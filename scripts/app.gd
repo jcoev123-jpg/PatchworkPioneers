@@ -684,6 +684,15 @@ var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
 var _stitched_sewing_catalog: Dictionary = {}
 var _stitched_battle_ticket: WeakRef
+## This is a detached, authenticated party receipt, not an editable UI request.
+const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
+var _stitched_party_picks: Array = STITCHED_DEFAULT_PICKS.duplicate()
+var _stitched_party_receipt: Dictionary = StitchedPartyAdmission.admit(STITCHED_DEFAULT_PICKS)
+var _stitched_party_draft: Array = []
+var _stitched_party_checkboxes: Dictionary = {}
+var _stitched_party_hint: Label
+var _stitched_party_confirm_button: Button
+var _stitched_party_cancel_button: Button
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
 const STITCHED_SEWING_MEND_COST := 2
@@ -1375,7 +1384,15 @@ func _build_title() -> void:
 ## the title roster: the three foes themselves come from the canonical S5 enemy
 ## profiles, so every live Roadblock fight uses the same authored kit as the
 ## catalog and every enemy trophy is resolved by the same loader.
-func _stitched_floor_config() -> Dictionary:
+## The S6 receipt supplies ONLY canonical identity/HP/rank. The S2 preview
+## supplies its existing nonidentity base stats at each seated rank. Every
+## authored hero's parts are present in the combined catalog, but only the
+## four admitted heroes receive worn equipment.
+func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
+	var party: Dictionary = StitchedPartyAdmission.admit(_stitched_party_picks)
+	if party.get("ok") != true or party != _stitched_party_receipt \
+			or (not requested_receipt.is_empty() and requested_receipt != party):
+		return {}
 	var preview := StitchedBattleScreen.read_preview()
 	if not preview.get("heroes") is Array or preview["heroes"].size() != 4 \
 			or not preview.get("foes") is Array or preview["foes"].size() != 3 \
@@ -1384,9 +1401,8 @@ func _stitched_floor_config() -> Dictionary:
 	var roster := StitchedEnemyCatalog.load_catalog()
 	if not bool(roster.get("ok", false)):
 		return {}
-	var owner_ids := ["warden", "seamstress", "tinker", "lantern_monk"]
 	var owner_catalogs: Dictionary = {}
-	for owner_id in owner_ids:
+	for owner_id in StitchedPartyAdmission.HERO_IDS:
 		var loaded := StitchedParts.load_catalog("res://data/parts/%s_parts.json" % owner_id)
 		if not bool(loaded.get("ok", false)):
 			return {}
@@ -1411,17 +1427,18 @@ func _stitched_floor_config() -> Dictionary:
 		if str(entry.get("owner", "")) == "any":
 			generic.append(entry)
 	var definitions: Array = []
-	for owner_id in owner_ids:
+	for owner_id in StitchedPartyAdmission.HERO_IDS:
 		for part in owner_catalogs[owner_id]["parts"]:
 			if str(part.get("owner", "")) != owner_id:
 				return {}
 			definitions.append(part)
 	definitions.append_array(generic)
 	definitions.append_array(roster["parts"])
-	# One combined validator rejects an ID collision between any two catalogs.
+	# This combined validation also excludes duplicated IDs across all sources.
 	var catalog := StitchedParts.build_catalog(definitions)
 	if not bool(catalog.get("ok", false)):
 		return {}
+	# Keep the four existing explicitly authored starter loadouts unchanged.
 	var starters := {
 		"warden": {
 			"head": "warden_head_pot_helm_bonk",
@@ -1448,33 +1465,49 @@ func _stitched_floor_config() -> Dictionary:
 			"legs": "lantern_monk_legs_pole_shelter",
 		},
 	}
-	# Authenticate each authored starter before the screen or battle is created.
-	for owner_id in owner_ids:
+	# New heroes wear the FIRST authored part in each slot, never a generic
+	# prototype and never an inferred skill or upgrade.
+	for owner_id in StitchedPartyAdmission.HERO_IDS:
+		if starters.has(owner_id):
+			continue
+		var first: Dictionary = {}
+		for part in owner_catalogs[owner_id]["parts"]:
+			var slot := str(part.get("slot", ""))
+			if slot in StitchedParts.SLOTS and not first.has(slot):
+				first[slot] = str(part.get("id", ""))
+		if first.size() != StitchedParts.SLOTS.size():
+			return {}
+		starters[owner_id] = first
+	for owner_id in StitchedPartyAdmission.HERO_IDS:
 		for slot in StitchedParts.SLOTS:
 			var part_id: String = starters[owner_id][slot]
 			var part: Dictionary = catalog["by_id"].get(part_id, {})
 			if part.is_empty() or str(part.get("owner", "")) != owner_id \
 					or str(part.get("slot", "")) != slot \
-					or StitchedParts.ability_at_tier(part, 1).is_empty():
+					or StitchedParts.ability_at_tier(part, 1).is_empty() \
+					or StitchedParts.validate_ability(StitchedParts.ability_at_tier(part, 1)).get("ok") != true:
 				return {}
 	var config := preview.duplicate(true)
-	var seen_heroes: Dictionary = {}
-	for hero in config["heroes"]:
-		if not hero is Dictionary or not hero.get("parts") is Dictionary:
+	var selected_heroes: Array = []
+	for index in range(4):
+		var identity: Dictionary = party["heroes"][index]
+		var source: Variant = preview["heroes"][index]
+		if not source is Dictionary or not source.get("parts") is Dictionary \
+				or identity.get("rank") != index + 1:
 			return {}
-		var hero_id := str(hero.get("id", ""))
-		if not starters.has(hero_id) or seen_heroes.has(hero_id):
-			return {}
-		seen_heroes[hero_id] = true
+		var hero: Dictionary = source.duplicate(true)
+		hero["id"] = identity["id"]
+		hero["name"] = identity["name"]
+		hero["max_hp"] = identity["max_hp"]
+		hero["rank"] = identity["rank"]
 		var worn: Dictionary = {}
 		for slot in StitchedParts.SLOTS:
-			worn[slot] = {"id": starters[hero_id][slot], "tier": 1, "torn": false}
+			worn[slot] = {"id": starters[identity["id"]][slot], "tier": 1, "torn": false}
 		hero["parts"] = worn
-	if seen_heroes.size() != owner_ids.size():
-		return {}
-	# Only equipment committed at Sewing Circle travels into the next Fight.
-	# A compatible foreign trophy is legal; its owner's identity is not the wearer.
-	for hero in config["heroes"]:
+		selected_heroes.append(hero)
+	# A trophy is carried only for the currently selected hero by canonical ID.
+	# A compatible foreign trophy is legal; its owner is not the wearer.
+	for hero in selected_heroes:
 		var carry_value: Variant = _stitched_gear_overrides.get(str(hero["id"]), {})
 		if not carry_value is Dictionary:
 			return {}
@@ -1491,9 +1524,11 @@ func _stitched_floor_config() -> Dictionary:
 					or not gear.get("tier") is int \
 					or int(gear["tier"]) < StitchedParts.MIN_TIER \
 					or int(gear["tier"]) > StitchedParts.MAX_TIER \
-					or not gear.get("torn") is bool:
+					or not gear.get("torn") is bool \
+					or StitchedParts.ability_at_tier(part, int(gear["tier"])).is_empty():
 				return {}
 			hero["parts"][slot] = gear.duplicate(true)
+	config["heroes"] = selected_heroes
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
 	config["seed"] = 4982026
@@ -1501,6 +1536,184 @@ func _stitched_floor_config() -> Dictionary:
 	config["subtitle"] = "Four heroes against three foes · sewn parts only"
 	config["mode"] = "stitched"
 	return config
+
+
+## The Roadblock remains the authority for Fight/toll/Leave. This optional
+## control only offers a detached four-of-eight identity selection.
+func _stitched_picker_live(source: WeakRef, gate: RunV3FightEventGate,
+		generation: int) -> bool:
+	var panel := source.get_ref() as LiveEventChoicePanel if source != null else null
+	return panel != null and panel == stitched_event_panel and panel.get_parent() == self \
+		and panel.is_visible_in_tree() and panel.has_open_event() \
+		and panel._wallet_mode and panel._selector != null \
+		and not panel._selector.is_claimed() and panel._generation == generation \
+		and gate != null and gate == stitched_event_gate and gate.is_valid() \
+		and not gate.is_claimed() and not is_instance_valid(stitched_fight_view)
+
+
+func _stitched_picker_checkbox_ids() -> Array:
+	var checked: Array = []
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var box: CheckBox = _stitched_party_checkboxes.get(id)
+		if not is_instance_valid(box):
+			return []
+		if box.button_pressed:
+			checked.append(id)
+	return checked
+
+
+func _stitched_picker_sync() -> void:
+	var panel := stitched_event_panel
+	if not is_instance_valid(panel):
+		return
+	var buttons := panel.get_choice_buttons()
+	if buttons.size() != 3:
+		return
+	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
+	var checked := _stitched_picker_checkbox_ids()
+	var matched := checked.size() == _stitched_party_draft.size()
+	for id in _stitched_party_draft:
+		if not id in checked:
+			matched = false
+	var valid: bool = matched and receipt.get("ok") == true
+	var confirmed: bool = valid and _stitched_party_draft == _stitched_party_picks \
+		and receipt == _stitched_party_receipt
+	# Incomplete or not-yet-confirmed edits cannot claim the Fight ticket.
+	buttons[0].disabled = not confirmed
+	buttons[0].focus_mode = Control.FOCUS_NONE if not confirmed else Control.FOCUS_ALL
+	_stitched_party_confirm_button.disabled = not valid
+	_stitched_party_cancel_button.disabled = confirmed
+	if valid:
+		var names: Array[String] = []
+		for hero in receipt["heroes"]:
+			names.append("%d %s" % [hero["rank"], hero["name"]])
+		_stitched_party_hint.text = "RANKS · " + "  /  ".join(names) \
+			+ ("   · Confirm to use" if not confirmed else "   · Ready to Fight")
+	else:
+		_stitched_party_hint.text = "Choose exactly four distinct sewn heroes (%d/4)" % checked.size()
+
+
+func _stitched_picker_changed(pressed: bool, id: String, source: WeakRef,
+		gate: RunV3FightEventGate, generation: int) -> void:
+	if not _stitched_picker_live(source, gate, generation) \
+			or not id in StitchedPartyAdmission.HERO_IDS:
+		return
+	var box: CheckBox = _stitched_party_checkboxes.get(id)
+	if not is_instance_valid(box) or box.button_pressed != pressed:
+		return
+	if pressed and not id in _stitched_party_draft:
+		_stitched_party_draft.append(id)
+	elif not pressed and id in _stitched_party_draft:
+		_stitched_party_draft.erase(id)
+	else:
+		return
+	_stitched_picker_sync()
+
+
+func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
+		generation: int) -> void:
+	if not _stitched_picker_live(source, gate, generation):
+		return
+	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
+	var checked := _stitched_picker_checkbox_ids()
+	if receipt.get("ok") != true or checked.size() != 4 \
+			or _stitched_party_draft.size() != 4:
+		return
+	for id in _stitched_party_draft:
+		if not id in checked:
+			return
+	# Update nothing until the complete canonical receipt has passed.
+	_stitched_party_picks = _stitched_party_draft.duplicate()
+	_stitched_party_receipt = receipt.duplicate(true)
+	# Only currently selected hero IDs retain their previously won parts.
+	for id in _stitched_gear_overrides.keys():
+		if not id in _stitched_party_picks:
+			_stitched_gear_overrides.erase(id)
+	_stitched_picker_sync()
+
+
+func _stitched_picker_cancel(source: WeakRef, gate: RunV3FightEventGate,
+		generation: int) -> void:
+	if not _stitched_picker_live(source, gate, generation):
+		return
+	_stitched_party_draft = _stitched_party_picks.duplicate()
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var box: CheckBox = _stitched_party_checkboxes.get(id)
+		if is_instance_valid(box):
+			box.set_pressed_no_signal(id in _stitched_party_draft)
+	_stitched_picker_sync()
+
+
+func _mount_stitched_party_picker(panel: LiveEventChoicePanel,
+		gate: RunV3FightEventGate) -> bool:
+	var party := StitchedPartyAdmission.admit(_stitched_party_picks)
+	if party.get("ok") != true or party != _stitched_party_receipt \
+			or panel.get_choice_buttons().size() != 3:
+		return false
+	_stitched_party_draft = _stitched_party_picks.duplicate()
+	_stitched_party_checkboxes.clear()
+	var generation: int = panel._generation
+	var source: WeakRef = weakref(panel)
+	var container := VBoxContainer.new()
+	container.name = "StitchedPartyPicker"
+	container.add_theme_constant_override("separation", 6)
+	var heading := Label.new()
+	heading.text = "SEW YOUR PARTY  ·  Four of Eight"
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.theme_type_variation = "PatchHeading"
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.add_child(heading)
+	var grid := GridContainer.new()
+	grid.name = "StitchedHeroChoices"
+	grid.columns = 4
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 4)
+	container.add_child(grid)
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var checkbox := CheckBox.new()
+		checkbox.name = "StitchedPick_" + id
+		# These static captions are decorative; admission owns identity and HP.
+		var label := str(id).replace("_", " ").capitalize()
+		checkbox.text = label
+		checkbox.tooltip_text = "Select " + label + " for a four-hero rank"
+		checkbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		checkbox.custom_minimum_size = Vector2(120, 30)
+		checkbox.focus_mode = Control.FOCUS_ALL
+		checkbox.set_pressed_no_signal(id in _stitched_party_draft)
+		grid.add_child(checkbox)
+		_stitched_party_checkboxes[id] = checkbox
+		checkbox.toggled.connect(_stitched_picker_changed.bind(id, source, gate, generation))
+	_stitched_party_hint = Label.new()
+	_stitched_party_hint.name = "StitchedRankPreview"
+	_stitched_party_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_stitched_party_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_stitched_party_hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	container.add_child(_stitched_party_hint)
+	var actions := HBoxContainer.new()
+	actions.name = "StitchedPartyActions"
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", 12)
+	container.add_child(actions)
+	_stitched_party_confirm_button = Button.new()
+	_stitched_party_confirm_button.name = "StitchedPartyConfirm"
+	_stitched_party_confirm_button.text = "Confirm party"
+	_stitched_party_confirm_button.custom_minimum_size = Vector2(160, 38)
+	_stitched_party_confirm_button.pressed.connect(
+		_stitched_picker_confirm.bind(source, gate, generation))
+	actions.add_child(_stitched_party_confirm_button)
+	_stitched_party_cancel_button = Button.new()
+	_stitched_party_cancel_button.name = "StitchedPartyCancel"
+	_stitched_party_cancel_button.text = "Cancel edits"
+	_stitched_party_cancel_button.custom_minimum_size = Vector2(160, 38)
+	_stitched_party_cancel_button.pressed.connect(
+		_stitched_picker_cancel.bind(source, gate, generation))
+	actions.add_child(_stitched_party_cancel_button)
+	# Insert above the three unmodified authored offer buttons, on their
+	# existing scrollable parchment. No new graphic is drawn in code.
+	panel.event_content.add_child(container)
+	panel.event_content.move_child(container, panel.choices_container.get_index())
+	_stitched_picker_sync()
+	return true
 
 
 func _open_stitched_fight() -> bool:
@@ -1572,6 +1785,9 @@ func _open_stitched_fight() -> bool:
 			return false
 	stitched_event_gate = gate
 	stitched_event_panel = panel
+	if not _mount_stitched_party_picker(panel, gate):
+		_retire_stitched_roadblock()
+		return false
 	panel.wallet_choice_committed.connect(_commit_stitched_roadblock.bind(weakref(panel), gate))
 	title_view.hide()
 	buttons[0].grab_focus.call_deferred()
@@ -1608,6 +1824,17 @@ func _commit_stitched_roadblock(receipt: Dictionary, source: WeakRef, gate: RunV
 			break
 	if not affordable:
 		return
+	# Only Fight needs a confirmed four. An authentic Leave must stay usable
+	# even if the player abandoned an incomplete draft.
+	if choice_id == gate.get_fight_choice_id():
+		var party := StitchedPartyAdmission.admit(_stitched_party_picks)
+		if party.get("ok") != true or party != _stitched_party_receipt \
+				or _stitched_party_draft != _stitched_party_picks \
+				or _stitched_picker_checkbox_ids().size() != 4:
+			return
+		for id in _stitched_party_picks:
+			if not id in _stitched_picker_checkbox_ids():
+				return
 	# A new, once-only gate settles the same choice and immutable title wallet.
 	# A cloned/forged/stale panel receipt cannot promote a visit into combat.
 	var admitted: Dictionary = gate.choose_with_wallet(choice_id, STITCHED_TITLE_WALLET.duplicate(true))
@@ -1626,6 +1853,11 @@ func _retire_stitched_roadblock() -> void:
 	# Drop app authority before removing buttons; queued input is then inert.
 	stitched_event_panel = null
 	stitched_event_gate = null
+	_stitched_party_draft.clear()
+	_stitched_party_checkboxes.clear()
+	_stitched_party_hint = null
+	_stitched_party_confirm_button = null
+	_stitched_party_cancel_button = null
 	if is_instance_valid(panel):
 		panel.close_event()
 		if panel.get_parent() == self:
