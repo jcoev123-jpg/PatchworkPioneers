@@ -1,5 +1,5 @@
 extends SceneTree
-## S6: genuine won Roadblock -> Leave without Mend -> same torn gear in next Fight.
+## S6: real Roadblock wounds and torn gear survive Victory -> Circle Leave -> next Fight.
 var failures: Array[String] = []
 var checks := 0
 const NODE := "s5_scissor_crab_sewing_circle"
@@ -87,12 +87,58 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		"foes": stage.battle.get_foes().duplicate(true)}
 
 
+# The same authored four-hero, three-foe config used by the live title path.
+# Invalid starting HP must fail before admission; omitted HP remains full.
+func _starting_hp_contract(app: Node) -> void:
+	var input: Dictionary = app._stitched_floor_config()
+	_check(input.get("heroes", []).size() == 4 and input.get("foes", []).size() == 3,
+		"starting HP checks have the genuine complete Roadblock config")
+	if input.get("heroes", []).size() != 4:
+		return
+	var original := StitchedRules.create(input)
+	_check(original.get("ok") == true and original.get("battle") != null,
+		"omitted HP admits a complete seeded rules session")
+	if original.get("ok") != true:
+		return
+	var id := str(input["heroes"][0]["id"])
+	var base: Dictionary = original["battle"].get_unit(id)
+	var cap: int = int(base["max_hp"])
+	_check(cap > 0 and base["hp"] == cap and not base["hanging"] and not base["lost"],
+		"omitted starting HP means full worn-part-adjusted health")
+	var replay := StitchedRules.create(input)
+	_check(replay.get("ok") == true
+		and replay["battle"].state_snapshot() == original["battle"].state_snapshot(),
+		"unchanged seeded replay is deterministic without HP")
+	for requested_hp in [0, 1, cap]:
+		var valid: Dictionary = input.duplicate(true)
+		valid["heroes"][0]["hp"] = requested_hp
+		var created := StitchedRules.create(valid)
+		var twice := StitchedRules.create(valid)
+		var correct: bool = created.get("ok") == true and twice.get("ok") == true
+		if correct:
+			var hero: Dictionary = created["battle"].get_unit(id)
+			correct = hero["hp"] == requested_hp and hero["max_hp"] == cap \
+				and hero["hanging"] == (requested_hp == 0) and not hero["lost"] \
+				and hero["parts"] == base["parts"] \
+				and created["battle"].state_snapshot() == twice["battle"].state_snapshot() \
+				and created["battle"].rng_state() == twice["battle"].rng_state()
+		_check(correct, "legal HP %s retains exact health/Hanging/parts and seeded replay" % requested_hp)
+	for bad_hp in [-1, cap + 1, 1.5, 8.0, "8", null, true, {}, []]:
+		var invalid: Dictionary = input.duplicate(true)
+		invalid["heroes"][0]["hp"] = bad_hp
+		var denied := StitchedRules.create(invalid)
+		_check(denied.get("ok") != true and denied.get("battle") == null,
+			"negative/oversized/noninteger starting HP refused: " + str(bad_hp))
+
+
 func _trace() -> Dictionary:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await process_frame
-	_check(app._stitched_gear_overrides.is_empty() and app.stitched_preview_scraps == 0
-		and _no_wallet(app), "fresh title has no carried parts, scraps or legacy resources")
+	_check(app._stitched_gear_overrides.is_empty() and app._stitched_hp_carry.is_empty()
+		and app.stitched_preview_scraps == 0 and _no_wallet(app),
+		"fresh title has no carried health, parts, scraps or legacy resources")
+	_starting_hp_contract(app)
 	# No non-victory route may open the Circle or invent a torn-gear carry.
 	var aborted: StitchedBattleScreen = await _admit(app)
 	_check(aborted != null and aborted.battle != null and aborted.battle.is_valid(),
@@ -104,7 +150,8 @@ func _trace() -> Dictionary:
 	aborted._action_buttons["exit"].pressed.emit()
 	await process_frame
 	_check(app.stitched_sewing_panel == null and app._stitched_gear_overrides.is_empty()
-		and app.stitched_preview_scraps == 0, "unwon exit grants neither Circle nor override")
+		and app._stitched_hp_carry.is_empty() and app.stitched_preview_scraps == 0,
+		"unwon exit grants neither Circle nor HP/gear override")
 	var first: StitchedBattleScreen = await _admit(app)
 	if first == null:
 		_check(false, "won battle needs authenticated Fight admission")
@@ -121,6 +168,31 @@ func _trace() -> Dictionary:
 		app.free()
 		await process_frame
 		return {}
+	# Witness damage from the real combat receipts, not a fabricated HP edit.
+	var battle_foe_ids: Array = []
+	for foe in first.battle.get_foes():
+		battle_foe_ids.append(str(foe["id"]))
+	var battle_hero_ids: Array = []
+	for hero in first.battle.get_heroes():
+		battle_hero_ids.append(str(hero["id"]))
+	var live_hits := 0
+	for action in first.receipts:
+		if str(action.get("actor", "")) not in battle_foe_ids:
+			continue
+		for impact in action.get("results", []):
+			if str(impact.get("target", "")) in battle_hero_ids \
+					and int(impact.get("damage", 0)) > 0:
+				live_hits += 1
+	var victory_hp: Dictionary = {}
+	var wounded_survivors := 0
+	for hero in first.battle.get_heroes():
+		if bool(hero.get("lost", false)):
+			continue
+		victory_hp[str(hero["id"])] = int(hero["hp"])
+		if int(hero["hp"]) < int(hero["max_hp"]):
+			wounded_survivors += 1
+	_check(live_hits > 0 and wounded_survivors > 0 and not victory_hp.is_empty(),
+		"foe hits visibly damaged at least one survivor through actual combat")
 	# Only a surviving hero's torn flag is controlled AFTER genuine victory.
 	var hero_id := ""
 	var original_parts: Dictionary = {}
@@ -143,6 +215,8 @@ func _trace() -> Dictionary:
 	first._action_buttons["exit"].pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_sewing_panel
+	_check(app._stitched_hp_carry == victory_hp and not victory_hp.is_empty(),
+		"only authentic terminal-victory survivor HP enters app-owned ID carry")
 	var swap: RunStitchedSewingSwap = app.stitched_sewing_visit
 	var mend: RunStitchedSewingMend = app.stitched_sewing_mend_visit
 	_check(panel != null and swap != null and mend != null
@@ -165,6 +239,7 @@ func _trace() -> Dictionary:
 	var disabled: Button = panel.find_child("Mend_%s_arms" % hero_id, true, false) as Button
 	_check(disabled != null and disabled.disabled and disabled.text.contains("insufficient scraps"),
 		"one genuine scrap cannot silently repair torn arms")
+	var before_hp: Dictionary = app._stitched_hp_carry.duplicate(true)
 	var before_overrides: Dictionary = app._stitched_gear_overrides.duplicate(true)
 	var before_satchel: Array = app.stitched_preview_satchel.duplicate(true)
 	var stale: Dictionary = displayed.duplicate(true)
@@ -177,6 +252,7 @@ func _trace() -> Dictionary:
 		and not swap.leave("wrong-node", displayed).get("ok")
 		and not mend.leave("wrong-node", mend_displayed).get("ok")
 		and app._stitched_gear_overrides == before_overrides
+		and app._stitched_hp_carry == before_hp
 		and swap.read_state() == displayed and mend.read_state() == mend_displayed
 		and app.stitched_preview_scraps == 1 and app.stitched_preview_satchel == before_satchel
 		and randi() == expected_rng and _no_wallet(app),
@@ -199,7 +275,8 @@ func _trace() -> Dictionary:
 	_check(not app._stitched_sewing_leave(displayed, weakref(panel)).get("ok")
 		and not swap.leave(NODE, displayed).get("ok")
 		and not mend.leave(NODE, mend_displayed).get("ok")
-		and app._stitched_gear_overrides == closed and app.stitched_preview_scraps == 1,
+		and app._stitched_gear_overrides == closed
+		and app._stitched_hp_carry == before_hp and app.stitched_preview_scraps == 1,
 		"old displayed callbacks and closed receipts cannot replay a carry or spend")
 	await process_frame
 	var config: Dictionary = app._stitched_floor_config()
@@ -207,6 +284,12 @@ func _trace() -> Dictionary:
 	for hero in config.get("heroes", []):
 		if str(hero["id"]) == hero_id:
 			expected_parts = hero["parts"]
+	var config_hp: Dictionary = {}
+	for hero in config.get("heroes", []):
+		if victory_hp.has(str(hero["id"])):
+			config_hp[str(hero["id"])] = int(hero.get("hp", -1))
+	_check(config_hp == victory_hp and not config_hp.is_empty(),
+		"after worn gear projection, all same-loadout survivors keep exact witnessed HP")
 	var same_parts := expected_parts.size() == StitchedParts.SLOTS.size()
 	for slot in StitchedParts.SLOTS:
 		same_parts = same_parts and expected_parts.get(slot) == intact.get(slot)
@@ -217,6 +300,17 @@ func _trace() -> Dictionary:
 		"real second Fight is mounted by title Roadblock button, not a fixture")
 	var trace: Dictionary = {}
 	if second != null and second.battle != null:
+		var mounted_hp: Dictionary = {}
+		var mounted_wounds := 0
+		for hero in second.battle.get_heroes():
+			var id := str(hero["id"])
+			if victory_hp.has(id):
+				mounted_hp[id] = int(hero["hp"])
+				if int(hero["hp"]) < int(hero["max_hp"]):
+					mounted_wounds += 1
+		_check(mounted_hp == config_hp and mounted_wounds > 0 \
+			and second.config.get("candle") == app.stitched_roadblock_candle,
+			"new live Fight mounts exact wounded survivor HP without free healing or candle mismatch")
 		var unit: Dictionary = second.battle.get_unit(hero_id)
 		var arms: Dictionary = unit.get("parts", {}).get("arms", {})
 		var correct := arms == torn and not second._valid_part(unit, arms)
@@ -245,14 +339,58 @@ func _trace() -> Dictionary:
 		_check(witness_turn and illegal_no_spend and legal_intact,
 			"actual next hero turn refuses torn ability without action/RNG spend; intact ability remains legal")
 		trace = {"parts": unit["parts"].duplicate(true), "config": expected_parts.duplicate(true),
-			"opening": second.battle.opening_strike(), "scraps": app.stitched_preview_scraps,
+			"opening": second.battle.opening_strike(), "hp": mounted_hp.duplicate(true),
+			"scraps": app.stitched_preview_scraps,
 			"satchel": app.stitched_preview_satchel.duplicate(true),
 			"candle": app.stitched_roadblock_candle}
 		second._action_buttons["exit"].pressed.emit()
 		await process_frame
 		_check(app.stitched_sewing_panel == null and app._stitched_gear_overrides == closed
+			and app._stitched_hp_carry == before_hp \
 			and app.stitched_preview_scraps == 1 and _no_wallet(app),
-			"unfinished second Fight cannot repair gear, mint reward or change old carry")
+			"unfinished second Fight cannot heal/corrupt carry, repair gear or mint reward")
+	# Replayed/forged exits from a retired stage cannot change the authenticated HP.
+	app._stitched_fight_exit(weakref(second))
+	app._stitched_fight_exit(null)
+	_check(app._stitched_hp_carry == before_hp and _no_wallet(app),
+		"stale and null battle exit callbacks cannot replace survivor HP")
+	# A draft or cancelled party edit retains HP. Only a genuine Confirm drops
+	# the deselected survivor, without touching the other three IDs.
+	app.stitched_fight_button.pressed.emit()
+	await process_frame
+	var picker: LiveEventChoicePanel = app.stitched_event_panel
+	_check(picker != null and app._stitched_party_checkboxes.has(hero_id),
+		"authenticated Roadblock mounts a fresh party picker after abandoned Fight")
+	if picker != null and app._stitched_party_checkboxes.has(hero_id):
+		var spare_id := ""
+		for id in StitchedPartyAdmission.HERO_IDS:
+			if not id in app._stitched_party_picks:
+				spare_id = str(id)
+				break
+		_check(not spare_id.is_empty(), "legal alternative hero exists for reselection")
+		var original: Dictionary = app._stitched_hp_carry.duplicate(true)
+		app._stitched_party_checkboxes[hero_id].button_pressed = false
+		_check(app._stitched_hp_carry == original and app._stitched_party_picks.has(hero_id),
+			"unfinished three-hero draft cannot clear stored HP")
+		app._stitched_party_cancel_button.pressed.emit()
+		_check(app._stitched_hp_carry == original and app._stitched_party_picks.has(hero_id),
+			"Cancel restores confirmed party without modifying any HP")
+		if not spare_id.is_empty():
+			app._stitched_party_checkboxes[hero_id].button_pressed = false
+			app._stitched_party_checkboxes[spare_id].button_pressed = true
+			app._stitched_party_confirm_button.pressed.emit()
+			var remaining := true
+			for id in original:
+				if str(id) != hero_id:
+					remaining = remaining and app._stitched_hp_carry.get(id) == original[id]
+			_check(not app._stitched_hp_carry.has(hero_id) and remaining \
+				and app._stitched_party_picks.has(spare_id) \
+				and not app._stitched_party_picks.has(hero_id),
+				"confirmed reselection clears only deselected ID's wounded HP")
+		picker.get_choice_buttons()[2].pressed.emit()
+		await process_frame
+		_check(app.stitched_event_panel == null and _no_wallet(app),
+			"reselection Roadblock Leave spends no run resources")
 	app.free()
 	await process_frame
 	return trace

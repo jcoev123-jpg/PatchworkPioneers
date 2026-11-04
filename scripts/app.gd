@@ -683,6 +683,7 @@ var stitched_preview_scraps := 0
 var stitched_roadblock_candle := 100
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
+var _stitched_hp_carry: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
 var _stitched_sewing_catalog: Dictionary = {}
@@ -1532,6 +1533,23 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 					or StitchedParts.ability_at_tier(part, int(gear["tier"])).is_empty():
 				return {}
 			hero["parts"][slot] = gear.duplicate(true)
+	# Project prior terminal-victory health only after the final worn parts are set.
+	# Torn equipment contributes no max HP; a lawful swap may lower the cap,
+	# but cannot heal a wounded survivor for free.
+	for hero in selected_heroes:
+		var hero_id := str(hero["id"])
+		if not _stitched_hp_carry.has(hero_id):
+			continue
+		var carried_hp: Variant = _stitched_hp_carry[hero_id]
+		if typeof(carried_hp) != TYPE_INT or int(carried_hp) < 0:
+			return {}
+		var worn_max: int = int(hero["max_hp"])
+		for slot in StitchedParts.SLOTS:
+			var gear: Dictionary = hero["parts"][slot]
+			if not bool(gear["torn"]):
+				var definition: Dictionary = catalog["by_id"][str(gear["id"])]
+				worn_max += int(StitchedParts.stat_at_tier(definition, int(gear["tier"])).get("max_hp", 0))
+		hero["hp"] = mini(int(carried_hp), worn_max)
 	config["heroes"] = selected_heroes
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
@@ -1633,6 +1651,9 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_gear_overrides.keys():
 		if not id in _stitched_party_picks:
 			_stitched_gear_overrides.erase(id)
+	for id in _stitched_hp_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
 	_stitched_picker_sync()
 
 
@@ -1950,6 +1971,12 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
+		# This exact, once-only stage is the sole HP source. A lost hero is not
+		# carried; failed, retreated and replayed exits leave the ledger untouched.
+		for id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
+		for hero in heroes:
+			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
 		stitched_preview_scraps += 1
