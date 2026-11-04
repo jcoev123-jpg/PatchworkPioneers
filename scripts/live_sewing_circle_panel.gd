@@ -30,6 +30,7 @@ const CONFIRM_TEXT := "3 Confirm choice"
 ## rebind, invalid/stale/consumed source, missing art or accessibility
 ## reduced_motion request, and has a nullable override for focused tests.
 const PANEL_ART := "res://assets/paper/ui/reward_panel.png"
+const VISIT_AMBIENT := preload("res://scripts/live_battle_ambient.gd")
 ## Decorative drift of the authored panel image: about a 1% scale breath plus a
 ## few pixels of drift, both exactly at rest at elapsed zero and at every
 ## shared period. No RNG and no wall clock; the caller accumulates a
@@ -92,6 +93,8 @@ var reduced_motion_override: Variant = null
 var _art_drift: Panel = null
 var _art_drift_base := Vector2.ZERO
 var _art_motion_elapsed := 0.0
+## One reused texture-only scraps renderer; never participates in visit settlement.
+var _ambient = null
 
 
 func _ready() -> void:
@@ -112,6 +115,7 @@ func _ready() -> void:
 	if panel_art_texture == null:
 		panel_art_texture = _load_panel_art()
 	_install_art_drift(paper)
+	_install_ambient(paper)
 	visibility_changed.connect(_on_art_visibility_changed)
 	var title := _label("SEWING CIRCLE - choose once", Vector2(24, 16), Vector2(890, 36))
 	title.theme_type_variation = "PatchHeading"
@@ -261,6 +265,8 @@ func bind(visit: RunSewingCircleVisit) -> void:
 	# A different bound visit (or none at all) restarts the decorative drift
 	# from its exact static baseline; the motion never influences the binding.
 	_reset_art_motion()
+	if is_instance_valid(_ambient):
+		_ambient.retire()
 	_visit = visit
 	_source = visit.read_state() if visit != null else {}
 	_submitted = false
@@ -329,6 +335,7 @@ func _refresh() -> void:
 	visible = true
 	_clear_options()
 	var active := _active()
+	_sync_ambient()
 	# An inactive/confirmed visit must restore the physical art layer now, even
 	# when _process is paused (e.g. a mounted deterministic test).
 	if not active:
@@ -863,6 +870,36 @@ func _install_art_drift(host_panel: Panel) -> void:
 	_art_drift = layer
 
 
+## The existing deterministic renderer is owned by the clipped backing, after
+## the faint drifting artwork and before every interactive panel Control.
+## Neither it nor any of its texture marks receives mouse or keyboard input.
+func _install_ambient(host_panel: Panel) -> void:
+	if is_instance_valid(_ambient):
+		return
+	_ambient = VISIT_AMBIENT.new()
+	host_panel.add_child(_ambient)
+	_ambient.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_ambient.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ambient.focus_mode = Control.FOCUS_NONE
+	_ambient.retire()
+
+
+## Only a current quoted OPEN visit that matches its bound ledger may dress
+## a visible, mounted panel. The single renderer keeps its ongoing clock on
+## mode/filter refreshes, but any invalidation retires its clock and watcher.
+func _sync_ambient() -> void:
+	if not is_instance_valid(_ambient):
+		return
+	var admitted := is_node_ready() and is_inside_tree() and is_visible_in_tree() \
+			and _active() and not _reduced_motion_active()
+	if admitted:
+		if _ambient.profile != "scraps" or not _ambient._visit_dressing:
+			_ambient.configure_visit_scraps()
+	elif not _ambient.profile.is_empty() or _ambient.visible or _ambient.is_processing() \
+			or _ambient._time != 0.0:
+		_ambient.retire()
+
+
 ## Pure deterministic presentation transform: a slow ~1% scale breath on a 7 s
 ## period plus a few pixels of drift on an 11 s period, both exactly at rest at
 ## elapsed zero and at every shared period. No RNG and no wall clock.
@@ -882,8 +919,8 @@ static func art_motion_transform_at(elapsed: float) -> Dictionary:
 ## baseline transform.
 func art_motion_active() -> bool:
 	return _art_drift != null and is_instance_valid(_art_drift) and panel_art_texture != null \
-			and _visit != null and not _submitted and _visit.is_valid() and not _visit.is_consumed() \
-			and is_inside_tree() and is_visible_in_tree() and not _reduced_motion_active()
+			and _active() and is_inside_tree() and is_visible_in_tree() \
+			and not _reduced_motion_active()
 
 
 ## Current decorative transform: the static baseline whenever motion is
@@ -898,6 +935,7 @@ func art_motion_transform() -> Dictionary:
 ## Deterministic presentation-time advance for focused tests; live play
 ## accumulates the very same clock through _process with the engine delta.
 func advance_art_motion(delta: float) -> void:
+	_sync_ambient()
 	if not art_motion_active():
 		_reset_art_motion()
 		return
@@ -911,6 +949,7 @@ func advance_art_motion(delta: float) -> void:
 ## hosts force the presentation on or off deterministically.
 func set_reduced_motion_override(value: Variant) -> void:
 	reduced_motion_override = value
+	_sync_ambient()
 	if not art_motion_active():
 		_reset_art_motion()
 
@@ -946,6 +985,7 @@ func _apply_art_motion() -> void:
 
 
 func _on_art_visibility_changed() -> void:
+	_sync_ambient()
 	if not is_visible_in_tree():
 		_reset_art_motion()
 
@@ -953,11 +993,14 @@ func _on_art_visibility_changed() -> void:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_EXIT_TREE:
 		_reset_art_motion()
+		if is_instance_valid(_ambient):
+			_ambient.retire()
 
 
 ## Accumulated presentation delta alone drives the decoration; it never calls
 ## the visit, the stitch/upgrade services, the route or any RNG.
 func _process(delta: float) -> void:
+	_sync_ambient()
 	if not art_motion_active():
 		_reset_art_motion()
 		return
