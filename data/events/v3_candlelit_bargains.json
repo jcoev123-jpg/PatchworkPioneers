@@ -119,6 +119,94 @@
         {"id": "sell_spool_braid", "text": "Sell two scrap bundles for 31 gold", "outcome": {"gold": 31, "scraps": -2}},
         {"id": "leave", "text": "Decline the spool-keeper’s trial", "outcome": {"gold": 0, "scraps": 0}}
       ]
+    },
+    {
+      "id": "v3_lost_sleeve_signalbox",
+      "title": "The Lost-Sleeve Signalbox",
+      "description": "A slate-blue signal hut balances on quilted stilts; three plump glove puppets pull enormous brass levers with their loose sleeves while one candle lights the switchboard.",
+      "choices": [
+        {
+          "id": "rewire_sleeve_levers",
+          "text": "Pay 18 gold for two bundles of spare signal-thread (+2 scraps)",
+          "outcome": {"gold": -18, "scraps": 2}
+        },
+        {
+          "id": "lend_spare_hem",
+          "text": "Trade two scrap bundles for 24 gold in repair wages",
+          "outcome": {"gold": 24, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the glove keepers to their switches",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_mourning_quiltwheel",
+      "title": "The Mourning Quiltwheel",
+      "description": "An old fairground wheel turns with stuffed mitten-shaped carriages; bone-cream pennants hang over an empty velvet square and a button-eyed keeper oils its stitches.",
+      "choices": [
+        {
+          "id": "mend_wheel_stitches",
+          "text": "Pay 27 gold for three bundles of wheel-mending thread (+3 scraps)",
+          "outcome": {"gold": -27, "scraps": 3}
+        },
+        {
+          "id": "donate_crimson_cord",
+          "text": "Give one scrap bundle to the keeper for 16 gold",
+          "outcome": {"gold": 16, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the quiltwheel creak through another turn",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_hollow_glove_observatory",
+      "title": "The Hollow-Glove Observatory",
+      "description": "A gigantic stuffed glove points at a midnight-plum sky from a stitched rooftop; its four button fingertips hold silver thread across a brass star chart.",
+      "choices": [
+        {
+          "id": "buy_constellation_cord",
+          "text": "Pay 14 gold for one spool of star-chart cord (+1 scrap)",
+          "outcome": {"gold": -14, "scraps": 1}
+        },
+        {
+          "id": "pawn_telescope_threads",
+          "text": "Sell three scrap bundles for 31 gold",
+          "outcome": {"gold": 31, "scraps": -3}
+        },
+        {
+          "id": "leave",
+          "text": "Fold the star chart and follow the dark road",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_inkglass_needle_laundry",
+      "title": "The Inkglass Needle Laundry",
+      "description": "Under black glass gutters, a round doll laundress hangs patched sleeves between two towering silver sewing needles; candlelit droplets bead on the thread lines.",
+      "choices": [
+        {
+          "id": "buy_washline_offcuts",
+          "text": "Pay 32 gold for four clean repair-thread bundles (+4 scraps)",
+          "outcome": {"gold": -32, "scraps": 4}
+        },
+        {
+          "id": "sell_hung_linen",
+          "text": "Trade two scrap bundles for 23 gold in laundry wages",
+          "outcome": {"gold": 23, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the sleeves drying under the gutter lamp",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
