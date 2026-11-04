@@ -40,6 +40,18 @@ func _wallet(gold: int = 50, scraps: int = 10) -> Dictionary:
 	return {"gold": gold, "scraps": scraps}
 
 
+## Shared-catalog-safe exclusion helper: every offered record except the named
+## keep IDs, so forced-single-eligible witnesses stay deterministic as the
+## shipped catalog grows (no hardcoded pool or full ID list).
+func _exclude_all_but(gate: RunV3HeroVitalEventGate, keep_ids: Array) -> Array:
+	var excluded: Array = []
+	for offer: Dictionary in gate.get_offers():
+		var oid: String = offer.get("id", "")
+		if not keep_ids.has(oid):
+			excluded.append(oid)
+	return excluded
+
+
 # AC1: Only authenticated party-owned hero events with matching living required hero are eligible.
 func _test_ac1_party_and_living_eligibility() -> void:
 	var party_ids := ["warden", "scarecrow", "tinker"]
@@ -62,37 +74,37 @@ func _test_ac1_party_and_living_eligibility() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 101
 
-	# Force Warden by excluding the other party records
+	# Force Warden by dynamically excluding every other offered record
 	var res_warden := gate.select_party_actionable_event(
-		rng, [scarecrow_id, crowbell_harvest_id, tinker_greenhouse_id, tinker_blunderbuss_id], wallet, heroes
+		rng, _exclude_all_but(gate, [warden_id]), wallet, heroes
 	)
 	_check(res_warden.get("ok") == true and res_warden["event"].get("id") == warden_id,
 		"AC1: forced Warden record returned")
 
-	# Force Scarecrow by excluding the other party records
+	# Force Scarecrow by dynamically excluding every other offered record
 	var res_scarecrow := gate.select_party_actionable_event(
-		rng, [warden_id, crowbell_harvest_id, tinker_greenhouse_id, tinker_blunderbuss_id], wallet, heroes
+		rng, _exclude_all_but(gate, [scarecrow_id]), wallet, heroes
 	)
 	_check(res_scarecrow.get("ok") == true and res_scarecrow["event"].get("id") == scarecrow_id,
 		"AC1: forced Scarecrow record returned")
 
-	# Force Tinker greenhouse by excluding the other party records
+	# Force Tinker greenhouse by dynamically excluding every other offered record
 	var res_tinker1 := gate.select_party_actionable_event(
-		rng, [warden_id, scarecrow_id, crowbell_harvest_id, tinker_blunderbuss_id], wallet, heroes
+		rng, _exclude_all_but(gate, [tinker_greenhouse_id]), wallet, heroes
 	)
 	_check(res_tinker1.get("ok") == true and res_tinker1["event"].get("id") == tinker_greenhouse_id,
 		"AC1: forced Tinker greenhouse record returned")
 
-	# Force Tinker blunderbuss by excluding the other party records
+	# Force Tinker blunderbuss by dynamically excluding every other offered record
 	var res_tinker2 := gate.select_party_actionable_event(
-		rng, [warden_id, scarecrow_id, crowbell_harvest_id, tinker_greenhouse_id], wallet, heroes
+		rng, _exclude_all_but(gate, [tinker_blunderbuss_id]), wallet, heroes
 	)
 	_check(res_tinker2.get("ok") == true and res_tinker2["event"].get("id") == tinker_blunderbuss_id,
 		"AC1: forced Tinker blunderbuss record returned")
 
-	# Absent heroes refusal: exclude all party records; un-excluded absent heroes (e.g. Seamstress) cannot be returned
+	# Absent heroes refusal: dynamically exclude every offered party record; un-offered absent heroes (e.g. Seamstress) cannot be returned
 	var res_absent := gate.select_party_actionable_event(
-		rng, [warden_id, scarecrow_id, crowbell_harvest_id, tinker_greenhouse_id, tinker_blunderbuss_id], wallet, heroes
+		rng, _exclude_all_but(gate, []), wallet, heroes
 	)
 	_check(res_absent.get("ok") == false and res_absent.get("event") == {},
 		"AC1: absent heroes can never be returned; exhausted party records reject")
@@ -104,7 +116,7 @@ func _test_ac1_party_and_living_eligibility() -> void:
 		_hero("tinker", 20, 30),
 	]
 	var res_torn_scarecrow := gate.select_party_actionable_event(
-		rng, [warden_id, crowbell_harvest_id, tinker_greenhouse_id, tinker_blunderbuss_id], wallet, torn_scarecrow_heroes
+		rng, _exclude_all_but(gate, [scarecrow_id]), wallet, torn_scarecrow_heroes
 	)
 	_check(res_torn_scarecrow.get("ok") == false and res_torn_scarecrow.get("event") == {},
 		"AC1: present-but-Torn Scarecrow cannot be returned")
@@ -116,7 +128,7 @@ func _test_ac1_party_and_living_eligibility() -> void:
 		_hero("tinker", 0, 30), # Torn!
 	]
 	var res_torn_tinker := gate.select_party_actionable_event(
-		rng, [warden_id, scarecrow_id, crowbell_harvest_id], wallet, torn_tinker_heroes
+		rng, _exclude_all_but(gate, [tinker_greenhouse_id, tinker_blunderbuss_id]), wallet, torn_tinker_heroes
 	)
 	_check(res_torn_tinker.get("ok") == false and res_torn_tinker.get("event") == {},
 		"AC1: present-but-Torn Tinker refuses both Tinker stories")
@@ -161,7 +173,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 
 	var scraps_2_wallet := _wallet(0, 2)
 	var scraps_res := gate.select_party_actionable_event(
-		rng, [tinker_greenhouse_id, tinker_blunderbuss_id], scraps_2_wallet, min_heroes
+		rng, _exclude_all_but(gate, [warden_id]), scraps_2_wallet, min_heroes
 	)
 	_check(scraps_res.get("ok") == true and scraps_res["event"].get("id") == warden_id,
 		"AC2: Warden becomes actionable when scraps raised to 2")
@@ -273,14 +285,12 @@ func _test_ac3_seeded_uniformity_purity_and_detachment() -> void:
 		_hero("tinker", 20, 30),
 	]
 
-	# All 4 records eligible and sorted:
-	var expected_sorted_ids := [
-		"v3_scarecrow_crowbell_harvest",
-		"v3_scarecrow_strawheart_alarm",
-		"v3_tinker_blunderbuss_fuse_well",
-		"v3_tinker_copper_needle_greenhouse",
-		"v3_warden_buckle_heart_ward",
-	]
+	# Every offered record is eligible and actionable at this funded wallet;
+	# derive and sort the pool dynamically (no hardcoded total or ID list):
+	var expected_sorted_ids: Array = []
+	for offer: Dictionary in gate.get_offers():
+		expected_sorted_ids.append(String(offer.get("id", "")))
+	expected_sorted_ids.sort()
 
 	# 1. Compare with separately seeded one-draw oracle
 	var rng1 := RandomNumberGenerator.new()
