@@ -128,6 +128,7 @@ func _run() -> void:
 	await _test_confirmation_handoff()
 	await _test_rejections()
 	await _test_art_motion()
+	await _test_visit_ambient()
 	_check(randi() == seeded_next, "mounted browsing and decisions consume no global RNG")
 	panel.queue_free()
 	await process_frame
@@ -1363,6 +1364,213 @@ func _test_rejections() -> void:
 		and panel.stitch_button.disabled and panel.leave_button.disabled
 		and panel.preview_label.text == "Choose Upgrade, Stitch or Leave, then confirm.",
 		"invalid source binding retires all active choice Help and Confirm")
+
+
+## Full mounted scraps renderer contract, exercised on authentic RunSewingCircleVisit
+## state rather than a detached dictionary or stand-in control.
+func _test_visit_ambient() -> void:
+	var layer = panel._ambient
+	var backing := panel.get_child(0) as Panel
+	_check(is_instance_valid(layer) and backing != null
+		and layer.get_script() == preload("res://scripts/live_battle_ambient.gd")
+		and backing.clip_contents and layer.get_parent() == backing
+		and layer.get_index() == panel._art_drift.get_index() + 1
+		and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+		"one shipped ambient renderer sits after sewn image drift in the clipped backing")
+	if not is_instance_valid(layer) or backing == null:
+		return
+	panel.set_process(false)
+	var visit := _make([STRIKE, STRIKE, PRICK], 7)
+	var state := visit.read_state()
+	var quoted := visit.quote()
+	_check(visit.is_valid() and quoted.ok and quoted.choices == ["upgrade", "stitch", "leave"]
+		and not visit.is_consumed(), "real OPEN Sewing Circle authorizes all three choices")
+	panel.bind(visit)
+	_check(panel._active() and layer.profile == "scraps" and layer._visit_dressing
+		and layer.fast and layer.visible_budget() == 7 and layer.motif_metadata().size() == 7
+		and is_equal_approx(layer.self_modulate.a, 0.42)
+		and layer._time == 0.0 and layer.is_processing(),
+		"authentic OPEN bind starts seven muted drawn motifs at zero")
+	await _settle_layout()
+	_check(layer.get_global_rect() == backing.get_global_rect()
+		and backing.size == Vector2(940, 620)
+		and layer.anchor_left == 0.0 and layer.anchor_top == 0.0
+		and layer.anchor_right == 1.0 and layer.anchor_bottom == 1.0
+		and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and layer.focus_mode == Control.FOCUS_NONE
+		and layer.get_child_count() == 0
+		and layer.find_children("*", "CPUParticles2D", true, false).is_empty()
+		and layer.find_children("*", "GPUParticles2D", true, false).is_empty(),
+		"full-rect 940x620 drawn VFX cannot intercept mouse, focus or spawn emitters")
+	var rects := [panel.get_global_rect(), panel.status_label.get_global_rect(),
+		panel.choice_scroll.get_global_rect(), panel.preview_scroll.get_global_rect(),
+		panel.upgrade_button.get_global_rect(), panel.stitch_button.get_global_rect(),
+		panel.leave_button.get_global_rect(), panel.confirm_button.get_global_rect()]
+	var before_intents := intents.duplicate(true)
+	seed(147925)
+	var next_random := randi()
+	seed(147925)
+	layer._process(0.61)
+	var tick: float = layer._time
+	_check(tick > 0.0 and layer.motif_metadata() ==
+		preload("res://scripts/live_battle_ambient.gd").motifs_for("scraps", layer.size, tick, true),
+		"presentation deltas use existing deterministic scraps placements")
+	await _activate(panel.upgrade_button, false)
+	_check(layer._time >= tick and layer.profile == "scraps"
+		and layer.get_instance_id() == panel._ambient.get_instance_id(),
+		"Upgrade mode refresh never restarts or duplicates its ambient clock")
+	var upgrade_row := panel.option_buttons[1]
+	await _activate(upgrade_row, false)
+	_check(panel.preview().index == 1 and visit.read_state() == state
+		and visit.quote() == quoted and intents == before_intents,
+		"one authentic upgrade preview reads but never spends or submits")
+	await _activate(panel.stitch_button, false)
+	var first_row: Button = null
+	for row in panel.option_buttons:
+		if row.get_meta("option").index == 1:
+			first_row = row
+			break
+	_check(first_row != null, "different-owner stitch has an authored first occurrence")
+	if first_row != null:
+		await _activate(first_row, false)
+		var second_row: Button = null
+		for row in panel.option_buttons:
+			if row.get_meta("option").index == 2:
+				second_row = row
+				break
+		_check(second_row != null, "second occurrence has another authentic owner")
+		if second_row != null:
+			await _activate(second_row, false)
+			_check(panel.preview().scrap_cost == 3 and panel.preview().first_index == 1
+				and visit.read_state() == state and visit.quote() == quoted,
+				"two-owner paid stitch preview leaves source untouched")
+	_check([panel.get_global_rect(), panel.status_label.get_global_rect(),
+		panel.choice_scroll.get_global_rect(), panel.preview_scroll.get_global_rect(),
+		panel.upgrade_button.get_global_rect(), panel.stitch_button.get_global_rect(),
+		panel.leave_button.get_global_rect(), panel.confirm_button.get_global_rect()] == rects
+		and visit.read_state() == state and visit.quote() == quoted
+		and intents == before_intents and randi() == next_random,
+		"texture time and mode/focus changes leave controls, ledger, quote, intents and RNG intact")
+	seed(RNG_SEED)
+	# Real paid Confirm immediately disables and retires this art; its controller
+	# still owns the only permitted settlement.
+	if not panel.confirm_button.disabled:
+		await _activate(panel.confirm_button, false)
+		_check(intents.size() == 1 and intents[0].action == "stitch"
+			and _ambient_retired(layer) and visit.read_state() == state,
+			"paid Confirm emits once and retires without settling the authoritative visit")
+		if intents.size() == 1:
+			var paid := Controller.submit(visit, intents[0])
+			_check(paid.ok and paid.charged_scraps == 3 and paid.remaining_scraps == 4
+				and visit.is_consumed() and _ambient_retired(layer),
+				"real stitch receipt charges three scraps after renderer retirement")
+	# A fully separate visit reuses the same node at a zeroed clock.
+	var reopened := _make()
+	intents.clear()
+	panel.bind(reopened)
+	_check(panel._ambient == layer and layer.profile == "scraps"
+		and layer._time == 0.0 and layer.visible_budget() == 7,
+		"independent OPEN rebind reuses one child and resets its clock")
+	var reopened_source := reopened.read_state()
+	await _activate(panel.leave_button, false)
+	await _activate(panel.confirm_button, false)
+	_check(intents.size() == 1 and intents[0].action == "leave"
+		and _ambient_retired(layer) and reopened.read_state() == reopened_source,
+		"free Leave Confirm emits once, leaving the source unchanged")
+	if intents.size() == 1:
+		var left := Controller.submit(reopened, intents[0])
+		_check(left.ok and left.charged_scraps == 0
+			and left.deck == reopened_source.deck and _ambient_retired(layer),
+			"free Leave receipt and consumed visit never restart the ambient")
+	# External settlement invalidates both quote and source snapshot.
+	var external := _make()
+	panel.bind(external)
+	layer._process(0.24)
+	var ext_state := external.read_state()
+	_check(external.leave(ext_state.visit_id, ext_state.node_id, ext_state).ok,
+		"authentic external consumption prerequisite")
+	panel._process(0.0)
+	_check(not panel._active() and _ambient_retired(layer),
+		"external consumption immediately retires clock and frame observer")
+	var stale := _make()
+	panel.bind(stale)
+	panel._source.remaining_scraps += 1
+	panel._process(0.0)
+	_check(stale.quote().ok and not panel._active() and _ambient_retired(layer),
+		"quote alone cannot admit a mismatching bound snapshot")
+	var invalid := RunSewingCircleVisit.new("bad-circle", ["invalid_card"], {}, 3, 1)
+	panel.bind(invalid)
+	_check(not invalid.is_valid() and _ambient_retired(layer),
+		"invalid visit binding never admits the renderer")
+	panel.bind(null)
+	_check(_ambient_retired(layer), "bind(null) fully retires the same renderer")
+	var visible_visit := _make()
+	intents.clear()
+	panel.bind(visible_visit)
+	var holder := Control.new()
+	root.add_child(holder)
+	panel.reparent(holder)
+	holder.hide()
+	panel._process(0.0)
+	_check(not panel.is_visible_in_tree() and _ambient_retired(layer),
+		"hidden ancestor retires source even though the panel itself stays shown")
+	holder.show()
+	panel._process(0.0)
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+		"show re-admits the original child from zero")
+	panel.reparent(root)
+	holder.queue_free()
+	panel.set_reduced_motion_override(true)
+	_check(_ambient_retired(layer), "explicit reduced-motion toggle retires its watcher and clock")
+	panel.set_reduced_motion_override(false)
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+		"clearing explicit reduced motion starts only the same fresh renderer")
+	var prior_motion: Variant = ProjectSettings.get_setting("accessibility/reduced_motion", false)
+	panel.set_reduced_motion_override(null)
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	panel._process(0.0)
+	_check(_ambient_retired(layer), "runtime reduced-motion setting also retires the live host")
+	ProjectSettings.set_setting("accessibility/reduced_motion", prior_motion)
+	panel._process(0.0)
+	_check(layer.profile == "scraps" and layer._time == 0.0,
+		"restored setting re-admits the same original child")
+	# Optional missing authored textures suppress drawing, not the visits or UI.
+	var saved := [layer.felt_texture, layer.light_texture, layer.fluff_texture,
+		layer.wisp_texture, layer.vignette_texture]
+	layer.felt_texture = null
+	layer.light_texture = null
+	layer.fluff_texture = null
+	layer.wisp_texture = null
+	layer.vignette_texture = null
+	layer.queue_redraw()
+	await _settle_layout()
+	_check(layer.profile == "scraps" and layer.motif_metadata().size() == 7
+		and backing.get_theme_stylebox("panel") != null
+		and not panel.upgrade_button.disabled and not panel.leave_button.disabled
+		and panel.status_label.text.contains("3 scraps"),
+		"absent optional VFX retains readable goth fabric and working controls")
+	await _activate(panel.leave_button, true)
+	await _activate(panel.confirm_button, true)
+	_check(intents.size() == 1 and _ambient_retired(layer)
+		and panel._submitted and visible_visit.read_state().consumed == false,
+		"mouse and keyboard remain usable when every decorative texture is absent")
+	for i in range(saved.size()):
+		match i:
+			0: layer.felt_texture = saved[i]
+			1: layer.light_texture = saved[i]
+			2: layer.fluff_texture = saved[i]
+			3: layer.wisp_texture = saved[i]
+			4: layer.vignette_texture = saved[i]
+	panel.close()
+	_check(_ambient_retired(layer) and panel._ambient == layer
+		and panel.find_children("LiveBattleAmbient", "Control", true, false).size() == 1,
+		"close leaves exactly one stopped reusable child")
+	panel.set_process(true)
+
+
+func _ambient_retired(layer) -> bool:
+	return layer.profile.is_empty() and layer._time == 0.0 and not layer.is_processing() \
+		and not layer.visible and not process_frame.is_connected(layer._sync_motion)
 
 
 ## ART v3: the already-authored sewn panel image is this stop's only animated

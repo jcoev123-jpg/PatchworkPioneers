@@ -488,12 +488,84 @@ func _reduced_motion(layer, roster) -> void:
 	layer.critter_strips = saved_strips
 
 
+## The nonbattle entry point must retain the shipped image imports, and must
+## never change a battle budget, consume RNG or maintain a retired observer.
+func _visit_scraps_profile() -> void:
+	var layer = AMBIENT.new()
+	root.add_child(layer)
+	layer.set_anchors_and_offsets_preset(Control.PRESET_TOP_LEFT)
+	layer.size = Vector2(940, 620)
+	_check(layer.profile.is_empty() and layer.get_child_count() == 0,
+		"visit ambient is a single initially inert texture Control")
+	var original := [layer.felt_texture, layer.light_texture, layer.fluff_texture,
+		layer.wisp_texture, layer.vignette_texture]
+	seed(81204)
+	var next_random := randi()
+	seed(81204)
+	layer.configure_visit_scraps()
+	_check(layer.profile == "scraps" and layer._visit_dressing and layer.fast
+		and layer.visible_budget() == 7 and layer.motif_metadata().size() == 7
+		and is_equal_approx(layer.self_modulate.a, 0.42)
+		and layer.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and layer.focus_mode == Control.FOCUS_NONE
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"reused visit entry point places seven muted marks with no input or emitter")
+	for tex in [AMBIENT.FELT_PATH, AMBIENT.LIGHT_PATH, AMBIENT.FLUFF_PATH,
+			AMBIENT.WISP_PATH]:
+		_check(ResourceLoader.exists(tex, "Texture2D"), "shipped VFX import is reachable: " + tex)
+	_textures(layer)
+	layer._process(0.63)
+	_check(layer._time > 0.0 and layer.motif_metadata()
+		== AMBIENT.motifs_for("scraps", layer.size, layer._time, true),
+		"visit profile uses only delta-based existing deterministic placements")
+	layer.felt_texture = null
+	layer.light_texture = null
+	layer.fluff_texture = null
+	layer.wisp_texture = null
+	layer.vignette_texture = null
+	layer.queue_redraw()
+	await _frames()
+	_check(layer.profile == "scraps" and layer.visible_budget() == 7
+		and layer.motif_metadata().size() == 7 and layer.get_child_count() == 0
+		and _particles(layer).is_empty(),
+		"missing every optional texture draws nothing and preserves renderer contract")
+	ProjectSettings.set_setting("accessibility/reduced_motion", true)
+	layer._process(2.0)
+	_check(layer._time == 0.0 and not layer.is_processing()
+		and layer.profile == "scraps", "existing renderer holds a neutral frame under reduced motion")
+	layer.retire()
+	_check(layer.profile.is_empty() and layer._time == 0.0
+		and not layer.is_processing() and not process_frame.is_connected(layer._sync_motion)
+		and layer.get_child_count() == 0 and _particles(layer).is_empty(),
+		"retiring a visit removes profile, time and frame watcher without emitter")
+	ProjectSettings.set_setting("accessibility/reduced_motion", false)
+	await _frames()
+	_check(layer.profile.is_empty() and not layer.is_processing()
+		and not process_frame.is_connected(layer._sync_motion),
+		"motion-setting changes cannot resurrect a retired visit")
+	for i in range(original.size()):
+		match i:
+			0: layer.felt_texture = original[i]
+			1: layer.light_texture = original[i]
+			2: layer.fluff_texture = original[i]
+			3: layer.wisp_texture = original[i]
+			4: layer.vignette_texture = original[i]
+	layer.configure_visit_scraps()
+	_check(layer.profile == "scraps" and layer._time == 0.0
+		and layer.visible_budget() == 7 and layer.is_processing(),
+		"independent rebind resets the reused visit clock")
+	layer.retire()
+	_check(randi() == next_random, "visit configuration, redrawing and teardown consume no global RNG")
+	layer.free()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	had_motion_setting = ProjectSettings.has_setting("accessibility/reduced_motion")
 	saved_motion_setting = ProjectSettings.get_setting("accessibility/reduced_motion", false)
 	ProjectSettings.set_setting("accessibility/reduced_motion", false)
 	_profiles()
+	await _visit_scraps_profile()
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await _frames()
