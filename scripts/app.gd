@@ -674,7 +674,16 @@ var stitched_fight_button: Button
 var stitched_fight_view: StitchedBattleScreen
 var stitched_event_panel: LiveEventChoicePanel
 var stitched_event_gate: RunV3FightEventGate
+var stitched_sewing_panel: Control
+var stitched_sewing_visit: RunStitchedSewingSwap
+var stitched_preview_satchel: Array = []
+var _stitched_gear_overrides: Dictionary = {}
+var _stitched_sewing_quote: Dictionary = {}
+var _stitched_battle_ticket: WeakRef
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
+const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
+const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
+const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1407,6 +1416,16 @@ func _stitched_floor_config() -> Dictionary:
 			# other heroes on the already authored generic kit.
 			for slot in StitchedParts.SLOTS:
 				hero["parts"][slot] = fallback[slot]
+	# Only equipment committed at Sewing Circle travels into the next Fight.
+	for hero in config["heroes"]:
+		var carried: Dictionary = _stitched_gear_overrides.get(str(hero["id"]), {})
+		for slot in StitchedParts.SLOTS:
+			if carried.has(slot):
+				var gear: Dictionary = carried[slot]
+				if not catalog["by_id"].has(str(gear.get("id", ""))) \
+						or str(catalog["by_id"][str(gear["id"])]["slot"]) != slot:
+					return {}
+				hero["parts"][slot] = gear.duplicate(true)
 	config["parts"] = catalog["parts"]
 	config["seed"] = 4982026
 	config["title"] = "Floor 01 · Stitched Crossing"
@@ -1419,6 +1438,7 @@ func _open_stitched_fight() -> bool:
 	# The title button admits only the authored Roadblock visit. No combat or
 	# run objects exist until a separately authenticated Fight is committed.
 	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
@@ -1557,6 +1577,7 @@ func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) ->
 			or admission.get("wallet") != STITCHED_TITLE_WALLET \
 			or admission.get("fight_request") != {"node_type": "Fight"} \
 			or stitched_event_gate != null or is_instance_valid(stitched_event_panel) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or is_instance_valid(stitched_fight_view) or deck != null or run_map != null \
 			or run_rng != null or not is_instance_valid(title_view) \
 			or title_view.is_visible_in_tree():
@@ -1569,24 +1590,238 @@ func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) ->
 		stage.free()
 		return false
 	stitched_fight_view = stage
+	_stitched_battle_ticket = weakref(stage)
 	stage.exit_requested.connect(_stitched_fight_exit.bind(weakref(stage)))
 	add_child(stage)
 	return true
 
 
 func _stitched_fight_exit(source: WeakRef) -> void:
-	var stage := source.get_ref() as StitchedBattleScreen
+	var stage := source.get_ref() as StitchedBattleScreen if source != null else null
 	if stage == null or stage != stitched_fight_view:
 		return
+	# Neither a forged UI receipt nor an unfinished/retreated battle can mint
+	# spoils. This exact stage was created by the claimed Roadblock admission.
+	var battle: StitchedRules = stage.battle
+	var won: bool = _stitched_battle_ticket != null \
+			and _stitched_battle_ticket.get_ref() == stage \
+			and battle != null and battle.is_valid() and battle.is_over() \
+			and battle.outcome() == "victory" and not stage.receipts.is_empty()
+	var heroes: Array = []
+	if won:
+		var crab: Dictionary = battle.get_unit("scissor_crab")
+		won = str(crab.get("side", "")) == "foe" and bool(crab.get("dead", false)) \
+				and int(crab.get("hp", -1)) == 0
+		for foe in battle.get_foes():
+			won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
+		for hero in battle.get_heroes():
+			if not bool(hero.get("lost", false)):
+				heroes.append(hero.duplicate(true))
 	_close_stitched_fight()
+	# Retire combat authority before giving the player another interactive node.
+	if won and not heroes.is_empty():
+		if stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
+			stitched_preview_satchel.append({
+				"id": STITCHED_CLAW_ID, "slot": "arms", "tier": 1, "torn": false,
+			})
+		var scavenger: Dictionary = battle.get_unit("fray_scavenger")
+		if str(scavenger.get("side", "")) == "foe" and bool(scavenger.get("dead", false)) \
+				and int(scavenger.get("hp", -1)) == 0 \
+				and stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
+			stitched_preview_satchel.append({
+				"id": STITCHED_SACK_ID, "slot": "arms", "tier": 1, "torn": false,
+			})
+		_open_stitched_sewing(heroes)
+
+
+func _open_stitched_sewing(heroes: Array) -> bool:
+	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
+			or not title_view.is_visible_in_tree():
+		return false
+	var config := _stitched_floor_config()
+	if config.is_empty():
+		return false
+	var catalog := StitchedParts.build_catalog(config["parts"])
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STITCHED_CLAW_ID) \
+			or not catalog["by_id"].has(STITCHED_SACK_ID):
+		return false
+	var visit := RunStitchedSewingSwap.new(
+		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_satchel, catalog["by_id"])
+	if visit.read_state().get("ok") != true:
+		return false
+	var panel := Control.new()
+	panel.name = "StitchedSewingCircle"
+	panel.theme = load("res://themes/gothic_theme.tres")
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.focus_mode = Control.FOCUS_ALL
+	stitched_sewing_visit = visit
+	stitched_sewing_panel = panel
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_view.hide()
+	_refresh_stitched_sewing()
+	return true
+
+
+func _refresh_stitched_sewing() -> void:
+	var panel := stitched_sewing_panel
+	var visit := stitched_sewing_visit
+	if not is_instance_valid(panel) or visit == null:
+		return
+	for old_child in panel.get_children():
+		panel.remove_child(old_child)
+		old_child.queue_free()
+	var quote: Dictionary = visit.quote()
+	if quote.get("ok") != true or quote.get("open") != true:
+		return
+	_stitched_sewing_quote = quote.duplicate(true)
+	# All the framing is shipped textile artwork, never code-drawn panels.
+	var frame := NinePatchRect.new()
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+		frame.patch_margin_left = 24
+		frame.patch_margin_right = 24
+		frame.patch_margin_top = 24
+		frame.patch_margin_bottom = 24
+	frame.position = Vector2(120, 40)
+	frame.size = Vector2(1040, 640)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.text = "SEWING CIRCLE  ·  SPOILS OF THE STITCHED ROADBLOCK"
+	heading.position = Vector2(165, 78)
+	heading.size = Vector2(960, 54)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 27)
+	panel.add_child(heading)
+	var description := Label.new()
+	description.text = "A claw and a scavenger's sack await the needle. Choose a living hero and exchange arms without coin."
+	description.position = Vector2(170, 143)
+	description.size = Vector2(950, 64)
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(description)
+	var count := Label.new()
+	count.text = "SATCHEL  %d / %d    ·    No gold, scraps or thread spent" % [
+		int(quote["satchel_count"]), int(quote["satchel_max"])]
+	count.position = Vector2(183, 224)
+	count.size = Vector2(910, 36)
+	panel.add_child(count)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(180, 278)
+	scroll.size = Vector2(920, 270)
+	panel.add_child(scroll)
+	var offers := VBoxContainer.new()
+	offers.custom_minimum_size.x = 890
+	offers.add_theme_constant_override("separation", 8)
+	scroll.add_child(offers)
+	var first_button: Button
+	var expected_state: Dictionary = quote["state"].duplicate(true)
+	for hero_row in quote["heroes"]:
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) != "arms":
+				continue
+			var worn: Dictionary = slot_row["worn"]
+			var hero_name := str(hero_row["name"])
+			var blocked := str(slot_row["blocked"])
+			if not blocked.is_empty():
+				var warning := Label.new()
+				warning.text = "%s · %s — %s" % [hero_name, str(worn["name"]), blocked]
+				offers.add_child(warning)
+			for spare in slot_row["offers"]:
+				var button := Button.new()
+				button.name = "Swap_%s_%d" % [str(hero_row["hero_id"]), int(spare["satchel_index"])]
+				button.custom_minimum_size = Vector2(850, 48)
+				button.text = "Sew %s onto %s (replace %s · tier %d)" % [
+					str(spare["part"]["name"]), hero_name, str(worn["name"]), int(worn["tier"])]
+				button.pressed.connect(_stitched_sewing_swap.bind(
+					str(hero_row["hero_id"]), str(slot_row["slot"]),
+					int(spare["satchel_index"]), expected_state.duplicate(true), weakref(panel)))
+				offers.add_child(button)
+				if first_button == null:
+					first_button = button
+	var leave_button := Button.new()
+	leave_button.name = "SewingLeave"
+	leave_button.text = "Leave the Circle · Return to title"
+	leave_button.position = Vector2(405, 576)
+	leave_button.size = Vector2(470, 54)
+	leave_button.pressed.connect(_stitched_sewing_leave.bind(expected_state.duplicate(true), weakref(panel)))
+	panel.add_child(leave_button)
+	if first_button != null:
+		first_button.grab_focus()
+	else:
+		leave_button.grab_focus()
+
+
+func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
+		expected_state: Dictionary, source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
+			or stitched_sewing_visit == null or is_instance_valid(stitched_fight_view) \
+			or _stitched_sewing_quote.get("state", {}) != expected_state:
+		return {"ok": false, "error": "stale Sewing Circle"}
+	# Authorise only a currently displayed compatible quote, not arbitrary
+	# client-supplied indices or a cloned receipt.
+	var matched := false
+	for hero_row in _stitched_sewing_quote.get("heroes", []):
+		if str(hero_row["hero_id"]) != hero_id:
+			continue
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) != slot or not bool(slot_row["can_swap"]):
+				continue
+			for offered in slot_row["offers"]:
+				if int(offered["satchel_index"]) == satchel_index:
+					matched = true
+	if not matched:
+		return {"ok": false, "error": "not an offered compatible part"}
+	var receipt: Dictionary = stitched_sewing_visit.swap(
+		hero_id, slot, satchel_index, STITCHED_SEWING_NODE_ID, expected_state)
+	if receipt.get("ok") != true or receipt.get("source_state") != expected_state:
+		return {"ok": false, "error": "swap rejected"}
+	stitched_preview_satchel = receipt["satchel"].duplicate(true)
+	for changed in receipt["changed_heroes"]:
+		var changed_id := str(changed["id"])
+		var carried: Dictionary = _stitched_gear_overrides.get(changed_id, {}).duplicate(true)
+		carried[slot] = changed["parts"][slot].duplicate(true)
+		_stitched_gear_overrides[changed_id] = carried
+	_refresh_stitched_sewing()
+	return receipt
+
+
+func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
+			or stitched_sewing_visit == null \
+			or _stitched_sewing_quote.get("state", {}) != expected_state:
+		return {"ok": false, "error": "stale Sewing Circle"}
+	var receipt: Dictionary = stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, expected_state)
+	if receipt.get("ok") == true:
+		_close_stitched_sewing()
+	return receipt
+
+
+func _close_stitched_sewing() -> void:
+	var panel := stitched_sewing_panel
+	stitched_sewing_panel = null
+	stitched_sewing_visit = null
+	_stitched_sewing_quote.clear()
+	if is_instance_valid(panel):
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+	_restore_stitched_title()
 
 
 func _close_stitched_fight() -> void:
 	if not is_instance_valid(stitched_fight_view):
 		stitched_fight_view = null
+		_stitched_battle_ticket = null
 		return
 	var stage := stitched_fight_view
 	stitched_fight_view = null
+	_stitched_battle_ticket = null
 	# Retire the authority *before* queued GUI signals or stale references can
 	# invoke any of its action handlers again.
 	stage.battle = null
@@ -8357,6 +8592,8 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	if is_instance_valid(stitched_sewing_panel):
+		_close_stitched_sewing()
 	_retire_stitched_roadblock()
 	if is_instance_valid(stitched_fight_view):
 		_close_stitched_fight()
