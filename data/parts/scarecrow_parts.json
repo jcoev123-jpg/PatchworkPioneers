@@ -1,0 +1,477 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "scarecrow_head_sack_glare",
+      "name": "Sack Glare",
+      "slot": "head",
+      "owner": "scarecrow",
+      "stat": {
+        "acc": 4
+      },
+      "ability": {
+        "id": "scarecrow_head_sack_glare_move",
+        "name": "Sack Glare",
+        "kind": "debuff",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "weak": 1,
+          "mark": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "weak": 2,
+              "mark": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "weak": 3,
+              "mark": 3
+            }
+          }
+        }
+      },
+      "text": "A sack-faced glare Weakens and Marks a foe."
+    },
+    {
+      "id": "scarecrow_arms_fork_jab",
+      "name": "Fork Jab",
+      "slot": "arms",
+      "owner": "scarecrow",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "scarecrow_arms_fork_jab_move",
+        "name": "Fork Jab",
+        "kind": "melee",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 93,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 3,
+        "effects": {
+          "bleed": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ],
+            "effects": {
+              "bleed": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              7,
+              10
+            ],
+            "effects": {
+              "bleed": 3
+            }
+          }
+        }
+      },
+      "text": "Jab a front foe with the pitchfork, leaving a Bleed."
+    },
+    {
+      "id": "scarecrow_torso_straw_padding",
+      "name": "Straw Padding",
+      "slot": "torso",
+      "owner": "scarecrow",
+      "stat": {
+        "max_hp": 6,
+        "prot": 3
+      },
+      "ability": {
+        "id": "scarecrow_torso_straw_padding_move",
+        "name": "Straw Padding",
+        "kind": "guard",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Tuck straw in an ally's seams; intercept their hits with Guard."
+    },
+    {
+      "id": "scarecrow_legs_crow_dive",
+      "name": "Crow Dive",
+      "slot": "legs",
+      "owner": "scarecrow",
+      "stat": {
+        "speed": 2
+      },
+      "ability": {
+        "id": "scarecrow_legs_crow_dive_move",
+        "name": "Crow Dive",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 91,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 3,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2",
+        "mark_damage": 3
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ],
+            "mark_damage": 4
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              6,
+              9
+            ],
+            "mark_damage": 6
+          }
+        }
+      },
+      "text": "Send the shoulder crow at a chosen foe; marked foes take extra damage."
+    },
+    {
+      "id": "scarecrow_head_crow_flock",
+      "name": "Crow Flock",
+      "slot": "head",
+      "owner": "scarecrow",
+      "stat": {
+        "crit": 4
+      },
+      "ability": {
+        "id": "scarecrow_head_crow_flock_move",
+        "name": "Crow Flock",
+        "kind": "debuff",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 90,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "weak": 1,
+          "mark": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "weak": 2,
+              "mark": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "weak": 3,
+              "mark": 3
+            }
+          }
+        }
+      },
+      "text": "Call crows over the first three foe ranks; Weak and Mark each struck foe."
+    },
+    {
+      "id": "scarecrow_arms_harvest_fright",
+      "name": "Harvest Fright",
+      "slot": "arms",
+      "owner": "scarecrow",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "scarecrow_arms_harvest_fright_move",
+        "name": "Harvest Fright",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 88,
+        "dmg": [
+          2,
+          4
+        ],
+        "crit": 0,
+        "effects": {
+          "weak": 2
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              3,
+              5
+            ],
+            "effects": {
+              "weak": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ],
+            "effects": {
+              "weak": 4
+            }
+          }
+        }
+      },
+      "text": "Strike the first three foes with a terrifying crow harvest, leaving Weak."
+    },
+    {
+      "id": "scarecrow_torso_straw_wrap",
+      "name": "Straw Wrap",
+      "slot": "torso",
+      "owner": "scarecrow",
+      "stat": {
+        "max_hp": 5,
+        "prot": 4
+      },
+      "ability": {
+        "id": "scarecrow_torso_straw_wrap_move",
+        "name": "Straw Wrap",
+        "kind": "buff",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "dodge": 6,
+          "duration": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "dodge": 8,
+              "duration": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "dodge": 10,
+              "duration": 3
+            }
+          }
+        }
+      },
+      "text": "Wrap one ally in loose straw for temporary Dodge."
+    },
+    {
+      "id": "scarecrow_legs_crow_peck",
+      "name": "Crow Peck",
+      "slot": "legs",
+      "owner": "scarecrow",
+      "stat": {
+        "dodge": 5
+      },
+      "ability": {
+        "id": "scarecrow_legs_crow_peck_move",
+        "name": "Crow Peck",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 3,
+        "effects": {
+          "mark": 2
+        },
+        "self_move": 0,
+        "move": "attack",
+        "mark_damage": 3
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ],
+            "mark_damage": 5,
+            "effects": {
+              "mark": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              7,
+              10
+            ],
+            "mark_damage": 7,
+            "effects": {
+              "mark": 3
+            }
+          }
+        }
+      },
+      "text": "Peck a chosen foe and Mark it; already Marked targets take extra damage."
+    }
+  ]
+}
