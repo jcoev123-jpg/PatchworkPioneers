@@ -1037,6 +1037,9 @@ func _run() -> void:
 	await _key(KEY_TAB)
 	_check(view.deck_button.has_focus(), "Tab reaches the Deck house")
 	await _key(KEY_TAB)
+	_check(view.guide_button.has_focus() and not view.field_guide.is_open(),
+		"Tab reaches the focusable Battle guide without opening it")
+	await _key(KEY_TAB)
 	_check(view.path_buttons[0].has_focus()
 		and view.path_hint_label.text
 			== String(VillagePathPreview.seamstress(shown[0]).get("hint", "")),
@@ -1070,7 +1073,7 @@ func _run() -> void:
 		"leaving all boards restores their prompts")
 	for control in [view.warden_buttons[1], view.warden_buttons[0],
 			view.tinker_buttons[1], view.tinker_buttons[0], view.path_buttons[1],
-			view.path_buttons[0], view.deck_button, view.camp_house_button,
+			view.path_buttons[0], view.guide_button, view.deck_button, view.camp_house_button,
 			view.heroes_house_button, view.back_button, view.difficulty_buttons[0], view.set_out_button]:
 		for down in [true, false]:
 			var reverse := InputEventKey.new()
@@ -1135,6 +1138,9 @@ func _run() -> void:
 		"Tab skips the confirmed Heroes Path but still reaches Camp")
 	await _key(KEY_TAB)
 	_check(view.deck_button.has_focus(), "Tab reaches Deck after a Path is chosen")
+	await _key(KEY_TAB)
+	_check(view.guide_button.has_focus() and not view.field_guide.is_open(),
+		"Battle guide stays keyboard reachable after a Path is chosen")
 	await _key(KEY_TAB)
 	_check(view.tinker_buttons[0].has_focus(), "Tab reaches the still-open first Tinker Path")
 	await _key(KEY_TAB)

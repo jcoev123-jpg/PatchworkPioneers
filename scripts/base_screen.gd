@@ -62,6 +62,8 @@ const PATH_OPTION_SIZE := 18
 var set_out_button: Button
 var back_button: Button
 var deck_button: Button
+var guide_button: Button
+var field_guide: StitchedFieldGuide
 var heroes_house_button: Button
 var camp_house_button: Button
 var deck_gallery: VillageStarterKitGallery
@@ -151,6 +153,7 @@ func _ready() -> void:
 	_motion_setting_poll.timeout.connect(_sync_backdrop_motion)
 	add_child(_motion_setting_poll)
 	_build_top_strip()
+	_build_guide_button()
 	_build_heroes_choice()
 	_build_tinker_choice()
 	_build_warden_choice()
@@ -159,6 +162,7 @@ func _ready() -> void:
 	_build_house_shortcuts()
 	_build_difficulty()
 	_build_deck_gallery()
+	_build_field_guide()
 	_wire_focus()
 	visibility_changed.connect(_on_base_visibility_changed)
 	if ProjectSettings.has_signal("settings_changed"):
@@ -265,6 +269,8 @@ func _process(delta: float) -> void:
 
 
 func _exit_tree() -> void:
+	if is_instance_valid(field_guide):
+		field_guide.dismiss()
 	if is_instance_valid(_motion_setting_poll):
 		_motion_setting_poll.stop()
 	set_process(false)
@@ -425,7 +431,7 @@ func selected_path_name() -> String:
 ## Host confirmation of a validated pick: show the actual selected Path and keep
 ## it; the other option can no longer be chosen. False leaves the view untouched.
 func mark_path_selected(path_id: String, display_name: String) -> bool:
-	if not _open or _set_out_pending or _back_pending:
+	if not _open or _set_out_pending or _back_pending or _guide_is_open():
 		return false
 	if not _selected_path_id.is_empty():
 		return false
@@ -565,7 +571,7 @@ func selected_tinker_path_name() -> String:
 ## Host confirmation of a validated Tinker pick. The other Tinker option can no
 ## longer be chosen, and the Seamstress board is left exactly as it was.
 func mark_tinker_path_selected(path_id: String, display_name: String) -> bool:
-	if not _open or _set_out_pending or _back_pending:
+	if not _open or _set_out_pending or _back_pending or _guide_is_open():
 		return false
 	if not _selected_tinker_id.is_empty():
 		return false
@@ -697,7 +703,7 @@ func selected_warden_path_name() -> String:
 
 ## A host validates the requested ID; only its explicit approval calls this.
 func mark_warden_path_selected(path_id: String, display_name: String) -> bool:
-	if not _open or _set_out_pending or _back_pending or not is_visible_in_tree():
+	if not _open or _set_out_pending or _back_pending or _guide_is_open() or not is_visible_in_tree():
 		return false
 	if not _selected_warden_id.is_empty():
 		return false
@@ -748,6 +754,7 @@ func release_warden_path_choice() -> bool:
 
 
 func _apply_closed_state() -> void:
+	_dismiss_field_guide(false)
 	if is_instance_valid(deck_gallery):
 		deck_gallery.dismiss()
 	_open = false
@@ -794,6 +801,9 @@ func _apply_closed_state() -> void:
 	if is_instance_valid(deck_button):
 		deck_button.disabled = true
 		deck_button.release_focus()
+	if is_instance_valid(guide_button):
+		guide_button.disabled = true
+		guide_button.release_focus()
 	if is_instance_valid(set_out_button):
 		set_out_button.disabled = true
 		set_out_button.release_focus()
@@ -887,6 +897,65 @@ func _build_top_strip() -> void:
 	wallet_label.add_theme_font_size_override("font_size", 20)
 	wallet_label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	row.add_child(wallet_label)
+
+
+## Distinct top-strip action for the read-only Stitched field guide.
+func _build_guide_button() -> void:
+	# A separate, focusable top-strip entry; existing house and path actions stay put.
+	var row := get_node("TopStrip/StripRow") as HBoxContainer
+	guide_button = Button.new()
+	guide_button.name = "BattleGuideButton"
+	guide_button.text = "Battle guide"
+	guide_button.custom_minimum_size = Vector2(172, 42)
+	guide_button.add_theme_font_size_override("font_size", 19)
+	guide_button.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	guide_button.focus_mode = Control.FOCUS_ALL
+	guide_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	guide_button.tooltip_text = "Read the Stitched ranked-combat field notes"
+	guide_button.pressed.connect(_on_guide_pressed)
+	row.add_child(guide_button)
+	row.move_child(guide_button, 2)
+	guide_button.disabled = true
+
+
+func _build_field_guide() -> void:
+	field_guide = StitchedFieldGuide.new()
+	add_child(field_guide)
+	field_guide.close_requested.connect(_on_field_guide_close_requested)
+
+
+func _guide_is_open() -> bool:
+	return is_instance_valid(field_guide) and field_guide.is_open()
+
+
+func _sync_guide_button() -> void:
+	if is_instance_valid(guide_button):
+		guide_button.disabled = not _open or _set_out_pending or _back_pending \
+			or _gallery_is_open() or _guide_is_open() or not is_visible_in_tree()
+
+
+func _on_guide_pressed() -> void:
+	if not _open or _set_out_pending or _back_pending or _path_pending \
+			or _tinker_pending or _warden_pending or _gallery_is_open() or _guide_is_open() \
+			or not is_inside_tree() or not is_visible_in_tree() \
+			or not is_instance_valid(guide_button) or guide_button.disabled:
+		return
+	if field_guide.open_guide():
+		_wire_focus()
+
+
+func _on_field_guide_close_requested() -> void:
+	_dismiss_field_guide(true)
+
+
+func _dismiss_field_guide(restore_focus: bool) -> void:
+	if not _guide_is_open():
+		return
+	field_guide.dismiss()
+	_wire_focus()
+	if restore_focus and _open and is_visible_in_tree() \
+			and is_instance_valid(guide_button) and not guide_button.disabled:
+		guide_button.grab_focus()
 
 
 ## Pinned Heroes board under its house: the two authored Path options and the
@@ -1183,7 +1252,8 @@ func _house_shortcut(button_name: String, caption: String, at: Vector2,
 
 func _house_shortcuts_legal() -> bool:
 	return _open and not _set_out_pending and not _back_pending \
-		and not _gallery_is_open() and is_inside_tree() and is_visible_in_tree()
+		and not _gallery_is_open() and not _guide_is_open() \
+		and is_inside_tree() and is_visible_in_tree()
 
 
 func _first_enabled_hero_path() -> Button:
@@ -1235,7 +1305,7 @@ func _gallery_is_open() -> bool:
 
 
 func _on_deck_pressed() -> void:
-	if not _open or _set_out_pending or _back_pending or _gallery_is_open() \
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open() \
 			or not is_visible_in_tree() or not is_instance_valid(deck_button) or deck_button.disabled:
 		return
 	deck_gallery.open_gallery()
@@ -1254,6 +1324,8 @@ func _on_gallery_visibility_changed() -> void:
 
 
 func _on_base_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_dismiss_field_guide(false)
 	_sync_backdrop_motion()
 	_wire_focus()
 	if not is_visible_in_tree() and is_instance_valid(deck_gallery):
@@ -1264,6 +1336,9 @@ func _on_base_visibility_changed() -> void:
 ## Heroes and Camp landmarks without bypassing their original actions.
 func _wire_focus() -> void:
 	_sync_house_shortcuts()
+	_sync_guide_button()
+	if _guide_is_open():
+		return
 	var loop: Array[Control] = []
 	if is_instance_valid(back_button) and not back_button.disabled:
 		loop.append(back_button)
@@ -1273,6 +1348,8 @@ func _wire_focus() -> void:
 		loop.append(camp_house_button)
 	if is_instance_valid(deck_button) and not deck_button.disabled and deck_button.is_visible_in_tree():
 		loop.append(deck_button)
+	if is_instance_valid(guide_button) and not guide_button.disabled:
+		loop.append(guide_button)
 	for button in path_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			loop.append(button)
@@ -1325,7 +1402,7 @@ func present_difficulty(available: Array[int], selected: int) -> void:
 
 
 func _request_difficulty(tier: int) -> void:
-	if not _open or _set_out_pending or _back_pending or _gallery_is_open() or not is_visible_in_tree() \
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open() or not is_visible_in_tree() \
 		or tier < 0 or tier >= difficulty_buttons.size() or difficulty_buttons[tier].disabled:
 		return
 	_difficulty_request = tier
@@ -1430,7 +1507,7 @@ func _refresh_tinker_hint() -> void:
 ## The view reports the pick; the host validates it and, only on success, calls
 ## mark_path_selected. A refused request leaves both options actionable.
 func _on_path_pressed(path_id: String) -> void:
-	if not _open or _path_pending or _set_out_pending or _back_pending or _gallery_is_open():
+	if not _open or _path_pending or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open():
 		return
 	if not _selected_path_id.is_empty():
 		return
@@ -1447,7 +1524,7 @@ func _on_path_pressed(path_id: String) -> void:
 ## The Tinker board reports its own pick. The host validates it against the
 ## authored Tinker record and, only on success, calls mark_tinker_path_selected.
 func _on_tinker_path_pressed(path_id: String) -> void:
-	if not _open or _tinker_pending or _set_out_pending or _back_pending or _gallery_is_open():
+	if not _open or _tinker_pending or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open():
 		return
 	if not _selected_tinker_id.is_empty():
 		return
@@ -1497,7 +1574,7 @@ func _refresh_warden_hint() -> void:
 ## Pending remains held until explicit host mark or release (unlike the older
 ## synchronous Seamstress/Tinker callbacks); stale button instances fail closed.
 func _on_warden_path_pressed(path_id: String, source: Button) -> void:
-	if not _open or _warden_pending or _set_out_pending or _back_pending or _gallery_is_open():
+	if not _open or _warden_pending or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open():
 		return
 	if not _selected_warden_id.is_empty() or not is_inside_tree() or not is_visible_in_tree():
 		return
@@ -1516,7 +1593,7 @@ func _on_warden_path_pressed(path_id: String, source: Button) -> void:
 
 
 func _on_set_out_pressed() -> void:
-	if not _open or _set_out_pending or _back_pending or _gallery_is_open():
+	if not _open or _set_out_pending or _back_pending or _gallery_is_open() or _guide_is_open():
 		return
 	if not is_inside_tree() or not is_visible_in_tree():
 		return
@@ -1532,7 +1609,7 @@ func _on_set_out_pressed() -> void:
 
 
 func _on_back_pressed() -> void:
-	if not _open or _back_pending or _set_out_pending or _gallery_is_open():
+	if not _open or _back_pending or _set_out_pending or _gallery_is_open() or _guide_is_open():
 		return
 	if not is_inside_tree() or not is_visible_in_tree():
 		return

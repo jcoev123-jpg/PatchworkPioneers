@@ -1,36 +1,45 @@
 class_name RunStitchedEventConsequence
 extends RefCounted
-## Scene-free Design v4 S6 groundwork: candle, fray and party-scraps Event bargains.
+## Scene-free Design v4 S6 groundwork: candle, fray, party-scraps and spare-part Event bargains.
 ##
 ## Wraps the existing RunEventChoice envelope (id, title, description and two
 ## or three distinct {id, text} choices) with the deliberately opt-in
 ## `stitched_effect` outcome field:
-##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...", "scraps": int}
+##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
+##      "scraps": int, "part": {"id": String, "tier": 1..3}}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
-## only the named active hero. `scraps` is optional on `stitched_effect`; when
-## omitted, the legacy 8-key preview entry and 7-key receipt shape are preserved.
-## When present, `scraps` is a signed integral delta applied to the shared party
-## scraps purse (never per-hero), exposing `scraps_delta` and projected `scraps`
-## on that choice's preview entry and successful receipt.
+## only the named active hero. `scraps` and `part` are optional on
+## `stitched_effect`; when omitted, the legacy 8-key preview entry and 7-key
+## receipt shape are preserved. When present, `scraps` is a signed integral
+## delta applied to the shared party scraps purse (never per-hero), exposing
+## `scraps_delta` and projected `scraps` on that choice's preview entry and
+## successful receipt. When present, `part` is an exact `{"id": String, "tier": int}`
+## award with native integer tier 1..3 whose `id` resolves in a caller-supplied
+## catalog validated with `StitchedParts.build_catalog`, exposing `part` and
+## projected `satchel_count` (`+1`) on that choice's preview entry and receipt.
 ##
 ## The caller supplies a detached snapshot
-##     {"candle": int, "party": [{"id": String, "fray": int}, ...], "scraps": int}
+##     {"candle": int, "party": [{"id": String, "fray": int}, ...],
+##      "scraps": int, "satchel_count": int}
 ## with candle 0..100, one to four distinct canonical heroes at fray 0..200,
-## and an optional native int `scraps >= 0`. Scrap-bearing choices require a
-## valid snapshot `scraps` balance that stays within `0..MAX_INT` after the
-## delta; missing, insufficient or overflowing scraps makes only that choice
+## an optional native int `scraps >= 0`, and an optional native int
+## `satchel_count` in 0..6. Scrap-bearing choices require a valid snapshot
+## `scraps` balance that stays within `0..MAX_INT` after the delta; part-bearing
+## choices require a validated parts catalog containing `part.id` and a snapshot
+## `satchel_count < 6`. Missing or full capacity makes only that choice
 ## unavailable while legacy choices on the same Event remain available.
 ##
 ## This service only projects and reports intents: candle is clamped 0..100,
-## scraps is projected without negative balances or 64-bit overflow, and fray
-## deltas stay raw and signed. The authoritative S1b Stitched rules (resolve
-## check at 100, seam tears at 200, trait choice, 0..200 clamping) are the only
-## owner of fray mutation and are deliberately not referenced here; a receipt is
-## handed back for the S6 wiring to apply.
+## scraps is projected without negative balances or 64-bit overflow, spare
+## satchel count increments by 1 up to 6, and fray deltas stay raw and signed.
+## The authoritative S1b Stitched rules (resolve check at 100, seam tears at
+## 200, trait choice, 0..200 clamping) are the only owner of fray mutation and
+## are deliberately not referenced here; a receipt is handed back for the S6
+## wiring to apply.
 ##
-## No RNG is seeded or drawn, no caller snapshot is edited, and no legacy
-## gold/scraps/vitality outcome is settled: the default cards-mode Event path
-## and RunEventChoice's own settlement methods are untouched.
+## No RNG is seeded or drawn, no caller snapshot or catalog is edited, and no
+## legacy gold/scraps/vitality outcome is settled: the default cards-mode Event
+## path and RunEventChoice's own settlement methods are untouched.
 
 const CANDLE_MIN := 0
 const CANDLE_MAX := 100
@@ -38,6 +47,10 @@ const FRAY_MIN := 0
 const FRAY_MAX := 200
 const MIN_PARTY_SIZE := 1
 const MAX_PARTY_SIZE := 4
+const SATCHEL_MIN := 0
+const SATCHEL_MAX := 6
+const PART_TIER_MIN := StitchedParts.MIN_TIER
+const PART_TIER_MAX := StitchedParts.MAX_TIER
 const TARGET_PARTY := "party"
 const TARGET_HERO := "hero"
 const MAX_INT := 9223372036854775807
@@ -58,10 +71,11 @@ const CANONICAL_HERO_IDS := [
 
 var _choice: RunEventChoice = null
 var _event: Dictionary = {}
+var _catalog: Dictionary = {"ok": false, "by_id": {}}
 var _valid: bool = false
 
 
-func _init(event_record: Variant = null) -> void:
+func _init(event_record: Variant = null, catalog: Variant = null) -> void:
 	# The shared envelope validator owns id/title/description and the two or
 	# three distinct {id, text} choices. Stitched outcomes stay opt-in, so a
 	# choice without `stitched_effect` is still a schema-valid envelope and is
@@ -70,6 +84,8 @@ func _init(event_record: Variant = null) -> void:
 	if not _choice.is_valid():
 		return
 	_event = _choice.get_event()
+	if catalog != null:
+		_catalog = _parse_catalog(catalog)
 	_valid = true
 
 
@@ -94,13 +110,16 @@ func get_event() -> Dictionary:
 ## where each entry keeps its authored slot:
 ##   {"choice_id", "target", "hero_id", "candle_delta", "fray_delta",
 ##    "available", "candle", "fray"}
-## and opt-in scrap-bearing choices also include `"scraps_delta"` and `"scraps"`.
+## Opt-in scrap-bearing choices also include `"scraps_delta"` and `"scraps"`,
+## and opt-in part-bearing choices with a catalog-valid part also include
+## `"part"` (`{id, tier}`) and `"satchel_count"`.
 ## A malformed outcome or an unavailable choice yields available=false with
 ## null deltas (malformed) or parsed deltas (absent hero / missing, insufficient
-## or overflowing scraps), the unchanged base candle (and base scraps when
-## present) and an empty fray map. Zero fray deltas produce no intent, so Leave
-## yields an empty fray map. Deterministic, no RNG, no mutation of the input.
-func preview(snapshot: Variant) -> Dictionary:
+## or overflowing scraps / missing or full satchel_count), the unchanged base
+## candle (plus base scraps / satchel_count when present) and an empty fray map.
+## Zero fray deltas produce no intent, so Leave yields an empty fray map.
+## Deterministic, no RNG, no mutation of the input.
+func preview(snapshot: Variant, catalog: Variant = null) -> Dictionary:
 	var denied := {"ok": false, "event_id": "", "candle": 0, "choices": []}
 	if not _valid or _choice.is_claimed():
 		return denied
@@ -108,9 +127,10 @@ func preview(snapshot: Variant) -> Dictionary:
 	if not parsed_state.get("ok", false):
 		return denied
 	var base_state: Dictionary = parsed_state["snapshot"]
+	var catalog_state: Dictionary = _resolve_catalog(catalog)
 	var entries: Array = []
 	for choice in _event.get("choices", []):
-		entries.append(_preview_entry(choice, base_state))
+		entries.append(_preview_entry(choice, base_state, catalog_state))
 	return {
 		"ok": true,
 		"event_id": _event.get("id", ""),
@@ -123,11 +143,12 @@ func preview(snapshot: Variant) -> Dictionary:
 ## Returns {"ok": bool, "event_id": String, "choice_id": String,
 ## "target": String, "hero_id": String, "candle": int, "fray": Dictionary}
 ## (plus `"scraps_delta": int, "scraps": int` when a scrap-bearing choice
-## succeeds), where a success carries the exact projected values from preview()
-## and a rejection carries the established 7-key refusal (the unchanged base
-## candle for a valid snapshot, else 0) without consuming the claim or touching
-## the caller's snapshot.
-func choose(choice_id: Variant, snapshot: Variant) -> Dictionary:
+## succeeds, and `"part": {"id": String, "tier": int}, "satchel_count": int`
+## when a part-bearing choice succeeds), where a success carries the exact
+## projected values from preview() and a rejection carries the established 7-key
+## refusal (the unchanged base candle for a valid snapshot, else 0) without
+## consuming the claim or touching the caller's snapshot or catalog.
+func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> Dictionary:
 	var parsed_state: Dictionary = _parse_snapshot(snapshot)
 	if not parsed_state.get("ok", false):
 		return _rejection(CANDLE_MIN)
@@ -145,7 +166,8 @@ func choose(choice_id: Variant, snapshot: Variant) -> Dictionary:
 			break
 	if matched.is_empty():
 		return _rejection(base_candle)
-	var parsed_effect: Dictionary = _parse_stitched_effect(matched)
+	var catalog_state: Dictionary = _resolve_catalog(catalog)
+	var parsed_effect: Dictionary = _parse_stitched_effect(matched, catalog_state)
 	if not parsed_effect.get("ok", false):
 		return _rejection(base_candle)
 	# An absent named hero is unavailable, so it cannot latch the visit.
@@ -158,6 +180,13 @@ func choose(choice_id: Variant, snapshot: Variant) -> Dictionary:
 		if not scraps_projection.get("ok", false):
 			return _rejection(base_candle)
 		projected_scraps = int(scraps_projection["scraps"])
+	var has_part: bool = parsed_effect.get("has_part", false)
+	var projected_satchel_count := 0
+	if has_part:
+		var satchel_projection: Dictionary = _project_satchel_count(base_state)
+		if not satchel_projection.get("ok", false):
+			return _rejection(base_candle)
+		projected_satchel_count = int(satchel_projection["satchel_count"])
 	var claim: Dictionary = _choice.choose(target_id)
 	if not claim.get("ok", false):
 		return _rejection(base_candle)
@@ -173,6 +202,9 @@ func choose(choice_id: Variant, snapshot: Variant) -> Dictionary:
 	if has_scraps:
 		receipt["scraps_delta"] = int(parsed_effect["scraps"])
 		receipt["scraps"] = projected_scraps
+	if has_part:
+		receipt["part"] = (parsed_effect["part"] as Dictionary).duplicate(true)
+		receipt["satchel_count"] = projected_satchel_count
 	return receipt
 
 
@@ -205,7 +237,18 @@ func _project_scraps(base_state: Dictionary, delta: int) -> Dictionary:
 	return {"ok": true, "scraps": base_scraps + delta}
 
 
-func _preview_entry(choice: Variant, base_state: Dictionary) -> Dictionary:
+## Shared spare-satchel capacity check for preview and commit: requires a valid
+## snapshot satchel_count (0..6) with room for one more spare part (< 6).
+func _project_satchel_count(base_state: Dictionary) -> Dictionary:
+	if not base_state.has("satchel_count"):
+		return {"ok": false}
+	var count: int = int(base_state["satchel_count"])
+	if count < SATCHEL_MIN or count >= SATCHEL_MAX:
+		return {"ok": false}
+	return {"ok": true, "satchel_count": count + 1}
+
+
+func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dictionary) -> Dictionary:
 	var entry := {
 		"choice_id": "",
 		"target": "",
@@ -219,10 +262,11 @@ func _preview_entry(choice: Variant, base_state: Dictionary) -> Dictionary:
 	if not choice is Dictionary:
 		return entry
 	entry["choice_id"] = (choice as Dictionary).get("id", "")
-	var parsed_effect: Dictionary = _parse_stitched_effect(choice)
+	var parsed_effect: Dictionary = _parse_stitched_effect(choice, catalog_state)
 	if not parsed_effect.get("ok", false):
 		return entry
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
+	var has_part: bool = parsed_effect.get("has_part", false)
 	entry["target"] = parsed_effect["target"]
 	entry["hero_id"] = parsed_effect["hero_id"]
 	entry["candle_delta"] = parsed_effect["candle"]
@@ -230,6 +274,9 @@ func _preview_entry(choice: Variant, base_state: Dictionary) -> Dictionary:
 	if has_scraps:
 		entry["scraps_delta"] = parsed_effect["scraps"]
 		entry["scraps"] = base_state.get("scraps")
+	if has_part:
+		entry["part"] = (parsed_effect["part"] as Dictionary).duplicate(true)
+		entry["satchel_count"] = base_state.get("satchel_count")
 	if _target_ids(base_state, parsed_effect).is_empty():
 		# The named hero is not in this party: readable deltas, no projection.
 		return entry
@@ -239,11 +286,19 @@ func _preview_entry(choice: Variant, base_state: Dictionary) -> Dictionary:
 		if not scraps_projection.get("ok", false):
 			return entry
 		projected_scraps = int(scraps_projection["scraps"])
+	var projected_satchel_count := 0
+	if has_part:
+		var satchel_projection: Dictionary = _project_satchel_count(base_state)
+		if not satchel_projection.get("ok", false):
+			return entry
+		projected_satchel_count = int(satchel_projection["satchel_count"])
 	entry["available"] = true
 	entry["candle"] = _project_candle(int(base_state["candle"]), int(parsed_effect["candle"]))
 	entry["fray"] = _fray_intents(base_state, parsed_effect)
 	if has_scraps:
 		entry["scraps"] = projected_scraps
+	if has_part:
+		entry["satchel_count"] = projected_satchel_count
 	return entry
 
 
@@ -273,10 +328,11 @@ func _target_ids(base_state: Dictionary, parsed_effect: Dictionary) -> Array:
 	return ids
 
 
-## Strict snapshot parse: {"candle", "party"} or {"candle", "party", "scraps"};
-## candle 0..100; optional native int scraps >= 0; one to four distinct
-## canonical heroes, each exactly {"id", "fray"} with fray 0..200. Returns a
-## rebuilt detached copy, never the caller's dictionaries.
+## Strict snapshot parse: {"candle", "party"} plus optional "scraps" and/or
+## "satchel_count"; candle 0..100; optional native int scraps >= 0; optional
+## native int satchel_count 0..6; one to four distinct canonical heroes, each
+## exactly {"id", "fray"} with fray 0..200. Returns a rebuilt detached copy,
+## never the caller's dictionaries.
 func _parse_snapshot(snapshot: Variant) -> Dictionary:
 	if typeof(snapshot) != TYPE_DICTIONARY:
 		return {"ok": false}
@@ -284,7 +340,8 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 	if not record.has("candle") or not record.has("party"):
 		return {"ok": false}
 	var has_scraps: bool = record.has("scraps")
-	var expected_size: int = 3 if has_scraps else 2
+	var has_satchel_count: bool = record.has("satchel_count")
+	var expected_size: int = 2 + (1 if has_scraps else 0) + (1 if has_satchel_count else 0)
 	if record.size() != expected_size:
 		return {"ok": false}
 	var scraps_int := 0
@@ -294,6 +351,14 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 			return {"ok": false}
 		scraps_int = int(raw_scraps)
 		if scraps_int < 0:
+			return {"ok": false}
+	var satchel_count_int := 0
+	if has_satchel_count:
+		var raw_satchel_count: Variant = record.get("satchel_count")
+		if typeof(raw_satchel_count) != TYPE_INT:
+			return {"ok": false}
+		satchel_count_int = int(raw_satchel_count)
+		if satchel_count_int < SATCHEL_MIN or satchel_count_int > SATCHEL_MAX:
 			return {"ok": false}
 	var candle_read: Dictionary = _read_signed_int(record.get("candle"))
 	if not candle_read.get("ok", false):
@@ -331,15 +396,18 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 	var parsed_snapshot := {"candle": candle, "party": party}
 	if has_scraps:
 		parsed_snapshot["scraps"] = scraps_int
+	if has_satchel_count:
+		parsed_snapshot["satchel_count"] = satchel_count_int
 	return {"ok": true, "snapshot": parsed_snapshot}
 
 
 ## Strict opt-in outcome parse: a choice of exactly {id, text, stitched_effect}
-## whose effect is {candle, fray, target[, scraps]} for "party" or
-## {candle, fray, target, hero_id[, scraps]} for "hero", with signed integer
-## candle, fray and optional scraps, plus a canonical hero_id. Anything else is
-## malformed and cannot settle.
-func _parse_stitched_effect(choice: Variant) -> Dictionary:
+## whose effect is {candle, fray, target[, scraps][, part]} for "party" or
+## {candle, fray, target, hero_id[, scraps][, part]} for "hero", with signed
+## integer candle, fray and optional scraps, a canonical hero_id, and optional
+## part {"id": String, "tier": native int 1..3} whose id resolves in the
+## validated parts catalog. Anything else is malformed and cannot settle.
+func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dictionary:
 	if typeof(choice) != TYPE_DICTIONARY:
 		return {"ok": false}
 	var record: Dictionary = choice
@@ -354,13 +422,15 @@ func _parse_stitched_effect(choice: Variant) -> Dictionary:
 	if target != TARGET_PARTY and target != TARGET_HERO:
 		return {"ok": false}
 	var has_scraps: bool = effect.has("scraps")
+	var has_part: bool = effect.has("part")
+	var optional_keys: int = (1 if has_scraps else 0) + (1 if has_part else 0)
 	var hero_id := ""
 	if target == TARGET_PARTY:
-		var expected_party_keys: int = 4 if has_scraps else 3
+		var expected_party_keys: int = 3 + optional_keys
 		if effect.size() != expected_party_keys:
 			return {"ok": false}
 	else:
-		var expected_hero_keys: int = 5 if has_scraps else 4
+		var expected_hero_keys: int = 4 + optional_keys
 		if effect.size() != expected_hero_keys or not effect.has("hero_id"):
 			return {"ok": false}
 		var raw_hero: Variant = effect.get("hero_id")
@@ -380,13 +450,107 @@ func _parse_stitched_effect(choice: Variant) -> Dictionary:
 		"target": target,
 		"hero_id": hero_id,
 		"has_scraps": has_scraps,
+		"has_part": has_part,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
 		if not scraps_read.get("ok", false):
 			return {"ok": false}
 		parsed["scraps"] = int(scraps_read["value"])
+	if has_part:
+		var parsed_part: Dictionary = _parse_part_award(effect.get("part"), catalog_state)
+		if not parsed_part.get("ok", false):
+			return {"ok": false}
+		parsed["part"] = parsed_part["part"]
 	return parsed
+
+
+func _parse_part_award(raw_part: Variant, catalog_state: Dictionary) -> Dictionary:
+	if typeof(raw_part) != TYPE_DICTIONARY:
+		return {"ok": false}
+	var part_record: Dictionary = raw_part
+	if part_record.size() != 2 or not part_record.has("id") or not part_record.has("tier"):
+		return {"ok": false}
+	var raw_id: Variant = part_record.get("id")
+	if not _is_nonblank_string(raw_id):
+		return {"ok": false}
+	var part_id: String = raw_id
+	if part_id != part_id.strip_edges():
+		return {"ok": false}
+	var raw_tier: Variant = part_record.get("tier")
+	if typeof(raw_tier) != TYPE_INT:
+		return {"ok": false}
+	var tier: int = int(raw_tier)
+	if tier < PART_TIER_MIN or tier > PART_TIER_MAX:
+		return {"ok": false}
+	if not catalog_state.get("ok", false):
+		return {"ok": false}
+	var by_id: Dictionary = catalog_state.get("by_id", {})
+	if not by_id.has(part_id):
+		return {"ok": false}
+	return {"ok": true, "part": {"id": part_id, "tier": tier}}
+
+
+func _resolve_catalog(catalog: Variant) -> Dictionary:
+	if catalog != null:
+		return _parse_catalog(catalog)
+	return _catalog
+
+
+## Validates a caller-supplied parts catalog via StitchedParts.build_catalog
+## without mutating the caller's dictionary or array.
+func _parse_catalog(catalog: Variant) -> Dictionary:
+	if typeof(catalog) == TYPE_ARRAY:
+		var built_from_array: Dictionary = StitchedParts.build_catalog((catalog as Array).duplicate(true))
+		if not bool(built_from_array.get("ok", false)):
+			return {"ok": false, "by_id": {}}
+		return {"ok": true, "by_id": built_from_array["by_id"]}
+	if typeof(catalog) != TYPE_DICTIONARY:
+		return {"ok": false, "by_id": {}}
+	var record: Dictionary = catalog
+	if record.is_empty():
+		return {"ok": false, "by_id": {}}
+	if record.has("ok"):
+		if typeof(record.get("ok")) != TYPE_BOOL or not bool(record.get("ok")):
+			return {"ok": false, "by_id": {}}
+	if record.has("parts"):
+		for key in record.keys():
+			if not key in ["ok", "error", "parts", "by_id", "version", "note"]:
+				return {"ok": false, "by_id": {}}
+		var raw_parts: Variant = record.get("parts")
+		if typeof(raw_parts) != TYPE_ARRAY:
+			return {"ok": false, "by_id": {}}
+		var built: Dictionary = StitchedParts.build_catalog((raw_parts as Array).duplicate(true))
+		if not bool(built.get("ok", false)):
+			return {"ok": false, "by_id": {}}
+		var built_by_id: Dictionary = built["by_id"]
+		if record.has("by_id"):
+			if typeof(record.get("by_id")) != TYPE_DICTIONARY:
+				return {"ok": false, "by_id": {}}
+			var raw_by_id: Dictionary = record.get("by_id")
+			if raw_by_id.size() != built_by_id.size():
+				return {"ok": false, "by_id": {}}
+			for part_id in built_by_id.keys():
+				if not raw_by_id.has(part_id) or typeof(raw_by_id[part_id]) != TYPE_DICTIONARY:
+					return {"ok": false, "by_id": {}}
+				var check_entry: Dictionary = StitchedParts.validate_part(
+					(raw_by_id[part_id] as Dictionary).duplicate(true)
+				)
+				if not bool(check_entry.get("ok", false)) or check_entry.get("part") != built_by_id[part_id]:
+					return {"ok": false, "by_id": {}}
+		return {"ok": true, "by_id": built_by_id}
+	var entries: Array = []
+	for key in record.keys():
+		if typeof(key) != TYPE_STRING or typeof(record[key]) != TYPE_DICTIONARY:
+			return {"ok": false, "by_id": {}}
+		var entry_copy: Dictionary = (record[key] as Dictionary).duplicate(true)
+		if entry_copy.get("id") != key:
+			return {"ok": false, "by_id": {}}
+		entries.append(entry_copy)
+	var built_from_map: Dictionary = StitchedParts.build_catalog(entries)
+	if not bool(built_from_map.get("ok", false)):
+		return {"ok": false, "by_id": {}}
+	return {"ok": true, "by_id": built_from_map["by_id"]}
 
 
 ## A signed integer exactly as authored: a native int, or an integral finite
