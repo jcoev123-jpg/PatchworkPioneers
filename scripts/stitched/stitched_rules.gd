@@ -709,7 +709,17 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"dodge_buff": {},
 	}
 	_recompute_stats(unit)
-	unit["hp"] = int(unit["max_hp"])
+	# Optional carry is in actual HP after worn-part modifiers, never base HP.
+	# Zero is an already-Hanging survivor; do not re-tear it or roll extra RNG.
+	if entry.has("hp"):
+		var starting_hp: Variant = entry["hp"]
+		if typeof(starting_hp) != TYPE_INT or int(starting_hp) < 0 \
+				or int(starting_hp) > int(unit["max_hp"]):
+			return {"ok": false, "error": "hero " + unit_id + " has invalid starting hp", "unit": {}}
+		unit["hp"] = int(starting_hp)
+		unit["hanging"] = int(starting_hp) == 0
+	else:
+		unit["hp"] = int(unit["max_hp"])
 	return {"ok": true, "error": "", "unit": unit}
 
 
