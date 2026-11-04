@@ -118,11 +118,15 @@ func _token_fallback(button: Button, kind: String) -> void:
 		"continued and opening tokens show independently projected kind and art metadata")
 	var thread: Color = {"Campfire": Color("#f1c38f"), "Peddler": Color("#e4d59a")}.get(kind, token.thread_colour)
 	var felt: Color = {"Campfire": Color("#965a39"), "Peddler": Color("#7d7150")}.get(kind, token.patch_colour)
+	# The kind's thread still marks the token and its stitch; the Button face itself
+	# is the inherited gothic chrome, so it must carry no local normal override.
+	var gothic: Theme = load("res://themes/gothic_theme.tres") as Theme
 	_check(token.thread_colour == thread and token.patch_colour == felt
 		and button.get_node("Stitch").thread_colour == thread
 		and button.get_node("Stitch").get_meta("route_kind") == kind
-		and button.get_theme_stylebox("normal").border_color == thread,
-		"projected palette agrees across felt token, button border and stitch")
+		and gothic != null and not button.has_theme_stylebox_override("normal")
+		and button.get_theme_stylebox("normal") == gothic.get_stylebox("normal", "Button"),
+		"projected felt and thread agree on token and stitch with inherited gothic button chrome")
 	var original: Texture2D = token.token_texture
 	if not path.is_empty() and ResourceLoader.exists(path, "Texture2D"):
 		_check(original == load(path), "present authentic art is loaded first")

@@ -50,6 +50,8 @@ const OTHER_THREAD := Color("#837886")
 const OTHER_BORDER := Color("#938999")
 ## Owner art path, kept in code so the relay's ART phase can drop in the board image.
 const MAP_BOARD_PATH := "res://assets/paper/backgrounds/map_board.png"
+## Shared with the live app so one Escape cannot both dismiss Compare and exit.
+const ESCAPE_CONSUMED_META := &"route_atlas_escape_consumed"
 ## The authored sewn route tokens: one committed image per exact authored kind.
 ## Kinds without an entry keep the original drawn paper marker, and so does a token
 ## whose file cannot be loaded, so a missing PNG never breaks the preview.
@@ -1308,16 +1310,8 @@ func _add_compare_button() -> void:
 	button.size = Vector2(139.0, 32.0)
 	button.focus_mode = Control.FOCUS_NONE
 	button.mouse_filter = Control.MOUSE_FILTER_STOP
-	var paper := StyleBoxFlat.new()
-	paper.bg_color = PAPER
-	paper.border_color = INK
-	paper.set_border_width_all(2)
-	paper.set_corner_radius_all(5)
-	for state_name in ["normal", "hover", "pressed", "hover_pressed"]:
-		button.add_theme_stylebox_override(state_name, paper)
-	button.add_theme_color_override("font_color", INK)
-	button.add_theme_color_override("font_hover_color", INK)
-	button.add_theme_color_override("font_pressed_color", INK)
+	# Inherit the live root Theme's gothic Button chrome; the diary paper and
+	# stitched comparison sheet remain their own authored, readable surfaces.
 	button.add_theme_font_size_override("font_size", 16)
 	button.pressed.connect(_toggle_comparison.bind(_map, _revision))
 	add_child(button)
@@ -1875,8 +1869,10 @@ func _input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 		return
 	if key.keycode == KEY_ESCAPE and _comparison_open:
-		_clear_comparison()
-		get_viewport().set_input_as_handled()
+		if not key.has_meta(ESCAPE_CONSUMED_META):
+			_clear_comparison()
+			key.set_meta(ESCAPE_CONSUMED_META, true)
+			get_viewport().set_input_as_handled()
 		return
 	if key.keycode == KEY_UP or key.keycode == KEY_DOWN:
 		if _step_legal_focus(-1 if key.keycode == KEY_UP else 1):

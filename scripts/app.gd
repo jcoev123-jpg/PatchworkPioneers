@@ -991,6 +991,9 @@ func _input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	if event.keycode == KEY_ESCAPE:
+		# The optional atlas owns this key before the combat-only card forecast.
+		if _handle_atlas_escape(event):
+			return
 		if _combo_selected != null:
 			_combo_selected = null
 			_combo_keyboard = false
@@ -1908,7 +1911,9 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 	var button := Button.new()
 	button.name = "Opening_" + id
 	button.text = label
-	button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	# Centre the label clear of the sewn token at the left without overriding
+	# the root Theme's Button face, colours or focus border.
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	button.custom_minimum_size = ROUTE_PATCH_SIZE
 	button.size = ROUTE_PATCH_SIZE
 	button.add_theme_font_size_override("font_size", 20)
@@ -1927,7 +1932,6 @@ func _route_choice_button(id: String, kind: String, opening: bool, choice: Dicti
 			button.tooltip_text = "Campfire: Heal each hero 30% max HP (torn revives at 1 HP first), or Leave unchanged for free."
 		elif kind == "Shop":
 			button.tooltip_text = "Peddler: buy one of three cards or one patch, or Leave for free."
-	_style_route_button(button, ROUTE_KIND_THREAD.get(presentation_kind, ROUTE_BOOK_THREAD), true)
 	button.add_child(_route_token(presentation_kind))
 	button.add_child(_route_patch_stitch(presentation_kind))
 	if opening:
@@ -1943,50 +1947,11 @@ func _route_book_action(title: String, action_size: Vector2, tooltip: String) ->
 	button.size = action_size
 	button.add_theme_font_size_override("font_size", 18)
 	button.tooltip_text = tooltip
-	_style_route_button(button, ROUTE_BOOK_THREAD, false)
 	return button
 
 
-## Felt choice face with the kind's thread colour, plus one opaque keyboard focus ring.
-func _style_route_button(button: Button, accent: Color, token_inset: bool) -> void:
-	for state in ["normal", "hover", "pressed", "disabled"]:
-		var paper := StyleBoxFlat.new()
-		match state:
-			"normal":
-				paper.bg_color = ROUTE_BOOK_FELT
-				paper.border_color = accent
-			"hover":
-				paper.bg_color = Color("#657555")
-				paper.border_color = ROUTE_BOOK_PAPER
-			"pressed":
-				paper.bg_color = Color("#3b4538")
-				paper.border_color = Color("#c5ab73")
-			_:
-				paper.bg_color = Color("#45433f")
-				paper.border_color = Color("#777166")
-		paper.set_border_width_all(2)
-		paper.set_corner_radius_all(4)
-		paper.content_margin_left = 60.0 if token_inset else 12.0
-		paper.content_margin_right = 12.0
-		paper.content_margin_top = 6.0
-		paper.content_margin_bottom = 6.0
-		button.add_theme_stylebox_override(state, paper)
-	button.add_theme_color_override("font_color", ROUTE_BOOK_PAPER)
-	button.add_theme_color_override("font_hover_color", Color.WHITE)
-	button.add_theme_color_override("font_pressed_color", ROUTE_BOOK_PAPER)
-	button.add_theme_color_override("font_hover_pressed_color", ROUTE_BOOK_PAPER)
-	button.add_theme_color_override("font_disabled_color", Color("#aaa391"))
-	var focus := StyleBoxFlat.new()
-	focus.bg_color = Color.TRANSPARENT
-	focus.border_color = Color("#f5d480")
-	focus.set_border_width_all(3)
-	focus.set_corner_radius_all(4)
-	focus.draw_center = false
-	focus.expand_margin_left = 3
-	focus.expand_margin_right = 3
-	focus.expand_margin_top = 3
-	focus.expand_margin_bottom = 3
-	button.add_theme_stylebox_override("focus", focus)
+## Route/book buttons use the inherited gothic Button face and focus seam.
+## Their sewn token art and authored colour-coded marker pieces stay separate.
 
 
 ## The kind's sewn token: committed art when it loads, else its drawn felt fallback.
@@ -2059,6 +2024,38 @@ func _dispatch_route(id: String, source: WeakRef, prior: Array[String], button) 
 	return false
 
 
+## Input is accepted only for the authentic, visible overlay. Invoke the Close
+## button's ORIGINAL bound callback, not freshly fabricated source references.
+## The event marker prevents a comparison Escape from closing twice if input
+## delivery order between the app and standalone atlas ever changes.
+func _handle_atlas_escape(key: InputEventKey) -> bool:
+	if key.has_meta(RunRouteAtlas.ESCAPE_CONSUMED_META):
+		return true
+	if key.shift_pressed or key.ctrl_pressed or key.alt_pressed or key.meta_pressed \
+			or not is_instance_valid(route_atlas_overlay) or not is_instance_valid(route_atlas) \
+			or not is_instance_valid(route_atlas_close) or not is_instance_valid(route_view) \
+			or route_atlas_overlay.get_parent() != self \
+			or route_atlas.get_parent() != route_atlas_overlay \
+			or route_atlas_close.get_parent() != route_atlas_overlay \
+			or route_atlas._map != run_map or route_view.visible \
+			or not route_atlas.is_visible_in_tree():
+		return false
+	if route_atlas.comparison_is_open():
+		if not route_atlas._toggle_comparison(run_map, route_atlas._revision):
+			return false
+	else:
+		var connections := route_atlas_close.pressed.get_connections()
+		if connections.size() != 1 or connections[0].callable.get_object() != self \
+				or connections[0].callable.get_method() != "_close_route_atlas":
+			return false
+		connections[0].callable.call()
+		if is_instance_valid(route_atlas_overlay):
+			return false
+	key.set_meta(RunRouteAtlas.ESCAPE_CONSUMED_META, true)
+	get_viewport().set_input_as_handled()
+	return true
+
+
 func _route_atlas_source(source_map: WeakRef, source_view: WeakRef, source_action: WeakRef) -> bool:
 	return source_map != null and source_map.get_ref() == run_map and run_map != null \
 		and _can_choose_connected_route() \
@@ -2075,8 +2072,8 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 	route_atlas_overlay = Control.new()
 	route_atlas_overlay.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	add_child(route_atlas_overlay)
-	var background := ColorRect.new()
-	background.color = Color("2b3135")
+	var background := Panel.new()
+	background.name = "GothicAtlasBackdrop"
 	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	route_atlas_overlay.add_child(background)
 	route_atlas = RunRouteAtlas.new()
@@ -2092,6 +2089,7 @@ func _open_route_atlas(source_map: WeakRef, source_view: WeakRef, source_action:
 		run_map.get_generation_revision(), run_map.get_floors(), choices, run_map.get_route()), CONNECT_DEFERRED)
 	route_atlas_close = Button.new()
 	route_atlas_close.text = "Close map"
+	route_atlas_close.tooltip_text = "Return to route choices (Escape)"
 	route_atlas_close.position = Vector2(520, 640)
 	route_atlas_close.size = Vector2(240, 48)
 	route_atlas_overlay.add_child(route_atlas_close)

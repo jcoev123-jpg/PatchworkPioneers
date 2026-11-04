@@ -141,9 +141,13 @@ func _check_connected_token(button: Button, projected: String) -> void:
 	elif projected == "Peddler":
 		_check(token.fallback_plan().is_empty() and token.patch_colour == Color("#7d7150")
 			and token.thread_colour == Color("#e4d59a"), "projected Peddler fallback retains its felt and thread")
+	# The projected thread still marks the token and its stitch; the Button face is
+	# the inherited gothic chrome, so it must carry no local normal override.
+	var gothic: Theme = load("res://themes/gothic_theme.tres") as Theme
 	_check(stitch.thread_colour == token.thread_colour
-		and button.get_theme_stylebox("normal").border_color == token.thread_colour,
-		"connected projected thread agrees on patch, stitch and token")
+		and gothic != null and not button.has_theme_stylebox_override("normal")
+		and button.get_theme_stylebox("normal") == gothic.get_stylebox("normal", "Button"),
+		"connected projected thread agrees on token and stitch with inherited gothic button chrome")
 	var font: Font = button.get_theme_font("font")
 	_check(font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
 		button.get_theme_font_size("font_size")).x <= button.size.x - 72

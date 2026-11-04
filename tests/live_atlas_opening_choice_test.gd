@@ -534,6 +534,23 @@ func _legal_openings(app) -> void:
 					await _click(app.quiet_spool_panel.get_choice_buttons()[1])
 				_check(app.run_scraps == 0, "atlas Ignore preserves zero-scrap wallet")
 			_assert_flow(app, kind, fixture[2], rng_state)
+			# Event settlement reaches the REAL connected chooser; verify Escape there too.
+			if kind == "Event" and mode == 0:
+				_check(app.route_view != null and app.run_map.get_route() == [fixture[2]],
+					"real settled Event has a connected route to return to")
+				if app.route_view != null:
+					var connected_view = app.route_view
+					var connected_action: Button = app.route_map_button
+					var connected_before := _values(app)
+					_gothic_button(app.theme, connected_action, "connected View full map")
+					await _click(connected_action)
+					_check(app.route_atlas != null and app.route_atlas._map == app.run_map,
+						"settled Event mounts the real connected full map")
+					if app.route_atlas != null:
+						await _key(KEY_ESCAPE)
+						_check(app.route_atlas == null and app.route_view == connected_view
+							and connected_action.has_focus() and _values(app) == connected_before,
+							"connected Escape restores exact same visit chooser and state")
 			if mode == 0:
 				replay = _values(app)
 			else:
@@ -549,11 +566,131 @@ func _legal_openings(app) -> void:
 					"accepted %s atlas request cannot reopen the next session" % kind)
 
 
+## Theme assertions use the actually mounted root Theme, not copied palette numbers.
+func _gothic_button(theme: Theme, button: Button, where: String) -> void:
+	_check(button != null and button.is_visible_in_tree(), where + ": real visible control")
+	if button == null:
+		return
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		_check(not button.has_theme_stylebox_override(state)
+			and button.get_theme_stylebox(state) == theme.get_stylebox(state, "Button"),
+			where + ": inherited " + state + " style")
+	for state in ["font_color", "font_hover_color", "font_pressed_color", "font_disabled_color"]:
+		_check(not button.has_theme_color_override(state)
+			and button.get_theme_color(state) == theme.get_color(state, "Button"),
+			where + ": inherited bone/amber " + state)
+	var focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(focus != null and focus.border_color.a > 0.9
+		and focus.border_width_left >= 2 and focus.border_width_top >= 2,
+		where + ": visible brass keyboard focus seam")
+
+
+## Actual title -> Base -> seeded opening. All Escape paths use GUI key events.
+func _gothic_escape_opening(app) -> void:
+	app.run_seed = 6
+	await _click(app.route_button)
+	_check(app.route_view != null and app.run_map != null
+		and app.run_map.get_legal_choices().size() >= 3
+		and app.theme == load("res://themes/gothic_theme.tres"),
+		"genuine seeded title/Base opening inherits the committed gothic Theme")
+	if app.route_view == null:
+		return
+	var chooser = app.route_view
+	var map_action: Button = app.route_map_button
+	var before := _values(app)
+	var focus_before := root.gui_get_focus_owner()
+	await _key(KEY_ESCAPE)
+	_check(app.route_view == chooser and app.route_atlas == null
+		and root.gui_get_focus_owner() == focus_before and _values(app) == before,
+		"Escape outside atlas keeps the authentic chooser and run untouched")
+	for button in app.route_buttons:
+		_gothic_button(app.theme, button, "seeded route choice " + str(button.get_meta("route_id")))
+		_check(button.get_node_or_null("RouteToken") != null or button.get_child_count() >= 2,
+			"route choice retains the sewn token and stitch children")
+	_gothic_button(app.theme, map_action, "View full map")
+	_gothic_button(app.theme, app.route_back_button, "Back")
+
+	# Mouse opens the REAL optional book; the backdrop is a Theme Panel, not a flat slate.
+	await _click(map_action)
+	_check(app.route_atlas_overlay != null and app.route_atlas != null
+		and app.route_atlas._map == app.run_map and app.route_view == chooser
+		and not chooser.visible, "mouse launches a genuine bound atlas")
+	if app.route_atlas == null:
+		return
+	var atlas: RunRouteAtlas = app.route_atlas
+	var overlay = app.route_atlas_overlay
+	var backdrop := overlay.get_node_or_null("GothicAtlasBackdrop") as Panel
+	_check(backdrop != null and not backdrop.has_theme_stylebox_override("panel")
+		and backdrop.get_theme_stylebox("panel") == app.theme.get_stylebox("panel", "Panel")
+		and backdrop.get_global_rect().has_point(Vector2(1279, 719)),
+		"full 1280x720 atlas backdrop inherits the gothic Panel face")
+	_gothic_button(app.theme, app.route_atlas_close, "Close map")
+	_check(app.route_atlas_close.has_focus()
+		and app.route_atlas_close.tooltip_text.contains("Escape")
+		and app.route_atlas_close.focus_next == NodePath("."),
+		"Close map remains in its existing focused Tab circuit")
+	var compare := atlas.get_node_or_null("CompareToggle") as Button
+	_gothic_button(app.theme, compare, "mouse Compare choices")
+	_check(compare != null and compare.focus_mode == Control.FOCUS_NONE
+		and not atlas._legal_actions.is_empty(), "Compare is mouse-only; real legal marker focus remains")
+	var stale_close: Callable = app.route_atlas_close.pressed.get_connections()[0].callable
+	var forged: Array = stale_close.get_bound_arguments()
+	forged[0] = weakref(app.route_back_button)
+	Callable(app, "_close_route_atlas").bindv(forged).call()
+	_check(app.route_atlas_overlay == overlay and _values(app) == before,
+		"foreign Close map source is rejected without state change")
+	await _click(compare)
+	_check(atlas.comparison_is_open() and app.route_atlas_overlay == overlay
+		and _values(app) == before, "mouse Compare opens read-only genuine sheet")
+	await _key(KEY_ESCAPE)
+	_check(app.route_atlas_overlay == overlay and app.route_atlas == atlas
+		and not atlas.comparison_is_open()
+		and atlas.get_node("JourneyJournal").visible
+		and app.route_atlas_close.has_focus() and _values(app) == before,
+		"first mouse-comparison Escape only returns to the diary")
+	await _key(KEY_ESCAPE)
+	_check(app.route_atlas == null and app.route_atlas_overlay == null
+		and app.route_view == chooser and chooser.is_visible_in_tree()
+		and app.route_map_button == map_action and map_action.has_focus()
+		and _values(app) == before, "second Escape closes exactly once and restores View full map focus")
+	stale_close.call()
+	_check(app.route_atlas == null and _values(app) == before,
+		"disposed authenticated close callback never acts again")
+
+	# Keyboard opens the same real overlay, C compares without re-routing or RNG.
+	map_action.grab_focus()
+	await _key(KEY_ENTER)
+	_check(app.route_atlas != null and app.route_atlas._map == app.run_map
+		and app.route_atlas_close.has_focus(), "focused Enter launches the real atlas")
+	if app.route_atlas != null:
+		atlas = app.route_atlas
+		var legal: Array = app.run_map.get_legal_choices()
+		_check(not legal.is_empty() and not atlas._legal_actions.is_empty(),
+			"real legal branch actions exist before keyboard comparison")
+		var marker := atlas._legal_actions[0]
+		marker.grab_focus()
+		await _key(KEY_C)
+		_check(atlas.comparison_is_open() and marker.has_focus()
+			and _values(app) == before, "physical C compares without stealing legal marker focus")
+		await _key(KEY_ESCAPE)
+		_check(app.route_atlas == atlas and not atlas.comparison_is_open()
+			and marker.has_focus() and _values(app) == before,
+			"first keyboard-comparison Escape preserves focused legal marker")
+		await _key(KEY_ESCAPE)
+		_check(app.route_atlas == null and map_action.has_focus()
+			and _values(app) == before, "second keyboard Escape closes and refocuses original action")
+	app._cancel_route()
+	await process_frame
+	_check(app.run_map == null and app.title_view.visible,
+		"opening Escape regression fixture returns cleanly to title")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await process_frame
+	await _gothic_escape_opening(app)
 	app.run_seed = 6
 	var id := "f01_n0"
 	var replay: Array = []

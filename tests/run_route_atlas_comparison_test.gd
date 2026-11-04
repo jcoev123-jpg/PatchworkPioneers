@@ -254,6 +254,13 @@ func _exercise(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
 	var button := view.get_node_or_null("CompareToggle") as Button
 	_check(button != null and button.visible and button.focus_mode == Control.FOCUS_NONE,
 		where + ": Compare is discoverable and cannot steal route keyboard focus")
+	var gothic := load("res://themes/gothic_theme.tres") as Theme
+	_check(button != null and gothic != null and button.get_theme_stylebox("normal") == gothic.get_stylebox("normal", "Button")
+		and button.get_theme_stylebox("hover") == gothic.get_stylebox("hover", "Button")
+		and button.get_theme_color("font_color") == gothic.get_color("font_color", "Button")
+		and not button.has_theme_stylebox_override("normal")
+		and not button.has_theme_color_override("font_color"),
+		where + ": mouse Compare inherits actual gothic Button chrome and bone text")
 	_check(not view.comparison_is_open() and view.get_node_or_null("CompareChoices") == null,
 		where + ": defaults to actual journal")
 	requests.clear()
@@ -386,15 +393,19 @@ func _exercise(view: RunRouteAtlas, map: RunMap, rng: RandomNumberGenerator,
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	var themed_host := Control.new()
+	themed_host.theme = load("res://themes/gothic_theme.tres")
+	themed_host.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	root.add_child(themed_host)
 	var view := RunRouteAtlas.new()
 	view.position = Vector2(20, 40)
-	root.add_child(view)
+	themed_host.add_child(view)
 	view.node_requested.connect(_requested)
 	var close_button := Button.new()
 	close_button.text = "Close map"
 	close_button.position = Vector2(520, 640)
 	close_button.size = Vector2(240, 48)
-	root.add_child(close_button)
+	themed_host.add_child(close_button)
 	await process_frame
 	var empty := RunMap.new()
 	view.bind_map(empty)
@@ -475,8 +486,7 @@ func _run() -> void:
 					"authored " + legacy_kind + " projected without altering kind")
 		_check(found_alias, "mounted legal " + legacy_kind + " was actually checked")
 		view.bind_map(null)
-	view.queue_free()
-	close_button.queue_free()
+	themed_host.queue_free()
 	await process_frame
 	if failures.is_empty():
 		print("run_route_atlas_comparison_test: PASS (", checks, " checks)")
