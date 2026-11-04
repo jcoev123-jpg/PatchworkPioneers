@@ -36,7 +36,7 @@ const STARTER_PARTS := {
 const ALTERNATE_PARTS := {
 	"head": "seamstress_scarlet_knot_hat",
 	"arms": "seamstress_needle_rain_needle",
-	"torso": "seamstress_patchwork_poultice_apron",
+	"torso": "seamstress_poultice_apron",
 	"legs": "seamstress_bobbin_snag_spools",
 }
 const ALL_PART_IDS := [
@@ -45,7 +45,7 @@ const ALL_PART_IDS := [
 	"seamstress_thread_prick_needle",
 	"seamstress_needle_rain_needle",
 	"seamstress_shielding_hem_coat",
-	"seamstress_patchwork_poultice_apron",
+	"seamstress_poultice_apron",
 	"seamstress_tether_loop_spools",
 	"seamstress_bobbin_snag_spools",
 ]
@@ -100,7 +100,7 @@ const EXPECTED := {
 			{"guard": 4, "heal": 4},
 		],
 	},
-	"seamstress_patchwork_poultice_apron": {
+	"seamstress_poultice_apron": {
 		"name": "Patchwork Poultice Apron", "slot": "torso", "stat_key": "prot", "stat": [5, 7, 9],
 		"ability_id": "patchwork_poultice", "ability_name": "Patchwork Poultice", "kind": "guard",
 		"launch": [2, 3], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
@@ -175,6 +175,11 @@ func _test_catalog() -> void:
 		_check(false, "AC1: the catalog holds only the eight named Seamstress wearables")
 	for part_id in by_id:
 		_check(str(part_id) in ALL_PART_IDS, "AC1: unexpected extra part in this kit catalog: " + str(part_id))
+	# The brief names the contract IDs exactly; the earlier invented torso id must be gone.
+	_check(not by_id.has("seamstress_patchwork_poultice_apron"),
+		"AC1: the invented torso id seamstress_patchwork_poultice_apron is absent")
+	_check(by_id.has("seamstress_poultice_apron"),
+		"AC1: the contract torso id seamstress_poultice_apron is authored")
 	# Every loaded record must still pass the engine's own single-entry validator.
 	var parts: Array = catalog["parts"]
 	for part in parts:

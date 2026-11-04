@@ -138,7 +138,7 @@
       "text": "Stitch a hem over one living ally: heal 2 and Guard the hits aimed at it for 2 turns."
     },
     {
-      "id": "seamstress_patchwork_poultice_apron",
+      "id": "seamstress_poultice_apron",
       "name": "Patchwork Poultice Apron",
       "slot": "torso",
       "owner": "seamstress",
