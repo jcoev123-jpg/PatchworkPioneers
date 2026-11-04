@@ -1,4 +1,4 @@
-[gd_scene load_steps=11 format=3]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
 [ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
@@ -11,6 +11,8 @@
 [ext_resource type="Script" path="res://scripts/live_visit_card_tiles.gd" id="9"]
 [ext_resource type="Script" path="res://scripts/live_lantern_monk_pole_shelter_hand.gd" id="10"]
 
+[ext_resource type="Theme" path="res://themes/gothic_theme.tres" id="11_gothic"]
+
 [node name="App" type="Control"]
 layout_mode = 3
 anchors_preset = 15
@@ -19,6 +21,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1")
+theme = ExtResource("11_gothic")
 
 [node name="PatchworkUIShell" type="Control" parent="."]
 layout_mode = 1

@@ -7,6 +7,12 @@ const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## U+2192, printed between the two halves of a real Rest upgrade tile.
 const ARROW := 0x2192
+const GOTHIC_BG := Color("171419")
+const GOTHIC_OXBLOOD := Color("352126")
+const GOTHIC_UMBER := Color("382a26")
+const GOTHIC_BRASS := Color("998053")
+const GOTHIC_BONE := Color("e9ddc7")
+const GOTHIC_AMBER := Color("e6ad58")
 
 
 func _run() -> void:
@@ -18,6 +24,30 @@ func _run() -> void:
 	var shell = app.get_node("PatchworkUIShell")
 	var shared: Theme = app.theme
 	_check(shared != null and shared.default_font_size >= 18, "scene installs body theme before App readiness")
+	for token in ["background", "oxblood", "umber", "brass", "bone", "amber"]:
+		_check(shared.has_color(token, "GothicPalette"),
+			"resource publishes reusable gothic palette token: " + token)
+	_check(shared.get_color("background", "GothicPalette").is_equal_approx(GOTHIC_BG)
+		and shared.get_color("oxblood", "GothicPalette").is_equal_approx(GOTHIC_OXBLOOD)
+		and shared.get_color("umber", "GothicPalette").is_equal_approx(GOTHIC_UMBER)
+		and shared.get_color("brass", "GothicPalette").is_equal_approx(GOTHIC_BRASS)
+		and shared.get_color("bone", "GothicPalette").is_equal_approx(GOTHIC_BONE)
+		and shared.get_color("amber", "GothicPalette").is_equal_approx(GOTHIC_AMBER),
+		"all six shared palette tokens match the owner's exact values")
+	var gothic_source: Theme = load("res://themes/gothic_theme.tres") as Theme
+	_check(gothic_source != null and shared == gothic_source
+		and shell._build_theme() == shared and app.theme == gothic_source,
+		"real App boots with the gothic scene Theme; shell inherits instead of replacing it")
+	_check(shared.default_font != null and shared.default_font.resource_path == BODY_FONT
+		and shared.default_font_size >= 18
+		and shared.get_font_size("font_size", "Label") >= 18,
+		"gothic Theme keeps Patrick Hand body at readable size")
+	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_OXBLOOD)
+		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_UMBER)
+		and (shared.get_stylebox("panel", "Panel") as StyleBoxFlat).border_color.is_equal_approx(GOTHIC_BRASS)
+		and shared.get_color("font_color", "Label").is_equal_approx(GOTHIC_BONE)
+		and shared.get_stylebox("scroll", "VScrollBar").bg_color.is_equal_approx(GOTHIC_BG),
+		"gothic palette is oxblood, umber, brass and bone over a near-black scrollbar")
 	# The mounted shell Theme must carry the master Theme's whole typography family.
 	_check(shared.get_type_variation_base("PatchTitle") == "Label"
 		and shared.get_type_variation_base("PatchHeading") == "Label"
@@ -34,11 +64,11 @@ func _run() -> void:
 	_check(not master.has_stylebox("normal", "OptionButton")
 		and not master.has_stylebox("panel", "PopupMenu")
 		and not master.has_stylebox("scroll", "VScrollBar"),
-		"selector surfaces belong to the shared copy, not the master")
+		"selector surfaces belong to the gothic root Theme, not the font master")
 	_check(shell._fabric_style("res://missing_selector_surface.png", shell.PAPER) is StyleBoxFlat,
 		"unavailable UI art retains the readable shell fallback")
 	_check(master != null and master != shared and master.get_font_size("font_size", "PatchTitle") < 40,
-		"the shell duplicates the master Theme instead of mutating it")
+		"the App uses a separate gothic Theme without mutating the master fonts")
 	_check(app.title_label.get_theme_font("font").resource_path == shell.TITLE_FONT,
 		"title uses the Londrina Solid title font")
 	for button in [app.start_button, app.route_button, app.base_button]:
@@ -48,12 +78,13 @@ func _run() -> void:
 		_check(button.get_theme_color("font_color") == shared.get_color("font_color", "Button")
 			and button.get_theme_color("font_hover_color") == shared.get_color("font_hover_color", "Button")
 			and button.get_theme_color("font_pressed_color") == shared.get_color("font_pressed_color", "Button"),
-			"title action keeps the shared cream ink in every state: " + button.text)
-	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color == shell.PAPER
-		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color != shell.PAPER,
-		"shared Theme supplies paper panels and contrasting felt containers")
-	_check(app.title_label.theme_type_variation == "PatchTitle" and app.title_label.get_theme_color("font_color") == shell.INK,
-		"existing live label uses the master dark ink PatchTitle variation")
+			"title action keeps inherited gothic text color in every state: " + button.text)
+	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_OXBLOOD)
+		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_UMBER),
+		"shared Theme supplies contrasting gothic oxblood and umber surfaces")
+	_check(app.title_label.theme_type_variation == "PatchTitle"
+		and app.title_label.get_theme_color("font_color").is_equal_approx(GOTHIC_BONE),
+		"original live title keeps bone Londrina lettering on its dark missing-logo backing")
 	_check(shell.mouse_filter == Control.MOUSE_FILTER_IGNORE and shell.focus_mode == Control.FOCUS_NONE,
 		"shell cannot intercept pointer or keyboard")
 	_check(shell.TITLE_BACKDROP == "res://assets/paper/backgrounds/title.png"
@@ -198,10 +229,12 @@ func _run() -> void:
 	await process_frame
 	_check(draws[0] > 0, "the null-backdrop fallback actually repaints")
 	_check(is_instance_valid(app.title_label) and app.title_label.is_visible_in_tree() and shell.visible
-		and shell.PAPER.get_luminance() - shell.INK.get_luminance() > 0.5
-		and shell.PAPER.get_luminance() - shell.FALLBACK_STAGE.get_luminance() > 0.3
-		and shell.THREAD.get_luminance() > shell.ACTION_BACKING.get_luminance(),
-		"fallback keeps the dark ink title readable on paper above its felt menu")
+		and app.title_label.get_theme_color("font_color").is_equal_approx(GOTHIC_BONE)
+		and shell.FALLBACK_STAGE.is_equal_approx(GOTHIC_BG)
+		and shell.ACTION_BACKING.is_equal_approx(GOTHIC_OXBLOOD)
+		and _gothic_contrast(GOTHIC_BONE, shell.ACTION_BACKING) >= 4.5
+		and shell.THREAD.is_equal_approx(GOTHIC_BRASS),
+		"missing-art fallback keeps bone title text readable on dark oxblood and brass")
 	shell._backdrop = mounted_backdrop
 	shell.queue_redraw()
 	await process_frame
@@ -213,11 +246,16 @@ func _run() -> void:
 	var fills: Array[Color] = []
 	for state in ["normal", "hover", "pressed", "disabled"]:
 		var style := shared.get_stylebox(state, "Button") as StyleBoxFlat
-		_check(style != null and not fills.has(style.bg_color), "distinct felt button state: " + state)
-		fills.append(style.bg_color)
+		_check(style != null and not fills.has(style.bg_color), "distinct gothic button state: " + state)
+		if style != null:
+			fills.append(style.bg_color)
+			var text_state: String = "font_color" if state == "normal" else "font_" + state + "_color"
+			_check(_gothic_contrast(shared.get_color(text_state, "Button"), style.bg_color) >= 4.5,
+				"gothic " + state + " button text remains legible")
 	var focus := shared.get_stylebox("focus", "Button") as StyleBoxFlat
-	_check(focus != null and focus.border_width_top >= 3 and focus.border_color.a == 1.0,
-		"opaque keyboard focus border")
+	_check(focus != null and focus.border_width_top >= 3 and focus.border_color.is_equal_approx(GOTHIC_AMBER)
+		and not focus.draw_center and focus.expand_margin_left >= 3.0,
+		"opaque 3px candle-amber keyboard focus border")
 	for button in [app.start_button, app.route_button, app.base_button]:
 		_check(button.get_child_count() == 1 and button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"title stitches cannot block original button")
@@ -330,28 +368,47 @@ func _collect(node: Node, controls: Array[Control]) -> void:
 		_collect(child, controls)
 
 
+## WCAG contrast is checked on the resolved flat fill, not merely on a font flag.
+func _gothic_contrast(foreground: Color, background: Color) -> float:
+	var a := foreground.srgb_to_linear().get_luminance()
+	var b := background.srgb_to_linear().get_luminance()
+	return (maxf(a, b) + 0.05) / (minf(a, b) + 0.05)
+
+
 func _check_visit_theme(shared: Theme) -> void:
-	for type in ["OptionButton", "PopupMenu", "VScrollBar"]:
+	for type in ["OptionButton", "PopupMenu", "VScrollBar", "HScrollBar"]:
 		var entries: Array = ["normal", "hover", "pressed", "disabled", "focus"]
 		if type == "PopupMenu":
-			entries = ["panel", "hover"]
-		elif type == "VScrollBar":
+			entries = ["panel", "hover", "focus"]
+		elif type in ["VScrollBar", "HScrollBar"]:
 			entries = ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]
 		for entry in entries:
 			_check(shared.has_stylebox(entry, type), type + " explicitly owns " + entry)
-			var style := shared.get_stylebox(entry, type) as StyleBoxTexture
-			_check(style != null and style.texture != null
-				and style.texture.resource_path.begins_with("res://assets/paper/ui/reward_"),
-				type + " reuses shipped sewn texture: " + entry)
-	_check(not shared.get_stylebox("focus", "OptionButton").get("draw_center"),
-		"sewn keyboard focus leaves the selector caption uncovered")
-	_check(shared.get_color("font_disabled_color", "OptionButton")
-		!= shared.get_color("font_color", "OptionButton"), "disabled selector ink is distinct")
+			var style := shared.get_stylebox(entry, type) as StyleBoxFlat
+			_check(style != null and style.border_width_top >= 1,
+				type + " uses readable dark-gothic flat fallback: " + entry)
+			if entry == "focus" and style != null:
+				_check(style.border_width_top >= 3 and style.border_color.is_equal_approx(GOTHIC_AMBER)
+					and not style.draw_center and style.expand_margin_top >= 3,
+					"type " + type + " exposes 3px candle-amber focus")
 	for type in ["OptionButton", "PopupMenu"]:
+		var normal_style := shared.get_stylebox("normal" if type == "OptionButton" else "panel", type) as StyleBoxFlat
+		var hover_style := shared.get_stylebox("hover", type) as StyleBoxFlat
+		_check(normal_style != null and hover_style != null,
+			type + " has real normal and hover surfaces")
+		if normal_style == null or hover_style == null:
+			continue
 		for entry in ["font_color", "font_hover_color", "font_disabled_color"]:
+			var bg: Color = hover_style.bg_color if entry == "font_hover_color" else normal_style.bg_color
 			_check(shared.has_color(entry, type)
-				and shared.get_color(entry, type).srgb_to_linear().get_luminance() < 0.2,
-				type + " keeps dark legible ink on paper: " + entry)
+				and _gothic_contrast(shared.get_color(entry, type), bg) >= 4.5,
+				type + " uses readable pale lettering on dark fabric: " + entry)
+	_check(shared.get_color("font_hover_color", "OptionButton").is_equal_approx(GOTHIC_AMBER)
+		and shared.get_color("font_hover_color", "PopupMenu").is_equal_approx(GOTHIC_AMBER),
+		"both selectors share the candle-amber hover highlight")
+	_check(shared.get_stylebox("grabber", "VScrollBar").bg_color.is_equal_approx(GOTHIC_BRASS)
+		and shared.get_stylebox("grabber_pressed", "VScrollBar").bg_color.is_equal_approx(GOTHIC_BONE),
+		"both dark scrollbars retain a contrasting brass/bone grip")
 
 
 func _check_visit_controls(app, screen: String) -> void:
@@ -411,11 +468,11 @@ func _check_visit_controls(app, screen: String) -> void:
 		for state in ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]:
 			_check(bar.get_theme_stylebox(state) == app.theme.get_stylebox(state, "VScrollBar"),
 				screen + " actual gallery scrollbar inherits " + state)
-		var track := bar.get_theme_stylebox("scroll") as StyleBoxTexture
-		var handle := bar.get_theme_stylebox("grabber") as StyleBoxTexture
+		var track := bar.get_theme_stylebox("scroll") as StyleBoxFlat
+		var handle := bar.get_theme_stylebox("grabber") as StyleBoxFlat
 		_check(track != null and handle != null
-			and handle.modulate_color.get_luminance() > track.modulate_color.get_luminance() + 0.4,
-			screen + " scrollbar has a discernible paper grabber on dark fabric")
+			and _gothic_contrast(handle.bg_color, track.bg_color) >= 4.5,
+			screen + " scrollbar has a discernible brass grabber on near-black fabric")
 	_check(app.run_deck == deck and [app.session_gold, app.run_scraps] == wallet,
 		screen + " focus and popup inspection do not spend or alter the deck")
 
