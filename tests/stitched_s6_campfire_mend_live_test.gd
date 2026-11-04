@@ -324,6 +324,220 @@ func _campfire_mend() -> Dictionary:
 	return trace
 
 
+## A second real Roadblock and authenticated Circle Leave exercise the optional
+## exchange, its fail-closed surface, subsequent ordinary Mend, and next Fight.
+func _campfire_swap_then_mend() -> void:
+	var setup: Dictionary = await _prepare()
+	var app: Node = setup["app"]
+	if setup.get("survivors", []).size() != 4 or not app.stitched_campfire_button.visible:
+		_check(false, "swap witness needs a real four-survivor victory")
+		app.free()
+		await process_frame
+		return
+	var earned_parts: Array = app._stitched_campfire_swap_roster.duplicate(true)
+	var earned_satchel: Array = app.stitched_preview_satchel.duplicate(true)
+	_check(earned_parts.size() == 4 and earned_satchel.size() > 0 \
+		and earned_satchel.size() <= RunStitchedSewingSwap.SATCHEL_CAP \
+		and app._stitched_campfire_swap_satchel == earned_satchel \
+		and earned_parts[0].get("parts", {}).size() == StitchedParts.SLOTS.size(),
+		"Circle Leave earned a complete real four-hero part roster and bounded satchel")
+	var before: Dictionary = _resources(app)
+	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var panel: Control = app.stitched_campfire_panel
+	var recovery: RunCampfireVisit = app.stitched_campfire_visit
+	var service: RunStitchedSewingSwap = app._stitched_campfire_swap_visit
+	if panel == null or recovery == null or service == null:
+		_check(false, "earned Campfire mounts distinct real recovery and swap services")
+		app.free()
+		await process_frame
+		return
+	var quote: Dictionary = service.quote()
+	var state: Dictionary = service.read_state()
+	var recovery_state: Dictionary = recovery.read_state()
+	var generation: int = app._stitched_campfire_generation
+	var hero_id := ""
+	var slot := ""
+	var satchel_index := -1
+	var chosen_hero := -1
+	for index in range(quote.get("heroes", []).size()):
+		var hero_row: Dictionary = quote["heroes"][index]
+		for slot_row in hero_row.get("slots", []):
+			if bool(slot_row.get("can_swap", false)) and not slot_row["offers"].is_empty():
+				hero_id = str(hero_row["hero_id"])
+				slot = str(slot_row["slot"])
+				satchel_index = int(slot_row["offers"][0]["satchel_index"])
+				chosen_hero = index
+				break
+		if chosen_hero >= 0:
+			break
+	_check(quote.get("ok") == true and state.get("ok") == true \
+		and state.get("node_id") == NODE and state.get("open") == true \
+		and state.get("heroes", []).size() == 4 \
+		and quote.get("state") == state and state.get("satchel") == earned_satchel \
+		and chosen_hero >= 0 and satchel_index >= 0 and not hero_id.is_empty(),
+		"live Campfire exposes an actual canonical same-slot spare quote")
+	if chosen_hero < 0:
+		app.free()
+		await process_frame
+		return
+	var worn: Dictionary = state["heroes"][chosen_hero]["parts"][slot]
+	var spare: Dictionary = state["satchel"][satchel_index]
+	var button_name := "CampfireSwap_%s_%s_%d" % [hero_id, slot, satchel_index]
+	var button: Button = panel.find_child(button_name, true, false)
+	var scroll: ScrollContainer = panel.find_child("CampfireSwapOffers", true, false)
+	var mend: Button = panel.find_child("CampfireMend", true, false)
+	_check(button != null and not button.disabled and button.focus_mode == Control.FOCUS_ALL \
+		and scroll != null and scroll.is_visible_in_tree() \
+		and spare["slot"] == slot and not bool(worn["torn"]) \
+		and mend != null and not mend.disabled \
+		and recovery_state == app._stitched_campfire_state \
+		and recovery_state["status"] == RunCampfireVisit.STITCHED_OPEN,
+		"quoted swap and recovery buttons are mouse/keyboard reachable together")
+	var wrong_node := state.duplicate(true)
+	wrong_node["node_id"] = "forged"
+	var wrong_version := state.duplicate(true)
+	wrong_version["version"] = -1
+	var torn_quote := state.duplicate(true)
+	torn_quote["heroes"][chosen_hero]["parts"][slot]["torn"] = true
+	var wrong_slot := "head" if slot != "head" else "legs"
+	var invalid_index: int = state["satchel"].size()
+	seed(685231)
+	var expected_rng := randi()
+	seed(685231)
+	var refusals := [
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			wrong_node, weakref(panel), generation),
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			wrong_version, weakref(panel), generation),
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			torn_quote, weakref(panel), generation),
+		app._stitched_campfire_swap_part("not_a_hero", slot, satchel_index,
+			state, weakref(panel), generation),
+		app._stitched_campfire_swap_part(hero_id, wrong_slot, satchel_index,
+			state, weakref(panel), generation),
+		app._stitched_campfire_swap_part(hero_id, slot, invalid_index,
+			state, weakref(panel), generation),
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			state, null, generation),
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			state, weakref(panel), generation - 1),
+		service.swap(hero_id, slot, satchel_index, "forged", state),
+		service.swap(hero_id, wrong_slot, satchel_index, NODE, state),
+		service.swap(hero_id, slot, invalid_index, NODE, state),
+		service.swap(hero_id, slot, satchel_index, NODE, wrong_version),
+	]
+	var fake := Control.new()
+	app.add_child(fake)
+	refusals.append(app._stitched_campfire_swap_part(
+		hero_id, slot, satchel_index, state, weakref(fake), generation))
+	fake.queue_free()
+	var changed_hp: Dictionary = app._stitched_hp_carry.duplicate(true)
+	app._stitched_hp_carry[hero_id] = -1
+	refusals.append(app._stitched_campfire_swap_part(
+		hero_id, slot, satchel_index, state, weakref(panel), generation))
+	app._stitched_hp_carry = changed_hp
+	var forged_gear: Dictionary = app._stitched_gear_overrides.duplicate(true)
+	app._stitched_gear_overrides[hero_id] = {"head": {"id": "forged"}}
+	refusals.append(app._stitched_campfire_swap_part(
+		hero_id, slot, satchel_index, state, weakref(panel), generation))
+	app._stitched_gear_overrides = forged_gear
+	var forged_satchel: Array = app.stitched_preview_satchel.duplicate(true)
+	app.stitched_preview_satchel.clear()
+	refusals.append(app._stitched_campfire_swap_part(
+		hero_id, slot, satchel_index, state, weakref(panel), generation))
+	app.stitched_preview_satchel = forged_satchel
+	var catalog: Dictionary = StitchedParts.build_catalog(app._stitched_floor_config()["parts"])
+	var torn_heroes: Array = state["heroes"].duplicate(true)
+	torn_heroes[chosen_hero]["parts"][slot]["torn"] = true
+	var torn_service := RunStitchedSewingSwap.new(NODE, torn_heroes, earned_satchel, catalog["by_id"])
+	var torn_live_quote: Dictionary = torn_service.quote()
+	var blocked := false
+	for hero_row in torn_live_quote.get("heroes", []):
+		if str(hero_row["hero_id"]) == hero_id:
+			for slot_row in hero_row["slots"]:
+				if str(slot_row["slot"]) == slot:
+					blocked = not bool(slot_row["can_swap"]) and slot_row["offers"].is_empty()
+	refusals.append(torn_service.swap(hero_id, slot, satchel_index,
+		NODE, torn_service.read_state()))
+	var all_refused := true
+	for refusal in refusals:
+		all_refused = all_refused and refusal.get("ok") == false
+	_check(all_refused and blocked and torn_service.read_state()["version"] == 0 \
+		and service.read_state() == state and recovery.read_state() == recovery_state \
+		and _resources(app) == before and randi() == expected_rng,
+		"wrong node/hero/slot/index, torn, forgery, generation, panel and ledger fail without RNG or spend")
+	var incoming := {"id": str(spare["id"]), "tier": int(spare["tier"]),
+		"torn": bool(spare["torn"])}
+	var outgoing := {"id": str(worn["id"]), "tier": int(worn["tier"]),
+		"torn": bool(worn["torn"]), "slot": slot}
+	var expected_after: Dictionary = before.duplicate(true)
+	var next_gear: Dictionary = expected_after["gear"].get(hero_id, {}).duplicate(true)
+	next_gear[slot] = incoming.duplicate(true)
+	expected_after["gear"][hero_id] = next_gear
+	expected_after["satchel"][satchel_index] = outgoing.duplicate(true)
+	if button != null:
+		button.pressed.emit()
+	var after: Dictionary = _resources(app)
+	_check(after == expected_after and service.read_state().get("open") == false \
+		and app._stitched_campfire_swap_state.get("open") == false \
+		and recovery.read_state() == recovery_state \
+		and panel == app.stitched_campfire_panel and button.disabled \
+		and not mend.disabled \
+		and not app.stitched_peddler_button.visible \
+		and not app._stitched_postvictory_stop_available and _no_legacy(app),
+		"one committed exchange changes only selected override and same satchel index, not recovery")
+	seed(685232)
+	expected_rng = randi()
+	seed(685232)
+	var replay := [
+		app._stitched_campfire_swap_part(hero_id, slot, satchel_index,
+			state, weakref(panel), generation),
+		service.swap(hero_id, slot, satchel_index, NODE, state),
+		service.leave(NODE, state),
+	]
+	all_refused = true
+	for refusal in replay:
+		all_refused = all_refused and refusal.get("ok") == false
+	_check(all_refused and _resources(app) == after \
+		and recovery.read_state() == recovery_state and randi() == expected_rng,
+		"same panel replay and closed service cannot buy a second part or consume recovery")
+	var expected_hp: Dictionary = after["hp"].duplicate(true)
+	for hero in recovery_state["heroes"]:
+		@warning_ignore("integer_division")
+		var amount: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
+		expected_hp[str(hero["id"])] = mini(int(hero["max_hp"]), int(hero["hp"]) + amount)
+	if mend != null:
+		mend.pressed.emit()
+	var recovered: Dictionary = expected_after.duplicate(true)
+	recovered["hp"] = expected_hp
+	_check(_resources(app) == recovered and app.stitched_campfire_panel == null \
+		and not app._open_stitched_campfire() and not app._open_stitched_peddler() \
+		and not app._stitched_campfire_swap_part(
+			hero_id, slot, satchel_index, state, weakref(panel), generation).get("ok"),
+		"ordinary Mend still applies after swap; post-decision input fails closed")
+	await process_frame
+	var next: StitchedBattleScreen = await _admit(app)
+	var mounted: Dictionary = {}
+	if next != null and next.battle != null and next.battle.is_valid():
+		for hero in next.battle.get_heroes():
+			if str(hero["id"]) == hero_id:
+				mounted = hero["parts"][slot].duplicate(true)
+	_check(next != null and next.battle != null and next.battle.is_valid() \
+		and mounted == incoming and app._stitched_gear_overrides[hero_id][slot] == incoming \
+		and next.config["heroes"][chosen_hero]["parts"][slot] == incoming \
+		and next.config["candle"] == maxi(0, before["candle"] - 8) \
+		and app._stitched_bleed_carry == before["bleed"] \
+		and app.stitched_preview_satchel == expected_after["satchel"] \
+		and _no_legacy(app),
+		"next real Fight mounts exchanged ID, tier and torn flag with preserved ledgers")
+	if next != null:
+		next._action_buttons["exit"].pressed.emit()
+		await process_frame
+	app.free()
+	await process_frame
+
+
 func _campfire_leave() -> void:
 	var setup: Dictionary = await _prepare()
 	var app: Node = setup["app"]
@@ -388,6 +602,7 @@ func _run() -> void:
 	var first: Dictionary = await _campfire_mend()
 	_check(not first.is_empty(), "complete real Mend trace produced")
 	await _campfire_leave()
+	await _campfire_swap_then_mend()
 	await _peddler_exclusive()
 	# Independent identical real-play traces prove deterministic quote and carry.
 	var replay: Dictionary = await _campfire_mend()
