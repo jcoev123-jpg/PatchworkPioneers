@@ -1,6 +1,22 @@
 class_name CombatRagDuelistLungeCards
 extends RefCounted
 ## Authenticated rules helper only; mounted-hand dispatch is a later task.
+##
+## One paid Lunge is one confirmed hit: the printed damage through
+## CombatStatusAttacks (Weak/Exposed/Tangled keep their canonical math), then one
+## forward swap with the living adjacent hero. The same confirmed hit answers the
+## chosen foe's V3-2 enemy keywords by reusing CombatEnemyKeywordRules instead of
+## restating them:
+##   Thorns N - one retaliation of N against the Duelist at the slot he actually
+##              occupies AFTER the swap, resolved through CombatParty so his own
+##              Block absorbs before HP. It reads the frozen pre-hit foe, so a
+##              blow fully absorbed by enemy Block still retaliates, and it runs
+##              once per hit (a lethal thrust still provokes it).
+##   Enrage   - one committed stack (0->1, 1->2, 2->3, capped at 3) for that same
+##              foe on this one confirmed hit; it never adds to this strike.
+## Both hooks receive the real resolve_vs_enemy receipt, so a refusal, a
+## zero-damage hit, a forecast, a target selection or a replay can never trigger
+## them, and a Lunge still never touches the run RNG.
 
 const CARDS := {
 	"rag_duelist_rapier_lunge": 5,
@@ -10,6 +26,7 @@ const CARDS := {
 }
 
 var _attacks := CombatStatusAttacks.new()
+var _keywords := CombatEnemyKeywordRules.new()
 
 
 func is_supported_card(card_id: Variant) -> bool:
@@ -70,20 +87,44 @@ func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	var neighbor: Dictionary = party._heroes[owner_position - 2]
 	if CombatPositionSwaps._tangled_blocks(mover) or CombatPositionSwaps._tangled_blocks(neighbor):
 		return {"ok": false}
+	# The authentic PRE-HIT source record: its Thorns N and Enrage metadata are
+	# frozen here, before the strike, so a reaction can never read what the hit
+	# itself changed. Malformed keyword metadata refuses before any payment.
 	var target: Dictionary = enemies.get_enemy(target_position)
+	if not _keywords_acceptable(target):
+		return {"ok": false}
 	# All remaining calls are guaranteed by the preflight; no RNG is used by a Lunge.
 	deck.try_spend_energy(1)
 	deck.discard_played(card_id)
 	var hit := _attacks.resolve_vs_enemy(enemies, target_position, CARDS[card_id],
 		mover.get("statuses", {}), target.get("statuses", {}))
+	# One stack for this confirmed hit on exactly that foe, before the swap (which
+	# never touches the enemy roster). Plain, zero-damage and capped foes are inert.
+	var enrage := _keywords.commit_enrage_after_hit(enemies, target_position, target, hit)
 	# Swap original dictionaries, preserving every actor-local field and reference.
 	party._heroes[owner_position - 2] = mover
 	party._heroes[owner_position - 1] = neighbor
 	mover["position"] = owner_position - 1
 	neighbor["position"] = owner_position
+	# Thorns answers the Duelist where he now stands, never the ally who took his
+	# old slot; CombatParty keeps his own Block in front of his HP.
+	var thorns := _keywords.resolve_thorns_retaliation(party, owner_position - 1,
+		target, hit)
 	hit.merge({"card_id": card_id, "cost": 1, "owner_position": owner_position,
-		"destination_position": owner_position - 1, "target_position": target_position})
+		"destination_position": owner_position - 1, "target_position": target_position,
+		"thorns_retaliation": thorns, "enrage_commit": enrage})
 	return hit
+
+
+## The chosen foe's Thorns N / Enrage metadata drives a real post-hit reaction, so
+## it belongs to this play's authoritative shape. CombatEnemyKeywordRules owns both
+## rules: a zero-damage probe validates every keyword field (Thorns count, Enrage
+## flag, 0..3 stack count) and the living-record contract without mutating
+## anything, so a malformed count or flag refuses BEFORE payment. An absent
+## keyword is a plain foe and stays legal.
+func _keywords_acceptable(target: Dictionary) -> bool:
+	return _keywords.quote_enrage_after_hit(target,
+		{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0}).get("ok", false)
 
 
 ## The model's is_valid checks size only. Reject corrupt mutable actor records before pay.
