@@ -828,7 +828,7 @@ func _check_skip_and_vertical_fit(label: String) -> void:
 	# leave the complete Skip label overflowing the sewn burlap.
 	_check(is_equal_approx(skip.custom_minimum_size.x,
 			ceilf(text_width + float(panel.BUTTON_EDGE + 12) * 2.0))
-		and is_equal_approx(skip.custom_minimum_size.y, maxf(54.0, text_height + 20.0)),
+		and is_equal_approx(skip.custom_minimum_size.y, maxf(46.0, text_height + 12.0)),
 		label + " Skip's minimum size is derived from the final display font")
 	var burlap := skip.get_node_or_null("BurlapPatch") as NinePatchRect
 	if burlap != null:
@@ -839,10 +839,11 @@ func _check_skip_and_vertical_fit(label: String) -> void:
 			label + " Skip keeps the established normal-size burlap slice")
 	var screen := Rect2(Vector2.ZERO, Vector2(root.size))
 	var panel_bounds := panel.paper_panel.get_global_rect()
-	var family: Array[Control] = [panel.top_stitches, panel.title_label,
-		panel.gold_label]
-	if panel.trinket_label.visible:
-		family.append(panel.trinket_label)
+	var receipt_row := panel.gold_label.get_parent() as Control
+	_check(receipt_row != null and (not panel.trinket_label.visible
+		or panel.trinket_label.get_parent() == receipt_row),
+		label + " both ledger tabs share one compact receipt row")
+	var family: Array[Control] = [panel.top_stitches, panel.title_label, receipt_row]
 	family.append(panel.choices_container)
 	family.append(skip)
 	family.append(panel.bottom_stitches)
@@ -1075,8 +1076,9 @@ func _check_display_typography() -> void:
 			"%s resolves the project display font" % action_name)
 		_check(button.get_theme_font(&"font") != body_font,
 			"%s is lettered in the display face, not the body face" % action_name)
-		_check(button.get_theme_font_size(&"font_size") == 20,
-			"%s keeps its authored 20 point size" % action_name)
+		var expected_size := 16 if button == panel.skip_button else 22
+		_check(button.get_theme_font_size(&"font_size") == expected_size,
+			"%s draws the intended primary/secondary display scale" % action_name)
 		var state_boxes: Array[StyleBoxFlat] = []
 		for state in ["normal", "hover", "disabled"]:
 			var box := button.get_theme_stylebox(state) as StyleBoxFlat
@@ -1287,8 +1289,8 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		_check(not panel.trinket_label.is_visible_in_tree(),
 			"plain Fight never displays a patch receipt just because its style exists")
 	var paper := panel.paper_panel.get_theme_stylebox("panel") as StyleBoxFlat
-	_check(paper != null and paper.bg_color.get_luminance() > 0.55
-		and paper.border_width_left >= 4, "cream stitched paper")
+	_check(paper != null and paper.bg_color.get_luminance() < 0.3
+		and paper.border_width_left >= 4, "dark stitched camp behind the readable offers")
 	var slate := panel.get_node("SlateBackdrop") as ColorRect
 	_check(slate != null and slate.color.get_luminance() < 0.3, "dark slate backing")
 	_check(panel.top_stitches.text.contains("×") and panel.bottom_stitches.text.contains("×"),
@@ -1314,6 +1316,12 @@ func _validate(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var header := content.get_node_or_null("CardHeader") as HBoxContainer
 		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
+		var seat_caption := content.get_node("CardArt/SeatCaption") as Label
+		_check(seat_caption != null and seat_caption.text == panel._seat_caption(definition)
+			and seat_caption.text.begins_with("FROM ") and seat_caption.text.contains("TO ")
+			and seat_caption.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and seat_caption.get_theme_color("font_color") == panel.LIGHT_INK,
+			"source and target rule printed on inert illustration footer: " + str(index))
 		var rarity_label := content.get_node("MetadataRow/RarityLabel") as Label
 		var cost_button := content.get_node("MetadataRow/CostButton") as Control
 		var pips_container := content.get_node("MetadataRow/PositionPips") as Control
@@ -1950,6 +1958,12 @@ func _validate_pool(receipt: Dictionary, kind: String, node_id: String) -> void:
 		var header := content.get_node_or_null("CardHeader") as HBoxContainer
 		var owner_patch := (header.get_node("OwnerPatch") as Control) if header != null else (content.get_node("OwnerPatch") as Control)
 		var name_label := content.get_node("NameLabel") as Label
+		var seat_caption := content.get_node("CardArt/SeatCaption") as Label
+		_check(seat_caption != null and seat_caption.text == panel._seat_caption(definition)
+			and seat_caption.text.begins_with("FROM ") and seat_caption.text.contains("TO ")
+			and seat_caption.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and seat_caption.get_theme_color("font_color") == panel.LIGHT_INK,
+			"source and target rule printed on inert illustration footer: " + str(index))
 		var rarity_label := content.get_node("MetadataRow/RarityLabel") as Label
 		var cost_button := content.get_node("MetadataRow/CostButton") as Control
 		var pips_container := content.get_node("MetadataRow/PositionPips") as Control
@@ -3501,7 +3515,7 @@ func _test_number_shortcuts(is_elite: bool) -> void:
 		for slot in range(4):
 			var button := actions[slot]
 			var expected_caption := "0 Skip — take no card" if slot == 3 \
-				else "%d Choose card" % (slot + 1)
+				else "%d  TAKE CARD" % (slot + 1)
 			_check(button.text == expected_caption and button.is_visible_in_tree(),
 				"%s action %d displays full numbered sewn caption" % [kind, slot])
 			var font := button.get_theme_font("font")
@@ -3653,9 +3667,16 @@ func _check_three_face_layout(kind: String) -> void:
 			and pips.size.x >= 108.0,
 			kind + " cost, rarity and six pips share a nonoverlapping row")
 		var art := content.get_node("CardArt") as LiveRunCardRewardChoicePanel._CardIllustration
-		_check(art.size.y >= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT
+		_check(art.size.y >= 140.0
+			and art.size.y >= LiveRunCardRewardChoicePanel.CARD_ART_HEIGHT
 			and art.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			kind + " card picture gets an inert readable window")
+		var caption := art.get_node_or_null("SeatCaption") as Label
+		_check(caption != null and caption.is_visible_in_tree()
+			and caption.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and caption.focus_mode == Control.FOCUS_NONE
+			and art.get_global_rect().encloses(caption.get_global_rect()),
+			kind + " full source/target caption stays inside inert image ticket")
 		var effects := content.get_node("EffectsScroll") as ScrollContainer
 		var rules := effects.get_node("RulesLabel") as Label
 		var offer: Dictionary = panel._receipt["offers"][slot]
@@ -3668,7 +3689,10 @@ func _check_three_face_layout(kind: String) -> void:
 				or effects.get_v_scroll_bar().max_value > effects.get_v_scroll_bar().page),
 			kind + " full rules are visible or wheel-scrollable rather than clipped")
 		var button := content.get_node("ChooseButton") as Button
-		_check(button.size.y >= 48.0 and button.text == "%d Choose card" % (slot + 1)
+		_check(button.get_theme_font_size("font_size") > panel.skip_button.get_theme_font_size("font_size")
+			and button.get_theme_font_size("font_size") >= 22,
+			kind + " the primary Take reads larger than the quiet Skip")
+		_check(button.size.y >= 52.0 and button.text == "%d  TAKE CARD" % (slot + 1)
 			and button.get_global_rect().end.y <= rect.end.y
 			and button.is_visible_in_tree() and not button.disabled,
 			kind + " distinct padded Choose remains reachable")
@@ -3804,12 +3828,12 @@ func _test_rules_well(fight: Dictionary, elite: Dictionary) -> void:
 	_check(measured.size() == 2, "both genuine reward kinds were measured")
 	if measured.size() != 2:
 		return
-	# The taller Fight card hands its extra height to the well, never the art:
-	# that is exactly the imbalance PLAYTEST_416 reported.
+	# The compact receipt row keeps card height and rules space consistent
+	# between Fight and Elite, leaving the illustration bounded in both.
 	_check(measured["Fight"]["art"] == measured["Elite"]["art"],
 		"card height never changes the bounded illustration")
-	_check(measured["Fight"]["well"][0] > measured["Elite"]["well"][0],
-		"the rules well absorbs the taller Fight card instead of the picture")
+	_check(is_equal_approx(measured["Fight"]["well"][0], measured["Elite"]["well"][0]),
+		"single-row pending receipts leave equal rule space for Fight and Elite")
 	_check(measured["Elite"]["well"][0]
 			>= float(LiveRunCardRewardChoicePanel.EFFECTS_WELL_MIN_HEIGHT),
 		"the shortest card still gives the rules a real well above its minimum")
