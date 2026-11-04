@@ -65,6 +65,8 @@ func _initialize() -> void:
 	_test_bolas_tangled_bonus_and_block()
 	_test_bolas_lethal_slot()
 	_test_bolas_refusals()
+	_test_bolas_mixed_status_fights()
+	_test_bolas_mixed_status_refusals()
 	_test_skein_catalog_contract()
 	_test_skein_paid_play()
 	_test_skein_slots_statuses_and_block()
@@ -2131,6 +2133,230 @@ func _test_bolas_refusals() -> void:
 	_check(retry_result.get("ok") == true and retry_deck.energy == 2
 		and retry_enemies.get_enemy(1).get("statuses") == {"tangled": 3},
 		"retry: the authentic play then succeeds exactly once")
+
+
+## AC1/AC2: an ordinary fight where the Yarn Ranger already carries the canonical Dodge
+## token (0 or 1) and/or Fear, and the chosen enemy already carries Blind (0 or 1) and/or Fear,
+## is a legal bolas target: all four authentic printings pay one energy, deal their printed
+## damage against the PRE-HIT statuses, add their printed Tangled to that same enemy and leave
+## every unrelated token, non-target enemy, pile and the seeded RNG untouched.
+func _test_bolas_mixed_status_fights() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+	# Explicit oracle for the printed two/three damage lines: untouched, Weak -25%, Exposed
+	# +50%, both 9/8, each floored once; the defender's PRE-HIT Tangled then adds its flat +2.
+	var oracle := {
+		"plain": {2: 2, 3: 3},
+		"weak": {2: 1, 3: 2},
+		"exposed": {2: 3, 3: 4},
+		"weak_exposed": {2: 2, 3: 3},
+	}
+	# Every lawful snapshot uses only canonical shapes in the role that owns them.
+	var lawful: Array = [
+		{"label": "Dodge 0 against Blind 0", "modifier": "plain", "pre_tangled": false,
+			"ranger": {"dodge_next_attack": 0}, "enemy": {"blind_next_attack": 0}},
+		{"label": "Dodge 1 against Blind 1", "modifier": "plain", "pre_tangled": false,
+			"ranger": {"dodge_next_attack": 1}, "enemy": {"blind_next_attack": 1}},
+		{"label": "Fear on both sides", "modifier": "plain", "pre_tangled": false,
+			"ranger": {"cannot_buff_next_turn": true},
+			"enemy": {"cannot_buff_next_turn": true}},
+		{"label": "Dodging feared Weak ranger against a blinded feared Tangled Bleed foe",
+			"modifier": "weak", "pre_tangled": true,
+			"ranger": {"dodge_next_attack": 1, "cannot_buff_next_turn": true, "weak": 1},
+			"enemy": {"blind_next_attack": 1, "cannot_buff_next_turn": true, "tangled": 2,
+				"bleed": 1}},
+		{"label": "inert Dodge and Weak against an inert-Blind Exposed Tangled Riposte foe",
+			"modifier": "weak_exposed", "pre_tangled": true,
+			"ranger": {"dodge_next_attack": 0, "weak": 2},
+			"enemy": {"blind_next_attack": 0, "exposed": 1, "tangled": 1, "riposte": 3}},
+	]
+	var cases := [
+		{"id": BOLAS_WOOL, "seat": 2, "damage": 2, "tangled": 1},
+		{"id": BOLAS_WOOL_PLUS, "seat": 3, "damage": 3, "tangled": 2},
+		{"id": BOLAS_TANGLE, "seat": 3, "damage": 2, "tangled": 2},
+		{"id": BOLAS_TANGLE_PLUS, "seat": 2, "damage": 3, "tangled": 3},
+	]
+	var target := 2
+	var target_block := 1
+	for index in range(cases.size()):
+		var entry: Dictionary = cases[index]
+		var card_id: String = entry["id"]
+		var seat: int = entry["seat"]
+		var printed: int = entry["damage"]
+		var added: int = entry["tangled"]
+		for token_index in range(lawful.size()):
+			var tokens: Dictionary = lawful[token_index]
+			var label: String = card_id + " with " + str(tokens["label"])
+			var party := _snare_party(seat)
+			var ranger_statuses: Dictionary = (tokens["ranger"] as Dictionary).duplicate(true)
+			party._heroes[seat - 1]["statuses"] = ranger_statuses.duplicate(true)
+			_check(party.get_hero(seat).get("statuses") == ranger_statuses,
+				label + ": fixture really gives the Ranger its lawful mixed tokens")
+			var enemy_statuses: Dictionary = (tokens["enemy"] as Dictionary).duplicate(true)
+			var enemies := _bolas_enemies([
+				{"max_hp": 30, "hp": 30, "statuses": {"blind_next_attack": 1}},
+				{"max_hp": 30, "hp": 30, "block": target_block,
+					"statuses": enemy_statuses.duplicate(true)},
+				{"max_hp": 30, "hp": 30, "statuses": {"cannot_buff_next_turn": true, "weak": 1}},
+			])
+			_check(enemies.get_enemy(target).get("statuses") == enemy_statuses,
+				label + ": fixture really gives the chosen foe its lawful mixed tokens")
+			var deck := _bolas_deck(card_id, 20261201 + index * 10 + token_index)
+			var rng_before: int = deck._rng.state
+			var draw_before: Array = deck.draw_pile.duplicate()
+			var other_before: Array = [enemies.get_enemy(1), enemies.get_enemy(3)]
+			var before := _bolas_snapshot(deck, party, enemies)
+			var damage: int = int(oracle[tokens["modifier"]][printed]) \
+				+ (2 if tokens["pre_tangled"] else 0)
+			var absorbed: int = mini(target_block, damage)
+			var hp_loss: int = damage - absorbed
+			var result: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+			_check(result.get("ok") == true and result.get("reason") == "applied",
+				label + ": the authentic paid play is accepted (got "
+					+ str(result.get("reason")) + ")")
+			_check(result.get("card_id") == card_id and result.get("cost") == 1
+				and result.get("owner_position") == seat
+				and result.get("target_position") == target,
+				label + ": receipt names the card, its one energy, the real seat and the chosen foe")
+			_check(result.get("damage") == damage,
+				label + ": pre-hit Weak/Exposed/Tangled give exactly " + str(damage) + " (got "
+					+ str(result.get("damage")) + ")")
+			_check(result.get("block_absorbed") == absorbed
+				and result.get("hp_loss") == hp_loss,
+				label + ": Block absorbs before HP and the remainder reaches HP")
+			_check(result.get("tangled_added") == added,
+				label + ": receipt reports the printed Tangled count")
+			_check(deck.energy == 2 and deck.hand.count(card_id) == 0
+				and deck.discard_pile == [card_id] and deck.draw_pile == draw_before,
+				label + ": exactly one energy, one discarded copy and no extra draw")
+			_check(deck._rng.state == rng_before, label + ": the play consumes no RNG")
+			var after: Dictionary = enemies.get_enemy(target)
+			var expected_statuses: Dictionary = enemy_statuses.duplicate(true)
+			expected_statuses["tangled"] = int(expected_statuses.get("tangled", 0)) + added
+			_check(after.get("hp") == 30 - hp_loss
+				and after.get("block") == target_block - absorbed,
+				label + ": the chosen foe lost exactly the printed damage")
+			_check(after.get("statuses") == expected_statuses,
+				label + ": Blind, Fear and every counted token survive; only Tangled grows")
+			_check(party.get_hero(seat).get("statuses") == ranger_statuses,
+				label + ": the Ranger keeps its Dodge/Fear/Weak tokens untouched")
+			_check(enemies.get_enemy(1) == other_before[0]
+				and enemies.get_enemy(3) == other_before[1],
+				label + ": both non-target enemies keep their tokens and state")
+			_check(_bolas_snapshot(deck, party, enemies)
+				== _expected_bolas(before, card_id, target, damage, added),
+				label + ": complete party, enemies, piles, energy and seeded RNG state")
+			var replay_before := _bolas_snapshot(deck, party, enemies)
+			var replay: Dictionary = resolver.play_card(deck, party, enemies, card_id, target)
+			_check(replay.get("ok") == false and replay.get("reason") == "card_not_held",
+				label + ": the spent copy cannot be replayed")
+			_check(_bolas_snapshot(deck, party, enemies) == replay_before,
+				label + ": the refused replay changes nothing")
+
+	# AC2: an identical seeded mixed-status run produces identical complete state.
+	var repeats: Array = []
+	for run_index in range(2):
+		var repeat_party := _snare_party(3)
+		repeat_party._heroes[2]["statuses"] = {"dodge_next_attack": 1,
+			"cannot_buff_next_turn": true}
+		var repeat_enemies := _bolas_enemies([
+			{"max_hp": 30, "hp": 30, "statuses": {"blind_next_attack": 1}},
+			{"max_hp": 30, "hp": 30, "block": 2,
+				"statuses": {"blind_next_attack": 1, "cannot_buff_next_turn": true,
+					"tangled": 2}},
+			{"max_hp": 30, "hp": 30},
+		])
+		var repeat_deck := _bolas_deck(BOLAS_TANGLE_PLUS, 20261999)
+		var repeat_result: Dictionary = resolver.play_card(repeat_deck, repeat_party,
+			repeat_enemies, BOLAS_TANGLE_PLUS, 2)
+		_check(repeat_result.get("ok") == true and repeat_result.get("damage") == 5,
+			"seeded repeat " + str(run_index) + ": 3 printed + pre-hit Tangled 2 = 5")
+		repeats.append(_bolas_snapshot(repeat_deck, repeat_party, repeat_enemies))
+	_check(repeats.size() == 2 and repeats[0] == repeats[1],
+		"an identical seeded mixed-status run yields identical complete state")
+
+
+## AC3: the lawful widening never coerces. The opposite-role one-shot token, every
+## non-canonical Dodge/Blind value, an inactive or non-boolean Fear, an invalid counter and an
+## unknown key still refuse before any energy, discard, damage or RNG change.
+func _test_bolas_mixed_status_refusals() -> void:
+	var resolver := CombatYarnRangerBolasCards.new()
+	# An attacking hero may never carry Blind: that belongs to the miss path.
+	var attacker_cases: Array = [
+		{"statuses": {"blind_next_attack": 0}, "reason": "invalid_statuses"},
+		{"statuses": {"blind_next_attack": 1}, "reason": "invalid_statuses"},
+		{"statuses": {"blind_next_attack": 1, "dodge_next_attack": 1},
+			"reason": "invalid_statuses"},
+		{"statuses": {"dodge_next_attack": 2}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": -1}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": true}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": false}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": 1.0}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": "1"}, "reason": "invalid_party"},
+		{"statuses": {"cannot_buff_next_turn": false}, "reason": "invalid_party"},
+		{"statuses": {"cannot_buff_next_turn": 1}, "reason": "invalid_party"},
+		{"statuses": {"cannot_buff_next_turn": 1.0}, "reason": "invalid_party"},
+		{"statuses": {"cannot_buff_next_turn": "true"}, "reason": "invalid_party"},
+		{"statuses": {"weak": -1}, "reason": "invalid_party"},
+		{"statuses": {"bleed": 1.5}, "reason": "invalid_party"},
+		{"statuses": {"forged": 1}, "reason": "invalid_party"},
+		{"statuses": {"dodge_next_attack": 1, "forged": 1}, "reason": "invalid_party"},
+	]
+	for entry: Dictionary in attacker_cases:
+		var party := _snare_party(2)
+		party._heroes[1]["statuses"] = (entry["statuses"] as Dictionary).duplicate(true)
+		var enemies := _bolas_enemies([{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}])
+		_rejected_bolas(resolver, _bolas_deck(BOLAS_WOOL, 7311), party, enemies, BOLAS_WOOL,
+			1, str(entry["reason"]), "attacker " + str(entry["statuses"]))
+	# A defending enemy may never carry Dodge: that belongs to the evasion path.
+	var defender_cases: Array = [
+		{"statuses": {"dodge_next_attack": 0}, "reason": "invalid_statuses"},
+		{"statuses": {"dodge_next_attack": 1}, "reason": "invalid_statuses"},
+		{"statuses": {"dodge_next_attack": 1, "blind_next_attack": 1},
+			"reason": "invalid_statuses"},
+		{"statuses": {"blind_next_attack": 2}, "reason": "invalid_enemies"},
+		{"statuses": {"blind_next_attack": -1}, "reason": "invalid_enemies"},
+		{"statuses": {"blind_next_attack": true}, "reason": "invalid_enemies"},
+		{"statuses": {"blind_next_attack": false}, "reason": "invalid_enemies"},
+		{"statuses": {"blind_next_attack": 1.0}, "reason": "invalid_enemies"},
+		{"statuses": {"blind_next_attack": "1"}, "reason": "invalid_enemies"},
+		{"statuses": {"cannot_buff_next_turn": false}, "reason": "invalid_enemies"},
+		{"statuses": {"cannot_buff_next_turn": 0}, "reason": "invalid_enemies"},
+		{"statuses": {"cannot_buff_next_turn": 0.0}, "reason": "invalid_enemies"},
+		{"statuses": {"tangled": -2}, "reason": "invalid_enemies"},
+		{"statuses": {"tangled": 2.0}, "reason": "invalid_enemies"},
+		{"statuses": {"tangled": false}, "reason": "invalid_enemies"},
+		{"statuses": {"riposte": -1}, "reason": "invalid_enemies"},
+		{"statuses": {"unravel": 1}, "reason": "invalid_enemies"},
+	]
+	for entry: Dictionary in defender_cases:
+		var party := _snare_party(2)
+		var enemies := _bolas_enemies([{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}])
+		enemies._enemies[0]["statuses"] = (entry["statuses"] as Dictionary).duplicate(true)
+		_rejected_bolas(resolver, _bolas_deck(BOLAS_WOOL, 7312), party, enemies, BOLAS_WOOL,
+			1, str(entry["reason"]), "defender " + str(entry["statuses"]))
+	# The whole roster is preflighted, so a malformed non-target token also refuses.
+	var non_target_party := _snare_party(2)
+	var malformed_roster := _bolas_enemies([
+		{"max_hp": 10, "hp": 10}, {"max_hp": 10, "hp": 10}])
+	malformed_roster._enemies[1]["statuses"] = {"blind_next_attack": 2}
+	_rejected_bolas(resolver, _bolas_deck(BOLAS_WOOL, 7313), non_target_party,
+		malformed_roster, BOLAS_WOOL, 1, "invalid_enemies",
+		"malformed token on a non-target enemy")
+	# Positive control: the identical fixtures with canonical tokens really are playable, so
+	# none of the refusals above can pass vacuously.
+	var control_party := _snare_party(2)
+	control_party._heroes[1]["statuses"] = {"dodge_next_attack": 1,
+		"cannot_buff_next_turn": true}
+	var control_enemies := _bolas_enemies([
+		{"max_hp": 10, "hp": 10, "statuses": {"blind_next_attack": 1,
+			"cannot_buff_next_turn": true}}])
+	var control_deck := _bolas_deck(BOLAS_WOOL, 7314)
+	var control: Dictionary = resolver.play_card(control_deck, control_party,
+		control_enemies, BOLAS_WOOL, 1)
+	_check(control.get("ok") == true and control.get("damage") == 2
+		and control_enemies.get_enemy(1).get("statuses")
+			== {"blind_next_attack": 1, "cannot_buff_next_turn": true, "tangled": 1},
+		"the same fixture with canonical tokens is playable and keeps both tokens")
 
 
 func _bolas_rng(seed_value: int) -> RandomNumberGenerator:
