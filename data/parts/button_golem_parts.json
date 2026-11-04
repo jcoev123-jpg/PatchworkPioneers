@@ -1,0 +1,459 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "button_golem_head_loose_pop",
+      "name": "Loose Button Pop",
+      "slot": "head",
+      "owner": "button_golem",
+      "stat": {
+        "acc": 5
+      },
+      "ability": {
+        "id": "button_golem_head_loose_pop_move",
+        "name": "Loose Button Pop",
+        "kind": "debuff",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          2,
+          4
+        ],
+        "crit": 2,
+        "effects": {
+          "mark": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "mark": 3
+            },
+            "dmg": [
+              3,
+              5
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "mark": 4
+            },
+            "dmg": [
+              4,
+              6
+            ]
+          }
+        }
+      },
+      "text": "Pop a loose button to Mark a front foe for a later hit."
+    },
+    {
+      "id": "button_golem_arms_button_fist",
+      "name": "Button Fist",
+      "slot": "arms",
+      "owner": "button_golem",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "button_golem_arms_button_fist_move",
+        "name": "Button Fist",
+        "kind": "melee",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          5,
+          7
+        ],
+        "crit": 4,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack",
+        "mark_damage": 3
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              6,
+              9
+            ],
+            "mark_damage": 5
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              8,
+              11
+            ],
+            "mark_damage": 7
+          }
+        }
+      },
+      "text": "Punch a front foe with a button fist; a Mark makes the hit stronger."
+    },
+    {
+      "id": "button_golem_torso_seam_resew",
+      "name": "Seam Re-Sew",
+      "slot": "torso",
+      "owner": "button_golem",
+      "stat": {
+        "max_hp": 6,
+        "prot": 3
+      },
+      "ability": {
+        "id": "button_golem_torso_seam_resew_move",
+        "name": "Seam Re-Sew",
+        "kind": "buff",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "thorns": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "thorns": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "thorns": 5
+            }
+          }
+        }
+      },
+      "text": "Restitch the seams into prickly Thorns, not a Block counter."
+    },
+    {
+      "id": "button_golem_legs_threadwheel_roll",
+      "name": "Threadwheel Roll",
+      "slot": "legs",
+      "owner": "button_golem",
+      "stat": {
+        "speed": 2
+      },
+      "ability": {
+        "id": "button_golem_legs_threadwheel_roll_move",
+        "name": "Threadwheel Roll",
+        "kind": "move",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "dodge": 6,
+          "duration": 2
+        },
+        "self_move": 1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "dodge": 8,
+              "duration": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "dodge": 11,
+              "duration": 3
+            }
+          }
+        }
+      },
+      "text": "Roll back one rank, swapping the adjacent ally and gaining temporary Dodge."
+    },
+    {
+      "id": "button_golem_head_buttonhole_snag",
+      "name": "Buttonhole Snag",
+      "slot": "head",
+      "owner": "button_golem",
+      "stat": {
+        "crit": 4
+      },
+      "ability": {
+        "id": "button_golem_head_buttonhole_snag_move",
+        "name": "Buttonhole Snag",
+        "kind": "debuff",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 93,
+        "dmg": [
+          2,
+          4
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 2
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              3,
+              5
+            ],
+            "effects": {
+              "tangled": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ],
+            "effects": {
+              "tangled": 4
+            }
+          }
+        }
+      },
+      "text": "Catch one foe in a buttonhole and leave them Tangled."
+    },
+    {
+      "id": "button_golem_arms_popping_volley",
+      "name": "Popping Volley",
+      "slot": "arms",
+      "owner": "button_golem",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "button_golem_arms_popping_volley_move",
+        "name": "Popping Volley",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 89,
+        "dmg": [
+          2,
+          3
+        ],
+        "crit": 0,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              3,
+              4
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              4,
+              6
+            ]
+          }
+        }
+      },
+      "text": "Scatter buttons across three foe ranks, once per target."
+    },
+    {
+      "id": "button_golem_torso_eyelet_guard",
+      "name": "Eyelet Guard",
+      "slot": "torso",
+      "owner": "button_golem",
+      "stat": {
+        "max_hp": 5,
+        "prot": 5
+      },
+      "ability": {
+        "id": "button_golem_torso_eyelet_guard_move",
+        "name": "Eyelet Guard",
+        "kind": "guard",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Protect one ally by intercepting their blows with Guard."
+    },
+    {
+      "id": "button_golem_legs_button_roll",
+      "name": "Button Roll",
+      "slot": "legs",
+      "owner": "button_golem",
+      "stat": {
+        "dodge": 5
+      },
+      "ability": {
+        "id": "button_golem_legs_button_roll_move",
+        "name": "Button Roll",
+        "kind": "move",
+        "launch": [
+          2,
+          3,
+          4
+        ],
+        "target": [
+          2,
+          3,
+          4
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "dodge": 5,
+          "duration": 2
+        },
+        "self_move": -1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "dodge": 10,
+              "duration": 3
+            }
+          }
+        }
+      },
+      "text": "Roll forward one rank and swap with the adjacent ally; gain temporary Dodge."
+    }
+  ]
+}
