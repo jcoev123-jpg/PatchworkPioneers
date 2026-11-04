@@ -7,7 +7,8 @@ extends RefCounted
 ##                 card_offers, trinket_offers[, visit_kind]).
 ## Default visit_kind "shop" preserves the existing five-card/two-trinket
 ## contract exactly. The optional "patch_stall" mode requires zero card
-## offers and exactly three distinct priced patch offers, allows only one
+## offers and exactly three distinct priced patch offers (for a three- or a
+## four-hero Stitched party; Shop and Peddler stay exactly three), allows only one
 ## successful patch purchase per visit, and refuses paid removal rebases.
 ## "peddler" requires one distinct card per party hero and one patch, permits
 ## one successful purchase of either kind, and refuses paid removal rebases.
@@ -32,13 +33,17 @@ func _init(party_ids: Variant, deck_card_ids: Variant, owned_trinket_ids: Varian
 		gold: Variant, card_offers: Variant, trinket_offers: Variant,
 		visit_kind: Variant = "shop") -> void:
 	# Validate before publishing any partial state.
-	if typeof(party_ids) != TYPE_ARRAY or party_ids.size() != 3:
+	# The visit kind is validated first: only a Patch Stall may also admit a
+	# four-hero Stitched party; Shop and Peddler keep exactly three actors.
+	if not visit_kind is String or not visit_kind in ["shop", "patch_stall", "peddler"]:
+		return
+	if typeof(party_ids) != TYPE_ARRAY:
+		return
+	if party_ids.size() != 3 and not (visit_kind == "patch_stall" and party_ids.size() == 4):
 		return
 	if typeof(deck_card_ids) != TYPE_ARRAY or typeof(owned_trinket_ids) != TYPE_ARRAY:
 		return
 	if typeof(gold) != TYPE_INT or gold < 0:
-		return
-	if not visit_kind is String or not visit_kind in ["shop", "patch_stall", "peddler"]:
 		return
 	if typeof(card_offers) != TYPE_ARRAY or typeof(trinket_offers) != TYPE_ARRAY:
 		return
