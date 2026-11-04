@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_tangled_enemy_debuff()
 	_test_inkbrush_blind_transaction()
 	_test_stitched_blind_guard()
+	_test_blind_ricochet_paid_miss()
 	for failure in failures:
 		printerr(failure)
 	print("combat_enemy_special_actions_test: ",
@@ -642,6 +643,47 @@ func _deck_snapshot(deck: CombatDeck, party: CombatParty) -> Dictionary:
 	return result
 
 
+## Full authoritative state for a paid-miss call: rosters, deck piles, energy and
+## both run-RNG fields, so any hidden spend, draw or hit shows up as a difference.
+func _blind_state(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies) -> String:
+	return JSON.stringify({"deck": _deck_snapshot(deck, party),
+		"enemies": enemies.get_enemies()})
+
+
+## A real shared CombatDeck holding two copies of one card plus a spare.
+func _ricochet_deck(card_id: String, seed_value: int = 49217) -> CombatDeck:
+	var deck := CombatDeck.new([card_id, card_id, "tinker_spare_parts"], _test_rng(seed_value))
+	_check(deck.start_turn() and deck.turn_active and deck.energy == 3,
+		"precondition: genuine shared deck starts active with three energy")
+	deck.hand.assign([card_id, card_id])
+	deck.draw_pile.assign(["tinker_spare_parts"])
+	deck.discard_pile.clear()
+	_check(deck.hand.count(card_id) == 2 and deck.energy == 3,
+		"precondition: two held " + card_id + " copies and three energy")
+	return deck
+
+
+func _armed_party() -> CombatParty:
+	var party := _party()
+	party._heroes[2]["statuses"] = {"blind_next_attack": 1}
+	_check(party.get_hero(3).get("id") == "tinker"
+		and party.get_hero(3).get("statuses", {}).get("blind_next_attack") == 1
+		and party.get_hero(3).hp == 26,
+		"precondition: Blind 1 armed on the living back-seat Tinker")
+	return party
+
+
+## A rejected cast must be a complete no-op: no energy, card, status, actor or RNG.
+func _blind_reject(service: CombatHeroBlindMiss, deck: CombatDeck,
+		party: CombatParty, enemies: CombatEnemies, card_id: String, target: int,
+		definition: Dictionary, discount: int, label: String) -> Dictionary:
+	var before := _blind_state(deck, party, enemies)
+	var result := service.attempt(deck, party, enemies, card_id, target, definition, discount)
+	_check(not result.get("ok", false) and _blind_state(deck, party, enemies) == before,
+		label + ": pays no energy, discards nothing, spends no Blind and draws no RNG")
+	return result
+
+
 func _apply_turn_batch(party: CombatParty, ticked_actors: Array) -> void:
 	for index in range(CombatParty.PARTY_SIZE):
 		var hero: Dictionary = party._heroes[index]
@@ -950,3 +992,246 @@ func _test_stitched_blind_guard() -> void:
 	party._heroes[0]["statuses"].erase("blind_next_attack")
 	_check(not CombatHeroBlindMiss.blocks_stitched(party, strike, brace),
 		"once consumed Blind no longer blocks genuine stitched attacks")
+
+
+func _test_blind_ricochet_paid_miss() -> void:
+	var catalog := TinkerPoolCards.new()
+	var service := CombatHeroBlindMiss.new()
+	for entry in CombatHeroBlindMiss.RICOCHET_IDS:
+		var card_id: String = entry
+		var definition := catalog.get_definition(card_id)
+		var effects: Dictionary = definition.get("effects", {})
+		var printed_damage := 4 if card_id == "tinker_ricochet" else 6
+		_check(definition.get("id") == card_id and definition.get("owner") == "tinker"
+			and definition.get("cost") == 1 and definition.get("from_positions") == [2, 3]
+			and definition.get("to_positions") == [1, 2, 3]
+			and definition.get("target_kind") == "enemy_random"
+			and effects.get("damage") == printed_damage and effects.get("hit_count") == 3
+			and effects.get("random_target_each_hit") == true
+			and effects.get("rng_source") == "run"
+			and effects.get("living_targets_only") == true,
+			"precondition: genuine authored " + card_id + " is three 1-cost random hits")
+
+		# --- AC1: the whole card misses once, before any random targeting ---
+		var party := _armed_party()
+		var enemies := _enemies()
+		var deck := _ricochet_deck(card_id)
+		var heroes_before := party.get_heroes()
+		var foes_before := enemies.get_enemies()
+		var hand_size_before: int = deck.hand.size()
+		var rng_before: int = deck._rng.state
+		var rng_seed_before: int = deck._rng.seed
+		var result := service.attempt(deck, party, enemies, card_id, 0, definition)
+		var expected := {"handled": true, "ok": true, "miss": true, "card_id": card_id,
+			"owner_position": 3, "target_position": 0, "cost": 1, "hits": [],
+			"damage": 0, "hp_loss": 0, "block_absorbed": 0, "reason": "blind_miss"}
+		_check(result == expected,
+			"AC1: blinded " + card_id + " returns exactly the zero-hit miss receipt")
+		_check(deck.energy == 2 and deck.combat_state.energy == 2
+			and deck.hand.size() == hand_size_before - 1
+			and deck.hand.count(card_id) == 1 and deck.discard_pile == [card_id],
+			"AC1: one printed energy and exactly one held copy move on " + card_id)
+		_check(not party.get_hero(3).get("statuses", {}).has("blind_next_attack")
+			and party.get_hero(3).hp == heroes_before[2].hp,
+			"AC1: the Tinker keeps every HP and loses only the one-shot Blind token")
+		var heroes_after := party.get_heroes()
+		var actors_intact: bool = heroes_after[0] == heroes_before[0] \
+			and heroes_after[1] == heroes_before[1] \
+			and heroes_after[2]["hp"] == heroes_before[2]["hp"] \
+			and heroes_after[2]["block"] == heroes_before[2]["block"]
+		_check(actors_intact and enemies.get_enemies() == foes_before
+			and deck._rng.state == rng_before and deck._rng.seed == rng_seed_before,
+			"AC1: all three random hits are absent, so no foe, ally or run draw changes")
+		var replay_party := _armed_party()
+		var replay_enemies := _enemies()
+		var replay_deck := _ricochet_deck(card_id)
+		var replay := service.attempt(replay_deck, replay_party, replay_enemies, card_id, 0,
+			catalog.get_definition(card_id))
+		_check(replay == result and _blind_state(replay_deck, replay_party, replay_enemies)
+			== _blind_state(deck, party, enemies),
+			"AC1: an independent same-seed cast repeats " + card_id + " receipt and post-state")
+
+		# --- AC2: only the one attempted card is swallowed ---
+		var spent_state := _blind_state(deck, party, enemies)
+		var second := service.attempt(deck, party, enemies, card_id, 0, definition)
+		_check(second == {"handled": false, "ok": false}
+			and _blind_state(deck, party, enemies) == spent_state,
+			"AC2: a spent Blind leaves the second " + card_id + " unpaid and untouched")
+		var ordinary := CombatTinkerPoolAttacks.new().play_attack(
+			deck, party, enemies, card_id, 0)
+		_check(ordinary.get("ok") == true and ordinary.get("hits", []).size() == 3
+			and deck.energy == 1 and deck.discard_pile == [card_id, card_id],
+			"AC2: that second " + card_id + " still resolves its ordinary three random hits")
+		var clean_party := _party()
+		var clean_enemies := _enemies()
+		var clean_deck := _ricochet_deck(card_id)
+		var clean_state := _blind_state(clean_deck, clean_party, clean_enemies)
+		_check(service.attempt(clean_deck, clean_party, clean_enemies, card_id, 0, definition)
+			== {"handled": false, "ok": false}
+			and _blind_state(clean_deck, clean_party, clean_enemies) == clean_state,
+			"AC2: without Blind " + card_id + " is neither handled nor charged")
+		clean_party._heroes[2]["statuses"] = {"blind_next_attack": 0}
+		var inert_state := _blind_state(clean_deck, clean_party, clean_enemies)
+		_check(service.attempt(clean_deck, clean_party, clean_enemies, card_id, 0, definition)
+			== {"handled": false, "ok": false}
+			and _blind_state(clean_deck, clean_party, clean_enemies) == inert_state,
+			"AC2: an inert 0 token never starts a " + card_id + " miss")
+
+		# --- AC3: narrow, fail-closed admission ---
+		for target in [1, 2, 3, -1, 4]:
+			var target_party := _armed_party()
+			var target_enemies := _enemies()
+			var target_deck := _ricochet_deck(card_id)
+			var wrong_target := _blind_reject(service, target_deck, target_party,
+				target_enemies, card_id, target, definition, 0,
+				"AC3: preselected Ricochet target %d" % target)
+			_check(wrong_target.get("handled") == true,
+				"AC3: only target 0 is legal for " + card_id)
+		var dead_party := _armed_party()
+		var dead_enemies := _enemies()
+		var dead_deck := _ricochet_deck(card_id)
+		_check(dead_enemies.apply_damage(1, 99) and dead_enemies.apply_damage(2, 99)
+			and dead_enemies.apply_damage(3, 99) and dead_enemies.is_victorious(),
+			"precondition: every authored TO foe is dead")
+		_blind_reject(service, dead_deck, dead_party, dead_enemies, card_id, 0,
+			definition, 0, "AC3: no living TO foe")
+		for discount in [2, -1, 99]:
+			var discount_party := _armed_party()
+			var discount_enemies := _enemies()
+			var discount_deck := _ricochet_deck(card_id)
+			_blind_reject(service, discount_deck, discount_party, discount_enemies,
+				card_id, 0, definition, discount,
+				"AC3: unprinted discount %d" % discount)
+		var poor_party := _armed_party()
+		var poor_enemies := _enemies()
+		var poor_deck := _ricochet_deck(card_id)
+		poor_deck.combat_state.energy = 0
+		_check(poor_deck.energy == 0, "precondition: no energy for the one-shot miss")
+		_blind_reject(service, poor_deck, poor_party, poor_enemies, card_id, 0,
+			definition, 0, "AC3: unavailable energy")
+		var unheld_party := _armed_party()
+		var unheld_enemies := _enemies()
+		var unheld_deck := _ricochet_deck(card_id)
+		unheld_deck.hand.assign(["tinker_spare_parts"])
+		_check(not unheld_deck.hand.has(card_id),
+			"precondition: no " + card_id + " is really held")
+		var unheld := _blind_reject(service, unheld_deck, unheld_party, unheld_enemies,
+			card_id, 0, definition, 0, "AC3: unheld " + card_id)
+		_check(unheld.get("handled") == true,
+			"AC3: an unheld " + card_id + " is a refused attempt, not a miss")
+		var forged_effects: Dictionary = definition["effects"].duplicate(true)
+		forged_effects["damage"] = 400
+		var inflated := definition.duplicate(true)
+		inflated["effects"] = forged_effects.duplicate(true)
+		var free := definition.duplicate(true)
+		free["cost"] = 0
+		var widened := definition.duplicate(true)
+		widened["to_positions"] = [1, 2, 3, 4]
+		var two_hits_effects: Dictionary = definition["effects"].duplicate(true)
+		two_hits_effects["hit_count"] = 2
+		var two_hits := definition.duplicate(true)
+		two_hits["effects"] = two_hits_effects
+		var turn_rng_effects: Dictionary = definition["effects"].duplicate(true)
+		turn_rng_effects["rng_source"] = "turn"
+		var turn_rng := definition.duplicate(true)
+		turn_rng["effects"] = turn_rng_effects
+		for forged in [inflated, free, widened, two_hits, turn_rng]:
+			var forged_party := _armed_party()
+			var forged_enemies := _enemies()
+			var forged_deck := _ricochet_deck(card_id)
+			var forged_result := _blind_reject(service, forged_deck, forged_party,
+				forged_enemies, card_id, 0, forged, 0,
+				"AC3: forged " + card_id + " pool descriptor")
+			_check(forged_result == {"handled": false, "ok": false},
+				"AC3: an unauthentic random descriptor is not an attack at all")
+		var seat_party := _party()
+		seat_party._heroes[0]["id"] = "tinker"
+		seat_party._heroes[2]["id"] = "warden"
+		seat_party._heroes[0]["statuses"] = {"blind_next_attack": 1}
+		var seat_enemies := _enemies()
+		var seat_deck := _ricochet_deck(card_id)
+		_check(seat_party.get_hero(1).get("id") == "tinker"
+			and seat_party.get_hero(3).get("id") == "warden"
+			and seat_party.get_hero(1).get("statuses", {}).get("blind_next_attack") == 1,
+			"precondition: the real Tinker sits in the front seat outside FROM [2,3]")
+		_blind_reject(service, seat_deck, seat_party, seat_enemies, card_id, 0,
+			definition, 0, "AC3: illegal Tinker seat")
+		var downed_party := _armed_party()
+		_check(downed_party.apply_damage(3, 26) and downed_party.is_downed(3),
+			"precondition: the Blinded Tinker is really downed")
+		var downed_enemies := _enemies()
+		var downed_deck := _ricochet_deck(card_id)
+		_blind_reject(service, downed_deck, downed_party, downed_enemies, card_id, 0,
+			definition, 0, "AC3: downed Tinker")
+		for bad_blind in [{"blind_next_attack": 2}, {"blind_next_attack": -1},
+				{"blind_next_attack": true}, {"bogus_status": 1}]:
+			var shape_party := _party()
+			shape_party._heroes[2]["statuses"] = bad_blind.duplicate(true)
+			var shape_enemies := _enemies()
+			var shape_deck := _ricochet_deck(card_id)
+			_blind_reject(service, shape_deck, shape_party, shape_enemies, card_id, 0,
+				definition, 0, "AC3: malformed Blind status")
+		var array_party := _party()
+		array_party._heroes[2]["statuses"] = ["blind_next_attack"]
+		var array_enemies := _enemies()
+		var array_deck := _ricochet_deck(card_id)
+		_blind_reject(service, array_deck, array_party, array_enemies, card_id, 0,
+			definition, 0, "AC3: non-dictionary Blind statuses")
+
+	# --- AC3/AC4: neighbouring card shapes keep their existing contracts ---
+	var support := catalog.get_definition("tinker_spare_parts")
+	var support_party := _armed_party()
+	var support_enemies := _enemies()
+	var support_deck := _test_deck(["tinker_spare_parts", "tinker_spare_parts"], 49218)
+	support_deck.hand.assign(["tinker_spare_parts"])
+	var support_result := _blind_reject(service, support_deck, support_party,
+		support_enemies, "tinker_spare_parts", 0, support, 0,
+		"AC3: nonattack Tinker card")
+	_check(support_result == {"handled": false, "ok": false},
+		"AC3: a nonattack card never reads or spends Blind")
+	var rivet := catalog.get_definition("tinker_rivet_shot")
+	_check(rivet.get("target_kind") == "enemy_single"
+		and rivet.get("effects", {}).get("damage") == 4,
+		"precondition: genuine single-target Tinker attack")
+	var unprinted_party := _armed_party()
+	var unprinted_enemies := _enemies()
+	var unprinted_deck := _test_deck(["tinker_rivet_shot", "tinker_rivet_shot"], 49219)
+	unprinted_deck.hand.assign(["tinker_rivet_shot"])
+	var unprinted := _blind_reject(service, unprinted_deck, unprinted_party,
+		unprinted_enemies, "tinker_rivet_shot", 4, rivet, 0,
+		"AC3: unprinted single target")
+	_check(unprinted.get("handled") == true,
+		"AC3: existing single-target legality still fails closed")
+	var single_party := _armed_party()
+	var single_enemies := _enemies()
+	var single_deck := _test_deck(["tinker_rivet_shot", "tinker_rivet_shot"], 49219)
+	single_deck.hand.assign(["tinker_rivet_shot"])
+	var single := service.attempt(single_deck, single_party, single_enemies,
+		"tinker_rivet_shot", 1, rivet)
+	_check(single.get("ok") == true and single.get("miss") == true
+		and single.get("hits") == [] and single_deck.energy == 2
+		and single_deck.discard_pile == ["tinker_rivet_shot"]
+		and not single_party.get_hero(3).get("statuses", {}).has("blind_next_attack"),
+		"AC3: existing single-target Blind miss is unchanged")
+	var scatter := catalog.get_definition("tinker_scatter_bolts")
+	_check(scatter.get("target_kind") == "enemy_all",
+		"precondition: genuine area Tinker attack")
+	var scatter_party := _armed_party()
+	var scatter_enemies := _enemies()
+	var scatter_deck := _test_deck(["tinker_scatter_bolts"], 49220)
+	scatter_deck.hand.assign(["tinker_scatter_bolts"])
+	var scatter_target := _blind_reject(service, scatter_deck, scatter_party,
+		scatter_enemies, "tinker_scatter_bolts", 1, scatter, 0,
+		"AC3: preselected area target")
+	_check(scatter_target.get("handled") == true,
+		"AC3: existing area-target legality still fails closed")
+	var area_party := _armed_party()
+	var area_enemies := _enemies()
+	var area_deck := _test_deck(["tinker_scatter_bolts"], 49221)
+	area_deck.hand.assign(["tinker_scatter_bolts"])
+	var area := service.attempt(area_deck, area_party, area_enemies,
+		"tinker_scatter_bolts", 0, scatter)
+	_check(area.get("ok") == true and area.get("miss") == true
+		and area.get("hits") == [] and area_deck.energy == 2
+		and area_deck.discard_pile == ["tinker_scatter_bolts"],
+		"AC3: existing all-target Blind miss still pays exactly once")

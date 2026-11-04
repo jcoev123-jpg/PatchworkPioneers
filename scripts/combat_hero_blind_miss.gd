@@ -5,13 +5,18 @@ extends RefCounted
 ## entering this scene-free transaction. No combat hit resolver is invoked.
 
 const KEY := "blind_next_attack"
+## The only two printings whose targets are chosen while the card resolves.
+## Blind skips the whole attempted card, so no recipient is ever sampled.
+const RICOCHET_IDS: Array[String] = ["tinker_ricochet", "tinker_ricochet_plus"]
 
 ## A missing token is not handled. Malformed owner statuses fail closed.
 ## Nonattack cards never read or consume Blind.
 func attempt(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 		card_id: String, target: int, definition: Dictionary, discount: int = 0) -> Dictionary:
 	var failure := {"handled": true, "ok": false, "reason": "invalid_blind_attack"}
-	if not is_ordinary_attack(definition, card_id):
+	# Random-target Ricochet is admitted only as its exact authored printing.
+	var ricochet := is_authentic_ricochet(card_id, definition)
+	if not ricochet and not is_ordinary_attack(definition, card_id):
 		return {"handled": false, "ok": false}
 	if deck == null or party == null or enemies == null or deck.combat_state == null \
 			or deck._rng == null or not deck.turn_active or not party.is_valid() \
@@ -45,11 +50,14 @@ func attempt(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	elif kind == "enemy_all":
 		if target != 0:
 			return failure
-		var living := false
-		for enemy in enemies.get_enemies():
-			if enemy.get("hp", 0) > 0 and definition["to_positions"].has(enemy["position"]):
-				living = true
-		if not living:
+		if not has_living_target(enemies, definition["to_positions"]):
+			return failure
+	elif kind == "enemy_random" and ricochet:
+		# Ricochet selects a new living foe per hit only while resolving, so the
+		# caller may never preselect one and a missed card samples no target.
+		if target != 0:
+			return failure
+		if not has_living_target(enemies, definition["to_positions"]):
 			return failure
 	else:
 		return failure
@@ -84,6 +92,35 @@ static func is_ordinary_attack(definition: Dictionary, card_id: String) -> bool:
 		return false
 	var effects: Variant = definition.get("effects")
 	return effects is Dictionary and effects.get("damage") is int and effects["damage"] > 0
+
+
+## Only the two catalog Ricochet printings may miss as a random-target card, and
+## only when the caller's descriptor is the full unchanged authored definition:
+## a forged or edited copy is never a Ricochet. The authored pool is read here,
+## so no caller can admit another card, target kind or effect shape.
+static func is_authentic_ricochet(card_id: String, definition: Dictionary) -> bool:
+	if not RICOCHET_IDS.has(card_id) or definition.is_empty():
+		return false
+	var authored := TinkerPoolCards.new().get_definition(card_id)
+	if authored.is_empty() or definition != authored:
+		return false
+	var effects: Variant = authored.get("effects")
+	if not effects is Dictionary or not effects.get("damage") is int or effects["damage"] <= 0 \
+			or effects.get("hit_count") != 3 or effects.get("random_target_each_hit") != true \
+			or effects.get("rng_source") != "run" or effects.get("living_targets_only") != true:
+		return false
+	return authored.get("owner") == "tinker" and authored.get("cost") == 1 \
+		and authored.get("target_kind") == "enemy_random"
+
+
+## Ricochet and area cards need at least one living foe in the authored TO slots.
+static func has_living_target(enemies: CombatEnemies, to_positions: Array) -> bool:
+	if enemies == null:
+		return false
+	for enemy in enemies.get_enemies():
+		if enemy.get("hp", 0) > 0 and to_positions.has(enemy.get("position")):
+			return true
+	return false
 
 
 ## Stitched attacks need ordered-half miss semantics. For now a blinded hero
