@@ -165,9 +165,9 @@ func _exercise(fixture: Dictionary, kind: String) -> void:
 		and _art(0).focus_mode == Control.FOCUS_NONE,
 		"clipped CardArt never captures pointer or keyboard")
 	_check(panel._card_panels[0].get_node("CardMargin/CardContent/CardHeader/HelpButton").text
-		== "Details" and panel.get_choice_buttons()[0].text.contains("Choose")
+		== "Details" and panel.get_choice_buttons()[0].text.contains("TAKE CARD")
 		and panel.skip_button.text.contains("Skip"),
-		"Details/Choose/Skip still mounted with readable names")
+		"Details/Take/Skip still mounted with readable names")
 	panel._process(0.8)
 	var samples: Array[Vector2] = []
 	for i in range(3):

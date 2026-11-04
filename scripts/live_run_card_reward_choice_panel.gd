@@ -60,9 +60,9 @@ const OWNER_NAME_SIDE_INSET := 8
 ## cropping art behind its text. The picture is a *bounded* window: it keeps its
 ## readable minimum and never grows with the card's spare height (see
 ## _mount_card), so a tall card cannot turn the illustration into the loudest
-## thing on the face. Its minimum leaves 96px for the cropped picture and
+## thing on the face. Its minimum leaves 128px for the cropped picture and
 ## 8px of sewn backing on each edge while every face stays aligned.
-const CARD_ART_HEIGHT := 112
+const CARD_ART_HEIGHT := 144
 const NAME_STRIP_HEIGHT := 32
 ## Card-local rhythm: every strip keeps its own measured height and the bounded
 ## picture gives its spare pixels to the rules well, so the name, cost coin,
@@ -72,7 +72,7 @@ const CARD_CONTENT_SEPARATION := 2
 const CARD_SIDE_MARGIN := 10
 const PIPS_STRIP_HEIGHT := 20
 const COST_COIN_SIZE := 38
-const CHOOSE_HEIGHT := 48
+const CHOOSE_HEIGHT := 52
 ## VIS V2 body floor at 1280x720: the short rules and the rarity tag are read
 ## from arm's length at the sewing table, so both keep the project body face at
 ## 18 px instead of the earlier 15 px. The card's own name stays on its 21 px
@@ -130,7 +130,7 @@ const FRAME_EDGE := 30
 ## The ribbon's swallow tails (left) and sewn-on patch (right) stay unstretched.
 const BANNER_LEFT := 64
 const BANNER_RIGHT := 86
-const BANNER_HEIGHT := 72
+const BANNER_HEIGHT := 64
 const BUTTON_EDGE := 22
 ## Room the sewn borders take before any card or panel content starts.
 const QUILT_INSET := 30
@@ -138,8 +138,8 @@ const FRAME_INSET := 24
 
 @onready var paper_panel: PanelContainer = $PaperPanel
 @onready var title_label: Label = $PaperPanel/ContentMargin/RewardContent/RewardTitle
-@onready var gold_label: Label = $PaperPanel/ContentMargin/RewardContent/GoldLabel
-@onready var trinket_label: Label = $PaperPanel/ContentMargin/RewardContent/TrinketLabel
+@onready var gold_label: Label = $PaperPanel/ContentMargin/RewardContent/ReceiptRow/GoldLabel
+@onready var trinket_label: Label = $PaperPanel/ContentMargin/RewardContent/ReceiptRow/TrinketLabel
 @onready var choices_container: HBoxContainer = $PaperPanel/ContentMargin/RewardContent/CardChoices
 @onready var skip_button: Button = $PaperPanel/ContentMargin/RewardContent/SkipButton
 @onready var top_stitches: Label = $PaperPanel/ContentMargin/RewardContent/TopStitches
@@ -392,6 +392,8 @@ func open_rewards(node_id: Variant, node_kind: Variant, prepared: Variant) -> bo
 	skip_button.disabled = false
 	skip_button.focus_mode = Control.FOCUS_ALL
 	_style_button(skip_button, Color("#766351"))
+	# Leaving without a card is available but reads quieter than three Takes.
+	skip_button.add_theme_font_size_override("font_size", 16)
 	_fit_skip_button()
 	_add_focus_stitch(skip_button)
 	_choice_buttons.append(skip_button)
@@ -457,7 +459,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	card.name = "Card_%d" % index
 	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.size_flags_stretch_ratio = 1.0
-	card.custom_minimum_size = Vector2(0, 320)
+	card.custom_minimum_size = Vector2(0, 390)
 	card.mouse_filter = Control.MOUSE_FILTER_STOP
 	card.focus_mode = Control.FOCUS_NONE
 	_style_card(card, String(offer["owner"]), false)
@@ -507,7 +509,7 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	owner_label.offset_right = -OWNER_NAME_SIDE_INSET
 	owner_patch.add_child(owner_label)
 
-	# Illustration window: image-only, inert to pointer and focus, and sized to
+	# Illustration window: image-led, inert to pointer and focus, and sized to
 	# its own patch so the name, cost, marks, rules and Choose stay separate.
 	# The resolved art keeps two distinct modes: the card's own picture fills
 	# its contained window, while a fallback hero emblem sits on a wide sewn
@@ -524,6 +526,28 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	# so the illustration can never dwarf the authored effects again.
 	illustration.size_flags_vertical = Control.SIZE_FILL
 	content.add_child(illustration)
+	# The illustrated ticket also prints the actual source/recipient rule in
+	# words. These are catalog seats, not a speculative play preview; the six
+	# painted position marks and the full Details remain available below.
+	var seat_caption := _card_label("SeatCaption", _seat_caption(definition), 14)
+	seat_caption.add_theme_color_override("font_color", LIGHT_INK)
+	seat_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	seat_caption.clip_text = true
+	seat_caption.anchor_left = 0.0
+	seat_caption.anchor_right = 1.0
+	seat_caption.anchor_top = 1.0
+	seat_caption.anchor_bottom = 1.0
+	seat_caption.offset_left = 12.0
+	seat_caption.offset_right = -12.0
+	seat_caption.offset_top = -27.0
+	seat_caption.offset_bottom = -3.0
+	var caption_felt := StyleBoxFlat.new()
+	caption_felt.bg_color = Color("#243038")
+	caption_felt.border_color = OWNER_COLORS[owner]
+	caption_felt.set_border_width_all(1)
+	caption_felt.set_corner_radius_all(4)
+	seat_caption.add_theme_stylebox_override("normal", caption_felt)
+	illustration.add_child(seat_caption)
 
 	# Name on its own readable torn-paper strip, never cropped illustration art
 	var name_label := _card_label("NameLabel", definition["display_name"], 21)
@@ -640,12 +664,18 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	# Choose button
 	var action := Button.new()
 	action.name = "ChooseButton"
-	action.text = "%d Choose card" % (index + 1)
+	action.text = "%d  TAKE CARD" % (index + 1)
 	action.focus_mode = Control.FOCUS_ALL
 	action.custom_minimum_size = Vector2(0, CHOOSE_HEIGHT)
 	action.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	action.mouse_filter = Control.MOUSE_FILTER_STOP
 	_style_button(action, OWNER_COLORS[offer["owner"]])
+	action.add_theme_font_size_override("font_size", 22)
+	# Warm burlap and a stronger owner stitch make these the primary tickets.
+	var take_face := action.get_theme_stylebox("normal") as StyleBoxFlat
+	if take_face != null:
+		take_face.bg_color = Color(0.95, 0.83, 0.61, 0.28) if art_texture(BURLAP_BUTTON) != null else Color("#e7c995")
+		take_face.set_border_width_all(4)
 	_add_focus_stitch(action)
 	content.add_child(action)
 
@@ -672,8 +702,16 @@ func _mount_card(index: int, offer: Dictionary, definition: Dictionary) -> Panel
 	return card
 
 
-## The hover legend for the six painted marks. The face prints no position, so
-## this is the only place the reward view spells the exact legal slots out; a
+## Short literal seat caption for the illustration footer; no inferred targets.
+func _seat_caption(definition: Dictionary) -> String:
+	var source := _positions_text(definition.get("from_positions", []), "none")
+	var recipients: Array = definition.get("to_positions", [])
+	var target := _positions_text(recipients, "") if not recipients.is_empty() else _target_slot_text(definition)
+	return "FROM %s  ·  TO %s" % [source, target]
+
+
+## The hover legend explains the six painted marks in full, supplementing
+## the short literal seat caption on the illustrated ticket; a
 ## card that chooses a hero (or has no target) says that no square is filled.
 func _pip_legend(definition: Dictionary) -> String:
 	var from_text := _positions_text(definition.get("from_positions", []), "no slot")
@@ -1279,7 +1317,7 @@ func _update_card_style(index: int) -> void:
 func _apply_patchwork_style() -> void:
 	title_label.theme_type_variation = &"PatchHeading"
 	var paper := StyleBoxFlat.new()
-	paper.bg_color = Color("#e9dcc3")
+	paper.bg_color = Color("#2e3439")
 	paper.border_color = Color("#736451")
 	paper.set_border_width_all(5)
 	paper.set_corner_radius_all(14)
@@ -1300,7 +1338,7 @@ func _apply_patchwork_style() -> void:
 	_sew_receipt_tab(gold_label, RECEIPT_GOLD_FELT)
 	_sew_receipt_tab(trinket_label, RECEIPT_PATCH_FELT)
 	for label in [top_stitches, bottom_stitches]:
-		label.add_theme_color_override("font_color", Color("#77624f"))
+		label.add_theme_color_override("font_color", Color("#dac5a1"))
 		label.add_theme_font_size_override("font_size", 17)
 	_apply_sewn_art(paper, content_margin)
 
@@ -1359,8 +1397,8 @@ func _apply_sewn_art(paper: StyleBoxFlat, content_margin: MarginContainer) -> vo
 		paper_panel.anchor_right = 0.98
 	var quilt := art_texture(QUILT_PANEL)
 	if quilt != null:
-		# Plain linen under the quilt's centre, matching the quilt's own weave.
-		paper.bg_color = Color("#e3d0b5")
+		# Deep slate beneath the existing sewn quilt border gives the cards contrast.
+		paper.bg_color = Color("#2e3439")
 		paper.border_color = Color(paper.border_color, 0.0)
 		paper.shadow_size = 18
 		for side in [SIDE_LEFT, SIDE_RIGHT, SIDE_TOP, SIDE_BOTTOM]:
@@ -1405,7 +1443,7 @@ func _fit_skip_button() -> void:
 	var border_space: float = float(BUTTON_EDGE + 12) * 2.0
 	skip_button.custom_minimum_size = Vector2(
 		ceilf(label_width + border_space),
-		maxf(54.0, font.get_height(point_size) + 20.0))
+		maxf(46.0, font.get_height(point_size) + 12.0))
 
 
 ## Resolve the display face a reward action draws with even before the card
