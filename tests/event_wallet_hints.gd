@@ -302,4 +302,19 @@ const SEEDS := [
 	# Genuine five-Event to Fight Parcel witness after the expanded pool;
 	# both ordinary and stitched mounted Parcel visits revalidate this seed.
 	4280583421, # frayed_debt_parcel to Fight
+	# Lane 8 gothic object-led wallet stories: genuine six-Event map, paid
+	# Warden toll, and one sorted-pool draw after the Mirror, Harp, Umbrella
+	# and Lockbox were appended. Keep prior witnesses and their checks intact.
+	40988, # v3_nightglass_firefly_hutch
+	126735, # v3_ghostlight_playhouse
+	187820, # v3_velvet_patch_pier
+	214506, # v3_dreaming_quilt_fair
+	242244, # v3_inky_needle_orchard
+	245799, # v3_oxblood_moss_garden
+	298458, # v3_moonlace_tailor
+	444718, # v3_quilt_reef_lighthouse
+	492543, # v3_velvet_thread_harp
+	694752, # estate_sale (outside previous bounded fallback)
+	815070, # v3_warden_cinder_shield_parade
+	5836208, # fate_pin_auction (strict six-Event/Treasure route)
 ]
