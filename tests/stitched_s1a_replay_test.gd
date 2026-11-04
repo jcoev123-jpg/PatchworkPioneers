@@ -1366,7 +1366,13 @@ func _test_ac4_hanging() -> void:
 	_check(downing["ok"], "AC4: the foe's heavy hit resolves")
 	var warden := heal_battle.get_unit("warden")
 	_check(int(warden["hp"]) == 0 and bool(warden["hanging"]), "AC4: a 0-HP hero is Hanging by a Thread")
-	_check(_drive_to(heal_battle, "seamstress"), "AC4: a Hanging hero's ally still gets a turn")
+	# S1b's extra opening/tear rolls can put another foe before this healer.
+	# Pass intervening actors to keep this legacy S1a check about healing, not damage.
+	var heal_steps := 0
+	while not heal_battle.is_over() and heal_battle.current_actor_id() != "seamstress" and heal_steps < 50:
+		heal_battle.pass_turn()
+		heal_steps += 1
+	_check(heal_battle.current_actor_id() == "seamstress", "AC4: a Hanging hero's ally still gets a turn")
 	var mend := heal_battle.use_part("test_torso_heal", 1)
 	_check(mend["ok"], "AC4: the mend resolves on the Hanging hero")
 	warden = heal_battle.get_unit("warden")

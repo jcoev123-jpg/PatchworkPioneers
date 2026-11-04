@@ -24,9 +24,8 @@ extends RefCounted
 ## that redirects enemy hits aimed at the guarded ally. Mark only adds damage to abilities
 ## authored with mark_damage.
 ##
-## Fray (section 7) is tracked only as the counter retreat needs (+15 on a successful
-## retreat, -3 on a crit); resolve checks, tearing and the candle are stage S1b and are
-## deliberately absent here.
+## S1b extends the same S1a session, validation, and seeded RNG with fray, resolve,
+## torn seams, thread cuts and candle projections. No live run/UI wiring is needed.
 
 const COMBAT_MODE_SETTING := "patchwork/combat_mode"
 const MODE_CARDS := "cards"
@@ -49,6 +48,10 @@ const SEAM_HOLD_PERCENT := 67
 const RETREAT_SUCCESS_PERCENT := 75
 const RETREAT_FRAY_GAIN := 15
 const CRIT_FRAY_RELIEF := 3
+const SATCHEL_CAP := 6
+const FRAY_MAX := 200
+const FRAY_RESOLVE := 100
+const FRAY_RECOVER := 50
 const COUNTDOWN_KEYS := [
 	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "blind", "stun_resist", "guard",
 ]
@@ -65,6 +68,11 @@ var _valid := false
 ## Set once at setup from the authored foes. A boss encounter keeps refusing retreat even
 ## after the boss itself is dead and only its minions still stand.
 var _boss_encounter := false
+var _candle := 100
+var _opening: Dictionary = {}
+var _thread_cuts: Dictionary = {}  # snipped hero id -> fixed rank boundary behind it
+var _satchel: Array = []
+var _turn_events: Array = []
 
 
 ## The project's authored combat mode. Only the exact "stitched" value leaves the card
@@ -166,6 +174,135 @@ func get_heaps() -> Array:
 	return _heaps.duplicate(true)
 
 
+func candle() -> int:
+	return _candle
+
+
+func candle_band() -> Dictionary:
+	return StitchedS1BEffects.candle_band(_candle)
+
+
+func opening_strike() -> Dictionary:
+	return _opening.duplicate(true)
+
+
+func thread_cuts() -> Dictionary:
+	return _thread_cuts.duplicate(true)
+
+
+func satchel() -> Array:
+	return _satchel.duplicate(true)
+
+
+func turn_events() -> Array:
+	return _turn_events.duplicate(true)
+
+
+## No S6 map/shop hooks yet: explicit scene-free candle transitions.
+func adjust_candle(source: String, amount: int = 0) -> Dictionary:
+	if not _valid:
+		return _reject("candle", "", "battle is not initialized")
+	var step := amount
+	match source:
+		"node":
+			if amount != 0 and amount != -8:
+				return _reject("candle", "", "node entry burns exactly eight")
+			step = -8
+		"campfire":
+			if amount != 0 and amount != 50:
+				return _reject("candle", "", "wick trimming restores exactly fifty")
+			step = 50
+		"peddler":
+			if amount != 0 and amount != 25:
+				return _reject("candle", "", "a candle stub restores exactly twenty-five")
+			step = 25
+		"event":
+			if amount == 0 or absi(amount) > 100:
+				return _reject("candle", "", "event candle delta must be nonzero and within 100")
+		_:
+			return _reject("candle", "", "unknown candle source")
+	var before := _candle
+	_candle = clampi(_candle + step, 0, 100)
+	return {"ok": true, "source": source, "before": before, "after": _candle, "band": candle_band()}
+
+
+## Events, Campfire stories and Unpicker calm may change fray without spending a combat turn.
+func apply_fray_event(hero_id: String, amount: int, source: String = "event") -> Dictionary:
+	if not _valid or not _units.has(hero_id):
+		return _reject("fray", hero_id, "unknown hero or uninitialized battle")
+	var hero: Dictionary = _units[hero_id]
+	if str(hero["side"]) != "hero" or bool(hero["lost"]):
+		return _reject("fray", hero_id, "only a present hero can receive fray")
+	if amount == 0 or absi(amount) > FRAY_MAX or not source in ["event", "campfire", "unpicker"]:
+		return _reject("fray", hero_id, "invalid fray event")
+	if source != "event" and amount > 0:
+		return _reject("fray", hero_id, "recovery sources cannot add fray")
+	return _change_fray(hero, amount)
+
+
+## Direct elite tear is also available to authored Rip/Unpick actions.
+func tear_part(hero_id: String) -> Dictionary:
+	var gate := _require_side_turn("tear", "foe")
+	if not gate.is_empty():
+		return gate
+	if not _units.has(hero_id) or str(_units[hero_id]["side"]) != "hero":
+		return _reject("tear", hero_id, "unknown hero")
+	return _tear_random(_units[hero_id])
+
+
+## Sewing Circle eligibility is scene-free. Caller supplies its later-stage scrap price.
+func mend_part(hero_id: String, slot: String, scraps: int, cost: int) -> Dictionary:
+	if not _valid or _outcome == "ongoing":
+		return _reject("mend", hero_id, "mending requires the end of a fight")
+	if not _units.has(hero_id) or str(_units[hero_id]["side"]) != "hero":
+		return _reject("mend", hero_id, "unknown hero")
+	var hero: Dictionary = _units[hero_id]
+	if bool(hero["lost"]) or not slot in StitchedParts.SLOTS or not hero["parts"].has(slot):
+		return _reject("mend", hero_id, "no eligible equipped part")
+	if not bool(hero["parts"][slot]["torn"]):
+		return _reject("mend", hero_id, "part is not torn")
+	if cost <= 0 or scraps < 0 or scraps < cost:
+		return _reject("mend", hero_id, "insufficient scraps or invalid price")
+	hero["parts"][slot]["torn"] = false
+	_recompute_stats(hero)
+	return {"ok": true, "action": "mend", "hero": hero_id, "slot": slot, "scraps_left": scraps - cost}
+
+
+func end_floor() -> Dictionary:
+	if not _valid or _outcome == "ongoing":
+		return _reject("floor", "", "floor cannot end during battle")
+	for hero in _units_of_side("hero"):
+		if str(hero.get("resolve", "")) == "steadfast":
+			hero["resolve"] = ""
+	return {"ok": true, "action": "floor"}
+
+
+## A cut is behind a rank 1-3 hero; only foes may snip as a standalone action.
+func snip_thread(hero_id: String) -> Dictionary:
+	var gate := _require_side_turn("snip", "foe")
+	if not gate.is_empty():
+		return gate
+	if not _units.has(hero_id) or str(_units[hero_id]["side"]) != "hero":
+		return _reject("snip", hero_id, "unknown hero")
+	var receipt := _cut_behind(_units[hero_id])
+	if bool(receipt["ok"]):
+		_advance_turn()
+	return receipt
+
+
+func re_tie() -> Dictionary:
+	var gate := _require_side_turn("re_tie", "hero")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	var id := str(actor["id"])
+	if not _thread_cuts.has(id):
+		return _reject("re_tie", id, "this hero's thread is not snipped")
+	_thread_cuts.erase(id)
+	_advance_turn()
+	return {"ok": true, "action": "re_tie", "actor": id}
+
+
 ## Everything a replay needs: round, turn pointer, rolled order, every unit, the heaps and
 ## the RNG position. Two runs with the same seed and the same actions produce equal snapshots.
 func state_snapshot() -> Dictionary:
@@ -180,6 +317,11 @@ func state_snapshot() -> Dictionary:
 		"rng_state": int(_rng.state),
 		"units": units,
 		"heaps": _heaps.duplicate(true),
+		"candle": _candle,
+		"opening": _opening.duplicate(true),
+		"thread_cuts": _thread_cuts.duplicate(true),
+		"satchel": _satchel.duplicate(true),
+		"turn_events": _turn_events.duplicate(true),
 	}
 
 
@@ -213,6 +355,12 @@ func use_part(part_id: String, target_rank: int) -> Dictionary:
 	var blocked := _self_move_gate(actor, ability)
 	if not blocked.is_empty():
 		return blocked
+	# A Cowering refusal consumes its turn; validate targets and movement before rolling.
+	if str(actor.get("resolve", "")) == "cowering" and str(ability["kind"]) == "melee":
+		var refuse_roll := _rng.randi_range(1, 100)
+		if StitchedS1BEffects.percent_roll_succeeds(refuse_roll, 30):
+			_advance_turn()
+			return {"ok": true, "action": "refused", "actor": str(actor["id"]), "roll": refuse_roll}
 	var receipt := _resolve_ability(actor, ability, targets, part_id)
 	_advance_turn()
 	return receipt
@@ -253,6 +401,8 @@ func move(direction: int) -> Dictionary:
 	var actor := _current_unit()
 	if int(actor["statuses"].get("tangled", 0)) > 0:
 		return _reject("move", str(actor["id"]), "a tangled hero cannot move")
+	if _thread_cuts.has(str(actor["id"])):
+		return _reject("move", str(actor["id"]), "the snipped hero cannot move")
 	if direction != -1 and direction != 1:
 		return _reject("move", str(actor["id"]), "move is one rank forward (-1) or back (1)")
 	var destination := int(actor["rank"]) + direction
@@ -261,6 +411,8 @@ func move(direction: int) -> Dictionary:
 	var other := _hero_at(destination)
 	if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
 		return _reject("move", str(actor["id"]), "a tangled ally cannot be swapped")
+	if _crosses_cut(int(actor["rank"]), destination) or (not other.is_empty() and _thread_cuts.has(str(other["id"]))):
+		return _reject("move", str(actor["id"]), "thread cut blocks the swap")
 	var from := int(actor["rank"])
 	var swapped := ""
 	if not other.is_empty():
@@ -311,7 +463,8 @@ func retreat() -> Dictionary:
 		for unit_id in _units:
 			var unit: Dictionary = _units[unit_id]
 			if str(unit["side"]) == "hero" and not bool(unit["lost"]):
-				unit["fray"] = int(unit["fray"]) + RETREAT_FRAY_GAIN
+				_change_fray(unit, RETREAT_FRAY_GAIN)
+		_finish_cleanup()
 		return {
 			"ok": true,
 			"action": "retreat",
@@ -441,6 +594,10 @@ func _setup(config: Dictionary) -> String:
 	var heroes: Variant = config.get("heroes")
 	if not heroes is Array or heroes.size() != HERO_COUNT:
 		return "stitched mode needs exactly four heroes"
+	var candle_value: Variant = config.get("candle", 100)
+	if not _integral(candle_value) or int(candle_value) < 0 or int(candle_value) > 100:
+		return "candle must be an integer from 0 to 100"
+	_candle = int(candle_value)
 	var foes: Variant = config.get("foes")
 	if not foes is Array or foes.size() < MIN_FOES or foes.size() > MAX_FOES:
 		return "stitched mode starts with two or three foes, never four"
@@ -538,6 +695,7 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"crit": 0,
 		"dmg_bonus": 0,
 		"fray": 0,
+		"resolve": "",
 		"statuses": {},
 		"parts": parts,
 		"abilities": [],
@@ -703,7 +861,25 @@ func _recompute_stats(unit: Dictionary) -> void:
 func _begin_round() -> void:
 	_round += 1
 	_turn_index = 0
+	if _round > 8:
+		_party_fray("", 3)
 	_order = _roll_order()
+	if _round == 1:
+		var band := candle_band()
+		var side := str(band["opening_side"])
+		var chance := int(band["opening_percent"])
+		_opening = {"side": side, "chance": chance, "triggered": false, "roll": 0}
+		if chance > 0:
+			var roll := _rng.randi_range(1, 100)
+			_opening["roll"] = roll
+			if StitchedS1BEffects.percent_roll_succeeds(roll, chance):
+				for index in range(_order.size()):
+					if str(_units[_order[index]]["side"]) == side:
+						var first: Variant = _order[index]
+						_order.remove_at(index)
+						_order.push_front(first)
+						_opening["triggered"] = true
+						break
 
 
 ## Rolls SPEED + 1d8 for every living unit. Draw order is heroes by rank (1..4), then foes
@@ -763,11 +939,18 @@ func _enter_turn() -> void:
 		if _tick_turn_start(unit):
 			_turn_index += 1
 			continue
+		if str(unit["side"]) == "hero" and _unravelled_turn(unit):
+			_turn_index += 1
+			continue
 		return
 
 
 ## Start-of-turn status tick. Returns true when the turn is consumed (stun or bleed death).
 func _tick_turn_start(unit: Dictionary) -> bool:
+	if str(unit["side"]) == "hero" and str(unit.get("resolve", "")) == "steadfast":
+		for hero in _units_of_side("hero"):
+			if not bool(hero["lost"]):
+				_change_fray(hero, -2)
 	var statuses: Dictionary = unit["statuses"]
 	if int(statuses.get("stun", 0)) > 0:
 		statuses["stun"] = int(statuses["stun"]) - 1
@@ -798,7 +981,7 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 
 func _begin_hanging_or_death(unit: Dictionary) -> void:
 	if str(unit["side"]) == "hero":
-		unit["hanging"] = true
+		_enter_hanging(unit)
 		return
 	_kill_foe(unit)
 
@@ -876,14 +1059,14 @@ func _legal_targets(actor: Dictionary, ability: Dictionary, target_rank: int) ->
 		absolute = "foe" if str(actor["side"]) == "hero" else "hero"
 	if not bool(ability["multi"]):
 		var single := _unit_at(absolute, target_rank)
-		if not single.is_empty():
+		if not single.is_empty() and not _ally_thread_blocked(actor, ability, single):
 			targets.append(single)
 		return targets
 	for rank in range(MIN_RANK, MAX_RANK + 1):
 		if not StitchedParts.ranks_allowed(mask, rank):
 			continue
 		var unit := _unit_at(absolute, rank)
-		if not unit.is_empty():
+		if not unit.is_empty() and not _ally_thread_blocked(actor, ability, unit):
 			targets.append(unit)
 	return targets
 
@@ -948,8 +1131,9 @@ func _resolve_attack(
 ) -> void:
 	var actor_statuses: Dictionary = actor["statuses"]
 	var blinded := int(actor_statuses.get("blind", 0)) > 0
+	var foe_acc := int(candle_band()["enemy_acc"]) if str(actor["side"]) == "foe" else 0
 	var chance := hit_chance(
-		int(ability["acc"]) + int(actor["acc"]),
+		int(ability["acc"]) + int(actor["acc"]) + foe_acc,
 		int(target.get("dodge", 0)),
 		int(actor["miss_streak"])
 	)
@@ -980,8 +1164,12 @@ func _resolve_attack(
 		else:
 			base = _rng.randi_range(int(ability["dmg"][0]), maximum)
 		base += int(actor.get("dmg_bonus", 0))
-		if critical:
-			actor["fray"] = maxi(0, int(actor["fray"]) - CRIT_FRAY_RELIEF)
+		if str(actor["side"]) == "foe":
+			base = StitchedS1BEffects.enemy_damage(base, _candle)
+		elif str(actor.get("resolve", "")) == "steadfast":
+			base = StitchedS1BEffects.steadfast_damage(base)
+		if critical and str(actor["side"]) == "hero":
+			_change_fray(actor, -CRIT_FRAY_RELIEF)
 			receipt["fray_relief"] = CRIT_FRAY_RELIEF
 		var marked := int(target["statuses"].get("mark", 0)) > 0
 		var damage := damage_after_modifiers(
@@ -994,6 +1182,14 @@ func _resolve_attack(
 		)
 		receipt["damage"] = damage
 		_damage_target(target, damage, receipt)
+		if critical and str(actor["side"]) == "foe" and str(target["side"]) == "hero" and not bool(target["lost"]):
+			receipt["enemy_crit_fray"] = _change_fray(target, 10)
+		if str(actor["side"]) == "hero" and receipt.has("heap"):
+			var kill_roll := _rng.randi_range(1, 100)
+			receipt["kill_relief_roll"] = kill_roll
+			if StitchedS1BEffects.percent_roll_succeeds(kill_roll, 50):
+				_change_fray(actor, -3)
+				receipt["kill_fray_relief"] = 3
 	_apply_effects(actor, target, ability, receipt)
 	# Thorns and Riposte are reaction damage: they answer a confirmed hit and ignore PROT.
 	var thorns := int(target["statuses"].get("thorns", 0))
@@ -1010,6 +1206,22 @@ func _apply_effects(
 	var effects: Dictionary = ability["effects"]
 	for key in effects:
 		var value := int(effects[key])
+		if key == "fray":
+			if str(actor["side"]) == "foe" and str(target["side"]) == "hero" and not bool(target["lost"]):
+				receipt["fray_event"] = _change_fray(target, value)
+			continue
+		if key == "snip":
+			if str(actor["side"]) == "foe" and str(target["side"]) == "hero":
+				receipt["snip"] = _cut_behind(target)
+			continue
+		if key == "tear":
+			if str(actor["side"]) == "foe" and str(target["side"]) == "hero":
+				receipt["tear"] = _tear_random(target)
+			continue
+		if key == "push" or key == "pull":
+			if str(target["side"]) == "hero":
+				receipt["shift"] = _shift(target, 1 if key == "push" else -1)
+			continue
 		if key == "heal":
 			if str(target["side"]) == "hero" and not bool(target["lost"]):
 				var before := int(target["hp"])
@@ -1061,11 +1273,11 @@ func _damage_target(target: Dictionary, damage: int, receipt: Dictionary) -> voi
 				else:
 					receipt["seam"] = "lost"
 					receipt["lost"] = true
-					target["lost"] = true
-					target["statuses"] = {}
-			elif not bool(target["hanging"]):
-				target["hanging"] = true
+					receipt["satchel"] = _lose_hero(target)
+			else:
+				var hanging := _enter_hanging(target)
 				receipt["hanging"] = true
+				receipt["tear"] = hanging["torn"]
 		return
 	if int(target["hp"]) == 0 and not bool(target["dead"]):
 		receipt["heap"] = _kill_foe(target)
@@ -1088,11 +1300,10 @@ func _damage_attacker(
 				else:
 					receipt["attacker_seam"] = "lost"
 					receipt["attacker_lost"] = true
-					actor["lost"] = true
-					actor["statuses"] = {}
-			elif not bool(actor["hanging"]):
-				actor["hanging"] = true
+					receipt["attacker_satchel"] = _lose_hero(actor)
+			else:
 				receipt["attacker_hanging"] = true
+				receipt["attacker_tear"] = _enter_hanging(actor)["torn"]
 		return
 	if int(actor["hp"]) == 0 and not bool(actor["dead"]):
 		receipt["attacker_heap"] = _kill_foe(actor)
@@ -1111,10 +1322,14 @@ func _shift_valid(unit: Dictionary, direction: int) -> Dictionary:
 		return {"ok": false, "reason": "there is no rank %d" % destination}
 	if int(unit["statuses"].get("tangled", 0)) > 0:
 		return {"ok": false, "reason": "tangled units cannot move"}
+	if str(unit["side"]) == "hero" and (_thread_cuts.has(str(unit["id"])) or _crosses_cut(from, destination)):
+		return {"ok": false, "reason": "thread cut blocks movement"}
 	if str(unit["side"]) == "hero":
 		var other := _hero_at(destination)
 		if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
 			return {"ok": false, "reason": "a tangled ally cannot be swapped"}
+		if not other.is_empty() and _thread_cuts.has(str(other["id"])):
+			return {"ok": false, "reason": "snipped ally cannot be moved"}
 		return {"ok": true, "reason": "", "destination": destination}
 	if not _foe_at(destination).is_empty() or not _heap_at(destination).is_empty():
 		return {"ok": false, "reason": "rank %d is taken" % destination}
@@ -1152,7 +1367,7 @@ func _shift(unit: Dictionary, direction: int) -> Dictionary:
 
 
 func _guardian_for(target: Dictionary) -> Dictionary:
-	if str(target["side"]) != "hero":
+	if str(target["side"]) != "hero" or str(target.get("resolve", "")) == "reckless":
 		return {}
 	for unit_id in _units:
 		var unit: Dictionary = _units[unit_id]
@@ -1163,6 +1378,8 @@ func _guardian_for(target: Dictionary) -> Dictionary:
 		if int(unit["statuses"].get("guard", 0)) <= 0:
 			continue
 		if str(unit.get("guard_target", "")) != str(target["id"]):
+			continue
+		if _crosses_cut(int(unit["rank"]), int(target["rank"])):
 			continue
 		return unit
 	return {}
@@ -1287,11 +1504,13 @@ func _battle_finished() -> bool:
 		return true
 	if _living_foes().is_empty():
 		_outcome = "victory"
+		_finish_cleanup()
 		return true
 	for unit in _units_of_side("hero"):
 		if not bool(unit["lost"]):
 			return false
 	_outcome = "defeat"
+	_finish_cleanup()
 	return true
 
 
@@ -1320,3 +1539,180 @@ static func _valid_text(value: Variant) -> String:
 	if text.is_empty() or text != text.strip_edges():
 		return ""
 	return text
+
+
+# ---------------------------------------------------------------- S1b fray, seams and thread
+
+## All fray gains use the candle of this battle, clamp to 200, and are applied
+## through the same seeded resolve gate. Recovery is never candle-multiplied.
+func _change_fray(hero: Dictionary, amount: int) -> Dictionary:
+	if str(hero["side"]) != "hero" or bool(hero["lost"]):
+		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
+	var before := int(hero["fray"])
+	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 else amount
+	hero["fray"] = clampi(before + applied, 0, FRAY_MAX)
+	var transition := ""
+	if int(hero["fray"]) >= FRAY_MAX:
+		hero["fray"] = 150
+		if bool(hero["hanging"]):
+			_lose_hero(hero)
+			transition = "lost"
+		else:
+			hero["hp"] = 0
+			_enter_hanging(hero)
+			transition = "hanging"
+	elif int(hero["fray"]) < FRAY_RECOVER and str(hero.get("resolve", "")) in StitchedS1BEffects.RESOLVE_TRAITS:
+		hero["resolve"] = ""
+		transition = "recovered"
+	elif before < FRAY_RESOLVE and int(hero["fray"]) >= FRAY_RESOLVE and str(hero.get("resolve", "")).is_empty():
+		var roll := _rng.randi_range(1, 100)
+		if StitchedS1BEffects.percent_roll_succeeds(roll, 25):
+			hero["resolve"] = "steadfast"
+			hero["fray"] = 45
+			transition = "steadfast"
+		else:
+			hero["resolve"] = StitchedS1BEffects.trait_for_roll(_rng.randi_range(0, 4))
+			transition = str(hero["resolve"])
+	return {"ok": true, "action": "fray", "actor": str(hero["id"]), "before": before, "change": applied, "after": int(hero["fray"]), "transition": transition}
+
+
+func _party_fray(except_id: String, amount: int) -> void:
+	# A fallen ally frays the surviving witnesses, never the fallen doll itself.
+	for hero in _units_of_side("hero"):
+		if str(hero["id"]) != except_id and not bool(hero["lost"]):
+			_change_fray(hero, amount)
+
+
+## Entering Hanging tears precisely one random non-torso part, only on its first
+## entry. The part remains equipped but torn (no stat/ability) until Sewing Circle.
+func _enter_hanging(hero: Dictionary) -> Dictionary:
+	if bool(hero["lost"]) or bool(hero["hanging"]):
+		return _reject("hanging", str(hero["id"]), "hero is already Hanging or lost")
+	hero["hp"] = 0
+	hero["hanging"] = true
+	var tear := _tear_random(hero)
+	_party_fray(str(hero["id"]), 8)
+	return {"ok": true, "torn": tear}
+
+
+func _tear_random(hero: Dictionary) -> Dictionary:
+	if str(hero.get("side", "")) != "hero" or bool(hero.get("lost", false)):
+		return _reject("tear", str(hero.get("id", "")), "hero is lost or not a hero")
+	var eligible: Array = []
+	for slot in ["head", "arms", "legs"]:
+		if hero["parts"].has(slot) and not bool(hero["parts"][slot]["torn"]):
+			eligible.append(slot)
+	if eligible.is_empty():
+		return _reject("tear", str(hero["id"]), "no untorn non-torso part")
+	var slot := str(eligible[_rng.randi_range(0, eligible.size() - 1)])
+	hero["parts"][slot]["torn"] = true
+	_recompute_stats(hero)
+	return {"ok": true, "action": "tear", "hero": str(hero["id"]), "slot": slot, "part": str(hero["parts"][slot]["id"])}
+
+
+## A lost doll leaves combat permanently and its equipped parts fill at most six
+## satchel slots. Overflow is explicitly discarded in stable slot order.
+func _lose_hero(hero: Dictionary) -> Dictionary:
+	if bool(hero["lost"]):
+		return _reject("lost", str(hero["id"]), "hero is already lost")
+	hero["lost"] = true
+	hero["hanging"] = false
+	hero["hp"] = 0
+	hero["statuses"] = {}
+	_thread_cuts.erase(str(hero["id"]))
+	var stored: Array = []
+	var overflow: Array = []
+	for slot in StitchedParts.SLOTS:
+		if not hero["parts"].has(slot):
+			continue
+		var worn: Dictionary = hero["parts"][slot]
+		var spare := worn.duplicate(true)
+		spare["slot"] = slot
+		if _satchel.size() < SATCHEL_CAP:
+			_satchel.append(spare)
+			stored.append(str(worn["id"]))
+		else:
+			overflow.append(str(worn["id"]))
+	hero["parts"] = {}
+	_party_fray(str(hero["id"]), 25)
+	return {"ok": true, "stored": stored, "overflow": overflow}
+
+
+func _cut_behind(hero: Dictionary) -> Dictionary:
+	if str(hero.get("side", "")) != "hero" or bool(hero.get("lost", false)):
+		return _reject("snip", str(hero.get("id", "")), "cannot snip this target")
+	var id := str(hero["id"])
+	if int(hero["rank"]) >= MAX_RANK or _thread_cuts.has(id):
+		return _reject("snip", id, "no intact thread behind this hero")
+	_thread_cuts[id] = int(hero["rank"])
+	return {"ok": true, "action": "snip", "hero": id, "after_rank": int(hero["rank"])}
+
+
+func _crosses_cut(a: int, b: int) -> bool:
+	for rank in _thread_cuts.values():
+		var boundary := int(rank)
+		if (a <= boundary and b > boundary) or (b <= boundary and a > boundary):
+			return true
+	return false
+
+
+func _finish_cleanup() -> void:
+	_thread_cuts.clear()
+
+
+func _unravelled_turn(hero: Dictionary) -> bool:
+	var mood := str(hero.get("resolve", ""))
+	var id := str(hero["id"])
+	match mood:
+		"hollow":
+			var roll := _rng.randi_range(1, 100)
+			if StitchedS1BEffects.percent_roll_succeeds(roll, 30):
+				_turn_events.append({"actor": id, "mood": mood, "action": "pass", "roll": roll})
+				return true
+		"bitter":
+			var neighbor := _hero_at(int(hero["rank"]) - 1)
+			if neighbor.is_empty():
+				neighbor = _hero_at(int(hero["rank"]) + 1)
+			if not neighbor.is_empty():
+				var receipt := _change_fray(neighbor, 4)
+				_turn_events.append({"actor": id, "mood": mood, "action": "fray", "target": str(neighbor["id"]), "receipt": receipt})
+		"reckless", "cowering":
+			var direction := -1 if mood == "reckless" else 1
+			var plan := _shift_valid(hero, direction)
+			if bool(plan["ok"]):
+				var receipt := _shift(hero, direction)
+				_turn_events.append({"actor": id, "mood": mood, "action": "move", "receipt": receipt})
+				return true
+		"frantic":
+			var candidates: Array = []
+			for slot in StitchedParts.SLOTS:
+				if not hero["parts"].has(slot):
+					continue
+				var worn: Dictionary = hero["parts"][slot]
+				if bool(worn["torn"]):
+					continue
+				var ability := StitchedParts.ability_at_tier(_parts[worn["id"]], int(worn["tier"]))
+				if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(hero["rank"])):
+					continue
+				if not _self_move_gate(hero, ability).is_empty():
+					continue
+				for rank in range(MIN_RANK, MAX_RANK + 1):
+					var targets := _legal_targets(hero, ability, rank)
+					if not targets.is_empty():
+						candidates.append({"ability": ability, "part": str(worn["id"]), "rank": rank})
+			if not candidates.is_empty():
+				var roll := _rng.randi_range(1, 100)
+				if StitchedS1BEffects.percent_roll_succeeds(roll, 30):
+					var candidate: Dictionary = candidates[_rng.randi_range(0, candidates.size() - 1)]
+					var results := _legal_targets(hero, candidate["ability"], int(candidate["rank"]))
+					var receipt := _resolve_ability(hero, candidate["ability"], results, str(candidate["part"]))
+					_turn_events.append({"actor": id, "mood": mood, "action": "ability", "roll": roll, "receipt": receipt})
+					return true
+	return false
+
+func _ally_thread_blocked(actor: Dictionary, ability: Dictionary, target: Dictionary) -> bool:
+	if str(ability["target_side"]) != "ally" or str(actor["side"]) != "hero":
+		return false
+	if str(ability["kind"]) in ["heal", "guard"] or ability["effects"].has("heal") or ability["effects"].has("guard"):
+		return _crosses_cut(int(actor["rank"]), int(target["rank"]))
+	return false

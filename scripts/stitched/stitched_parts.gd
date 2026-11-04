@@ -23,7 +23,7 @@ const ABILITY_KINDS := ["melee", "ranged", "heal", "guard", "buff", "debuff", "m
 const TARGET_SIDES := ["enemy", "ally", "self"]
 const EFFECT_KEYS := [
 	"bleed", "weak", "exposed", "tangled", "stun", "mark", "thorns", "riposte", "blind",
-	"guard", "heal",
+	"guard", "heal", "fray", "snip", "push", "pull", "tear",
 ]
 const MOVE_POSES := ["attack", "attack2", "guard", "skill"]
 const MIN_TIER := 1
@@ -348,6 +348,8 @@ static func _validate_effects(value: Variant, label: String) -> Dictionary:
 				"error": label + " effect " + str(key) + " must be a nonnegative integer",
 				"effects": {},
 			}
+		if str(key) in ["snip", "tear", "push", "pull"] and int(value[key]) != 1:
+			return {"ok": false, "error": label + " effect " + str(key) + " must be one step", "effects": {}}
 		effects[key] = int(value[key])
 	return {"ok": true, "error": "", "effects": effects}
 
