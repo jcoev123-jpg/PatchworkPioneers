@@ -9,6 +9,52 @@ var _visit_id: String
 var _status: String
 var _snapshot: Dictionary
 var _purchases: RunShopPurchases
+## True only for the opt-in card-free four-hero Stitched visit.
+var _stitched: bool = false
+
+
+## Opt-in card-free four-hero Stitched Patch Stall. The run owner authenticates
+## the node and supplies the three prepared priced patch offers; this visit never
+## samples stock, invents a price or draws RNG. It sells at most one patch (it
+## does not equip it) or allows Leave. Any invalid input yields an invalid visit.
+static func open_stitched(node_id: Variant, party_ids: Variant, owned_patch_ids: Variant,
+		gold: Variant, prepared_three_patch_offers: Variant) -> RunPatchStallVisit:
+	var invalid := RunPatchStallVisit.new(null, null, null, null, null, null)
+	if typeof(party_ids) != TYPE_ARRAY or party_ids.size() != 4 \
+			or typeof(owned_patch_ids) != TYPE_ARRAY \
+			or typeof(prepared_three_patch_offers) != TYPE_ARRAY:
+		return invalid
+	for offer in prepared_three_patch_offers:
+		if typeof(offer) != TYPE_DICTIONARY or typeof(offer.get("price")) != TYPE_INT or offer["price"] <= 0:
+			return invalid
+	var stitched := RunPatchStallVisit.new(node_id, party_ids, [], owned_patch_ids, gold, prepared_three_patch_offers)
+	if not stitched.is_valid():
+		return invalid
+	stitched._enter_stitched_mode()
+	return stitched
+
+
+func _enter_stitched_mode() -> void:
+	_stitched = true
+	_snapshot = {
+		"party_ids": _snapshot.party_ids.duplicate(true),
+		"owned_patch_ids": _snapshot.owned_trinkets.duplicate(true),
+		"gold": _snapshot.gold
+	}
+	_visit_id = var_to_str([get_instance_id(), _node_id, _snapshot, _purchases.get_stock()]).sha256_text()
+
+
+## Public ledger projection: legacy keeps the purchase ledger; Stitched exposes
+## only party, owned patches and gold (no deck, cards, hand or energy).
+func _public_ledger(state: Dictionary) -> Dictionary:
+	if not _stitched:
+		return state
+	return {
+		"party_ids": state.party_ids.duplicate(true),
+		"owned_patch_ids": state.trinkets.duplicate(true),
+		"gold": state.gold
+	}
+
 
 func _init(node_id: Variant, party_ids: Variant, deck_ids: Variant, owned_trinkets: Variant, gold: Variant, prepared_three_patch_offers: Variant) -> void:
 	_status = "invalid"
@@ -94,7 +140,7 @@ func buy_patch(patch_id: Variant, expected_visit_id: Variant, expected_node_id: 
 		"ok": true,
 		"decision": "buy_patch",
 		"receipt": result.receipt,
-		"ledger": result.state,
+		"ledger": _public_ledger(result.state),
 		"source_snapshot": _snapshot.duplicate(true)
 	}
 
@@ -129,6 +175,6 @@ func leave(expected_visit_id: Variant, expected_node_id: Variant, expected_snaps
 	return {
 		"ok": true,
 		"decision": "leave",
-		"ledger": _purchases.get_state(),
+		"ledger": _public_ledger(_purchases.get_state()),
 		"source_snapshot": _snapshot.duplicate(true)
 	}
