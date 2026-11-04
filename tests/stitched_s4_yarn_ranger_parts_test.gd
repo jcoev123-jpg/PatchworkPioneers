@@ -20,13 +20,63 @@ const IDS := [
 	"yarn_ranger_head_needle_arrow", "yarn_ranger_arms_purling_barrage",
 	"yarn_ranger_torso_snare_net", "yarn_ranger_legs_endless_skein",
 ]
+
+const HEAD_LAUNCH := [2, 3, 4]
+const HEAD_SPECS := {
+	"yarn_ranger_head_needle_nock": {
+		"ability": "yarn_ranger_head_needle_nock_move",
+		"stat": {"acc": 3},
+		"dmg": [[4, 6], [5, 8], [7, 10]],
+		"effects": [{"exposed": 1}, {"exposed": 1}, {"exposed": 2}],
+	},
+	"yarn_ranger_head_needle_arrow": {
+		"ability": "yarn_ranger_head_needle_arrow_move",
+		"stat": {"crit": 3},
+		"dmg": [[5, 7], [7, 9], [9, 11]],
+		"effects": [{"mark": 1}, {"mark": 2}, {"mark": 3}],
+	},
+}
+const UNCHANGED_PARTS := {
+	"yarn_ranger_arms_wool_bolas": {
+		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": false,
+		"acc": 92, "dmg": [2, 4], "effects": {"tangled": 1}, "move": "attack",
+		"stat": {"dmg": 1},
+	},
+	"yarn_ranger_legs_reel_thread": {
+		"launch": [2, 3], "target": [2, 3], "side": "enemy", "multi": false,
+		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
+		"stat": {"speed": 1},
+	},
+	"yarn_ranger_torso_hood_knit": {
+		"launch": [1, 2, 3], "target": [1, 2, 3, 4], "side": "ally", "multi": false,
+		"acc": 100, "dmg": [0, 0], "effects": {"guard": 2}, "move": "guard",
+		"stat": {"max_hp": 5, "prot": 3},
+	},
+	"yarn_ranger_arms_purling_barrage": {
+		"launch": [3], "target": [1, 2, 3], "side": "enemy", "multi": false,
+		"acc": 92, "dmg": [5, 8], "effects": {"exposed": 1}, "move": "attack",
+		"stat": {"dmg": 2},
+	},
+	"yarn_ranger_torso_snare_net": {
+		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": true,
+		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
+		"stat": {"prot": 5, "max_hp": 3},
+	},
+	"yarn_ranger_legs_endless_skein": {
+		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": true,
+		"acc": 94, "dmg": [3, 5], "effects": {"tangled": 1}, "move": "attack2",
+		"stat": {"dodge": 4, "speed": 1},
+	},
+}
 var failures: Array[String] = []
 var checks := 0
 
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_head_launch_tiers()
 	_test_each_tier()
+	_test_rank_four_head_launch()
 	_test_multi_tangled()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
@@ -104,6 +154,122 @@ func _to(b: StitchedRules, actor_id: String, limit: int = 55) -> bool:
 	return false
 
 
+## A fresh in-memory copy of the same four-hero / three-foe S2 fixture, with the equipped
+## Ranger taken out of rank three and appended at hero rank four. S6 owns live admission.
+func _rank_four_config(selected_head: String, tier: int = 1, seed_value: int = 504040) -> Dictionary:
+	var config := _config(selected_head, tier, seed_value)
+	if config.is_empty():
+		return {}
+	var ranger: Dictionary = config["heroes"].pop_at(2)
+	config["heroes"].append(ranger)
+	return config
+
+
+func _rank_four_battle(selected_head: String, tier: int = 1, seed_value: int = 504040) -> StitchedRules:
+	var config := _rank_four_config(selected_head, tier, seed_value)
+	if config.is_empty():
+		return null
+	var created := StitchedRules.create(config)
+	if not bool(created.get("ok", false)):
+		return null
+	var battle: StitchedRules = created["battle"]
+	return battle
+
+
+## Both needle-bow HEAD abilities keep their authored numbers at every tier while the launch
+## mask gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
+func _test_head_launch_tiers() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for head_id in HEAD_SPECS:
+		var part: Dictionary = cat["by_id"][head_id]
+		var spec: Dictionary = HEAD_SPECS[head_id]
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			var mask := int(ability["launch_mask"])
+			var reachable := true
+			for rank in HEAD_LAUNCH:
+				reachable = reachable and StitchedParts.ranks_allowed(mask, rank)
+			var excluded := true
+			for rank in [0, 1, 5]:
+				excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
+			_check(ability["launch"] == HEAD_LAUNCH
+				and mask == StitchedParts.rank_mask(HEAD_LAUNCH) and reachable and excluded,
+				"AC2: tier %d %s launch mask allows 2,3,4 and refuses 0,1,5" % [tier, head_id])
+			_check(ability["dmg"] == spec["dmg"][tier - 1]
+				and ability["effects"] == spec["effects"][tier - 1]
+				and int(ability["acc"]) == 93 and ability["target"] == [1, 2, 3],
+				"AC2: tier %d %s keeps authored damage, status, ACC and enemy targets"
+					% [tier, head_id])
+
+
+## The authentic seeded battle: the same four heroes and the same three foes, Ranger at rank
+## four. Each HEAD part fires from there during her actual scheduled turn. A genuine seeded
+## miss is a legal shot, never a rejected launch.
+func _test_rank_four_head_launch() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for head_id in HEAD_SPECS:
+		var spec: Dictionary = HEAD_SPECS[head_id]
+		var ability_id := str(spec["ability"])
+		var b := _rank_four_battle(head_id)
+		_check(b != null, "AC2: fresh S2 battle equips rank-four Ranger with " + head_id)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 4
+			and str(ranger["parts"]["head"]["id"]) == head_id,
+			"AC2: %s is worn at hero rank four against the same three foes" % head_id)
+		_check(_to(b, "yarn_ranger"), "AC2: rank-four Ranger reaches her actual turn for " + head_id)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		var before := b.state_snapshot()
+		var receipt := b.use_part(head_id, 1)
+		var after := b.state_snapshot()
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+			and str(receipt.get("actor", "")) == "yarn_ranger"
+			and str(receipt.get("part", "")) == head_id
+			and str(receipt.get("ability", "")) == ability_id
+			and results.size() == 1
+			and str(results[0].get("target_side", "")) == "foe"
+			and int(results[0].get("target_rank", 0)) == 1,
+			"AC2: rank-four %s legally fires one shot at the living rank-one foe: %s"
+				% [head_id, str(receipt.get("error", ""))])
+		_check(after != before and (int(after["round"]) > int(before["round"])
+			or (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) > int(before["turn_index"]))),
+			"AC2: rank-four %s advances the real turn" % head_id)
+	# A bounded explicit seed window witnesses an actual hit and status from rank four; the
+	# rules are untouched, so a genuine miss is skipped only while searching for that witness.
+	for head_id in HEAD_SPECS:
+		var head_spec: Dictionary = HEAD_SPECS[head_id]
+		var effect := str(head_spec["effects"][0].keys()[0])
+		var witnessed := false
+		for seed_value in range(504040, 504072):
+			var shot_battle := _rank_four_battle(head_id, 1, seed_value)
+			if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+				continue
+			var shot := shot_battle.use_part(head_id, 1)
+			if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 1:
+				continue
+			var result: Dictionary = shot["results"][0]
+			if not bool(result.get("hit", false)):
+				continue
+			if not result["statuses"].any(
+					func(s): return str(s.get("status", "")) == effect):
+				continue
+			var foe := shot_battle.get_unit(str(result["target"]))
+			if int(foe["statuses"].get(effect, 0)) >= int(head_spec["effects"][0][effect]):
+				witnessed = true
+				break
+		_check(witnessed, "AC2: a bounded real seed shows rank-four %s hitting rank one with %s"
+			% [head_id, effect])
+
+
 func _test_catalog() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: complete Yarn Ranger JSON validates with StitchedParts")
@@ -152,6 +318,36 @@ func _test_catalog() -> void:
 			for retired in ["draw", "block", "unravel", "pull_forward", "hit_count", "requires_target_status"]:
 				_check(not ab.has(retired) and not ab["effects"].has(retired),
 					"AC1: unsupported card-only claim %s absent on %s" % [retired, id])
+	for head_id in HEAD_SPECS:
+		var part: Dictionary = cat["by_id"][head_id]
+		var spec: Dictionary = HEAD_SPECS[head_id]
+		var ability: Dictionary = part["ability"]
+		_check(str(part["slot"]) == "head" and str(part["owner"]) == "yarn_ranger"
+			and part["stat"] == spec["stat"],
+			"AC1: %s stays a Yarn Ranger head part with its authored stat" % head_id)
+		_check(str(ability["id"]) == str(spec["ability"]) and str(ability["kind"]) == "ranged"
+			and ability["launch"] == HEAD_LAUNCH
+			and int(ability["launch_mask"]) == StitchedParts.rank_mask(HEAD_LAUNCH)
+			and ability["target"] == [1, 2, 3]
+			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+			and int(ability["acc"]) == 93 and int(ability["crit"]) == 0
+			and ability["dmg"] == spec["dmg"][0] and ability["effects"] == spec["effects"][0]
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
+			"AC1: %s keeps every authored value except the rank-four launch" % head_id)
+	for other_id in UNCHANGED_PARTS:
+		var other: Dictionary = cat["by_id"][other_id]
+		var expected: Dictionary = UNCHANGED_PARTS[other_id]
+		var other_ability: Dictionary = other["ability"]
+		_check(other_ability["launch"] == expected["launch"]
+			and other_ability["target"] == expected["target"]
+			and str(other_ability["target_side"]) == str(expected["side"])
+			and bool(other_ability["multi"]) == bool(expected["multi"])
+			and int(other_ability["acc"]) == int(expected["acc"])
+			and other_ability["dmg"] == expected["dmg"]
+			and other_ability["effects"] == expected["effects"]
+			and str(other_ability["move"]) == str(expected["move"])
+			and other["stat"] == expected["stat"],
+			"AC1: %s keeps its authored launch, targets, numbers and stat" % other_id)
 	for slot in counts:
 		_check(int(counts[slot]) == 2 and str(cat["by_id"][STARTERS[slot]]["slot"]) == slot
 			and str(cat["by_id"][ALTERNATES[slot]]["slot"]) == slot,
@@ -178,6 +374,11 @@ func _test_catalog() -> void:
 	wrong_rank["ability"]["target"] = [1, 5]
 	_check(not bool(StitchedParts.validate_part(wrong_rank).get("ok", false)),
 		"AC3: invalid target mask fails closed")
+	for malformed_launch in [[2, 3, 4, 5], [2, 3, 4, 4]]:
+		var malformed_head: Dictionary = cat["by_id"][STARTERS["head"]].duplicate(true)
+		malformed_head["ability"]["launch"] = malformed_launch
+		_check(not bool(StitchedParts.validate_part(malformed_head).get("ok", false)),
+			"AC3: malformed head launch %s fails closed" % str(malformed_launch))
 	var wrong_tier: Dictionary = cat["parts"][0].duplicate(true)
 	wrong_tier["tiers"]["4"] = {"ability": {"acc": 100}}
 	_check(not bool(StitchedParts.validate_part(wrong_tier).get("ok", false)),
