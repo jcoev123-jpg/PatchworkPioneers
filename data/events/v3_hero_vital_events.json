@@ -186,6 +186,50 @@
         { "id": "wrench_loose_rim", "text": "Lose 6 HP prying out the brass rim (gain 29 gold)", "outcome": { "gold": 29, "scraps": 0, "hp": -6, "max_hp": 0 } },
         { "id": "leave", "text": "Let the great button turn without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_amber_moth_nest",
+      "title": "The Amber Moth Nest",
+      "description": "The Lantern Monk finds a huge quilted moth cocoon hanging in a crooked bone-cream belfry; a single amber flame glows through its stitched silk ribs.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        { "id": "rewick_cocoon", "text": "Pay 14 gold to rekindle the nest wick (heal 8 HP)", "outcome": { "gold": -14, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "unspool_amber_silk", "text": "Unspool hot cocoon silk (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the amber moth asleep in its silk", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_duel_mask_mirror",
+      "title": "The Duel-Mask Mirror",
+      "description": "The Rag Duelist faces a cape-wide oxblood mirror where a button-eyed masked double holds a needle rapier through a torn velvet sash.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "bind_mirror_cape", "text": "Spend 2 scraps binding the mirror-cape (heal 4 HP; gain 2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 4, "max_hp": 2 } },
+        { "id": "pawn_mirror_lining", "text": "Pawn the reflected cape lining (lose 3 max HP; gain 28 gold)", "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -3 } },
+        { "id": "leave", "text": "Cover the duel mirror and depart", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_moonbolas_stag",
+      "title": "The Moon-Bolas Stag",
+      "description": "The Yarn Ranger finds a plump midnight-wool stag tangled in her enormous braided bolas; pale stitched stars gleam along its soft antlers.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "free_star_bolas", "text": "Spend 1 scrap loosening the starry knots (heal 6 HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 6, "max_hp": 0 } },
+        { "id": "pluck_sharp_stars", "text": "Gather the sharp star-wool (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the moon-wool stag find its own trail", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_stormbutton_canopy",
+      "title": "The Stormbutton Canopy",
+      "description": "The Button Golem braces a thundercloud-sized quilted canopy under violet rain; massive brass chest buttons and one lantern hold its seams together.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "reinforce_thunder_button", "text": "Pay 20 gold to fit a stronger thunder button (+3 max HP)", "outcome": { "gold": -20, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "shake_copper_rain", "text": "Shake loose the copper rain (lose 4 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the great canopy weather the storm", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
