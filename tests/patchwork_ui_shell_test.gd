@@ -71,7 +71,7 @@ func _run() -> void:
 		"the App uses a separate gothic Theme without mutating the master fonts")
 	_check(app.title_label.get_theme_font("font").resource_path == shell.TITLE_FONT,
 		"title uses the Londrina Solid title font")
-	for button in [app.start_button, app.route_button, app.base_button]:
+	for button in [app.start_button, app.route_button, app.base_button, app.stitched_fight_button]:
 		_check(button.theme_type_variation == "PatchHeadingButton"
 			and (button.get_theme_font("font") as Font).resource_path == shell.HEADING_FONT,
 			"title action uses the master Londrina heading button font: " + button.text)
@@ -108,9 +108,9 @@ func _run() -> void:
 		and title_back.encloses(Rect2(app.title_label.global_position, app.title_label.size)),
 		"compact paper backing follows the live title label inside the viewport")
 	var frames_actions := action_back.has_area() and viewport.encloses(action_back)
-	for button in [app.start_button, app.route_button, app.base_button]:
+	for button in [app.start_button, app.route_button, app.base_button, app.stitched_fight_button]:
 		frames_actions = frames_actions and action_back.encloses(button.get_global_rect())
-	_check(frames_actions, "one compact felt backing frames all three original actions")
+	_check(frames_actions, "one compact felt backing frames all four title actions")
 	_check(is_equal_approx(action_back.position.x, title_back.position.x)
 		and is_equal_approx(action_back.size.x, title_back.size.x)
 		and action_back.position.y <= title_back.end.y,
@@ -123,7 +123,7 @@ func _run() -> void:
 	var logo_box: Rect2 = shell.logo_rect()
 	var fixed_label: Rect2 = app.title_label.get_global_rect()
 	var fixed_actions: Array[Rect2] = []
-	for button in [app.start_button, app.route_button, app.base_button]:
+	for button in [app.start_button, app.route_button, app.base_button, app.stitched_fight_button]:
 		fixed_actions.append(button.get_global_rect())
 	_check(logo_art != null and logo_art.resource_path == shell.TITLE_LOGO
 		and logo_box.has_area() and shell.is_processing() and app.start_button.has_focus(),
@@ -146,7 +146,8 @@ func _run() -> void:
 		_check(shell.logo_rect() == logo_box and app.title_label.get_global_rect() == fixed_label,
 			"logo motion leaves the title label and static logo rectangle unchanged")
 		for index in range(fixed_actions.size()):
-			_check([app.start_button, app.route_button, app.base_button][index].get_global_rect() == fixed_actions[index],
+			_check([app.start_button, app.route_button, app.base_button,
+				app.stitched_fight_button][index].get_global_rect() == fixed_actions[index],
 				"sway cannot move the original interactive hit target " + str(index))
 	_check(distinct_motion, "mounted wordmark actually moves and rotates during the cycle")
 	shell._logo_elapsed = 2.0
@@ -200,8 +201,8 @@ func _run() -> void:
 		"title re-entry starts fresh at the untransformed logo rectangle")
 	_check(app.title_label.get_global_rect() == fixed_label
 		and [app.start_button.get_global_rect(), app.route_button.get_global_rect(),
-			app.base_button.get_global_rect()] == fixed_actions,
-		"hide/re-entry preserve label and all three mouse/keyboard action rects")
+			app.base_button.get_global_rect(), app.stitched_fight_button.get_global_rect()] == fixed_actions,
+		"hide/re-entry preserve label and all four mouse/keyboard action rects")
 	# This direct visibility probe bypasses App's navigation callbacks, so restore the
 	# original focused title action before exercising the physical Tab cycle.
 	app.start_button.grab_focus()
@@ -256,13 +257,17 @@ func _run() -> void:
 	_check(focus != null and focus.border_width_top >= 3 and focus.border_color.is_equal_approx(GOTHIC_AMBER)
 		and not focus.draw_center and focus.expand_margin_left >= 3.0,
 		"opaque 3px candle-amber keyboard focus border")
-	for button in [app.start_button, app.route_button, app.base_button]:
+	for button in [app.start_button, app.route_button, app.base_button, app.stitched_fight_button]:
 		_check(button.get_child_count() == 1 and button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"title stitches cannot block original button")
 	_check(app.base_button.get_theme_stylebox("normal") == shared.get_stylebox("normal", "Button")
 		and app.base_button.get_theme_stylebox("hover") == shared.get_stylebox("hover", "Button")
 		and app.base_button.get_theme_stylebox("focus") == shared.get_stylebox("focus", "Button"),
 		"third title action shares the sewn button theme")
+	_check(app.stitched_fight_button.get_theme_stylebox("normal") == shared.get_stylebox("normal", "Button")
+		and app.stitched_fight_button.get_theme_stylebox("hover") == shared.get_stylebox("hover", "Button")
+		and app.stitched_fight_button.get_theme_stylebox("focus") == shared.get_stylebox("focus", "Button"),
+		"Stitched Fight shares the same sewn heading button theme as the original actions")
 	_check(app.start_button.has_focus() and shell.visible, "initial focused title with backdrop")
 	await _key(KEY_TAB)
 	_check(app.route_button.has_focus(), "physical Tab retains title focus cycle")
@@ -288,10 +293,12 @@ func _run() -> void:
 	_check(app.base_screen == null and shell.visible and app.title_view.is_visible_in_tree()
 		and app.base_button.has_focus() and app.run_map == null and app.run_rng == null,
 		"village Back restores the focused title without starting a run")
-	# Focus cycles over all three original actions with the picture mounted.
+	# Focus cycles over all four live title actions with the picture mounted.
 	app.base_button.grab_focus()
 	await _key(KEY_TAB)
-	_check(app.start_button.has_focus(), "Tab wraps from Quilt village to Start run")
+	_check(app.stitched_fight_button.has_focus(), "Tab reaches Stitched Fight on the sewn title")
+	await _key(KEY_TAB)
+	_check(app.start_button.has_focus(), "Tab wraps from Stitched Fight to Start run")
 	await _key(KEY_TAB)
 	_check(app.route_button.has_focus(), "Tab reaches Choose a route on the sewn title")
 	await _key(KEY_TAB)

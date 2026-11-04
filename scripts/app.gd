@@ -670,6 +670,8 @@ var title_label: Label
 var start_button: Button
 var route_button: Button
 var base_button: Button
+var stitched_fight_button: Button
+var stitched_fight_view: StitchedBattleScreen
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
 var _route_from_base := false
@@ -1327,15 +1329,132 @@ func _build_title() -> void:
 	base_button.tooltip_text = "Visit the Quilt village"
 	base_button.pressed.connect(_open_base)
 	box.add_child(base_button)
+	stitched_fight_button = Button.new()
+	stitched_fight_button.name = "StitchedFightButton"
+	stitched_fight_button.text = "Stitched Fight"
+	stitched_fight_button.tooltip_text = "Floor 01 · four-rank Stitched combat"
+	stitched_fight_button.custom_minimum_size = Vector2(240, 56)
+	stitched_fight_button.pressed.connect(_open_stitched_fight)
+	box.add_child(stitched_fight_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
 	route_button.focus_next = route_button.get_path_to(base_button)
-	base_button.focus_next = base_button.get_path_to(start_button)
-	start_button.focus_previous = start_button.get_path_to(base_button)
+	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
+	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
+	start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
 	route_button.focus_previous = route_button.get_path_to(start_button)
 	base_button.focus_previous = base_button.get_path_to(route_button)
+	stitched_fight_button.focus_previous = stitched_fight_button.get_path_to(base_button)
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
 
+
+
+## S3's ordinary-title, card-free Stitched encounter. The preview record is only
+## a roster/foe source: none of its prototype Warden parts are admitted here.
+func _stitched_floor_config() -> Dictionary:
+	var preview := StitchedBattleScreen.read_preview()
+	if not preview.get("heroes") is Array or preview["heroes"].size() != 4 \
+			or not preview.get("foes") is Array or preview["foes"].size() != 3 \
+			or not preview.get("parts") is Array:
+		return {}
+	var warden := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var foes := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+	if not bool(warden.get("ok", false)) or not bool(foes.get("ok", false)):
+		return {}
+	var generic: Array = []
+	for entry in preview["parts"]:
+		if not entry is Dictionary:
+			return {}
+		if str(entry.get("owner", "")) == "any":
+			generic.append(entry)
+	var definitions: Array = []
+	definitions.append_array(warden["parts"])
+	definitions.append_array(generic)
+	definitions.append_array(foes["parts"])
+	var catalog := StitchedParts.build_catalog(definitions)
+	if not bool(catalog.get("ok", false)):
+		return {}
+	var starter := {
+		"head": "warden_head_pot_helm_bonk",
+		"arms": "warden_arms_shield_catch",
+		"torso": "warden_torso_iron_challenge",
+		"legs": "warden_legs_rim_toss",
+	}
+	var fallback := {
+		"head": "any_head_needle_pin",
+		"arms": "any_arm_red_thread",
+		"torso": "any_torso_felt_coat",
+		"legs": "any_legs_stitch_step",
+	}
+	for slot in StitchedParts.SLOTS:
+		if not catalog["by_id"].has(starter[slot]) or not catalog["by_id"].has(fallback[slot]):
+			return {}
+		if str(catalog["by_id"][starter[slot]]["slot"]) != slot \
+				or str(catalog["by_id"][fallback[slot]]["slot"]) != slot:
+			return {}
+	var config := preview.duplicate(true)
+	for hero in config["heroes"]:
+		if not hero is Dictionary or not hero.get("parts") is Dictionary:
+			return {}
+		if str(hero.get("id", "")) == "warden":
+			hero["parts"] = starter.duplicate(true)
+		else:
+			# The S2 Tinker borrowed the prototype Warden IDs. Keep all three
+			# other heroes on the already authored generic kit.
+			for slot in StitchedParts.SLOTS:
+				hero["parts"][slot] = fallback[slot]
+	config["parts"] = catalog["parts"]
+	config["seed"] = 4982026
+	config["title"] = "Floor 01 · Stitched Crossing"
+	config["subtitle"] = "Four heroes against three foes · sewn parts only"
+	config["mode"] = "stitched"
+	return config
+
+
+func _open_stitched_fight() -> bool:
+	if is_instance_valid(stitched_fight_view) or deck != null or run_map != null \
+			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+		return false
+	var data := _stitched_floor_config()
+	if data.is_empty():
+		return false
+	var stage := StitchedBattleScreen.new()
+	if not stage.begin(data):
+		stage.free()
+		return false
+	stitched_fight_view = stage
+	stage.exit_requested.connect(_stitched_fight_exit.bind(weakref(stage)))
+	add_child(stage)
+	title_view.hide()
+	return true
+
+
+func _stitched_fight_exit(source: WeakRef) -> void:
+	var stage := source.get_ref() as StitchedBattleScreen
+	if stage == null or stage != stitched_fight_view:
+		return
+	_close_stitched_fight()
+
+
+func _close_stitched_fight() -> void:
+	if not is_instance_valid(stitched_fight_view):
+		stitched_fight_view = null
+		return
+	var stage := stitched_fight_view
+	stitched_fight_view = null
+	# Retire the authority *before* queued GUI signals or stale references can
+	# invoke any of its action handlers again.
+	stage.battle = null
+	stage._selected_part = ""
+	stage._target_ranks.clear()
+	if stage.get_parent() == self:
+		remove_child(stage)
+	stage.queue_free()
+	if is_instance_valid(title_view):
+		title_view.show()
+		if is_instance_valid(stitched_fight_button):
+			stitched_fight_button.grab_focus.call_deferred()
 
 ## Full-screen Quilt village with no run, RNG, deck or currency allocation.
 func _open_base() -> bool:
