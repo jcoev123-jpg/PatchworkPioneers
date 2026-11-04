@@ -1418,7 +1418,7 @@ func _build_title() -> void:
 	stitched_campfire_button = Button.new()
 	stitched_campfire_button.name = "StitchedCampfireButton"
 	stitched_campfire_button.text = "Stitched Campfire"
-	stitched_campfire_button.tooltip_text = "Mend surviving ragdolls after the Roadblock"
+	stitched_campfire_button.tooltip_text = "Mend heroes or trim up to 50 CANDLE after the Roadblock"
 	stitched_campfire_button.custom_minimum_size = Vector2(240, 56)
 	stitched_campfire_button.visible = false
 	stitched_campfire_button.disabled = true
@@ -3262,6 +3262,7 @@ func _open_stitched_campfire() -> bool:
 			or state.get("candle") != stitched_roadblock_candle \
 			or state.get("quote") != visit.read_state().get("quote") \
 			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.MEND) == -1 \
+			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.TRIM_THE_WICK) == -1 \
 			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.STITCHED_LEAVE) == -1:
 		return false
 	var generation := _stitched_campfire_generation + 1
@@ -3309,7 +3310,7 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 	panel.add_child(frame)
 	var heading := Label.new()
 	heading.name = "CampfireHeading"
-	heading.text = "STITCHED CAMPFIRE  ·  MEND THE FOUR"
+	heading.text = "STITCHED CAMPFIRE  ·  TEND THE EMBERS"
 	heading.position = Vector2(165, 72)
 	heading.size = Vector2(950, 50)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -3317,7 +3318,7 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 	panel.add_child(heading)
 	var quote := Label.new()
 	quote.name = "CampfireQuote"
-	quote.text = "One post-Roadblock stop. Mend each surviving ragdoll for 30% of current max HP, or leave without healing."
+	quote.text = "One earned stop: Mend each hero for 30% max HP, Trim the Wick for up to 50 CANDLE (cap 100), or Leave. All choices free."
 	quote.position = Vector2(185, 135)
 	quote.size = Vector2(910, 75)
 	quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3325,7 +3326,10 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 	panel.add_child(quote)
 	var candle := Label.new()
 	candle.name = "CampfireCandle"
-	candle.text = "CANDLELIGHT  %d / 100  ·  MEND FREE" % int(state["candle"])
+	var wick_gain: int = mini(RunCampfireVisit.WICK_CANDLE_RESTORE, \
+		RunCampfireVisit.STITCHED_CANDLE_MAX - int(state["candle"]))
+	candle.text = "CANDLELIGHT  %d / 100  ·  TRIM +%d → %d / 100" % [
+		int(state["candle"]), wick_gain, int(state["candle"]) + wick_gain]
 	candle.position = Vector2(250, 215)
 	candle.size = Vector2(780, 40)
 	candle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -3348,23 +3352,34 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 	var mend := Button.new()
 	mend.name = "CampfireMend"
 	mend.text = "Mend · 30% max HP for each · free"
-	mend.position = Vector2(205, 550)
-	mend.size = Vector2(470, 58)
+	mend.position = Vector2(185, 550)
+	mend.size = Vector2(385, 58)
 	mend.focus_mode = Control.FOCUS_ALL
 	mend.pressed.connect(_stitched_campfire_choose.bind(
 		RunCampfireVisit.MEND, state.duplicate(true), weakref(panel), generation))
 	panel.add_child(mend)
+	var wick := Button.new()
+	wick.name = "CampfireWick"
+	wick.text = "Trim the Wick · +%d CANDLE · free" % wick_gain
+	wick.position = Vector2(585, 550)
+	wick.size = Vector2(315, 58)
+	wick.focus_mode = Control.FOCUS_ALL
+	wick.pressed.connect(_stitched_campfire_choose.bind(
+		RunCampfireVisit.TRIM_THE_WICK, state.duplicate(true), weakref(panel), generation))
+	panel.add_child(wick)
 	var leave := Button.new()
 	leave.name = "CampfireLeave"
 	leave.text = "Leave Campfire · free"
-	leave.position = Vector2(700, 550)
-	leave.size = Vector2(370, 58)
+	leave.position = Vector2(915, 550)
+	leave.size = Vector2(200, 58)
 	leave.focus_mode = Control.FOCUS_ALL
 	leave.pressed.connect(_stitched_campfire_choose.bind(
 		RunCampfireVisit.STITCHED_LEAVE, state.duplicate(true), weakref(panel), generation))
 	panel.add_child(leave)
-	mend.focus_next = mend.get_path_to(leave)
-	leave.focus_previous = leave.get_path_to(mend)
+	mend.focus_next = mend.get_path_to(wick)
+	wick.focus_previous = wick.get_path_to(mend)
+	wick.focus_next = wick.get_path_to(leave)
+	leave.focus_previous = leave.get_path_to(wick)
 	leave.focus_next = leave.get_path_to(mend)
 	mend.focus_previous = mend.get_path_to(leave)
 	return {"panel": panel, "first": mend}
@@ -3375,7 +3390,7 @@ func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
 func _stitched_campfire_choose(decision: String, expected: Dictionary,
 		source: WeakRef, generation: int) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
-	if not decision in [RunCampfireVisit.MEND, RunCampfireVisit.STITCHED_LEAVE] \
+	if not decision in [RunCampfireVisit.MEND, RunCampfireVisit.TRIM_THE_WICK, RunCampfireVisit.STITCHED_LEAVE] \
 			or panel == null or not is_instance_valid(panel) \
 			or panel != stitched_campfire_panel or not panel.is_visible_in_tree() \
 			or panel.get_meta("campfire_generation", -1) != generation \
@@ -3404,19 +3419,25 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 			@warning_ignore("integer_division")
 			var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
 			hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+	var after_candle: int = int(expected["candle"])
+	if decision == RunCampfireVisit.TRIM_THE_WICK:
+		after_candle = mini(RunCampfireVisit.STITCHED_CANDLE_MAX,
+			after_candle + RunCampfireVisit.WICK_CANDLE_RESTORE)
 	var receipt: Dictionary = stitched_campfire_visit.select(
 		decision, STITCHED_CAMPFIRE_NODE_ID, before, int(expected["candle"]))
 	var committed: Dictionary = stitched_campfire_visit.read_state()
 	if receipt != {"ok": true, "decision": decision,
 			"node_id": STITCHED_CAMPFIRE_NODE_ID, "heroes": after,
-			"candle": int(expected["candle"])} \
+			"candle": after_candle} \
 			or committed.get("status") != RunCampfireVisit.STITCHED_DECIDED \
-			or committed.get("heroes") != after or committed.get("candle") != expected["candle"]:
+			or committed.get("heroes") != after or committed.get("candle") != after_candle:
 		return {"ok": false, "error": "Campfire receipt rejected"}
-	# Only HP is published, after the whole successful receipt is verified.
+	# Publish only the chosen ledger after the complete receipt is verified.
 	if decision == RunCampfireVisit.MEND:
 		for hero in after:
 			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
+	elif decision == RunCampfireVisit.TRIM_THE_WICK:
+		stitched_roadblock_candle = after_candle
 	_close_stitched_campfire()
 	return receipt
 
