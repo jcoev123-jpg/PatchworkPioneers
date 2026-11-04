@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "note": "Design v4 (Stitched) S4 Rag Duelist wearable kit: one head, arms, torso and legs starter plus one alternative per slot, all owner 'rag_duelist'. These are explicit Stitched translations of the authored v3 Rag Duelist starter/pool cards (Rapier Lunge, Cape Parry, Feather Feint, Cape Slip and Tattered Snare, Needle Prick, Duelist Reprise, Cape Flourish). The retired card draw, Block and guaranteed next-attack dodge become current turn-based effects: Exposed, Riposte and a one-turn temporary Dodge pair. Tier I is the base record; tiers 2 and 3 are partial ability overrides. The En Garde passive, live party registration, rewards, satchel and icon art are later S6 work and are not represented here.",
+  "parts": [
+    {
+      "id": "rag_duelist_head_feather_feint",
+      "name": "Feather Feint",
+      "slot": "head",
+      "owner": "rag_duelist",
+      "stat": {"acc": 4},
+      "ability": {
+        "id": "rag_duelist_head_feather_feint_move",
+        "name": "Feather Feint",
+        "kind": "debuff",
+        "launch": [1, 2],
+        "target": [1, 2, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 95,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"exposed": 1},
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"exposed": 2}}},
+        "3": {"ability": {"effects": {"exposed": 3}}}
+      },
+      "text": "Feint from ranks 1-2 at one foe in ranks 1-3 and leave it Exposed, deeper at each stitch tier."
+    },
+    {
+      "id": "rag_duelist_head_tattered_snare",
+      "name": "Tattered Snare",
+      "slot": "head",
+      "owner": "rag_duelist",
+      "stat": {"crit": 3},
+      "ability": {
+        "id": "rag_duelist_head_tattered_snare_move",
+        "name": "Tattered Snare",
+        "kind": "debuff",
+        "launch": [1, 2],
+        "target": [1, 2, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"tangled": 2},
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"tangled": 3}}},
+        "3": {"ability": {"effects": {"tangled": 4}}}
+      },
+      "text": "Snap a rag-tie from ranks 1-2 around one foe in ranks 1-3: Tangled, longer at each stitch tier."
+    },
+    {
+      "id": "rag_duelist_arms_rapier_lunge",
+      "name": "Rapier Lunge",
+      "slot": "arms",
+      "owner": "rag_duelist",
+      "stat": {"dmg": 1},
+      "ability": {
+        "id": "rag_duelist_arms_rapier_lunge_move",
+        "name": "Rapier Lunge",
+        "kind": "melee",
+        "launch": [2, 3],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [4, 6],
+        "crit": 0,
+        "effects": {},
+        "self_move": -1,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [5, 8], "self_move": -1}},
+        "3": {"ability": {"dmg": [7, 10], "self_move": -1}}
+      },
+      "text": "Lunge from ranks 2-3 at one foe in ranks 1-2 and step one rank forward. Deeper tiers pierce harder."
+    },
+    {
+      "id": "rag_duelist_arms_needle_prick",
+      "name": "Needle Prick",
+      "slot": "arms",
+      "owner": "rag_duelist",
+      "stat": {"dmg": 2},
+      "ability": {
+        "id": "rag_duelist_arms_needle_prick_move",
+        "name": "Needle Prick",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {"bleed": 2},
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [4, 6], "effects": {"bleed": 3}}},
+        "3": {"ability": {"dmg": [5, 8], "effects": {"bleed": 4}}}
+      },
+      "text": "Prick one foe in ranks 1-2 for light damage and open a Bleed, deeper at each stitch tier."
+    },
+    {
+      "id": "rag_duelist_torso_cape_parry",
+      "name": "Cape Parry",
+      "slot": "torso",
+      "owner": "rag_duelist",
+      "stat": {"max_hp": 4, "prot": 3},
+      "ability": {
+        "id": "rag_duelist_torso_cape_parry_move",
+        "name": "Cape Parry",
+        "kind": "buff",
+        "launch": [1, 2, 3],
+        "target": [1, 2, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"riposte": 2},
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"riposte": 3}}},
+        "3": {"ability": {"effects": {"riposte": 4}}}
+      },
+      "text": "Wrap the cape from ranks 1-3: Riposte on yourself, so a foe that lands a hit takes that much back."
+    },
+    {
+      "id": "rag_duelist_torso_duelist_reprise",
+      "name": "Duelist Reprise",
+      "slot": "torso",
+      "owner": "rag_duelist",
+      "stat": {"prot": 6},
+      "ability": {
+        "id": "rag_duelist_torso_duelist_reprise_move",
+        "name": "Duelist Reprise",
+        "kind": "buff",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"riposte": 5},
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"riposte": 6}}},
+        "3": {"ability": {"effects": {"riposte": 7}}}
+      },
+      "text": "Answer from ranks 1-2: a heavier Riposte on yourself, sharper at each stitch tier."
+    },
+    {
+      "id": "rag_duelist_legs_cape_slip",
+      "name": "Cape Slip",
+      "slot": "legs",
+      "owner": "rag_duelist",
+      "stat": {"dodge": 6},
+      "ability": {
+        "id": "rag_duelist_legs_cape_slip_move",
+        "name": "Cape Slip",
+        "kind": "buff",
+        "launch": [1, 2, 3],
+        "target": [1, 2, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"dodge": 25, "duration": 1},
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"dodge": 30, "duration": 1}}},
+        "3": {"ability": {"effects": {"dodge": 35, "duration": 1}}}
+      },
+      "text": "Slip from ranks 1-3: temporary Dodge for one turn, harder to hit but never a guaranteed miss."
+    },
+    {
+      "id": "rag_duelist_legs_cape_flourish",
+      "name": "Cape Flourish",
+      "slot": "legs",
+      "owner": "rag_duelist",
+      "stat": {"speed": 1, "dodge": 5},
+      "ability": {
+        "id": "rag_duelist_legs_cape_flourish_move",
+        "name": "Cape Flourish",
+        "kind": "buff",
+        "launch": [1, 2, 3],
+        "target": [1, 2, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"dodge": 35, "duration": 1},
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"dodge": 40, "duration": 1}}},
+        "3": {"ability": {"effects": {"dodge": 45, "duration": 1}}}
+      },
+      "text": "Flourish from ranks 1-3: temporary Dodge for one turn, stronger than the plain Cape Slip."
+    }
+  ]
+}
