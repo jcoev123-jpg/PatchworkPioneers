@@ -23,7 +23,7 @@ const ABILITY_KINDS := ["melee", "ranged", "heal", "guard", "buff", "debuff", "m
 const TARGET_SIDES := ["enemy", "ally", "self"]
 const EFFECT_KEYS := [
 	"bleed", "weak", "exposed", "tangled", "stun", "mark", "thorns", "riposte", "blind",
-	"guard", "heal", "fray", "snip", "push", "pull", "tear",
+	"guard", "heal", "fray", "snip", "push", "pull", "tear", "dodge", "duration",
 ]
 const MOVE_POSES := ["attack", "attack2", "guard", "skill"]
 const MIN_TIER := 1
@@ -32,6 +32,8 @@ const MIN_RANK := 1
 const MAX_RANK := 4
 const ALL_RANKS_MASK := 0b11110  # bits 1-4
 const MAX_ACCURACY := 100
+const MAX_TEMP_DODGE := 100
+const MAX_DODGE_TURNS := 8
 const PART_FIELDS := ["id", "name", "slot", "owner", "stat", "ability", "tiers", "text"]
 const ABILITY_FIELDS := [
 	"id", "name", "kind", "launch", "target", "target_side", "multi", "acc", "dmg",
@@ -338,6 +340,9 @@ static func _validate_stat(value: Variant, slot: String, label: String) -> Dicti
 static func _validate_effects(value: Variant, label: String) -> Dictionary:
 	if not value is Dictionary:
 		return {"ok": false, "error": label + " effects are not a dictionary", "effects": {}}
+	# Dodge has one bounded duration; neither half is a standalone status.
+	if value.has("dodge") != value.has("duration"):
+		return {"ok": false, "error": label + " dodge needs a matching duration", "effects": {}}
 	var effects: Dictionary = {}
 	for key in value:
 		if not key is String or not key in EFFECT_KEYS:
@@ -348,6 +353,10 @@ static func _validate_effects(value: Variant, label: String) -> Dictionary:
 				"error": label + " effect " + str(key) + " must be a nonnegative integer",
 				"effects": {},
 			}
+		if str(key) == "dodge" and int(value[key]) > MAX_TEMP_DODGE:
+			return {"ok": false, "error": label + " dodge exceeds maximum", "effects": {}}
+		if str(key) == "duration" and (int(value[key]) < 1 or int(value[key]) > MAX_DODGE_TURNS):
+			return {"ok": false, "error": label + " duration must be 1-%d" % MAX_DODGE_TURNS, "effects": {}}
 		if str(key) in ["snip", "tear", "push", "pull"] and int(value[key]) != 1:
 			return {"ok": false, "error": label + " effect " + str(key) + " must be one step", "effects": {}}
 		effects[key] = int(value[key])
