@@ -142,6 +142,50 @@
         { "id": "pry_bronze_disc", "text": "Lose 5 HP levering out a bronze disc (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
         { "id": "leave", "text": "Leave the quarry's heavy buttons in the stone", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_waxwing_crossing",
+      "title": "The Waxwing Crossing",
+      "description": "A great moth-wing bridge folds around a crooked lantern post; the Lantern Monk's glowing lamp reveals amber knots in the velvet crossing.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        { "id": "buy_waxwing_ward", "text": "Pay 24 gold to strengthen the wing-stitch (+3 max HP)", "outcome": { "gold": -24, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pluck_amber_knots", "text": "Lose 6 HP plucking hot amber knots (gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the moth-wing bridge fold behind you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_thimble_duel_stage",
+      "title": "The Thimble Duel Stage",
+      "description": "Beneath oxblood velvet curtains, a button-eyed duelling puppet raises a needle rapier above a stage made from one giant brass thimble.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "darn_duellist_cape", "text": "Spend 2 scraps repairing the crimson cape (heal 9 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 9, "max_hp": 0 } },
+        { "id": "pawn_stage_medal", "text": "Give up 2 max HP for the puppet's 27-gold medal", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Bow to the puppet and leave the stage", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_woolwisp_waymark",
+      "title": "The Woolwisp Waymark",
+      "description": "The Yarn Ranger's huge wool bolas hold a stranded button-eyed wolf doll high above a moss-green needle-loom signpost.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "buy_wolf_lining", "text": "Pay 19 gold for a warm wolf-wool lining (heal 10 HP)", "outcome": { "gold": -19, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "free_tangled_wolf", "text": "Lose 5 HP freeing the wool-wolf (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the woolwisp dangling by the waymark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_gilt_turnstile",
+      "title": "The Gilt Button Turnstile",
+      "description": "An enormous four-hole gilded button turns like a gate beneath a black chapel arch; the Button Golem's round fists steady its rattling rim.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "reinforce_turnstile", "text": "Spend 3 scraps on a lasting brass-button seam (+4 max HP)", "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 4 } },
+        { "id": "wrench_loose_rim", "text": "Lose 6 HP prying out the brass rim (gain 29 gold)", "outcome": { "gold": 29, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the great button turn without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
