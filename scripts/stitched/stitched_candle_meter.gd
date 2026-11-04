@@ -25,7 +25,7 @@ var _focused := false
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_PASS
 	focus_mode = Control.FOCUS_NONE
-	theme = load(THEME_PATH) as Theme
+	# Inherit the mounted application's Gothic Theme (keep theme == null).
 	_build()
 	clear_readout()
 
