@@ -102,6 +102,7 @@ func _initialize() -> void:
 	_test_actionable_preview_sampling_and_replay()
 	_test_actionable_preview_invalids_and_isolation()
 	_test_v3_hero_vital_event_gate()
+	_test_four_hero_vital_gate_admission()
 	_check(_replay(257) == _replay(257), "whole offer/entry/receipt sequence replays exactly")
 	_check(_replay_actionable(257) == _replay_actionable(257), "seeded actionable selection and settlement sequence replays exactly")
 	_check(_replay_actionable_with_preview(257) == _replay_actionable_with_preview(257), "seeded actionable selection with preview and settlement sequence replays exactly")
@@ -1674,10 +1675,17 @@ func _test_v3_hero_vital_event_gate() -> void:
 	_check(_by_id(offers_b, "v3_warden_buckle_heart_ward").is_empty(), "PARTY_B excludes warden vital event")
 	_check(_by_id(offers_b, "v3_seamstress_crimson_quilt_surgeon").is_empty(), "PARTY_B excludes seamstress vital event")
 
-	# Invalid parties fail closed.
+	# Invalid parties fail closed. Four distinct heroes are valid (see
+	# _test_four_hero_vital_gate_admission); wrong sizes, duplicates, unknown IDs
+	# and non-string members still reject.
 	for bad_party in [null, {}, "warden", [], ["warden"], ["warden", "seamstress"],
-		["warden", "seamstress", "tinker", "scarecrow"], ["warden", "warden", "tinker"],
-		["warden", "unknown", "tinker"], ["warden", "", "tinker"], ["warden", 1, "tinker"]]:
+		["warden", "seamstress", "tinker", "lantern_monk", "scarecrow"],
+		["warden", "seamstress", "tinker", "lantern_monk", "scarecrow", "rag_duelist"],
+		["warden", "warden", "tinker"], ["warden", "warden", "tinker", "lantern_monk"],
+		["warden", "unknown", "tinker"], ["warden", "unknown", "tinker", "lantern_monk"],
+		["warden", "", "tinker"], ["warden", "", "tinker", "lantern_monk"],
+		["warden", 1, "tinker"], ["warden", 1, "tinker", "lantern_monk"],
+		["Warden", "seamstress", "tinker", "lantern_monk"]]:
 		var bad_gate := RunV3HeroVitalEventGate.new(bad_party)
 		_check(not bad_gate.is_valid() and bad_gate.get_offers().is_empty()
 			and bad_gate.enter("v3_warden_buckle_heart_ward", _vital_state("warden")) == null,
@@ -1879,4 +1887,108 @@ func _test_v3_hero_vital_event_gate() -> void:
 		_check(receipt_iso.get("ok") == true, "leave succeeds on isolation visit")
 		receipt_iso["state"]["gold"] = 88888
 		_check(visit_iso.get_snapshot()["gold"] != 88888, "mutating receipt does not mutate visit state")
+
+
+## AC1/AC3: a Design v4 Stitched roster of four distinct canonical heroes must be
+## admitted by the existing hero-vital Event gate, expose exactly the authored
+## records whose required_hero is on the roster (including the fourth hero's),
+## and settle the named Lantern Monk trade exactly once.
+func _test_four_hero_vital_gate_admission() -> void:
+	var catalog_events: Array = JSON.parse_string(
+		FileAccess.get_file_as_string(RunV3HeroVitalEventGate.CATALOG_PATH)).get("events", [])
+	var gate := RunV3HeroVitalEventGate.new(STITCHED_PARTY)
+	var ranked := RunV3HeroVitalEventGate.new(["lantern_monk", "tinker", "warden", "seamstress"])
+	_check(gate.is_valid() and ranked.is_valid(),
+		"four-hero Stitched party passes the hero-vital gate regardless of rank order")
+	if not gate.is_valid() or not ranked.is_valid():
+		return
+
+	# Offered IDs are derived per required_hero from the shipped catalog, never a
+	# fixed catalog total or full ordered ID list.
+	var expected_ids: Array[String] = []
+	for record: Dictionary in catalog_events:
+		if STITCHED_PARTY.has(record.get("required_hero")):
+			expected_ids.append(record["id"])
+	expected_ids.sort()
+	var offered_ids: Array[String] = []
+	for offer: Dictionary in gate.get_offers():
+		offered_ids.append(offer["id"])
+		_check(STITCHED_PARTY.has(offer.get("required_hero")),
+			"four-hero vital offer belongs to the roster by required_hero: " + str(offer.get("id")))
+	offered_ids.sort()
+	_check(offered_ids == expected_ids,
+		"four-hero vital offers are exactly the roster's authored records")
+	var ranked_ids: Array[String] = []
+	for offer: Dictionary in ranked.get_offers():
+		ranked_ids.append(offer["id"])
+	ranked_ids.sort()
+	_check(ranked_ids == expected_ids, "rank order does not change the four-hero vital offer set")
+
+	# The fourth hero's authenticated record is offered; the absent Rag Duelist's is not.
+	var vigil_id := "v3_lantern_monk_thimble_moon_vigil"
+	_check(offered_ids.has(vigil_id), "four-hero gate offers the fourth hero's moon vigil")
+	_check(not offered_ids.has("v3_rag_duelist_velvet_straw_mender"),
+		"four-hero gate excludes the absent Rag Duelist's record")
+	var authored := _by_id(catalog_events, vigil_id)
+	_check(not authored.is_empty() and authored.get("required_hero") == "lantern_monk",
+		"moon vigil is the shipped Lantern Monk record")
+	_check(_by_id(gate.get_offers(), vigil_id) == authored,
+		"four-hero offered record equals the authored moon vigil")
+
+	# Living fourth hero admits; Torn and wrong-hero snapshots do not.
+	var snap := _vital_state("lantern_monk", 20, 2, 15, 30)
+	var visit := gate.enter(vigil_id, snap)
+	_check(visit != null and visit.is_valid() and not visit.is_claimed(),
+		"living fourth hero opens an unclaimed moon vigil visit")
+	_check(gate.enter(vigil_id, _vital_state("lantern_monk", 20, 2, 0, 30)) == null,
+		"Torn Lantern Monk (0 HP) is refused admission")
+	_check(gate.enter(vigil_id, _vital_state("warden", 20, 2, 15, 30)) == null,
+		"wrong-hero snapshot is refused admission")
+	_check(gate.enter(vigil_id, _vital_state("scarecrow", 20, 2, 15, 30)) == null,
+		"off-party hero snapshot is refused admission")
+	if visit == null:
+		return
+
+	# The authored trades keep exactly the documented signed outcomes.
+	var moonlight := {}
+	var tend := {}
+	for choice: Dictionary in authored.get("choices", []):
+		if choice.get("id") == "moonlight_seam":
+			moonlight = choice["outcome"]
+		elif choice.get("id") == "tend_moth_candles":
+			tend = choice["outcome"]
+	_check(moonlight.size() == 4 and int(moonlight.get("gold", 0)) == -16
+		and int(moonlight.get("scraps", 0)) == 0 and int(moonlight.get("hp", 0)) == 0
+		and int(moonlight.get("max_hp", 0)) == 2,
+		"moonlight_seam keeps its exact four signed keys")
+	_check(tend.size() == 4 and int(tend.get("gold", 0)) == 20
+		and int(tend.get("scraps", 0)) == 0 and int(tend.get("hp", 0)) == -4
+		and int(tend.get("max_hp", 0)) == 0,
+		"tend_moth_candles keeps its exact four signed keys")
+
+	# Preview and settle the fourth hero's trade once, exactly.
+	var expected_state := _vital_state("lantern_monk", 4, 2, 15, 32)
+	var snap_copy := snap.duplicate(true)
+	var preview := visit.preview_vital_choices(snap)
+	_check(preview.get("ok") == true and preview.get("event_id") == vigil_id,
+		"four-hero moon vigil previews authentically")
+	var quote := {}
+	for entry: Dictionary in preview.get("choices", []):
+		if entry.get("choice_id") == "moonlight_seam":
+			quote = entry
+	_check(quote == {"choice_id": "moonlight_seam", "gold_delta": -16, "scraps_delta": 0,
+		"hp_delta": 0, "max_hp_delta": 2, "affordable": true, "state": expected_state},
+		"moonlight_seam previews gold 20 -> 4, scraps 2, HP 15/max 30 -> 32")
+	_check(not visit.is_claimed() and snap == snap_copy,
+		"four-hero preview is non-claiming and leaves the snapshot detached")
+	var receipt := visit.choose_with_vitals("moonlight_seam", snap)
+	_check(receipt == {"ok": true, "event_id": vigil_id, "choice_id": "moonlight_seam",
+		"state": expected_state} and snap == snap_copy,
+		"moonlight_seam settles once exactly as previewed without mutating the input")
+	_check(visit.is_claimed() and not visit.is_valid(), "four-hero claim latches the visit")
+	_check(visit.choose_with_vitals("moonlight_seam", expected_state) == {
+		"ok": false, "event_id": "", "choice_id": "", "state": expected_state},
+		"four-hero replay refuses without a second settlement")
+	_check(not visit.choose_with_vitals("leave", expected_state)["ok"],
+		"alternate choice is blocked once the four-hero visit is claimed")
 
