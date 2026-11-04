@@ -1,0 +1,490 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "tinker_head_cog_shot",
+      "name": "Cog Shot",
+      "slot": "head",
+      "owner": "tinker",
+      "stat": {
+        "acc": 4
+      },
+      "ability": {
+        "id": "tinker_cog_shot_move",
+        "name": "Cog Shot",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 91,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "mark": 2
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ],
+            "effects": {
+              "mark": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 95,
+            "dmg": [
+              7,
+              10
+            ],
+            "effects": {
+              "mark": 3
+            }
+          }
+        }
+      },
+      "text": "Fire a salvaged cog across the enemy line and mark its seams."
+    },
+    {
+      "id": "tinker_arms_scrap_bomb",
+      "name": "Scrap Bomb",
+      "slot": "arms",
+      "owner": "tinker",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "tinker_scrap_bomb_move",
+        "name": "Scrap Bomb",
+        "kind": "ranged",
+        "launch": [
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 90,
+        "dmg": [
+          3,
+          4
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "acc": 92,
+            "dmg": [
+              4,
+              6
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 95,
+            "dmg": [
+              5,
+              7
+            ]
+          }
+        }
+      },
+      "text": "Scatter scrap across every living foe in ranks one through three; never a fourth starting foe."
+    },
+    {
+      "id": "tinker_torso_casing_ward",
+      "name": "Casing Ward",
+      "slot": "torso",
+      "owner": "tinker",
+      "stat": {
+        "max_hp": 5,
+        "prot": 4
+      },
+      "ability": {
+        "id": "tinker_casing_ward_move",
+        "name": "Casing Ward",
+        "kind": "buff",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "thorns": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "stat": {
+            "max_hp": 7,
+            "prot": 5
+          },
+          "ability": {
+            "effects": {
+              "thorns": 3
+            }
+          }
+        },
+        "3": {
+          "stat": {
+            "max_hp": 9,
+            "prot": 7
+          },
+          "ability": {
+            "effects": {
+              "thorns": 4
+            }
+          }
+        }
+      },
+      "text": "Fold metal casing around yourself; Thorns answer each landed blow."
+    },
+    {
+      "id": "tinker_legs_tune_up",
+      "name": "Tune Up",
+      "slot": "legs",
+      "owner": "tinker",
+      "stat": {
+        "speed": 2,
+        "dodge": 2
+      },
+      "ability": {
+        "id": "tinker_tune_up_move",
+        "name": "Tune Up",
+        "kind": "heal",
+        "launch": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "heal": 3,
+          "dodge": 5,
+          "duration": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "heal": 4,
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "heal": 5,
+              "dodge": 9,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Repair a little HP and tune your joints for one turn of temporary Dodge."
+    },
+    {
+      "id": "tinker_head_spring_clamp",
+      "name": "Spring Clamp",
+      "slot": "head",
+      "owner": "tinker",
+      "stat": {
+        "crit": 4
+      },
+      "ability": {
+        "id": "tinker_spring_clamp_move",
+        "name": "Spring Clamp",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 94,
+            "dmg": [
+              5,
+              9
+            ],
+            "effects": {
+              "weak": 2
+            }
+          }
+        }
+      },
+      "text": "Clamp an enemy's seam and leave it Weak."
+    },
+    {
+      "id": "tinker_arms_overload",
+      "name": "Overload",
+      "slot": "arms",
+      "owner": "tinker",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "tinker_overload_move",
+        "name": "Overload",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 0,
+        "mark_damage": 3,
+        "effects": {},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ],
+            "mark_damage": 4
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 94,
+            "dmg": [
+              5,
+              9
+            ],
+            "mark_damage": 5
+          }
+        }
+      },
+      "text": "Discharge a charged tool; a Marked target takes extra damage, with no card or scrap cost."
+    },
+    {
+      "id": "tinker_torso_gear_brace",
+      "name": "Gear Brace",
+      "slot": "torso",
+      "owner": "tinker",
+      "stat": {
+        "max_hp": 5,
+        "prot": 5
+      },
+      "ability": {
+        "id": "tinker_gear_brace_move",
+        "name": "Gear Brace",
+        "kind": "guard",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          },
+          "stat": {
+            "max_hp": 7,
+            "prot": 6
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          },
+          "stat": {
+            "max_hp": 9,
+            "prot": 8
+          }
+        }
+      },
+      "text": "Brace an allied doll against incoming attacks, redirecting their hits."
+    },
+    {
+      "id": "tinker_legs_spare_screws",
+      "name": "Spare Screws",
+      "slot": "legs",
+      "owner": "tinker",
+      "stat": {
+        "speed": 1,
+        "dodge": 3
+      },
+      "ability": {
+        "id": "tinker_spare_screws_move",
+        "name": "Spare Screws",
+        "kind": "move",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          2,
+          3
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "mark_damage": 0,
+        "effects": {
+          "dodge": 5,
+          "duration": 1
+        },
+        "self_move": 1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "dodge": 7,
+              "duration": 1
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "dodge": 10,
+              "duration": 1
+            }
+          }
+        }
+      },
+      "text": "Scatter spare screws, gain temporary Dodge, and swap one rank backward."
+    }
+  ]
+}
