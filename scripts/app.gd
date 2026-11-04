@@ -683,6 +683,7 @@ var stitched_preview_scraps := 0
 var stitched_roadblock_candle := 100
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
+var _stitched_hp_carry: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
 var _stitched_sewing_catalog: Dictionary = {}
@@ -1532,6 +1533,23 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 					or StitchedParts.ability_at_tier(part, int(gear["tier"])).is_empty():
 				return {}
 			hero["parts"][slot] = gear.duplicate(true)
+	# Project prior terminal-victory health only after the final worn parts are set.
+	# Torn equipment contributes no max HP; a lawful swap may lower the cap,
+	# but cannot heal a wounded survivor for free.
+	for hero in selected_heroes:
+		var hero_id := str(hero["id"])
+		if not _stitched_hp_carry.has(hero_id):
+			continue
+		var carried_hp: Variant = _stitched_hp_carry[hero_id]
+		if typeof(carried_hp) != TYPE_INT or int(carried_hp) < 0:
+			return {}
+		var worn_max: int = int(hero["max_hp"])
+		for slot in StitchedParts.SLOTS:
+			var gear: Dictionary = hero["parts"][slot]
+			if not bool(gear["torn"]):
+				var definition: Dictionary = catalog["by_id"][str(gear["id"])]
+				worn_max += int(StitchedParts.stat_at_tier(definition, int(gear["tier"])).get("max_hp", 0))
+		hero["hp"] = mini(int(carried_hp), worn_max)
 	config["heroes"] = selected_heroes
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
@@ -1633,6 +1651,9 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_gear_overrides.keys():
 		if not id in _stitched_party_picks:
 			_stitched_gear_overrides.erase(id)
+	for id in _stitched_hp_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
 	_stitched_picker_sync()
 
 
@@ -1950,6 +1971,12 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
+		# This exact, once-only stage is the sole HP source. A lost hero is not
+		# carried; failed, retreated and replayed exits leave the ledger untouched.
+		for id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
+		for hero in heroes:
+			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
 		stitched_preview_scraps += 1
@@ -2058,7 +2085,7 @@ func _refresh_stitched_sewing() -> void:
 	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(description)
 	var count := Label.new()
-	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn arms: %d scraps" % [
+	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn parts: %d scraps" % [
 		int(quote["satchel_count"]), int(quote["satchel_max"]),
 		stitched_preview_scraps, STITCHED_SEWING_MEND_COST]
 	count.position = Vector2(183, 224)
@@ -2077,22 +2104,20 @@ func _refresh_stitched_sewing() -> void:
 	var mend_state: Dictionary = mend_quote["state"].duplicate(true)
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) != "arms":
-				continue
 			var worn: Dictionary = slot_row["worn"]
 			var hero_name := str(hero_row["name"])
 			var blocked := str(slot_row["blocked"])
-			# Only actual torn arms are offered a Mend control. Unaffordable
+			# Only quoted torn worn parts get a Mend control. Unaffordable
 			# and lost-hero requests remain visible but disabled with a reason.
 			if bool(worn["torn"]):
 				for mend_hero in mend_quote["heroes"]:
 					if str(mend_hero["hero_id"]) != str(hero_row["hero_id"]):
 						continue
 					for mend_slot in mend_hero["slots"]:
-						if str(mend_slot["slot"]) != "arms":
+						if str(mend_slot["slot"]) != str(slot_row["slot"]):
 							continue
 						var mend_button := Button.new()
-						mend_button.name = "Mend_%s_arms" % str(hero_row["hero_id"])
+						mend_button.name = "Mend_%s_%s" % [str(hero_row["hero_id"]), str(slot_row["slot"])]
 						mend_button.custom_minimum_size = Vector2(850, 48)
 						mend_button.disabled = not bool(mend_slot["can_mend"])
 						mend_button.focus_mode = Control.FOCUS_NONE if mend_button.disabled else Control.FOCUS_ALL
@@ -2102,7 +2127,7 @@ func _refresh_stitched_sewing() -> void:
 							(" — " + reason) if not reason.is_empty() else ""]
 						mend_button.tooltip_text = reason
 						mend_button.pressed.connect(_stitched_sewing_mend.bind(
-							str(hero_row["hero_id"]), "arms", mend_state.duplicate(true), weakref(panel)))
+							str(hero_row["hero_id"]), str(slot_row["slot"]), mend_state.duplicate(true), weakref(panel)))
 						offers.add_child(mend_button)
 						if not mend_button.disabled and first_button == null:
 							first_button = mend_button
@@ -2166,11 +2191,11 @@ func _stitched_sewing_mend(hero_id: String, slot: String,
 		if str(hero_row["hero_id"]) != hero_id:
 			continue
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) == slot and slot == "arms" \
+			if str(slot_row["slot"]) == slot \
 					and bool(slot_row["can_mend"]) and bool(slot_row["worn"]["torn"]):
 				offered = true
 	if not offered:
-		return {"ok": false, "error": "not a quoted affordable torn arm"}
+		return {"ok": false, "error": "not a quoted affordable torn part"}
 	var receipt: Dictionary = stitched_sewing_mend_visit.mend(
 		hero_id, slot, STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") != true or receipt.get("source_state") != expected_state \

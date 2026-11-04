@@ -85,12 +85,12 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		"foes": stage.battle.get_foes().duplicate(true)}
 
 
-func _torn_witness(stage: StitchedBattleScreen) -> Dictionary:
+func _torn_witness(stage: StitchedBattleScreen, slot: String = "arms") -> Dictionary:
 	for hero in stage.battle.get_heroes():
 		if not bool(hero.get("lost", false)):
 			var hero_id := str(hero["id"])
-			var part: Dictionary = hero["parts"]["arms"].duplicate(true)
-			stage.battle._units[hero_id]["parts"]["arms"]["torn"] = true
+			var part: Dictionary = hero["parts"][slot].duplicate(true)
+			stage.battle._units[hero_id]["parts"][slot]["torn"] = true
 			return {"hero_id": hero_id, "part": part}
 	return {}
 
@@ -296,4 +296,241 @@ func _run() -> void:
 		await process_frame
 	_check(app.stitched_preview_scraps == 0 and app.stitched_sewing_panel == null
 		and _no_wallet(app), "unwon next Fight cannot refund mending or mint another scrap")
-	await _finish(app)
+	app.free()
+	await process_frame
+	await _exercise_slot("head")
+	await _exercise_slot("legs")
+	await _finish(null)
+
+
+## Exercise each formerly blocked slot through independent real title -> wins ->
+## mounted Circle -> Leave -> next mounted Fight routes.
+func _exercise_slot(slot: String) -> void:
+	var app: Node = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	_check(_no_wallet(app) and app.stitched_preview_scraps == 0,
+		"%s scenario begins from a fresh real title without free scraps" % slot)
+	var first: StitchedBattleScreen = await _admit(app)
+	if first == null or first.battle == null or not first.battle.is_valid():
+		_check(false, "%s first authentic Roadblock mounted" % slot)
+		app.free()
+		await process_frame
+		return
+	var win_one: Dictionary = _victory(first)
+	_check(win_one.get("outcome") == "victory" and int(win_one.get("abilities", 0)) > 0
+		and int(win_one.get("steps", 0)) > 0 and win_one.get("foes", []).size() == 3,
+		"%s first scrap is earned through real combat abilities" % slot)
+	if win_one.get("outcome") != "victory":
+		app.free()
+		await process_frame
+		return
+	var torn_one: Dictionary = _torn_witness(first, slot)
+	_check(not torn_one.is_empty(), "%s surviving hero and worn part exist" % slot)
+	first._action_buttons["exit"].pressed.emit()
+	await process_frame
+	var panel: Control = app.stitched_sewing_panel
+	if panel == null or app.stitched_sewing_mend_visit == null:
+		_check(false, "%s first real Sewing Circle mounted" % slot)
+		app.free()
+		await process_frame
+		return
+	var disabled: Button = panel.find_child("Mend_%s_%s" % [torn_one.get("hero_id", ""), slot],
+		true, false) as Button
+	_check(disabled != null and disabled.disabled and disabled.focus_mode == Control.FOCUS_NONE
+		and disabled.text.contains("insufficient scraps") and app.stitched_preview_scraps == 1,
+		"%s quote visibly disables unaffordable worn-part Mend with its reason" % slot)
+	var poor_mend: RunStitchedSewingMend = app.stitched_sewing_mend_visit
+	var poor_before: Dictionary = poor_mend.read_state()
+	var poor_swap: Dictionary = app.stitched_sewing_visit.read_state()
+	var poor_gear: Dictionary = app._stitched_gear_overrides.duplicate(true)
+	var poor_satchel: Array = app.stitched_preview_satchel.duplicate(true)
+	var poor_candle: int = app.stitched_roadblock_candle
+	seed(853201)
+	var poor_rng := randi()
+	seed(853201)
+	_check(not app._stitched_sewing_mend(str(torn_one["hero_id"]), slot,
+		poor_before, weakref(panel)).get("ok")
+		and poor_mend.read_state() == poor_before
+		and app.stitched_sewing_visit.read_state() == poor_swap
+		and app.stitched_preview_scraps == 1 and app._stitched_gear_overrides == poor_gear
+		and app.stitched_preview_satchel == poor_satchel
+		and app.stitched_roadblock_candle == poor_candle
+		and randi() == poor_rng and _no_wallet(app),
+		"%s insufficient-scrap direct click is inert for all resources and RNG" % slot)
+	panel.get_node("SewingLeave").pressed.emit()
+	await process_frame
+	_check(app.stitched_sewing_panel == null and app.stitched_preview_scraps == 1,
+		"%s first Circle Leave keeps one earned scrap" % slot)
+	var second: StitchedBattleScreen = await _admit(app)
+	if second == null or second.battle == null or not second.battle.is_valid():
+		_check(false, "%s next authentic Roadblock mounted" % slot)
+		app.free()
+		await process_frame
+		return
+	var carried: Dictionary = second.battle.get_unit(str(torn_one["hero_id"]))
+	_check(carried.get("parts", {}).get(slot, {}).get("torn") == true,
+		"%s torn part carries through Leave into the next real fight" % slot)
+	var win_two: Dictionary = _victory(second)
+	_check(win_two.get("outcome") == "victory" and int(win_two.get("abilities", 0)) > 0
+		and int(win_two.get("steps", 0)) > 0 and win_two.get("foes", []).size() == 3,
+		"%s second scrap is earned through a second real victory" % slot)
+	if win_two.get("outcome") != "victory":
+		app.free()
+		await process_frame
+		return
+	var torn_two: Dictionary = _torn_witness(second, slot)
+	_check(not torn_two.is_empty(), "%s second win has a surviving torn wearer" % slot)
+	second._action_buttons["exit"].pressed.emit()
+	await process_frame
+	panel = app.stitched_sewing_panel
+	var mend: RunStitchedSewingMend = app.stitched_sewing_mend_visit
+	var swap: RunStitchedSewingSwap = app.stitched_sewing_visit
+	if panel == null or mend == null or swap == null:
+		_check(false, "%s two-scrap Circle mounts both real services" % slot)
+		app.free()
+		await process_frame
+		return
+	var hero_id := str(torn_two["hero_id"])
+	var button: Button = panel.find_child("Mend_%s_%s" % [hero_id, slot],
+		true, false) as Button
+	var quote: Dictionary = mend.quote()
+	var before: Dictionary = mend.read_state()
+	var swap_before: Dictionary = swap.read_state()
+	var satchel_before: Array = app.stitched_preview_satchel.duplicate(true)
+	var gear_before: Dictionary = app._stitched_gear_overrides.duplicate(true)
+	var candle_before: int = app.stitched_roadblock_candle
+	var hero_before: Dictionary = {}
+	for record in before["heroes"]:
+		if str(record["id"]) == hero_id:
+			hero_before = record.duplicate(true)
+	_check(not hero_before.is_empty() and bool(hero_before.get("parts", {}).get(slot, {}).get("torn", false))
+		and app.stitched_preview_scraps == 2 and before["scraps"] == 2
+		and before["mend_cost"] == 2 and before["heroes"] == swap_before["heroes"]
+		and button != null and not button.disabled and button.focus_mode != Control.FOCUS_NONE
+		and quote.get("ok") == true and _no_wallet(app),
+		"%s eligible quoted Mend control is usable at exactly two earned scraps" % slot)
+	# Every displayed Mend must correspond to a torn row; intact parts must have no Mend.
+	var all_quotes_mounted := true
+	for row in quote["heroes"]:
+		for item in row["slots"]:
+			var named: Button = panel.find_child("Mend_%s_%s" % [
+				str(row["hero_id"]), str(item["slot"])], true, false) as Button
+			if bool(item["worn"]["torn"]):
+				all_quotes_mounted = all_quotes_mounted and named != null
+				if named != null:
+					all_quotes_mounted = all_quotes_mounted and (
+						named.disabled == not bool(item["can_mend"]))
+			else:
+				all_quotes_mounted = all_quotes_mounted and named == null
+	_check(all_quotes_mounted, "%s all quoted torn slots get controls but intact slots never do" % slot)
+	# The swap UI must still use exactly the service's compatible satchel offers.
+	var swap_buttons_quoted := true
+	var swap_quote: Dictionary = swap.quote()
+	for row in swap_quote["heroes"]:
+		for item in row["slots"]:
+			for spare in item["offers"]:
+				swap_buttons_quoted = swap_buttons_quoted and panel.find_child("Swap_%s_%d" % [
+					str(row["hero_id"]), int(spare["satchel_index"])], true, false) != null
+	_check(swap_buttons_quoted and swap_quote.get("ok") == true,
+		"%s compatible satchel swaps remain mounted from real quotes" % slot)
+	if button == null or hero_before.is_empty():
+		app.free()
+		await process_frame
+		return
+	var forged: Dictionary = before.duplicate(true)
+	forged["scraps"] = 99
+	seed(584220)
+	var reject_rng := randi()
+	seed(584220)
+	_check(not app._stitched_sewing_mend("impostor", slot, before, weakref(panel)).get("ok")
+		and not app._stitched_sewing_mend(hero_id, "bogus-slot", before, weakref(panel)).get("ok")
+		and not app._stitched_sewing_mend(hero_id, slot, forged, weakref(panel)).get("ok")
+		and not mend.mend(hero_id, slot, "wrong-node", before).get("ok")
+		and not mend.mend(hero_id, slot, NODE, forged).get("ok")
+		and mend.read_state() == before and swap.read_state() == swap_before
+		and app.stitched_preview_scraps == 2 and app.stitched_preview_satchel == satchel_before
+		and app._stitched_gear_overrides == gear_before
+		and app.stitched_roadblock_candle == candle_before and randi() == reject_rng and _no_wallet(app),
+		"%s wrong-hero/slot/node and forged-state requests are inert including RNG/candle" % slot)
+	seed(342298)
+	var mend_rng := randi()
+	seed(342298)
+	button.pressed.emit()
+	var after: Dictionary = mend.read_state()
+	var hero_after: Dictionary = {}
+	for record in after["heroes"]:
+		if str(record["id"]) == hero_id:
+			hero_after = record.duplicate(true)
+	var expected_hero: Dictionary = hero_before.duplicate(true)
+	expected_hero["parts"][slot]["torn"] = false
+	var expected_roster: Array = before["heroes"].duplicate(true)
+	for previous in expected_roster:
+		if str(previous["id"]) == hero_id:
+			previous["parts"][slot]["torn"] = false
+	_check(after["heroes"] == expected_roster and hero_after == expected_hero and app._stitched_gear_overrides.get(hero_id, {}).get(slot) == expected_hero["parts"][slot]
+		and app.stitched_preview_scraps == 0 and after["scraps"] == 0
+		and app.stitched_preview_satchel == satchel_before and app.stitched_roadblock_candle == candle_before
+		and app.stitched_sewing_visit.read_state()["heroes"] == after["heroes"]
+		and randi() == mend_rng and _no_wallet(app),
+		"%s click repairs only torn flag, preserves every other part and spends two scraps once" % slot)
+	var fresh: Dictionary = after.duplicate(true)
+	seed(288303)
+	var replay_rng := randi()
+	seed(288303)
+	button.pressed.emit()
+	_check(not app._stitched_sewing_mend(hero_id, slot, before, weakref(panel)).get("ok")
+		and not mend.mend(hero_id, slot, NODE, before).get("ok")
+		and not mend.mend(hero_id, slot, NODE, fresh).get("ok")
+		and mend.read_state() == after and app.stitched_preview_scraps == 0
+		and app.stitched_preview_satchel == satchel_before and app.stitched_roadblock_candle == candle_before
+		and randi() == replay_rng and _no_wallet(app),
+		"%s stale, repeated and already-mended clicks never replay a charge" % slot)
+	var retired: RunStitchedSewingMend = mend
+	panel.get_node("SewingLeave").pressed.emit()
+	await process_frame
+	_check(app.stitched_sewing_panel == null and app.stitched_sewing_mend_visit == null
+		and app.stitched_sewing_visit == null and not retired.read_state()["open"]
+		and not app._stitched_sewing_mend(hero_id, slot, after, weakref(panel)).get("ok")
+		and app.stitched_preview_scraps == 0,
+		"%s Circle Leave closes mending authority and stale callbacks" % slot)
+	var next: StitchedBattleScreen = await _admit(app)
+	if next == null or next.battle == null or not next.battle.is_valid():
+		_check(false, "%s repaired gear is mounted in a next authentic Fight" % slot)
+		app.free()
+		await process_frame
+		return
+	var actor: Dictionary = next.battle.get_unit(hero_id)
+	var restored: Dictionary = actor.get("parts", {}).get(slot, {})
+	var equipped: bool = restored == expected_hero["parts"][slot] and not bool(restored.get("torn", true))
+	var available: bool = equipped and next._valid_part(actor, restored)
+	var exercised := false
+	var attempt_count := 0
+	while available and not next.battle.is_over() and attempt_count < 5:
+		attempt_count += 1
+		if next.battle.current_side() != "hero":
+			break
+		var active: Dictionary = next.battle.get_unit(next.battle.current_actor_id())
+		if str(active.get("id", "")) != hero_id:
+			var passed: Dictionary = next.submit_pass()
+			if passed.get("ok") != true:
+				break
+			continue
+		var definition: Dictionary = next.parts.get(str(restored["id"]), {})
+		var ability: Dictionary = StitchedParts.ability_at_tier(definition, int(restored["tier"]))
+		for rank in range(1, 5):
+			if next.battle._legal_targets(active, ability, rank).is_empty():
+				continue
+			var used: Dictionary = next.submit_part(str(restored["id"]), rank)
+			exercised = used.get("ok") == true and used.get("action") == "ability"
+			break
+		break
+	_check(equipped and available and exercised and _no_wallet(app),
+		"%s exact repaired part remains equipped and its ability executes in next real Fight" % slot)
+	if next.battle != null and not next.battle.is_over():
+		next._action_buttons["exit"].pressed.emit()
+		await process_frame
+	_check(app.stitched_preview_scraps == 0 and app.stitched_sewing_panel == null and _no_wallet(app),
+		"%s next unfinished Fight cannot refund mending" % slot)
+	app.free()
+	await process_frame

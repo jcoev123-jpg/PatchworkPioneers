@@ -47,6 +47,9 @@ func _initialize() -> void:
 	_test_hp_party_and_hero_intents()
 	_test_hp_combined_and_legacy_shapes()
 	_test_hp_rejections()
+	_test_paid_wick_party_and_hero_bargains()
+	_test_paid_wick_underfunded_and_bounds()
+	_test_paid_wick_opt_in_and_rejections()
 	_finish()
 
 
@@ -3311,6 +3314,669 @@ func _test_hp_rejections() -> void:
 		"AC4: malformed HP checks and fallback claims never draw from global RNG")
 	_check(snap == snap_original,
 		"AC4: malformed HP checks never mutate caller snapshot")
+
+
+func _paid_wick_effect(candle: Variant, fray: int, require_full_candle: Variant = true,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {
+		"candle": candle,
+		"fray": fray,
+		"target": target,
+		"require_full_candle": require_full_candle,
+	}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _paid_wick_event() -> Dictionary:
+	return _event([
+		_choice("pay_wick", "Burn a quarter of the wick to soothe the party's seams.",
+			_paid_wick_effect(-25, -25, true, "party")),
+		_choice("leave", "Keep the remaining wick untouched.",
+			_effect(0, 0, "party")),
+	], "ev_stitched_paid_wick_bargain")
+
+
+func _test_paid_wick_party_and_hero_bargains() -> void:
+	var expected_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id",
+		"fray", "fray_delta", "hero_id", "target",
+	]
+	var expected_receipt_keys := [
+		"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+	]
+	var expected_party_fray := {
+		"warden": -25,
+		"seamstress": -25,
+		"tinker": -25,
+		"button_golem": -25,
+	}
+
+	# AC1: Four-hero snapshot (warden, seamstress, tinker, button_golem, each fray 80, candle 40)
+	# with {candle:-25, fray:-25, target:"party", require_full_candle:true} and Leave {candle:0, fray:0, target:"party"}.
+	var snap_40 := _four(40, [80, 80, 80, 80])
+	var snap_40_original := snap_40.duplicate(true)
+	var event_record := _paid_wick_event()
+	var event_original := event_record.duplicate(true)
+
+	seed(20261114)
+	var expected_rng := randi()
+	seed(20261114)
+
+	var svc := RunStitchedEventConsequence.new(event_record)
+	_check(svc.is_valid() and not svc.is_claimed(),
+		"AC1: paid-wick Event opens valid and unclaimed")
+	var prev_40 := svc.preview(snap_40)
+	_check(prev_40.get("ok") == true
+		and prev_40.get("event_id") == "ev_stitched_paid_wick_bargain"
+		and prev_40.get("candle") == 40
+		and _choice_ids(prev_40) == ["pay_wick", "leave"],
+		"AC1: paid-wick Event preflights at candle 40 with exact choice order")
+
+	var pay_entry_40 := _entry(prev_40, "pay_wick")
+	_check(pay_entry_40.get("available") == true
+		and pay_entry_40.get("target") == "party"
+		and pay_entry_40.get("hero_id") == ""
+		and pay_entry_40.get("candle_delta") == -25
+		and pay_entry_40.get("fray_delta") == -25
+		and pay_entry_40.get("candle") == 15
+		and pay_entry_40.get("fray") == expected_party_fray
+		and (pay_entry_40.get("fray") as Dictionary).size() == 4
+		and _receipt_keys(pay_entry_40) == expected_preview_keys,
+		"AC1: at candle 40, pay_wick is offered and previews candle 15, four raw -25 fray intents, and exact 8-key shape")
+
+	var leave_entry_40 := _entry(prev_40, "leave")
+	_check(leave_entry_40.get("available") == true
+		and leave_entry_40.get("target") == "party"
+		and leave_entry_40.get("hero_id") == ""
+		and leave_entry_40.get("candle_delta") == 0
+		and leave_entry_40.get("fray_delta") == 0
+		and leave_entry_40.get("candle") == 40
+		and leave_entry_40.get("fray") == {}
+		and _receipt_keys(leave_entry_40) == expected_preview_keys,
+		"AC1: Leave sibling previews unchanged candle 40, empty fray map, and exact 8-key shape")
+
+	var receipt_40 := svc.choose("pay_wick", snap_40)
+	_check(receipt_40.get("ok") == true
+		and receipt_40.get("event_id") == "ev_stitched_paid_wick_bargain"
+		and receipt_40.get("choice_id") == "pay_wick"
+		and receipt_40.get("target") == "party"
+		and receipt_40.get("hero_id") == ""
+		and receipt_40.get("candle") == 15
+		and receipt_40.get("fray") == expected_party_fray
+		and _receipt_keys(receipt_40) == expected_receipt_keys,
+		"AC1: choose(pay_wick) at candle 40 returns candle 15, four raw -25 fray intents, and exact 7-key receipt")
+	_check(svc.is_claimed() and not svc.is_valid(),
+		"AC1: choose(pay_wick) claims the visit once")
+	_assert_rejected(svc, "pay_wick", snap_40, 40,
+		"AC1/AC3: duplicate claim of pay_wick is rejected")
+	_assert_rejected(svc, "leave", snap_40, 40,
+		"AC1/AC3: Leave after pay_wick claim is rejected")
+	_check(svc.preview(snap_40) == _denied_preview(),
+		"AC1/AC3: claimed paid-wick visit denies preflight")
+
+	# Deterministic replay across equal detached snapshots and mutation isolation:
+	var replay_svc := RunStitchedEventConsequence.new(event_record.duplicate(true))
+	var replay_snap := snap_40.duplicate(true)
+	var replay_prev := replay_svc.preview(replay_snap)
+	var replay_receipt := replay_svc.choose("pay_wick", replay_snap)
+	_check(replay_prev == prev_40 and replay_receipt == receipt_40,
+		"AC1: paid-wick preview and receipt are deterministic across equal detached snapshots")
+	pay_entry_40["fray"]["warden"] = 999
+	pay_entry_40["candle"] = 99
+	receipt_40["fray"]["warden"] = -999
+	receipt_40["candle"] = 0
+	_check(snap_40 == snap_40_original and event_record == event_original
+		and RunStitchedEventConsequence.new(event_record).choose("pay_wick", snap_40) == replay_receipt,
+		"AC1: mutating returned preview or receipt never mutates caller snapshot, event, or later visits")
+	_check(randi() == expected_rng,
+		"AC1: paid-wick construction, preview, commit and duplicate-claim rejection never draw global RNG")
+
+	# Named-hero target coverage across all 8 canonical heroes (funded vs underfunded vs absent hero):
+	for hero_idx in range(REQUIRED_IDS.size()):
+		var hero_id: String = REQUIRED_IDS[hero_idx]
+		var alt_a: String = REQUIRED_IDS[(hero_idx + 1) % REQUIRED_IDS.size()]
+		var alt_b: String = REQUIRED_IDS[(hero_idx + 2) % REQUIRED_IDS.size()]
+		var alt_c: String = REQUIRED_IDS[(hero_idx + 3) % REQUIRED_IDS.size()]
+		var alt_d: String = REQUIRED_IDS[(hero_idx + 4) % REQUIRED_IDS.size()]
+
+		var hero_event := _event([
+			_choice("pay_wick_hero", "Burn wick for named hero.",
+				_paid_wick_effect(-25, -25, true, "hero", hero_id)),
+			_choice("pay_wick", "Burn wick for party.",
+				_paid_wick_effect(-25, -25, true, "party")),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "ev_stitched_paid_wick_" + hero_id)
+
+		for funded_case in [[40, 15], [25, 0], [100, 75]]:
+			var funded_candle: int = funded_case[0]
+			var expected_candle: int = funded_case[1]
+			var present_snap := _snapshot(funded_candle, [
+				[alt_a, 80], [hero_id, 80], [alt_b, 80], [alt_c, 80],
+			])
+			var hero_svc := RunStitchedEventConsequence.new(hero_event)
+			var hero_prev := hero_svc.preview(present_snap)
+			var hero_entry := _entry(hero_prev, "pay_wick_hero")
+			_check(hero_entry.get("available") == true
+				and hero_entry.get("target") == "hero"
+				and hero_entry.get("hero_id") == hero_id
+				and hero_entry.get("candle_delta") == -25
+				and hero_entry.get("fray_delta") == -25
+				and hero_entry.get("candle") == expected_candle
+				and hero_entry.get("fray") == {hero_id: -25}
+				and _receipt_keys(hero_entry) == expected_preview_keys,
+				"paid-wick hero target %s at candle %d previews candle %d and sole -25 fray" % [
+					hero_id, funded_candle, expected_candle,
+				])
+			var hero_rec := hero_svc.choose("pay_wick_hero", present_snap)
+			_check(hero_rec.get("ok") == true
+				and hero_rec.get("target") == "hero"
+				and hero_rec.get("hero_id") == hero_id
+				and hero_rec.get("candle") == expected_candle
+				and hero_rec.get("fray") == {hero_id: -25}
+				and _receipt_keys(hero_rec) == expected_receipt_keys,
+				"paid-wick hero target %s at candle %d commits candle %d and sole -25 fray" % [
+					hero_id, funded_candle, expected_candle,
+				])
+
+		for underfunded_candle in [24, 0]:
+			var low_snap := _snapshot(underfunded_candle, [
+				[alt_a, 80], [hero_id, 80], [alt_b, 80], [alt_c, 80],
+			])
+			var low_svc := RunStitchedEventConsequence.new(hero_event)
+			var low_prev := low_svc.preview(low_snap)
+			var low_hero_entry := _entry(low_prev, "pay_wick_hero")
+			_check(low_hero_entry.get("available") == false
+				and low_hero_entry.get("candle_delta") == -25
+				and low_hero_entry.get("fray_delta") == -25
+				and low_hero_entry.get("candle") == underfunded_candle
+				and low_hero_entry.get("fray") == {}
+				and _receipt_keys(low_hero_entry) == expected_preview_keys,
+				"paid-wick hero target %s at candle %d is unavailable with unchanged candle and empty fray" % [
+					hero_id, underfunded_candle,
+				])
+			_assert_rejected(low_svc, "pay_wick_hero", low_snap, underfunded_candle,
+				"underfunded paid-wick hero target %s at candle %d" % [hero_id, underfunded_candle])
+			var low_leave := low_svc.choose("leave", low_snap)
+			_check(low_leave.get("ok") == true and low_leave.get("candle") == underfunded_candle,
+				"Leave claims after underfunded paid-wick hero denial for %s at candle %d" % [
+					hero_id, underfunded_candle,
+				])
+
+		var absent_snap := _snapshot(40, [
+			[alt_a, 80], [alt_b, 80], [alt_c, 80], [alt_d, 80],
+		])
+		var absent_svc := RunStitchedEventConsequence.new(hero_event)
+		var absent_prev := absent_svc.preview(absent_snap)
+		var absent_entry := _entry(absent_prev, "pay_wick_hero")
+		_check(absent_entry.get("available") == false
+			and absent_entry.get("candle") == 40
+			and absent_entry.get("fray") == {},
+			"paid-wick hero target %s when absent from party is unavailable even at candle 40" % hero_id)
+		_assert_rejected(absent_svc, "pay_wick_hero", absent_snap, 40,
+			"absent hero on paid-wick hero choice for " + hero_id)
+		var fallback_party := absent_svc.choose("pay_wick", absent_snap)
+		_check(fallback_party.get("ok") == true and fallback_party.get("candle") == 15,
+			"funded party paid-wick sibling claims after absent-hero refusal for " + hero_id)
+
+	# Combined paid-wick with existing optional fields (required_hero, scraps, gold, part, hp):
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var combined_effect := {
+		"candle": -25,
+		"fray": -25,
+		"target": "party",
+		"required_hero": "warden",
+		"scraps": -2,
+		"gold": -12,
+		"part": {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		"hp": 6,
+		"require_full_candle": true,
+	}
+	var combined_event := _event([
+		_choice("pay_wick", "Full paid bargain with all optional fields.", combined_effect),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_paid_wick_combined")
+
+	var funded_combo_snap := _gold_scraps_satchel_four(40, 4, 30, 5, [80, 80, 80, 80])
+	var funded_combo_svc := RunStitchedEventConsequence.new(combined_event, warden_catalog)
+	var funded_combo_prev := funded_combo_svc.preview(funded_combo_snap)
+	var funded_combo_entry := _entry(funded_combo_prev, "pay_wick")
+	_check(funded_combo_entry.get("available") == true
+		and funded_combo_entry.get("candle") == 15
+		and funded_combo_entry.get("scraps") == 2
+		and funded_combo_entry.get("gold") == 18
+		and funded_combo_entry.get("satchel_count") == 6
+		and funded_combo_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and funded_combo_entry.get("fray") == expected_party_fray
+		and funded_combo_entry.get("hp") == {
+			"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+		}
+		and _receipt_keys(funded_combo_entry) == [
+			"available", "candle", "candle_delta", "choice_id", "fray", "fray_delta",
+			"gold", "gold_delta", "hero_id", "hp", "hp_delta", "part", "satchel_count",
+			"scraps", "scraps_delta", "target",
+		],
+		"AC1/AC3: combined paid-wick + scraps/gold/part/hp/required_hero previews all fields at candle 40")
+	var funded_combo_rec := funded_combo_svc.choose("pay_wick", funded_combo_snap)
+	_check(funded_combo_rec.get("ok") == true
+		and funded_combo_rec.get("candle") == 15
+		and funded_combo_rec.get("scraps") == 2
+		and funded_combo_rec.get("gold") == 18
+		and funded_combo_rec.get("satchel_count") == 6
+		and _receipt_keys(funded_combo_rec) == [
+			"candle", "choice_id", "event_id", "fray", "gold", "gold_delta",
+			"hero_id", "hp", "hp_delta", "ok", "part", "satchel_count",
+			"scraps", "scraps_delta", "target",
+		],
+		"AC1/AC3: combined paid-wick + scraps/gold/part/hp/required_hero commits with exact 15-key receipt")
+
+	var underfunded_combo_snap := _gold_scraps_satchel_four(24, 4, 30, 5, [80, 80, 80, 80])
+	var underfunded_combo_svc := RunStitchedEventConsequence.new(combined_event, warden_catalog)
+	var underfunded_combo_entry := _entry(underfunded_combo_svc.preview(underfunded_combo_snap), "pay_wick")
+	_check(underfunded_combo_entry.get("available") == false
+		and underfunded_combo_entry.get("candle") == 24
+		and underfunded_combo_entry.get("scraps") == 4
+		and underfunded_combo_entry.get("gold") == 30
+		and underfunded_combo_entry.get("satchel_count") == 5
+		and underfunded_combo_entry.get("fray") == {}
+		and underfunded_combo_entry.get("hp") == {},
+		"AC2/AC3: underfunded combined paid-wick at candle 24 leaves candle/scraps/gold/satchel_count unprojected and fray/hp empty")
+	_assert_rejected(underfunded_combo_svc, "pay_wick", underfunded_combo_snap, 24,
+		"AC2/AC3: underfunded combined paid-wick rejected at candle 24")
+	_check(underfunded_combo_svc.choose("leave", underfunded_combo_snap).get("ok") == true,
+		"AC2/AC3: Leave claims after underfunded combined paid-wick refusal")
+
+
+func _test_paid_wick_underfunded_and_bounds() -> void:
+	var expected_party_fray := {
+		"warden": -25,
+		"seamstress": -25,
+		"tinker": -25,
+		"button_golem": -25,
+	}
+	var expected_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id",
+		"fray", "fray_delta", "hero_id", "target",
+	]
+	var expected_receipt_keys := [
+		"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+	]
+
+	# AC2: Funded boundary checks at candle 25 -> 0 and candle 100 -> 75 (plus 40 -> 15):
+	for funded_case in [[25, 0], [40, 15], [100, 75]]:
+		var base_candle: int = funded_case[0]
+		var expected_candle: int = funded_case[1]
+		var snap := _four(base_candle, [80, 80, 80, 80])
+		var snap_original := snap.duplicate(true)
+
+		seed(20261115 + base_candle)
+		var expected_rng := randi()
+		seed(20261115 + base_candle)
+
+		var svc := RunStitchedEventConsequence.new(_paid_wick_event())
+		var prev := svc.preview(snap)
+		var pay_entry := _entry(prev, "pay_wick")
+		_check(pay_entry.get("available") == true
+			and pay_entry.get("candle_delta") == -25
+			and pay_entry.get("fray_delta") == -25
+			and pay_entry.get("candle") == expected_candle
+			and pay_entry.get("fray") == expected_party_fray
+			and _receipt_keys(pay_entry) == expected_preview_keys,
+			"AC2: at candle %d, pay_wick is available and previews candle %d" % [base_candle, expected_candle])
+		var rec := svc.choose("pay_wick", snap)
+		_check(rec.get("ok") == true
+			and rec.get("choice_id") == "pay_wick"
+			and rec.get("candle") == expected_candle
+			and rec.get("fray") == expected_party_fray
+			and _receipt_keys(rec) == expected_receipt_keys,
+			"AC2: at candle %d, choose(pay_wick) succeeds with candle %d and claims once" % [base_candle, expected_candle])
+		_check(svc.is_claimed() and not svc.is_valid(),
+			"AC2: at candle %d, choose(pay_wick) latches the visit" % base_candle)
+		_assert_rejected(svc, "pay_wick", snap, base_candle,
+			"AC2: replay at candle %d rejected" % base_candle)
+		_assert_rejected(svc, "leave", snap, base_candle,
+			"AC2: Leave after claim at candle %d rejected" % base_candle)
+		_check(snap == snap_original and randi() == expected_rng,
+			"AC2: funded bound %d mutates nothing and draws no RNG" % base_candle)
+
+	# AC2: Denied previews and non-latching rejections at candle 24 and 0 (plus intermediate underfunded values),
+	# followed by a legal zero-effect Leave on the same instance:
+	for denied_candle in [24, 0, 1, 12]:
+		var snap := _four(denied_candle, [80, 80, 80, 80])
+		var snap_original := snap.duplicate(true)
+
+		seed(20261300 + denied_candle)
+		var expected_rng := randi()
+		seed(20261300 + denied_candle)
+
+		var svc := RunStitchedEventConsequence.new(_paid_wick_event())
+		var prev := svc.preview(snap)
+		_check(prev.get("ok") == true
+			and prev.get("event_id") == "ev_stitched_paid_wick_bargain"
+			and prev.get("candle") == denied_candle
+			and _choice_ids(prev) == ["pay_wick", "leave"],
+			"AC2: at candle %d, paid Event still preflights with both choices" % denied_candle)
+
+		var pay_entry := _entry(prev, "pay_wick")
+		_check(pay_entry.get("available") == false
+			and pay_entry.get("target") == "party"
+			and pay_entry.get("hero_id") == ""
+			and pay_entry.get("candle_delta") == -25
+			and pay_entry.get("fray_delta") == -25
+			and pay_entry.get("candle") == denied_candle
+			and pay_entry.get("fray") == {}
+			and _receipt_keys(pay_entry) == expected_preview_keys,
+			"AC2: at candle %d, preview marks pay_wick unavailable with unchanged candle %d and empty fray" % [
+				denied_candle, denied_candle,
+			])
+
+		var leave_entry := _entry(prev, "leave")
+		_check(leave_entry.get("available") == true
+			and leave_entry.get("candle") == denied_candle
+			and leave_entry.get("fray") == {},
+			"AC2: at candle %d, Leave remains available in preview" % denied_candle)
+
+		_assert_rejected(svc, "pay_wick", snap, denied_candle,
+			"AC2: underfunded pay_wick at candle %d" % denied_candle)
+		_check(not svc.is_claimed() and svc.is_valid(),
+			"AC2: underfunded pay_wick at candle %d leaves visit unclaimed" % denied_candle)
+		_check(svc.preview(snap) == prev,
+			"AC2: preflight remains identical after underfunded rejection at candle %d" % denied_candle)
+
+		var leave_rec := svc.choose("leave", snap)
+		_check(leave_rec.get("ok") == true
+			and leave_rec.get("event_id") == "ev_stitched_paid_wick_bargain"
+			and leave_rec.get("choice_id") == "leave"
+			and leave_rec.get("target") == "party"
+			and leave_rec.get("hero_id") == ""
+			and leave_rec.get("candle") == denied_candle
+			and leave_rec.get("fray") == {}
+			and _receipt_keys(leave_rec) == expected_receipt_keys,
+			"AC2: at candle %d, Leave succeeds on the same instance after pay_wick denial" % denied_candle)
+		_check(svc.is_claimed() and not svc.is_valid(),
+			"AC2: Leave latches the visit after underfunded denial at candle %d" % denied_candle)
+		_assert_rejected(svc, "leave", snap, denied_candle,
+			"AC2: duplicate Leave after claim at candle %d rejected" % denied_candle)
+		_assert_rejected(svc, "pay_wick", snap, denied_candle,
+			"AC2: pay_wick after Leave claim at candle %d rejected" % denied_candle)
+		_check(snap == snap_original,
+			"AC2: underfunded denial and Leave at candle %d leave caller snapshot untouched" % denied_candle)
+		_check(randi() == expected_rng,
+			"AC2: underfunded denial and Leave at candle %d never draw global RNG" % denied_candle)
+
+	# Retry on same instance with a funded snapshot after an underfunded denial:
+	var retry_svc := RunStitchedEventConsequence.new(_paid_wick_event())
+	var snap_24 := _four(24, [80, 80, 80, 80])
+	var snap_25 := _four(25, [80, 80, 80, 80])
+	_assert_rejected(retry_svc, "pay_wick", snap_24, 24,
+		"AC2: denied at candle 24 before retry at candle 25")
+	var retry_rec := retry_svc.choose("pay_wick", snap_25)
+	_check(retry_rec.get("ok") == true
+		and retry_rec.get("candle") == 0
+		and retry_rec.get("fray") == expected_party_fray,
+		"AC2: same unclaimed instance accepts pay_wick when retried with candle 25")
+	_assert_rejected(retry_svc, "leave", snap_25, 25,
+		"AC2: replay rejected after funded retry claim")
+
+	# Exact -1 and -100 paid-wick boundaries and extreme negative deltas (including MIN_INT):
+	var one_wick_event := _event([
+		_choice("pay_one", "Pay 1 candle.", _paid_wick_effect(-1, -5, true, "party")),
+		_choice("pay_all", "Pay 100 candle.", _paid_wick_effect(-100, -50, true, "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	_check(_entry(RunStitchedEventConsequence.new(one_wick_event).preview(_four(0, [80, 80, 80, 80])), "pay_one").get("available") == false
+		and _entry(RunStitchedEventConsequence.new(one_wick_event).preview(_four(1, [80, 80, 80, 80])), "pay_one").get("available") == true
+		and _entry(RunStitchedEventConsequence.new(one_wick_event).preview(_four(99, [80, 80, 80, 80])), "pay_all").get("available") == false
+		and _entry(RunStitchedEventConsequence.new(one_wick_event).preview(_four(100, [80, 80, 80, 80])), "pay_all").get("available") == true,
+		"AC2: -1 and -100 paid-wick choices enforce exact >= 1 and >= 100 candle bounds")
+
+	var min_int: int = -9223372036854775807 - 1
+	var extreme_paid_event := _event([
+		_choice("pay_min_int", "Impossible wick cost (MIN_INT).",
+			_paid_wick_effect(min_int, -25, true, "party")),
+		_choice("pay_max_neg", "Impossible wick cost (-MAX_INT).",
+			_paid_wick_effect(-9223372036854775807, -25, true, "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	var snap_100 := _four(100, [80, 80, 80, 80])
+	var extreme_svc := RunStitchedEventConsequence.new(extreme_paid_event)
+	var extreme_prev := extreme_svc.preview(snap_100)
+	_check(_entry(extreme_prev, "pay_min_int").get("available") == false
+		and _entry(extreme_prev, "pay_min_int").get("candle_delta") == min_int
+		and _entry(extreme_prev, "pay_min_int").get("candle") == 100
+		and _entry(extreme_prev, "pay_min_int").get("fray") == {}
+		and _entry(extreme_prev, "pay_max_neg").get("available") == false
+		and _entry(extreme_prev, "pay_max_neg").get("candle_delta") == -9223372036854775807
+		and _entry(extreme_prev, "pay_max_neg").get("candle") == 100,
+		"AC2: MIN_INT and -MAX_INT paid-wick deltas compare safely in signed arithmetic without overflow")
+	_assert_rejected(extreme_svc, "pay_min_int", snap_100, 100,
+		"AC2: MIN_INT paid-wick delta rejected safely")
+	_assert_rejected(extreme_svc, "pay_max_neg", snap_100, 100,
+		"AC2: -MAX_INT paid-wick delta rejected safely")
+	_check(extreme_svc.choose("leave", snap_100).get("ok") == true,
+		"AC2: Leave claims after extreme negative paid-wick rejections")
+
+	var service_source := FileAccess.get_file_as_string("res://scripts/run_stitched_event_consequence.gd")
+	_check(service_source.find("abs(") == -1 and service_source.find("absi(") == -1,
+		"AC2: service never calls abs() or absi() on signed integer deltas")
+
+
+func _test_paid_wick_opt_in_and_rejections() -> void:
+	var snap_24 := _four(24, [80, 80, 80, 80])
+	var snap_0 := _four(0, [80, 80, 80, 80])
+	var snap_40 := _four(40, [80, 80, 80, 80])
+	var snap_40_original := snap_40.duplicate(true)
+	var expected_malformed_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id",
+		"fray", "fray_delta", "hero_id", "target",
+	]
+
+	# 1. AC3: Optional absence keeps legacy unconditional candle clamping to 0 and unchanged shapes:
+	var legacy_unclamped_event := _event([
+		_choice("legacy_burn", "Burn wick without require_full_candle.", _effect(-25, -25, "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	for low_candle in [24, 0]:
+		var low_snap := _four(low_candle, [80, 80, 80, 80])
+		var legacy_svc := RunStitchedEventConsequence.new(legacy_unclamped_event)
+		var legacy_prev := legacy_svc.preview(low_snap)
+		var legacy_entry := _entry(legacy_prev, "legacy_burn")
+		_check(legacy_entry.get("available") == true
+			and legacy_entry.get("candle") == 0
+			and legacy_entry.get("fray") == {
+				"warden": -25, "seamstress": -25, "tinker": -25, "button_golem": -25,
+			}
+			and _receipt_keys(legacy_entry) == expected_malformed_preview_keys,
+			"AC3: omitting require_full_candle at candle %d preserves legacy clamped candle 0 and 8-key preview" % low_candle)
+		var legacy_rec := legacy_svc.choose("legacy_burn", low_snap)
+		_check(legacy_rec.get("ok") == true
+			and legacy_rec.get("candle") == 0
+			and _receipt_keys(legacy_rec) == [
+				"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+			],
+			"AC3: omitting require_full_candle at candle %d commits clamped candle 0 with 7-key receipt" % low_candle)
+
+	seed(20261116)
+	var expected_rng := randi()
+	seed(20261116)
+
+	# 2. AC3: Invalid opt-in booleans/types (false, non-boolean) on a negative candle delta are malformed
+	#    outcomes (unavailable with null deltas and unclaimable), NOT silent opt-outs:
+	var bad_flag_values: Array = [
+		false,
+		null,
+		1,
+		0,
+		-1,
+		1.0,
+		0.0,
+		"true",
+		"false",
+		"1",
+		"",
+		" ",
+		[true],
+		{"require_full_candle": true},
+	]
+	for index in range(bad_flag_values.size()):
+		var bad_flag: Variant = bad_flag_values[index]
+		for target_mode in ["party", "hero"]:
+			var broken_choice := _choice(
+				"broken_wick",
+				"Invalid require_full_candle value.",
+				_paid_wick_effect(-25, -25, bad_flag, target_mode, "seamstress")
+			)
+			for test_snap in [snap_40, snap_24, snap_0]:
+				var base_candle: int = int(test_snap["candle"])
+				var svc := RunStitchedEventConsequence.new(_event([
+					broken_choice,
+					_choice("leave", "Leave.", _effect(0, 0, "party")),
+				]))
+				var prev := svc.preview(test_snap)
+				var broken_entry := _entry(prev, "broken_wick")
+				_check(prev.get("ok") == true
+					and broken_entry.get("available") == false
+					and broken_entry.get("candle_delta") == null
+					and broken_entry.get("fray_delta") == null
+					and broken_entry.get("candle") == base_candle
+					and broken_entry.get("fray") == {}
+					and _receipt_keys(broken_entry) == expected_malformed_preview_keys,
+					"AC3: invalid require_full_candle %d (%s, candle %d) is malformed with null deltas" % [
+						index, target_mode, base_candle,
+					])
+				_assert_rejected(svc, "broken_wick", test_snap, base_candle,
+					"AC3: invalid require_full_candle %d (%s, candle %d) commit" % [
+						index, target_mode, base_candle,
+					])
+				var leave_rec := svc.choose("leave", test_snap)
+				_check(leave_rec.get("ok") == true and leave_rec.get("candle") == base_candle,
+					"AC3: Leave still claims after invalid require_full_candle %d (%s, candle %d)" % [
+						index, target_mode, base_candle,
+					])
+
+	# 3. AC3: Nonnegative or non-native-int candle deltas with require_full_candle: true are malformed:
+	var bad_paid_candle_deltas: Array = [
+		0,
+		1,
+		25,
+		100,
+		9223372036854775807,
+		-25.0,
+		-1.0,
+		0.0,
+		25.0,
+		-25.5,
+		"-25",
+		"0",
+		true,
+		false,
+		null,
+		INF,
+		-INF,
+		NAN,
+		[-25],
+		{"candle": -25},
+	]
+	for index in range(bad_paid_candle_deltas.size()):
+		var bad_delta: Variant = bad_paid_candle_deltas[index]
+		for target_mode in ["party", "hero"]:
+			var broken_choice := _choice(
+				"broken_delta",
+				"Invalid paid candle delta.",
+				_paid_wick_effect(bad_delta, -25, true, target_mode, "seamstress")
+			)
+			var svc := RunStitchedEventConsequence.new(_event([
+				broken_choice,
+				_choice("pay_wick", "Valid paid wick.", _paid_wick_effect(-25, -25, true, "party")),
+				_choice("leave", "Leave.", _effect(0, 0, "party")),
+			]))
+			var prev := svc.preview(snap_40)
+			var broken_entry := _entry(prev, "broken_delta")
+			_check(prev.get("ok") == true
+				and broken_entry.get("available") == false
+				and broken_entry.get("candle_delta") == null
+				and broken_entry.get("fray_delta") == null
+				and broken_entry.get("candle") == 40
+				and broken_entry.get("fray") == {}
+				and _entry(prev, "pay_wick").get("available") == true,
+				"AC3: invalid paid candle delta %d (%s) is malformed with null deltas while valid sibling stays available" % [
+					index, target_mode,
+				])
+			_assert_rejected(svc, "broken_delta", snap_40, 40,
+				"AC3: invalid paid candle delta %d (%s) commit" % [index, target_mode])
+			var valid_rec := svc.choose("pay_wick", snap_40)
+			_check(valid_rec.get("ok") == true and valid_rec.get("candle") == 15,
+				"AC3: valid paid-wick sibling claims after invalid paid delta %d (%s)" % [index, target_mode])
+
+	# 4. AC3: Structural errors alongside require_full_candle, forged choice IDs, and malformed snapshots:
+	var structural_broken: Array = [
+		{"id": "broken", "text": "Party with hero_id and require_full_candle.", "stitched_effect": {
+			"candle": -25, "fray": -25, "target": "party",
+			"hero_id": "warden", "require_full_candle": true,
+		}},
+		{"id": "broken", "text": "Hero without hero_id and require_full_candle.", "stitched_effect": {
+			"candle": -25, "fray": -25, "target": "hero",
+			"require_full_candle": true,
+		}},
+		{"id": "broken", "text": "Unknown hero_id with require_full_candle.", "stitched_effect": {
+			"candle": -25, "fray": -25, "target": "hero",
+			"hero_id": "porcelain_doll", "require_full_candle": true,
+		}},
+		{"id": "broken", "text": "Absent required_hero with require_full_candle=false is malformed, not hidden.", "stitched_effect": {
+			"candle": -25, "fray": -25, "target": "party",
+			"required_hero": "lantern_monk", "require_full_candle": false,
+		}},
+		{"id": "broken", "text": "Absent required_hero with nonnegative paid delta is malformed, not hidden.", "stitched_effect": {
+			"candle": 0, "fray": -25, "target": "party",
+			"required_hero": "lantern_monk", "require_full_candle": true,
+		}},
+		{"id": "broken", "text": "Extra unknown key alongside require_full_candle.", "stitched_effect": {
+			"candle": -25, "fray": -25, "target": "party",
+			"require_full_candle": true, "extra": 1,
+		}},
+	]
+	for index in range(structural_broken.size()):
+		var svc := RunStitchedEventConsequence.new(_event([
+			structural_broken[index],
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		]))
+		var prev := svc.preview(snap_40)
+		var broken_entry := _entry(prev, "broken")
+		_check(_choice_ids(prev) == ["broken", "leave"]
+			and broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null,
+			"AC3: structural malformed paid-wick choice %d is shown unavailable with null deltas" % index)
+		_assert_rejected(svc, "broken", snap_40, 40,
+			"AC3: structural malformed paid-wick choice %d commit" % index)
+		_check(svc.choose("leave", snap_40).get("ok") == true,
+			"AC3: Leave claims after structural malformed paid-wick choice %d" % index)
+
+	var unoffered_svc := RunStitchedEventConsequence.new(_paid_wick_event())
+	for forged_id in ["", " ", "bargain", "pay_wick ", " pay_wick", "PAY_WICK", 42, null, ["pay_wick"], {"id": "pay_wick"}]:
+		_assert_rejected(unoffered_svc, forged_id, snap_40, 40,
+			"AC3: forged choice id on paid-wick Event: " + str(forged_id))
+	for bad_snap in [
+		null,
+		{},
+		{"candle": -1, "party": [{"id": "warden", "fray": 80}]},
+		{"candle": 101, "party": [{"id": "warden", "fray": 80}]},
+		{"candle": 40, "party": []},
+		{"candle": 40, "party": [{"id": "warden", "fray": 80}], "extra": 1},
+	]:
+		_check(unoffered_svc.preview(bad_snap) == _denied_preview(),
+			"AC3: malformed snapshot denies paid-wick preflight")
+		_assert_rejected(unoffered_svc, "pay_wick", bad_snap, 0,
+			"AC3: malformed snapshot rejected on paid-wick commit")
+	_check(unoffered_svc.choose("pay_wick", snap_40).get("ok") == true,
+		"AC3: valid paid-wick choice still claims after forged-choice and malformed-snapshot refusals")
+
+	_check(randi() == expected_rng,
+		"AC3: paid-wick rejection checks never draw global RNG")
+	_check(snap_40 == snap_40_original,
+		"AC3: paid-wick rejection checks never mutate caller snapshot")
+
 
 
 
