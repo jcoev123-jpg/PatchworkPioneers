@@ -173,6 +173,12 @@ func _run() -> void:
 			and not guide.page_text(i).to_lower().contains("energy cost")
 			and not guide.page_text(i).to_lower().contains("draw a card"),
 			"legible body size and no obsolete deck/hand/energy copy on page %d" % i)
+	# The atlas trigger extends, rather than breaks, the original focus ring.
+	_check(guide.tab_buttons[2].focus_next == guide.tab_buttons[2].get_path_to(guide.atlas_button)
+		and guide.atlas_button.focus_next == guide.atlas_button.get_path_to(guide.close_button)
+		and guide.close_button.focus_next == guide.close_button.get_path_to(guide.tab_buttons[0])
+		and guide.tab_buttons[0].focus_previous == guide.tab_buttons[0].get_path_to(guide.close_button),
+		"three original tabs, atlas and Close form one focus ring")
 	# One keyboard-only trip around the guide ring must never focus the village.
 	guide.tab_buttons[0].grab_focus()
 	await _key(KEY_TAB)

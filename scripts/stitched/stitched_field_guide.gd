@@ -6,6 +6,9 @@ signal close_requested
 
 const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const GOTHIC := preload("res://themes/gothic_theme.tres")
+const PART_INSPECTOR_SCENE := preload("res://scenes/stitched_part_inspector.tscn")
+const WARDEN_PARTS := "res://data/parts/warden_parts.json"
+const FOE_PARTS := "res://data/parts/enemy_parts.json"
 const BONE := Color("#f4e5cd")
 const BRASS := Color("#e0b977")
 const PAGES := [
@@ -33,6 +36,12 @@ const TABS := ["Ranks & turns", "Seams & retreat", "Fray & candle"]
 var tab_buttons: Array[Button] = []
 var page_labels: Array[Label] = []
 var close_button: Button
+var atlas_button: Button
+var atlas_status: Label
+var part_atlas: StitchedPartInspector
+# Fixed live sources. The mounted regression can replace one with a missing path
+# to prove that a partial catalog never leaves stale or selectable parts.
+var catalog_paths: Array[String] = [WARDEN_PARTS, FOE_PARTS]
 var page_index := 0
 var _active := false
 
@@ -64,6 +73,7 @@ func open_guide() -> bool:
 
 
 func dismiss() -> void:
+	_close_part_atlas(false)
 	_active = false
 	hide()
 
@@ -89,15 +99,129 @@ func _request_close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if _active and event is InputEventKey and event.pressed and not event.echo \
-			and event.keycode == KEY_ESCAPE:
+	if not _active or not is_visible_in_tree() or not event is InputEventKey:
+		return
+	if not event.pressed or event.echo:
+		return
+	if _atlas_is_open() and event.keycode == KEY_TAB:
 		get_viewport().set_input_as_handled()
-		_request_close()
+		_cycle_atlas_focus(event.shift_pressed)
+	elif event.keycode == KEY_ESCAPE:
+		get_viewport().set_input_as_handled()
+		if _atlas_is_open():
+			_close_part_atlas(true)
+		else:
+			_request_close()
 
 
 func _on_visibility_changed() -> void:
-	if not visible:
+	if not is_visible_in_tree():
+		_close_part_atlas(false)
 		_active = false
+
+
+## This is an atlas, not a satchel: both real file catalogs must validate in
+## full before the existing inspector receives any entries. No gameplay API is
+## referenced, and reopening always reloads the authored sources.
+func open_part_atlas() -> bool:
+	if not _active or not is_inside_tree() or not is_visible_in_tree() or _atlas_is_open():
+		return false
+	var entries: Array = []
+	for path in catalog_paths:
+		var result := StitchedParts.load_catalog(path)
+		if not bool(result.get("ok", false)):
+			_reject_part_atlas()
+			return false
+		entries.append_array(result["parts"])
+	if entries.is_empty():
+		_reject_part_atlas()
+		return false
+	if not is_instance_valid(part_atlas):
+		part_atlas = PART_INSPECTOR_SCENE.instantiate() as StitchedPartInspector
+		if part_atlas == null:
+			_reject_part_atlas()
+			return false
+		part_atlas.name = "PartAtlasInspector"
+		part_atlas.hide()
+		add_child(part_atlas)
+		part_atlas.close_requested.connect(_on_part_atlas_close_requested)
+		var rows := part_atlas.get_node("CatalogPanel/PartScroll/PartRows")
+		rows.child_entered_tree.connect(_on_atlas_rows_changed)
+		rows.child_exiting_tree.connect(_on_atlas_rows_changed)
+	if not part_atlas.present_parts(entries):
+		_reject_part_atlas()
+		return false
+	(part_atlas.get_node("Subtitle") as Label).text = (
+		"REFERENCE ONLY  •  Warden parts and foe spoils; nothing is equipped or claimed here.")
+	part_atlas.show()
+	atlas_status.text = "REFERENCE ONLY  •  Inspect part abilities and tiers; no changes to your party."
+	_wire_atlas_focus()
+	(part_atlas.get_node("CloseButton") as Button).grab_focus()
+	return true
+
+
+func _atlas_is_open() -> bool:
+	return is_instance_valid(part_atlas) and part_atlas.visible
+
+
+func _reject_part_atlas() -> void:
+	_close_part_atlas(false)
+	atlas_status.text = "PARTS & SPOILS UNAVAILABLE  •  Catalog validation failed; no parts displayed."
+
+
+func _on_part_atlas_close_requested() -> void:
+	_close_part_atlas(true)
+
+
+func _close_part_atlas(restore_focus: bool) -> void:
+	if is_instance_valid(part_atlas):
+		part_atlas.hide()
+		# A previous successful readout must never survive hide or a bad reload.
+		part_atlas.present_parts([])
+	if restore_focus and _active and is_visible_in_tree():
+		atlas_button.grab_focus()
+
+
+func _on_atlas_rows_changed(_node: Node) -> void:
+	# Inspector rebuilds its rows on slot/part selection. Re-link the newly
+	# generated controls after its old, queued-for-deletion rows are gone.
+	_wire_atlas_focus.call_deferred()
+
+
+func _atlas_focus_buttons() -> Array[Button]:
+	var ring: Array[Button] = []
+	if not _atlas_is_open():
+		return ring
+	for path in ["CloseButton", "CatalogPanel/SlotHead", "CatalogPanel/SlotArms",
+			"CatalogPanel/SlotTorso", "CatalogPanel/SlotLegs"]:
+		var button := part_atlas.get_node(path) as Button
+		if not button.disabled:
+			ring.append(button)
+	for child in part_atlas.get_node("CatalogPanel/PartScroll/PartRows").get_children():
+		if child is Button and not child.is_queued_for_deletion() and not child.disabled:
+			ring.append(child as Button)
+	for path in ["DetailsPanel/TierI", "DetailsPanel/TierII", "DetailsPanel/TierIII"]:
+		var button := part_atlas.get_node(path) as Button
+		if not button.disabled:
+			ring.append(button)
+	return ring
+
+
+func _wire_atlas_focus() -> void:
+	var ring := _atlas_focus_buttons()
+	for i in range(ring.size()):
+		ring[i].focus_next = ring[i].get_path_to(ring[(i + 1) % ring.size()])
+		ring[i].focus_previous = ring[i].get_path_to(ring[(i - 1 + ring.size()) % ring.size()])
+
+
+func _cycle_atlas_focus(backwards: bool) -> void:
+	_wire_atlas_focus()
+	var ring := _atlas_focus_buttons()
+	if ring.is_empty():
+		return
+	var current := ring.find(get_viewport().gui_get_focus_owner())
+	var next := 0 if current < 0 else (current + (-1 if backwards else 1) + ring.size()) % ring.size()
+	ring[next].grab_focus()
 
 
 func _build_view() -> void:
@@ -162,6 +286,17 @@ func _build_view() -> void:
 	close_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
 	close_button.pressed.connect(_request_close)
 	heading.add_child(close_button)
+	atlas_button = Button.new()
+	atlas_button.name = "PartAtlasButton"
+	atlas_button.text = "Parts & spoils"
+	atlas_button.tooltip_text = "Reference only: examine Warden parts and foe drops"
+	atlas_button.custom_minimum_size = Vector2(190, 46)
+	atlas_button.add_theme_font_size_override("font_size", 19)
+	atlas_button.focus_mode = Control.FOCUS_ALL
+	atlas_button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	atlas_button.pressed.connect(open_part_atlas)
+	heading.add_child(atlas_button)
+	heading.move_child(atlas_button, heading.get_child_count() - 2)
 
 	var tabs := HBoxContainer.new()
 	tabs.name = "GuideTabs"
@@ -179,6 +314,14 @@ func _build_view() -> void:
 		button.pressed.connect(select_page.bind(i))
 		tabs.add_child(button)
 		tab_buttons.append(button)
+
+	atlas_status = Label.new()
+	atlas_status.name = "PartAtlasStatus"
+	atlas_status.text = "REFERENCE ONLY  •  Parts & spoils lists abilities, not equipment or rewards."
+	atlas_status.add_theme_font_size_override("font_size", 16)
+	atlas_status.add_theme_color_override("font_color", BRASS)
+	atlas_status.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	content.add_child(atlas_status)
 
 	# A single visible page at a time, with wrap and scroll as a smaller-screen
 	# fallback. At 1280x720 the 18px copy fits the stitched panel without scroll.
@@ -205,6 +348,7 @@ func _build_view() -> void:
 		page_labels.append(label)
 
 	var focus_ring: Array[Button] = tab_buttons.duplicate()
+	focus_ring.append(atlas_button)
 	focus_ring.append(close_button)
 	for i in range(focus_ring.size()):
 		focus_ring[i].focus_next = focus_ring[i].get_path_to(focus_ring[(i + 1) % focus_ring.size()])
