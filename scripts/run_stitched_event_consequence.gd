@@ -7,16 +7,20 @@ extends RefCounted
 ## `stitched_effect` outcome field:
 ##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
-##      "part": {"id": String, "tier": 1..3}}
+##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
 ## `target: "hero"`: a valid gated choice whose `required_hero` is absent from
 ## the active party is omitted from `preview().choices` and rejected by
 ## `choose()` without latching, while `target` / `hero_id` still determine the
-## affected fray and HP recipients. `scraps`, `gold`, `part` and `hp` are
-## optional on `stitched_effect`; when omitted, the legacy 8-key preview entry
-## and 7-key receipt shape are preserved. When present, `scraps` and `gold` are
+## affected fray and HP recipients. `scraps`, `gold`, `part`, `hp` and
+## `require_full_candle` are optional on `stitched_effect`; when omitted, the
+## legacy 8-key preview entry and 7-key receipt shape are preserved. When
+## present, `require_full_candle` must be native boolean `true` on a strictly
+## negative native integer `candle` delta (`-N`), requiring `snapshot.candle >= N`
+## for the choice to be available in `preview()` or claimable in `choose()`.
+## When present, `scraps` and `gold` are
 ## signed integral deltas applied to the shared party scraps and gold purses
 ## (never per-hero), exposing `scraps_delta`/`scraps` and `gold_delta`/`gold` on
 ## that choice's preview entry and successful receipt. When present, `part` is an
@@ -126,11 +130,11 @@ func get_event() -> Dictionary:
 ## `"part"` (`{id, tier}`) and `"satchel_count"`, and opt-in HP-bearing choices
 ## also include `"hp_delta"` and `"hp"`.
 ## A malformed outcome or an unavailable choice yields available=false with
-## null deltas (malformed) or parsed deltas (absent hero / missing, insufficient
-## or overflowing scraps or gold / missing or full satchel_count), the unchanged
-## base candle (plus base scraps / gold / satchel_count when present) and empty
-## fray/hp maps. Zero fray or hp deltas produce no intent, so Leave yields empty
-## intent maps. Deterministic, no RNG, no mutation of the input.
+## null deltas (malformed) or parsed deltas (absent hero / underfunded paid wick /
+## missing, insufficient or overflowing scraps or gold / missing or full satchel_count),
+## the unchanged base candle (plus base scraps / gold / satchel_count when present)
+## and empty fray/hp maps. Zero fray or hp deltas produce no intent, so Leave yields
+## empty intent maps. Deterministic, no RNG, no mutation of the input.
 func preview(snapshot: Variant, catalog: Variant = null) -> Dictionary:
 	var denied := {"ok": false, "event_id": "", "candle": 0, "choices": []}
 	if not _valid or _choice.is_claimed():
@@ -190,6 +194,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 		return _rejection(base_candle)
 	# An absent named hero is unavailable, so it cannot latch the visit.
 	if _target_ids(base_state, parsed_effect).is_empty():
+		return _rejection(base_candle)
+	if not _can_afford_candle(base_candle, parsed_effect):
 		return _rejection(base_candle)
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
 	var projected_scraps := 0
@@ -252,6 +258,16 @@ func _project_candle(base_candle: int, delta: int) -> int:
 			return CANDLE_MIN
 		return base_candle + delta
 	return base_candle
+
+
+## Shared full-wick affordability gate for preview and commit when
+## `require_full_candle: true` is present on `stitched_effect`.
+## Compares in signed arithmetic without negating `delta`.
+func _can_afford_candle(base_candle: int, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("require_full_candle", false):
+		return true
+	var delta: int = int(parsed_effect["candle"])
+	return delta < 0 and delta >= -base_candle
 
 
 ## Shared party-scraps arithmetic for preview and commit: requires a valid
@@ -334,6 +350,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["hp"] = {}
 	if _target_ids(base_state, parsed_effect).is_empty():
 		# The named hero is not in this party: readable deltas, no projection.
+		return entry
+	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
 		return entry
 	var projected_scraps := 0
 	if has_scraps:
@@ -512,12 +530,16 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 
 
 ## Strict opt-in outcome parse: a choice of exactly {id, text, stitched_effect}
-## whose effect is {candle, fray, target[, required_hero][, scraps][, gold][, part][, hp]}
-## for "party" or {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part][, hp]}
+## whose effect is
+## {candle, fray, target[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle]}
+## for "party" or
+## {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle]}
 ## for "hero", with signed integer candle, fray and optional scraps/gold/hp,
-## canonical hero_id / optional required_hero, and optional part
+## canonical hero_id / optional required_hero, optional part
 ## {"id": String, "tier": native int 1..3} whose id resolves in the validated
-## parts catalog. Anything else is malformed and cannot settle.
+## parts catalog, and optional require_full_candle (native bool true on a
+## strictly negative native integer candle delta). Anything else is malformed
+## and cannot settle.
 func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dictionary:
 	if typeof(choice) != TYPE_DICTIONARY:
 		return {"ok": false}
@@ -537,12 +559,14 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_gold: bool = effect.has("gold")
 	var has_required_hero: bool = effect.has("required_hero")
 	var has_hp: bool = effect.has("hp")
+	var has_require_full_candle: bool = effect.has("require_full_candle")
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
 		+ (1 if has_part else 0)
 		+ (1 if has_gold else 0)
 		+ (1 if has_required_hero else 0)
 		+ (1 if has_hp else 0)
+		+ (1 if has_require_full_candle else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -569,9 +593,16 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var fray_read: Dictionary = _read_signed_int(effect.get("fray"))
 	if not candle_read.get("ok", false) or not fray_read.get("ok", false):
 		return {"ok": false}
+	var candle_delta: int = int(candle_read["value"])
+	if has_require_full_candle:
+		var raw_require_full_candle: Variant = effect.get("require_full_candle")
+		if typeof(raw_require_full_candle) != TYPE_BOOL or not bool(raw_require_full_candle):
+			return {"ok": false}
+		if typeof(effect.get("candle")) != TYPE_INT or candle_delta >= 0:
+			return {"ok": false}
 	var parsed := {
 		"ok": true,
-		"candle": int(candle_read["value"]),
+		"candle": candle_delta,
 		"fray": int(fray_read["value"]),
 		"target": target,
 		"hero_id": hero_id,
@@ -581,6 +612,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"has_required_hero": has_required_hero,
 		"required_hero": required_hero,
 		"has_hp": has_hp,
+		"require_full_candle": has_require_full_candle,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
