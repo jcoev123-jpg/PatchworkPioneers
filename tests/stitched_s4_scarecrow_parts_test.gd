@@ -23,6 +23,36 @@ const IDS := [
 ]
 const ENEMY_IDS := ["fray_scavenger", "scissor_crab", "moth_scribe"]
 const OTHER_HERO_IDS := ["warden", "tinker", "lantern_monk"]
+## The two shoulder-crow legs attacks: base authored values, and the tier II/III overrides.
+## Only their base launch array gains hero rank 4; every other value here must stay untouched.
+const CROW_LEGS := {
+	"scarecrow_legs_crow_dive": {
+		"name": "Crow Dive",
+		"stat": {"speed": 2},
+		"ability_id": "scarecrow_legs_crow_dive_move",
+		"acc": 91,
+		"dmg": [3, 5],
+		"crit": 3,
+		"effects": {},
+		"move": "attack2",
+		"mark_damage": 3,
+		"tier2": {"dmg": [4, 7], "mark_damage": 4, "effects": {}},
+		"tier3": {"dmg": [6, 9], "mark_damage": 6, "effects": {}},
+	},
+	"scarecrow_legs_crow_peck": {
+		"name": "Crow Peck",
+		"stat": {"dodge": 5},
+		"ability_id": "scarecrow_legs_crow_peck_move",
+		"acc": 92,
+		"dmg": [4, 6],
+		"crit": 3,
+		"effects": {"mark": 2},
+		"move": "attack",
+		"mark_damage": 3,
+		"tier2": {"dmg": [5, 8], "mark_damage": 5, "effects": {"mark": 2}},
+		"tier3": {"dmg": [7, 10], "mark_damage": 7, "effects": {"mark": 3}},
+	},
+}
 var failures: Array[String] = []
 var checks := 0
 
@@ -33,6 +63,8 @@ func _initialize() -> void:
 	_test_area_and_effects()
 	_test_guard_and_dodge()
 	_test_mark_damage()
+	_test_leg_rank4_data()
+	_test_rank4_crows()
 	_test_rejections()
 	_test_replay()
 	for failure in failures:
@@ -181,6 +213,22 @@ func _test_catalog() -> void:
 	invalid_rank["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(invalid_rank).get("ok", false)),
 		"AC3: out-of-bounds target rank rejects at validation")
+	var duplicate_launch: Dictionary = cat["by_id"][STARTERS["legs"]].duplicate(true)
+	duplicate_launch["ability"]["launch"] = [1, 2, 3, 4, 4]
+	_check(not bool(StitchedParts.validate_part(duplicate_launch).get("ok", false)),
+		"AC3: duplicate launch rank rejects on a crow legs part copy")
+	var duplicate_target: Dictionary = cat["by_id"][ALTERNATES["legs"]].duplicate(true)
+	duplicate_target["ability"]["target"] = [1, 2, 2, 3]
+	_check(not bool(StitchedParts.validate_part(duplicate_target).get("ok", false)),
+		"AC3: duplicate target rank rejects on a crow legs part copy")
+	var out_of_range_launch: Dictionary = cat["by_id"][STARTERS["legs"]].duplicate(true)
+	out_of_range_launch["ability"]["launch"] = [1, 2, 3, 4, 5]
+	_check(not bool(StitchedParts.validate_part(out_of_range_launch).get("ok", false)),
+		"AC3: out-of-bounds launch rank rejects on a crow legs part copy")
+	var out_of_range_target: Dictionary = cat["by_id"][ALTERNATES["legs"]].duplicate(true)
+	out_of_range_target["ability"]["target"] = [1, 2, 3, 4, 5]
+	_check(not bool(StitchedParts.validate_part(out_of_range_target).get("ok", false)),
+		"AC3: out-of-bounds target rank rejects on a crow legs part copy")
 
 
 func _test_each_tier() -> void:
@@ -349,6 +397,165 @@ func _test_mark_damage() -> void:
 				if witnessed:
 					break
 		_check(witnessed, "AC2: actual Sack Glare Mark adds damage to %s at matched RNG" % crow_part)
+
+
+## AC1/AC3 data contract: both crow legs abilities may launch from allied ranks 1-4 at every
+## tier, still target enemy ranks 1-3 only, and keep every other authored value.
+func _test_leg_rank4_data() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var unchanged_launches := {
+		"scarecrow_head_sack_glare": [1, 2, 3],
+		"scarecrow_arms_fork_jab": [1, 2],
+		"scarecrow_torso_straw_padding": [1, 2, 3],
+		"scarecrow_head_crow_flock": [2, 3],
+		"scarecrow_arms_harvest_fright": [1, 2, 3],
+		"scarecrow_torso_straw_wrap": [1, 2, 3],
+	}
+	for id in unchanged_launches:
+		_check(cat["by_id"][id]["ability"]["launch"] == unchanged_launches[id],
+			"AC1: six other Scarecrow parts keep their authored launch: " + id)
+	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	var target_mask := StitchedParts.rank_mask([1, 2, 3])
+	_check(full_mask == StitchedParts.ALL_RANKS_MASK and target_mask != full_mask,
+		"AC1: allied ranks 1-4 form the full launch mask while targets stay ranks 1-3")
+	for id in CROW_LEGS:
+		var part: Dictionary = cat["by_id"][id]
+		var spec: Dictionary = CROW_LEGS[id]
+		var base: Dictionary = part["ability"]
+		_check(str(part["slot"]) == "legs" and str(part["owner"]) == "scarecrow"
+			and part["stat"] == spec["stat"],
+			"AC1: " + id + " keeps its legs slot, owner and stat")
+		_check(str(base["id"]) == str(spec["ability_id"]) and str(base["name"]) == str(spec["name"])
+			and str(base["kind"]) == "ranged" and str(base["target_side"]) == "enemy"
+			and not bool(base["multi"]),
+			"AC1: " + id + " keeps its ability id, name and ranged single-target shape")
+		_check(int(base["acc"]) == int(spec["acc"]) and base["dmg"] == spec["dmg"]
+			and int(base["crit"]) == int(spec["crit"]) and base["effects"] == spec["effects"]
+			and int(base["mark_damage"]) == int(spec["mark_damage"])
+			and str(base["move"]) == str(spec["move"]) and int(base["self_move"]) == 0,
+			"AC1: " + id + " keeps its ACC, damage, crit, Mark, mark_damage and pose")
+		_check(base["launch"] == [1, 2, 3, 4] and int(base["launch_mask"]) == full_mask,
+			"AC1: " + id + " base launch adds only hero rank 4")
+		_check(base["target"] == [1, 2, 3] and int(base["target_mask"]) == target_mask,
+			"AC3: " + id + " base targets stay enemy ranks 1-3 only")
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			_check(ability["launch"] == [1, 2, 3, 4] and int(ability["launch_mask"]) == full_mask,
+				"AC1: %s tier %d keeps the base launch array with rank 4" % [id, tier])
+			for rank in [1, 2, 3, 4]:
+				_check(StitchedParts.ranks_allowed(int(ability["launch_mask"]), rank),
+					"AC2: %s tier %d may launch from hero rank %d" % [id, tier, rank])
+			_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 0)
+				and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 5),
+				"AC1: %s tier %d launch mask excludes ranks 0 and 5" % [id, tier])
+			_check(ability["target"] == [1, 2, 3] and int(ability["target_mask"]) == target_mask,
+				"AC3: %s tier %d still targets enemy ranks 1-3 only" % [id, tier])
+			_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
+				"AC3: %s tier %d cannot target enemy rank 4" % [id, tier])
+		for tier in [2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			var tier_spec: Dictionary = spec["tier" + str(tier)]
+			_check(ability["dmg"] == tier_spec["dmg"]
+				and int(ability["mark_damage"]) == int(tier_spec["mark_damage"])
+				and ability["effects"] == tier_spec["effects"],
+				"AC1: %s tier %d keeps its authored damage, mark_damage and effects" % [id, tier])
+
+
+## The shipped preview with only an in-memory rank swap: Scarecrow leaves index 1 and appends
+## behind the three preview companions, so he genuinely stands in allied rank 4.
+func _rank4_config(selected: String = "", tier: int = 1, seed_value: int = 501041) -> Dictionary:
+	var config := _config(selected, tier, seed_value)
+	if config.is_empty():
+		return {}
+	var scarecrow: Dictionary = config["heroes"].pop_at(1)
+	config["heroes"].append(scarecrow)
+	return config
+
+
+func _rank4_battle(selected: String, tier: int, seed_value: int) -> StitchedRules:
+	var config := _rank4_config(selected, tier, seed_value)
+	if config.is_empty():
+		return null
+	var built := StitchedRules.create(config)
+	if not bool(built.get("ok", false)):
+		return null
+	return built["battle"]
+
+
+## AC2/AC3: each crow legs ability fires from Scarecrow's real rank-4 turn against the real
+## rank-1 foe, while enemy rank 4 stays an illegal target.
+func _test_rank4_crows() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for leg_id in [STARTERS["legs"], ALTERNATES["legs"]]:
+		var ability: Dictionary = StitchedParts.ability_at_tier(cat["by_id"][leg_id], 1)
+		var setup := _rank4_battle(leg_id, 1, 501300)
+		_check(setup != null, "AC2: genuine rank-4 battle builds for " + leg_id)
+		if setup != null:
+			var heroes: Array = setup.get_heroes()
+			var foes: Array = setup.get_foes()
+			_check(heroes.size() == 4 and foes.size() == 3,
+				"AC2: rank-4 witness keeps four real heroes and the three S2 foes")
+			var scarecrow := setup.get_unit("scarecrow")
+			_check(int(scarecrow.get("rank", -1)) == 4
+				and str(scarecrow.get("parts", {}).get("legs", {}).get("id", "")) == leg_id,
+				"AC2: Scarecrow actually stands in rank 4 wearing " + leg_id)
+			_check(int(setup.get_unit("warden")["rank"]) == 1
+				and int(setup.get_unit("tinker")["rank"]) == 2
+				and int(setup.get_unit("lantern_monk")["rank"]) == 3,
+				"AC2: the three preview companions keep their relative rank order")
+			for id in ENEMY_IDS:
+				_check(not setup.get_unit(id).is_empty(), "AC2: actual shipped foe retained: " + id)
+			if _to(setup, "scarecrow"):
+				_reject_without_spend(setup, leg_id, 4,
+					leg_id + " at hero rank 4 still cannot target enemy rank 4")
+			else:
+				_check(false, "AC3: rank-4 target rejection receives an actual Scarecrow turn")
+		var witnessed := false
+		var landed := false
+		for seed_value in range(501300, 501380):
+			var b := _rank4_battle(leg_id, 1, seed_value)
+			if b == null or not _to(b, "scarecrow"):
+				continue
+			if int(b.get_unit("scarecrow")["rank"]) != 4:
+				continue
+			var before := b.state_snapshot()
+			var foe_before := b.get_unit("fray_scavenger")
+			var cast := b.use_part(leg_id, 1)
+			if not bool(cast.get("ok", false)):
+				continue
+			var receipts: Array = cast.get("results", [])
+			if receipts.is_empty():
+				continue
+			if not witnessed:
+				witnessed = true
+				var after := b.state_snapshot()
+				_check(str(cast.get("actor", "")) == "scarecrow"
+					and str(cast.get("part", "")) == leg_id
+					and str(cast.get("ability", "")) == str(ability["id"]),
+					"AC2: " + leg_id + " executes from the actual rank-4 turn")
+				_check(receipts.size() == 1 and str(receipts[0]["target"]) == "fray_scavenger"
+					and str(receipts[0]["target_side"]) == "foe"
+					and int(receipts[0]["target_rank"]) == 1
+					and int(foe_before.get("hp", 0)) > 0,
+					"AC2: " + leg_id + " resolves one receipt on the real living rank-1 foe")
+				_check(int(after["round"]) != int(before["round"])
+					or int(after["turn_index"]) != int(before["turn_index"]),
+					"AC2: " + leg_id + " actually spends Scarecrow's turn")
+			if bool(receipts[0].get("hit", false)) and int(receipts[0].get("damage", 0)) > 0:
+				if leg_id == ALTERNATES["legs"]:
+					landed = receipts[0].get("statuses", []).any(
+						func(s): return str(s.get("status", "")) == "mark")
+					landed = landed and int(b.get_unit("fray_scavenger")["statuses"].get("mark", 0)) > 0
+				else:
+					landed = true
+			if witnessed and landed:
+				break
+		_check(witnessed, "AC2: bounded fixed-seed rank-4 cast witness for " + leg_id)
+		_check(landed, "AC2: bounded fixed-seed landed rank-4 hit witness for " + leg_id)
 
 
 func _reject_without_spend(b: StitchedRules, id: String, rank: int, label: String) -> void:
