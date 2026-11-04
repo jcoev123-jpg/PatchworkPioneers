@@ -128,6 +128,43 @@ func _test_ac1_quote_projections_and_admission() -> void:
 	# torn part is blocked until mended.
 	var arms_c := _slot_quote(quote, "hero_c", "arms")
 	_check(not bool(arms_c["can_upgrade"]) and str(arms_c["blocked"]) == "part is torn: mend it first", "torn part explains mend-first")
+	# Real authored effects/crit tier changes survive in the quoted projections.
+	var arms_a := _slot_quote(quote, "hero_a", "arms")
+	_check(int(arms_a["current_ability"]["effects"]["guard"]) == 2 and int(arms_a["next_ability"]["effects"]["guard"]) == 3, "Shield Catch quotes Guard 2 -> 3")
+	_check(str(arms_a["current_ability"]["id"]) == "arms_shield_catch_move" and str(arms_a["current_ability"]["target_side"]) == "ally", "current ability keeps every authored field")
+	_check(arms_a["current_ability"] == StitchedParts.ability_at_tier(catalog["warden_arms_shield_catch"], 1), "current ability equals the catalog resolution")
+	_check(arms_a["next_ability"] == StitchedParts.ability_at_tier(catalog["warden_arms_shield_catch"], 2), "next ability equals the catalog resolution")
+	_check(arms_a["worn"]["ability"] == StitchedParts.ability_at_tier(catalog["warden_arms_shield_catch"], 1), "worn summary carries the full ability")
+	var rattle_b := _slot_quote(quote, "hero_b", "head")
+	_check(int(rattle_b["current_ability"]["crit"]) == 0 and int(rattle_b["next_ability"]["crit"]) == 0, "Helmet Rattle tiers I and II have crit 0")
+	_check(rattle_b["next_ability"]["dmg"] == [5, 7], "Helmet Rattle tier II dmg [5,7]")
+	# Tier-II Shield Catch -> III (Guard 3 -> 4) and Helmet Rattle tier III crit 8 via upgraded services.
+	var tier_party := _party()
+	tier_party[0]["parts"]["arms"]["tier"] = 2
+	tier_party[1]["parts"]["head"]["tier"] = 2
+	var tier_svc := _service(5, 2, tier_party)
+	var tier_quote := tier_svc.quote()
+	var arms_t2 := _slot_quote(tier_quote, "hero_a", "arms")
+	_check(int(arms_t2["current_ability"]["effects"]["guard"]) == 3 and int(arms_t2["next_ability"]["effects"]["guard"]) == 4, "Shield Catch quotes Guard 3 -> 4")
+	var head_t2 := _slot_quote(tier_quote, "hero_b", "head")
+	_check(int(head_t2["next_ability"]["crit"]) == 8 and head_t2["next_ability"]["dmg"] == [6, 9], "Helmet Rattle tier III shows crit 8 and dmg [6,9]")
+	var tier_receipt := tier_svc.upgrade("hero_b", "head", NODE, tier_svc.read_state())
+	_check(bool(tier_receipt["ok"]), "Helmet Rattle upgrades to tier III")
+	var rattle_t3 := _slot_quote(tier_svc.quote(), "hero_b", "head")
+	_check(int(rattle_t3["current_ability"]["crit"]) == 8 and rattle_t3["next_ability"].is_empty() and rattle_t3["next_stat"].is_empty(), "tier III quotes crit 8 and an empty next")
+	# Mutation isolation for nested returned ability data.
+	var iso := _service(5, 2)
+	var iso_quote := iso.quote()
+	var iso_arms := _slot_quote(iso_quote, "hero_a", "arms")
+	iso_arms["current_ability"]["effects"]["guard"] = 99
+	iso_arms["next_ability"]["effects"]["guard"] = 99
+	iso_arms["next_ability"]["launch"].append(9)
+	iso_arms["worn"]["ability"]["effects"]["guard"] = 99
+	iso_arms["worn"]["ability"]["target"].clear()
+	var iso_again := _slot_quote(iso.quote(), "hero_a", "arms")
+	_check(int(iso_again["current_ability"]["effects"]["guard"]) == 2 and int(iso_again["next_ability"]["effects"]["guard"]) == 3, "mutating quoted effects never reaches the service")
+	_check(iso_again["next_ability"]["launch"] == [1, 2] and iso_again["worn"]["ability"]["target"] == [1, 2, 3, 4], "mutating quoted arrays never reaches the service")
+	_check(int(catalog["warden_arms_shield_catch"]["ability"]["effects"]["guard"]) == 2, "quote mutation never reaches the catalog")
 	# every slot quotes the caller price and deep-copied details.
 	for hero_quote in quote["heroes"]:
 		for slot_quote in hero_quote["slots"]:

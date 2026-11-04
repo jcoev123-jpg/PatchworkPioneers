@@ -222,14 +222,9 @@ func _summary(part: Dictionary, slot: String) -> Dictionary:
 	}
 
 
+## Fully detached, catalog-resolved ability at a tier (every authored field, nested maps and arrays).
 func _ability_brief(ability: Dictionary) -> Dictionary:
-	return {
-		"id": str(ability.get("id", "")),
-		"name": str(ability.get("name", "")),
-		"kind": str(ability.get("kind", "")),
-		"acc": int(ability.get("acc", 0)),
-		"dmg": ability.get("dmg", []).duplicate(true) if ability.get("dmg", []) is Array else [],
-	}
+	return ability.duplicate(true)
 
 
 func _setup(node_id: Variant, heroes: Variant, scraps: Variant, quoted_upgrade_cost: Variant, catalog_by_id: Variant) -> String:
