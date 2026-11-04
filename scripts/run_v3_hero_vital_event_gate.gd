@@ -2,7 +2,8 @@ class_name RunV3HeroVitalEventGate
 extends RefCounted
 ## Scene-free, one-visit V3-4 hero-gated vitality crossroad admission and settlement gate.
 ##
-## Validates the exact three-hero party; authenticates data/events/v3_hero_vital_events.json;
+## Validates a legacy three-hero or Design v4 four-hero party of distinct canonical
+## IDs; authenticates data/events/v3_hero_vital_events.json;
 ## admits only when the chosen required hero is present and living (1 <= hp <= max_hp,
 ## max_hp >= 10). Binds a detached opening snapshot and underlying RunEventChoice, exposing
 ## a non-claiming preview and a single claim latched by choose_with_vitals.
@@ -21,6 +22,10 @@ const HERO_IDS := [
 ]
 const LEAVE_CHOICE_ID := "leave"
 const MIN_VITAL_MAX_HP := 10
+## Legacy cards runs field exactly three heroes; a Design v4 Stitched run picks
+## four of eight and places them in ranks 1-4. Membership is the distinct ID set,
+## never rank, so both party sizes are admitted here.
+const PARTY_SIZES := [3, 4]
 
 const REQUIRED_EVENT_IDS := [
 	"v3_warden_buckle_heart_ward",
@@ -419,7 +424,7 @@ static func _parse_party(party_ids: Variant) -> Dictionary:
 	if not (party_ids is Array):
 		return {"ok": false}
 	var list: Array = party_ids
-	if list.size() != 3:
+	if not PARTY_SIZES.has(list.size()):
 		return {"ok": false}
 	var seen: Dictionary = {}
 	var result_ids: Array[String] = []
@@ -694,7 +699,8 @@ func _parse_actionable_heroes(heroes: Variant) -> Dictionary:
 	if typeof(heroes) != TYPE_ARRAY:
 		return {"ok": false}
 	var list: Array = heroes
-	if list.size() != 3:
+	# The snapshot must describe the exact party: same count and the same ID set.
+	if list.size() != _party_ids.size():
 		return {"ok": false}
 	var seen_ids: Dictionary = {}
 	var living_by_id: Dictionary = {}
@@ -727,7 +733,7 @@ func _parse_actionable_heroes(heroes: Variant) -> Dictionary:
 				"hp": hp_int,
 				"max_hp": max_hp_int,
 			}
-	if seen_ids.size() != 3:
+	if seen_ids.size() != _party_ids.size():
 		return {"ok": false}
 	for pid: String in _party_ids:
 		if not seen_ids.has(pid):
