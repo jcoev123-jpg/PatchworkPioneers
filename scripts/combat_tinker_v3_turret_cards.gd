@@ -4,7 +4,7 @@ extends RefCounted
 ##
 ## The hunched goggled scrap-tinker bolts a clockwork turret onto the floor behind the line: it costs two
 ## energy, is cast only from the back seat (FROM 3), targets self, deals no damage on deployment, and then
-## fires 3 (Wind-up Turret) or 4 (Wind-up Turret+) raw damage at a RANDOM living enemy at the END of each
+## fires 3 (Wind-up Turret) or 4 (Wind-up Turret+) base damage at a RANDOM living enemy at the END of each
 ## player turn for exactly three turns. The turret is a summoned gadget effect, never the enemy-summon
 ## keyword, and it reads and spends no Combat Scrap and no run-wallet `scraps`.
 ##
@@ -20,11 +20,22 @@ extends RefCounted
 ## CombatEnemies roster and the existing caller-seeded run RNG.
 ##
 ## A tick chooses uniformly from the LIVING enemies' actual slots (1-3) through that supplied RNG only when at
-## least two are alive, hits exactly one of them with the stored damage through CombatEnemies.apply_damage
-## (Block before HP) and returns a detached receipt plus next state. One living enemy is hit without a
-## needless RNG call; zero living enemies do no damage, consume no RNG and still spend the scheduled beat. After
-## three ticks the instance is expired and a fourth tick is inert. Slain slots keep their id and position,
-## are never resurrected and are never retargeted. Two independently deployed instances never share a counter.
+## least two are alive, hits exactly one of them with its already-status-adjusted damage through
+## CombatEnemies.apply_damage (Block before HP) and returns a detached receipt plus next state. One living enemy
+## is hit without a needless RNG call; zero living enemies do no damage, consume no RNG and still spend the
+## scheduled beat. After three ticks the instance is expired and a fourth tick is inert. Slain slots keep their
+## id and position, are never resurrected and are never retargeted. Two independently deployed instances never
+## share a counter.
+##
+## Each confirmed shot reads the chosen defender's own already-present statuses and computes the hit ONCE with
+## CombatStatuses.adjusted_attack_damage(stored, {}, target_statuses), the canonical Weak/Exposed/Tangled rule.
+## The turret is an autonomous gadget with neutral attacker statuses, so no Tinker Weak snapshot applies: an
+## Exposed 1 defender takes floor(3 * 3 / 2) = 4 (or 6 for the "+"), a Tangled N>0 defender takes its flat +2
+## once whatever N is (3 -> 5, 4 -> 6), and both together take 6 or 8. The defender's status map is read, never
+## consumed, aged or added to: a turret never applies a status of its own, and a newly added Tangled is never
+## applied retroactively. Every LIVING candidate's status shape (and Enrage metadata) is validated before the
+## target RNG is drawn or anything is committed, so malformed target data refuses the whole tick instead of
+## producing a partial hit.
 ##
 ## A shot is a confirmed hit for the Enrage keyword: any positive damage (a blow fully absorbed by Block
 ## included) commits one stack on an `enrage: true` target through CombatEnemyKeywordRules, capped at three,
@@ -79,10 +90,17 @@ const CARDS := {
 const PENDING_KEYS := ["kind", "card_id", "damage", "duration_turns", "remaining",
 	"tick", "target_kind", "living_targets_only", "rng_source"]
 
+## The defender status vocabulary CombatStatuses itself accepts. The turret's own attacker side is always
+## neutral (`{}`), so only a target's existing map can change a shot.
+const STATUS_KEYS: Array[String] = ["bleed", "weak", "exposed", "tangled", "riposte"]
+const ONE_SHOT_STATUS_KEYS: Array[String] = ["dodge_next_attack", "blind_next_attack"]
+const FEAR_STATUS_KEY := "cannot_buff_next_turn"
+
 const _CATALOG := preload("res://data/cards/v3_tinker_pool_cards.gd")
 
 var _catalog := _CATALOG.new()
 var _keywords := CombatEnemyKeywordRules.new()
+var _statuses := CombatStatuses.new()
 
 
 ## True only for the two authentic catalog printings. Pure lookup; nothing is charged or mutated and no RNG
@@ -345,9 +363,10 @@ static func is_pending_instance(value: Variant) -> bool:
 
 
 ## One end-of-player-turn tick for ONE detached pending instance: choose a living enemy (the supplied run RNG
-## picks uniformly only when at least two are alive), hit it once for the stored 3 or 4 through
-## CombatEnemies.apply_damage so Block absorbs before HP, and return a detached receipt with the next state.
-## A malformed or tampered instance, an invalid roster, a missing RNG or an already expired instance is
+## picks uniformly only when at least two are alive), hit it once for the stored 3 or 4 adjusted by that
+## defender's own existing statuses through CombatStatuses, and apply it through CombatEnemies.apply_damage so
+## Block absorbs before HP. Returns a detached receipt with the next state. A malformed or tampered instance,
+## an invalid roster, a malformed living target status map, a missing RNG or an already expired instance is
 ## refused with no change to the roster, the instance or the RNG.
 func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGenerator) -> Dictionary:
 	if enemies == null:
@@ -375,11 +394,14 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 			return _refusal("invalid_enemies")
 		if not enemy_block is int or enemy_block < 0:
 			return _refusal("invalid_enemies")
-		# Any living slot may be the random target, so its Enrage flag and stack count are checked here,
-		# with the keyword's own validator, before a target is chosen or anything is spent.
-		if enemy_hp > 0 and not _keywords.quote_enrage_after_hit(enemy,
-				{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0})["ok"]:
-			return _refusal("invalid_enrage")
+		# Any living slot may be the random target, so its status map and its Enrage flag/stack count are
+		# checked here, with their own validators, before a target is chosen or anything is spent.
+		if enemy_hp > 0:
+			if not _valid_status_map(enemy.get("statuses", {})):
+				return _refusal("malformed_statuses")
+			if not _keywords.quote_enrage_after_hit(enemy,
+					{"ok": true, "damage": 0, "block_absorbed": 0, "hp_loss": 0})["ok"]:
+				return _refusal("invalid_enrage")
 		seen_enemy_ids.append(enemy_id)
 
 	if not is_pending_instance(current):
@@ -388,7 +410,7 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 	var remaining_before: int = int(state["remaining"])
 	if remaining_before <= 0:
 		return _refusal("turret_expired")
-	var damage: int = int(state["damage"])
+	var stored_damage: int = int(state["damage"])
 
 	# Living slots in ascending original position; a slain slot is never listed, resurrected or retargeted.
 	var living: Array[int] = []
@@ -409,12 +431,23 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 	var target_id := ""
 	var block_before: int = 0
 	var hp_before: int = 0
+	var target_statuses: Dictionary = {}
+	var damage: int = 0
 	if target > 0:
 		var enemy_before: Dictionary = enemies.get_enemy(target)
 		target_id = str(enemy_before.get("id", ""))
 		block_before = int(enemy_before.get("block", 0))
 		hp_before = int(enemy_before.get("hp", 0))
+		target_statuses = _live_statuses(enemy_before)
+		# One canonical calculation on the printed base with neutral turret attacker statuses: the
+		# defender's own already-present Exposed/Tangled change this shot, and nothing consumes them.
+		damage = _statuses.adjusted_attack_damage(stored_damage, {}, target_statuses)
+		if damage <= 0:
+			# The stored base cannot become a positive hit (invalid or overflowing); refuse without a trace.
+			rng.state = rng_state_before
+			return _refusal("damage_overflow")
 		if not enemies.apply_damage(target, damage):
+			rng.state = rng_state_before
 			return _refusal("damage_rejected")
 		var enemy_after: Dictionary = enemies.get_enemy(target)
 		block_absorbed = block_before - int(enemy_after.get("block", 0))
@@ -435,7 +468,8 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 		"reason": "ticked",
 		"card_id": str(state["card_id"]),
 		"damage": damage if target > 0 else 0,
-		"stored_damage": damage,
+		"stored_damage": stored_damage,
+		"target_statuses": target_statuses.duplicate(true),
 		"tick": TICK_BOUNDARY,
 		"remaining_before": remaining_before,
 		"remaining": remaining_before - 1,
@@ -451,6 +485,41 @@ func tick_turret(current: Variant, enemies: CombatEnemies, rng: RandomNumberGene
 		"rng_consumed": rng.state != rng_state_before,
 		"state": next_state,
 	}
+
+
+## CombatStatuses' own status vocabulary and counter shape. Anything else is malformed and refuses the tick
+## before a target is chosen, so bad target data can never yield a partial hit. Absent means no counters.
+static func _valid_status_map(statuses: Variant) -> bool:
+	if not statuses is Dictionary:
+		return false
+	for name in statuses:
+		if not name is String:
+			return false
+		if ONE_SHOT_STATUS_KEYS.has(name):
+			var token = statuses[name]
+			if not token is int or (token != 0 and token != 1):
+				return false
+			continue
+		if name == FEAR_STATUS_KEY:
+			var fear = statuses[name]
+			if not fear is bool or not bool(fear):
+				return false
+			continue
+		if not STATUS_KEYS.has(name):
+			return false
+		var count = statuses[name]
+		if not count is int or count < 0:
+			return false
+	return true
+
+
+## The authoritative status dictionary stored on a real enemy record. An absent key means no counters; any
+## other non-dictionary value was already refused by the living-candidate validation.
+static func _live_statuses(record: Dictionary) -> Dictionary:
+	var value = record.get("statuses", {})
+	if not value is Dictionary:
+		return {}
+	return value
 
 
 func _refusal(reason: String) -> Dictionary:
