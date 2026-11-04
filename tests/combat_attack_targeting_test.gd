@@ -58,10 +58,19 @@ func _test_v3_tinker() -> void:
 		var middle := _party(["warden", "tinker", "seamstress"])
 		_check(service.get_preview(deck, middle, enemies, id).playable == id.contains("cog_shot"),
 			"V3 middle seat admits Cog and refuses Bomb")
-		var wide := _enemies(4, 4)
-		var wide_before := _snapshot(deck, party, wide)
-		_check(not service.get_preview(deck, party, wide, id).playable
-			and _snapshot(deck, party, wide) == wide_before, "V3 rejects unsupported four-slot roster atomically")
+		# A battle roster that explicitly opts in to four slots now admits the V3
+		# attacks against the living fourth foe; single-target preview selection
+		# itself stays at the authored [1, 2, 3] slots.
+		var wide := _enemies(4, CombatEnemies.OPT_IN_MAX_ENEMIES)
+		var area: bool = id.contains("scrap_bomb")
+		_assert_preview(deck, party, wide, id, true, not area,
+			[1, 2, 3, 4] if area else [1, 2, 3],
+			"V3 admits a genuine opt-in four-slot roster " + id)
+		# The same four occupied slots still fail closed when the roster declares
+		# the default three-slot capacity.
+		wide._capacity = CombatEnemies.MAX_ENEMIES
+		_reject(deck, party, wide, id,
+			"V3 rejects a four-occupied roster above declared capacity " + id)
 		party._heroes[2].combat_scrap = CombatParty.MAX_INT
 		_check(not service.get_preview(deck, party, enemies, id).playable, "V3 overflow not advertised")
 		_check(not service.supports(id + "_forged"), "V3 forged ID unsupported")

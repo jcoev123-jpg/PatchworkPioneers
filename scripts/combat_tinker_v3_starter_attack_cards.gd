@@ -72,7 +72,8 @@ func preflight(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if not _valid_roster(party._heroes, 3, 3, true):
 		return _refusal("invalid_party")
 	# Do not call enemy readers here: they settle revivals, even on refused requests.
-	if not _valid_roster(enemies._enemies, 1, 3, false):
+	if enemies.get_capacity() not in [CombatEnemies.MAX_ENEMIES, CombatEnemies.OPT_IN_MAX_ENEMIES] \
+			or not _valid_roster(enemies._enemies, 1, enemies.get_capacity(), false):
 		return _refusal("invalid_enemies")
 	var owner := 0
 	for hero in party._heroes:
@@ -89,7 +90,8 @@ func preflight(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	if scrap == CombatParty.MAX_INT:
 		return _refusal("combat_scrap_overflow")
 	var area: bool = spec["cost"] == 2
-	if (area and target_position != 0) or (not area and target_position not in [1, 2, 3]):
+	if (area and target_position != 0) or (not area and (target_position < 1 \
+			or target_position > enemies._enemies.size())):
 		return _refusal("invalid_target")
 	var targets: Array[Dictionary] = []
 	for enemy in enemies._enemies:
