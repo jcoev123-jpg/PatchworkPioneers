@@ -658,6 +658,31 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 			"error": "hero " + unit_id + " needs four equipped slots",
 			"unit": {},
 		}
+	# Optional carried statuses: only a positive integer Bleed is admitted, so a
+	# malformed carry can never become free damage or a silent cure.
+	var starting_statuses := {}
+	var raw_statuses: Variant = entry.get("statuses", {})
+	if not raw_statuses is Dictionary:
+		return {
+			"ok": false,
+			"error": "hero " + unit_id + " statuses must be a dictionary",
+			"unit": {},
+		}
+	for key in raw_statuses:
+		if typeof(key) != TYPE_STRING or str(key) != "bleed":
+			return {
+				"ok": false,
+				"error": "hero " + unit_id + " has an illegal starting status: " + str(key),
+				"unit": {},
+			}
+		var amount: Variant = (raw_statuses as Dictionary)[key]
+		if typeof(amount) != TYPE_INT or int(amount) <= 0:
+			return {
+				"ok": false,
+				"error": "hero " + unit_id + " needs a positive integer bleed",
+				"unit": {},
+			}
+		starting_statuses["bleed"] = int(amount)
 	if equipped.size() != StitchedParts.SLOTS.size():
 		return {
 			"ok": false,
@@ -696,7 +721,7 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"dmg_bonus": 0,
 		"fray": 0,
 		"resolve": "",
-		"statuses": {},
+		"statuses": starting_statuses,
 		"parts": parts,
 		"abilities": [],
 		"is_boss": false,

@@ -159,6 +159,36 @@ func _test_completeness(catalog: Dictionary) -> void:
 			"AC2: every phase-two action is a distinct authored move")
 
 
+	# The Roadblock's Scissor Crab Pinch is the authored Bleed source the live
+	# Peddler loop relies on. Only its Bleed was added; damage, ranks and the
+	# sibling action keep their original authored values.
+	var crab: Dictionary = catalog["foes"].get("scissor_crab", {})
+	var pinch := {}
+	var thread_snip := {}
+	for ability in crab.get("abilities", []):
+		if str(ability.get("id", "")) == "pinch":
+			pinch = ability
+		elif str(ability.get("id", "")) == "thread_snip":
+			thread_snip = ability
+	_check(not pinch.is_empty() and int(pinch.get("effects", {}).get("bleed", 0)) == 2
+		and pinch.get("dmg") == [3, 6] and pinch.get("launch") == [1, 2, 3]
+		and pinch.get("target") == [1, 2] and int(pinch.get("acc", 0)) == 86,
+		"AC1: Scissor Crab Pinch authors Bleed 2 with its damage and ranks intact")
+	_check(thread_snip.get("effects") == {"snip": 1},
+		"AC1: Scissor Crab's other Stitched action is untouched")
+	var crab_record := {}
+	for entry in StitchedEnemyCatalog.CATALOGS:
+		var parsed: Variant = _read_json(str(entry["path"]))
+		if parsed is Array:
+			for raw in parsed:
+				if raw is Dictionary and str(raw.get("id", "")) == "scissor_crab":
+					crab_record = raw
+	var legacy_actions: Array = crab_record.get("intent", {}).get("actions", [])
+	_check(legacy_actions.size() == 4 and int(crab_record.get("max_hp", 0)) == 26
+		and int(crab.get("max_hp", 0)) == 22,
+		"AC1: Scissor Crab's legacy card intent and both health values are unchanged")
+
+
 # ---------------------------------------------------------------- AC1 trophies
 
 func _test_trophies(catalog: Dictionary) -> void:
