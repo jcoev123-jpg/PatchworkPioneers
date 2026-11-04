@@ -207,6 +207,94 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_bellows_organ_wayhouse",
+      "title": "The Bellows-Organ Wayhouse",
+      "description": "A plump button-eyed porter pumps a house-sized oxblood bellows organ; bone-cream pipes breathe warm thread beneath its lantern ribs.",
+      "choices": [
+        {
+          "id": "purchase_lung_stitches",
+          "text": "Pay 20 gold for two bundles of bellows repair thread (+2 scraps)",
+          "outcome": {"gold": -20, "scraps": 2}
+        },
+        {
+          "id": "restitch_bellows_hinge",
+          "text": "Spend 2 scraps to mend the great hinge (earn 29 gold)",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the organ draw another ragged breath",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_bone_needle_chimeyard",
+      "title": "The Bone-Needle Chimeyard",
+      "description": "Huge bone-white needles hang like chapel bells from a midnight-teal seam; a round candlekeeper listens for loosened stitches.",
+      "choices": [
+        {
+          "id": "gather_chime_filaments",
+          "text": "Gather fallen chime filaments (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1}
+        },
+        {
+          "id": "retune_needle_bell",
+          "text": "Spend 1 scrap to retune the needle bell (earn 18 gold)",
+          "outcome": {"gold": 18, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the needle bells to the night breeze",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_oxblood_umbrella_roost",
+      "title": "The Oxblood Umbrella Roost",
+      "description": "An inside-out umbrella as tall as a watchtower shelters three rounded crow dolls; brass ribs pin plum quilts above a candlelit toll desk.",
+      "choices": [
+        {
+          "id": "buy_rib_thread",
+          "text": "Pay 27 gold for three bundles of canopy-rib thread (+3 scraps)",
+          "outcome": {"gold": -27, "scraps": 3}
+        },
+        {
+          "id": "sell_canopy_stitches",
+          "text": "Trade 3 scraps for 41 gold in storm-mending wages",
+          "outcome": {"gold": 41, "scraps": -3}
+        },
+        {
+          "id": "leave",
+          "text": "Let the crows shelter beneath the crooked canopy",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_velvet_hearse_spoolcart",
+      "title": "The Velvet Spool Hearse",
+      "description": "A tiny masked ragdoll pulls a hearse made from an enormous black thread spool; its bone-cream wheels rattle past small candle shrines.",
+      "choices": [
+        {
+          "id": "buy_wheel_thread",
+          "text": "Pay 13 gold for one roll of hearse-wheel thread (+1 scrap)",
+          "outcome": {"gold": -13, "scraps": 1}
+        },
+        {
+          "id": "mend_hearse_axle",
+          "text": "Spend 2 scraps binding the creaking axle (earn 25 gold)",
+          "outcome": {"gold": 25, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Watch the spool hearse roll into the mist",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }

@@ -158,6 +158,7 @@ func _run() -> void:
 	# AC4: Global/Run RNG isolation
 	_check(rng.state == rng_state, "visit creation and actions do not consume global or run RNG")
 	_run_four_hero_stitched()
+	_run_open_stitched()
 
 
 ## Four-hero Stitched Patch Stall: warden, seamstress, tinker, lantern_monk, an
@@ -369,3 +370,135 @@ func _check_stale_requests(old_id: String, current: RunPatchStallVisit, patch_id
 	_check(not current.reconcile_purchase(receipt, old_id, before.node_id, before.snapshot),
 		"old visit cannot reconcile authentic receipt on identical-source visit")
 	_check(current.read_state() == before and current.quote() == stock, "stale reconcile preserves state and stock")
+
+
+func _authored_price(authored: Dictionary, id: String) -> int:
+	for entry in authored.trinkets:
+		if entry.id == id:
+			return int(entry.price)
+	return -1
+
+
+func _has_card_keys(value: Variant) -> bool:
+	var text := var_to_str(value)
+	for banned in ["deck", "card", "hand", "energy"]:
+		if text.contains(banned):
+			return true
+	return false
+
+
+## Opt-in card-free Stitched factory: named authored patches, no deck argument.
+func _run_open_stitched() -> void:
+	seed(7741)
+	var expected_global := randi()
+	seed(7741)
+	var authored: Dictionary = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	var ids := ["quilted_coat", "button_eye", "pincushion_arm"]
+	var offers: Array = []
+	for id in ids:
+		var price := _authored_price(authored, id)
+		_check(price == 100, "authored price for " + id)
+		offers.append({"id": id, "price": price})
+	_check(_authored_price(authored, "stitched_badge") > 0 and _authored_price(authored, "spare_spool") > 0,
+		"earlier authored entries remain available")
+	var party := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var owned := ["stitched_badge"]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 99
+	var rng_state := rng.state
+
+	var visit := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
+	var twin := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
+	_check(visit.is_valid() and twin.is_valid(), "open_stitched opens")
+	var state := visit.read_state()
+	_check(state.snapshot == {"party_ids": party, "owned_patch_ids": owned, "gold": 150}, "stitched snapshot is card-free")
+	_check(state.visit_id != twin.read_state().visit_id, "stitched visits have distinct identities")
+	var quote := visit.quote()
+	_check(quote == {"offers": [
+			{"id": "quilted_coat", "price": 100, "sold": false},
+			{"id": "button_eye", "price": 100, "sold": false},
+			{"id": "pincushion_arm", "price": 100, "sold": false}],
+		"decisions": ["buy_patch", "leave"]}, "stitched quote is three authored patches plus Buy Patch/Leave")
+	_check(not _has_card_keys(state) and not _has_card_keys(quote), "stitched state and quote have no deck/card/hand/energy")
+
+	# AC3 rejections.
+	var bad_snap: Dictionary = state.snapshot.duplicate(true)
+	bad_snap.gold = 151
+	_check(not visit.buy_patch("quilted_coat", "x", "node_s", state.snapshot).ok, "stitched wrong visit refused")
+	_check(not visit.buy_patch("quilted_coat", state.visit_id, "other", state.snapshot).ok, "stitched wrong node refused")
+	_check(not visit.buy_patch("quilted_coat", state.visit_id, "node_s", bad_snap).ok, "stitched stale snapshot refused")
+	_check(not visit.buy_patch("forged", state.visit_id, "node_s", state.snapshot).ok, "stitched forged offer refused")
+	_check(not visit.buy_patch("quilted_coat", twin.read_state().visit_id, "node_s", state.snapshot).ok, "stitched cross-visit refused")
+	_check(not visit.leave(twin.read_state().visit_id, "node_s", state.snapshot).ok, "stitched cross-visit Leave refused")
+	_check(visit.read_state() == state and visit.quote() == quote and not visit.is_consumed(), "stitched refusals change nothing")
+	var bad_inputs := [
+		RunPatchStallVisit.open_stitched("", party, owned, 150, offers),
+		RunPatchStallVisit.open_stitched("n", party.slice(0, 3), owned, 150, offers),
+		RunPatchStallVisit.open_stitched("n", party + ["scarecrow"], owned, 150, offers),
+		RunPatchStallVisit.open_stitched("n", ["warden", "warden", "tinker", "lantern_monk"], owned, 150, offers),
+		RunPatchStallVisit.open_stitched("n", party, owned, -1, offers),
+		RunPatchStallVisit.open_stitched("n", party, owned, 150.0, offers),
+		RunPatchStallVisit.open_stitched("n", party, owned, 150, offers.slice(0, 2)),
+		RunPatchStallVisit.open_stitched("n", party, owned, 150, [offers[0], offers[0], offers[1]]),
+		RunPatchStallVisit.open_stitched("n", party, owned, 150, [offers[0], offers[1], {"id": "pincushion_arm", "price": 0}]),
+		RunPatchStallVisit.open_stitched("n", party, ["quilted_coat", "quilted_coat"], 150, offers),
+		RunPatchStallVisit.open_stitched("n", "party", owned, 150, offers)]
+	for bad in bad_inputs:
+		_check(not bad.is_valid() and bad.read_state() == {} and bad.quote() == {}, "invalid stitched open refused")
+
+	# Already-owned and unaffordable stock.
+	var owned_visit := RunPatchStallVisit.open_stitched("node_s", party, ["button_eye"], 150, offers)
+	var owned_state := owned_visit.read_state()
+	_check(not owned_visit.buy_patch("button_eye", owned_state.visit_id, "node_s", owned_state.snapshot).ok
+		and owned_visit.preview_purchase("button_eye", owned_state.visit_id, "node_s", owned_state.snapshot).is_empty(),
+		"stitched owned patch unavailable")
+	var poor := RunPatchStallVisit.open_stitched("node_s", party, owned, 99, offers)
+	var poor_state := poor.read_state()
+	_check(not poor.buy_patch("quilted_coat", poor_state.visit_id, "node_s", poor_state.snapshot).ok
+		and poor.read_state() == poor_state, "stitched unaffordable buy refused")
+	var poor_leave := poor.leave(poor_state.visit_id, "node_s", poor_state.snapshot)
+	_check(poor_leave.ok and poor_leave.ledger == {"party_ids": party, "owned_patch_ids": owned, "gold": 99}
+		and not _has_card_keys(poor_leave), "refused buy still permits a card-free Leave")
+
+	# AC2: each named patch buys once for exactly 100, no equip, then closes.
+	for id in ids:
+		var v := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
+		var s := v.read_state()
+		var q := v.quote()
+		var r := v.buy_patch(id, s.visit_id, "node_s", s.snapshot)
+		_check(r.ok and r.decision == "buy_patch" and r.receipt == {"kind": "trinket", "id": id, "price": 100},
+			"stitched buy receipt " + id)
+		_check(r.ledger == {"party_ids": party, "owned_patch_ids": owned + [id], "gold": 50},
+			"stitched buy leaves 50 gold and adds only " + id)
+		_check(r.source_snapshot == s.snapshot and not _has_card_keys(r), "stitched receipt is card-free with source snapshot")
+		_check(v.is_consumed() and not v.buy_patch(id, s.visit_id, "node_s", s.snapshot).ok
+			and not v.leave(s.visit_id, "node_s", s.snapshot).ok, "stitched buy closes and refuses replay")
+		_check_closed_quote(v, q, s, "stitched buy " + id)
+		r.ledger.party_ids.clear()
+		_check(v.read_state().snapshot == s.snapshot, "stitched receipt detached")
+	var lv := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
+	var ls := lv.read_state()
+	var lq := lv.quote()
+	var lr := lv.leave(ls.visit_id, "node_s", ls.snapshot)
+	_check(lr.ok and lr.decision == "leave" and lr.ledger == {"party_ids": party, "owned_patch_ids": owned, "gold": 150}
+		and not _has_card_keys(lr), "stitched Leave leaves gold and inventory unchanged")
+	_check(not lv.leave(ls.visit_id, "node_s", ls.snapshot).ok, "stitched Leave latches")
+	_check_closed_quote(lv, lq, ls, "stitched Leave")
+
+	# AC4: preview then reconcile exactly once.
+	var av := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
+	var as_ := av.read_state()
+	var aq := av.quote()
+	var pre := av.preview_purchase("button_eye", as_.visit_id, "node_s", as_.snapshot)
+	_check(pre == {"kind": "trinket", "id": "button_eye", "price": 100} and av.read_state() == as_, "stitched preview exact and read-only")
+	for forged in [{}, {"kind": "card", "id": "button_eye", "price": 100}, {"kind": "trinket", "id": "button_eye", "price": 99},
+			{"kind": "trinket", "id": "quilted_coat", "price": 100, "x": 1}, {"kind": "trinket", "id": "nope", "price": 100}]:
+		_check(not av.reconcile_purchase(forged, as_.visit_id, "node_s", as_.snapshot) and not av.is_consumed(),
+			"stitched forged receipt refused")
+	_check(not av.reconcile_purchase(pre, as_.visit_id, "node_s", bad_snap), "stitched stale reconcile refused")
+	_check(av.reconcile_purchase(pre, as_.visit_id, "node_s", as_.snapshot)
+		and not av.reconcile_purchase(pre, as_.visit_id, "node_s", as_.snapshot), "stitched reconcile once, no replay")
+	_check(av.read_state().snapshot == as_.snapshot, "reconcile does not debit the source snapshot")
+	_check_closed_quote(av, aq, as_, "stitched reconcile")
+
+	_check(rng.state == rng_state and randi() == expected_global, "stitched service draws no global or run RNG")

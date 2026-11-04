@@ -7,7 +7,8 @@ extends RefCounted
 ## `stitched_effect` outcome field:
 ##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
-##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true}
+##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
+##      "min_fray": 1..200}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -59,6 +60,8 @@ const CANDLE_MIN := 0
 const CANDLE_MAX := 100
 const FRAY_MIN := 0
 const FRAY_MAX := 200
+const MIN_FRAY_MIN := 1
+const MIN_FRAY_MAX := 200
 const MIN_PARTY_SIZE := 1
 const MAX_PARTY_SIZE := 4
 const SATCHEL_MIN := 0
@@ -195,6 +198,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	# An absent named hero is unavailable, so it cannot latch the visit.
 	if _target_ids(base_state, parsed_effect).is_empty():
 		return _rejection(base_candle)
+	if not _meets_min_fray(base_state, parsed_effect):
+		return _rejection(base_candle)
 	if not _can_afford_candle(base_candle, parsed_effect):
 		return _rejection(base_candle)
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
@@ -268,6 +273,24 @@ func _can_afford_candle(base_candle: int, parsed_effect: Dictionary) -> bool:
 		return true
 	var delta: int = int(parsed_effect["candle"])
 	return delta < 0 and delta >= -base_candle
+
+
+## Shared named-hero FRAY admission gate for preview and commit when
+## `min_fray` is present on `stitched_effect`.
+func _meets_min_fray(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("has_min_fray", false):
+		return true
+	var gated_hero_id: String = (
+		String(parsed_effect["hero_id"])
+		if parsed_effect["target"] == TARGET_HERO
+		else String(parsed_effect["required_hero"])
+	)
+	var threshold: int = int(parsed_effect["min_fray"])
+	var party: Array = base_state["party"]
+	for hero in party:
+		if hero["id"] == gated_hero_id:
+			return int(hero["fray"]) >= threshold
+	return false
 
 
 ## Shared party-scraps arithmetic for preview and commit: requires a valid
@@ -350,6 +373,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["hp"] = {}
 	if _target_ids(base_state, parsed_effect).is_empty():
 		# The named hero is not in this party: readable deltas, no projection.
+		return entry
+	if not _meets_min_fray(base_state, parsed_effect):
 		return entry
 	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
 		return entry
@@ -560,6 +585,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_required_hero: bool = effect.has("required_hero")
 	var has_hp: bool = effect.has("hp")
 	var has_require_full_candle: bool = effect.has("require_full_candle")
+	var has_min_fray: bool = effect.has("min_fray")
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
 		+ (1 if has_part else 0)
@@ -567,6 +593,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_required_hero else 0)
 		+ (1 if has_hp else 0)
 		+ (1 if has_require_full_candle else 0)
+		+ (1 if has_min_fray else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -613,6 +640,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"required_hero": required_hero,
 		"has_hp": has_hp,
 		"require_full_candle": has_require_full_candle,
+		"has_min_fray": has_min_fray,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
@@ -634,6 +662,16 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if not hp_read.get("ok", false):
 			return {"ok": false}
 		parsed["hp"] = int(hp_read["value"])
+	if has_min_fray:
+		if target == TARGET_PARTY and not has_required_hero:
+			return {"ok": false}
+		var raw_min_fray: Variant = effect.get("min_fray")
+		if typeof(raw_min_fray) != TYPE_INT:
+			return {"ok": false}
+		var min_fray_val: int = int(raw_min_fray)
+		if min_fray_val < MIN_FRAY_MIN or min_fray_val > MIN_FRAY_MAX:
+			return {"ok": false}
+		parsed["min_fray"] = min_fray_val
 	return parsed
 
 
