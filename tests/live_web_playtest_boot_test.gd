@@ -78,6 +78,12 @@ func _run() -> void:
 					and app.base_screen.set_out_button.has_focus()
 					and app.base_screen.back_button.is_visible_in_tree(),
 					"village preview mounts focusable Set out and Back to title")
+			elif screen == "stitched_battle":
+				var stage: StitchedBattleScreen = boot.stitched_view
+				_check(stage != null and stage.is_visible_in_tree() and stage.battle != null and stage.battle.is_valid(), "stitched public scene mounts real rules")
+				_check(stage.battle.get_heroes().size() == 4 and stage.battle.get_foes().size() == 3, "stitched preview starts 4v3, with fourth foe rank empty")
+				_check(app.deck == null and app.run_map == null and app.run_rng == null and app.run_deck.is_empty() and app.run_heroes.is_empty(), "stitched preview never allocates card run")
+				_check(stage._puppets.size() == 8 and stage._seat_buttons.size() == 8, "four mounted rank seats per side")
 			else:
 				_check(app.run_seed == {"rest": 14, "shop": 14, "event": 6}.get(screen, 1), "fixed seed: " + screen)
 				_check(app.session_gold == 100 and app.run_scraps == 10, "consistent currency fixture: " + screen)
@@ -129,7 +135,11 @@ func _run() -> void:
 					"already-open village preview cannot be re-entered")
 			if screen not in ["title", "base"]:
 				_check(not await boot.enter_preview(app, "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
-				app._return_to_title()
+				if screen == "stitched_battle":
+					boot.exit_stitched_preview(app)
+					_check(boot.stitched_view == null and app.title_view.is_visible_in_tree(), "stitched preview unmounts and restores title")
+				else:
+					app._return_to_title()
 				app.start_button.pressed.emit()
 				_check(is_instance_valid(app.party_picker) and app.run_map == null, "restart first mounts picker")
 				for id in ["warden", "seamstress", "tinker"]:

@@ -1,12 +1,13 @@
 extends Node
 ## Opt-in exported-web fixtures. Ordinary startup never allocates a run or RNG.
 
-const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results"]
+const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results", "stitched_battle"]
 const GOLD := 100
 const SCRAPS := 10
 var preview_ready := false
 var _busy := false
 var _preview_map: WeakRef
+var stitched_view: StitchedBattleScreen
 
 
 ## Preserve ordinary zero-wallet admission; authorize only this preview's map.
@@ -47,7 +48,18 @@ func enter_preview(app, screen: String) -> bool:
 		return false
 	_busy = true
 	preview_ready = false
-	if screen == "base":
+	if screen == "stitched_battle":
+		# S2 is an independent opt-in rules session; no run, card deck, or map is allocated.
+		var view := StitchedBattleScreen.new()
+		if not view.begin():
+			view.free()
+			_busy = false
+			return false
+		app.title_view.hide()
+		app.add_child(view)
+		stitched_view = view
+		view.exit_requested.connect(func(): exit_stitched_preview(app))
+	elif screen == "base":
 		# The village preview mounts the real Base and allocates no run at all.
 		app.base_button.pressed.emit()
 		if not _visible(app.base_screen) or not app.base_screen.has_open_village():
@@ -116,6 +128,10 @@ func _expected_view(app, screen: String) -> bool:
 	match screen:
 		"title":
 			return _visible(app.title_view) and app.run_map == null and app.deck == null
+		"stitched_battle":
+			return _visible(stitched_view) and stitched_view.battle != null and stitched_view.battle.is_valid() \
+				and not _visible(app.title_view) and app.run_map == null and app.deck == null \
+				and app.run_rng == null and app.run_heroes.is_empty()
 		"base":
 			return _visible(app.base_screen) and app.base_screen.has_open_village() \
 				and not _visible(app.title_view) and app.run_map == null \
@@ -137,3 +153,16 @@ func _expected_view(app, screen: String) -> bool:
 		"event":
 			return _visible(app.quiet_spool_panel) and app.quiet_spool_panel.has_open_event()
 	return false
+
+
+## Undo only this opt-in screen. Ordinary card-start remains pristine on the same app.
+func exit_stitched_preview(app) -> void:
+	if stitched_view == null or not is_instance_valid(stitched_view):
+		return
+	stitched_view.queue_free()
+	stitched_view = null
+	preview_ready = false
+	if is_instance_valid(app) and is_instance_valid(app.title_view):
+		app.title_view.show()
+		if is_instance_valid(app.start_button):
+			app.start_button.grab_focus()
