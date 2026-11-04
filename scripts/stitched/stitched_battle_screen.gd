@@ -8,6 +8,10 @@ signal exit_requested
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
 const SLOTS := ["head", "arms", "torso", "legs"]
+const STATUS_ORDER := [
+	"bleed", "weak", "exposed", "thorns", "tangled", "blind",
+	"riposte", "stun", "stun_resist", "mark", "guard",
+]
 const INK := Color("0d1016")
 const PANEL := Color("11151edc")
 const PAPER := Color("f0ddc0")
@@ -31,6 +35,7 @@ var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
 var _notice := ""
+var _inspected_seat := ""
 var _portrait_font: Font
 var _pose_catalog := LiveMovePoseCatalog.new()
 var _pose_manifest: Dictionary = {}
@@ -165,10 +170,14 @@ func _build_screen() -> void:
 	_action_buttons["retreat"] = _button("Retreat", Rect2(852, 594, 155, 38), func(): submit_retreat())
 	for index in range(4):
 		var hero_rank := index + 1
-		_target_buttons["hero_" + str(hero_rank)] = _button("Ally %d" % hero_rank,
+		var hero_key := "hero_" + str(hero_rank)
+		var foe_key := "foe_" + str(hero_rank)
+		_target_buttons[hero_key] = _button("Ally %d" % hero_rank,
 			Rect2(266 + index * 91, 647, 86, 38), func(): submit_target("hero", hero_rank))
-		_target_buttons["foe_" + str(hero_rank)] = _button("Foe %d" % hero_rank,
+		_bind_seat_signals(_target_buttons[hero_key], hero_key)
+		_target_buttons[foe_key] = _button("Foe %d" % hero_rank,
 			Rect2(643 + index * 91, 647, 86, 38), func(): submit_target("foe", hero_rank))
+		_bind_seat_signals(_target_buttons[foe_key], foe_key)
 	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1042, 468, 208, 125), 18, MUTED)
 	_labels["log"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["log"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -212,15 +221,23 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_puppets[key] = puppet
 	var tag := _button("%s %d · empty" % [side.capitalize(), rank], Rect2(x, 373, 116, 36),
 		func(): submit_target(side, rank))
+	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
 	_labels[key] = _label("", Rect2(x - 3, 411, 122, 25), 16, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _bind_seat_signals(control: Control, key: String) -> void:
+	control.mouse_entered.connect(func(): _inspect_seat(key))
+	control.mouse_exited.connect(func(): _clear_seat_inspection(key))
+	control.focus_entered.connect(func(): _inspect_seat(key))
+	control.focus_exited.connect(func(): _clear_seat_inspection(key))
 
 
 func _unit_at(side: String, rank: int) -> Dictionary:
 	if battle == null:
 		return {}
 	for unit in battle.get_heroes() if side == "hero" else battle.get_foes():
-		if int(unit["rank"]) == rank and not bool(unit["lost"]) and not bool(unit["dead"]):
+		if int(unit["rank"]) == rank and not bool(unit["lost"]) and not bool(unit["dead"]) and (side == "hero" or int(unit.get("hp", 0)) > 0):
 			return unit
 	return {}
 
@@ -232,6 +249,77 @@ func _heap_at(rank: int) -> Dictionary:
 		if int(heap["rank"]) == rank:
 			return heap
 	return {}
+
+
+func _status_tokens(unit: Dictionary) -> Array[String]:
+	var tokens: Array[String] = []
+	if unit.is_empty():
+		return tokens
+	var statuses: Variant = unit.get("statuses", {})
+	if statuses is Dictionary:
+		for key in STATUS_ORDER:
+			if statuses.has(key) and int(statuses[key]) > 0:
+				tokens.append("%s %d" % [str(key).replace("_", " ").to_upper(), int(statuses[key])])
+		var extras: Array[String] = []
+		for key in statuses:
+			var name := str(key)
+			if not name in STATUS_ORDER and int(statuses[key]) > 0:
+				extras.append(name)
+		extras.sort()
+		for name in extras:
+			tokens.append("%s %d" % [name.replace("_", " ").to_upper(), int(statuses[name])])
+	var dodge_buff: Variant = unit.get("dodge_buff", {})
+	if dodge_buff is Dictionary:
+		var amount := int(dodge_buff.get("amount", 0))
+		var turns := int(dodge_buff.get("turns", 0))
+		if amount > 0 and turns > 0:
+			tokens.append("DODGE +%d / %d turns" % [amount, turns])
+	if bool(unit.get("hanging", false)):
+		tokens.append("HANGING")
+	return tokens
+
+
+func status_detail(side: String, rank: int) -> String:
+	if rank < 1 or rank > 4 or not side in ["hero", "foe"]:
+		return ""
+	var unit := _unit_at(side, rank)
+	if not unit.is_empty():
+		var header := "R%d %s · HP %d/%d" % [rank, str(unit.get("name", "")), int(unit.get("hp", 0)), int(unit.get("max_hp", 0))]
+		if side == "hero" or int(unit.get("fray", 0)) > 0:
+			header += " · FRAY %d/200" % int(unit.get("fray", 0))
+		var tokens := _status_tokens(unit)
+		return header + "\nSTATUS: " + (", ".join(tokens) if not tokens.is_empty() else "none")
+	var heap := _heap_at(rank) if side == "foe" else {}
+	if not heap.is_empty():
+		return "R%d Scrap heap · SCRAP %d HP\nSTATUS: none" % [rank, int(heap.get("hp", 0))]
+	return "R%d %s · EMPTY\nSTATUS: none" % [rank, side.capitalize()]
+
+
+func _default_log_text() -> String:
+	return _notice if not _notice.is_empty() else "Choose a sewn ability, a move, or Pass.\nEach committed action uses the seeded battle rules."
+
+
+func _seat_detail_for(key: String) -> String:
+	var parts_key := key.split("_")
+	if parts_key.size() != 2:
+		return _default_log_text()
+	var detail := status_detail(str(parts_key[0]), int(parts_key[1]))
+	return detail if not detail.is_empty() else _default_log_text()
+
+
+func _inspect_seat(key: String) -> void:
+	if not _seat_buttons.has(key):
+		return
+	_inspected_seat = key
+	if _labels.has("log"):
+		_labels["log"].text = _seat_detail_for(key)
+
+
+func _clear_seat_inspection(key: String = "") -> void:
+	if key.is_empty() or _inspected_seat == key:
+		_inspected_seat = ""
+		if _labels.has("log"):
+			_labels["log"].text = _default_log_text()
 
 
 func _art_for(id: String) -> Dictionary:
@@ -295,16 +383,13 @@ func _refresh() -> void:
 			var button: Button = _seat_buttons[key]
 			var heap := _heap_at(rank) if side == "foe" and unit.is_empty() else {}
 			button.text = "R%d  %s" % [rank, str(unit.get("name", "Scrap heap" if not heap.is_empty() else "—"))]
+			button.tooltip_text = status_detail(side, rank)
 			var flags: Array[String] = []
 			if not unit.is_empty():
 				if int(unit.get("fray", 0)) > 0:
 					flags.append("FRAY %d" % int(unit["fray"]))
-				for status in unit.get("statuses", {}):
-					if int(unit["statuses"][status]) > 0:
-						flags.append(str(status).to_upper())
-				if bool(unit.get("hanging", false)):
-					flags.append("HANGING")
-			_labels[key].text = ("HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])] if not unit.is_empty() else ("SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() else "EMPTY")) + (" · " + ",".join(flags) if not flags.is_empty() else "")
+				flags.append_array(_status_tokens(unit))
+			_labels[key].text = ("HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])] if not unit.is_empty() else ("SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() else "EMPTY")) + (" · " + ", ".join(flags) if not flags.is_empty() else "")
 	_target_ranks.clear()
 	for slot in SLOTS:
 		var button: Button = _part_buttons[slot]
@@ -336,7 +421,7 @@ func _refresh() -> void:
 	_action_buttons["re_tie"].disabled = not hero_turn or not cuts.has(str(acting.get("id", "")))
 	_action_buttons["pass"].disabled = not hero_turn
 	_action_buttons["retreat"].disabled = not hero_turn or battle.is_boss_encounter()
-	_labels["log"].text = _notice if not _notice.is_empty() else "Choose a sewn ability, a move, or Pass.\nEach committed action uses the seeded battle rules."
+	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
 
 
 func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
@@ -489,6 +574,7 @@ func _record(receipt: Dictionary) -> void:
 		for result in receipt.get("results", []):
 			log += "\n→ " + str(result.get("target", "")) + "  " + str(result.get("damage", result.get("hit", "")))
 	_notice = log + "\nRound %d · %s" % [battle.round_number(), battle.outcome().capitalize()]
+	_inspected_seat = ""
 	if reduced_motion:
 		return
 	var actor := battle.get_unit(actor_id)
@@ -548,5 +634,6 @@ func set_reduced_motion(value: bool) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		_selected_part = ""
+		_inspected_seat = ""
 		_refresh()
 		get_viewport().set_input_as_handled()

@@ -54,6 +54,158 @@ func _choose_legal(stage: StitchedBattleScreen) -> Dictionary:
 	return {}
 
 
+func _verify_status_readout(stage: StitchedBattleScreen) -> void:
+	var battle := stage.battle
+	var saved_units: Dictionary = {}
+	for unit_id in battle._units:
+		saved_units[unit_id] = battle._units[unit_id].duplicate(true)
+	var saved_heaps: Array = battle._heaps.duplicate(true)
+	var ordinary_log := str(stage._labels["log"].text)
+	var foe_1_id := str(stage._unit_at("foe", 1).get("id", ""))
+	var hero_1_id := str(stage._unit_at("hero", 1).get("id", ""))
+	var hero_2_id := str(stage._unit_at("hero", 2).get("id", ""))
+	_check(not foe_1_id.is_empty() and not hero_1_id.is_empty() and not hero_2_id.is_empty(),
+		"precondition: mounted 4v3 fight has living actors in foe_1, hero_1 and hero_2")
+	var foe_1: Dictionary = battle._units[foe_1_id]
+	var hero_1: Dictionary = battle._units[hero_1_id]
+	var hero_2: Dictionary = battle._units[hero_2_id]
+	foe_1["statuses"] = {"bleed": 3, "weak": 2, "mark": 1, "stun": 1, "exposed": 0}
+	hero_1["statuses"] = {"guard": 2, "stun_resist": 1, "tangled": 0}
+	hero_1["dodge_buff"] = {"amount": 8, "turns": 2, "skip": false}
+	hero_2["hp"] = 0
+	hero_2["fray"] = 150
+	hero_2["hanging"] = true
+	hero_2["statuses"] = {}
+	stage._refresh()
+	var view_snapshot := battle.state_snapshot()
+	var view_rng := battle.rng_state()
+	var view_receipts := stage.receipts.size()
+	_check(stage._labels["log"].text == ordinary_log,
+		"passive refresh without seat hover or focus preserves the ordinary action message")
+	_check(stage._seat_buttons["foe_1"].text.contains("R1") and
+		stage._seat_buttons["foe_1"].text.contains(str(foe_1["name"])) and
+		stage._labels["foe_1"].text.begins_with("HP %d/%d" % [int(foe_1["hp"]), int(foe_1["max_hp"])]) and
+		stage._labels["foe_1"].text.contains("BLEED 3") and
+		stage._labels["foe_1"].text.contains("WEAK 2") and
+		stage._labels["foe_1"].text.contains("STUN 1") and
+		stage._labels["foe_1"].text.contains("MARK 1") and
+		not stage._labels["foe_1"].text.contains("EXPOSED"),
+		"foe_1 rank seat keeps rank/name/HP and exposes positive counted statuses while omitting zero statuses")
+	# Pointer hover over foe_1 seat.
+	stage._seat_buttons["foe_1"].mouse_entered.emit()
+	var foe_detail := str(stage._labels["log"].text)
+	_check(foe_detail == stage.status_detail("foe", 1) and
+		foe_detail.contains("R1") and foe_detail.contains(str(foe_1["name"])) and
+		foe_detail.contains("HP %d/%d" % [int(foe_1["hp"]), int(foe_1["max_hp"])]) and
+		foe_detail.contains("BLEED 3") and foe_detail.contains("WEAK 2") and
+		foe_detail.contains("STUN 1") and foe_detail.contains("MARK 1") and
+		not foe_detail.contains("EXPOSED") and not foe_detail.contains("DODGE") and
+		not foe_detail.contains("HANGING"),
+		"mouse hover on foe_1 shows full counted status summary in the side detail log without zero/foreign statuses")
+	_check(battle.state_snapshot() == view_snapshot and battle.rng_state() == view_rng and
+		stage.receipts.size() == view_receipts,
+		"mouse hover inspection spends no turn, changes no snapshot and consumes no RNG")
+	stage._seat_buttons["foe_1"].mouse_exited.emit()
+	_check(stage._labels["log"].text == ordinary_log,
+		"leaving hovered seat restores the prior ordinary action message")
+	# Keyboard focus over hero_1 seat (Guard 2, Stun Resist 1, Dodge +8 / 2 turns).
+	stage._seat_buttons["hero_1"].grab_focus()
+	var hero_1_detail := str(stage._labels["log"].text)
+	_check(stage._seat_buttons["hero_1"].has_focus() and
+		hero_1_detail == stage.status_detail("hero", 1) and
+		hero_1_detail.contains("R1") and hero_1_detail.contains(str(hero_1["name"])) and
+		hero_1_detail.contains("HP %d/%d" % [int(hero_1["hp"]), int(hero_1["max_hp"])]) and
+		hero_1_detail.contains("GUARD 2") and hero_1_detail.contains("STUN RESIST 1") and
+		hero_1_detail.contains("DODGE +8 / 2 turns") and
+		stage._labels["hero_1"].text.contains("GUARD 2") and
+		stage._labels["hero_1"].text.contains("DODGE +8 / 2 turns") and
+		not hero_1_detail.contains("TANGLED") and not hero_1_detail.contains("BLEED") and
+		not hero_1_detail.contains("HANGING"),
+		"keyboard focus on hero_1 shows GUARD 2, STUN RESIST 1 and temporary DODGE +8 / 2 turns")
+	_check(battle.state_snapshot() == view_snapshot and battle.rng_state() == view_rng and
+		stage.receipts.size() == view_receipts,
+		"keyboard focus inspection spends no turn, changes no snapshot and consumes no RNG")
+	stage._action_buttons["pass"].grab_focus()
+	_check(stage._labels["log"].text == ordinary_log,
+		"moving keyboard focus off the rank seat restores the prior action message")
+	# Separate Hanging fixture on hero_2.
+	stage._seat_buttons["hero_2"].mouse_entered.emit()
+	var hero_2_detail := str(stage._labels["log"].text)
+	_check(hero_2_detail == stage.status_detail("hero", 2) and
+		hero_2_detail.contains("R2") and hero_2_detail.contains(str(hero_2["name"])) and
+		hero_2_detail.contains("HP 0/%d" % int(hero_2["max_hp"])) and
+		hero_2_detail.contains("FRAY 150/200") and hero_2_detail.contains("HANGING") and
+		stage._labels["hero_2"].text.contains("FRAY 150") and
+		stage._labels["hero_2"].text.contains("HANGING") and
+		not hero_2_detail.contains("DODGE") and not hero_2_detail.contains("GUARD"),
+		"Hanging hero fixture exposes HP 0, FRAY 150 and HANGING state in seat and detail readout")
+	_check(battle.state_snapshot() == view_snapshot and battle.rng_state() == view_rng and
+		stage.receipts.size() == view_receipts,
+		"viewing Hanging seat preserves battle snapshot, RNG and receipt count")
+	stage._seat_buttons["hero_2"].mouse_exited.emit()
+	# Zero/removed statuses and expired/absent dodge_buff disappear on refresh.
+	stage._seat_buttons["hero_1"].mouse_entered.emit()
+	hero_1["statuses"]["guard"] = 0
+	hero_1["statuses"].erase("stun_resist")
+	hero_1["dodge_buff"] = {"amount": 8, "turns": 0, "skip": false}
+	foe_1["statuses"] = {"bleed": 0}
+	foe_1["statuses"].erase("weak")
+	hero_2["hanging"] = false
+	hero_2["hp"] = int(hero_2["max_hp"])
+	hero_2["fray"] = 0
+	var cleared_snapshot := battle.state_snapshot()
+	var cleared_rng := battle.rng_state()
+	stage._refresh()
+	_check(stage._labels["log"].text.contains("STATUS: none") and
+		not stage._labels["log"].text.contains("GUARD") and
+		not stage._labels["log"].text.contains("STUN RESIST") and
+		not stage._labels["log"].text.contains("DODGE") and
+		not stage._labels["hero_1"].text.contains("GUARD") and
+		not stage._labels["hero_1"].text.contains("DODGE") and
+		not stage._labels["foe_1"].text.contains("BLEED") and
+		not stage._labels["foe_1"].text.contains("WEAK") and
+		not stage.status_detail("foe", 1).contains("BLEED") and
+		not stage._labels["hero_2"].text.contains("HANGING") and
+		not stage.status_detail("hero", 2).contains("HANGING"),
+		"zero/removed statuses, expired temporary Dodge and cleared Hanging disappear on refresh")
+	_check(battle.state_snapshot() == cleared_snapshot and battle.rng_state() == cleared_rng and
+		stage.receipts.size() == view_receipts,
+		"refreshing after status expiry spends no turn, snapshot or RNG")
+	stage._seat_buttons["hero_1"].mouse_exited.emit()
+	# Empty rank (foe_4) and scrap heap never leak stale or phantom status text.
+	stage._seat_buttons["foe_4"].mouse_entered.emit()
+	var empty_detail := str(stage._labels["log"].text)
+	_check(stage._labels["foe_4"].text == "EMPTY" and
+		empty_detail.contains("R4") and empty_detail.contains("EMPTY") and
+		empty_detail.contains("STATUS: none") and
+		not empty_detail.contains("BLEED") and not empty_detail.contains("GUARD") and
+		not empty_detail.contains("DODGE") and not empty_detail.contains("HANGING"),
+		"empty fourth foe rank is unambiguous and leaks no stale status text")
+	battle._heaps.append({
+		"id": "heap:test_scavenger", "side": "heap", "rank": 4,
+		"hp": 9, "max_hp": 9, "foe_id": foe_1_id, "statuses": {"bleed": 4, "mark": 2},
+	})
+	var heap_snapshot := battle.state_snapshot()
+	var heap_rng := battle.rng_state()
+	stage._refresh()
+	var heap_detail := str(stage._labels["log"].text)
+	_check(stage._labels["foe_4"].text == "SCRAP 9 HP" and
+		heap_detail.contains("R4") and heap_detail.contains("Scrap heap") and
+		heap_detail.contains("SCRAP 9 HP") and heap_detail.contains("STATUS: none") and
+		not heap_detail.contains("BLEED") and not heap_detail.contains("MARK"),
+		"scrap heap rank displays heap HP and STATUS: none without phantom statuses")
+	_check(battle.state_snapshot() == heap_snapshot and battle.rng_state() == heap_rng and
+		stage.receipts.size() == view_receipts,
+		"inspecting empty and scrap-heap seats preserves snapshot, RNG and receipt count")
+	stage._seat_buttons["foe_4"].mouse_exited.emit()
+	_check(stage._labels["log"].text == ordinary_log,
+		"exiting empty/heap rank seat restores the prior action message")
+	for unit_id in saved_units:
+		battle._units[unit_id] = saved_units[unit_id]
+	battle._heaps = saved_heaps
+	stage._refresh()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var boot = root.get_node_or_null("LiveWebPlaytestBoot")
@@ -129,6 +281,9 @@ func _run() -> void:
 				break
 		_check(selected and battle.state_snapshot() == pristine and battle.rng_state() == rng,
 			"part selection and repeated hover previews spend no turn or RNG")
+		_verify_status_readout(stage)
+		_check(battle.state_snapshot() == pristine and battle.rng_state() == rng,
+			"status readout fixture cleanup leaves pristine snapshot and RNG intact")
 		# A torn equipped seam disables its own action, with no effect on the action receipt.
 		var selected_slot := stage._selected_part
 		if not selected_slot.is_empty():
@@ -154,6 +309,20 @@ func _run() -> void:
 			stage.receipts[retie_before].get("action") == "re_tie" and
 			not battle.thread_cuts().has(str(retie.get("actor", ""))),
 			"live Re-tie delegates once, clears the cut and spends the acting turn")
+		var receipt_log := str(stage._labels["log"].text)
+		var post_retie_snapshot := battle.state_snapshot()
+		var post_retie_rng := battle.rng_state()
+		var post_retie_receipts := stage.receipts.size()
+		stage._seat_buttons["hero_1"].mouse_entered.emit()
+		_check(stage._labels["log"].text == stage.status_detail("hero", 1) and
+			stage._labels["log"].text != receipt_log,
+			"hovering a seat after a committed turn inspects that seat's status detail")
+		stage._seat_buttons["hero_1"].mouse_exited.emit()
+		_check(stage._labels["log"].text == receipt_log and
+			battle.state_snapshot() == post_retie_snapshot and
+			battle.rng_state() == post_retie_rng and
+			stage.receipts.size() == post_retie_receipts,
+			"ending seat inspection restores the committed action receipt without spending RNG or turns")
 		# Repeatable public trace: the same entrance and the same approved action sequence.
 		stage.set_reduced_motion(true)
 		_check(stage.reduced_motion and stage._puppets["hero_1"].is_processing() == false,
