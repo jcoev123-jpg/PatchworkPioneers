@@ -24,12 +24,14 @@ const IDS := [
 const ENEMY_IDS := ["fray_scavenger", "scissor_crab", "moth_scribe"]
 const OTHER_HERO_IDS := ["warden", "tinker", "lantern_monk"]
 ## The two shoulder-crow legs attacks: base authored values, and the tier II/III overrides.
-## Only their base launch array gains hero rank 4; every other value here must stay untouched.
+## Both may launch from hero rank 4; only Crow Peck reaches enemy rank 4, while Crow Dive
+## keeps its authored enemy ranks 1-3. Every other value here must stay untouched.
 const CROW_LEGS := {
 	"scarecrow_legs_crow_dive": {
 		"name": "Crow Dive",
 		"stat": {"speed": 2},
 		"ability_id": "scarecrow_legs_crow_dive_move",
+		"target": [1, 2, 3],
 		"acc": 91,
 		"dmg": [3, 5],
 		"crit": 3,
@@ -43,6 +45,7 @@ const CROW_LEGS := {
 		"name": "Crow Peck",
 		"stat": {"dodge": 5},
 		"ability_id": "scarecrow_legs_crow_peck_move",
+		"target": [1, 2, 3, 4],
 		"acc": 92,
 		"dmg": [4, 6],
 		"crit": 3,
@@ -400,7 +403,8 @@ func _test_mark_damage() -> void:
 
 
 ## AC1/AC3 data contract: both crow legs abilities may launch from allied ranks 1-4 at every
-## tier, still target enemy ranks 1-3 only, and keep every other authored value.
+## tier; Crow Peck reaches enemy rank 4 while Crow Dive still targets enemy ranks 1-3 only.
+## Every other authored value stays unchanged.
 func _test_leg_rank4_data() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -417,13 +421,14 @@ func _test_leg_rank4_data() -> void:
 		_check(cat["by_id"][id]["ability"]["launch"] == unchanged_launches[id],
 			"AC1: six other Scarecrow parts keep their authored launch: " + id)
 	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
-	var target_mask := StitchedParts.rank_mask([1, 2, 3])
-	_check(full_mask == StitchedParts.ALL_RANKS_MASK and target_mask != full_mask,
-		"AC1: allied ranks 1-4 form the full launch mask while targets stay ranks 1-3")
+	_check(full_mask == StitchedParts.ALL_RANKS_MASK,
+		"AC1: allied ranks 1-4 form the full launch mask")
 	for id in CROW_LEGS:
 		var part: Dictionary = cat["by_id"][id]
 		var spec: Dictionary = CROW_LEGS[id]
 		var base: Dictionary = part["ability"]
+		var target_ranks: Array = spec["target"]
+		var target_mask := StitchedParts.rank_mask(target_ranks)
 		_check(str(part["slot"]) == "legs" and str(part["owner"]) == "scarecrow"
 			and part["stat"] == spec["stat"],
 			"AC1: " + id + " keeps its legs slot, owner and stat")
@@ -438,8 +443,8 @@ func _test_leg_rank4_data() -> void:
 			"AC1: " + id + " keeps its ACC, damage, crit, Mark, mark_damage and pose")
 		_check(base["launch"] == [1, 2, 3, 4] and int(base["launch_mask"]) == full_mask,
 			"AC1: " + id + " base launch adds only hero rank 4")
-		_check(base["target"] == [1, 2, 3] and int(base["target_mask"]) == target_mask,
-			"AC3: " + id + " base targets stay enemy ranks 1-3 only")
+		_check(base["target"] == target_ranks and int(base["target_mask"]) == target_mask,
+			"AC1: " + id + " base target matches its authored enemy ranks")
 		for tier in [1, 2, 3]:
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			_check(ability["launch"] == [1, 2, 3, 4] and int(ability["launch_mask"]) == full_mask,
@@ -450,10 +455,22 @@ func _test_leg_rank4_data() -> void:
 			_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 0)
 				and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 5),
 				"AC1: %s tier %d launch mask excludes ranks 0 and 5" % [id, tier])
-			_check(ability["target"] == [1, 2, 3] and int(ability["target_mask"]) == target_mask,
-				"AC3: %s tier %d still targets enemy ranks 1-3 only" % [id, tier])
-			_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
-				"AC3: %s tier %d cannot target enemy rank 4" % [id, tier])
+			_check(ability["target"] == target_ranks and int(ability["target_mask"]) == target_mask,
+				"AC1: %s tier %d resolves its authored enemy target ranks" % [id, tier])
+			for rank in [1, 2, 3, 4]:
+				_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), rank)
+					== (rank in target_ranks),
+					"AC1: %s tier %d enemy target rank %d matches its authored mask" % [id, tier, rank])
+			_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 0)
+				and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 5),
+				"AC1: %s tier %d target mask excludes ranks 0 and 5" % [id, tier])
+			if id == ALTERNATES["legs"]:
+				_check(ability["target"] == [1, 2, 3, 4]
+					and int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK,
+					"AC1: Crow Peck tier %d resolves all four enemy ranks" % tier)
+			else:
+				_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
+					"AC3: Crow Dive tier %d still excludes enemy rank 4" % tier)
 		for tier in [2, 3]:
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			var tier_spec: Dictionary = spec["tier" + str(tier)]
@@ -484,8 +501,26 @@ func _rank4_battle(selected: String, tier: int, seed_value: int) -> StitchedRule
 	return built["battle"]
 
 
+## The shipped 4v3 battle stays exactly as authored; only the already-existing third foe,
+## the Moth Scribe, moves to enemy rank 4 in test memory. Rank 3 is left empty and no
+## fourth foe is introduced. Scarecrow keeps his real rank-2 preview slot.
+func _rank4_foe_battle(seed_value: int) -> StitchedRules:
+	var config := _config(ALTERNATES["legs"], 1, seed_value)
+	if config.is_empty():
+		return null
+	var built := StitchedRules.create(config)
+	if not bool(built.get("ok", false)):
+		return null
+	var b: StitchedRules = built["battle"]
+	if b.get_foes().size() != 3 or b.get_unit("moth_scribe").is_empty():
+		return null
+	b._units["moth_scribe"]["rank"] = 4
+	return b
+
+
 ## AC2/AC3: each crow legs ability fires from Scarecrow's real rank-4 turn against the real
-## rank-1 foe, while enemy rank 4 stays an illegal target.
+## rank-1 foe. A vacant enemy rank 4 still rejects for both; with the existing Moth Scribe
+## moved there, Crow Peck lands while Crow Dive keeps refusing rank 4.
 func _test_rank4_crows() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -510,8 +545,9 @@ func _test_rank4_crows() -> void:
 			for id in ENEMY_IDS:
 				_check(not setup.get_unit(id).is_empty(), "AC2: actual shipped foe retained: " + id)
 			if _to(setup, "scarecrow"):
-				_reject_without_spend(setup, leg_id, 4,
-					leg_id + " at hero rank 4 still cannot target enemy rank 4")
+				for bad_rank in [0, 4, 5]:
+					_reject_without_spend(setup, leg_id, bad_rank,
+						"%s rejects enemy rank %d without a legal target" % [leg_id, bad_rank])
 			else:
 				_check(false, "AC3: rank-4 target rejection receives an actual Scarecrow turn")
 		var witnessed := false
@@ -556,6 +592,71 @@ func _test_rank4_crows() -> void:
 				break
 		_check(witnessed, "AC2: bounded fixed-seed rank-4 cast witness for " + leg_id)
 		_check(landed, "AC2: bounded fixed-seed landed rank-4 hit witness for " + leg_id)
+
+	# AC2: real 4v3 fixture, then the existing third foe (Moth Scribe) moves to enemy rank 4.
+	var foe_witnessed := false
+	var foe_landed := false
+	var structure_checked := false
+	var replay_seed := -1
+	var replay_cast: Dictionary = {}
+	var replay_snapshot: Dictionary = {}
+	var replay_rng := -1
+	for seed_value in range(501400, 501460):
+		var b := _rank4_foe_battle(seed_value)
+		if b == null or not _to(b, "scarecrow"):
+			continue
+		if not structure_checked:
+			structure_checked = true
+			var foes: Array = b.get_foes()
+			_check(foes.size() == 3,
+				"AC2: rank-4 foe witness keeps exactly three initial foes")
+			_check(int(b.get_unit("moth_scribe")["rank"]) == 4
+				and int(b.get_unit("fray_scavenger")["rank"]) == 1
+				and int(b.get_unit("scissor_crab")["rank"]) == 2,
+				"AC2: the existing Moth Scribe stands alone in enemy rank 4")
+			_check(foes.all(func(foe): return int(foe["rank"]) != 3),
+				"AC2: moving the Moth Scribe leaves enemy rank 3 empty")
+		var before := b.state_snapshot()
+		var cast := b.use_part(ALTERNATES["legs"], 4)
+		var receipts: Array = cast.get("results", [])
+		if not bool(cast.get("ok", false)) or receipts.size() != 1:
+			continue
+		if str(receipts[0]["target"]) != "moth_scribe" or int(receipts[0]["target_rank"]) != 4:
+			continue
+		if not foe_witnessed:
+			foe_witnessed = true
+			var after := b.state_snapshot()
+			_check(str(cast.get("actor", "")) == "scarecrow"
+				and str(cast.get("part", "")) == ALTERNATES["legs"]
+				and str(receipts[0]["target_side"]) == "foe",
+				"AC2: Crow Peck at rank 4 returns exactly one receipt for the rank-4 foe")
+			_check(int(after["round"]) != int(before["round"])
+				or int(after["turn_index"]) != int(before["turn_index"]),
+				"AC2: rank-4 Crow Peck actually spends Scarecrow's turn")
+			_reject_without_spend(b, ALTERNATES["legs"], 4,
+				"replayed rank-4 Crow Peck after the turn is spent")
+		if bool(receipts[0].get("hit", false)) and int(receipts[0].get("damage", 0)) > 0:
+			var marked: bool = receipts[0].get("statuses", []).any(
+				func(s): return str(s.get("status", "")) == "mark")
+			marked = marked and int(b.get_unit("moth_scribe")["statuses"].get("mark", 0)) > 0
+			if marked:
+				foe_landed = true
+				replay_seed = seed_value
+				replay_cast = cast.duplicate(true)
+				replay_snapshot = b.state_snapshot()
+				replay_rng = b.rng_state()
+		if foe_witnessed and foe_landed:
+			break
+	_check(foe_witnessed, "AC2: bounded fixed-seed rank-4 Crow Peck cast witness")
+	_check(foe_landed, "AC2: bounded fixed-seed Crow Peck damages and Marks the rank-4 foe")
+	if replay_seed >= 0:
+		var replay := _rank4_foe_battle(replay_seed)
+		var replayed := {}
+		if replay != null and _to(replay, "scarecrow"):
+			replayed = replay.use_part(ALTERNATES["legs"], 4)
+		_check(not replayed.is_empty() and replayed == replay_cast
+			and replay.state_snapshot() == replay_snapshot and replay.rng_state() == replay_rng,
+			"AC2: same rank-4 input and seed replay identical receipt, snapshot and RNG")
 
 
 func _reject_without_spend(b: StitchedRules, id: String, rank: int, label: String) -> void:
