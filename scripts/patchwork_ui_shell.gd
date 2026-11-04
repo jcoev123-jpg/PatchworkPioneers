@@ -1,9 +1,9 @@
 extends Control
-## Presentation only. Child readiness installs the theme before App builds its UI.
+## Presentation only. App owns the shared Theme before this child becomes ready.
 
-const INK := Color("302b29")
-const PAPER := Color("ecdfbd")
-const THREAD := Color("c9b996")
+const INK := Color("171419")
+const PAPER := Color("e9ddc7")
+const THREAD := Color("998053")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
 ## Stuffed-fabric wordmark drawn in place of the title text; the live label keeps its text.
 const TITLE_LOGO := "res://assets/paper/ui/title_logo.png"
@@ -15,14 +15,15 @@ const LOGO_MOTION_OFFSET := Vector2(3.0, 1.5)
 const LOGO_MOTION_ROTATION := 0.012
 ## Padded felt the title actions are sewn onto; the drawn felt patch is its fallback.
 const MENU_FELT := "res://assets/paper/ui/panel_felt.png"
-## The master project Theme owns the Patch* typography variations and the body font.
+## Keep the original font Theme as a read-only fallback and font-family reference.
 const THEME_PATH := "res://assets/fonts/patchwork_theme.tres"
+const GOTHIC_THEME_PATH := "res://themes/gothic_theme.tres"
 const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Code-drawn ground for a missing owner picture; never a blank felt screen.
-const FALLBACK_STAGE := Color("2b3135")
-## Felt the three original title actions are sewn onto, darker than every button state.
-const ACTION_BACKING := Color("3a4436")
+const FALLBACK_STAGE := Color("171419")
+## Dark oxblood backing behind the three original title actions.
+const ACTION_BACKING := Color("352126")
 ## The two sewn backings stay inside this share of the picture, so scenery stays visible.
 const MENU_COVERAGE_LIMIT := 0.35
 var _title: Control
@@ -58,9 +59,11 @@ func _ready() -> void:
 	if felt != null:
 		_menu_felt = StyleBoxTexture.new()
 		_menu_felt.texture = felt
+		_menu_felt.modulate_color = Color("725457")
 		for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
 			_menu_felt.set_texture_margin(side, 48)
-	get_parent().theme = _build_theme()
+	if get_parent().theme == null:
+		get_parent().theme = _build_theme()
 	get_parent().ready.connect(_bind_title, CONNECT_ONE_SHOT)
 	resized.connect(queue_redraw)
 
@@ -141,76 +144,17 @@ func _panel(fill: Color, edge: Color, border: int = 2) -> StyleBoxFlat:
 	return style
 
 
+## The real App owns the gothic Theme in its scene. Do not replace or mutate it;
+## detached callers (including UI fixtures) resolve the same resource.
 func _build_theme() -> Theme:
-	# The shell's Theme replaces the project Theme under App, so start from a duplicate of
-	# the master one: live title, Event and result views keep its Patch* typography.
-	var shared := _load_master_theme()
-	shared.default_font_size = 18
-	shared.set_font_size("font_size", "Label", 18)
-	shared.set_color("font_color", "Label", PAPER)
-	# Owner 2026-10-24: Londrina Solid titles; body text stays Patrick Hand from the master Theme.
-	shared.set_type_variation("PatchTitle", "Label")
-	shared.set_font("font", "PatchTitle", load(TITLE_FONT))
-	shared.set_font_size("font_size", "PatchTitle", 48)
-	shared.set_color("font_color", "PatchTitle", INK)
-	shared.set_type_variation("PatchHeading", "Label")
-	shared.set_font("font", "PatchHeading", load(HEADING_FONT))
-	shared.set_type_variation("PatchHeadingButton", "Button")
-	shared.set_font("font", "PatchHeadingButton", load(HEADING_FONT))
-	shared.set_stylebox("panel", "Panel", _panel(PAPER, Color("a8997b")))
-	shared.set_stylebox("panel", "PanelContainer", _panel(Color("514b42"), Color("a8997b")))
-	# Cream ink stays readable on all four earthy felt states.
-	for state in ["normal", "hover", "pressed", "disabled"]:
-		var fills := {"normal": Color("555d48"), "hover": Color("6b7757"),
-			"pressed": Color("3e493b"), "disabled": Color("45433f")}
-		var edges := {"normal": Color("a99b79"), "hover": PAPER,
-			"pressed": Color("c5ab73"), "disabled": Color("777166")}
-		shared.set_stylebox(state, "Button", _panel(fills[state], edges[state]))
-		shared.set_color("font_" + state + "_color", "Button", Color("aaa391") if state == "disabled" else PAPER)
-	shared.set_color("font_color", "Button", PAPER)
-	shared.set_color("font_hover_pressed_color", "Button", PAPER)
-	shared.set_stylebox("hover_pressed", "Button", shared.get_stylebox("pressed", "Button"))
-	var focus := _panel(Color.TRANSPARENT, Color("f5d480"), 3)
-	focus.draw_center = false
-	focus.expand_margin_left = 3
-	focus.expand_margin_right = 3
-	focus.expand_margin_top = 3
-	focus.expand_margin_bottom = 3
-	shared.set_stylebox("focus", "Button", focus)
-	shared.set_font_size("font_size", "Button", 18)
-	# Shipped sewn paper surfaces; keep compact metrics owned by the live visits.
-	for state in ["normal", "hover", "pressed", "disabled"]:
-		var tints := {"normal": Color("ecdfbd"), "hover": Color("fff0ce"),
-			"pressed": Color("c9b996"), "disabled": Color("aaa391")}
-		shared.set_stylebox(state, "OptionButton", _fabric_style(
-			"res://assets/paper/ui/reward_button.png", tints[state]))
-	for entry in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
-		shared.set_color(entry, "OptionButton", INK)
-	shared.set_color("font_disabled_color", "OptionButton", Color("514b42"))
-	shared.set_font_size("font_size", "OptionButton", 18)
-	shared.set_constant("modulate_arrow", "OptionButton", 1)
-	var sewn_focus := _fabric_style("res://assets/paper/ui/reward_button.png", Color("f5d480"))
-	sewn_focus.set("draw_center", false)
-	if sewn_focus is StyleBoxFlat:
-		sewn_focus.border_color = Color("f5d480")
-		sewn_focus.set_border_width_all(3)
-	shared.set_stylebox("focus", "OptionButton", sewn_focus)
-	shared.set_stylebox("panel", "PopupMenu", _fabric_style(
-		"res://assets/paper/ui/reward_panel.png", PAPER, 12))
-	shared.set_stylebox("hover", "PopupMenu", _fabric_style(
-		"res://assets/paper/ui/reward_button.png", Color("f5d480")))
-	shared.set_color("font_color", "PopupMenu", INK)
-	shared.set_color("font_hover_color", "PopupMenu", INK)
-	shared.set_color("font_disabled_color", "PopupMenu", Color("696052"))
-	shared.set_color("font_accelerator_color", "PopupMenu", Color("514b42"))
-	shared.set_font_size("font_size", "PopupMenu", 18)
-	for state in ["scroll", "scroll_focus", "grabber", "grabber_highlight", "grabber_pressed"]:
-		var tints := {"scroll": Color("514b42"), "scroll_focus": Color("696052"),
-			"grabber": PAPER, "grabber_highlight": Color("fff0ce"),
-			"grabber_pressed": Color("f5d480")}
-		shared.set_stylebox(state, "VScrollBar", _fabric_style(
-			"res://assets/paper/ui/reward_button.png", tints[state], 6))
-	return shared
+	var host := get_parent() as Control
+	if host != null and host.theme != null:
+		return host.theme
+	if ResourceLoader.exists(GOTHIC_THEME_PATH, "Theme"):
+		var gothic := load(GOTHIC_THEME_PATH) as Theme
+		if gothic != null:
+			return gothic
+	return _load_master_theme()
 
 
 ## Reuse pipeline art as nine-patch UI, with the same legible flat fallback as
@@ -236,7 +180,7 @@ func _bind_title() -> void:
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
 	_label.theme_type_variation = "PatchTitle"
-	_label.add_theme_color_override("font_color", INK)
+	_label.add_theme_color_override("font_color", PAPER)
 	_label.add_theme_constant_override("outline_size", 0)
 	# The live label remains in layout and accessible; the sync chooses whether it paints.
 	for button in _actions:
@@ -359,7 +303,7 @@ func _draw_sewn_backing(rect: Rect2, fill: Color) -> void:
 ## Code-drawn sewn horizon shown only when the owner picture is missing.
 func _draw_fallback_picture() -> void:
 	draw_rect(Rect2(Vector2.ZERO, size), FALLBACK_STAGE)
-	var bands := [[0.54, Color("4c5548")], [0.7, Color("5a614b")], [0.86, Color("6b6046")]]
+	var bands := [[0.54, Color("352126")], [0.7, Color("382a26")], [0.86, Color("503238")]]
 	for band in bands:
 		var top: float = size.y * float(band[0])
 		draw_colored_polygon(PackedVector2Array([
@@ -381,7 +325,7 @@ func _draw() -> void:
 	var banner := title_backing_rect()
 	var logo := logo_rect()
 	if banner.size.x > 0 and banner.size.y > 0 and not logo.has_area():
-		_draw_sewn_backing(banner, PAPER)
+		_draw_sewn_backing(banner, ACTION_BACKING)
 	var menu := action_backing_rect()
 	if menu.size.x > 0 and menu.size.y > 0:
 		if _menu_felt != null:
