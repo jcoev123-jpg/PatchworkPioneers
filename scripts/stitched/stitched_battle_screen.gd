@@ -35,6 +35,13 @@ var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
 var _turn_ribbon: StitchedTurnOrderRibbon
+var _foe_tickets: Dictionary = {}
+var _foe_ticket_labels: Dictionary = {}
+var _foe_intents: Dictionary = {}
+var _intent_disclosure: NinePatchRect
+var _intent_disclosure_label: Label
+var _intent_hover_rank := 0
+var _intent_focus_rank := 0
 var _notice := ""
 var _inspected_seat := ""
 var _portrait_font: Font
@@ -203,6 +210,7 @@ func _build_screen() -> void:
 		for rank in range(1, 5):
 			var px: float = (516.0 - rank * 124.0) if side == "hero" else (646.0 + (rank - 1) * 126.0)
 			_seat(side, rank, px)
+	_build_foe_intent_tickets()
 	# Pose manifest is optional: it only selects authored pixels, never a game action.
 	var pose_file := FileAccess.open(LiveMovePoseCatalog.MANIFEST_PATH, FileAccess.READ)
 	if pose_file != null:
@@ -232,6 +240,135 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
 	_labels[key] = _label("", Rect2(x - 3, 411, 122, 25), 16, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
+
+
+func _build_foe_intent_tickets() -> void:
+	# Four fixed sewn plates, even when rank four is initially vacant. The
+	# 150–188 ticket band sits above every puppet's 194px upper edge.
+	var plate: Texture2D = load("res://assets/paper/ui/hud_name_plate.png")
+	for rank in range(1, 5):
+		var ticket := NinePatchRect.new()
+		ticket.name = "FoeIntentRank%d" % rank
+		ticket.position = Vector2(646 + (rank - 1) * 126, 150)
+		ticket.size = Vector2(116, 38)
+		ticket.texture = plate
+		ticket.patch_margin_left = 8
+		ticket.patch_margin_right = 8
+		ticket.patch_margin_top = 8
+		ticket.patch_margin_bottom = 8
+		ticket.mouse_filter = Control.MOUSE_FILTER_STOP
+		ticket.focus_mode = Control.FOCUS_ALL
+		ticket.visible = false
+		add_child(ticket)
+		var ink := Label.new()
+		ink.name = "IntentText"
+		ink.position = Vector2(4, 2)
+		ink.size = Vector2(108, 34)
+		ink.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		ink.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		ink.add_theme_font_size_override("font_size", 12)
+		ink.add_theme_color_override("font_color", PAPER)
+		ink.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ticket.add_child(ink)
+		_foe_tickets[rank] = ticket
+		_foe_ticket_labels[rank] = ink
+		ticket.mouse_entered.connect(func(): _foe_intent_enter(rank, false))
+		ticket.mouse_exited.connect(func(): _foe_intent_exit(rank, false))
+		ticket.focus_entered.connect(func(): _foe_intent_enter(rank, true))
+		ticket.focus_exited.connect(func(): _foe_intent_exit(rank, true))
+	# Focus disclosure never repurposes the separate hero forecast/status log.
+	# It fills the quiet gap on the hero side, without covering puppet faces.
+	_intent_disclosure = NinePatchRect.new()
+	_intent_disclosure.name = "FoeIntentDisclosure"
+	_intent_disclosure.position = Vector2(22, 148)
+	_intent_disclosure.size = Vector2(592, 45)
+	_intent_disclosure.texture = plate
+	_intent_disclosure.patch_margin_left = 8
+	_intent_disclosure.patch_margin_right = 8
+	_intent_disclosure.patch_margin_top = 8
+	_intent_disclosure.patch_margin_bottom = 8
+	_intent_disclosure.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_intent_disclosure.visible = false
+	add_child(_intent_disclosure)
+	_intent_disclosure_label = Label.new()
+	_intent_disclosure_label.name = "FullIntent"
+	_intent_disclosure_label.position = Vector2(12, 3)
+	_intent_disclosure_label.size = Vector2(568, 39)
+	_intent_disclosure_label.add_theme_font_size_override("font_size", 12)
+	_intent_disclosure_label.add_theme_color_override("font_color", PAPER)
+	_intent_disclosure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_intent_disclosure.add_child(_intent_disclosure_label)
+
+
+func _foe_intent_enter(rank: int, focused: bool) -> void:
+	if not _foe_tickets[rank].visible:
+		return
+	if focused:
+		_intent_focus_rank = rank
+	else:
+		_intent_hover_rank = rank
+	_present_foe_intent_disclosure()
+
+
+func _foe_intent_exit(rank: int, focused: bool) -> void:
+	if focused and _intent_focus_rank == rank:
+		_intent_focus_rank = 0
+	if not focused and _intent_hover_rank == rank:
+		_intent_hover_rank = 0
+	_present_foe_intent_disclosure()
+
+
+func _present_foe_intent_disclosure() -> void:
+	var rank := _intent_focus_rank if _intent_focus_rank != 0 else _intent_hover_rank
+	var ticket: NinePatchRect = _foe_tickets.get(rank)
+	_intent_disclosure.visible = ticket != null and ticket.visible
+	_intent_disclosure_label.text = ticket.tooltip_text if _intent_disclosure.visible else ""
+	for seat_rank in _foe_ticket_labels:
+		_foe_ticket_labels[seat_rank].add_theme_color_override(
+			"font_color", ACCENT if seat_rank == rank and _intent_disclosure.visible else PAPER)
+
+
+func _refresh_foe_intents() -> void:
+	_foe_intents.clear()
+	for rank in range(1, 5):
+		var ticket: NinePatchRect = _foe_tickets[rank]
+		var foe := _unit_at("foe", rank)
+		var intent := StitchedFoeIntent.choose(battle, foe)
+		if intent.is_empty() or not _heap_at(rank).is_empty():
+			ticket.visible = false
+			ticket.tooltip_text = ""
+			_foe_ticket_labels[rank].text = ""
+			if _intent_focus_rank == rank:
+				_intent_focus_rank = 0
+			if _intent_hover_rank == rank:
+				_intent_hover_rank = 0
+			continue
+		_foe_intents[rank] = intent
+		var heading := str(intent["ability_name"])
+		var target := ""
+		var detail := ""
+		if bool(intent["stun"]):
+			heading = "STUN"
+			detail = "STUN: next turn will be skipped"
+		elif bool(intent["pass"]):
+			heading = "PASS"
+			detail = "PASS: no currently legal ability or target"
+		else:
+			var side := str(intent["target_side"])
+			var ranks: Array[String] = []
+			for affected in intent["affected_ranks"]:
+				ranks.append(str(affected))
+			var prefix := "H" if side == "hero" else "F"
+			target = ("ALL " if bool(intent["multi"]) else "") + prefix + ",".join(ranks)
+			var side_name := "HERO" if side == "hero" else "FOE"
+			detail = ("ALL legal %s ranks %s (launch rank %d)" %
+				[side_name, ", ".join(ranks), int(intent["target_rank"])]) if bool(intent["multi"]) else (
+				"Target: %s rank %d" % [side_name, int(intent["target_rank"])])
+		_foe_ticket_labels[rank].text = heading.to_upper().substr(0, 13) + "\n" + target
+		ticket.tooltip_text = ("%s · %s · %s\nCurrent intent; may change if ranks or statuses change" %
+			[str(intent["foe_name"]), heading, detail])
+		ticket.visible = true
+	_present_foe_intent_disclosure()
 
 
 func _bind_seat_signals(control: Control, key: String) -> void:
@@ -399,6 +536,7 @@ func _refresh() -> void:
 					flags.append("FRAY %d" % int(unit["fray"]))
 				flags.append_array(_status_tokens(unit))
 			_labels[key].text = ("HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])] if not unit.is_empty() else ("SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() else "EMPTY")) + (" · " + ", ".join(flags) if not flags.is_empty() else "")
+	_refresh_foe_intents()
 	_target_ranks.clear()
 	for slot in SLOTS:
 		var button: Button = _part_buttons[slot]
@@ -571,22 +709,26 @@ func _drive_foes() -> void:
 		iterations += 1
 		var actor := battle.get_unit(battle.current_actor_id())
 		var receipt: Dictionary = {}
-		# Rotate through the foe's authored kit by round before falling back to any
-		# legal move. This exposes snip/debuff skills without guessing combat state.
-		var authored: Array = actor.get("abilities", [])
-		var offset := (battle.round_number() - 1) % maxi(1, authored.size())
-		for step in range(authored.size()):
-			var ability: Dictionary = authored[(offset + step) % authored.size()]
-			if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) or not battle._self_move_gate(actor, ability).is_empty():
-				continue
-			for rank in range(1, 5):
-				if battle._legal_targets(actor, ability, rank).is_empty():
+		var choice := StitchedFoeIntent.choose(battle, actor)
+		if not choice.is_empty() and not bool(choice["pass"]):
+			receipt = battle.use_foe_ability(str(choice["ability_id"]), int(choice["target_rank"]))
+		# A refusal is exceptional. Preserve the original rank-by-rank safe
+		# fallback, including the ability rotation, without adding RNG or turns.
+		if not bool(receipt.get("ok", false)) and not choice.is_empty() and not bool(choice["pass"]):
+			var authored: Array = actor.get("abilities", [])
+			var offset := (battle.round_number() - 1) % maxi(1, authored.size())
+			for step in range(authored.size()):
+				var ability: Dictionary = authored[(offset + step) % authored.size()]
+				if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) or not battle._self_move_gate(actor, ability).is_empty():
 					continue
-				receipt = battle.use_foe_ability(str(ability["id"]), rank)
+				for rank in range(1, 5):
+					if battle._legal_targets(actor, ability, rank).is_empty():
+						continue
+					receipt = battle.use_foe_ability(str(ability["id"]), rank)
+					if bool(receipt.get("ok", false)):
+						break
 				if bool(receipt.get("ok", false)):
 					break
-			if bool(receipt.get("ok", false)):
-				break
 		if not bool(receipt.get("ok", false)):
 			receipt = battle.pass_turn()
 		if not bool(receipt.get("ok", false)):

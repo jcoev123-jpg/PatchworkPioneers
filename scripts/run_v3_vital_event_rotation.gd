@@ -161,7 +161,7 @@ func select_actionable_event(rng: Variant, excluded_ids: Variant = null, snapsho
 
 
 ## Opt-in party selector that qualifies unvisited vitality events having at least
-## one affordable non-Leave choice for ANY living hero in the caller's three-hero
+## one affordable non-Leave choice for ANY living hero in the caller's four-hero
 ## party snapshots [{id, hp, max_hp}, ...] and wallet {gold, scraps}. Rejects
 ## invalid RNG, unvalidated catalogs, malformed exclusions, malformed wallet or
 ## hero snapshots, and all-Torn/Leave-only pools before any RNG draw. Preserves
@@ -243,7 +243,7 @@ static func _parse_party_heroes(heroes: Variant) -> Dictionary:
 	if typeof(heroes) != TYPE_ARRAY:
 		return {"ok": false}
 	var list: Array = heroes
-	if list.size() != 3:
+	if list.size() != 4:
 		return {"ok": false}
 	var seen_ids: Dictionary = {}
 	var living_heroes: Array = []
