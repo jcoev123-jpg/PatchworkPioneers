@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_every_tier_in_real_combat()
 	_test_back_rank_shots()
+	_test_overload_back_rank()
 	_test_heal_and_guard()
 	_test_mark_overload()
 	_test_invalid_actions_and_equipment()
@@ -161,7 +162,7 @@ func _test_catalog() -> void:
 		"tinker_torso_casing_ward": [1, 2, 3],
 		"tinker_legs_tune_up": [1, 2, 3, 4],
 		"tinker_head_spring_clamp": [2, 3],
-		"tinker_arms_overload": [2, 3],
+		"tinker_arms_overload": [2, 3, 4],
 		"tinker_torso_gear_brace": [1, 2, 3],
 		"tinker_legs_spare_screws": [2, 3],
 	}
@@ -180,9 +181,32 @@ func _test_catalog() -> void:
 	var bomb_mask := int(accepted["by_id"]["tinker_arms_scrap_bomb"]["ability"]["launch_mask"])
 	_check(StitchedParts.ranks_allowed(bomb_mask, 3) and StitchedParts.ranks_allowed(bomb_mask, 4) and not StitchedParts.ranks_allowed(bomb_mask, 1) and not StitchedParts.ranks_allowed(bomb_mask, 2),
 		"AC1: Scrap Bomb launches from ranks 3-4, never ranks 1-2")
+	# AC1/AC3: the alternate arms now launch from the hero back rank too; every tier inherits it.
+	var overload_part: Dictionary = accepted["by_id"]["tinker_arms_overload"]
+	_check(str(overload_part["name"]) == "Overload" and str(overload_part["slot"]) == "arms" and str(overload_part["owner"]) == "tinker"
+		and str(overload_part["ability"]["id"]) == "tinker_overload_move" and str(overload_part["ability"]["name"]) == "Overload"
+		and str(overload_part["ability"]["kind"]) == "ranged" and not bool(overload_part["ability"]["multi"]),
+		"AC1: Overload stays Tinker's single-target ranged arms ability")
+	_check(str(overload_part["text"]) == "Discharge a charged tool; a Marked target takes extra damage, with no card or scrap cost.",
+		"AC1: Overload keeps its short authored rules text")
+	for tier in [1, 2, 3]:
+		var tier_overload := StitchedParts.ability_at_tier(overload_part, tier)
+		var tier_mask := int(tier_overload["launch_mask"])
+		_check(StitchedParts.ranks_allowed(tier_mask, 2) and StitchedParts.ranks_allowed(tier_mask, 3) and StitchedParts.ranks_allowed(tier_mask, 4)
+			and not StitchedParts.ranks_allowed(tier_mask, 1) and not StitchedParts.ranks_allowed(tier_mask, 0) and not StitchedParts.ranks_allowed(tier_mask, 5),
+			"AC1: tier %d Overload launch mask accepts ranks 2-4 and refuses rank 1/0/5" % tier)
+		_check(tier_overload["target"] == [1, 2, 3] and int(tier_overload["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			and int(tier_overload["self_move"]) == 0 and str(tier_overload["move"]) == "attack2" and str(tier_overload["target_side"]) == "enemy"
+			and not bool(tier_overload["multi"]),
+			"AC1: tier %d Overload keeps target ranks 1-3, attack2 pose, self_move 0 and one enemy target" % tier)
+		_check(int(tier_overload["mark_damage"]) == [3, 4, 5][tier - 1],
+			"AC3: tier %d Overload Mark bonus is %d" % [tier, [3, 4, 5][tier - 1]])
+		_check(int(overload_part["stat"].get("dmg", 0)) == 2 and int(StitchedParts.stat_at_tier(overload_part, tier).get("dmg", 0)) == 2,
+			"AC3: tier %d Overload arms stat stays damage +2" % tier)
 	var expected_shots := {
 		"tinker_head_cog_shot": {"acc": [91, 91, 95], "dmg": [[4, 6], [5, 8], [7, 10]], "mark": [2, 3, 3], "multi": false},
 		"tinker_arms_scrap_bomb": {"acc": [90, 92, 95], "dmg": [[3, 4], [4, 6], [5, 7]], "mark": [0, 0, 0], "multi": true},
+		"tinker_arms_overload": {"acc": [90, 90, 94], "dmg": [[3, 5], [4, 7], [5, 9]], "mark": [0, 0, 0], "multi": false},
 	}
 	for id in expected_shots:
 		var expected_shot: Dictionary = expected_shots[id]
@@ -385,6 +409,205 @@ func _test_back_rank_shots() -> void:
 				"AC2: Scrap Bomb receipts each of the three living foes in ranks 1-3 exactly once")
 			_check(not StitchedParts.ranks_allowed(int(_catalog()["by_id"][part_id]["ability"]["target_mask"]), 4),
 				"AC2: Scrap Bomb still has no enemy rank-4 target")
+
+
+## Builds the shipped S2 preview battle with Tinker's alternate Overload arms and Spare Screws
+## legs swapped in memory; the preview fixture file itself is never edited.
+func _overload_battle(tier: int = 1, seed_value: int = 499041, torn_arms: bool = false) -> StitchedRules:
+	var config := _config("", tier, seed_value)
+	if config.is_empty():
+		return null
+	var arms: Dictionary = {"id": ALTERNATES["arms"], "tier": tier}
+	if torn_arms:
+		arms["torn"] = true
+	config["heroes"][2]["parts"]["arms"] = arms
+	config["heroes"][2]["parts"]["legs"] = {"id": ALTERNATES["legs"], "tier": tier}
+	var result := StitchedRules.create(config)
+	if not bool(result.get("ok", false)):
+		return null
+	return result["battle"] as StitchedRules
+
+
+## AC2 witness: rank-3 Tinker swaps backward with Spare Screws, then on her next genuine turn
+## fires Overload from hero rank 4 at the living rank-1 foe. Refusals are recorded around the
+## successful cast so the test can prove they neither spend the turn nor advance the RNG.
+func _overload_back_rank_witness(seed_value: int) -> Dictionary:
+	var battle := _overload_battle(1, seed_value)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	# A self-side legs ability aimed at an enemy rank is refused before any spend.
+	var turn_start := battle.state_snapshot()
+	var turn_rng := battle.rng_state()
+	var wrong_side := battle.use_part(ALTERNATES["legs"], 1)
+	var after_wrong_side := battle.state_snapshot()
+	var swap := battle.use_part(ALTERNATES["legs"], 3)
+	if not bool(swap.get("ok", false)) \
+		or str(swap.get("actor", "")) != "tinker" \
+		or str(swap.get("part", "")) != ALTERNATES["legs"] \
+		or str(swap.get("ability", "")) != "tinker_spare_screws_move":
+		return {}
+	if not bool(swap.get("self_move", {}).get("ok", false)) or int(swap["self_move"].get("to", 0)) != 4:
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4 or int(battle.get_unit("lantern_monk")["rank"]) != 3:
+		return {}
+	if battle.current_actor_id() == "tinker":
+		return {}
+	if not _to(battle, "tinker") or battle.is_over():
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4:
+		return {}
+	for foe_id in ["fray_scavenger", "scissor_crab", "moth_scribe"]:
+		var foe := battle.get_unit(foe_id)
+		if bool(foe.get("dead", true)) or int(foe.get("hp", 0)) <= 0:
+			return {}
+	if int(battle.get_unit("fray_scavenger")["rank"]) != 1:
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	var foe_before := battle.get_unit("fray_scavenger")
+	# Enemy rank 4, plus ranks 0 and 5, stay outside Overload's target [1,2,3]; the starter
+	# Scrap Bomb arms are no longer equipped. Every request refuses before any spend.
+	var refusals: Array = []
+	for target_rank in [4, 0, 5]:
+		refusals.append(battle.use_part(ALTERNATES["arms"], target_rank))
+	refusals.append(battle.use_part(STARTERS["arms"], 1))
+	var after_refusals := battle.state_snapshot()
+	var actor_after_refusals := battle.current_actor_id()
+	var shot := battle.use_part(ALTERNATES["arms"], 1)
+	if not bool(shot.get("ok", false)) or shot.get("results", []).is_empty():
+		return {}
+	if not bool(shot["results"][0].get("hit", false)) or int(shot["results"][0].get("damage", 0)) <= 0:
+		return {}
+	if battle.current_actor_id() == "tinker":
+		return {}
+	return {
+		"battle": battle,
+		"wrong_side": wrong_side,
+		"turn_start": turn_start,
+		"turn_rng": turn_rng,
+		"after_wrong_side": after_wrong_side,
+		"swap": swap,
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"foe_before": foe_before,
+		"refusals": refusals,
+		"after_refusals": after_refusals,
+		"actor_after_refusals": actor_after_refusals,
+		"shot": shot,
+		"after": battle.state_snapshot(),
+		"rng_after": battle.rng_state(),
+	}
+
+
+## AC2/AC3: the real preview, both alternate Tinker parts, a landed rank-4 Overload, its
+## fail-closed peers (wrong side, target ranks 4/0/5, unequipped and torn part, stale turn)
+## and a rank-1 launch refusal that may never spend anything.
+func _test_overload_back_rank() -> void:
+	var witness: Dictionary = {}
+	var witness_seed := 0
+	for seed_value in range(499500, 499580):
+		witness = _overload_back_rank_witness(seed_value)
+		if not witness.is_empty():
+			witness_seed = seed_value
+			break
+	_check(not witness.is_empty(), "AC2: real seeded Overload rank-4 cast witness exists in the shipped S2 preview")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var swap: Dictionary = witness["swap"]
+	var shot: Dictionary = witness["shot"]
+	var wrong_side: Dictionary = witness["wrong_side"]
+	_check(not bool(wrong_side.get("ok", false)) and str(wrong_side.get("error", "")).contains("rank 1")
+		and witness["turn_start"] == witness["after_wrong_side"]
+		and int(witness["turn_rng"]) == int(witness["after_wrong_side"].get("rng_state", -1)),
+		"AC3: wrong-side Spare Screws target refuses without changing state, turn or seeded RNG")
+	_check(str(swap.get("actor", "")) == "tinker" and str(swap.get("part", "")) == ALTERNATES["legs"]
+		and str(swap.get("ability", "")) == "tinker_spare_screws_move",
+		"AC2: Spare Screws is Tinker's own equipped legs ability action")
+	_check(int(swap["self_move"].get("from", 0)) == 3 and int(swap["self_move"].get("to", 0)) == 4
+		and str(swap["self_move"].get("swapped", "")) == "lantern_monk",
+		"AC2: her rank-3 turn swaps Tinker behind the rank-4 Lantern Monk")
+	_check(int(battle.get_unit("tinker")["rank"]) == 4 and int(battle.get_unit("lantern_monk")["rank"]) == 3,
+		"AC2: Tinker stays in rank 4 and the Lantern Monk in rank 3 after the cast")
+	_check(str(shot.get("action", "")) == "ability" and str(shot.get("actor", "")) == "tinker"
+		and str(shot.get("part", "")) == ALTERNATES["arms"] and str(shot.get("ability", "")) == "tinker_overload_move"
+		and not shot.has("self_move"),
+		"AC2: Overload executes as Tinker's one named equipment action from rank 4")
+	_check(str(witness["actor_before"]) == "tinker" and battle.current_actor_id() != "tinker",
+		"AC2: the rank-4 Overload spends exactly one scheduled Tinker turn")
+	var refusals: Array = witness["refusals"]
+	var all_refused := refusals.size() == 4
+	var errors: Array[String] = []
+	for refusal in refusals:
+		all_refused = all_refused and not bool(refusal.get("ok", false))
+		errors.append(str(refusal.get("error", "")))
+	_check(all_refused and errors[0].contains("rank 4") and errors[1].contains("rank 0")
+		and errors[2].contains("rank 5") and errors[3].contains("not equipped"),
+		"AC3: target ranks 4/0/5 and the unequipped part each refuse for their own reason")
+	_check(witness["before"] == witness["after_refusals"] and int(witness["rng"]) == int(witness["after_refusals"].get("rng_state", -1))
+		and str(witness["actor_after_refusals"]) == "tinker",
+		"AC3: refused launches change no battle state, spend no turn and draw no seeded RNG")
+	var results: Array = shot.get("results", [])
+	var foe_before: Dictionary = witness["foe_before"]
+	_check(results.size() == 1 and str(results[0].get("target", "")) == "fray_scavenger"
+		and str(results[0].get("target_side", "")) == "foe" and int(results[0].get("target_rank", 0)) == 1,
+		"AC2: Overload yields exactly one receipt for the living rank-1 foe")
+	_check(bool(results[0].get("hit", false)) and int(results[0].get("damage", 0)) > 0,
+		"AC2: the seeded rank-4 Overload really lands for damage")
+	var dealt := int(results[0].get("damage", 0))
+	var foe_after := battle.get_unit("fray_scavenger")
+	_check(int(foe_after.get("hp", -1)) == int(foe_before.get("hp", 0)) - dealt
+		and int(results[0].get("target_hp", -1)) == int(foe_after.get("hp", -2)),
+		"AC2: actual foe HP drops by the receipted damage")
+	_check(int(witness["rng_after"]) != int(witness["rng"]), "AC2: the landed cast consumed seeded RNG draws")
+	var stale := battle.use_part(ALTERNATES["arms"], 1)
+	_check(not bool(stale.get("ok", false)) and witness["after"] == battle.state_snapshot()
+		and int(witness["rng_after"]) == battle.rng_state() and battle.current_actor_id() != "tinker",
+		"AC3: stale Overload after the spent rank-4 turn refuses without state or RNG change")
+	var replay := _overload_back_rank_witness(witness_seed)
+	_check(not replay.is_empty(), "AC3: the rank-4 Overload witness replays at seed %d" % witness_seed)
+	if not replay.is_empty():
+		_check(replay["swap"] == swap and replay["shot"] == shot and replay["before"] == witness["before"]
+			and replay["after_refusals"] == witness["after_refusals"] and replay["after"] == witness["after"]
+			and int(replay["rng_after"]) == int(witness["rng_after"]),
+			"AC3: equal-seed replay reproduces the swap, cast receipts, all state and exact RNG")
+	var torn := _overload_battle(1, witness_seed, true)
+	_check(torn != null, "AC3: real torn Overload arms can enter the seeded preview battle")
+	if torn != null:
+		var torn_ready := _to(torn, "tinker")
+		_check(torn_ready and int(torn.get_unit("tinker")["rank"]) == 3,
+			"AC3: torn-arms witness reaches Tinker's real rank-3 turn")
+		var torn_swap := torn.use_part(ALTERNATES["legs"], 3) if torn_ready else {}
+		var torn_at_rank_4 := bool(torn_swap.get("ok", false)) and int(torn.get_unit("tinker")["rank"]) == 4 and _to(torn, "tinker")
+		_check(torn_at_rank_4, "AC3: torn-arms witness still reaches rank 4 on her next turn")
+		if torn_at_rank_4:
+			var torn_before := torn.state_snapshot()
+			var torn_rng := torn.rng_state()
+			var torn_shot := torn.use_part(ALTERNATES["arms"], 1)
+			_check(not bool(torn_shot.get("ok", false)) and str(torn_shot.get("error", "")).contains("torn")
+				and torn_before == torn.state_snapshot() and torn_rng == torn.rng_state(),
+				"AC3: torn Overload refuses without spending the turn or advancing seeded RNG")
+	var front := _overload_battle(1, witness_seed)
+	_check(front != null, "AC3: rank-1 launch witness builds from the seeded preview")
+	if front != null:
+		var front_ready := _to(front, "tinker")
+		var first_step := front.move(-1)
+		var second_ready := bool(first_step.get("ok", false)) and _to(front, "tinker")
+		var second_step := front.move(-1) if second_ready else {}
+		var at_front := bool(second_step.get("ok", false)) and int(front.get_unit("tinker")["rank"]) == 1 and _to(front, "tinker")
+		_check(front_ready and second_ready and bool(second_step.get("ok", false)) and int(front.get_unit("tinker")["rank"]) == 1,
+			"AC3: genuine adjacent Tinker Moves bring her to forbidden launch rank 1")
+		if at_front:
+			var front_before := front.state_snapshot()
+			var front_rng := front.rng_state()
+			var front_shot := front.use_part(ALTERNATES["arms"], 1)
+			_check(not bool(front_shot.get("ok", false)) and str(front_shot.get("error", "")).contains("rank 1")
+				and front_before == front.state_snapshot() and front_rng == front.rng_state(),
+				"AC3: Overload refuses a genuine rank-1 launch without state, turn or RNG spending")
 
 
 func _test_heal_and_guard() -> void:
