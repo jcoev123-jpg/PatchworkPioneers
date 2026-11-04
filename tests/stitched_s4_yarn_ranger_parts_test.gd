@@ -1,0 +1,372 @@
+extends SceneTree
+## S4 Yarn Ranger: independent native eight-part catalog, seeded four-hero / three-foe combat.
+const CATALOG_PATH := "res://data/parts/yarn_ranger_parts.json"
+const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
+const STARTERS := {
+	"head": "yarn_ranger_head_needle_nock",
+	"arms": "yarn_ranger_arms_wool_bolas",
+	"torso": "yarn_ranger_torso_hood_knit",
+	"legs": "yarn_ranger_legs_reel_thread",
+}
+const ALTERNATES := {
+	"head": "yarn_ranger_head_needle_arrow",
+	"arms": "yarn_ranger_arms_purling_barrage",
+	"torso": "yarn_ranger_torso_snare_net",
+	"legs": "yarn_ranger_legs_endless_skein",
+}
+const IDS := [
+	"yarn_ranger_head_needle_nock", "yarn_ranger_arms_wool_bolas",
+	"yarn_ranger_legs_reel_thread", "yarn_ranger_torso_hood_knit",
+	"yarn_ranger_head_needle_arrow", "yarn_ranger_arms_purling_barrage",
+	"yarn_ranger_torso_snare_net", "yarn_ranger_legs_endless_skein",
+]
+var failures: Array[String] = []
+var checks := 0
+
+
+func _initialize() -> void:
+	_test_catalog()
+	_test_each_tier()
+	_test_multi_tangled()
+	_test_guard_interception()
+	_test_invalid_and_no_spend()
+	_test_replay()
+	for failure in failures:
+		printerr(failure)
+	print("stitched_s4_yarn_ranger_parts_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _check(ok: bool, message: String) -> void:
+	checks += 1
+	if not ok:
+		failures.append(message)
+
+
+func _catalog() -> Dictionary:
+	return StitchedParts.load_catalog(CATALOG_PATH)
+
+
+## Only an in-memory S2 copy changes: replace the original rank-3 Tinker,
+## preserving four heroes and all three actual preview foes. S6 owns player-facing admission.
+func _config(selected: String = "", tier: int = 1, seed_value: int = 502040) -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW_PATH))
+	if not parsed is Dictionary:
+		_check(false, "S2 preview fixture must be a dictionary")
+		return {}
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		_check(false, "Yarn Ranger catalog loads: " + str(cat.get("error", "")))
+		return {}
+	var config: Dictionary = parsed
+	_check(config["heroes"].size() == 4 and config["foes"].size() == 3
+		and str(config["heroes"][2]["id"]) == "tinker",
+		"AC2: original S2 fixture has exactly four heroes, Tinker at rank three, and three foes")
+	config["parts"].append_array(cat["parts"])
+	config["seed"] = seed_value
+	var ranger := {"id": "yarn_ranger", "name": "Yarn Ranger", "max_hp": 27,
+		"speed": 7, "dodge": 8, "acc": 7, "prot": 0, "parts": {}}
+	var gear: Dictionary = {}
+	for slot in STARTERS:
+		var part_id: String = STARTERS[slot]
+		if not selected.is_empty() and cat["by_id"].has(selected) and str(cat["by_id"][selected]["slot"]) == slot:
+			part_id = selected
+		gear[slot] = {"id": part_id, "tier": tier}
+	ranger["parts"] = gear
+	config["heroes"][2] = ranger
+	return config
+
+
+func _battle(selected: String = "", tier: int = 1, seed_value: int = 502040) -> StitchedRules:
+	var config := _config(selected, tier, seed_value)
+	if config.is_empty():
+		return null
+	var created := StitchedRules.create(config)
+	_check(bool(created.get("ok", false)), "AC2: native seeded battle accepts Ranger gear: " + str(created.get("error", "")))
+	if not bool(created.get("ok", false)):
+		return null
+	var b: StitchedRules = created["battle"]
+	var ranger := b.get_unit("yarn_ranger")
+	_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3 and int(ranger.get("rank", 0)) == 3
+		and ranger.get("parts", {}).size() == 4,
+		"AC2: real four-hero/three-foe combat equips four Ranger parts at rank 3")
+	return b
+
+
+func _to(b: StitchedRules, actor_id: String, limit: int = 55) -> bool:
+	for _step in range(limit):
+		if b.is_over():
+			return false
+		if b.current_actor_id() == actor_id:
+			return true
+		if not bool(b.pass_turn().get("ok", false)):
+			return false
+	return false
+
+
+func _test_catalog() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: complete Yarn Ranger JSON validates with StitchedParts")
+	if not bool(cat.get("ok", false)):
+		return
+	var counts := {"head": 0, "arms": 0, "torso": 0, "legs": 0}
+	var part_ids := {}
+	var ability_ids := {}
+	_check(cat["parts"].size() == 8, "AC1: dedicated eight-part Ranger catalog")
+	for id in IDS:
+		_check(cat["by_id"].has(id), "AC1: required original-card-inspired name: " + id)
+	for part in cat["parts"]:
+		var id := str(part["id"])
+		var slot := str(part["slot"])
+		_check(id in IDS and not part_ids.has(id) and str(part["owner"]) == "yarn_ranger",
+			"AC1: unique Ranger part " + id)
+		part_ids[id] = true
+		if counts.has(slot):
+			counts[slot] += 1
+		var ability: Dictionary = part["ability"]
+		var aid := str(ability["id"])
+		_check(aid.begins_with("yarn_ranger_") and not ability_ids.has(aid),
+			"AC1: separate unique ability ID for " + id)
+		ability_ids[aid] = true
+		_check(str(ability["move"]) in StitchedParts.MOVE_POSES
+			and int(ability["launch_mask"]) == StitchedParts.rank_mask(ability["launch"])
+			and int(ability["target_mask"]) == StitchedParts.rank_mask(ability["target"])
+			and int(ability["launch_mask"]) > 0 and int(ability["target_mask"]) > 0
+			and StitchedParts.ranks_allowed(int(ability["launch_mask"]), 3),
+			"AC1: real launch/target rank masks and a valid move pose for " + id)
+		_check(part["tiers"].has("2") and part["tiers"].has("3"),
+			"AC1: authored tier II and III on " + id)
+		var first := StitchedParts.ability_at_tier(part, 1)
+		var second := StitchedParts.ability_at_tier(part, 2)
+		var third := StitchedParts.ability_at_tier(part, 3)
+		_check(first != second and second != third,
+			"AC1: every tier changes ability mechanics for " + id)
+		for tier in [1, 2, 3]:
+			var ab := StitchedParts.ability_at_tier(part, tier)
+			var stat := StitchedParts.stat_at_tier(part, tier)
+			_check(bool(StitchedParts.validate_ability(ab).get("ok", false)) and not stat.is_empty(),
+				"AC1: fully validated tier %d for %s" % [tier, id])
+			for key in stat:
+				_check(str(key) in StitchedParts.SLOT_STATS[slot],
+					"AC1: slot-compatible stat at tier %d on %s" % [tier, id])
+			for retired in ["draw", "block", "unravel", "pull_forward", "hit_count", "requires_target_status"]:
+				_check(not ab.has(retired) and not ab["effects"].has(retired),
+					"AC1: unsupported card-only claim %s absent on %s" % [retired, id])
+	for slot in counts:
+		_check(int(counts[slot]) == 2 and str(cat["by_id"][STARTERS[slot]]["slot"]) == slot
+			and str(cat["by_id"][ALTERNATES[slot]]["slot"]) == slot,
+			"AC1: two catalog parts per slot, starter and nonstarter, at " + slot)
+	for id in [ALTERNATES["torso"], ALTERNATES["legs"]]:
+		var ab: Dictionary = cat["by_id"][id]["ability"]
+		_check(bool(ab["multi"]) and ab["target"] == [1, 2, 3] and str(ab["target_side"]) == "enemy"
+			and int(ab["effects"].get("tangled", 0)) > 0,
+			"AC1: enemy-all Snare Net / Endless Skein use native multi Tangled")
+	_check(str(cat["by_id"][STARTERS["torso"]]["ability"]["kind"]) == "guard",
+		"AC1: Hood Knit maps old block/draw into an actual ally Guard ability")
+	var bad_entries: Array = cat["parts"].duplicate(true)
+	bad_entries.append(cat["parts"][0].duplicate(true))
+	_check(not bool(StitchedParts.build_catalog(bad_entries).get("ok", false)),
+		"AC3: duplicate part IDs fail closed")
+	for invalid in ["draw", "block", "unravel"]:
+		var malformed: Dictionary = cat["parts"][0].duplicate(true)
+		var illegal_effects := {}
+		illegal_effects[invalid] = 1
+		malformed["ability"]["effects"] = illegal_effects
+		_check(not bool(StitchedParts.validate_part(malformed).get("ok", false)),
+			"AC3: unsupported %s is never admitted as a Ranger card translation" % invalid)
+	var wrong_rank: Dictionary = cat["parts"][0].duplicate(true)
+	wrong_rank["ability"]["target"] = [1, 5]
+	_check(not bool(StitchedParts.validate_part(wrong_rank).get("ok", false)),
+		"AC3: invalid target mask fails closed")
+	var wrong_tier: Dictionary = cat["parts"][0].duplicate(true)
+	wrong_tier["tiers"]["4"] = {"ability": {"acc": 100}}
+	_check(not bool(StitchedParts.validate_part(wrong_tier).get("ok", false)),
+		"AC3: illegal authored tier IV fails closed")
+
+
+## Every part in every tier must land its effect on a real scheduled Ranger turn.
+## Search short independent seed windows to avoid treating a genuine 5% miss as pass.
+func _test_each_tier() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for id in IDS:
+		for tier in [1, 2, 3]:
+			var witnessed := false
+			for seed_value in range(502500 + tier * 100, 502514 + tier * 100):
+				var b := _battle(id, tier, seed_value)
+				if b == null or not _to(b, "yarn_ranger"):
+					continue
+				var part: Dictionary = cat["by_id"][id]
+				var ab := StitchedParts.ability_at_tier(part, tier)
+				var target_rank := 2 if id == STARTERS["legs"] else 1
+				var prior := b.state_snapshot()
+				var result := b.use_part(id, target_rank)
+				if not bool(result.get("ok", false)):
+					continue
+				var receipts: Array = result.get("results", [])
+				var expected := 3 if bool(ab["multi"]) else 1
+				if receipts.size() != expected or prior == b.state_snapshot():
+					continue
+				if str(result.get("actor", "")) != "yarn_ranger" or str(result.get("part", "")) != id \
+						or str(result.get("ability", "")) != str(ab["id"]):
+					continue
+				var seen_targets: Dictionary = {}
+				var good := true
+				for item in receipts:
+					var target_id := str(item.get("target", ""))
+					seen_targets[target_id] = true
+					if not bool(item.get("hit", false)):
+						good = false
+						break
+					for effect in ab["effects"]:
+						if not item.get("statuses", []).any(func(s): return str(s.get("status", "")) == str(effect)):
+							good = false
+					if str(ab["target_side"]) == "enemy":
+						var foe := b.get_unit(target_id)
+						for effect in ab["effects"]:
+							if int(foe["statuses"].get(effect, 0)) < int(ab["effects"][effect]):
+								good = false
+						if int(ab["dmg"][1]) > 0 and (int(item.get("damage", 0)) <= 0
+								or int(foe["hp"]) >= int(foe["max_hp"])):
+							good = false
+					elif str(ab["kind"]) == "guard":
+						if str(b.get_unit("yarn_ranger")["guard_target"]) != "warden" \
+								or int(b.get_unit("yarn_ranger")["statuses"].get("guard", 0)) < int(ab["effects"]["guard"]):
+							good = false
+				if bool(ab["multi"]):
+					good = good and seen_targets.has("fray_scavenger") and seen_targets.has("scissor_crab") \
+						and seen_targets.has("moth_scribe") and seen_targets.size() == 3
+				if good:
+					witnessed = true
+					break
+			_check(witnessed, "AC2: actual tier %d %s lands receipts, battle-state statuses/damage and advances turn" % [tier, id])
+
+
+func _test_multi_tangled() -> void:
+	for id in [ALTERNATES["torso"], ALTERNATES["legs"]]:
+		var found := false
+		for seed_value in range(503000, 503032):
+			var b := _battle(id, 3, seed_value)
+			if b == null or not _to(b, "yarn_ranger"):
+				continue
+			var action := b.use_part(id, 1)
+			if not bool(action.get("ok", false)) or action.get("results", []).size() != 3:
+				continue
+			var actual := {}
+			for receipt in action["results"]:
+				var foe_id := str(receipt["target"])
+				if bool(receipt["hit"]) and receipt["statuses"].any(func(s): return str(s.get("status", "")) == "tangled") \
+						and int(b.get_unit(foe_id)["statuses"].get("tangled", 0)) >= 3:
+					actual[foe_id] = true
+			if actual.has("fray_scavenger") and actual.has("scissor_crab") and actual.has("moth_scribe"):
+				found = true
+				break
+		_check(found, "AC2: tier-III %s applies actual Tangled to all three distinct foes" % id)
+
+
+func _test_guard_interception() -> void:
+	var found := false
+	for seed_value in range(503100, 503140):
+		var b := _battle(STARTERS["torso"], 2, seed_value)
+		if b == null or not _to(b, "yarn_ranger"):
+			continue
+		var guard := b.use_part(STARTERS["torso"], 1)
+		if not bool(guard.get("ok", false)) or str(b.get_unit("yarn_ranger")["guard_target"]) != "warden":
+			continue
+		if not _to(b, "fray_scavenger"):
+			continue
+		var warden_before := int(b.get_unit("warden")["hp"])
+		var ranger_before := int(b.get_unit("yarn_ranger")["hp"])
+		var strike := b.use_foe_ability("sack_swing", 1)
+		found = bool(strike.get("ok", false)) and strike.get("results", []).size() == 1 \
+			and str(strike["results"][0].get("guarded_by", "")) == "yarn_ranger" \
+			and int(b.get_unit("warden")["hp"]) == warden_before \
+			and int(b.get_unit("yarn_ranger")["hp"]) <= ranger_before
+		if found:
+			break
+	_check(found, "AC2: enemy Sack Swing on Warden is redirected by actual Ranger Guard")
+
+
+func _reject_without_spend(b: StitchedRules, part: String, rank: int, label: String) -> void:
+	var turn := b.current_actor_id()
+	var snapshot := b.state_snapshot()
+	var rng := b.rng_state()
+	var receipt := b.use_part(part, rank)
+	_check(not bool(receipt.get("ok", false)) and not str(receipt.get("error", "")).is_empty()
+		and b.current_actor_id() == turn and b.state_snapshot() == snapshot and b.rng_state() == rng,
+		"AC3: %s refused without turn, state or RNG spend" % label)
+
+
+func _test_invalid_and_no_spend() -> void:
+	var config := _config()
+	if config.is_empty():
+		return
+	config["heroes"][2]["parts"]["head"] = {"id": STARTERS["arms"], "tier": 1}
+	_check(not bool(StitchedRules.create(config).get("ok", false)), "AC3: wrong equipment slot rejected")
+	config = _config()
+	config["heroes"][2]["parts"]["head"] = {"id": STARTERS["head"], "tier": 4}
+	_check(not bool(StitchedRules.create(config).get("ok", false)), "AC3: equipped tier IV rejected")
+	config = _config()
+	config["heroes"][2]["parts"]["head"] = {"id": "yarn_ranger_missing", "tier": 1}
+	_check(not bool(StitchedRules.create(config).get("ok", false)), "AC3: missing catalog part rejected")
+	config = _config()
+	config["heroes"][2]["parts"]["head"] = {"id": STARTERS["head"], "tier": 1, "torn": true}
+	var torn := StitchedRules.create(config)
+	_check(bool(torn.get("ok", false)), "AC3: real torn part admitted as equipment")
+	if bool(torn.get("ok", false)):
+		var torn_battle: StitchedRules = torn["battle"]
+		_check(_to(torn_battle, "yarn_ranger"), "AC3: real torn Ranger gets a scheduled turn")
+		if torn_battle.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(torn_battle, STARTERS["head"], 1, "torn part")
+	var b := _battle()
+	if b == null or not _to(b, "yarn_ranger"):
+		_check(false, "AC3: valid active Ranger needed for negative actions")
+		return
+	_reject_without_spend(b, STARTERS["head"], 4, "enemy target rank 4 has no living foe")
+	_reject_without_spend(b, STARTERS["torso"], 0, "ally target rank 0 invalid")
+	_reject_without_spend(b, STARTERS["legs"], 1, "reel thread cannot target front foe rank 1")
+	_reject_without_spend(b, "missing_part", 1, "unequipped part")
+	var snap := b.state_snapshot()
+	var rng := b.rng_state()
+	var turn := b.current_actor_id()
+	var wrong_side := b.use_foe_ability("sack_swing", 1)
+	_check(not bool(wrong_side.get("ok", false)) and b.state_snapshot() == snap
+		and b.rng_state() == rng and b.current_actor_id() == turn,
+		"AC3: wrong-side foe action rejected with full snapshot and RNG equality")
+	var legal := b.use_part(STARTERS["head"], 1)
+	_check(bool(legal.get("ok", false)), "AC3: legal action does spend Ranger turn")
+	if bool(legal.get("ok", false)):
+		_reject_without_spend(b, STARTERS["arms"], 1, "off-turn hero action")
+	config = _config()
+	var ranger: Dictionary = config["heroes"].pop_at(2)
+	config["heroes"].append(ranger)
+	var relocated := StitchedRules.create(config)
+	_check(bool(relocated.get("ok", false)), "AC3: same real four-hero fixture allows Ranger rank four")
+	if bool(relocated.get("ok", false)):
+		var rear: StitchedRules = relocated["battle"]
+		_check(_to(rear, "yarn_ranger"), "AC3: rank-four Ranger obtains real scheduled turn")
+		if rear.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(rear, STARTERS["arms"], 1, "illegal rank-four launch")
+
+
+func _trace(seed_value: int) -> Dictionary:
+	var b := _battle("", 2, seed_value)
+	if b == null:
+		return {}
+	var receipts: Array = []
+	for action in [[STARTERS["head"], 1], [STARTERS["arms"], 2],
+			[STARTERS["torso"], 1], [STARTERS["legs"], 2]]:
+		if not _to(b, "yarn_ranger"):
+			return {}
+		receipts.append(b.use_part(str(action[0]), int(action[1])))
+	return {"receipts": receipts, "state": b.state_snapshot(), "rng": b.rng_state()}
+
+
+func _test_replay() -> void:
+	var first := _trace(503999)
+	var second := _trace(503999)
+	_check(not first.is_empty() and first == second and first.get("receipts", []).size() == 4,
+		"AC3: seeded four-action Ranger replay equals all receipts, snapshot and RNG")
+	for receipt in first.get("receipts", []):
+		_check(bool(receipt.get("ok", false)), "AC3: each real replayed action was legal")

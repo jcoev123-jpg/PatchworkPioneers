@@ -1,0 +1,474 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "yarn_ranger_head_needle_nock",
+      "name": "Needle Nock",
+      "slot": "head",
+      "owner": "yarn_ranger",
+      "stat": {
+        "acc": 3
+      },
+      "ability": {
+        "id": "yarn_ranger_head_needle_nock_move",
+        "name": "Needle Nock",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 93,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 0,
+        "effects": {
+          "exposed": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              7,
+              10
+            ],
+            "effects": {
+              "exposed": 2
+            }
+          }
+        }
+      },
+      "text": "Nock a threaded needle and pierce a foe's defences, leaving it Exposed."
+    },
+    {
+      "id": "yarn_ranger_arms_wool_bolas",
+      "name": "Wool Bolas",
+      "slot": "arms",
+      "owner": "yarn_ranger",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "yarn_ranger_arms_wool_bolas_move",
+        "name": "Wool Bolas",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          2,
+          4
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              3,
+              5
+            ],
+            "effects": {
+              "tangled": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              4,
+              7
+            ],
+            "effects": {
+              "tangled": 3
+            }
+          }
+        }
+      },
+      "text": "Hurl weighted wool across enemy ranks to damage and Tangle a foe."
+    },
+    {
+      "id": "yarn_ranger_legs_reel_thread",
+      "name": "Reel Thread",
+      "slot": "legs",
+      "owner": "yarn_ranger",
+      "stat": {
+        "speed": 1
+      },
+      "ability": {
+        "id": "yarn_ranger_legs_reel_thread_move",
+        "name": "Reel Thread",
+        "kind": "debuff",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 94,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "acc": 97,
+            "effects": {
+              "tangled": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 100,
+            "effects": {
+              "tangled": 3,
+              "mark": 1
+            }
+          }
+        }
+      },
+      "text": "Tighten a thread around a rear foe, applying Tangled; this does not pull enemies."
+    },
+    {
+      "id": "yarn_ranger_torso_hood_knit",
+      "name": "Hood Knit",
+      "slot": "torso",
+      "owner": "yarn_ranger",
+      "stat": {
+        "max_hp": 5,
+        "prot": 3
+      },
+      "ability": {
+        "id": "yarn_ranger_torso_hood_knit_move",
+        "name": "Hood Knit",
+        "kind": "guard",
+        "launch": [
+          1,
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Knit cover for one ally: stand Guard over that ally for several turns, not Block or draw."
+    },
+    {
+      "id": "yarn_ranger_head_needle_arrow",
+      "name": "Needle Arrow",
+      "slot": "head",
+      "owner": "yarn_ranger",
+      "stat": {
+        "crit": 3
+      },
+      "ability": {
+        "id": "yarn_ranger_head_needle_arrow_move",
+        "name": "Needle Arrow",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 93,
+        "dmg": [
+          5,
+          7
+        ],
+        "crit": 0,
+        "effects": {
+          "mark": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              7,
+              9
+            ],
+            "effects": {
+              "mark": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              9,
+              11
+            ],
+            "effects": {
+              "mark": 3
+            }
+          }
+        }
+      },
+      "text": "Send a needle arrow into a foe, damaging and Marking it; no retired Unravel."
+    },
+    {
+      "id": "yarn_ranger_arms_purling_barrage",
+      "name": "Purling Barrage",
+      "slot": "arms",
+      "owner": "yarn_ranger",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "yarn_ranger_arms_purling_barrage_move",
+        "name": "Purling Barrage",
+        "kind": "ranged",
+        "launch": [
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 92,
+        "dmg": [
+          5,
+          8
+        ],
+        "crit": 0,
+        "effects": {
+          "exposed": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              7,
+              10
+            ],
+            "effects": {
+              "exposed": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              9,
+              12
+            ],
+            "effects": {
+              "exposed": 3
+            }
+          }
+        }
+      },
+      "text": "Concentrated barrage of needles translated into one strong hit that Exposes the foe."
+    },
+    {
+      "id": "yarn_ranger_torso_snare_net",
+      "name": "Snare Net",
+      "slot": "torso",
+      "owner": "yarn_ranger",
+      "stat": {
+        "prot": 5,
+        "max_hp": 3
+      },
+      "ability": {
+        "id": "yarn_ranger_torso_snare_net_move",
+        "name": "Snare Net",
+        "kind": "debuff",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 94,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "acc": 97,
+            "effects": {
+              "tangled": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 100,
+            "effects": {
+              "tangled": 3
+            }
+          }
+        }
+      },
+      "text": "Cast a net over every living foe in ranks one through three, Tangling each independently."
+    },
+    {
+      "id": "yarn_ranger_legs_endless_skein",
+      "name": "Endless Skein",
+      "slot": "legs",
+      "owner": "yarn_ranger",
+      "stat": {
+        "dodge": 4,
+        "speed": 1
+      },
+      "ability": {
+        "id": "yarn_ranger_legs_endless_skein_move",
+        "name": "Endless Skein",
+        "kind": "ranged",
+        "launch": [
+          2,
+          3
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": true,
+        "acc": 94,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              4,
+              6
+            ],
+            "effects": {
+              "tangled": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ],
+            "effects": {
+              "tangled": 3
+            }
+          }
+        }
+      },
+      "text": "Uncoil a great skein of yarn to damage and Tangle all living foes in range."
+    }
+  ]
+}
