@@ -1,12 +1,12 @@
 class_name RunStitchedEventConsequence
 extends RefCounted
-## Scene-free Design v4 S6 groundwork: candle, fray, party-scraps, party-gold and spare-part Event bargains.
+## Scene-free Design v4 S6 groundwork: candle, fray, party-scraps, party-gold, spare-part and hero-HP Event bargains.
 ##
 ## Wraps the existing RunEventChoice envelope (id, title, description and two
 ## or three distinct {id, text} choices) with the deliberately opt-in
 ## `stitched_effect` outcome field:
 ##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
-##      "required_hero": "...", "scraps": int, "gold": int,
+##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
 ##      "part": {"id": String, "tier": 1..3}}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
@@ -14,16 +14,18 @@ extends RefCounted
 ## `target: "hero"`: a valid gated choice whose `required_hero` is absent from
 ## the active party is omitted from `preview().choices` and rejected by
 ## `choose()` without latching, while `target` / `hero_id` still determine the
-## affected fray recipients. `scraps`, `gold` and `part` are optional on
-## `stitched_effect`; when omitted, the legacy 8-key preview entry and 7-key
-## receipt shape are preserved. When present, `scraps` and `gold` are signed
-## integral deltas applied to the shared party scraps and gold purses (never
-## per-hero), exposing `scraps_delta`/`scraps` and `gold_delta`/`gold` on that
-## choice's preview entry and successful receipt. When present, `part` is an
+## affected fray and HP recipients. `scraps`, `gold`, `part` and `hp` are
+## optional on `stitched_effect`; when omitted, the legacy 8-key preview entry
+## and 7-key receipt shape are preserved. When present, `scraps` and `gold` are
+## signed integral deltas applied to the shared party scraps and gold purses
+## (never per-hero), exposing `scraps_delta`/`scraps` and `gold_delta`/`gold` on
+## that choice's preview entry and successful receipt. When present, `part` is an
 ## exact `{"id": String, "tier": int}` award with native integer tier 1..3 whose
 ## `id` resolves in a caller-supplied catalog validated with `StitchedParts.build_catalog`,
 ## exposing `part` and projected `satchel_count` (`+1`) on that choice's preview
-## entry and receipt.
+## entry and receipt. When present, `hp` is a signed integral delta exposing
+## `hp_delta` and raw per-hero `hp` intents (`{}` when `hp == 0`) on that
+## choice's preview entry and successful receipt.
 ##
 ## The caller supplies a detached snapshot
 ##     {"candle": int, "party": [{"id": String, "fray": int}, ...],
@@ -39,11 +41,11 @@ extends RefCounted
 ##
 ## This service only projects and reports intents: candle is clamped 0..100,
 ## scraps and gold are projected without negative balances or 64-bit overflow,
-## spare satchel count increments by 1 up to 6, and fray deltas stay raw and signed.
-## The authoritative S1b Stitched rules (resolve check at 100, seam tears at
-## 200, trait choice, 0..200 clamping) are the only owner of fray mutation and
-## are deliberately not referenced here; a receipt is handed back for the S6
-## wiring to apply.
+## spare satchel count increments by 1 up to 6, and fray/HP deltas stay raw and signed.
+## The authoritative S1b/S6 Stitched rules (resolve check at 100, seam tears at
+## 200, trait choice, 0..200 clamping, HP/Hanging settlement) are the only owner
+## of fray and HP mutation and are deliberately not referenced here; a receipt is
+## handed back for the S6 wiring to apply.
 ##
 ## No RNG is seeded or drawn, no caller snapshot or catalog is edited, and no
 ## legacy gold/scraps/vitality outcome is settled: the default cards-mode Event
@@ -120,14 +122,15 @@ func get_event() -> Dictionary:
 ##    "available", "candle", "fray"}
 ## Opt-in scrap-bearing choices also include `"scraps_delta"` and `"scraps"`,
 ## opt-in gold-bearing choices also include `"gold_delta"` and `"gold"`,
-## and opt-in part-bearing choices with a catalog-valid part also include
-## `"part"` (`{id, tier}`) and `"satchel_count"`.
+## opt-in part-bearing choices with a catalog-valid part also include
+## `"part"` (`{id, tier}`) and `"satchel_count"`, and opt-in HP-bearing choices
+## also include `"hp_delta"` and `"hp"`.
 ## A malformed outcome or an unavailable choice yields available=false with
 ## null deltas (malformed) or parsed deltas (absent hero / missing, insufficient
 ## or overflowing scraps or gold / missing or full satchel_count), the unchanged
-## base candle (plus base scraps / gold / satchel_count when present) and an
-## empty fray map. Zero fray deltas produce no intent, so Leave yields an empty
-## fray map. Deterministic, no RNG, no mutation of the input.
+## base candle (plus base scraps / gold / satchel_count when present) and empty
+## fray/hp maps. Zero fray or hp deltas produce no intent, so Leave yields empty
+## intent maps. Deterministic, no RNG, no mutation of the input.
 func preview(snapshot: Variant, catalog: Variant = null) -> Dictionary:
 	var denied := {"ok": false, "event_id": "", "candle": 0, "choices": []}
 	if not _valid or _choice.is_claimed():
@@ -155,8 +158,9 @@ func preview(snapshot: Variant, catalog: Variant = null) -> Dictionary:
 ## "target": String, "hero_id": String, "candle": int, "fray": Dictionary}
 ## (plus `"scraps_delta": int, "scraps": int` when a scrap-bearing choice
 ## succeeds, `"gold_delta": int, "gold": int` when a gold-bearing choice
-## succeeds, and `"part": {"id": String, "tier": int}, "satchel_count": int`
-## when a part-bearing choice succeeds), where a success carries the exact
+## succeeds, `"part": {"id": String, "tier": int}, "satchel_count": int`
+## when a part-bearing choice succeeds, and `"hp_delta": int, "hp": Dictionary`
+## when an HP-bearing choice succeeds), where a success carries the exact
 ## projected values from preview() and a rejection carries the established 7-key
 ## refusal (the unchanged base candle for a valid snapshot, else 0) without
 ## consuming the claim or touching the caller's snapshot or catalog.
@@ -208,6 +212,7 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 		if not gold_projection.get("ok", false):
 			return _rejection(base_candle)
 		projected_gold = int(gold_projection["gold"])
+	var has_hp: bool = parsed_effect.get("has_hp", false)
 	var claim: Dictionary = _choice.choose(target_id)
 	if not claim.get("ok", false):
 		return _rejection(base_candle)
@@ -229,6 +234,9 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if has_gold:
 		receipt["gold_delta"] = int(parsed_effect["gold"])
 		receipt["gold"] = projected_gold
+	if has_hp:
+		receipt["hp_delta"] = int(parsed_effect["hp"])
+		receipt["hp"] = _hp_intents(base_state, parsed_effect)
 	return receipt
 
 
@@ -307,6 +315,7 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
 	var has_part: bool = parsed_effect.get("has_part", false)
 	var has_gold: bool = parsed_effect.get("has_gold", false)
+	var has_hp: bool = parsed_effect.get("has_hp", false)
 	entry["target"] = parsed_effect["target"]
 	entry["hero_id"] = parsed_effect["hero_id"]
 	entry["candle_delta"] = parsed_effect["candle"]
@@ -320,6 +329,9 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if has_gold:
 		entry["gold_delta"] = parsed_effect["gold"]
 		entry["gold"] = base_state.get("gold")
+	if has_hp:
+		entry["hp_delta"] = parsed_effect["hp"]
+		entry["hp"] = {}
 	if _target_ids(base_state, parsed_effect).is_empty():
 		# The named hero is not in this party: readable deltas, no projection.
 		return entry
@@ -350,6 +362,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["satchel_count"] = projected_satchel_count
 	if has_gold:
 		entry["gold"] = projected_gold
+	if has_hp:
+		entry["hp"] = _hp_intents(base_state, parsed_effect)
 	return entry
 
 
@@ -358,6 +372,18 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 func _fray_intents(base_state: Dictionary, parsed_effect: Dictionary) -> Dictionary:
 	var intents: Dictionary = {}
 	var delta: int = int(parsed_effect["fray"])
+	if delta == 0:
+		return intents
+	for hero_id in _target_ids(base_state, parsed_effect):
+		intents[hero_id] = delta
+	return intents
+
+
+## Raw signed HP intents for the S6 owner: one entry per affected active hero,
+## never clamped. A zero delta carries no intent, so it is omitted.
+func _hp_intents(base_state: Dictionary, parsed_effect: Dictionary) -> Dictionary:
+	var intents: Dictionary = {}
+	var delta: int = int(parsed_effect["hp"])
 	if delta == 0:
 		return intents
 	for hero_id in _target_ids(base_state, parsed_effect):
@@ -486,9 +512,9 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 
 
 ## Strict opt-in outcome parse: a choice of exactly {id, text, stitched_effect}
-## whose effect is {candle, fray, target[, required_hero][, scraps][, gold][, part]}
-## for "party" or {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part]}
-## for "hero", with signed integer candle, fray and optional scraps/gold,
+## whose effect is {candle, fray, target[, required_hero][, scraps][, gold][, part][, hp]}
+## for "party" or {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part][, hp]}
+## for "hero", with signed integer candle, fray and optional scraps/gold/hp,
 ## canonical hero_id / optional required_hero, and optional part
 ## {"id": String, "tier": native int 1..3} whose id resolves in the validated
 ## parts catalog. Anything else is malformed and cannot settle.
@@ -510,11 +536,13 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_part: bool = effect.has("part")
 	var has_gold: bool = effect.has("gold")
 	var has_required_hero: bool = effect.has("required_hero")
+	var has_hp: bool = effect.has("hp")
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
 		+ (1 if has_part else 0)
 		+ (1 if has_gold else 0)
 		+ (1 if has_required_hero else 0)
+		+ (1 if has_hp else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -552,6 +580,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"has_gold": has_gold,
 		"has_required_hero": has_required_hero,
 		"required_hero": required_hero,
+		"has_hp": has_hp,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
@@ -568,6 +597,11 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if not gold_read.get("ok", false):
 			return {"ok": false}
 		parsed["gold"] = int(gold_read["value"])
+	if has_hp:
+		var hp_read: Dictionary = _read_signed_int(effect.get("hp"))
+		if not hp_read.get("ok", false):
+			return {"ok": false}
+		parsed["hp"] = int(hp_read["value"])
 	return parsed
 
 

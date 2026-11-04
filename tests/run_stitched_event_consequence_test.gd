@@ -44,6 +44,9 @@ func _initialize() -> void:
 	_test_gold_rejections()
 	_test_required_hero_party_and_hero_gates()
 	_test_required_hero_rejections()
+	_test_hp_party_and_hero_intents()
+	_test_hp_combined_and_legacy_shapes()
+	_test_hp_rejections()
 	_finish()
 
 
@@ -2637,5 +2640,677 @@ func _test_required_hero_rejections() -> void:
 			"AC3: malformed structural required_hero choice %d commit" % index)
 		_check(svc.choose("leave", without_monk).get("ok") == true,
 			"AC3: Leave claims after malformed structural required_hero choice %d" % index)
+
+
+func _hp_effect(candle: int, fray: int, hp: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {"candle": candle, "fray": fray, "target": target, "hp": hp}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _hp_required_hero_effect(candle: int, fray: int, hp: Variant, required_hero: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {
+		"candle": candle,
+		"fray": fray,
+		"target": target,
+		"hp": hp,
+		"required_hero": required_hero,
+	}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _hp_party_bargain_event() -> Dictionary:
+	return _event([
+		_choice("mend_flesh", "Stitch the party's torn felt.", _hp_effect(15, -20, 6, "party")),
+		_choice("bleed_thread", "Draw taut thread through every seam.", _hp_effect(25, 10, -4, "party")),
+		_choice("steady_pulse", "Hold the needle still.", _hp_effect(0, 0, 0, "party")),
+	], "ev_stitched_hp_party_bargain")
+
+
+func _test_hp_party_and_hero_intents() -> void:
+	# AC1: Three-choice and two-choice Events with optional signed stitched_effect.hp (+6, -4, 0),
+	# four-hero snapshots in differing party orders, exact hp_delta and hp intent maps,
+	# and independent candle (clamped 0..100) and fray (raw signed intents) projections.
+	var party_orders: Array = [
+		["warden", "seamstress", "tinker", "button_golem"],
+		["button_golem", "tinker", "seamstress", "warden"],
+		["seamstress", "button_golem", "warden", "tinker"],
+		["lantern_monk", "rag_duelist", "scarecrow", "yarn_ranger"],
+		["yarn_ranger", "scarecrow", "rag_duelist", "lantern_monk"],
+	]
+	var expected_hp_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id",
+		"fray", "fray_delta", "hero_id", "hp", "hp_delta", "target",
+	]
+	var expected_hp_receipt_keys := [
+		"candle", "choice_id", "event_id", "fray",
+		"hero_id", "hp", "hp_delta", "ok", "target",
+	]
+
+	for order_idx in range(party_orders.size()):
+		var order: Array = party_orders[order_idx]
+		var snap := _snapshot(40, [
+			[order[0], 95],
+			[order[1], 0],
+			[order[2], 50],
+			[order[3], 200],
+		])
+		var snap_original := snap.duplicate(true)
+		var expected_plus_six := {
+			order[0]: 6,
+			order[1]: 6,
+			order[2]: 6,
+			order[3]: 6,
+		}
+		var expected_minus_four := {
+			order[0]: -4,
+			order[1]: -4,
+			order[2]: -4,
+			order[3]: -4,
+		}
+		var expected_fray_mend := {
+			order[0]: -20,
+			order[1]: -20,
+			order[2]: -20,
+			order[3]: -20,
+		}
+		var expected_fray_bleed := {
+			order[0]: 10,
+			order[1]: 10,
+			order[2]: 10,
+			order[3]: 10,
+		}
+		if order_idx < 3:
+			_check(expected_plus_six == {
+				"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+			} and expected_minus_four == {
+				"warden": -4, "seamstress": -4, "tinker": -4, "button_golem": -4,
+			}, "AC1: four-hero order %d matches exact {warden,seamstress,tinker,button_golem} map" % order_idx)
+
+		var svc := RunStitchedEventConsequence.new(_hp_party_bargain_event())
+		var prev := svc.preview(snap)
+		_check(prev.get("ok") == true
+			and prev.get("event_id") == "ev_stitched_hp_party_bargain"
+			and prev.get("candle") == 40
+			and prev.get("choices", []).size() == 3,
+			"AC1: 3-choice party HP event preflights for party order %d" % order_idx)
+
+		var mend_entry := _entry(prev, "mend_flesh")
+		_check(mend_entry.get("available") == true
+			and mend_entry.get("target") == "party"
+			and mend_entry.get("hero_id") == ""
+			and mend_entry.get("candle_delta") == 15
+			and mend_entry.get("fray_delta") == -20
+			and mend_entry.get("hp_delta") == 6
+			and mend_entry.get("candle") == 55
+			and mend_entry.get("fray") == expected_fray_mend
+			and mend_entry.get("hp") == expected_plus_six
+			and (mend_entry.get("hp") as Dictionary).size() == 4
+			and _receipt_keys(mend_entry) == expected_hp_preview_keys,
+			"AC1: +6 party HP preview returns exact 10-key entry and +6 on all four heroes (order %d)" % order_idx)
+
+		var bleed_entry := _entry(prev, "bleed_thread")
+		_check(bleed_entry.get("available") == true
+			and bleed_entry.get("target") == "party"
+			and bleed_entry.get("hero_id") == ""
+			and bleed_entry.get("candle_delta") == 25
+			and bleed_entry.get("fray_delta") == 10
+			and bleed_entry.get("hp_delta") == -4
+			and bleed_entry.get("candle") == 65
+			and bleed_entry.get("fray") == expected_fray_bleed
+			and bleed_entry.get("hp") == expected_minus_four
+			and (bleed_entry.get("hp") as Dictionary).size() == 4
+			and _receipt_keys(bleed_entry) == expected_hp_preview_keys,
+			"AC1: -4 party HP preview returns exact 10-key entry and -4 on all four heroes (order %d)" % order_idx)
+
+		var zero_entry := _entry(prev, "steady_pulse")
+		_check(zero_entry.get("available") == true
+			and zero_entry.get("target") == "party"
+			and zero_entry.get("hero_id") == ""
+			and zero_entry.get("candle_delta") == 0
+			and zero_entry.get("fray_delta") == 0
+			and zero_entry.get("hp_delta") == 0
+			and zero_entry.get("candle") == 40
+			and zero_entry.get("fray") == {}
+			and zero_entry.get("hp") == {}
+			and _receipt_keys(zero_entry) == expected_hp_preview_keys,
+			"AC1: 0 party HP preview returns exact 10-key entry with hp_delta 0 and empty hp map (order %d)" % order_idx)
+
+		for choice_id in ["mend_flesh", "bleed_thread", "steady_pulse"]:
+			var visit := RunStitchedEventConsequence.new(_hp_party_bargain_event())
+			var expected_entry := _entry(visit.preview(snap), choice_id)
+			var receipt := visit.choose(choice_id, snap)
+			_check(receipt.get("ok") == true
+				and receipt.get("event_id") == "ev_stitched_hp_party_bargain"
+				and receipt.get("choice_id") == choice_id
+				and receipt.get("target") == expected_entry.get("target")
+				and receipt.get("hero_id") == expected_entry.get("hero_id")
+				and receipt.get("candle") == expected_entry.get("candle")
+				and receipt.get("fray") == expected_entry.get("fray")
+				and receipt.get("hp_delta") == expected_entry.get("hp_delta")
+				and receipt.get("hp") == expected_entry.get("hp")
+				and _receipt_keys(receipt) == expected_hp_receipt_keys,
+				"AC1: party HP choice %s receipt has exact parity and 9-key shape (order %d)" % [choice_id, order_idx])
+			_check(visit.is_claimed() and not visit.is_valid(),
+				"AC1: party HP choice %s latches the visit (order %d)" % [choice_id, order_idx])
+			_assert_rejected(visit, choice_id, snap, 40,
+				"AC1: replay of %s rejected (order %d)" % [choice_id, order_idx])
+			_check(snap == snap_original,
+				"AC1: party HP choice %s leaves caller snapshot untouched (order %d)" % [choice_id, order_idx])
+
+	# AC1: Two-choice Event with JSON-parsed integral float hp (+6.0, -4.0) and candle clamping (0..100):
+	var two_choice_hp_json: Dictionary = JSON.parse_string(JSON.stringify(_event([
+		_choice("heal_clamp_up", "Warm the seams.", _hp_effect(80, -30, 6, "party")),
+		_choice("harm_clamp_down", "Snuff the wick.", _hp_effect(-60, 15, -4, "party")),
+	], "ev_stitched_hp_two_choice")))
+	var clamp_snap := _four(40, [95, 0, 50, 200])
+	var two_svc_a := RunStitchedEventConsequence.new(two_choice_hp_json)
+	var two_prev := two_svc_a.preview(clamp_snap)
+	_check(_entry(two_prev, "heal_clamp_up").get("candle") == 100
+		and _entry(two_prev, "heal_clamp_up").get("hp_delta") == 6
+		and _entry(two_prev, "heal_clamp_up").get("hp") == {
+			"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+		}
+		and _entry(two_prev, "harm_clamp_down").get("candle") == 0
+		and _entry(two_prev, "harm_clamp_down").get("hp_delta") == -4
+		and _entry(two_prev, "harm_clamp_down").get("hp") == {
+			"warden": -4, "seamstress": -4, "tinker": -4, "button_golem": -4,
+		},
+		"AC1: 2-choice JSON-parsed party HP Event clamps candle 0..100 and projects +6/-4 intents")
+	var two_rec_a := two_svc_a.choose("heal_clamp_up", clamp_snap)
+	var two_rec_b := RunStitchedEventConsequence.new(two_choice_hp_json).choose("harm_clamp_down", clamp_snap)
+	_check(two_rec_a.get("ok") == true and two_rec_a.get("candle") == 100
+		and two_rec_a.get("hp_delta") == 6
+		and two_rec_a.get("hp") == {"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6}
+		and two_rec_b.get("ok") == true and two_rec_b.get("candle") == 0
+		and two_rec_b.get("hp_delta") == -4
+		and two_rec_b.get("hp") == {"warden": -4, "seamstress": -4, "tinker": -4, "button_golem": -4},
+		"AC1: 2-choice JSON-parsed party HP Event commits with exact preview parity")
+
+	# AC2: Hero-targeted HP choices across all 8 canonical hero IDs (present vs absent, +6, -4, 0,
+	# exact preview/receipt key checks, and retry of another legal choice on the same visit).
+	for hero_idx in range(REQUIRED_IDS.size()):
+		var hero_id: String = REQUIRED_IDS[hero_idx]
+		var alt_a: String = REQUIRED_IDS[(hero_idx + 1) % REQUIRED_IDS.size()]
+		var alt_b: String = REQUIRED_IDS[(hero_idx + 2) % REQUIRED_IDS.size()]
+		var alt_c: String = REQUIRED_IDS[(hero_idx + 3) % REQUIRED_IDS.size()]
+		var alt_d: String = REQUIRED_IDS[(hero_idx + 4) % REQUIRED_IDS.size()]
+
+		var present_four := _snapshot(45, [
+			[alt_a, 30], [hero_id, 110], [alt_b, 70], [alt_c, 190],
+		])
+		var absent_four := _snapshot(45, [
+			[alt_a, 30], [alt_b, 70], [alt_c, 190], [alt_d, 15],
+		])
+		var hero_event := _event([
+			_choice("hurt_hero", "Prick the named hero.", _hp_effect(10, 15, -4, "hero", hero_id)),
+			_choice("heal_hero", "Patch the named hero.", _hp_effect(-5, -10, 6, "hero", hero_id)),
+			_choice("zero_hero", "Check the named hero's stitches.", _hp_effect(0, 0, 0, "hero", hero_id)),
+		], "ev_stitched_hp_hero_" + hero_id)
+
+		var present_svc := RunStitchedEventConsequence.new(hero_event)
+		var present_prev := present_svc.preview(present_four)
+		var hurt_entry := _entry(present_prev, "hurt_hero")
+		var heal_entry := _entry(present_prev, "heal_hero")
+		var zero_hero_entry := _entry(present_prev, "zero_hero")
+		_check(hurt_entry.get("available") == true
+			and hurt_entry.get("target") == "hero"
+			and hurt_entry.get("hero_id") == hero_id
+			and hurt_entry.get("hp_delta") == -4
+			and hurt_entry.get("hp") == {hero_id: -4}
+			and hurt_entry.get("fray") == {hero_id: 15}
+			and hurt_entry.get("candle") == 55
+			and _receipt_keys(hurt_entry) == expected_hp_preview_keys,
+			"AC2: present canonical hero %s previews sole -4 hp intent and exact 10-key entry" % hero_id)
+		_check(heal_entry.get("available") == true
+			and heal_entry.get("target") == "hero"
+			and heal_entry.get("hero_id") == hero_id
+			and heal_entry.get("hp_delta") == 6
+			and heal_entry.get("hp") == {hero_id: 6}
+			and heal_entry.get("fray") == {hero_id: -10}
+			and heal_entry.get("candle") == 40
+			and _receipt_keys(heal_entry) == expected_hp_preview_keys,
+			"AC2: present canonical hero %s previews sole +6 hp intent and exact 10-key entry" % hero_id)
+		_check(zero_hero_entry.get("available") == true
+			and zero_hero_entry.get("hp_delta") == 0
+			and zero_hero_entry.get("hp") == {}
+			and zero_hero_entry.get("fray") == {}
+			and _receipt_keys(zero_hero_entry) == expected_hp_preview_keys,
+			"AC2: present canonical hero %s previews empty hp map for 0 delta" % hero_id)
+
+		var hurt_receipt := present_svc.choose("hurt_hero", present_four)
+		_check(hurt_receipt.get("ok") == true
+			and hurt_receipt.get("target") == "hero"
+			and hurt_receipt.get("hero_id") == hero_id
+			and hurt_receipt.get("hp_delta") == -4
+			and hurt_receipt.get("hp") == {hero_id: -4}
+			and hurt_receipt.get("fray") == {hero_id: 15}
+			and hurt_receipt.get("candle") == 55
+			and _receipt_keys(hurt_receipt) == expected_hp_receipt_keys,
+			"AC2: present canonical hero %s commits sole -4 hp intent with exact 9-key receipt" % hero_id)
+		_assert_rejected(present_svc, "heal_hero", present_four, 45,
+			"AC2: replay after hero HP commit rejected for %s" % hero_id)
+
+		var heal_receipt := RunStitchedEventConsequence.new(hero_event).choose("heal_hero", present_four)
+		_check(heal_receipt.get("ok") == true
+			and heal_receipt.get("hp_delta") == 6
+			and heal_receipt.get("hp") == {hero_id: 6}
+			and _receipt_keys(heal_receipt) == expected_hp_receipt_keys,
+			"AC2: present canonical hero %s commits sole +6 hp intent" % hero_id)
+
+		var zero_hero_receipt := RunStitchedEventConsequence.new(hero_event).choose("zero_hero", present_four)
+		_check(zero_hero_receipt.get("ok") == true
+			and zero_hero_receipt.get("hp_delta") == 0
+			and zero_hero_receipt.get("hp") == {}
+			and _receipt_keys(zero_hero_receipt) == expected_hp_receipt_keys,
+			"AC2: present canonical hero %s commits empty hp map for 0 delta" % hero_id)
+
+		# Absent named hero with a legal party HP alternative and a legacy Leave alternative:
+		var retry_event := _event([
+			_choice("absent_hurt", "Hurt absent hero.", _hp_effect(10, 15, -4, "hero", hero_id)),
+			_choice("party_heal", "Heal active party.", _hp_effect(15, -10, 6, "party")),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "ev_stitched_hp_absent_" + hero_id)
+		var absent_svc := RunStitchedEventConsequence.new(retry_event)
+		var absent_prev := absent_svc.preview(absent_four)
+		var absent_entry := _entry(absent_prev, "absent_hurt")
+		_check(absent_entry.get("available") == false
+			and absent_entry.get("target") == "hero"
+			and absent_entry.get("hero_id") == hero_id
+			and absent_entry.get("candle_delta") == 10
+			and absent_entry.get("fray_delta") == 15
+			and absent_entry.get("hp_delta") == -4
+			and absent_entry.get("candle") == 45
+			and absent_entry.get("fray") == {}
+			and absent_entry.get("hp") == {}
+			and _receipt_keys(absent_entry) == expected_hp_preview_keys,
+			"AC2: absent canonical hero %s is unavailable with readable hp_delta -4 and empty hp map" % hero_id)
+		_assert_rejected(absent_svc, "absent_hurt", absent_four, 45,
+			"AC2: absent canonical hero %s cannot claim" % hero_id)
+		_check(not absent_svc.is_claimed() and absent_svc.is_valid(),
+			"AC2: absent canonical hero %s refusal does not consume the visit" % hero_id)
+		var retry_receipt := absent_svc.choose("party_heal", absent_four)
+		_check(retry_receipt.get("ok") == true
+			and retry_receipt.get("choice_id") == "party_heal"
+			and retry_receipt.get("candle") == 60
+			and retry_receipt.get("hp_delta") == 6
+			and retry_receipt.get("hp") == {
+				alt_a: 6, alt_b: 6, alt_c: 6, alt_d: 6,
+			}
+			and _receipt_keys(retry_receipt) == expected_hp_receipt_keys,
+			"AC2: retry of legal party HP choice on same visit succeeds after absent %s" % hero_id)
+		_assert_rejected(absent_svc, "leave", absent_four, 45,
+			"AC2: replay after retry claim rejected for %s" % hero_id)
+
+		# Required-hero gate on HP-bearing choice across all 8 canonical hero IDs:
+		var gated_hp_event := _event([
+			_choice("gated_heal", "Required hero heals the party.",
+				_hp_required_hero_effect(20, -15, 6, hero_id, "party")),
+			_choice("gated_self_hurt", "Required hero takes the needle.",
+				_hp_required_hero_effect(10, 5, -4, hero_id, "hero", alt_a)),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "ev_stitched_hp_gate_" + hero_id)
+		var gate_absent_svc := RunStitchedEventConsequence.new(gated_hp_event)
+		var gate_absent_prev := gate_absent_svc.preview(absent_four)
+		_check(_choice_ids(gate_absent_prev) == ["leave"]
+			and _entry(gate_absent_prev, "gated_heal") == {}
+			and _entry(gate_absent_prev, "gated_self_hurt") == {},
+			"AC2: absent required_hero %s hides HP-bearing choices from preview" % hero_id)
+		_assert_rejected(gate_absent_svc, "gated_heal", absent_four, 45,
+			"AC2: hidden party HP choice rejected when required_hero %s is absent" % hero_id)
+		_assert_rejected(gate_absent_svc, "gated_self_hurt", absent_four, 45,
+			"AC2: hidden hero HP choice rejected when required_hero %s is absent" % hero_id)
+		var gate_leave_receipt := gate_absent_svc.choose("leave", absent_four)
+		_check(gate_leave_receipt.get("ok") == true
+			and _receipt_keys(gate_leave_receipt) == [
+				"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+			],
+			"AC2: Leave claims once after hidden HP-choice refusals for %s" % hero_id)
+
+		var gate_present_svc := RunStitchedEventConsequence.new(gated_hp_event)
+		var gate_present_prev := gate_present_svc.preview(present_four)
+		_check(_choice_ids(gate_present_prev) == ["gated_heal", "gated_self_hurt", "leave"],
+			"AC2: present required_hero %s exposes HP-bearing gated choices in authored order" % hero_id)
+		var gate_self_entry := _entry(gate_present_prev, "gated_self_hurt")
+		_check(gate_self_entry.get("available") == true
+			and gate_self_entry.get("hp_delta") == -4
+			and gate_self_entry.get("hp") == {alt_a: -4},
+			"AC2: present required_hero %s with target=hero directs -4 hp intent only to %s" % [hero_id, alt_a])
+		var gate_self_receipt := gate_present_svc.choose("gated_self_hurt", present_four)
+		_check(gate_self_receipt.get("ok") == true
+			and gate_self_receipt.get("hp_delta") == -4
+			and gate_self_receipt.get("hp") == {alt_a: -4}
+			and _receipt_keys(gate_self_receipt) == expected_hp_receipt_keys,
+			"AC2: present required_hero %s commits target=hero HP choice once" % hero_id)
+
+
+func _test_hp_combined_and_legacy_shapes() -> void:
+	# AC3: Combined HP, candle, fray and optional scraps/gold/part fields can be previewed and
+	# claimed together once without settlement, mutation or RNG draws. HP-absent choices keep
+	# their original exact 8-key preview and 7-key success receipt (plus any optional wallet/part
+	# keys); rejection keeps its exact 7-key shape.
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var catalog_original := warden_catalog.duplicate(true)
+	var snap := _gold_scraps_satchel_four(50, 4, 30, 5, [95, 0, 50, 200])
+	var snap_original := snap.duplicate(true)
+
+	var combined_hp_effect := {
+		"candle": 25,
+		"fray": -15,
+		"target": "party",
+		"required_hero": "warden",
+		"scraps": -2,
+		"gold": -12,
+		"part": {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		"hp": 6,
+	}
+	var hero_hp_scraps_effect := {
+		"candle": -10,
+		"fray": 10,
+		"target": "hero",
+		"hero_id": "seamstress",
+		"scraps": 3,
+		"hp": -4,
+	}
+	var mixed_event := _event([
+		_choice("all_in_mend", "Pay gold and scraps for helm and party stitch.", combined_hp_effect),
+		_choice("seamstress_tithe", "Draw thread from the seamstress for scraps.", hero_hp_scraps_effect),
+		_choice("legacy_leave", "Leave without touching HP.", _effect(0, 0, "party")),
+	], "ev_stitched_hp_combined")
+	var event_original := mixed_event.duplicate(true)
+
+	seed(20261112)
+	var expected_rng := randi()
+	seed(20261112)
+
+	var svc := RunStitchedEventConsequence.new(mixed_event, warden_catalog)
+	var prev := svc.preview(snap)
+	_check(prev.get("ok") == true and prev.get("candle") == 50,
+		"AC3: combined HP+wallet+part event preflights")
+
+	var all_in_entry := _entry(prev, "all_in_mend")
+	_check(all_in_entry.get("available") == true
+		and all_in_entry.get("candle_delta") == 25
+		and all_in_entry.get("candle") == 75
+		and all_in_entry.get("fray_delta") == -15
+		and all_in_entry.get("fray") == {
+			"warden": -15, "seamstress": -15, "tinker": -15, "button_golem": -15,
+		}
+		and all_in_entry.get("scraps_delta") == -2
+		and all_in_entry.get("scraps") == 2
+		and all_in_entry.get("gold_delta") == -12
+		and all_in_entry.get("gold") == 18
+		and all_in_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and all_in_entry.get("satchel_count") == 6
+		and all_in_entry.get("hp_delta") == 6
+		and all_in_entry.get("hp") == {
+			"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+		}
+		and _receipt_keys(all_in_entry) == [
+			"available", "candle", "candle_delta", "choice_id", "fray", "fray_delta",
+			"gold", "gold_delta", "hero_id", "hp", "hp_delta", "part", "satchel_count",
+			"scraps", "scraps_delta", "target",
+		],
+		"AC3: combined HP+scraps+gold+part preview entry has exact 16 keys and projected values")
+
+	var tithe_entry := _entry(prev, "seamstress_tithe")
+	_check(tithe_entry.get("available") == true
+		and tithe_entry.get("target") == "hero"
+		and tithe_entry.get("hero_id") == "seamstress"
+		and tithe_entry.get("candle") == 40
+		and tithe_entry.get("fray") == {"seamstress": 10}
+		and tithe_entry.get("scraps_delta") == 3
+		and tithe_entry.get("scraps") == 7
+		and tithe_entry.get("hp_delta") == -4
+		and tithe_entry.get("hp") == {"seamstress": -4}
+		and _receipt_keys(tithe_entry) == [
+			"available", "candle", "candle_delta", "choice_id", "fray", "fray_delta",
+			"hero_id", "hp", "hp_delta", "scraps", "scraps_delta", "target",
+		],
+		"AC3: hero HP+scraps preview entry has exact 12 keys and single-hero -4 hp intent")
+
+	var leave_entry := _entry(prev, "legacy_leave")
+	_check(leave_entry.get("available") == true
+		and not leave_entry.has("hp")
+		and not leave_entry.has("hp_delta")
+		and _receipt_keys(leave_entry) == [
+			"available", "candle", "candle_delta", "choice_id",
+			"fray", "fray_delta", "hero_id", "target",
+		],
+		"AC3: HP-absent Leave sibling retains exact 8-key preview shape")
+
+	var all_in_receipt := svc.choose("all_in_mend", snap)
+	_check(all_in_receipt.get("ok") == true
+		and all_in_receipt.get("candle") == 75
+		and all_in_receipt.get("fray") == {
+			"warden": -15, "seamstress": -15, "tinker": -15, "button_golem": -15,
+		}
+		and all_in_receipt.get("scraps_delta") == -2
+		and all_in_receipt.get("scraps") == 2
+		and all_in_receipt.get("gold_delta") == -12
+		and all_in_receipt.get("gold") == 18
+		and all_in_receipt.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and all_in_receipt.get("satchel_count") == 6
+		and all_in_receipt.get("hp_delta") == 6
+		and all_in_receipt.get("hp") == {
+			"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+		}
+		and _receipt_keys(all_in_receipt) == [
+			"candle", "choice_id", "event_id", "fray", "gold", "gold_delta",
+			"hero_id", "hp", "hp_delta", "ok", "part", "satchel_count",
+			"scraps", "scraps_delta", "target",
+		],
+		"AC3: combined HP+scraps+gold+part receipt has exact 15 keys and matches preview")
+	_assert_rejected(svc, "all_in_mend", snap, 50,
+		"AC3: replay of combined HP choice returns exact 7-key refusal")
+
+	var leave_receipt := RunStitchedEventConsequence.new(mixed_event, warden_catalog).choose("legacy_leave", snap)
+	_check(leave_receipt.get("ok") == true
+		and not leave_receipt.has("hp")
+		and not leave_receipt.has("hp_delta")
+		and _receipt_keys(leave_receipt) == [
+			"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+		],
+		"AC3: HP-absent Leave receipt retains exact 7-key shape")
+
+	_check(randi() == expected_rng,
+		"AC3: combined HP preview, commit and replay never draw from global RNG")
+	_check(snap == snap_original and warden_catalog == catalog_original and mixed_event == event_original,
+		"AC3: combined HP preview and commit leave snapshot, catalog and event untouched")
+
+	# Detachment and repeatability of HP intent maps:
+	var replay_receipt := RunStitchedEventConsequence.new(mixed_event, warden_catalog).choose("all_in_mend", snap)
+	_check(all_in_receipt == replay_receipt,
+		"AC3: combined HP receipt is repeatable across fresh instances")
+	all_in_entry["hp"]["warden"] = 999
+	all_in_receipt["hp"]["warden"] = -999
+	_check(RunStitchedEventConsequence.new(mixed_event, warden_catalog).choose("all_in_mend", snap) == replay_receipt
+		and snap == snap_original,
+		"AC3: mutating preview or receipt hp dictionary never aliases caller state or later visits")
+
+	# Wallet and satchel capacity checks on HP-bearing combined choices (insufficient scraps,
+	# insufficient gold, full satchel_count == 6, missing balances):
+	var low_scraps_snap := _gold_scraps_satchel_four(50, 1, 30, 5, [95, 0, 50, 200])
+	var low_scraps_svc := RunStitchedEventConsequence.new(mixed_event, warden_catalog)
+	var low_scraps_entry := _entry(low_scraps_svc.preview(low_scraps_snap), "all_in_mend")
+	_check(low_scraps_entry.get("available") == false
+		and low_scraps_entry.get("hp_delta") == 6
+		and low_scraps_entry.get("hp") == {}
+		and low_scraps_entry.get("fray") == {}
+		and low_scraps_entry.get("scraps") == 1
+		and low_scraps_entry.get("gold") == 30
+		and low_scraps_entry.get("satchel_count") == 5
+		and low_scraps_entry.get("candle") == 50,
+		"AC3: insufficient scraps disables combined HP choice and leaves hp map empty")
+	_assert_rejected(low_scraps_svc, "all_in_mend", low_scraps_snap, 50,
+		"AC3: insufficient scraps on combined HP choice")
+	var fallback_tithe := low_scraps_svc.choose("seamstress_tithe", low_scraps_snap)
+	_check(fallback_tithe.get("ok") == true
+		and fallback_tithe.get("scraps") == 4
+		and fallback_tithe.get("hp") == {"seamstress": -4},
+		"AC3: legal HP+scraps sibling claims after insufficient-scraps refusal")
+
+	var low_gold_snap := _gold_scraps_satchel_four(50, 4, 5, 5, [95, 0, 50, 200])
+	var low_gold_svc := RunStitchedEventConsequence.new(mixed_event, warden_catalog)
+	var low_gold_entry := _entry(low_gold_svc.preview(low_gold_snap), "all_in_mend")
+	_check(low_gold_entry.get("available") == false
+		and low_gold_entry.get("hp_delta") == 6
+		and low_gold_entry.get("hp") == {}
+		and low_gold_entry.get("gold") == 5,
+		"AC3: insufficient gold disables combined HP choice and leaves hp map empty")
+	_assert_rejected(low_gold_svc, "all_in_mend", low_gold_snap, 50,
+		"AC3: insufficient gold on combined HP choice")
+	_check(low_gold_svc.choose("legacy_leave", low_gold_snap).get("ok") == true,
+		"AC3: Leave claims after insufficient-gold combined HP refusal")
+
+	var full_satchel_snap := _gold_scraps_satchel_four(50, 4, 30, 6, [95, 0, 50, 200])
+	var full_satchel_svc := RunStitchedEventConsequence.new(mixed_event, warden_catalog)
+	var full_satchel_entry := _entry(full_satchel_svc.preview(full_satchel_snap), "all_in_mend")
+	_check(full_satchel_entry.get("available") == false
+		and full_satchel_entry.get("hp_delta") == 6
+		and full_satchel_entry.get("hp") == {}
+		and full_satchel_entry.get("satchel_count") == 6,
+		"AC3: full satchel (6) disables combined HP+part choice and leaves hp map empty")
+	_assert_rejected(full_satchel_svc, "all_in_mend", full_satchel_snap, 50,
+		"AC3: full satchel on combined HP+part choice")
+	_check(full_satchel_svc.choose("seamstress_tithe", full_satchel_snap).get("ok") == true,
+		"AC3: non-part HP sibling claims when satchel is full")
+
+
+func _test_hp_rejections() -> void:
+	# AC4: Fractional, nonfinite, string, null, out-of-safe-integral-range or wrong-shaped hp
+	# values make that choice unavailable and unclaimable without consuming the visit; a valid
+	# alternative still works.
+	var snap := _four(40, [95, 0, 50, 200])
+	var snap_original := snap.duplicate(true)
+	var expected_malformed_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id",
+		"fray", "fray_delta", "hero_id", "target",
+	]
+	var bad_hp_values: Array = [
+		1.5,
+		-4.5,
+		0.25,
+		INF,
+		-INF,
+		NAN,
+		"6",
+		"-4",
+		"0",
+		"",
+		" ",
+		null,
+		true,
+		false,
+		9007199254740992.0 * 2.0,
+		-9007199254740992.0 * 2.0,
+		[6],
+		[-4],
+		{"hp": 6},
+		{"amount": -4},
+	]
+
+	seed(20261113)
+	var expected_rng := randi()
+	seed(20261113)
+
+	for index in range(bad_hp_values.size()):
+		var bad_hp: Variant = bad_hp_values[index]
+		for target_mode in ["party", "hero"]:
+			var broken_choice := _choice(
+				"broken_hp",
+				"Malformed HP outcome.",
+				_hp_effect(20, -15, bad_hp, target_mode, "seamstress")
+			)
+			var svc := RunStitchedEventConsequence.new(_event([
+				broken_choice,
+				_choice("valid_heal", "Valid party stitch.", _hp_effect(15, -20, 6, "party")),
+				_choice("leave", "Leave.", _effect(0, 0, "party")),
+			]))
+			_check(svc.is_valid() and not svc.is_claimed(),
+				"AC4: malformed hp %d (%s) keeps event envelope valid" % [index, target_mode])
+			var prev := svc.preview(snap)
+			_check(prev.get("ok") == true,
+				"AC4: malformed hp %d (%s) keeps event preflight readable" % [index, target_mode])
+			var broken_entry := _entry(prev, "broken_hp")
+			_check(broken_entry.get("available") == false
+				and broken_entry.get("candle_delta") == null
+				and broken_entry.get("fray_delta") == null
+				and broken_entry.get("hp_delta") == null
+				and not broken_entry.has("hp")
+				and not broken_entry.has("hp_delta")
+				and broken_entry.get("candle") == 40
+				and broken_entry.get("fray") == {}
+				and _receipt_keys(broken_entry) == expected_malformed_preview_keys,
+				"AC4: malformed hp %d (%s) is unavailable with null deltas and no hp keys" % [index, target_mode])
+			_check(_entry(prev, "valid_heal").get("available") == true
+				and _entry(prev, "leave").get("available") == true,
+				"AC4: malformed hp %d (%s) leaves valid siblings available" % [index, target_mode])
+			_assert_rejected(svc, "broken_hp", snap, 40,
+				"AC4: malformed hp %d (%s) commit" % [index, target_mode])
+			_check(not svc.is_claimed(),
+				"AC4: malformed hp %d (%s) refusal never latches the visit" % [index, target_mode])
+			var fallback := svc.choose("valid_heal", snap)
+			_check(fallback.get("ok") == true
+				and fallback.get("candle") == 55
+				and fallback.get("hp_delta") == 6
+				and fallback.get("hp") == {
+					"warden": 6, "seamstress": 6, "tinker": 6, "button_golem": 6,
+				},
+				"AC4: valid HP sibling still claims after malformed hp %d (%s)" % [index, target_mode])
+			_assert_rejected(svc, "leave", snap, 40,
+				"AC4: replay after valid sibling claim rejected (%d, %s)" % [index, target_mode])
+
+	# Structural errors alongside valid hp (party with hero_id, hero without hero_id,
+	# unknown hero_id, invalid required_hero, absent required_hero with malformed hp, extra key):
+	var structural_broken: Array = [
+		{"id": "broken_hp", "text": "Party target with hero_id and hp.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "party", "hero_id": "warden", "hp": 6,
+		}},
+		{"id": "broken_hp", "text": "Hero target missing hero_id with hp.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "hero", "hp": -4,
+		}},
+		{"id": "broken_hp", "text": "Unknown hero_id with hp.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "hero", "hero_id": "porcelain_doll", "hp": -4,
+		}},
+		{"id": "broken_hp", "text": "Invalid required_hero with hp.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "party", "required_hero": "porcelain_doll", "hp": 6,
+		}},
+		{"id": "broken_hp", "text": "Absent required_hero with fractional hp is malformed, not hidden.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "party", "required_hero": "lantern_monk", "hp": 1.5,
+		}},
+		{"id": "broken_hp", "text": "Extra unknown key alongside hp.", "stitched_effect": {
+			"candle": 15, "fray": -10, "target": "party", "hp": 6, "max_hp": 4,
+		}},
+	]
+	for index in range(structural_broken.size()):
+		var svc := RunStitchedEventConsequence.new(_event([
+			structural_broken[index],
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		]))
+		var prev := svc.preview(snap)
+		var broken_entry := _entry(prev, "broken_hp")
+		_check(_choice_ids(prev) == ["broken_hp", "leave"]
+			and broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null
+			and not broken_entry.has("hp")
+			and not broken_entry.has("hp_delta"),
+			"AC4: structural malformed HP choice %d is shown unavailable with null deltas" % index)
+		_assert_rejected(svc, "broken_hp", snap, 40,
+			"AC4: structural malformed HP choice %d commit" % index)
+		_check(svc.choose("leave", snap).get("ok") == true,
+			"AC4: Leave claims after structural malformed HP choice %d" % index)
+
+	_check(randi() == expected_rng,
+		"AC4: malformed HP checks and fallback claims never draw from global RNG")
+	_check(snap == snap_original,
+		"AC4: malformed HP checks never mutate caller snapshot")
+
 
 
