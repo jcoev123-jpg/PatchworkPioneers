@@ -15,6 +15,7 @@ func _initialize() -> void:
 	_test_ac3_seeded_uniformity_purity_and_detachment()
 	_test_ac4_gate_enter_preview_and_claim_handoff()
 	_test_ac5_rivet_choir_full_health_paid_heal_suppression()
+	_test_four_hero_stitched_party()
 	_finish()
 
 
@@ -656,4 +657,263 @@ func _test_ac5_rivet_choir_full_health_paid_heal_suppression() -> void:
 			"AC5: second choice on claimed visit refuses")
 		_check(bg_snap == bg_snap_before,
 			"AC5: caller snapshot is untouched by choice settlement")
+
+
+# A Design v4 Stitched party is four of eight distinct heroes. Excluding the
+# other three members' genuine offers must leave the living fourth hero's
+# authenticated Event selectable with one sorted-ID draw, while a Torn fourth
+# hero, foreign/missing/duplicate/malformed snapshots and rejected exclusions
+# consume no RNG and mutate no input. The named Lantern Monk trade then settles
+# exactly once.
+func _test_four_hero_stitched_party() -> void:
+	var party_ids := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var vigil_id := "v3_lantern_monk_thimble_moon_vigil"
+	var gate := RunV3HeroVitalEventGate.new(party_ids)
+	_check(gate.is_valid(), "four-hero: Stitched gate is valid")
+	if not gate.is_valid():
+		return
+	var offers := gate.get_offers()
+	# The exclusions are actual offered IDs of the other three party members, so
+	# only the fourth hero's authenticated records can remain. Never a catalog total.
+	var other_members: Array[String] = []
+	var monk_offers: Array = []
+	for offer: Dictionary in offers:
+		if offer.get("required_hero") == "lantern_monk":
+			monk_offers.append(offer)
+		else:
+			other_members.append(offer["id"])
+	_check(not other_members.is_empty() and not monk_offers.is_empty(),
+		"four-hero: genuine three-member exclusions and fourth-hero offers exist")
+
+	var wallet := _wallet(20, 2)
+	var live_heroes := [
+		_hero("warden", 20, 30),
+		_hero("seamstress", 20, 30),
+		_hero("tinker", 20, 30),
+		_hero("lantern_monk", 15, 30),
+	]
+	var wallet_copy := wallet.duplicate(true)
+	var heroes_copy := live_heroes.duplicate(true)
+	var exclusions_copy := other_members.duplicate(true)
+
+	# Independently derive the eligible sorted IDs from the genuine offers.
+	var candidates := _offers_actionable_for_hero(offers, "lantern_monk", wallet, 15, 30, other_members)
+	_check(candidates.has(vigil_id), "four-hero: moon vigil is actionable for the living fourth hero")
+	_check(not candidates.is_empty(), "four-hero: the living fourth hero has candidates")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 61001
+	var oracle := RandomNumberGenerator.new()
+	oracle.seed = 61001
+	var expected_id: String = candidates[oracle.randi_range(0, candidates.size() - 1)]
+	var expected_record := {}
+	for offer: Dictionary in offers:
+		if offer.get("id") == expected_id:
+			expected_record = offer
+	_check(not expected_record.is_empty(), "four-hero: oracle candidate is a genuine offer")
+	var res := gate.select_party_actionable_event(rng, other_members, wallet, live_heroes)
+	_check(res == {"ok": true, "event": expected_record},
+		"four-hero: living fourth hero's Event is selected from the sorted eligible set")
+	_check(rng.state == oracle.state,
+		"four-hero: selection consumes exactly one randi_range draw versus the seeded oracle")
+	_check(res.get("event", {}).get("required_hero") == "lantern_monk",
+		"four-hero: selected Event belongs to the fourth hero")
+
+	# A Torn (0 HP) fourth hero can never be selected, and consumes no RNG.
+	var torn_heroes := [
+		_hero("warden", 20, 30),
+		_hero("seamstress", 20, 30),
+		_hero("tinker", 20, 30),
+		_hero("lantern_monk", 0, 30),
+	]
+	var torn_state := rng.state
+	_check(gate.select_party_actionable_event(rng, other_members, wallet, torn_heroes)
+		== {"ok": false, "event": {}} and rng.state == torn_state,
+		"four-hero: 0-HP fourth hero cannot select and consumes zero RNG")
+
+	# With every fourth-hero trade unaffordable (0 gold, 0 scraps, HP 4/max 10 the
+	# paid heal would leave 0 HP and the max-HP cut would break the floor) the
+	# pool is Leave-only and rejects with zero RNG draws.
+	var broke_wallet := _wallet(0, 0)
+	var broke_heroes := [
+		_hero("warden", 20, 30),
+		_hero("seamstress", 20, 30),
+		_hero("tinker", 20, 30),
+		_hero("lantern_monk", 4, 10),
+	]
+	var broke_candidates := _offers_actionable_for_hero(
+		offers, "lantern_monk", broke_wallet, 4, 10, other_members)
+	var broke_state := rng.state
+	_check(broke_candidates.is_empty()
+		and gate.select_party_actionable_event(rng, other_members, broke_wallet, broke_heroes)
+			== {"ok": false, "event": {}} and rng.state == broke_state,
+		"four-hero: Leave-only fourth-hero pool rejects with zero RNG draws")
+
+	# Foreign, missing, five-member, duplicate and malformed hero snapshots.
+	var bad_snapshots := [
+		["missing", [_hero("warden", 20, 30), _hero("seamstress", 20, 30), _hero("tinker", 20, 30)]],
+		["foreign", [_hero("warden", 20, 30), _hero("seamstress", 20, 30),
+			_hero("tinker", 20, 30), _hero("scarecrow", 15, 30)]],
+		["five", [_hero("warden", 20, 30), _hero("seamstress", 20, 30),
+			_hero("tinker", 20, 30), _hero("lantern_monk", 15, 30), _hero("scarecrow", 15, 30)]],
+		["duplicate", [_hero("warden", 20, 30), _hero("warden", 20, 30),
+			_hero("tinker", 20, 30), _hero("lantern_monk", 15, 30)]],
+		["malformed", [_hero("warden", 20, 30), _hero("seamstress", 20, 30),
+			_hero("tinker", 20, 30), {"id": "lantern_monk", "hp": 15}]],
+	]
+	for snapshot_case: Array in bad_snapshots:
+		var bad_state := rng.state
+		_check(gate.select_party_actionable_event(rng, other_members, wallet, snapshot_case[1])
+			== {"ok": false, "event": {}} and rng.state == bad_state,
+			"four-hero: " + str(snapshot_case[0]) + " hero snapshot rejects with zero RNG draws")
+
+	# Rejected exclusions also consume zero RNG.
+	for bad_exclusions in [123, "ids", other_members + [123], [""], ["   "]]:
+		var ex_state := rng.state
+		_check(gate.select_party_actionable_event(rng, bad_exclusions, wallet, live_heroes)
+			== {"ok": false, "event": {}} and rng.state == ex_state,
+			"four-hero: malformed exclusions reject with zero RNG draws: " + str(bad_exclusions))
+	_check(wallet == wallet_copy and live_heroes == heroes_copy
+		and other_members == exclusions_copy,
+		"four-hero: refused selection never mutates caller wallet, heroes or exclusions")
+
+	# Force the named record: exclude every other genuine offer, one draw remains.
+	var only_vigil: Array[String] = []
+	for offer: Dictionary in offers:
+		if offer.get("id") != vigil_id:
+			only_vigil.append(offer["id"])
+	var forced_rng := RandomNumberGenerator.new()
+	forced_rng.seed = 61002
+	var forced_oracle := RandomNumberGenerator.new()
+	forced_oracle.seed = 61002
+	forced_oracle.randi_range(0, 0)
+	var forced := gate.select_party_actionable_event(forced_rng, only_vigil, wallet, live_heroes)
+	_check(forced.get("ok") == true and forced.get("event", {}).get("id") == vigil_id
+		and forced_rng.state == forced_oracle.state,
+		"four-hero: only the fourth hero's moon vigil remains, selected with one draw")
+
+	# Enter the authenticated record with the Stitched opening vitality.
+	var snap := {"gold": 20, "scraps": 2, "hero": {"id": "lantern_monk", "hp": 15, "max_hp": 30}}
+	var snap_copy := snap.duplicate(true)
+	var expected_state := {"gold": 4, "scraps": 2,
+		"hero": {"id": "lantern_monk", "hp": 15, "max_hp": 32}}
+	_check(gate.enter(vigil_id, {"gold": 20, "scraps": 2,
+		"hero": {"id": "lantern_monk", "hp": 0, "max_hp": 30}}) == null,
+		"four-hero: Torn Lantern Monk is refused admission")
+	_check(gate.enter(vigil_id, {"gold": 20, "scraps": 2,
+		"hero": {"id": "warden", "hp": 15, "max_hp": 30}}) == null,
+		"four-hero: wrong-hero snapshot is refused admission")
+	var visit := gate.enter(forced["event"], snap)
+	_check(visit != null and visit.is_valid() and not visit.is_claimed(),
+		"four-hero: authenticated moon vigil opens an unclaimed visit")
+	if visit == null:
+		return
+	# None of the preview/claim refusals below may consume a run RNG draw.
+	var claim_rng_state := rng.state
+
+	var preview := visit.preview_vital_choices(snap)
+	_check(preview.get("ok") == true and preview.get("event_id") == vigil_id,
+		"four-hero: moon vigil previews authentically")
+	var moonlight_quote := {}
+	var tend_quote := {}
+	for entry: Dictionary in preview.get("choices", []):
+		if entry.get("choice_id") == "moonlight_seam":
+			moonlight_quote = entry
+		elif entry.get("choice_id") == "tend_moth_candles":
+			tend_quote = entry
+	_check(moonlight_quote == {"choice_id": "moonlight_seam", "gold_delta": -16,
+		"scraps_delta": 0, "hp_delta": 0, "max_hp_delta": 2, "affordable": true,
+		"state": expected_state},
+		"four-hero: moonlight_seam previews gold 20 -> 4, scraps 2, HP 15/max 32")
+	_check(tend_quote == {"choice_id": "tend_moth_candles", "gold_delta": 20,
+		"scraps_delta": 0, "hp_delta": -4, "max_hp_delta": 0, "affordable": true,
+		"state": {"gold": 40, "scraps": 2, "hero": {"id": "lantern_monk",
+			"hp": 11, "max_hp": 30}}},
+		"four-hero: tend_moth_candles previews its exact signed alternative")
+	_check(snap == snap_copy and not visit.is_claimed(),
+		"four-hero: preview does not claim or mutate the caller snapshot")
+
+	# Wrong-hero preview and claim refuse on the still-unclaimed visit.
+	var wrong_snap := {"gold": 20, "scraps": 2,
+		"hero": {"id": "warden", "hp": 15, "max_hp": 30}}
+	_check(visit.preview_vital_choices(wrong_snap).get("ok") == false,
+		"four-hero: wrong-hero preview is denied")
+	_check(visit.choose_with_vitals("moonlight_seam", wrong_snap) == {
+		"ok": false, "event_id": "", "choice_id": "", "state": wrong_snap},
+		"four-hero: wrong-hero claim refuses without changing the snapshot")
+	_check(visit.is_valid() and not visit.is_claimed(),
+		"four-hero: wrong-hero refusal does not consume the claim")
+
+	var receipt := visit.choose_with_vitals("moonlight_seam", snap)
+	_check(receipt == {"ok": true, "event_id": vigil_id, "choice_id": "moonlight_seam",
+		"state": expected_state} and snap == snap_copy,
+		"four-hero: moonlight_seam settles once to gold 4, scraps 2, HP 15/max 32")
+	_check(visit.is_claimed() and not visit.is_valid(),
+		"four-hero: accepted claim latches the visit")
+	_check(visit.choose_with_vitals("moonlight_seam", expected_state) == {
+		"ok": false, "event_id": "", "choice_id": "", "state": expected_state},
+		"four-hero: replay refuses without a second settlement")
+	_check(visit.choose_with_vitals("leave", expected_state).get("ok") == false,
+		"four-hero: alternate choice is blocked after the claim")
+
+	# An unfunded choice refuses without changing wallet, HP or the claim.
+	var poor_snap := {"gold": 15, "scraps": 0,
+		"hero": {"id": "lantern_monk", "hp": 15, "max_hp": 30}}
+	var poor_copy := poor_snap.duplicate(true)
+	var poor_visit := gate.enter(vigil_id, poor_snap)
+	_check(poor_visit != null and poor_visit.is_valid(),
+		"four-hero: unfunded Lantern Monk still enters the authored visit")
+	if poor_visit == null:
+		return
+	var poor_quote := {}
+	for entry: Dictionary in poor_visit.preview_vital_choices(poor_snap).get("choices", []):
+		if entry.get("choice_id") == "moonlight_seam":
+			poor_quote = entry
+	_check(poor_quote.get("affordable") == false and poor_quote.get("state") == poor_snap,
+		"four-hero: unfunded moonlight_seam projects the unchanged snapshot")
+	_check(poor_visit.choose_with_vitals("moonlight_seam", poor_snap) == {
+		"ok": false, "event_id": "", "choice_id": "", "state": poor_snap}
+		and poor_snap == poor_copy and poor_visit.is_valid() and not poor_visit.is_claimed(),
+		"four-hero: unfunded claim refuses without spending gold, HP or the claim")
+	_check(poor_visit.choose_with_vitals("leave", poor_snap).get("ok") == true
+		and poor_visit.is_claimed(),
+		"four-hero: unfunded visit recovers with the authored Leave")
+	_check(rng.state == claim_rng_state,
+		"four-hero: preview, wrong-hero, unfunded and replay refusals consume no RNG")
+
+	# Legacy three-hero parties remain admitted and selectable.
+	var legacy := RunV3HeroVitalEventGate.new(["warden", "seamstress", "tinker"])
+	_check(legacy.is_valid(), "four-hero: legacy three-hero gate stays valid")
+
+
+## Expected sorted IDs of a hero's actionable offered Events, computed from the
+## genuine offers and the production row rule (never a hardcoded catalog list).
+func _offers_actionable_for_hero(
+	offers: Array,
+	hero_id: String,
+	wallet: Dictionary,
+	hp: int,
+	max_hp: int,
+	excluded: Array = []
+) -> Array[String]:
+	var excluded_map := {}
+	for item: Variant in excluded:
+		excluded_map[item] = true
+	var snapshot := {"gold": wallet["gold"], "scraps": wallet["scraps"],
+		"hero": {"id": hero_id, "hp": hp, "max_hp": max_hp}}
+	var ids: Array[String] = []
+	for offer: Dictionary in offers:
+		if offer.get("required_hero") != hero_id or excluded_map.has(offer.get("id")):
+			continue
+		var service := RunEventChoice.new(offer)
+		if not service.is_valid():
+			continue
+		var preview := service.preview_vital_choices(snapshot)
+		if not preview.get("ok", false):
+			continue
+		for entry: Dictionary in preview.get("choices", []):
+			if RunV3HeroVitalEventGate.is_choice_actionable(entry, hp):
+				ids.append(offer["id"])
+				break
+	ids.sort()
+	return ids
 
