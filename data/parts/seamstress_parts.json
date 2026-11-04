@@ -12,7 +12,7 @@
         "id": "mending_knot",
         "name": "Mending Knot",
         "kind": "heal",
-        "launch": [2, 3],
+        "launch": [2, 3, 4],
         "target": [1, 2, 3, 4],
         "target_side": "ally",
         "multi": false,
@@ -27,7 +27,7 @@
         "2": {"stat": {"acc": 3}, "ability": {"effects": {"heal": 6}}},
         "3": {"stat": {"acc": 4}, "ability": {"effects": {"heal": 8}}}
       },
-      "text": "Darn one living ally for 4 HP from ranks 2-3. The sewn knot cannot unpick a debuff yet."
+      "text": "Darn one living ally for 4 HP from ranks 2-4. The sewn knot cannot unpick a debuff yet."
     },
     {
       "id": "seamstress_scarlet_knot_hat",
@@ -120,7 +120,7 @@
         "id": "shielding_hem",
         "name": "Shielding Hem",
         "kind": "guard",
-        "launch": [1, 2, 3],
+        "launch": [1, 2, 3, 4],
         "target": [1, 2, 3, 4],
         "target_side": "ally",
         "multi": false,
@@ -147,7 +147,7 @@
         "id": "patchwork_poultice",
         "name": "Patchwork Poultice",
         "kind": "guard",
-        "launch": [2, 3],
+        "launch": [2, 3, 4],
         "target": [1, 2, 3, 4],
         "target_side": "ally",
         "multi": false,
