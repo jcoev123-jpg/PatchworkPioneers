@@ -1,0 +1,308 @@
+{
+  "version": 1,
+  "note": "Design v4 (Stitched) S1a part catalog: two Warden parts per slot plus one foreign ('any') part per slot, with stitch tiers II and III.",
+  "parts": [
+    {
+      "id": "warden_head_iron_helm",
+      "name": "Iron Helm",
+      "slot": "head",
+      "owner": "warden",
+      "stat": {"acc": 5},
+      "ability": {
+        "id": "iron_helm_bash",
+        "name": "Iron Helm Bash",
+        "kind": "melee",
+        "launch": [1],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "acc": 90,
+        "dmg": [5, 8],
+        "crit": 5,
+        "effects": {"weak": 1},
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"acc": 92, "dmg": [6, 9]}},
+        "3": {"ability": {"acc": 95, "dmg": [7, 11], "crit": 8}}
+      },
+      "text": "Hit a front-rank foe and leave it Weak."
+    },
+    {
+      "id": "warden_head_button_eye",
+      "name": "Button Eye",
+      "slot": "head",
+      "owner": "warden",
+      "stat": {"crit": 5},
+      "ability": {
+        "id": "button_eye",
+        "name": "Button Eye",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "acc": 85,
+        "dmg": [4, 6],
+        "crit": 5,
+        "effects": {"exposed": 1},
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [5, 8]}},
+        "3": {"ability": {"acc": 92, "dmg": [6, 9], "crit": 8}}
+      },
+      "text": "Prick a foe in the front ranks and leave it Exposed."
+    },
+    {
+      "id": "warden_arm_shield_bash",
+      "name": "Shield Bash",
+      "slot": "arms",
+      "owner": "warden",
+      "stat": {"dmg": 1},
+      "ability": {
+        "id": "shield_bash",
+        "name": "Shield Bash",
+        "kind": "melee",
+        "launch": [1],
+        "target": [1],
+        "target_side": "enemy",
+        "acc": 90,
+        "dmg": [7, 10],
+        "crit": 0,
+        "effects": {"stun": 1},
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [8, 12]}},
+        "3": {"ability": {"dmg": [9, 14], "acc": 95}}
+      },
+      "text": "Slam the front rank and Stun it for its next turn."
+    },
+    {
+      "id": "warden_arm_brace",
+      "name": "Brace",
+      "slot": "arms",
+      "owner": "warden",
+      "stat": {"dmg": 0},
+      "ability": {
+        "id": "brace",
+        "name": "Brace",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 4],
+        "target_side": "ally",
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"guard": 2},
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"guard": 3}}},
+        "3": {"ability": {"effects": {"guard": 3}}}
+      },
+      "text": "Guard one ally: take the hits aimed at it for two of your turns."
+    },
+    {
+      "id": "warden_torso_quilt",
+      "name": "Quilted Torso",
+      "slot": "torso",
+      "owner": "warden",
+      "stat": {"max_hp": 6, "prot": 10},
+      "ability": {
+        "id": "quilt_up",
+        "name": "Quilt Up",
+        "kind": "buff",
+        "launch": [1, 4],
+        "target": [1, 4],
+        "target_side": "ally",
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"thorns": 2},
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"stat": {"max_hp": 9}, "ability": {"effects": {"thorns": 3}}},
+        "3": {"stat": {"max_hp": 12, "prot": 15}, "ability": {"effects": {"thorns": 4}}}
+      },
+      "text": "Stitch felt spikes onto an ally: it answers hits with Thorns 2."
+    },
+    {
+      "id": "warden_torso_rivet",
+      "name": "Riveted Torso",
+      "slot": "torso",
+      "owner": "warden",
+      "stat": {"max_hp": 3},
+      "ability": {
+        "id": "rivet_mark",
+        "name": "Rivet Mark",
+        "kind": "debuff",
+        "launch": [1, 3],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "acc": 90,
+        "dmg": [2, 4],
+        "crit": 0,
+        "effects": {"mark": 2},
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [3, 5]}},
+        "3": {"ability": {"dmg": [4, 6], "effects": {"mark": 3}}}
+      },
+      "text": "Rivet a foe so mark-hunting abilities bite deeper."
+    },
+    {
+      "id": "warden_legs_hold",
+      "name": "Holding Legs",
+      "slot": "legs",
+      "owner": "warden",
+      "stat": {"speed": 2},
+      "ability": {
+        "id": "shove",
+        "name": "Shove",
+        "kind": "melee",
+        "launch": [1],
+        "target": [1],
+        "target_side": "enemy",
+        "acc": 85,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {"tangled": 1},
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [4, 6]}},
+        "3": {"ability": {"dmg": [5, 8], "acc": 90}}
+      },
+      "text": "Shove the front rank: the foe is Tangled for a turn."
+    },
+    {
+      "id": "warden_legs_stride",
+      "name": "Striding Legs",
+      "slot": "legs",
+      "owner": "warden",
+      "stat": {"dodge": 5},
+      "ability": {
+        "id": "stride",
+        "name": "Stride",
+        "kind": "move",
+        "launch": [1, 4],
+        "target": [1, 4],
+        "target_side": "self",
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {},
+        "self_move": -1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"ability": {"self_move": -1}},
+        "3": {"ability": {"self_move": -1}}
+      },
+      "text": "Lunge one rank forward along the thread."
+    },
+    {
+      "id": "any_head_needle_pin",
+      "name": "Needle Pin",
+      "slot": "head",
+      "owner": "any",
+      "stat": {"acc": 3},
+      "ability": {
+        "id": "needle_pin",
+        "name": "Needle Pin",
+        "kind": "ranged",
+        "launch": [1, 2, 3, 4],
+        "target": [1, 3],
+        "target_side": "enemy",
+        "acc": 90,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {"bleed": 2},
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [4, 6]}},
+        "3": {"ability": {"dmg": [5, 8], "effects": {"bleed": 3}}}
+      },
+      "text": "Pin any foe up to rank 3 and open a Bleed 2."
+    },
+    {
+      "id": "any_arm_red_thread",
+      "name": "Red Thread Arm",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {"dmg": 2},
+      "ability": {
+        "id": "red_thread",
+        "name": "Red Thread",
+        "kind": "ranged",
+        "launch": [1, 2, 3],
+        "target": [1, 4],
+        "target_side": "enemy",
+        "acc": 88,
+        "dmg": [4, 7],
+        "crit": 0,
+        "mark_damage": 3,
+        "effects": {"mark": 1},
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [5, 8]}},
+        "3": {"ability": {"dmg": [6, 9], "mark_damage": 4}}
+      },
+      "text": "Thread any rank; a Marked foe takes 3 extra."
+    },
+    {
+      "id": "any_torso_felt_coat",
+      "name": "Felt Coat",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {"max_hp": 8, "prot": 5},
+      "ability": {
+        "id": "felt_mend",
+        "name": "Felt Mend",
+        "kind": "heal",
+        "launch": [1, 4],
+        "target": [1, 4],
+        "target_side": "ally",
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"heal": 5},
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"stat": {"max_hp": 11}, "ability": {"effects": {"heal": 7}}},
+        "3": {"stat": {"max_hp": 14, "prot": 8}, "ability": {"effects": {"heal": 9}}}
+      },
+      "text": "Mend an ally for 5; a heal above 0 ends Hanging."
+    },
+    {
+      "id": "any_legs_stitch_step",
+      "name": "Stitch Step",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {"speed": 1, "dodge": 3},
+      "ability": {
+        "id": "stitch_step",
+        "name": "Stitch Step",
+        "kind": "buff",
+        "launch": [1, 3],
+        "target": [1, 4],
+        "target_side": "self",
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"riposte": 2},
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {"ability": {"effects": {"riposte": 3}}},
+        "3": {"ability": {"effects": {"riposte": 4}}}
+      },
+      "text": "Set your feet: Riposte 2 for two of your turns."
+    }
+  ]
+}

@@ -1,0 +1,1322 @@
+class_name StitchedRules
+extends RefCounted
+## Headless Design v4 "Stitched" combat rules core, build stage S1a (STITCHED_DESIGN.md).
+##
+## This file is deliberately independent of the live card battle: it owns its own four-hero
+## party, four enemy ranks, part abilities, statuses, scrap heaps, Hanging and retreat. The
+## app only builds it when the project setting "patchwork/combat_mode" is "stitched"; the
+## shipped default "cards" keeps the existing card path in charge and this core refuses to
+## build at all (see create()).
+##
+## Determinism: every random draw comes from one RandomNumberGenerator seeded by the caller,
+## so a fixed seed replays exactly. Illegal actions are validated before any state or RNG
+## change and return {"ok": false, ...}; a successful action always spends the acting unit's
+## turn. Draw order is documented at each roll site.
+##
+## Turn order (section 1): each living unit rolls SPEED + 1d8 at the start of the round;
+## highest first, ties go to heroes before foes and then to the lower rank. A boss may have
+## two turns in the round. Heaps and lost heroes never take turns.
+##
+## Statuses (section 3) tick at the start of the affected unit's turn: Bleed deals its
+## count in direct HP damage (ignoring PROT), then every N-turn counter drops by one. Stun
+## is special: the stunned unit's turn is skipped, the stun is consumed and it gains one
+## turn of stun resist that refuses the next stun. Guard is a status on the guarding hero
+## that redirects enemy hits aimed at the guarded ally. Mark only adds damage to abilities
+## authored with mark_damage.
+##
+## Fray (section 7) is tracked only as the counter retreat needs (+15 on a successful
+## retreat, -3 on a crit); resolve checks, tearing and the candle are stage S1b and are
+## deliberately absent here.
+
+const COMBAT_MODE_SETTING := "patchwork/combat_mode"
+const MODE_CARDS := "cards"
+const MODE_STITCHED := "stitched"
+
+const HERO_COUNT := 4
+const MIN_FOES := 2
+const MAX_FOES := 3
+const MIN_RANK := 1
+const MAX_RANK := 4
+const D8 := 8
+const HIT_MIN := 5
+const HIT_MAX := 95
+const MISS_STREAK_ACC := 5
+const CRIT_BASE := 5
+const CRIT_NUMERATOR := 3
+const CRIT_DENOMINATOR := 2
+const PROT_CAP := 80
+const SEAM_HOLD_PERCENT := 67
+const RETREAT_SUCCESS_PERCENT := 75
+const RETREAT_FRAY_GAIN := 15
+const CRIT_FRAY_RELIEF := 3
+const COUNTDOWN_KEYS := [
+	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "blind", "stun_resist", "guard",
+]
+
+var _parts: Dictionary = {}
+var _units: Dictionary = {}
+var _heaps: Array = []
+var _rng := RandomNumberGenerator.new()
+var _round := 0
+var _turn_index := 0
+var _order: Array = []
+var _outcome := "ongoing"
+var _valid := false
+## Set once at setup from the authored foes. A boss encounter keeps refusing retreat even
+## after the boss itself is dead and only its minions still stand.
+var _boss_encounter := false
+
+
+## The project's authored combat mode. Only the exact "stitched" value leaves the card
+## battle; anything else (including a missing or malformed setting) means cards.
+static func combat_mode() -> String:
+	var setting: Variant = ProjectSettings.get_setting(COMBAT_MODE_SETTING, MODE_CARDS)
+	if setting is String and str(setting) == MODE_STITCHED:
+		return MODE_STITCHED
+	return MODE_CARDS
+
+
+static func uses_card_combat() -> bool:
+	return combat_mode() == MODE_CARDS
+
+
+## Builds a stitched battle from authored data:
+##   {"heroes": [4 hero definitions], "foes": [2-3 foe definitions],
+##    "parts": [part entries], "seed": int, "mode": optional explicit mode}
+## Returns {"ok": true, "error": "", "battle": StitchedRules} or
+## {"ok": false, "error": message, "battle": null}. Nothing is rolled or mutated on failure.
+static func create(config: Dictionary) -> Dictionary:
+	var mode := combat_mode()
+	if config.has("mode"):
+		var requested: Variant = config["mode"]
+		if not requested is String or not str(requested) in [MODE_CARDS, MODE_STITCHED]:
+			return {"ok": false, "error": "unknown combat mode: " + str(requested), "battle": null}
+		mode = str(requested)
+	if mode != MODE_STITCHED:
+		return {
+			"ok": false,
+			"error": "combat_mode is cards: the card battle stays in charge",
+			"battle": null,
+		}
+	var battle := StitchedRules.new()
+	var error := battle._setup(config)
+	if not error.is_empty():
+		return {"ok": false, "error": error, "battle": null}
+	return {"ok": true, "error": "", "battle": battle}
+
+
+func is_valid() -> bool:
+	return _valid
+
+
+func round_number() -> int:
+	return _round
+
+
+func outcome() -> String:
+	return _outcome
+
+
+func is_over() -> bool:
+	return _outcome != "ongoing"
+
+
+## True when the fight was authored with a boss, whether or not it still lives.
+func is_boss_encounter() -> bool:
+	return _boss_encounter
+
+
+func current_actor_id() -> String:
+	if _outcome != "ongoing" or _turn_index < 0 or _turn_index >= _order.size():
+		return ""
+	return str(_order[_turn_index])
+
+
+func current_side() -> String:
+	var id := current_actor_id()
+	if id.is_empty() or not _units.has(id):
+		return ""
+	return str(_units[id]["side"])
+
+
+## The rolled order for the current round, unit ids in acting order (a boss appears twice).
+func turn_order() -> Array:
+	return _order.duplicate()
+
+
+func rng_state() -> int:
+	return int(_rng.state)
+
+
+func get_unit(unit_id: String) -> Dictionary:
+	if not _units.has(unit_id):
+		return {}
+	return _units[unit_id].duplicate(true)
+
+
+func get_heroes() -> Array:
+	return _units_of_side("hero")
+
+
+func get_foes() -> Array:
+	return _units_of_side("foe")
+
+
+func get_heaps() -> Array:
+	return _heaps.duplicate(true)
+
+
+## Everything a replay needs: round, turn pointer, rolled order, every unit, the heaps and
+## the RNG position. Two runs with the same seed and the same actions produce equal snapshots.
+func state_snapshot() -> Dictionary:
+	var units: Array = []
+	for unit_id in _sorted_ids():
+		units.append(_units[unit_id].duplicate(true))
+	return {
+		"round": _round,
+		"turn_index": _turn_index,
+		"order": _order.duplicate(),
+		"outcome": _outcome,
+		"rng_state": int(_rng.state),
+		"units": units,
+		"heaps": _heaps.duplicate(true),
+	}
+
+
+## A hero's turn: use one equipped, untorn part ability from a legal launch rank against a
+## legal target rank. Validates everything (including rank masks and target presence) before
+## the first RNG draw, then spends the turn.
+func use_part(part_id: String, target_rank: int) -> Dictionary:
+	var gate := _require_side_turn("ability", "hero")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	var equipped := _equipment(actor, part_id)
+	if equipped.is_empty():
+		return _reject("ability", str(actor["id"]), "part is not equipped")
+	if bool(equipped["torn"]):
+		return _reject("ability", str(actor["id"]), "part is torn")
+	var ability := StitchedParts.ability_at_tier(_parts[equipped["id"]], int(equipped["tier"]))
+	if ability.is_empty():
+		return _reject("ability", str(actor["id"]), "part has no ability")
+	if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])):
+		return _reject(
+			"ability",
+			str(actor["id"]),
+			"part cannot launch from rank %d" % int(actor["rank"]),
+		)
+	var targets := _legal_targets(actor, ability, target_rank)
+	if targets.is_empty():
+		return _reject("ability", str(actor["id"]), "no legal target in rank %d" % target_rank)
+	# A mandatory self_move step is part of the action: refuse before any roll or state change
+	# rather than resolving the hit and then failing to move.
+	var blocked := _self_move_gate(actor, ability)
+	if not blocked.is_empty():
+		return blocked
+	var receipt := _resolve_ability(actor, ability, targets, part_id)
+	_advance_turn()
+	return receipt
+
+
+## A foe's turn: use one of its authored actions. Same validation and turn spending as a hero.
+func use_foe_ability(ability_id: String, target_rank: int) -> Dictionary:
+	var gate := _require_side_turn("ability", "foe")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	var ability := _foe_ability(actor, ability_id)
+	if ability.is_empty():
+		return _reject("ability", str(actor["id"]), "the foe has no ability " + ability_id)
+	if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])):
+		return _reject(
+			"ability",
+			str(actor["id"]),
+			"ability cannot launch from rank %d" % int(actor["rank"]),
+		)
+	var targets := _legal_targets(actor, ability, target_rank)
+	if targets.is_empty():
+		return _reject("ability", str(actor["id"]), "no legal target in rank %d" % target_rank)
+	var blocked := _self_move_gate(actor, ability)
+	if not blocked.is_empty():
+		return blocked
+	var receipt := _resolve_ability(actor, ability, targets, "")
+	_advance_turn()
+	return receipt
+
+
+## A hero's turn: swap with the adjacent ally in front (-1) or behind (1), or step into an
+## empty rank left by a lost ally. Tangled heroes can neither move nor be swapped.
+func move(direction: int) -> Dictionary:
+	var gate := _require_side_turn("move", "hero")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	if int(actor["statuses"].get("tangled", 0)) > 0:
+		return _reject("move", str(actor["id"]), "a tangled hero cannot move")
+	if direction != -1 and direction != 1:
+		return _reject("move", str(actor["id"]), "move is one rank forward (-1) or back (1)")
+	var destination := int(actor["rank"]) + direction
+	if destination < MIN_RANK or destination > MAX_RANK:
+		return _reject("move", str(actor["id"]), "there is no rank %d" % destination)
+	var other := _hero_at(destination)
+	if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
+		return _reject("move", str(actor["id"]), "a tangled ally cannot be swapped")
+	var from := int(actor["rank"])
+	var swapped := ""
+	if not other.is_empty():
+		other["rank"] = from
+		swapped = str(other["id"])
+	actor["rank"] = destination
+	_advance_turn()
+	return {
+		"ok": true,
+		"action": "move",
+		"actor": str(actor["id"]),
+		"from": from,
+		"to": destination,
+		"swapped": swapped,
+	}
+
+
+## Any unit's turn: spend it without acting.
+func pass_turn() -> Dictionary:
+	var gate := _require_turn("pass")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	_advance_turn()
+	return {
+		"ok": true,
+		"action": "pass",
+		"actor": str(actor["id"]),
+		"actor_side": str(actor["side"]),
+	}
+
+
+## The battle's Retreat button (section 2): only in a non-boss fight. 75% success ends the
+## fight with no reward and +15 fray on every living hero; a failed try spends the current
+## hero's turn. A boss encounter refuses for the whole fight, even once the boss is dead and
+## only its minions remain (the boss identity is stored at setup, never re-derived from the
+## living foes). It refuses before any RNG draw or state change.
+func retreat() -> Dictionary:
+	var gate := _require_side_turn("retreat", "hero")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	if _boss_encounter:
+		return _reject("retreat", str(actor["id"]), "a boss fight cannot be retreated")
+	var roll := _rng.randi_range(1, 100)
+	if retreat_succeeds(roll):
+		_outcome = "retreated"
+		for unit_id in _units:
+			var unit: Dictionary = _units[unit_id]
+			if str(unit["side"]) == "hero" and not bool(unit["lost"]):
+				unit["fray"] = int(unit["fray"]) + RETREAT_FRAY_GAIN
+		return {
+			"ok": true,
+			"action": "retreat",
+			"actor": str(actor["id"]),
+			"success": true,
+			"roll": roll,
+			"fray_gain": RETREAT_FRAY_GAIN,
+			"reward": {},
+		}
+	_advance_turn()
+	return {
+		"ok": true,
+		"action": "retreat",
+		"actor": str(actor["id"]),
+		"success": false,
+		"roll": roll,
+		"fray_gain": 0,
+		"reward": {},
+	}
+
+
+## Hit chance for one attempt: ability ACC + attacker ACC - target DODGE, plus 5 per
+## consecutive miss, clamped to 5..95.
+static func hit_chance(accuracy: int, dodge: int, miss_streak: int) -> int:
+	var chance := accuracy - dodge + MISS_STREAK_ACC * maxi(0, miss_streak)
+	return clampi(chance, HIT_MIN, HIT_MAX)
+
+
+## A crit deals 1.5x the ability's maximum range value (floored).
+static func crit_damage(range_max: int) -> int:
+	if range_max <= 0:
+		return 0
+	return int(range_max * CRIT_NUMERATOR / CRIT_DENOMINATOR)
+
+
+## PROT is a percentage cut capped at 80%, applied to direct damage only.
+static func apply_protection(damage: int, prot: int) -> int:
+	if damage <= 0:
+		return 0
+	var capped := clampi(prot, 0, PROT_CAP)
+	return damage - int(damage * capped / 100)
+
+
+## Damage after mark, Weak/Exposed, Tangled and PROT, in the order GAME_DESIGN.md defines:
+## the mark bonus is added first (like Pinned's +5), Weak and Exposed use the combined
+## 3/4 and 3/2 fractions with one floor, Tangled adds its flat +2, then PROT cuts the rest.
+static func damage_after_modifiers(
+	base: int,
+	attacker_statuses: Dictionary,
+	defender_statuses: Dictionary,
+	marked: bool,
+	mark_damage: int,
+	prot: int
+) -> int:
+	if base < 0:
+		return 0
+	var damage := base
+	if marked and mark_damage > 0:
+		damage += mark_damage
+	var weak := int(attacker_statuses.get("weak", 0)) > 0
+	var exposed := int(defender_statuses.get("exposed", 0)) > 0
+	var numerator := 1
+	var denominator := 1
+	if weak and exposed:
+		numerator = 9
+		denominator = 8
+	elif weak:
+		numerator = 3
+		denominator = 4
+	elif exposed:
+		numerator = 3
+		denominator = 2
+	if numerator != denominator:
+		@warning_ignore("integer_division")
+		var whole: int = damage / denominator
+		@warning_ignore("integer_division")
+		var partial: int = (damage % denominator) * numerator / denominator
+		damage = whole * numerator + partial
+	if damage > 0 and int(defender_statuses.get("tangled", 0)) > 0:
+		damage += 2
+	return apply_protection(damage, prot)
+
+
+## A seam check holds on 1..67 and the hero is LOST on 68..100.
+static func seam_holds(roll: int) -> bool:
+	return roll >= 1 and roll <= SEAM_HOLD_PERCENT
+
+
+## A retreat try succeeds on 1..75.
+static func retreat_succeeds(roll: int) -> bool:
+	return roll >= 1 and roll <= RETREAT_SUCCESS_PERCENT
+
+
+## A defeated foe's scrap heap keeps one third of its max HP (floored, at least 1).
+static func heap_hp_for(max_hp: int) -> int:
+	if max_hp <= 0:
+		return 0
+	return maxi(1, int(max_hp / 3))
+
+
+## Pure turn-order sort used by the round roll and by tests: highest total first, heroes
+## before foes on a tie, then the lower rank, then the original sequence.
+static func sort_turn_entries(entries: Array) -> Array:
+	var sorted: Array = entries.duplicate(true)
+	sorted.sort_custom(_order_before)
+	return sorted
+
+
+static func _order_before(a: Dictionary, b: Dictionary) -> bool:
+	if int(a["total"]) != int(b["total"]):
+		return int(a["total"]) > int(b["total"])
+	if str(a["side"]) != str(b["side"]):
+		return str(a["side"]) == "hero"
+	if int(a["rank"]) != int(b["rank"]):
+		return int(a["rank"]) < int(b["rank"])
+	return int(a["seq"]) < int(b["seq"])
+
+
+func _setup(config: Dictionary) -> String:
+	var catalog := StitchedParts.build_catalog(config.get("parts", []))
+	if not catalog["ok"]:
+		return str(catalog["error"])
+	_parts = catalog["by_id"]
+	var seed_value: Variant = config.get("seed")
+	if not _integral(seed_value):
+		return "seed must be an integer"
+	var heroes: Variant = config.get("heroes")
+	if not heroes is Array or heroes.size() != HERO_COUNT:
+		return "stitched mode needs exactly four heroes"
+	var foes: Variant = config.get("foes")
+	if not foes is Array or foes.size() < MIN_FOES or foes.size() > MAX_FOES:
+		return "stitched mode starts with two or three foes, never four"
+	var rank := 0
+	for entry in heroes:
+		rank += 1
+		var built := _build_hero(entry, rank)
+		if not built["ok"]:
+			return str(built["error"])
+		_units[str(built["unit"]["id"])] = built["unit"]
+	rank = 0
+	for entry in foes:
+		rank += 1
+		var built := _build_foe(entry, rank)
+		if not built["ok"]:
+			return str(built["error"])
+		_units[str(built["unit"]["id"])] = built["unit"]
+		if bool(built["unit"]["is_boss"]):
+			_boss_encounter = true
+	_valid = true
+	_rng = RandomNumberGenerator.new()
+	_rng.seed = int(seed_value)
+	_round = 0
+	_outcome = "ongoing"
+	_begin_round()
+	_enter_turn()
+	return ""
+
+
+func _build_hero(entry: Variant, rank: int) -> Dictionary:
+	if not entry is Dictionary:
+		return {"ok": false, "error": "hero is not a dictionary", "unit": {}}
+	var unit_id := _valid_text(entry.get("id"))
+	if unit_id.is_empty():
+		return {"ok": false, "error": "hero needs a nonempty id", "unit": {}}
+	if _units.has(unit_id):
+		return {"ok": false, "error": "duplicate unit id: " + unit_id, "unit": {}}
+	var name := _valid_text(entry.get("name"))
+	if name.is_empty():
+		return {"ok": false, "error": "hero " + unit_id + " needs a name", "unit": {}}
+	var max_hp := _positive_int(entry.get("max_hp"))
+	if max_hp <= 0:
+		return {"ok": false, "error": "hero " + unit_id + " needs positive max_hp", "unit": {}}
+	var stats := {}
+	for key in ["speed", "dodge", "acc", "prot"]:
+		var value := _nonnegative_int(entry.get(key, 0))
+		if value < 0:
+			return {
+				"ok": false,
+				"error": "hero " + unit_id + " needs a nonnegative " + key,
+				"unit": {},
+			}
+		stats[key] = value
+	var equipped: Variant = entry.get("parts")
+	if not equipped is Dictionary:
+		return {
+			"ok": false,
+			"error": "hero " + unit_id + " needs four equipped slots",
+			"unit": {},
+		}
+	if equipped.size() != StitchedParts.SLOTS.size():
+		return {
+			"ok": false,
+			"error": "hero " + unit_id + " needs exactly four equipped slots",
+			"unit": {},
+		}
+	var parts: Dictionary = {}
+	for slot in StitchedParts.SLOTS:
+		if not equipped.has(slot):
+			return {
+				"ok": false,
+				"error": "hero " + unit_id + " is missing the " + slot + " slot",
+				"unit": {},
+			}
+		var worn := _build_equipment(equipped[slot], slot, "hero " + unit_id)
+		if not worn["ok"]:
+			return {"ok": false, "error": str(worn["error"]), "unit": {}}
+		parts[slot] = worn["equipment"]
+	var unit := {
+		"id": unit_id,
+		"name": name,
+		"side": "hero",
+		"rank": rank,
+		"base_max_hp": max_hp,
+		"max_hp": 0,
+		"hp": 0,
+		"base_speed": stats["speed"],
+		"speed": 0,
+		"base_dodge": stats["dodge"],
+		"dodge": 0,
+		"base_acc": stats["acc"],
+		"acc": 0,
+		"base_prot": stats["prot"],
+		"prot": 0,
+		"crit": 0,
+		"dmg_bonus": 0,
+		"fray": 0,
+		"statuses": {},
+		"parts": parts,
+		"abilities": [],
+		"is_boss": false,
+		"turns_per_round": 1,
+		"hanging": false,
+		"lost": false,
+		"dead": false,
+		"miss_streak": 0,
+		"guard_target": "",
+	}
+	_recompute_stats(unit)
+	unit["hp"] = int(unit["max_hp"])
+	return {"ok": true, "error": "", "unit": unit}
+
+
+func _build_foe(entry: Variant, rank: int) -> Dictionary:
+	if not entry is Dictionary:
+		return {"ok": false, "error": "foe is not a dictionary", "unit": {}}
+	var unit_id := _valid_text(entry.get("id"))
+	if unit_id.is_empty():
+		return {"ok": false, "error": "foe needs a nonempty id", "unit": {}}
+	if _units.has(unit_id):
+		return {"ok": false, "error": "duplicate unit id: " + unit_id, "unit": {}}
+	var name := _valid_text(entry.get("name"))
+	if name.is_empty():
+		return {"ok": false, "error": "foe " + unit_id + " needs a name", "unit": {}}
+	var max_hp := _positive_int(entry.get("max_hp"))
+	if max_hp <= 0:
+		return {"ok": false, "error": "foe " + unit_id + " needs positive max_hp", "unit": {}}
+	var stats := {}
+	for key in ["speed", "dodge", "acc", "prot"]:
+		var value := _nonnegative_int(entry.get(key, 0))
+		if value < 0:
+			return {"ok": false, "error": "foe " + unit_id + " needs a nonnegative " + key, "unit": {}}
+		stats[key] = value
+	var is_boss: Variant = entry.get("is_boss", false)
+	if not is_boss is bool:
+		return {"ok": false, "error": "foe " + unit_id + " is_boss must be a boolean", "unit": {}}
+	var turns := _positive_int(entry.get("turns_per_round", 1))
+	if turns < 1 or turns > 2:
+		return {"ok": false, "error": "foe " + unit_id + " may take one or two turns", "unit": {}}
+	# Only a boss may take the two-turn exception; an ordinary foe always acts once a round.
+	if turns > 1 and not bool(is_boss):
+		return {
+			"ok": false,
+			"error": "foe " + unit_id + " may only take two turns as a boss",
+			"unit": {},
+		}
+	var authored: Variant = entry.get("abilities")
+	if not authored is Array or authored.is_empty():
+		return {"ok": false, "error": "foe " + unit_id + " needs at least one ability", "unit": {}}
+	var abilities: Array = []
+	var ability_ids: Array = []
+	for ability_entry in authored:
+		var result := StitchedParts.validate_ability(ability_entry, "foe " + unit_id + " ability")
+		if not result["ok"]:
+			return {"ok": false, "error": str(result["error"]), "unit": {}}
+		var ability: Dictionary = result["ability"]
+		var ability_id := str(ability["id"])
+		if ability_id in ability_ids:
+			return {
+				"ok": false,
+				"error": "foe " + unit_id + " repeats ability " + ability_id,
+				"unit": {},
+			}
+		ability_ids.append(ability_id)
+		abilities.append(ability)
+	var unit := {
+		"id": unit_id,
+		"name": name,
+		"side": "foe",
+		"rank": rank,
+		"base_max_hp": max_hp,
+		"max_hp": max_hp,
+		"hp": max_hp,
+		"base_speed": stats["speed"],
+		"speed": stats["speed"],
+		"base_dodge": stats["dodge"],
+		"dodge": stats["dodge"],
+		"base_acc": stats["acc"],
+		"acc": stats["acc"],
+		"base_prot": stats["prot"],
+		"prot": stats["prot"],
+		"crit": 0,
+		"dmg_bonus": 0,
+		"fray": 0,
+		"statuses": {},
+		"parts": {},
+		"abilities": abilities,
+		"is_boss": bool(is_boss),
+		"turns_per_round": turns,
+		"hanging": false,
+		"lost": false,
+		"dead": false,
+		"miss_streak": 0,
+		"guard_target": "",
+	}
+	return {"ok": true, "error": "", "unit": unit}
+
+
+func _build_equipment(value: Variant, slot: String, label: String) -> Dictionary:
+	var worn: Dictionary = {}
+	if value is String:
+		worn = {"id": str(value), "tier": 1, "torn": false}
+	elif value is Dictionary:
+		var part_id := _valid_text(value.get("id"))
+		if part_id.is_empty():
+			return {"ok": false, "error": label + " " + slot + " needs a part id", "equipment": {}}
+		var tier := _positive_int(value.get("tier", 1))
+		if tier < StitchedParts.MIN_TIER or tier > StitchedParts.MAX_TIER:
+			return {
+				"ok": false,
+				"error": "%s %s has an illegal tier" % [label, slot],
+				"equipment": {},
+			}
+		var torn: Variant = value.get("torn", false)
+		if not torn is bool:
+			return {
+				"ok": false,
+				"error": label + " " + slot + " torn must be a boolean",
+				"equipment": {},
+			}
+		worn = {"id": part_id, "tier": tier, "torn": bool(torn)}
+	else:
+		return {"ok": false, "error": label + " " + slot + " is not a part", "equipment": {}}
+	if not _parts.has(worn["id"]):
+		return {
+			"ok": false,
+			"error": label + " wears an unknown part: " + str(worn["id"]),
+			"equipment": {},
+		}
+	var part: Dictionary = _parts[worn["id"]]
+	if str(part["slot"]) != slot:
+		return {
+			"ok": false,
+			"error": "%s %s cannot wear the %s part %s" % [label, slot, str(part["slot"]), worn["id"]],
+			"equipment": {},
+		}
+	return {"ok": true, "error": "", "equipment": worn}
+
+
+func _recompute_stats(unit: Dictionary) -> void:
+	var totals := {"acc": 0, "crit": 0, "dmg": 0, "max_hp": 0, "prot": 0, "speed": 0, "dodge": 0}
+	var parts: Dictionary = unit["parts"]
+	for slot in parts:
+		var worn: Dictionary = parts[slot]
+		if bool(worn["torn"]):
+			continue
+		var stat := StitchedParts.stat_at_tier(_parts[worn["id"]], int(worn["tier"]))
+		for key in stat:
+			totals[key] = int(totals.get(key, 0)) + int(stat[key])
+	unit["acc"] = int(unit["base_acc"]) + int(totals["acc"])
+	unit["crit"] = int(totals["crit"])
+	# Arms grant damage: the equipped parts' dmg stat is a flat bonus on every direct attack.
+	unit["dmg_bonus"] = int(totals["dmg"])
+	unit["max_hp"] = int(unit["base_max_hp"]) + int(totals["max_hp"])
+	unit["prot"] = int(unit["base_prot"]) + int(totals["prot"])
+	unit["speed"] = int(unit["base_speed"]) + int(totals["speed"])
+	unit["dodge"] = int(unit["base_dodge"]) + int(totals["dodge"])
+
+
+func _begin_round() -> void:
+	_round += 1
+	_turn_index = 0
+	_order = _roll_order()
+
+
+## Rolls SPEED + 1d8 for every living unit. Draw order is heroes by rank (1..4), then foes
+## by rank (1..3), each unit exactly one draw; a boss is inserted once per turn it takes.
+func _roll_order() -> Array:
+	var entries: Array = []
+	var sequence := 0
+	for unit in _units_of_side("hero"):
+		if bool(unit["lost"]):
+			continue
+		var total := int(unit["speed"]) + _rng.randi_range(1, D8)
+		entries.append({
+			"id": str(unit["id"]),
+			"side": "hero",
+			"rank": int(unit["rank"]),
+			"total": total,
+			"seq": sequence,
+		})
+		sequence += 1
+	for unit in _units_of_side("foe"):
+		if bool(unit["dead"]) or int(unit["hp"]) <= 0:
+			continue
+		var total := int(unit["speed"]) + _rng.randi_range(1, D8)
+		for _turn in range(int(unit["turns_per_round"])):
+			entries.append({
+				"id": str(unit["id"]),
+				"side": "foe",
+				"rank": int(unit["rank"]),
+				"total": total,
+				"seq": sequence,
+			})
+			sequence += 1
+	var sorted := sort_turn_entries(entries)
+	var order: Array = []
+	for entry in sorted:
+		order.append(str(entry["id"]))
+	return order
+
+
+## Walks forward from the current turn pointer until a unit that can actually act is found.
+## A stunned unit's turn is consumed here; a new round rolls a fresh order.
+func _enter_turn() -> void:
+	while true:
+		if _battle_finished():
+			return
+		if _turn_index >= _order.size():
+			_begin_round()
+			continue
+		var unit_id := str(_order[_turn_index])
+		if not _units.has(unit_id):
+			_turn_index += 1
+			continue
+		var unit: Dictionary = _units[unit_id]
+		if not _can_act(unit):
+			_turn_index += 1
+			continue
+		if _tick_turn_start(unit):
+			_turn_index += 1
+			continue
+		return
+
+
+## Start-of-turn status tick. Returns true when the turn is consumed (stun or bleed death).
+func _tick_turn_start(unit: Dictionary) -> bool:
+	var statuses: Dictionary = unit["statuses"]
+	if int(statuses.get("stun", 0)) > 0:
+		statuses["stun"] = int(statuses["stun"]) - 1
+		if int(statuses["stun"]) <= 0:
+			statuses.erase("stun")
+		statuses["stun_resist"] = 1
+		return true
+	var bleed := int(statuses.get("bleed", 0))
+	if bleed > 0:
+		statuses["bleed"] = bleed - 1
+		if int(statuses["bleed"]) <= 0:
+			statuses.erase("bleed")
+		if int(unit["hp"]) > 0:
+			unit["hp"] = maxi(0, int(unit["hp"]) - bleed)
+			if int(unit["hp"]) == 0:
+				_begin_hanging_or_death(unit)
+				return true
+	for key in COUNTDOWN_KEYS:
+		if not statuses.has(key):
+			continue
+		statuses[key] = int(statuses[key]) - 1
+		if int(statuses[key]) <= 0:
+			statuses.erase(key)
+			if key == "guard":
+				unit["guard_target"] = ""
+	return false
+
+
+func _begin_hanging_or_death(unit: Dictionary) -> void:
+	if str(unit["side"]) == "hero":
+		unit["hanging"] = true
+		return
+	_kill_foe(unit)
+
+
+func _advance_turn() -> void:
+	if _outcome != "ongoing":
+		return
+	_turn_index += 1
+	_enter_turn()
+
+
+func _require_turn(action: String) -> Dictionary:
+	if _outcome != "ongoing":
+		return _reject(action, "", "the battle is over")
+	if _order.is_empty() or _turn_index < 0 or _turn_index >= _order.size():
+		return _reject(action, "", "no unit has the turn")
+	var unit_id := str(_order[_turn_index])
+	if not _units.has(unit_id):
+		return _reject(action, unit_id, "the acting unit is missing")
+	var unit: Dictionary = _units[unit_id]
+	if not _can_act(unit):
+		return _reject(action, unit_id, "the acting unit cannot act")
+	return {}
+
+
+func _require_side_turn(action: String, side: String) -> Dictionary:
+	var gate := _require_turn(action)
+	if not gate.is_empty():
+		return gate
+	var unit_id := str(_order[_turn_index])
+	if str(_units[unit_id]["side"]) != side:
+		return _reject(action, unit_id, "it is not a " + side + " turn")
+	return {}
+
+
+func _reject(action: String, actor: String, error: String) -> Dictionary:
+	return {"ok": false, "action": action, "actor": actor, "error": error}
+
+
+func _current_unit() -> Dictionary:
+	return _units[str(_order[_turn_index])]
+
+
+func _equipment(unit: Dictionary, part_id: String) -> Dictionary:
+	var parts: Dictionary = unit.get("parts", {})
+	for slot in parts:
+		if str(parts[slot]["id"]) == part_id:
+			return parts[slot]
+	return {}
+
+
+func _foe_ability(foe: Dictionary, ability_id: String) -> Dictionary:
+	for ability in foe.get("abilities", []):
+		if str(ability["id"]) == ability_id:
+			return ability
+	return {}
+
+
+func _legal_targets(actor: Dictionary, ability: Dictionary, target_rank: int) -> Array:
+	var targets: Array = []
+	if target_rank < MIN_RANK or target_rank > MAX_RANK:
+		return targets
+	var mask := int(ability["target_mask"])
+	if not StitchedParts.ranks_allowed(mask, target_rank):
+		return targets
+	var side := str(ability["target_side"])
+	if side == "self":
+		if target_rank == int(actor["rank"]):
+			targets.append(actor)
+		return targets
+	# "enemy" and "ally" are relative to the acting unit: a hero's enemy is a foe and a
+	# foe's enemy is a hero, so one authored ability works on either side of the fight.
+	var absolute := str(actor["side"])
+	if side == "enemy":
+		absolute = "foe" if str(actor["side"]) == "hero" else "hero"
+	if not bool(ability["multi"]):
+		var single := _unit_at(absolute, target_rank)
+		if not single.is_empty():
+			targets.append(single)
+		return targets
+	for rank in range(MIN_RANK, MAX_RANK + 1):
+		if not StitchedParts.ranks_allowed(mask, rank):
+			continue
+		var unit := _unit_at(absolute, rank)
+		if not unit.is_empty():
+			targets.append(unit)
+	return targets
+
+
+func _resolve_ability(
+	actor: Dictionary, ability: Dictionary, targets: Array, part_id: String
+) -> Dictionary:
+	var results: Array = []
+	for target in targets:
+		if str(target["side"]) == "foe" and (bool(target["dead"]) or int(target["hp"]) <= 0):
+			continue
+		results.append(_resolve_single(actor, ability, target))
+	var receipt := {
+		"ok": true,
+		"action": "ability",
+		"actor": str(actor["id"]),
+		"actor_side": str(actor["side"]),
+		"ability": str(ability["id"]),
+		"part": part_id,
+		"results": results,
+	}
+	if results.size() == 1:
+		receipt["target"] = str(results[0]["target"])
+	var self_move := int(ability["self_move"])
+	if self_move != 0 and _can_act(actor):
+		receipt["self_move"] = _shift(actor, self_move)
+	return receipt
+
+
+func _resolve_single(actor: Dictionary, ability: Dictionary, target: Dictionary) -> Dictionary:
+	var receipt := {
+		"target": str(target["id"]),
+		"target_side": str(target["side"]),
+		"target_rank": int(target["rank"]),
+		"hit": false,
+		"crit": false,
+		"damage": 0,
+		"target_hp": int(target["hp"]),
+		"seam": "",
+		"hanging": false,
+		"lost": false,
+		"statuses": [],
+	}
+	if str(ability["target_side"]) != "enemy":
+		_apply_effects(actor, target, ability, receipt)
+		receipt["hit"] = true
+		return receipt
+	var aimed := target
+	if str(aimed["side"]) == "hero":
+		var guardian := _guardian_for(aimed)
+		if not guardian.is_empty():
+			aimed = guardian
+			receipt["guarded_by"] = str(guardian["id"])
+			receipt["target"] = str(guardian["id"])
+			receipt["target_rank"] = int(guardian["rank"])
+	_resolve_attack(actor, ability, aimed, receipt)
+	return receipt
+
+
+func _resolve_attack(
+	actor: Dictionary, ability: Dictionary, target: Dictionary, receipt: Dictionary
+) -> void:
+	var actor_statuses: Dictionary = actor["statuses"]
+	var blinded := int(actor_statuses.get("blind", 0)) > 0
+	var chance := hit_chance(
+		int(ability["acc"]) + int(actor["acc"]),
+		int(target.get("dodge", 0)),
+		int(actor["miss_streak"])
+	)
+	receipt["hit_chance"] = chance
+	var hit := false
+	if blinded:
+		actor_statuses.erase("blind")
+		receipt["blinded"] = true
+	else:
+		var roll := _rng.randi_range(1, 100)
+		receipt["roll"] = roll
+		hit = roll <= chance
+	receipt["hit"] = hit
+	if not hit:
+		actor["miss_streak"] = int(actor["miss_streak"]) + 1
+		return
+	actor["miss_streak"] = 0
+	var maximum := int(ability["dmg"][1])
+	# A confirmed 0-damage hit (a pure debuff such as Mark) still applies its authored effects;
+	# only the damage and crit rolls are skipped. The equipped arms' dmg stat is a flat bonus
+	# added to the direct attack base (critical or not) before Weak/Exposed/Tangled/PROT.
+	if maximum > 0:
+		var critical := _rng.randi_range(1, 100) <= CRIT_BASE + int(ability["crit"]) + int(actor["crit"])
+		receipt["crit"] = critical
+		var base := 0
+		if critical:
+			base = crit_damage(maximum)
+		else:
+			base = _rng.randi_range(int(ability["dmg"][0]), maximum)
+		base += int(actor.get("dmg_bonus", 0))
+		if critical:
+			actor["fray"] = maxi(0, int(actor["fray"]) - CRIT_FRAY_RELIEF)
+			receipt["fray_relief"] = CRIT_FRAY_RELIEF
+		var marked := int(target["statuses"].get("mark", 0)) > 0
+		var damage := damage_after_modifiers(
+			base,
+			actor_statuses,
+			target["statuses"],
+			marked,
+			int(ability["mark_damage"]),
+			int(target.get("prot", 0))
+		)
+		receipt["damage"] = damage
+		_damage_target(target, damage, receipt)
+	_apply_effects(actor, target, ability, receipt)
+	# Thorns and Riposte are reaction damage: they answer a confirmed hit and ignore PROT.
+	var thorns := int(target["statuses"].get("thorns", 0))
+	if thorns > 0 and int(target["hp"]) > 0:
+		_damage_attacker(actor, thorns, receipt, "thorns")
+	var riposte := int(target["statuses"].get("riposte", 0))
+	if riposte > 0 and int(target["hp"]) > 0:
+		_damage_attacker(actor, riposte, receipt, "riposte")
+
+
+func _apply_effects(
+	actor: Dictionary, target: Dictionary, ability: Dictionary, receipt: Dictionary
+) -> void:
+	var effects: Dictionary = ability["effects"]
+	for key in effects:
+		var value := int(effects[key])
+		if key == "heal":
+			if str(target["side"]) == "hero" and not bool(target["lost"]):
+				var before := int(target["hp"])
+				target["hp"] = mini(int(target["max_hp"]), before + value)
+				if int(target["hp"]) > 0:
+					target["hanging"] = false
+				receipt["statuses"].append({
+					"status": "heal",
+					"amount": int(target["hp"]) - before,
+				})
+			continue
+		if key == "guard":
+			actor["statuses"]["guard"] = maxi(int(actor["statuses"].get("guard", 0)), value)
+			actor["guard_target"] = str(target["id"])
+			receipt["statuses"].append({
+				"status": "guard",
+				"duration": int(actor["statuses"]["guard"]),
+				"guards": str(target["id"]),
+			})
+			continue
+		if str(target["side"]) == "heap":
+			continue
+		if key == "stun" and int(target["statuses"].get("stun_resist", 0)) > 0:
+			receipt["statuses"].append({"status": "stun", "refused": true})
+			continue
+		target["statuses"][key] = maxi(int(target["statuses"].get(key, 0)), value)
+		receipt["statuses"].append({"status": key, "duration": value})
+
+
+func _damage_target(target: Dictionary, damage: int, receipt: Dictionary) -> void:
+	var side := str(target["side"])
+	if side == "heap":
+		target["hp"] = maxi(0, int(target["hp"]) - damage)
+		receipt["target_hp"] = int(target["hp"])
+		if int(target["hp"]) == 0:
+			_clear_heap(target)
+			receipt["heap_cleared"] = true
+		return
+	var was_hanging := bool(target["hanging"])
+	target["hp"] = maxi(0, int(target["hp"]) - damage)
+	receipt["target_hp"] = int(target["hp"])
+	if side == "hero":
+		if int(target["hp"]) == 0:
+			if was_hanging:
+				var seam_roll := _rng.randi_range(1, 100)
+				receipt["seam_roll"] = seam_roll
+				if seam_holds(seam_roll):
+					receipt["seam"] = "hold"
+				else:
+					receipt["seam"] = "lost"
+					receipt["lost"] = true
+					target["lost"] = true
+					target["statuses"] = {}
+			elif not bool(target["hanging"]):
+				target["hanging"] = true
+				receipt["hanging"] = true
+		return
+	if int(target["hp"]) == 0 and not bool(target["dead"]):
+		receipt["heap"] = _kill_foe(target)
+
+
+func _damage_attacker(
+	actor: Dictionary, amount: int, receipt: Dictionary, source: String
+) -> void:
+	receipt[source] = amount
+	var was_hanging := bool(actor["hanging"])
+	actor["hp"] = maxi(0, int(actor["hp"]) - amount)
+	receipt["attacker_hp"] = int(actor["hp"])
+	if str(actor["side"]) == "hero":
+		if int(actor["hp"]) == 0:
+			if was_hanging:
+				var seam_roll := _rng.randi_range(1, 100)
+				receipt["attacker_seam_roll"] = seam_roll
+				if seam_holds(seam_roll):
+					receipt["attacker_seam"] = "hold"
+				else:
+					receipt["attacker_seam"] = "lost"
+					receipt["attacker_lost"] = true
+					actor["lost"] = true
+					actor["statuses"] = {}
+			elif not bool(actor["hanging"]):
+				actor["hanging"] = true
+				receipt["attacker_hanging"] = true
+		return
+	if int(actor["hp"]) == 0 and not bool(actor["dead"]):
+		receipt["attacker_heap"] = _kill_foe(actor)
+
+
+## Validity of a mandatory self_move step, checked without changing anything. A hero swaps
+## with the ally in the destination rank, so that ally must not be Tangled either; a foe only
+## steps into a rank with no living foe and no scrap heap. Used both to preflight an ability
+## (before any action) and to perform the step itself.
+func _shift_valid(unit: Dictionary, direction: int) -> Dictionary:
+	var from := int(unit["rank"])
+	var destination := from + direction
+	if direction < -1 or direction > 1 or direction == 0:
+		return {"ok": false, "reason": "there is no rank %d" % destination}
+	if destination < MIN_RANK or destination > MAX_RANK:
+		return {"ok": false, "reason": "there is no rank %d" % destination}
+	if int(unit["statuses"].get("tangled", 0)) > 0:
+		return {"ok": false, "reason": "tangled units cannot move"}
+	if str(unit["side"]) == "hero":
+		var other := _hero_at(destination)
+		if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
+			return {"ok": false, "reason": "a tangled ally cannot be swapped"}
+		return {"ok": true, "reason": "", "destination": destination}
+	if not _foe_at(destination).is_empty() or not _heap_at(destination).is_empty():
+		return {"ok": false, "reason": "rank %d is taken" % destination}
+	return {"ok": true, "reason": "", "destination": destination}
+
+
+## Returns a refusal receipt when an ability's mandatory self_move step is impossible, so the
+## action never resolves and the turn is not spent; {} when the step is legal.
+func _self_move_gate(actor: Dictionary, ability: Dictionary) -> Dictionary:
+	var direction := int(ability["self_move"])
+	if direction == 0:
+		return {}
+	var plan := _shift_valid(actor, direction)
+	if bool(plan["ok"]):
+		return {}
+	return _reject("ability", str(actor["id"]), "self move is blocked: " + str(plan["reason"]))
+
+
+## Moves a unit one rank for a self_move ability; heroes swap with the ally in the way,
+## foes only step into an empty rank. Tangled units refuse to be moved.
+func _shift(unit: Dictionary, direction: int) -> Dictionary:
+	var plan := _shift_valid(unit, direction)
+	if not plan["ok"]:
+		return {"ok": false, "reason": str(plan["reason"])}
+	var destination := int(plan["destination"])
+	var from := int(unit["rank"])
+	var swapped := ""
+	if str(unit["side"]) == "hero":
+		var other := _hero_at(destination)
+		if not other.is_empty():
+			other["rank"] = from
+			swapped = str(other["id"])
+	unit["rank"] = destination
+	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
+
+
+func _guardian_for(target: Dictionary) -> Dictionary:
+	if str(target["side"]) != "hero":
+		return {}
+	for unit_id in _units:
+		var unit: Dictionary = _units[unit_id]
+		if str(unit["side"]) != "hero" or str(unit["id"]) == str(target["id"]):
+			continue
+		if bool(unit["lost"]):
+			continue
+		if int(unit["statuses"].get("guard", 0)) <= 0:
+			continue
+		if str(unit.get("guard_target", "")) != str(target["id"]):
+			continue
+		return unit
+	return {}
+
+
+func _kill_foe(foe: Dictionary) -> Dictionary:
+	foe["dead"] = true
+	foe["hp"] = 0
+	foe["hanging"] = false
+	foe["statuses"] = {}
+	var heap_hp := heap_hp_for(int(foe["max_hp"]))
+	var heap := {
+		"id": "heap:" + str(foe["id"]),
+		"side": "heap",
+		"rank": int(foe["rank"]),
+		"hp": heap_hp,
+		"max_hp": heap_hp,
+		"foe_id": str(foe["id"]),
+		"statuses": {},
+	}
+	_heaps.append(heap)
+	return {"rank": int(heap["rank"]), "hp": int(heap["hp"])}
+
+
+func _clear_heap(heap: Dictionary) -> void:
+	for index in range(_heaps.size() - 1, -1, -1):
+		if str(_heaps[index]["id"]) == str(heap["id"]):
+			_heaps.remove_at(index)
+	_compact_foe_ranks()
+
+
+## A cleared heap lets the foes behind it step forward, one rank per vacant gap. Only vacant
+## ranks close up: a rank still holding an uncleared heap keeps blocking forward progress, so
+## a foe behind a heap never jumps across it.
+func _compact_foe_ranks() -> void:
+	var moved := true
+	while moved:
+		moved = false
+		for rank in range(MIN_RANK, MAX_RANK):
+			if _enemy_rank_taken(rank):
+				continue
+			for behind in range(rank + 1, MAX_RANK + 1):
+				if not _enemy_rank_taken(behind):
+					continue
+				var foe := _foe_at(behind)
+				if foe.is_empty():
+					break
+				foe["rank"] = rank
+				moved = true
+				break
+
+
+func _enemy_rank_taken(rank: int) -> bool:
+	return not _foe_at(rank).is_empty() or not _heap_at(rank).is_empty()
+
+
+func _unit_at(side: String, rank: int) -> Dictionary:
+	if side == "foe":
+		var foe := _foe_at(rank)
+		if not foe.is_empty():
+			return foe
+		return _heap_at(rank)
+	return _hero_at(rank)
+
+
+func _hero_at(rank: int) -> Dictionary:
+	for unit in _units_of_side("hero"):
+		if int(unit["rank"]) == rank and not bool(unit["lost"]):
+			return unit
+	return {}
+
+
+func _foe_at(rank: int) -> Dictionary:
+	for unit in _units_of_side("foe"):
+		if int(unit["rank"]) == rank and not bool(unit["dead"]) and int(unit["hp"]) > 0:
+			return unit
+	return {}
+
+
+func _heap_at(rank: int) -> Dictionary:
+	for heap in _heaps:
+		if int(heap["rank"]) == rank:
+			return heap
+	return {}
+
+
+func _units_of_side(side: String) -> Array:
+	var units: Array = []
+	for unit_id in _units:
+		if str(_units[unit_id]["side"]) == side:
+			units.append(_units[unit_id])
+	units.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return int(a["rank"]) < int(b["rank"]))
+	return units
+
+
+func _sorted_ids() -> Array:
+	var ids: Array = []
+	for unit in _units_of_side("hero"):
+		ids.append(str(unit["id"]))
+	for unit in _units_of_side("foe"):
+		ids.append(str(unit["id"]))
+	return ids
+
+
+func _can_act(unit: Dictionary) -> bool:
+	if str(unit["side"]) == "hero":
+		return not bool(unit["lost"])
+	return int(unit["hp"]) > 0 and not bool(unit["dead"])
+
+
+func _living_foes() -> Array:
+	var living: Array = []
+	for unit in _units_of_side("foe"):
+		if not bool(unit["dead"]) and int(unit["hp"]) > 0:
+			living.append(unit)
+	return living
+
+
+func _battle_finished() -> bool:
+	if _outcome != "ongoing":
+		return true
+	if _living_foes().is_empty():
+		_outcome = "victory"
+		return true
+	for unit in _units_of_side("hero"):
+		if not bool(unit["lost"]):
+			return false
+	_outcome = "defeat"
+	return true
+
+
+static func _integral(value: Variant) -> bool:
+	if typeof(value) == TYPE_INT:
+		return true
+	return typeof(value) == TYPE_FLOAT and is_finite(value) and value == floor(value)
+
+
+static func _positive_int(value: Variant) -> int:
+	if not _integral(value):
+		return -1
+	return int(value)
+
+
+static func _nonnegative_int(value: Variant) -> int:
+	if not _integral(value) or int(value) < 0:
+		return -1
+	return int(value)
+
+
+static func _valid_text(value: Variant) -> String:
+	if typeof(value) != TYPE_STRING:
+		return ""
+	var text: String = value
+	if text.is_empty() or text != text.strip_edges():
+		return ""
+	return text
