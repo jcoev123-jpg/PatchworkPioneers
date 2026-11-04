@@ -1291,8 +1291,22 @@ func _resolve_attack(party: CombatParty, enemies: CombatEnemies, id: String, pos
 		var mitt_quote := {}
 		if _fray != null:
 			mitt_quote = _fray.quote_heavy_hit(id, position)
+		# The selected, physically held heavy card uses the battle's carried
+		# Needle HEAD and exactly the same live Pinned authority as the resolver.
+		var needle_rules: CombatHeirloomPatchTriggers = null
+		var needle_quote := {}
+		if CombatHeirloomPatchTriggers.NEEDLE_WARDEN_HEAVY.has(id) and position > 0 \
+				and _deck != null and _deck.hand.has(id):
+			var hand = get_parent().get_node_or_null("LiveSupportHand")
+			if hand != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, party)
+				if current != null and current._pinned == _pinned and current._enemies == enemies:
+					var offered: Dictionary = current.quote_needle_hit("warden", position, id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
 		var committed := _heavy_attacks.play_attack(_deck, party, enemies, id, position,
-			{}, {}, _pinned, _play._patches, _fray, mitt_quote)
+			{}, {}, _pinned, _play._patches, _fray, mitt_quote, needle_rules, needle_quote)
 		var mitt_confirmed := true
 		if committed.get("ok", false) and mitt_quote.get("bonus") == 2:
 			mitt_confirmed = _fray.consume_confirmed_hit(mitt_quote, committed)

@@ -19,6 +19,8 @@ func _initialize() -> void:
 	_test_patch_ac1_pincushion_arm_damage_bonus()
 	_test_patch_ac2_button_eye_exposed_and_latch()
 	_test_patch_ac3_projection_rejections_and_replay()
+	_test_needle_heavy_first_hit_receipts()
+	_test_needle_heavy_fail_closed()
 	_finish()
 
 
@@ -1840,3 +1842,145 @@ func _test_patch_ac3_projection_rejections_and_replay() -> void:
 	var rep1: Dictionary = replay_sequence.call(1234)
 	var rep2: Dictionary = replay_sequence.call(1234)
 	_check(rep1 == rep2, "AC3: patched play sequence is 100% deterministic under identical seed")
+
+## P12: use the exact authored heavy definitions with genuine battle/run
+## ledgers; never substitute a detached bonus number for a worn HEAD quote.
+func _heavy_needle_context(card_id: String, wearer: String = "warden",
+		pin_owner: String = "warden", weak_exposed: bool = false) -> Dictionary:
+	var party := _party_with_statuses({"weak": 1} if weak_exposed else {})
+	var foes := _enemies([120, 120, 120])
+	var deck := _deck([card_id, card_id, "warden_pin_and_pound"])
+	var torn := RunTornMending.new(party.get_heroes())
+	var wardrobe := RunPatchWardrobe.new(party.get_heroes(), ["needle_echo"],
+		RunAuthoredPatchDefinitions.load_definitions(), 5)
+	_check(torn.is_valid() and wardrobe.is_valid(), "heavy Needle real ledger preconditions")
+	if not wearer.is_empty():
+		_check(wardrobe.sew("needle_echo", wearer, "HEAD",
+			"heavy_needle_sew", wardrobe.get_snapshot()).get("ok", false),
+			"heavy Needle genuinely worn HEAD by " + wearer)
+	var pins := CombatPinned.new()
+	if not pin_owner.is_empty():
+		_check(pins.pin_enemy(foes, 1, pin_owner), "heavy Needle genuine living pin")
+	if weak_exposed:
+		_check(foes.apply_statuses({1: {"exposed": 1}}),
+			"heavy Needle real Exposed target")
+	var rules := CombatHeirloomPatchTriggers.new()
+	_check(rules.bind_battle(wardrobe, torn, party, foes, pins)
+		and rules.start_player_turn() and rules.is_current(),
+		"heavy Needle genuine wearer, party, target and turn bound")
+	return {"party": party, "foes": foes, "deck": deck, "pins": pins,
+		"rules": rules, "wardrobe": wardrobe, "torn": torn}
+
+
+func _test_needle_heavy_first_hit_receipts() -> void:
+	for id in CombatWardenPoolHeavyAttacks.SUPPORTED_CARD_IDS:
+		var printed := WardenPoolCards.new().get_definition(id)
+		var multi: bool = int(printed.effects.get("hits", 1)) == 2
+		var battle := _heavy_needle_context(id, "warden", "warden",
+			id == "warden_pin_and_pound_plus")
+		var deck: CombatDeck = battle.deck
+		var foes: CombatEnemies = battle.foes
+		var rules: CombatHeirloomPatchTriggers = battle.rules
+		var pins: CombatPinned = battle.pins
+		var service := CombatWardenPoolHeavyAttacks.new(pins)
+		var blocked: int = 110 if id == "warden_heavy_thimble_plus" else 3
+		_check(deck.hand.has(id) and printed.id == id
+			and printed.owner == "warden" and printed.target_kind == "enemy_single"
+			and printed.from_positions == [1] and printed.to_positions.has(1)
+			and foes.gain_block(1, blocked), "held canonical heavy and genuine Block " + id)
+		var before := foes.get_enemy(1)
+		var payment := _snapshot(deck, battle.party, foes)
+		var quote: Dictionary = rules.quote_needle_hit("warden", 1, id)
+		_check(quote.get("ok", false) and quote.get("card_id") == id
+			and rules.authorizes_needle_hit(quote, battle.party, foes, id, 1),
+			"exact authored heavy printing has a sealed Echo ticket " + id)
+		var result := service.play_attack(deck, battle.party, foes, id, 1,
+			{}, {}, pins, null, null, {}, rules, quote)
+		var base: int = printed.effects.damage
+		var hero_status: Dictionary = battle.party.get_hero(1).get("statuses", {})
+		var enemy_status: Dictionary = before.get("statuses", {})
+		var first: int = CombatStatuses.new().adjusted_attack_damage(
+			base + 1, hero_status, enemy_status)
+		var second: int = CombatStatuses.new().adjusted_attack_damage(
+			base, hero_status, enemy_status)
+		var remaining_block: int = maxi(0, blocked - first)
+		var first_block: int = mini(blocked, first)
+		var second_block: int = mini(remaining_block, second) if multi else 0
+		var hp_loss: int = first - first_block + (second - second_block if multi else 0)
+		var after := foes.get_enemy(1)
+		_check(result.get("ok", false) and result.get("hits", []).size() == (2 if multi else 1)
+			and result.hits[0].damage == first
+			and result.hits[0].block_absorbed == first_block
+			and result.hits[0].hp_loss == first - first_block
+			and (not multi or (result.hits[1].damage == second
+				and result.hits[1].block_absorbed == second_block
+				and result.hits[1].hp_loss == second - second_block))
+			and after.hp == before.hp - hp_loss
+			and after.block == before.block - first_block - second_block
+			and after.get("statuses", {}) == before.get("statuses", {}),
+			"Echo on first raw hit only, exact post-status HP/Block/status receipts " + id)
+		_check(deck.energy == payment.energy - printed.cost
+			and deck.hand.count(id) == payment.hand.count(id) - 1
+			and deck.discard_pile.count(id) == payment.discard_pile.count(id) + 1
+			and deck._rng.state == payment.rng_state
+			and rules._needle_used and rules._pending_needle.is_empty()
+			and pins.pinner_for_enemy(1) == "warden",
+			"single paid/discarded heavy and Echo latch; same-owner Pin retained " + id)
+		if id == "warden_heavy_thimble_plus":
+			_check(result.hits[0].hp_loss == 0
+				and result.hits[0].block_absorbed == first and rules._needle_used,
+				"Block-only heavy contact still consumes Echo")
+		if id == "warden_pin_and_pound_plus":
+			_check(first == CombatStatuses.new().adjusted_attack_damage(
+				base + 1, {"weak": 1}, {"exposed": 1})
+				and first >= second,
+				"Echo enters raw first hit before Weak and Exposed adjustments")
+		_check(not rules.quote_needle_hit("warden", 1, id).get("ok", false),
+			"spent Echo cannot quote a second held heavy in same turn " + id)
+		_check(not rules.finish_needle_hit(quote, result)
+			and rules._needle_used, "paid heavy receipt replay is refused " + id)
+		_check(rules.start_player_turn() and not rules._needle_used
+			and rules.quote_needle_hit("warden", 1, id).get("ok", false),
+			"fresh service turn rearms exact heavy Needle ticket " + id)
+		rules.cancel_needle_hit()
+
+
+func _test_needle_heavy_fail_closed() -> void:
+	for scenario in ["forged", "stale", "wrong_card", "wrong_target", "no_energy",
+			"wrong_owner", "unworn", "unpinned", "invalid_binding"]:
+		var wearer := "seamstress" if scenario == "wrong_owner" else (
+			"" if scenario == "unworn" else "warden")
+		var pin_owner := "" if scenario == "unpinned" else "warden"
+		var battle := _heavy_needle_context("warden_heavy_thimble", wearer, pin_owner)
+		var deck: CombatDeck = battle.deck
+		var foes: CombatEnemies = battle.foes
+		var rules: CombatHeirloomPatchTriggers = battle.rules
+		var pins: CombatPinned = battle.pins
+		var id := "warden_heavy_thimble"
+		var quote: Dictionary = rules.quote_needle_hit("warden", 1, id)
+		if scenario in ["wrong_owner", "unworn", "unpinned"]:
+			_check(not quote.get("ok", false) and rules._pending_needle.is_empty(),
+				"refused Needle eligibility " + scenario)
+			continue
+		_check(quote.get("ok", false), "real precondition before heavy refusal " + scenario)
+		if scenario == "forged":
+			quote["ticket"] = -500
+		if scenario == "stale":
+			_check(pins.clear_pin(1), "stale quote loses original pin")
+		if scenario == "no_energy":
+			_check(deck.try_spend_energy(2), "real deck has insufficient heavy energy")
+		if scenario == "invalid_binding":
+			pins = CombatPinned.new()
+		var before := _snapshot(deck, battle.party, foes)
+		var before_pin: Dictionary = battle.pins._pinner_by_position.duplicate(true)
+		var card := "warden_pin_and_pound" if scenario == "wrong_card" else id
+		_check(deck.hand.has(card) and (deck.energy >= 2 or scenario == "no_energy"),
+			"authentic selected/held candidate affordable before ticket refusal " + scenario)
+		var target := 3 if scenario == "wrong_target" else 1
+		var result := CombatWardenPoolHeavyAttacks.new().play_attack(
+			deck, battle.party, foes, card, target, {}, {}, pins, null, null, {}, rules, quote)
+		_check(not result.get("ok", false)
+			and _snapshot(deck, battle.party, foes) == before
+			and battle.pins._pinner_by_position == before_pin
+			and not rules._needle_used and rules._pending_needle.is_empty(),
+			"heavy refusal cancels ticket without energy/hand/RNG/pin/patch effects " + scenario)

@@ -1061,6 +1061,7 @@ func _run() -> void:
 	await _needle_mounted_cases(fixture)
 	await _needle_pool_mounted_cases(fixture)
 	await _tinker_direct_needle_cases(fixture)
+	await _needle_heavy_mounted_cases(fixture)
 	await _finish_patch_play()
 
 
@@ -2451,4 +2452,202 @@ func _tinker_direct_needle_cases(fixture: Dictionary) -> void:
 				_check(fresh == rules and not rules._needle_used
 					and rules._turn == turn_before + 1 and rules._pending_needle.is_empty(),
 					"next real scheduler turn re-arms exactly one Needle use for Tinker pools")
+		await _click(app.return_button)
+
+## P12 heavy Echo reaches the actual held hand, the routed Fight's one Pinned
+## identity, the real paid heavy resolver, and its first-hit Block/HP receipt.
+func _needle_heavy_mounted_cases(fixture: Dictionary) -> void:
+	var cases := [
+		{"id": "warden_heavy_thimble", "repeat": true},
+		{"id": "warden_heavy_thimble_plus", "absorbed": true, "keyboard": true},
+		{"id": "warden_pin_and_pound", "cross": true},
+		{"id": "warden_pin_and_pound_plus", "statuses": true},
+		{"id": "warden_heavy_thimble", "wearer": "seamstress"},
+		{"id": "warden_heavy_thimble_plus", "unpinned": true},
+		{"id": "warden_pin_and_pound", "wearer": ""},
+		{"id": "warden_pin_and_pound_plus", "torn": true},
+	]
+	for scenario in cases:
+		var id: String = scenario.id
+		var wearer: String = scenario.get("wearer", "warden")
+		var torn: bool = scenario.get("torn", false)
+		var keyboard: bool = scenario.get("keyboard", false)
+		var eligible: bool = wearer == "warden" and not torn and not scenario.get("unpinned", false)
+		if not await _entry(fixture, wearer, torn, keyboard, false, [], false,
+				false, "", true, wearer != ""):
+			_check(false, "genuine heavy Echo routed Fight entered " + id)
+			continue
+		var hand = app.get_node("LiveSupportHand")
+		var rules: CombatHeirloomPatchTriggers = hand._heirloom
+		var definition: Dictionary = WardenPoolCards.new().get_definition(id)
+		_check(app.deck != null and app.deck.turn_active
+			and app.party.is_valid() and app.enemies.is_valid()
+			and presenter._battle == app.battle_view and presenter._deck == app.deck
+			and presenter._pinned != null and presenter._heavy_attacks != null
+			and definition.get("id") == id and definition.get("owner") == "warden"
+			and (rules == null if wearer == "" else rules != null
+				and rules._party == app.party and rules._enemies == app.enemies
+				and rules._pinned == presenter._pinned),
+			"nonvacuous held-hand, sewn HEAD, heavy service and shared Pinned " + id)
+		if not await _ensure_held(id):
+			_check(false, "actual owned heavy printing in live hand " + id)
+			await _click(app.return_button)
+			continue
+		var foe: Dictionary = app.enemies.get_enemy(1)
+		_check(foe.get("hp", 0) > 0
+			and presenter._pinned.pin_enemy(app.enemies, 1,
+				"seamstress" if scenario.get("cross", false) else "warden"),
+			"authentic living Pinned recipient before heavy physical click " + id)
+		if scenario.get("repeat", false):
+			while app.deck.hand.count(id) < 2 and not app.deck.draw_pile.is_empty():
+				_check(app.deck.draw_extra(1) == 1,
+					"draw second actually owned heavy copy in same real turn")
+			app._refresh_hand()
+			await _frames()
+			_check(app.deck.hand.count(id) >= 2,
+				"two actual held heavy copies make same-turn repeat nonvacuous")
+		var original := _needle_state()
+		var forecast: Dictionary = presenter._resolve_attack(
+			app.party, app.enemies, id, 0, true)
+		_check((not forecast.get("playable", false) if torn else
+			forecast.get("playable", false) and forecast.get("hits", []).any(
+				func(row): return row.position == 1))
+			and _needle_state() == original,
+			"heavy forecast does not quote or mutate deck, Pinned, Echo or RNG " + id)
+		if torn:
+			_check(app.party.is_downed(1) and rules != null
+				and not rules.quote_needle_hit("warden", 1, id).get("ok", false),
+				"torn Warden has no heavy Echo ticket")
+			var before_torn := _needle_state()
+			_check(not presenter._resolve_attack(
+				app.party, app.enemies, id, 1).get("ok", false)
+				and _needle_state() == before_torn,
+				"downed heavy owner cannot pay or spend Echo")
+			await _click(app.return_button)
+			continue
+		if rules != null and scenario.get("repeat", false):
+			var genuine: Dictionary = rules.quote_needle_hit("warden", 1, id)
+			_check(genuine.get("ok", false), "actual wearer minted heavy Echo ticket")
+			var forged: Dictionary = genuine.duplicate(true)
+			forged["ticket"] = -17
+			var refused_before := _live_state()
+			var refused: Dictionary = presenter._heavy_attacks.play_attack(app.deck, app.party,
+				app.enemies, id, 1, {}, {}, presenter._pinned, presenter._play._patches,
+				presenter._fray, {}, rules, forged)
+			_check(not refused.get("ok", false) and _live_state() == refused_before
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"forged heavy ticket refuses without payment/pin/patch/RNG mutation")
+			var stale: Dictionary = rules.quote_needle_hit("warden", 1, id)
+			_check(stale.get("ok", false) and presenter._pinned.clear_pin(1),
+				"actual pin revoked after a valid heavy quote")
+			refused_before = _live_state()
+			refused = presenter._heavy_attacks.play_attack(app.deck, app.party,
+				app.enemies, id, 1, {}, {}, presenter._pinned, presenter._play._patches,
+				presenter._fray, {}, rules, stale)
+			_check(not refused.get("ok", false) and _live_state() == refused_before
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"stale Pinned heavy ticket rejects atomically")
+			_check(presenter._pinned.pin_enemy(app.enemies, 1, "warden"),
+				"living recipient pin restored after stale refusal")
+			var wrong_target: Dictionary = rules.quote_needle_hit("warden", 1, id)
+			refused_before = _live_state()
+			refused = presenter._heavy_attacks.play_attack(app.deck, app.party,
+				app.enemies, id, 3, {}, {}, presenter._pinned, presenter._play._patches,
+				presenter._fray, {}, rules, wrong_target)
+			_check(not refused.get("ok", false) and _live_state() == refused_before
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"illegal heavy target cancels ticket without spending")
+			app.deck.combat_state.energy = 0
+			var no_energy: Dictionary = rules.quote_needle_hit("warden", 1, id)
+			refused_before = _live_state()
+			refused = presenter._heavy_attacks.play_attack(app.deck, app.party,
+				app.enemies, id, 1, {}, {}, presenter._pinned, presenter._play._patches,
+				presenter._fray, {}, rules, no_energy)
+			_check(not refused.get("ok", false) and _live_state() == refused_before
+				and rules._pending_needle.is_empty() and not rules._needle_used,
+				"unaffordable held heavy cancels Echo without cost or RNG")
+			app.deck.combat_state.energy = 3
+		if scenario.get("unpinned", false):
+			_check(presenter._pinned.clear_pin(1),
+				"unPinned real recipient before physical heavy click")
+		if scenario.get("statuses", false):
+			app.party._heroes[0]["statuses"] = {"weak": 1}
+			app.enemies._enemies[0]["statuses"] = {"exposed": 1}
+			_check(app.party.get_hero(1).get("statuses") == {"weak": 1}
+				and app.enemies.get_enemy(1).get("statuses") == {"exposed": 1},
+				"live Weak/Exposed modifiers exist before heavy Echo hit")
+		var blocked := 100 if scenario.get("absorbed", false) or scenario.get("repeat", false) else (40 if int(definition.effects.get("hits", 1)) == 2 else 3)
+		_check(app.enemies.gain_block(1, blocked),
+			"real enemy Block protects physically selected heavy attack")
+		var before: Dictionary = app.enemies.get_enemy(1)
+		var paid_before := _needle_state()
+		if rules != null:
+			var quote: Dictionary = rules.quote_needle_hit("warden", 1, id)
+			_check(quote.get("ok", false) == eligible,
+				"real sewn owner, tear count, and pin control heavy eligibility")
+			rules.cancel_needle_hit()
+		_check(await _choose(id, keyboard), "physical heavy card armed from hand " + id)
+		if keyboard:
+			await _key(KEY_1)
+		else:
+			await _click(app.get_node("LiveEnemyRoster")._labels[0])
+		var paid: Dictionary = presenter.last_event
+		var now: Dictionary = app.enemies.get_enemy(1)
+		var pin_bonus: int = 5 if scenario.get("cross", false) else 0
+		var first: int = CombatStatuses.new().adjusted_attack_damage(
+			definition.effects.damage + pin_bonus + (1 if eligible else 0),
+			app.party.get_hero(1).get("statuses", {}), before.get("statuses", {}))
+		var second: int = CombatStatuses.new().adjusted_attack_damage(
+			definition.effects.damage,
+			app.party.get_hero(1).get("statuses", {}), before.get("statuses", {}))
+		var multi: bool = int(definition.effects.get("hits", 1)) == 2
+		var first_block: int = mini(before.block, first)
+		var second_block: int = mini(maxi(0, before.block - first), second) if multi else 0
+		_check(paid.get("ok", false) and paid.get("hits", []).size() == (2 if multi else 1)
+			and paid.hits[0].damage == first and paid.hits[0].position == 1
+			and paid.hits[0].block_absorbed == first_block
+			and paid.hits[0].hp_loss == first - first_block
+			and paid.hits[0].pinned_bonus == pin_bonus
+			and paid.hits[0].statuses == {}
+			and (not multi or (paid.hits[1].damage == second
+				and paid.hits[1].block_absorbed == second_block
+				and paid.hits[1].hp_loss == second - second_block
+				and paid.hits[1].pinned_bonus == 0))
+			and now.block == before.block - first_block - second_block
+			and now.hp == before.hp - first - (second if multi else 0)
+				+ first_block + second_block
+			and now.get("statuses", {}) == before.get("statuses", {}),
+			"physical base/+ first-only Echo plus Pin, Block, status, HP receipts " + id)
+		_check(app.deck.energy == paid_before[0][15] - definition.cost
+			and app.deck.hand.count(id) == paid_before[0][12].count(id) - 1
+			and app.deck.discard_pile.count(id) == paid_before[0][14].count(id) + 1
+			and app.run_rng.state == paid_before[0][10]
+			and (rules == null or (rules._needle_used == eligible
+				and rules._pending_needle.is_empty())),
+			"physical heavy costs once and uses exactly one Echo with no RNG draw " + id)
+		if scenario.get("absorbed", false):
+			_check(paid.hits[0].hp_loss == 0 and paid.hits[0].block_absorbed == first
+				and rules._needle_used, "Block-only heavy hit spends one Echo")
+		if scenario.get("cross", false):
+			_check(presenter._pinned.pinner_for_enemy(1) == "",
+				"foreign Pin consumed on first hit only")
+		if scenario.get("repeat", false) and app.deck.hand.has(id):
+			app.deck.combat_state.energy = 3
+			_check(await _choose(id, false), "second held heavy copy selected in same turn")
+			await _click(app.get_node("LiveEnemyRoster")._labels[0])
+			_check(presenter.last_event.get("ok", false)
+				and presenter.last_event.hits[0].damage == definition.effects.damage
+				and rules._needle_used and rules._pending_needle.is_empty(),
+				"second same-turn paid heavy cannot reuse spent Echo")
+			var turn: int = rules._turn
+			var scheduler_turn: int = app.enemy_intents._turn_index
+			await _click(app.end_turn_button)
+			await _frames()
+			# Turn advance is demand-synchronized by the real hand when queried.
+			var fresh: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(
+				app.deck, app.party)
+			_check(app.deck.turn_active and app.enemy_intents._turn_index == scheduler_turn + 1
+				and fresh == rules and rules._turn == turn + 1
+				and not rules._needle_used and app.enemies.get_enemy(1).hp > 0,
+				"real enemy phase and new player turn rearm same carried Echo")
 		await _click(app.return_button)
