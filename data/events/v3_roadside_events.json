@@ -979,6 +979,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_mirror_of_missing_stitches",
+      "title": "The Mirror of Missing Stitches",
+      "description": "A round velvet-clad mirror mender holds a house-sized cracked blackglass mirror upright; its mismatched button eyes peer through red-thread seams in the reflection.",
+      "choices": [
+        {
+          "id": "polish_reflection",
+          "text": "Polish the mirror with two scrap bundles (spend 2 scraps; gain 30 gold)",
+          "outcome": { "gold": 30, "scraps": -2 }
+        },
+        {
+          "id": "buy_silver_lining",
+          "text": "Buy three silvered seam strips (spend 18 gold; gain 3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the mirror to hold its shadows",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_velvet_thread_harp",
+      "title": "The Velvet Thread Harp",
+      "description": "A tiny bone-cream ragdoll plucks an enormous harp strung with black sewing thread; each note shakes dust from its oxblood-velvet frame beneath one candle.",
+      "choices": [
+        {
+          "id": "gather_loose_strings",
+          "text": "Gather a fallen harp string (gain 1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "retune_harp",
+          "text": "Retune the midnight harp (spend 1 scrap; gain 19 gold)",
+          "outcome": { "gold": 19, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the last black-thread note fade",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_damask_iron_umbrella",
+      "title": "The Damask Iron Umbrella",
+      "description": "A stout slate-blue umbrella keeper braces a wagon-sized iron-ribbed damask umbrella over a foggy crossroads; amber raindrops collect in its stitched hem.",
+      "choices": [
+        {
+          "id": "mend_umbrella_spokes",
+          "text": "Patch three broken umbrella spokes (spend 3 scraps; gain 38 gold)",
+          "outcome": { "gold": 38, "scraps": -3 }
+        },
+        {
+          "id": "buy_wax_hems",
+          "text": "Buy two waxed shelter seams (spend 13 gold; gain 2 scraps)",
+          "outcome": { "gold": -13, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Walk past the iron umbrella in the rain",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_midnight_lockbox_garden",
+      "title": "The Midnight Lockbox Garden",
+      "description": "A squat moss-cloth gardener waters towering lockboxes whose brass keyholes bloom like flowers; a lone lantern lights their crooked velvet roots.",
+      "choices": [
+        {
+          "id": "sell_old_lockplates",
+          "text": "Sell two worn lockplates (spend 2 scraps; gain 25 gold)",
+          "outcome": { "gold": 25, "scraps": -2 }
+        },
+        {
+          "id": "buy_keyhole_threads",
+          "text": "Buy three keyhole spools (spend 16 gold; gain 3 scraps)",
+          "outcome": { "gold": -16, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the lockbox flowers shut",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
