@@ -151,6 +151,72 @@ func _run() -> void:
 	first.mouse_exited.emit()
 	_check(not first.get_node("FocusTooltip").visible, "hover exit clears expanded information")
 
+	# Six real public-unit-shaped snapshots copied from StitchedRules.get_heroes() with documented resolves.
+	var base_heroes: Array = battle.get_heroes()
+	var resolve_specs := [
+		{"trait": "steadfast", "cue": "STFD", "fray": 45, "terms": ["+10%", "party -2 fray/turn", "floor end", "45"]},
+		{"trait": "frantic", "cue": "FRNT", "fray": 110, "terms": ["30%", "random legal ability", "random legal target", "clears under 50 fray"]},
+		{"trait": "hollow", "cue": "HOLL", "fray": 115, "terms": ["30%", "forced pass", "clears under 50 fray"]},
+		{"trait": "bitter", "cue": "BITR", "fray": 120, "terms": ["+4 fray/turn", "adjacent ally", "clears under 50 fray"]},
+		{"trait": "reckless", "cue": "RECK", "fray": 125, "terms": ["ignore Guard", "step forward", "clears under 50 fray"]},
+		{"trait": "cowering", "cue": "COWR", "fray": 130, "terms": ["step backward", "30%", "melee", "clears under 50 fray"]},
+	]
+	var resolve_snapshots: Array = []
+	var seen_cues: Dictionary = {}
+	for i in range(resolve_specs.size()):
+		var spec: Dictionary = resolve_specs[i]
+		var unit_copy: Dictionary = base_heroes[i % base_heroes.size()].duplicate(true)
+		var trait_name := str(spec["trait"])
+		var expected_cue := str(spec["cue"])
+		unit_copy["fray"] = int(spec["fray"])
+		unit_copy["resolve"] = trait_name
+		resolve_snapshots.append(unit_copy)
+		var actual_cue := StitchedTurnStatusCues.cue(unit_copy)
+		seen_cues[actual_cue] = true
+		_check(actual_cue == expected_cue and actual_cue.length() <= 4,
+			"resolve %s yields distinct <=4-char cue %s (fray %d)" % [trait_name, expected_cue, int(spec["fray"])])
+		var lines := StitchedTurnStatusCues.tooltip_lines(unit_copy)
+		var resolve_line_idx := lines.find("Resolve: " + trait_name)
+		_check(resolve_line_idx >= 0 and resolve_line_idx + 1 < lines.size(),
+			"resolve %s retains Resolve: <trait> line followed by one concise effect line" % trait_name)
+		var effect_line := lines[resolve_line_idx + 1] if (resolve_line_idx >= 0 and resolve_line_idx + 1 < lines.size()) else ""
+		var tip := StitchedTurnStatusCues.tooltip(unit_copy)
+		var all_terms := true
+		for term in spec["terms"]:
+			if not effect_line.contains(str(term)) or not tip.contains(str(term)):
+				all_terms = false
+		_check(all_terms, "resolve %s tooltip effect line accurately states documented numbers/rules" % trait_name)
+	_check(seen_cues.size() == 6, "all six documented resolves have distinct short cues")
+
+	ribbon.show_order(resolve_snapshots, "", false)
+	_check(ribbon.displayed_entries.size() == 6 and ribbon.get_child_count() == 9,
+		"mounted ribbon projects all six resolved hero snapshots without adding nodes")
+	_check_fit(ribbon, 6)
+	for i in range(resolve_snapshots.size()):
+		var spec: Dictionary = resolve_specs[i]
+		var expected_cue := str(spec["cue"])
+		var expected_tip := StitchedTurnStatusCues.tooltip(resolve_snapshots[i])
+		var tag := ribbon.tag_at(i)
+		var marker := ribbon.marker_at(i)
+		_check(marker.text == expected_cue and marker.text.length() <= 4 and
+			marker.size.x == 34.0 and
+			marker.get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+			"mounted slot %d displays <=4-char resolve cue %s inside 34px marker" % [i, expected_cue])
+		tag.grab_focus()
+		await process_frame
+		var focus_tip := str(tag.get_node("FocusTooltip/TooltipText").text)
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			focus_tip == tag.tooltip_text and tag.tooltip_text == expected_tip,
+			"mounted slot %d keyboard focus exposes exact resolve tooltip" % i)
+		tag.release_focus()
+		tag.mouse_entered.emit()
+		var hover_tip := str(tag.get_node("FocusTooltip/TooltipText").text)
+		_check(tag.get_node("FocusTooltip").visible and hover_tip == focus_tip and hover_tip == expected_tip,
+			"mounted slot %d mouse hover exposes the exact same resolve tooltip as keyboard focus" % i)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible,
+			"mounted slot %d hover exit hides resolve tooltip" % i)
+
 	# Projection units are deep copies: seams, states, parts and overlap cannot affect authority.
 	var hero: Dictionary = battle.get_heroes()[0].duplicate(true)
 	var foe: Dictionary = battle.get_foes()[0].duplicate(true)
@@ -164,7 +230,8 @@ func _run() -> void:
 	_check(StitchedTurnStatusCues.cue(hero) == "SEAM", "SEAM wins overlapping stun, torn and high fray")
 	var info := StitchedTurnStatusCues.tooltip(hero)
 	_check(info.contains("HP: 0 / ") and info.contains("FRAY: 145 / 200") and
-		info.contains("Resolve: bitter") and info.contains("Torn parts: Head, Arms") and
+		info.contains("Resolve: bitter") and info.contains("+4 fray/turn") and
+		info.contains("Torn parts: Head, Arms") and
 		info.contains("67% seam hold / 33% hero lost") and
 		info.contains("Statuses: guard 3, mark 2, stun 1") and
 		not info.contains("weak 0") and not info.contains("bleed -1"),
@@ -182,21 +249,47 @@ func _run() -> void:
 	_check(ribbon.marker_at(0).text == "SEAM", "finished view clears NOW without losing truthful SEAM")
 
 	hero["hanging"] = false
-	_check(StitchedTurnStatusCues.cue(hero) == "STUN", "positive stun overrides torn and fray")
+	_check(StitchedTurnStatusCues.cue(hero) == "STUN", "positive stun overrides torn, resolve and fray")
 	hero["statuses"]["stun"] = 0
-	_check(StitchedTurnStatusCues.cue(hero) == "TORN", "multiple torn equipped parts beat high fray")
+	_check(StitchedTurnStatusCues.cue(hero) == "TORN", "multiple torn equipped parts beat resolve and high fray")
 	hero["parts"]["head"]["torn"] = false
 	hero["parts"]["arms"]["torn"] = false
-	_check(StitchedTurnStatusCues.cue(hero) == "FRAY", "fray exactly above 100 is warned")
+	_check(StitchedTurnStatusCues.cue(hero) == "BITR", "known bitter resolve precedes numeric fray warning")
+	hero["resolve"] = ""
+	_check(StitchedTurnStatusCues.cue(hero) == "FRAY", "fray above 100 with blank resolve is warned")
 	hero["fray"] = 100
 	_check(StitchedTurnStatusCues.cue(hero) == "FRAY", "threshold 100 is inclusive")
 	hero["fray"] = 99
-	_check(StitchedTurnStatusCues.cue(hero) == "HERO", "fray 99 gets no premature warning")
+	_check(StitchedTurnStatusCues.cue(hero) == "HERO" and
+		not StitchedTurnStatusCues.tooltip(hero).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(hero).contains("Steadfast") and
+		not StitchedTurnStatusCues.tooltip(hero).contains("Unravelled"),
+		"blank-resolve hero at fray 99 gets HERO and no invented benefit")
+	foe["resolve"] = "bitter"
 	foe["statuses"] = {"stun": 2}
 	foe["fray"] = 150
 	_check(StitchedTurnStatusCues.cue(foe) == "STUN", "foe stun is real, foe fray is never a hero warning")
 	foe["statuses"] = {"stun": 0}
-	_check(StitchedTurnStatusCues.cue(foe) == "FOE", "zero stun and foe fray yield FOE")
+	_check(StitchedTurnStatusCues.cue(foe) == "FOE" and
+		not StitchedTurnStatusCues.tooltip(foe).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(foe).contains("Unravelled") and
+		not StitchedTurnStatusCues.tooltip(foe).contains("+4 fray"),
+		"zero stun and foe spoofing bitter yield FOE with no resolve trait or bonus")
+
+	for invalid_resolve in ["unknown", "STEADFAST", "Bitter", "panic", 99, null, ["steadfast"]]:
+		var invalid_hero: Dictionary = battle.get_heroes()[1].duplicate(true)
+		invalid_hero["fray"] = 45
+		invalid_hero["resolve"] = invalid_resolve
+		var invalid_tip := StitchedTurnStatusCues.tooltip(invalid_hero)
+		_check(StitchedTurnStatusCues.cue(invalid_hero) == "HERO" and
+			not invalid_tip.contains("Resolve:") and
+			not invalid_tip.contains("Steadfast") and
+			not invalid_tip.contains("Unravelled") and
+			not invalid_tip.contains("+10%"),
+			"invalid resolve %s at 45 fray falls back to HERO without invented trait or bonus" % str(invalid_resolve))
+		invalid_hero["fray"] = 100
+		_check(StitchedTurnStatusCues.cue(invalid_hero) == "FRAY",
+			"invalid resolve %s at 100 fray falls back to numeric FRAY warning" % str(invalid_resolve))
 
 	# Malformed optional fields may not masquerade as 0, a stun or torn equipment.
 	var sparse := {"id":"never_mapped_art","name":"Unknown Stitch","side":"hero","rank":4,

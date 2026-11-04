@@ -4,6 +4,22 @@ extends RefCounted
 ## No battle instance, random calls, combat methods or authored-data lookups.
 
 const PART_SLOTS := ["head", "arms", "torso", "legs"]
+const RESOLVE_CUES := {
+	"steadfast": "STFD",
+	"frantic": "FRNT",
+	"hollow": "HOLL",
+	"bitter": "BITR",
+	"reckless": "RECK",
+	"cowering": "COWR",
+}
+const RESOLVE_EFFECTS := {
+	"steadfast": "Steadfast: +10% damage and party -2 fray/turn until floor end (fray drops to 45).",
+	"frantic": "Unravelled: on 30% of turns use a random legal ability on a random legal target; clears under 50 fray.",
+	"hollow": "Unravelled: on 30% of turns forced pass; clears under 50 fray.",
+	"bitter": "Unravelled: +4 fray/turn to an adjacent ally; clears under 50 fray.",
+	"reckless": "Unravelled: ignore Guard and step forward when possible; clears under 50 fray.",
+	"cowering": "Unravelled: step backward when possible and refuse melee abilities on 30% of turns; clears under 50 fray.",
+}
 
 
 static func _number(value: Variant) -> bool:
@@ -12,6 +28,24 @@ static func _number(value: Variant) -> bool:
 
 static func _positive_count(value: Variant) -> bool:
 	return value is int and int(value) > 0
+
+
+static func resolve_cue(unit: Dictionary) -> String:
+	if unit.get("side") != "hero":
+		return ""
+	var resolve: Variant = unit.get("resolve")
+	if resolve is String and RESOLVE_CUES.has(resolve):
+		return str(RESOLVE_CUES[resolve])
+	return ""
+
+
+static func resolve_effect(unit: Dictionary) -> String:
+	if unit.get("side") != "hero":
+		return ""
+	var resolve: Variant = unit.get("resolve")
+	if resolve is String and RESOLVE_EFFECTS.has(resolve):
+		return str(RESOLVE_EFFECTS[resolve])
+	return ""
 
 
 static func torn_slots(unit: Dictionary) -> PackedStringArray:
@@ -35,6 +69,9 @@ static func cue(unit: Dictionary) -> String:
 		return "STUN"
 	if not torn_slots(unit).is_empty():
 		return "TORN"
+	var trait_cue := resolve_cue(unit)
+	if not trait_cue.is_empty():
+		return trait_cue
 	if side == "hero" and _number(unit.get("fray")) and float(unit["fray"]) >= 100:
 		return "FRAY"
 	if side == "hero":
@@ -72,8 +109,9 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 		if _number(unit.get("fray")):
 			lines.append("FRAY: %s / 200" % str(unit["fray"]))
 		var resolve: Variant = unit.get("resolve")
-		if resolve is String and not resolve.is_empty():
+		if resolve is String and RESOLVE_EFFECTS.has(resolve):
 			lines.append("Resolve: " + resolve)
+			lines.append(str(RESOLVE_EFFECTS[resolve]))
 		var torn := torn_slots(unit)
 		if not torn.is_empty():
 			lines.append("Torn parts: " + ", ".join(torn))
