@@ -838,7 +838,7 @@ func _win(fixture: Dictionary) -> Array:
 			_check(app.run_heroes == app.party_carryover.read_state().heroes,
 				"published roster agrees with carryover ledger before claim")
 			if kind == "Boss":
-				_check(app.enemies.get_enemy(1).id in ["patchwork_behemoth", "sewing_machine_colossus"]
+				_check(app.enemies.get_enemy(1).id in ["patchwork_behemoth", "sewing_machine_colossus", "moth_queen"]
 					and app.enemies.get_enemies().size() == 1 and app.enemies.is_victorious()
 					and app.act_outcome.get_state().run_status == "VICTORY" and app.run_map.get_route() == fixture.path,
 					"witnessed authored final Boss victory after all twelve selections")

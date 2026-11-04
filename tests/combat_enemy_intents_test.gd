@@ -1867,14 +1867,14 @@ const BOSS_NAMED_ATTACKS := {
 		"attack4": ["Rope Lash", 38, 1],
 	},
 	"sewing_machine_colossus": {
-		"attack2": ["Needle Drive", 28, 1],
-		"attack3": ["Bobbin Shot", 20, 2],
-		"attack4": ["Treadle Stomp", 32, 1],
+		"attack2": ["Needle Drive", 9, 1],
+		"attack3": ["Bobbin Shot", 6, 2],
+		"attack4": ["Treadle Stomp", 10, 1],
 	},
 	"moth_queen": {
-		"attack2": ["Dust Gale", 18, 2],
-		"attack3": ["Pin Crown Dive", 28, 1],
-		"attack4": ["Devour", 32, 1],
+		"attack2": ["Dust Gale", 6, 2],
+		"attack3": ["Pin Crown Dive", 9, 1],
+		"attack4": ["Devour", 10, 1],
 	},
 }
 ## Each Boss keeps the original non-attack alternatives it shipped with.

@@ -252,10 +252,7 @@ func _report_v3(trials: Array[Dictionary], heroes: Dictionary) -> void:
 	var numeric_gate := wins >= 10 and wins <= 22
 	var spread := losses.size() > 1 and losses.keys().any(func(floor_number): return floor_number < 12)
 	print("V3 observed 10-22 numeric diagnostic: %s; loss spread: %s" % ["PASS" if numeric_gate else "FAIL", "PASS" if spread else "FAIL"])
-	if CombatEnemies.MAX_ENEMIES < 4:
-		print("V3 BAL 10-22/50 and loss spread: BLOCKED (live four-foe adapter missing; current results are diagnostics)")
-	else:
-		_check(numeric_gate and spread, "V3 balance target after live four-foe admission")
+	_check(numeric_gate and spread, "V3 BAL 10-22/50 wins and genuine early multi-floor losses in 2-3-foe routed fights")
 	print("V3 mandatory starter winning-deck presence once/deck / %d: %s" % [wins, JSON.stringify(mandatory)])
 	print("V3 optional acquired winning-deck presence once/deck / %d: %s" % [wins, JSON.stringify(optional)])
 	print("V3 derived stitched winning-deck presence by actual halves once/deck / %d: %s" % [wins, JSON.stringify(derived)])

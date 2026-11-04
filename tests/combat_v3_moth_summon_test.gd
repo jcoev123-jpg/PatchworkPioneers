@@ -611,7 +611,7 @@ func _queen_phase_refusals() -> void:
 				and f.intents.get_intents()[2] == {"type": "attack", "amount": 5,
 					"enemy_position": 3, "target_position": 1},
 				"Queen's child first attacks on the following announced turn")
-	for mode in ["slain", "forged", "bad_latch", "bad_weight"]:
+	for mode in ["slain", "forged", "bad_latch", "bad_weight", "low_attack"]:
 		var f := _fixture(8202, 2, true)
 		if f.is_empty():
 			_check(false, "precondition: Queen forged-source fixture exists")
@@ -626,6 +626,8 @@ func _queen_phase_refusals() -> void:
 				f.enemies._enemies[0][CombatEnemies.BROODLING_LATCH] = "true"
 			"bad_weight":
 				f.enemies._enemies[0]["intent"]["actions"][1]["weight"] = 3
+			"low_attack":
+				f.enemies._enemies[0]["intent"]["actions"][0]["amount"] = 4
 		var before := [f.party.get_heroes(), f.enemies.get_enemies(),
 			f.intents.get_intents(), f.rng.state]
 		var result := CombatEnemyPhase.new().execute_phase(

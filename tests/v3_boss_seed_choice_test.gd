@@ -146,10 +146,10 @@ func _named_kits() -> void:
 	var expected := {
 		"patchwork_behemoth": {"attack2": ["Knuckle Slam", 30, 1],
 			"attack3": ["Stuffing Hurl", 22, 2], "attack4": ["Rope Lash", 38, 1]},
-		"sewing_machine_colossus": {"attack2": ["Needle Drive", 28, 1],
-			"attack3": ["Bobbin Shot", 20, 2], "attack4": ["Treadle Stomp", 32, 1]},
-		"moth_queen": {"attack2": ["Dust Gale", 18, 2],
-			"attack3": ["Pin Crown Dive", 28, 1], "attack4": ["Devour", 32, 1]},
+		"sewing_machine_colossus": {"attack2": ["Needle Drive", 9, 1],
+			"attack3": ["Bobbin Shot", 6, 2], "attack4": ["Treadle Stomp", 10, 1]},
+		"moth_queen": {"attack2": ["Dust Gale", 6, 2],
+			"attack3": ["Pin Crown Dive", 9, 1], "attack4": ["Devour", 10, 1]},
 	}
 	for id in expected:
 		var fixture: Dictionary = _seeded(witnesses.get(id, {}).get("seed", 0))
@@ -219,13 +219,13 @@ func _packets_and_badge() -> void:
 	for turn in range(32):
 		var shown := intents.get_intents()
 		if shown.size() == 1 and shown[0].get("type") == "attack" \
-				and shown[0].get("amount") == 24 and shown[0].get("hits") == 2 \
+				and shown[0].get("amount") == 6 and shown[0].get("hits") == 2 \
 				and not shown[0].has("move"):
 			action = shown[0]
 			break
 		if not intents.advance_turn():
 			break
-	_check(action.get("hits") == 2 and action.get("amount") == 24
+	_check(action.get("hits") == 2 and action.get("amount") == 6
 		and action.get("target_position") == 1,
 		"genuine seeded Colossus announces its authored two-packet front attack")
 	if action.is_empty() or action.get("hits") != 2:
@@ -234,21 +234,21 @@ func _packets_and_badge() -> void:
 	root.add_child(badge)
 	badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
 	badge.show_intent(action, false, false, CombatEnemyIntents.policy_for(enemies, 1))
-	_check(badge.hit_count == 2 and badge.hit_damage == 12
-		and badge.amount == 24 and badge.readable_text.contains("24")
+	_check(badge.hit_count == 2 and badge.hit_damage == 3
+		and badge.amount == 6 and badge.readable_text.contains("6")
 		and badge.tooltip_text.contains("two"),
 		"mounted shipped intent badge identifies both real hit packets")
 	var original_hp: int = party.get_hero(1).hp
-	_check(original_hp == 40 and party.gain_block(1, 7),
+	_check(original_hp == 40 and party.gain_block(1, 2),
 		"front hero starts alive with genuine Block before both packets")
 	var resolved := CombatEnemyPhase.new().execute_phase(
 		party, enemies, [action], null, true)
 	_check(resolved.get("ok", false) and resolved.get("events", []).size() == 2
 		and resolved.events[0].applied and resolved.events[1].applied,
 		"one real Colossus announcement produces two applied phase events")
-	_check(party.get_hero(1).block == 0 and party.get_hero(1).hp == 23
+	_check(party.get_hero(1).block == 0 and party.get_hero(1).hp == 36
 		and party.get_hero(2).hp == 30 and party.get_hero(3).hp == 26,
-		"first 12-damage packet consumes seven Block, second deals its own twelve")
+		"first 3-damage packet consumes two Block and deals one HP; second deals its own three")
 	# Existing Warden reactions run for each Colossus packet, not once per
 	# announcement: one living Warden and one authentic Colossus, no stand-ins.
 	var reacting_party := _party()
@@ -265,8 +265,8 @@ func _packets_and_badge() -> void:
 		and countered.events[0].applied and countered.events[1].applied
 		and countered.events[0].get("retaliation_damage", -1) == 3
 		and countered.events[1].get("retaliation_damage", -1) == 3
-		and reacting_party.get_hero(1).hp == 16 and reacting_boss.get_enemy(1).hp == 90,
-		"both twelve-point hits independently trigger real Warden Thorns 3")
+		and reacting_party.get_hero(1).hp == 34 and reacting_boss.get_enemy(1).hp == 90,
+		"both three-point hits independently trigger real Warden Thorns 3")
 	badge.queue_free()
 
 
