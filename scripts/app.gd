@@ -704,6 +704,16 @@ var _stitched_peddler_candle_state: Dictionary = {}
 var _stitched_peddler_candle_quote: Dictionary = {}
 var _stitched_peddler_generation := 0
 var _stitched_peddler_roster: Array = []
+## This separate four-hero health authority is earned by the same terminal
+## Roadblock + Circle Leave and competes for ONE postvictory stop.
+var stitched_campfire_button: Button
+var stitched_campfire_panel: Control
+var stitched_campfire_visit: RunCampfireVisit
+var _stitched_campfire_state: Dictionary = {}
+var _stitched_campfire_roster: Array = []
+var _stitched_campfire_authorized_roster: Array = []
+var _stitched_campfire_generation := 0
+var _stitched_postvictory_stop_available := false
 ## This is a detached, authenticated party receipt, not an editable UI request.
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
 var _stitched_party_picks: Array = STITCHED_DEFAULT_PICKS.duplicate()
@@ -719,6 +729,7 @@ const STITCHED_SEWING_MEND_COST := 2
 const STITCHED_SEWING_UPGRADE_COST := 2
 const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
+const STITCHED_CAMPFIRE_NODE_ID := "s6_stitched_roadblock_campfire"
 const STITCHED_PEDDLER_PRICE := 10
 const STITCHED_PREVIEW_WIN_GOLD := 10
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
@@ -1404,6 +1415,16 @@ func _build_title() -> void:
 	stitched_peddler_button.focus_mode = Control.FOCUS_NONE
 	stitched_peddler_button.pressed.connect(_open_stitched_peddler)
 	box.add_child(stitched_peddler_button)
+	stitched_campfire_button = Button.new()
+	stitched_campfire_button.name = "StitchedCampfireButton"
+	stitched_campfire_button.text = "Stitched Campfire"
+	stitched_campfire_button.tooltip_text = "Mend heroes or trim up to 50 CANDLE after the Roadblock"
+	stitched_campfire_button.custom_minimum_size = Vector2(240, 56)
+	stitched_campfire_button.visible = false
+	stitched_campfire_button.disabled = true
+	stitched_campfire_button.focus_mode = Control.FOCUS_NONE
+	stitched_campfire_button.pressed.connect(_open_stitched_campfire)
+	box.add_child(stitched_campfire_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
 	route_button.focus_next = route_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
@@ -1709,6 +1730,9 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	# unchanged one must not lose it without a purchase or a free Leave.
 	if party_changed:
 		_stitched_peddler_roster.clear()
+		_stitched_campfire_roster.clear()
+		_stitched_campfire_authorized_roster.clear()
+		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 	_stitched_picker_sync()
 
@@ -1804,7 +1828,8 @@ func _open_stitched_fight() -> bool:
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
-			or stitched_peddler_candle_visit != null or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
+			or stitched_peddler_candle_visit != null or is_instance_valid(stitched_campfire_panel) \
+			or stitched_campfire_visit != null or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
 			or is_instance_valid(battle_view) or _route_from_base \
@@ -1970,7 +1995,8 @@ func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) ->
 			or stitched_event_gate != null or is_instance_valid(stitched_event_panel) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
-			or is_instance_valid(stitched_fight_view) or deck != null or run_map != null \
+			or is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_campfire_panel) \
+			or stitched_campfire_visit != null or deck != null or run_map != null \
 			or run_rng != null or not is_instance_valid(title_view) \
 			or title_view.is_visible_in_tree():
 		return false
@@ -2050,6 +2076,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 				_stitched_bleed_carry[str(hero["id"])] = int(bleed)
 		# A fresh terminal victory supersedes any Peddler offer won earlier.
 		_stitched_peddler_roster.clear()
+		_stitched_campfire_roster.clear()
+		_stitched_campfire_authorized_roster.clear()
+		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
@@ -2555,6 +2584,7 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 	_close_stitched_sewing()
 	# The Peddler is earned only by this exact terminal victory + Circle Leave.
 	_offer_stitched_peddler(swap_final["heroes"])
+	_offer_stitched_campfire(swap_final["heroes"])
 	return receipt
 
 
@@ -2647,6 +2677,80 @@ func _offer_stitched_peddler(survivors: Array) -> void:
 	_refresh_stitched_peddler_button()
 
 
+## Only the actual Circle Leave's four non-lost battle heroes can earn
+## Campfire. Record their CURRENT battle rank, worn max HP, HP, and fray.
+## Unlike Peddler, a zero-HP Hanging (not lost) hero is valid for Mend.
+func _offer_stitched_campfire(survivors: Array) -> void:
+	_stitched_campfire_roster.clear()
+	_stitched_campfire_authorized_roster.clear()
+	if survivors.size() == 4 and _stitched_party_picks.size() == 4:
+		var roster: Array = []
+		for value in survivors:
+			if not value is Dictionary:
+				roster.clear()
+				break
+			var hero: Dictionary = value
+			var id := str(hero.get("id", ""))
+			if bool(hero.get("lost", true)) or not id in _stitched_party_picks \
+					or not _stitched_hp_carry.has(id) \
+					or typeof(_stitched_hp_carry[id]) != TYPE_INT \
+					or typeof(hero.get("rank")) != TYPE_INT \
+					or typeof(hero.get("hp")) != TYPE_INT \
+					or typeof(hero.get("max_hp")) != TYPE_INT \
+					or typeof(hero.get("fray")) != TYPE_INT \
+					or int(hero["hp"]) != int(_stitched_hp_carry[id]):
+				roster.clear()
+				break
+			roster.append({"id": id, "name": str(hero.get("name", id)),
+				"position": int(hero["rank"]), "hp": int(hero["hp"]),
+				"max_hp": int(hero["max_hp"]), "fray": int(hero["fray"])})
+		if roster.size() == 4:
+			roster.sort_custom(func(a, b): return int(a["position"]) < int(b["position"]))
+			var authority := RunCampfireVisit.new(
+				STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
+				stitched_roadblock_candle)
+			var state: Dictionary = authority.read_state()
+			if state.get("ok") == true and state.get("heroes") == roster \
+					and state.get("status") == RunCampfireVisit.STITCHED_OPEN:
+				_stitched_campfire_roster = roster.duplicate(true)
+				_stitched_campfire_authorized_roster = roster.duplicate(true)
+	_stitched_postvictory_stop_available = not _stitched_campfire_roster.is_empty() \
+		or not _stitched_peddler_roster.is_empty()
+	_refresh_stitched_peddler_button()
+
+
+## A detached roster must still match every HP ledger entry and the exact
+## authenticated Circle receipt. It may not be rebuilt from title defaults.
+func _stitched_campfire_living_roster() -> Array:
+	if not _stitched_postvictory_stop_available \
+			or _stitched_campfire_roster.size() != 4 \
+			or _stitched_campfire_roster != _stitched_campfire_authorized_roster \
+			or _stitched_party_picks.size() != 4:
+		return []
+	var ids := {}
+	var roster: Array = []
+	for hero_value in _stitched_campfire_roster:
+		if not hero_value is Dictionary:
+			return []
+		var hero: Dictionary = hero_value
+		var id := str(hero.get("id", ""))
+		if id.is_empty() or ids.has(id) or not id in _stitched_party_picks \
+				or typeof(hero.get("hp")) != TYPE_INT \
+				or not _stitched_hp_carry.has(id) \
+				or _stitched_hp_carry[id] != hero["hp"]:
+			return []
+		ids[id] = true
+		roster.append(hero.duplicate(true))
+	if ids.size() != 4:
+		return []
+	var visit := RunCampfireVisit.new(
+		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
+		stitched_roadblock_candle)
+	if visit.read_state().get("ok") != true:
+		return []
+	return roster
+
+
 ## A fully detached, currently lawful rank roster (ranks 1..4, four living
 ## selected heroes and exactly the carried Bleed statuses), or [] to fail closed.
 func _stitched_peddler_living_roster() -> Array:
@@ -2692,32 +2796,48 @@ func _stitched_peddler_living_roster() -> Array:
 ## Shows the title Peddler button only while a lawful earned roster waits, and
 ## keeps it inside the title's keyboard ring only at that moment.
 func _refresh_stitched_peddler_button() -> void:
-	if not is_instance_valid(stitched_peddler_button):
+	if not is_instance_valid(stitched_peddler_button) or not is_instance_valid(stitched_campfire_button):
 		return
-	var ready: bool = not _stitched_peddler_roster.is_empty() \
+	var peddler_ready: bool = _stitched_postvictory_stop_available \
+		and not _stitched_peddler_roster.is_empty() \
 		and stitched_peddler_visit == null and stitched_peddler_candle_visit == null \
-		and not is_instance_valid(stitched_peddler_panel)
-	stitched_peddler_button.visible = ready
-	stitched_peddler_button.disabled = not ready
-	stitched_peddler_button.focus_mode = Control.FOCUS_ALL if ready else Control.FOCUS_NONE
+		and not is_instance_valid(stitched_peddler_panel) \
+		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel)
+	var campfire_ready: bool = _stitched_postvictory_stop_available \
+		and not _stitched_campfire_roster.is_empty() \
+		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel) \
+		and stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel)
+	stitched_peddler_button.visible = peddler_ready
+	stitched_peddler_button.disabled = not peddler_ready
+	stitched_peddler_button.focus_mode = Control.FOCUS_ALL if peddler_ready else Control.FOCUS_NONE
+	stitched_campfire_button.visible = campfire_ready
+	stitched_campfire_button.disabled = not campfire_ready
+	stitched_campfire_button.focus_mode = Control.FOCUS_ALL if campfire_ready else Control.FOCUS_NONE
 	if not is_instance_valid(title_view) or not title_view.is_inside_tree() \
 			or not is_instance_valid(stitched_fight_button) or not is_instance_valid(start_button):
 		return
-	if ready:
-		stitched_fight_button.focus_next = stitched_fight_button.get_path_to(stitched_peddler_button)
-		stitched_peddler_button.focus_next = stitched_peddler_button.get_path_to(start_button)
-		stitched_peddler_button.focus_previous = stitched_peddler_button.get_path_to(
-			stitched_fight_button)
-		start_button.focus_previous = start_button.get_path_to(stitched_peddler_button)
-	else:
-		stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
-		start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
+	var first: Control = stitched_peddler_button if peddler_ready else stitched_campfire_button \
+		if campfire_ready else start_button
+	var last: Control = stitched_campfire_button if campfire_ready else stitched_peddler_button \
+		if peddler_ready else stitched_fight_button
+	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(first)
+	start_button.focus_previous = start_button.get_path_to(last)
+	if peddler_ready:
+		stitched_peddler_button.focus_previous = stitched_peddler_button.get_path_to(stitched_fight_button)
+		stitched_peddler_button.focus_next = stitched_peddler_button.get_path_to(
+			stitched_campfire_button if campfire_ready else start_button)
+	if campfire_ready:
+		stitched_campfire_button.focus_previous = stitched_campfire_button.get_path_to(
+			stitched_peddler_button if peddler_ready else stitched_fight_button)
+		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(start_button)
 
 
 ## The title-accessible Peddler: one quoted bandage for a genuinely bleeding
 ## survivor, or a free Leave. Only an earned roster can open it.
 func _open_stitched_peddler() -> bool:
-	if is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+	if not _stitched_postvictory_stop_available \
+			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
@@ -2777,6 +2897,10 @@ func _open_stitched_peddler() -> bool:
 	_stitched_peddler_candle_state = candle_state.duplicate(true)
 	_stitched_peddler_candle_quote = candle_quote.duplicate(true)
 	_stitched_peddler_generation = generation
+	# Selection consumes the common earned stop, not just a purchase/Leave.
+	_stitched_postvictory_stop_available = false
+	_stitched_campfire_roster.clear()
+	_refresh_stitched_peddler_button()
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	title_view.hide()
@@ -3104,6 +3228,241 @@ func _close_stitched_peddler() -> void:
 	if is_instance_valid(stitched_peddler_button) and stitched_peddler_button.visible:
 		stitched_peddler_button.grab_focus.call_deferred()
 	elif is_instance_valid(stitched_fight_button):
+		stitched_fight_button.grab_focus.call_deferred()
+
+
+## A second title stop beside the Peddler. Only a one-use authenticated
+## Circle receipt can supply the complete current roster for this service.
+func _open_stitched_campfire() -> bool:
+	if not _stitched_postvictory_stop_available \
+			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or stitched_peddler_candle_visit != null \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
+			or deck != null or run_map != null or run_rng != null \
+			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
+			or is_instance_valid(battle_view) \
+			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+		return false
+	var roster: Array = _stitched_campfire_living_roster()
+	if roster.size() != 4:
+		return false
+	var visit := RunCampfireVisit.new(
+		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
+		stitched_roadblock_candle)
+	var state: Dictionary = visit.read_state()
+	if state.get("ok") != true or state.get("mode") != RunCampfireVisit.STITCHED \
+			or state.get("status") != RunCampfireVisit.STITCHED_OPEN \
+			or state.get("node_id") != STITCHED_CAMPFIRE_NODE_ID \
+			or state.get("heroes") != roster \
+			or state.get("candle") != stitched_roadblock_candle \
+			or state.get("quote") != visit.read_state().get("quote") \
+			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.MEND) == -1 \
+			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.TRIM_THE_WICK) == -1 \
+			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.STITCHED_LEAVE) == -1:
+		return false
+	var generation := _stitched_campfire_generation + 1
+	var mounted := _mount_stitched_campfire(state, generation)
+	var panel: Control = mounted.get("panel")
+	if panel == null:
+		return false
+	stitched_campfire_visit = visit
+	stitched_campfire_panel = panel
+	_stitched_campfire_state = state.duplicate(true)
+	_stitched_campfire_generation = generation
+	# The stop is spent on panel selection, even if the player chooses Leave.
+	_stitched_postvictory_stop_available = false
+	_stitched_campfire_roster.clear()
+	_stitched_peddler_roster.clear()
+	_refresh_stitched_peddler_button()
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_view.hide()
+	var first: Button = mounted.get("first")
+	if first != null:
+		first.grab_focus()
+	return true
+
+
+func _mount_stitched_campfire(state: Dictionary, generation: int) -> Dictionary:
+	var panel := Control.new()
+	panel.name = "StitchedCampfire"
+	panel.set_meta("campfire_generation", generation)
+	panel.theme = load("res://themes/gothic_theme.tres")
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.focus_mode = Control.FOCUS_ALL
+	var frame := NinePatchRect.new()
+	frame.name = "CampfireFrame"
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+		frame.patch_margin_left = 24
+		frame.patch_margin_right = 24
+		frame.patch_margin_top = 24
+		frame.patch_margin_bottom = 24
+	frame.position = Vector2(120, 40)
+	frame.size = Vector2(1040, 640)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.name = "CampfireHeading"
+	heading.text = "STITCHED CAMPFIRE  ·  TEND THE EMBERS"
+	heading.position = Vector2(165, 72)
+	heading.size = Vector2(950, 50)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 28)
+	panel.add_child(heading)
+	var quote := Label.new()
+	quote.name = "CampfireQuote"
+	quote.text = "One earned stop: Mend each hero for 30% max HP, Trim the Wick for up to 50 CANDLE (cap 100), or Leave. All choices free."
+	quote.position = Vector2(185, 135)
+	quote.size = Vector2(910, 75)
+	quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	quote.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(quote)
+	var candle := Label.new()
+	candle.name = "CampfireCandle"
+	var wick_gain: int = mini(RunCampfireVisit.WICK_CANDLE_RESTORE, \
+		RunCampfireVisit.STITCHED_CANDLE_MAX - int(state["candle"]))
+	candle.text = "CANDLELIGHT  %d / 100  ·  TRIM +%d → %d / 100" % [
+		int(state["candle"]), wick_gain, int(state["candle"]) + wick_gain]
+	candle.position = Vector2(250, 215)
+	candle.size = Vector2(780, 40)
+	candle.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(candle)
+	for index in range(state["heroes"].size()):
+		var hero: Dictionary = state["heroes"][index]
+		var maximum: int = int(hero["max_hp"])
+		@warning_ignore("integer_division")
+		var heal: int = mini(maximum - int(hero["hp"]),
+			(maximum * RunCampfireVisit.MEND_HEAL_PERCENT) / 100)
+		var row := Label.new()
+		row.name = "CampfireHero_%s" % str(hero["id"])
+		row.text = "%d  %s    HP %d / %d    FRAY %d    MEND +%d" % [
+			int(hero["position"]), str(hero["name"]), int(hero["hp"]),
+			maximum, int(hero["fray"]), heal]
+		row.position = Vector2(245, 270 + index * 57)
+		row.size = Vector2(800, 47)
+		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		panel.add_child(row)
+	var mend := Button.new()
+	mend.name = "CampfireMend"
+	mend.text = "Mend · 30% max HP for each · free"
+	mend.position = Vector2(185, 550)
+	mend.size = Vector2(385, 58)
+	mend.focus_mode = Control.FOCUS_ALL
+	mend.pressed.connect(_stitched_campfire_choose.bind(
+		RunCampfireVisit.MEND, state.duplicate(true), weakref(panel), generation))
+	panel.add_child(mend)
+	var wick := Button.new()
+	wick.name = "CampfireWick"
+	wick.text = "Trim the Wick · +%d CANDLE · free" % wick_gain
+	wick.position = Vector2(585, 550)
+	wick.size = Vector2(315, 58)
+	wick.focus_mode = Control.FOCUS_ALL
+	wick.pressed.connect(_stitched_campfire_choose.bind(
+		RunCampfireVisit.TRIM_THE_WICK, state.duplicate(true), weakref(panel), generation))
+	panel.add_child(wick)
+	var leave := Button.new()
+	leave.name = "CampfireLeave"
+	leave.text = "Leave Campfire · free"
+	leave.position = Vector2(915, 550)
+	leave.size = Vector2(200, 58)
+	leave.focus_mode = Control.FOCUS_ALL
+	leave.pressed.connect(_stitched_campfire_choose.bind(
+		RunCampfireVisit.STITCHED_LEAVE, state.duplicate(true), weakref(panel), generation))
+	panel.add_child(leave)
+	mend.focus_next = mend.get_path_to(wick)
+	wick.focus_previous = wick.get_path_to(mend)
+	wick.focus_next = wick.get_path_to(leave)
+	leave.focus_previous = leave.get_path_to(wick)
+	leave.focus_next = leave.get_path_to(mend)
+	mend.focus_previous = mend.get_path_to(leave)
+	return {"panel": panel, "first": mend}
+
+
+## The app accepts only this live panel generation and its WHOLE quoted
+## service state; a forged request never publishes a private service result.
+func _stitched_campfire_choose(decision: String, expected: Dictionary,
+		source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if not decision in [RunCampfireVisit.MEND, RunCampfireVisit.TRIM_THE_WICK, RunCampfireVisit.STITCHED_LEAVE] \
+			or panel == null or not is_instance_valid(panel) \
+			or panel != stitched_campfire_panel or not panel.is_visible_in_tree() \
+			or panel.get_meta("campfire_generation", -1) != generation \
+			or generation != _stitched_campfire_generation \
+			or stitched_campfire_visit == null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or _stitched_campfire_state != expected \
+			or stitched_campfire_visit.read_state() != expected \
+			or expected.get("node_id") != STITCHED_CAMPFIRE_NODE_ID \
+			or expected.get("status") != RunCampfireVisit.STITCHED_OPEN \
+			or expected.get("mode") != RunCampfireVisit.STITCHED \
+			or expected.get("heroes", []) != _stitched_campfire_authorized_roster \
+			or expected.get("candle") != stitched_roadblock_candle:
+		return {"ok": false, "error": "stale or forged Campfire"}
+	var before: Array = expected["heroes"].duplicate(true)
+	if before.size() != 4 or _stitched_hp_carry.size() != 4:
+		return {"ok": false, "error": "missing survivor authority"}
+	var after: Array = before.duplicate(true)
+	for hero in after:
+		var id := str(hero["id"])
+		if not _stitched_hp_carry.has(id) or _stitched_hp_carry[id] != hero["hp"]:
+			return {"ok": false, "error": "changed survivor HP"}
+		if decision == RunCampfireVisit.MEND:
+			@warning_ignore("integer_division")
+			var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
+			hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+	var after_candle: int = int(expected["candle"])
+	if decision == RunCampfireVisit.TRIM_THE_WICK:
+		after_candle = mini(RunCampfireVisit.STITCHED_CANDLE_MAX,
+			after_candle + RunCampfireVisit.WICK_CANDLE_RESTORE)
+	var receipt: Dictionary = stitched_campfire_visit.select(
+		decision, STITCHED_CAMPFIRE_NODE_ID, before, int(expected["candle"]))
+	var committed: Dictionary = stitched_campfire_visit.read_state()
+	if receipt != {"ok": true, "decision": decision,
+			"node_id": STITCHED_CAMPFIRE_NODE_ID, "heroes": after,
+			"candle": after_candle} \
+			or committed.get("status") != RunCampfireVisit.STITCHED_DECIDED \
+			or committed.get("heroes") != after or committed.get("candle") != after_candle:
+		return {"ok": false, "error": "Campfire receipt rejected"}
+	# Publish only the chosen ledger after the complete receipt is verified.
+	if decision == RunCampfireVisit.MEND:
+		for hero in after:
+			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
+	elif decision == RunCampfireVisit.TRIM_THE_WICK:
+		stitched_roadblock_candle = after_candle
+	_close_stitched_campfire()
+	return receipt
+
+
+func _close_stitched_campfire() -> void:
+	var panel := stitched_campfire_panel
+	if stitched_campfire_visit != null:
+		var open: Dictionary = stitched_campfire_visit.read_state()
+		if open.get("status") == RunCampfireVisit.STITCHED_OPEN:
+			stitched_campfire_visit.select(RunCampfireVisit.STITCHED_LEAVE,
+				STITCHED_CAMPFIRE_NODE_ID, open["heroes"], open["candle"])
+	stitched_campfire_panel = null
+	stitched_campfire_visit = null
+	_stitched_campfire_state.clear()
+	_stitched_campfire_roster.clear()
+	_stitched_campfire_authorized_roster.clear()
+	_stitched_campfire_generation += 1
+	if is_instance_valid(panel):
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+	if is_instance_valid(title_view):
+		title_view.show()
+	_refresh_stitched_peddler_button()
+	if is_instance_valid(stitched_fight_button):
 		stitched_fight_button.grab_focus.call_deferred()
 
 
