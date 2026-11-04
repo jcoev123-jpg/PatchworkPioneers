@@ -22,7 +22,7 @@ const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
 const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 ## Code-drawn ground for a missing owner picture; never a blank felt screen.
 const FALLBACK_STAGE := Color("171419")
-## Dark oxblood backing behind the three original title actions.
+## Dark oxblood backing behind the live title actions.
 const ACTION_BACKING := Color("352126")
 ## The two sewn backings stay inside this share of the picture, so scenery stays visible.
 const MENU_COVERAGE_LIMIT := 0.35
@@ -116,7 +116,7 @@ func logo_rect() -> Rect2:
 	return Rect2(Vector2(room.get_center().x - drawn.x / 2.0, room.end.y - drawn.y), drawn)
 
 
-## Compact felt backing that follows the three original actions, in shell coordinates.
+## Compact felt backing that follows the live title actions, in shell coordinates.
 func action_backing_rect() -> Rect2:
 	var backing := Rect2()
 	for index in range(_actions.size()):
@@ -176,7 +176,7 @@ func _bind_title() -> void:
 	var app = get_parent()
 	_title = app.title_view
 	_label = app.title_label
-	_actions.assign([app.start_button, app.route_button, app.base_button])
+	_actions.assign([app.start_button, app.route_button, app.base_button, app.stitched_fight_button])
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
 	_label.theme_type_variation = "PatchTitle"
@@ -184,7 +184,7 @@ func _bind_title() -> void:
 	_label.add_theme_constant_override("outline_size", 0)
 	# The live label remains in layout and accessible; the sync chooses whether it paints.
 	for button in _actions:
-		# The three original actions speak in the master Theme's Londrina heading face.
+		# Every live title action speaks in the master Theme's Londrina heading face.
 		button.theme_type_variation = "PatchHeadingButton"
 		button.add_child(ButtonStitches.new())
 		# The menu backing follows the real action rects; containers may lay them out
