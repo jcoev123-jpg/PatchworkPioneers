@@ -26,6 +26,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_moth_cloud_fourth_rank()
 	_test_each_tier()
 	_test_multi_blind()
 	_test_blind_next_attack()
@@ -149,8 +150,8 @@ func _test_catalog() -> void:
 			and str(cat["by_id"][ALTERNATES[slot]]["slot"]) == slot,
 			"AC1: four named starters plus four alternative names in matching slots")
 	_check(bool(cat["by_id"][ALTERNATES["head"]]["ability"]["multi"])
-		and cat["by_id"][ALTERNATES["head"]]["ability"]["target"] == [1, 2, 3],
-		"AC1: Moth Cloud is authoritative multi-target Blind against real three-foe ranks")
+		and cat["by_id"][ALTERNATES["head"]]["ability"]["target"] == [1, 2, 3, 4],
+		"AC1: Moth Cloud is authoritative multi-target Blind reaching a possible summoned rank 4")
 	for id in [STARTERS["torso"], ALTERNATES["torso"]]:
 		_check(bool(cat["by_id"][id]["ability"]["multi"]) and str(cat["by_id"][id]["ability"]["target_side"]) == "ally",
 			"AC1: whole-party lantern healing uses native multi targeting")
@@ -169,6 +170,64 @@ func _test_catalog() -> void:
 	bad_mask["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(bad_mask).get("ok", false)),
 		"AC3: out-of-bounds target rank rejects")
+
+
+## S4 completion: Moth Cloud's base target list reaches enemy rank 4, which Design v4 only
+## creates by summon or split. The shipped S2 4v3 fixture keeps its three real starting foes,
+## so the extra rank is proven through data rules, never by inventing a fourth opening enemy.
+func _test_moth_cloud_fourth_rank() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog with Moth Cloud's fourth target rank validates")
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][ALTERNATES["head"]]
+	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	_check(full_mask == StitchedParts.ALL_RANKS_MASK and full_mask != 0,
+		"AC1: ranks 1-4 derive the complete four-rank mask")
+	_check(str(part["id"]) == "lantern_monk_head_moth_cloud" and str(part["slot"]) == "head"
+		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"crit": 3},
+		"AC1: named Moth Cloud keeps its owner, head slot and crit stat")
+	_check(part["ability"]["launch"] == [2, 3] and part["ability"]["target"] == [1, 2, 3, 4]
+		and int(part["ability"]["target_mask"]) == full_mask
+		and str(part["ability"]["target_side"]) == "enemy" and bool(part["ability"]["multi"])
+		and int(part["ability"]["acc"]) == 90 and part["ability"]["dmg"] == [0, 0]
+		and part["ability"]["effects"] == {"blind": 1} and str(part["ability"]["move"]) == "skill",
+		"AC1: Moth Cloud keeps launch [2,3], enemy multi Blind, ACC 90 and its skill pose")
+	var expected_acc := {1: 90, 2: 95, 3: 100}
+	var expected_effects := {1: {"blind": 1}, 2: {"blind": 1}, 3: {"blind": 1, "exposed": 1}}
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var valid := StitchedParts.validate_ability(ability)
+		_check(bool(valid.get("ok", false)), "AC2: Moth Cloud tier %d ability validates" % tier)
+		if not bool(valid.get("ok", false)):
+			continue
+		var checked: Dictionary = valid["ability"]
+		_check(int(checked["acc"]) == int(expected_acc[tier])
+			and checked["effects"] == expected_effects[tier],
+			"AC2: Moth Cloud tier %d keeps its authored ACC and Blind/Exposed values" % tier)
+		_check(bool(checked["multi"]) and str(checked["target_side"]) == "enemy"
+			and checked["launch"] == [2, 3]
+			and int(checked["launch_mask"]) == StitchedParts.rank_mask([2, 3]),
+			"AC2: Moth Cloud tier %d stays a multi enemy ability launched from ranks 2-3" % tier)
+		_check(int(checked["target_mask"]) == full_mask,
+			"AC2: Moth Cloud tier %d target mask is exactly ranks 1-4" % tier)
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC2: Moth Cloud tier %d includes enemy rank %d" % [tier, rank])
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC2: Moth Cloud tier %d excludes rank %d" % [tier, rank])
+	_check(part["ability"]["target"] == [1, 2, 3, 4] and int(part["ability"]["acc"]) == 90
+		and part["ability"]["effects"] == {"blind": 1},
+		"AC2: tier reads never replace Moth Cloud's base fields in memory")
+	var off_rank: Dictionary = part.duplicate(true)
+	off_rank["ability"]["target"] = [1, 2, 3, 4, 5]
+	_check(not bool(StitchedParts.validate_part(off_rank).get("ok", false)),
+		"AC3: Moth Cloud with target rank 5 fails closed")
+	var repeated: Dictionary = part.duplicate(true)
+	repeated["ability"]["target"] = [1, 2, 3, 4, 4]
+	_check(not bool(StitchedParts.validate_part(repeated).get("ok", false)),
+		"AC3: Moth Cloud with a duplicated rank 4 fails closed")
 
 
 func _test_each_tier() -> void:

@@ -241,7 +241,8 @@
         "target": [
           1,
           2,
-          3
+          3,
+          4
         ],
         "target_side": "enemy",
         "multi": true,
@@ -273,7 +274,7 @@
           }
         }
       },
-      "text": "Loose a cloud of moths; attempt Blind independently on each living foe in ranks one to three."
+      "text": "Loose a cloud of moths; attempt Blind independently on each living foe in ranks one to four."
     },
     {
       "id": "lantern_monk_arms_snuff_flame",
