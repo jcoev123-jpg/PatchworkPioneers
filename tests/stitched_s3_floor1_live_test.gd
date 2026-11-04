@@ -57,6 +57,23 @@ func _terminal_trace(stage: StitchedBattleScreen) -> Dictionary:
 	_check(acted > 0 and stage.receipts.size() >= acted and stage.battle.state_snapshot() != started,
 		"live fight advances turns after actual hero part or movement actions")
 	_check(witnessed_foe, "active foes take real ability/pass turns during the trace")
+	var non_warden_move := false
+	for receipt in stage.receipts:
+		if str(receipt.get("action", "")) != "ability":
+			continue
+		var actor_id := str(receipt.get("actor", ""))
+		if not actor_id in ["seamstress", "tinker", "lantern_monk"]:
+			continue
+		var unit: Dictionary = stage.battle.get_unit(actor_id)
+		for slot in StitchedParts.SLOTS:
+			var worn: Dictionary = unit.get("parts", {}).get(slot, {})
+			var definition: Dictionary = stage.parts.get(str(worn.get("id", "")), {})
+			if definition.is_empty():
+				continue
+			var ability := StitchedParts.ability_at_tier(definition, int(worn.get("tier", 0)))
+			if definition.get("owner") == actor_id and ability.get("id") == receipt.get("ability"):
+				non_warden_move = true
+	_check(non_warden_move, "an authentic named non-Warden move commits through the mounted screen")
 	_check(stage.battle.rng_state() != started_rng, "committed actions consume the seeded battle RNG")
 	for step in range(80):
 		if stage.battle.is_over():
@@ -76,8 +93,8 @@ func _terminal_trace(stage: StitchedBattleScreen) -> Dictionary:
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var warden := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
-	_check(bool(warden.get("ok", false)) and warden.get("parts", []).size() == 8,
-		"Warden authored JSON loads with eight valid entries")
+	_check(bool(warden.get("ok", false)) and warden.get("by_id", {}).has("warden_head_pot_helm_bonk"),
+		"Warden authored JSON loads with the canonical head starter")
 	if not bool(warden.get("ok", false)):
 		for failure in failures:
 			printerr(failure)
@@ -97,7 +114,7 @@ func _run() -> void:
 		var id := str(part["id"])
 		_check(not ids.has(id), "Warden part IDs remain distinct: " + id)
 		ids[id] = true
-		_check(str(part["owner"]) == "warden" and id in expected[str(part["slot"])],
+		_check(str(part["owner"]) == "warden" and str(part["slot"]) in StitchedParts.SLOTS,
 			"authored part belongs to a matching Warden slot: " + id)
 		slots[str(part["slot"])] += 1
 		for tier in range(1, 4):
@@ -109,8 +126,8 @@ func _run() -> void:
 				StitchedParts.validate_ability(ability).get("ok", false),
 				"tier %d has a named, rank-legal sewn move: %s" % [tier,id])
 	for slot in expected:
-		_check(slots[slot] == 2 and ids.has(expected[slot][0]) and ids.has(expected[slot][1]),
-			"two distinct part IDs per Warden body slot: " + slot)
+		_check(ids.has(expected[slot][0]) and ids.has(expected[slot][1]),
+			"the two required Warden part IDs are present for slot: " + slot)
 	_check(not ids.has("warden_legs_iron_taunt"), "the retired Iron Taunt substitution is not in the Warden catalog")
 	var shield_toss: Dictionary = {}
 	for part in warden["parts"]:
@@ -154,6 +171,27 @@ func _run() -> void:
 		invalid["parts"][0]["ability"]["launch"] = [0,5]
 		_check(not StitchedParts.build_catalog(invalid["parts"]).get("ok", true),
 			"malformed rank rules refuse an entire catalog")
+		# A malformed mounted kit is rejected without a turn, receipt or global RNG draw.
+		var malformed_kit: Dictionary = config.duplicate(true)
+		malformed_kit["heroes"][1]["parts"]["head"] = {
+			"id": "seamstress_mending_knot_hat", "tier": 4, "torn": false,
+		}
+		var rejected_kit := StitchedBattleScreen.new()
+		seed(118277)
+		var rejected_rng := randi()
+		seed(118277)
+		_check(not rejected_kit.begin(malformed_kit) and rejected_kit.battle == null
+			and randi() == rejected_rng, "illegal starter tier refuses combat without drawing global RNG")
+		rejected_kit.free()
+		app._stitched_gear_overrides["tinker"] = {
+			"head": {"id": "tinker_head_cog_shot", "tier": 4, "torn": false},
+		}
+		seed(118278)
+		var carried_rng := randi()
+		seed(118278)
+		_check(app._stitched_floor_config().is_empty() and randi() == carried_rng,
+			"malformed carried tier fails closed before a live battle or RNG draw")
+		app._stitched_gear_overrides.clear()
 		var global_seed := 204915
 		seed(global_seed)
 		var expected_global := randi()
@@ -188,17 +226,42 @@ func _run() -> void:
 			app.deck == null and app.run_map == null and app.run_rng == null and app.run_deck.is_empty(),
 			"real 4v3 four-rank combat starts without a card battle resource")
 		_check(randi() == expected_global, "new title fight never uses global RNG")
-		var worn: Dictionary = stage.battle.get_unit("warden").get("parts", {})
-		var equipped_ok := worn.size() == 4
-		for slot in expected:
-			equipped_ok = equipped_ok and worn.has(slot) \
-				and str(worn.get(slot, {}).get("id", "")) == expected[slot][0] \
-				and int(worn.get(slot, {}).get("tier", 0)) == 1 \
-				and not bool(worn.get(slot, {}).get("torn", true))
-		_check(equipped_ok, "Warden wears each of the four real tier-I starter parts")
-		var tinker := stage.battle.get_unit("tinker")
-		_check(str(tinker.get("parts", {}).get("head", {}).get("id", "")) == "any_head_needle_pin" and
-			not stage.parts.has("warden_head_iron_helm"), "borrowed prototypes are remapped, not admitted")
+		var starter_ids := {
+			"warden": {
+				"head": "warden_head_pot_helm_bonk", "arms": "warden_arms_shield_catch",
+				"torso": "warden_torso_iron_challenge", "legs": "warden_legs_rim_toss",
+			},
+			"seamstress": {
+				"head": "seamstress_mending_knot_hat", "arms": "seamstress_thread_prick_needle",
+				"torso": "seamstress_shielding_hem_coat", "legs": "seamstress_tether_loop_spools",
+			},
+			"tinker": {
+				"head": "tinker_head_cog_shot", "arms": "tinker_arms_scrap_bomb",
+				"torso": "tinker_torso_casing_ward", "legs": "tinker_legs_tune_up",
+			},
+			"lantern_monk": {
+				"head": "lantern_monk_head_moth_wink", "arms": "lantern_monk_arms_wick_spark",
+				"torso": "lantern_monk_torso_lamplight_wash", "legs": "lantern_monk_legs_pole_shelter",
+			},
+		}
+		var equipped_ok := true
+		for hero_id in starter_ids:
+			var unit: Dictionary = stage.battle.get_unit(hero_id)
+			var worn: Dictionary = unit.get("parts", {})
+			equipped_ok = equipped_ok and unit.get("side") == "hero" and worn.size() == 4
+			for slot in StitchedParts.SLOTS:
+				var worn_part: Dictionary = worn.get(slot, {})
+				var part_id := str(worn_part.get("id", ""))
+				var definition: Dictionary = stage.parts.get(part_id, {})
+				equipped_ok = equipped_ok and part_id == starter_ids[hero_id][slot] \
+					and int(worn_part.get("tier", 0)) == 1 \
+					and not bool(worn_part.get("torn", true)) \
+					and not definition.is_empty() and definition.get("owner") == hero_id \
+					and definition.get("slot") == slot
+		_check(equipped_ok, "all four real heroes mount their own four validated tier-I parts")
+		_check(stage.parts.has("any_head_needle_pin") and stage.parts.has("felt_bulwark_button_shield") \
+			and not stage.parts.has("warden_head_iron_helm"),
+			"generic compatibility and foe parts remain available, but retired prototypes do not")
 		var snapshot := stage.battle.state_snapshot()
 		var rng := stage.battle.rng_state()
 		_check(not app._open_stitched_fight() and stage.battle.state_snapshot() == snapshot and
