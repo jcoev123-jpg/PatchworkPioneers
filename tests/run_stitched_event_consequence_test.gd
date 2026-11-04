@@ -37,6 +37,8 @@ func _initialize() -> void:
 	_test_detachment_and_rng()
 	_test_scraps_bargains()
 	_test_scraps_rejections()
+	_test_part_prize_bargains()
+	_test_part_prize_rejections()
 	_finish()
 
 
@@ -918,3 +920,528 @@ func _test_scraps_rejections() -> void:
 	_assert_rejected(rng_scraps_service, "leave", valid_snap, 40, "scraps rng replay refusal")
 	_check(randi() == expected_rng,
 		"scraps preflight, refusals, claim and replay never advance the global RNG")
+
+
+func _part_effect(candle: int, fray: int, part: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {"candle": candle, "fray": fray, "target": target, "part": part}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _part_scraps_effect(candle: int, fray: int, scraps: Variant, part: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {
+		"candle": candle,
+		"fray": fray,
+		"target": target,
+		"scraps": scraps,
+		"part": part,
+	}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _satchel_four(candle: int, satchel_count: Variant, frays: Array) -> Dictionary:
+	var snapshot := _four(candle, frays)
+	snapshot["satchel_count"] = satchel_count
+	return snapshot
+
+
+func _scraps_satchel_four(candle: int, scraps: Variant, satchel_count: Variant, frays: Array) -> Dictionary:
+	var snapshot := _four(candle, frays)
+	snapshot["scraps"] = scraps
+	snapshot["satchel_count"] = satchel_count
+	return snapshot
+
+
+func _part_bargain_event() -> Dictionary:
+	return _event([
+		_choice("claim_pot_helm", "Take the stitched pot helm from the rack.",
+			_part_effect(-15, 20, {"id": "warden_head_pot_helm_bonk", "tier": 2})),
+		_choice("buy_pot_helm", "Pay scraps to fit the helm for the warden.",
+			_part_scraps_effect(10, -15, -2, {"id": "warden_head_pot_helm_bonk", "tier": 2}, "hero", "warden")),
+		_choice("leave", "Leave the rack untouched.", _effect(0, 0)),
+	], "ev_stitched_part_bargain")
+
+
+func _test_part_prize_bargains() -> void:
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var catalog_original := warden_catalog.duplicate(true)
+	_check(bool(warden_catalog.get("ok", false)),
+		"loads the actual authored Warden part catalog via StitchedParts.load_catalog")
+	var by_id: Dictionary = warden_catalog.get("by_id", {})
+	_check(by_id.has("warden_head_pot_helm_bonk"),
+		"Warden part catalog contains warden_head_pot_helm_bonk")
+
+	# Preserve all four snapshot combinations on non-part events, including when satchel_count is 5 or full 6.
+	for count_val in [0, 5, 6]:
+		var snap_count_only := _satchel_four(40, count_val, [95, 0, 50, 200])
+		var snap_both := _scraps_satchel_four(40, 4, count_val, [95, 0, 50, 200])
+		var non_part_service := RunStitchedEventConsequence.new(_bargain_event())
+		var non_part_preview := non_part_service.preview(snap_count_only)
+		_check(non_part_preview.get("ok") == true,
+			"non-part event preflights with satchel_count=%d" % count_val)
+		var non_part_entry := _entry(non_part_preview, "bargain")
+		_check(non_part_entry.get("available") == true
+			and not non_part_entry.has("part")
+			and not non_part_entry.has("satchel_count"),
+			"non-part preview entry omits part and satchel_count at count=%d" % count_val)
+		var non_part_receipt := non_part_service.choose("bargain", snap_count_only)
+		_check(non_part_receipt.get("ok") == true
+			and _receipt_keys(non_part_receipt) == ["candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target"],
+			"non-part receipt keeps exact 7-key shape at satchel_count=%d" % count_val)
+
+		var scraps_only_service := RunStitchedEventConsequence.new(_scraps_bargain_event())
+		var scraps_only_preview := scraps_only_service.preview(snap_both)
+		_check(scraps_only_preview.get("ok") == true
+			and _entry(scraps_only_preview, "mend_party").get("available") == true
+			and not _entry(scraps_only_preview, "mend_party").has("part")
+			and not _entry(scraps_only_preview, "mend_party").has("satchel_count"),
+			"scraps-only choice omits part and satchel_count when snapshot has both scraps and satchel_count=%d" % count_val)
+		var scraps_only_receipt := scraps_only_service.choose("mend_party", snap_both)
+		_check(scraps_only_receipt.get("ok") == true
+			and _receipt_keys(scraps_only_receipt) == [
+				"candle", "choice_id", "event_id", "fray", "hero_id",
+				"ok", "scraps", "scraps_delta", "target",
+			],
+			"scraps-only receipt keeps exact 9-key shape when snapshot has satchel_count=%d" % count_val)
+
+	# AC1: Four canonical heroes, satchel_count 5, Warden catalog -> preview and choose agree on
+	# warden_head_pot_helm_bonk tier 2 and projected satchel_count 6 alongside candle/fray/scraps.
+	var event_record := _part_bargain_event()
+	var event_original := event_record.duplicate(true)
+	var snapshot := _scraps_satchel_four(40, 4, 5, [95, 0, 50, 200])
+	var snapshot_original := snapshot.duplicate(true)
+
+	seed(20261106)
+	var expected_rng := randi()
+	seed(20261106)
+
+	var service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	var preview := service.preview(snapshot)
+	_check(preview.get("ok") == true and preview.get("event_id") == "ev_stitched_part_bargain"
+		and preview.get("candle") == 40,
+		"AC1: part bargain preflight succeeds and reports base candle 40")
+
+	var claim_entry := _entry(preview, "claim_pot_helm")
+	_check(claim_entry.get("available") == true
+		and claim_entry.get("target") == "party"
+		and claim_entry.get("hero_id") == ""
+		and claim_entry.get("candle_delta") == -15
+		and claim_entry.get("fray_delta") == 20
+		and claim_entry.get("candle") == 25
+		and claim_entry.get("fray") == {
+			"warden": 20, "seamstress": 20, "tinker": 20, "button_golem": 20,
+		}
+		and claim_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and claim_entry.get("satchel_count") == 6
+		and not claim_entry.has("scraps")
+		and not claim_entry.has("scraps_delta"),
+		"AC1: party part choice previews warden_head_pot_helm_bonk tier 2 and satchel_count 6")
+
+	var buy_entry := _entry(preview, "buy_pot_helm")
+	_check(buy_entry.get("available") == true
+		and buy_entry.get("target") == "hero"
+		and buy_entry.get("hero_id") == "warden"
+		and buy_entry.get("candle_delta") == 10
+		and buy_entry.get("fray_delta") == -15
+		and buy_entry.get("scraps_delta") == -2
+		and buy_entry.get("candle") == 50
+		and buy_entry.get("scraps") == 2
+		and buy_entry.get("fray") == {"warden": -15}
+		and buy_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and buy_entry.get("satchel_count") == 6,
+		"AC1: hero scraps+part choice previews warden_head_pot_helm_bonk tier 2, scraps 2 and satchel_count 6")
+
+	var leave_entry := _entry(preview, "leave")
+	_check(leave_entry.get("available") == true
+		and leave_entry.get("candle") == 40
+		and leave_entry.get("fray") == {}
+		and not leave_entry.has("part")
+		and not leave_entry.has("satchel_count")
+		and not leave_entry.has("scraps"),
+		"AC1: Leave sibling on part Event keeps legacy non-part preview shape")
+
+	var claim_receipt := service.choose("claim_pot_helm", snapshot)
+	_check(claim_receipt.get("ok") == true
+		and claim_receipt.get("event_id") == "ev_stitched_part_bargain"
+		and claim_receipt.get("choice_id") == "claim_pot_helm"
+		and claim_receipt.get("target") == "party"
+		and claim_receipt.get("hero_id") == ""
+		and claim_receipt.get("candle") == 25
+		and claim_receipt.get("fray") == {
+			"warden": 20, "seamstress": 20, "tinker": 20, "button_golem": 20,
+		}
+		and claim_receipt.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and claim_receipt.get("satchel_count") == 6,
+		"AC1: choose() returns exact previewed part award and satchel_count 6")
+	_check(_receipt_keys(claim_receipt) == [
+		"candle", "choice_id", "event_id", "fray", "hero_id",
+		"ok", "part", "satchel_count", "target",
+	], "AC1: part-only receipt has exact 9-key shape")
+	_check(service.is_claimed() and not service.is_valid(),
+		"AC1: committing a part choice consumes the single visit")
+	_assert_rejected(service, "claim_pot_helm", snapshot, 40, "AC2: replay of committed part choice")
+	_assert_rejected(service, "leave", snapshot, 40, "AC2: Leave after committed part choice")
+	_check(randi() == expected_rng,
+		"AC1/AC2: part preview, commit and replay never draw from global RNG")
+
+	# Commit parity on the scraps+part choice and catalog passed via preview/choose arguments:
+	var call_catalog_service := RunStitchedEventConsequence.new(event_record)
+	var call_preview := call_catalog_service.preview(snapshot, warden_catalog)
+	_check(call_preview == preview,
+		"catalog supplied to preview() produces identical preflight to constructor catalog")
+	var buy_receipt := call_catalog_service.choose("buy_pot_helm", snapshot, warden_catalog)
+	_check(buy_receipt.get("ok") == true
+		and buy_receipt.get("candle") == buy_entry.get("candle")
+		and buy_receipt.get("fray") == buy_entry.get("fray")
+		and buy_receipt.get("scraps_delta") == -2
+		and buy_receipt.get("scraps") == 2
+		and buy_receipt.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and buy_receipt.get("satchel_count") == 6,
+		"AC1: scraps+part choice commits with exact preview parity")
+	_check(_receipt_keys(buy_receipt) == [
+		"candle", "choice_id", "event_id", "fray", "hero_id",
+		"ok", "part", "satchel_count", "scraps", "scraps_delta", "target",
+	], "AC1: scraps+part receipt has exact 11-key shape")
+
+	# Snapshot without scraps ({candle, party, satchel_count: 5}) on a 2-choice Event (part + ordinary):
+	var no_scraps_snap := _satchel_four(90, 5, [95, 0, 50, 200])
+	var two_choice_event := _event([
+		_choice("claim_pot_helm", "Take the helm.",
+			_part_effect(25, -25, {"id": "warden_head_pot_helm_bonk", "tier": 2})),
+		_choice("ordinary", "Steady the candle.", _effect(15, -10)),
+	])
+	var two_choice_service := RunStitchedEventConsequence.new(two_choice_event, warden_catalog)
+	var two_choice_preview := two_choice_service.preview(no_scraps_snap)
+	_check(_entry(two_choice_preview, "claim_pot_helm").get("candle") == 100
+		and _entry(two_choice_preview, "claim_pot_helm").get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and _entry(two_choice_preview, "claim_pot_helm").get("satchel_count") == 6,
+		"2-choice part Event clamps candle to 100 and projects satchel_count 6 without scraps key")
+	var two_choice_receipt := two_choice_service.choose("claim_pot_helm", no_scraps_snap)
+	_check(two_choice_receipt.get("ok") == true and two_choice_receipt.get("candle") == 100
+		and two_choice_receipt.get("satchel_count") == 6,
+		"2-choice part Event commits with clamped candle 100 and satchel_count 6")
+
+	# Legal tiers 1, 2, 3 and satchel_count 0..5 projections, plus StitchedParts.build_catalog input forms:
+	var built_catalog := StitchedParts.build_catalog(warden_catalog["parts"])
+	_check(bool(built_catalog.get("ok", false)), "StitchedParts.build_catalog validates Warden parts array")
+	for tier in [1, 2, 3]:
+		var count_before: int = tier + 2 # 3, 4, 5
+		var tier_snap := _satchel_four(50, count_before, [20, 40, 60, 80])
+		var tier_event := _event([
+			_choice("prize", "Tiered helm.",
+				_part_effect(0, 5, {"id": "warden_head_pot_helm_bonk", "tier": tier})),
+			_choice("leave", "Leave.", _effect(0, 0)),
+		])
+		var tier_service := RunStitchedEventConsequence.new(tier_event, built_catalog)
+		var tier_entry := _entry(tier_service.preview(tier_snap), "prize")
+		_check(tier_entry.get("available") == true
+			and tier_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": tier}
+			and tier_entry.get("satchel_count") == count_before + 1,
+			"tier %d part offer is legal and projects satchel_count %d" % [tier, count_before + 1])
+		var tier_receipt := tier_service.choose("prize", tier_snap)
+		_check(tier_receipt.get("ok") == true
+			and tier_receipt.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": tier}
+			and tier_receipt.get("satchel_count") == count_before + 1,
+			"tier %d part offer commits with exact tier and satchel_count" % tier)
+
+	for base_count in range(0, 6):
+		var count_snap := _satchel_four(50, base_count, [10, 20, 30, 40])
+		var count_service := RunStitchedEventConsequence.new(two_choice_event, warden_catalog["parts"])
+		var count_receipt := count_service.choose("claim_pot_helm", count_snap)
+		_check(count_receipt.get("ok") == true and count_receipt.get("satchel_count") == base_count + 1,
+			"satchel_count %d is affordable and projects %d" % [base_count, base_count + 1])
+
+	# Deep-copy / immutability checks on catalog, event record, snapshot, preview and receipt:
+	_check(warden_catalog == catalog_original, "caller's Warden catalog is never mutated")
+	_check(event_record == event_original, "caller's authored event record is never mutated")
+	_check(snapshot == snapshot_original, "caller's snapshot is never mutated")
+	claim_entry["part"]["id"] = "mutated_id"
+	claim_entry["part"]["tier"] = 99
+	claim_receipt["part"]["id"] = "mutated_receipt_id"
+	claim_receipt["part"]["tier"] = 1
+	var fresh_check := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	var fresh_preview := fresh_check.preview(snapshot)
+	_check(_entry(fresh_preview, "claim_pot_helm").get("part")
+		== {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		"mutating preview or receipt part dictionary never aliases future calls")
+	var mutated_catalog := warden_catalog.duplicate(true)
+	mutated_catalog["by_id"].clear()
+	mutated_catalog["parts"].clear()
+	var after_catalog_mutation := fresh_check.choose("claim_pot_helm", snapshot)
+	_check(after_catalog_mutation.get("ok") == true
+		and after_catalog_mutation.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		"mutating caller catalog after construction never affects the service")
+
+
+func _test_part_prize_rejections() -> void:
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var event_record := _part_bargain_event()
+
+	# 1. AC2: Full six-part satchel (satchel_count == 6) disables only part choices;
+	#    choose rejects without claiming; Leave and ordinary choices still commit once; replay rejects.
+	var full_snap := _scraps_satchel_four(40, 4, 6, [95, 0, 50, 200])
+	var full_original := full_snap.duplicate(true)
+	var full_service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	var full_preview := full_service.preview(full_snap)
+	_check(full_preview.get("ok") == true, "full satchel (6) snapshot still preflights")
+	var full_claim_entry := _entry(full_preview, "claim_pot_helm")
+	_check(full_claim_entry.get("available") == false
+		and full_claim_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and full_claim_entry.get("satchel_count") == 6
+		and full_claim_entry.get("candle") == 40
+		and full_claim_entry.get("fray") == {},
+		"AC2: at satchel_count 6, party part choice is unavailable and keeps count 6 / base candle 40")
+	var full_buy_entry := _entry(full_preview, "buy_pot_helm")
+	_check(full_buy_entry.get("available") == false
+		and full_buy_entry.get("satchel_count") == 6
+		and full_buy_entry.get("scraps") == 4
+		and full_buy_entry.get("candle") == 40
+		and full_buy_entry.get("fray") == {},
+		"AC2: at satchel_count 6, scraps+part choice is unavailable without projecting scraps or fray")
+	_check(_entry(full_preview, "leave").get("available") == true,
+		"AC2: at satchel_count 6, Leave remains available")
+	_assert_rejected(full_service, "claim_pot_helm", full_snap, 40, "AC2: full satchel party part choice")
+	_assert_rejected(full_service, "buy_pot_helm", full_snap, 40, "AC2: full satchel scraps+part choice")
+	_check(not full_service.is_claimed(), "AC2: full satchel rejections leave visit unclaimed")
+	var full_leave_receipt := full_service.choose("leave", full_snap)
+	_check(full_leave_receipt.get("ok") == true
+		and full_leave_receipt.get("candle") == 40
+		and full_leave_receipt.get("fray") == {}
+		and not full_leave_receipt.has("part")
+		and not full_leave_receipt.has("satchel_count"),
+		"AC2: Leave commits on the same visit after full-satchel rejections")
+	_assert_rejected(full_service, "leave", full_snap, 40, "AC2: replay after full-satchel Leave")
+	_check(full_snap == full_original, "AC2: full-satchel checks never mutate caller snapshot")
+
+	# Ordinary non-Leave choice also commits on the same visit when satchel_count == 6:
+	var ordinary_full_event := _event([
+		_choice("claim_pot_helm", "Take helm.",
+			_part_effect(-15, 20, {"id": "warden_head_pot_helm_bonk", "tier": 2})),
+		_choice("mend_party", "Spend scraps to calm the party.", _scraps_effect(25, -25, -2)),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	])
+	var ordinary_full_service := RunStitchedEventConsequence.new(ordinary_full_event, warden_catalog)
+	_assert_rejected(ordinary_full_service, "claim_pot_helm", full_snap, 40,
+		"AC2: full satchel rejects part choice before ordinary sibling")
+	var ordinary_full_receipt := ordinary_full_service.choose("mend_party", full_snap)
+	_check(ordinary_full_receipt.get("ok") == true
+		and ordinary_full_receipt.get("candle") == 65
+		and ordinary_full_receipt.get("scraps") == 2
+		and not ordinary_full_receipt.has("part")
+		and not ordinary_full_receipt.has("satchel_count"),
+		"AC2: ordinary scraps choice commits normally when satchel_count is 6")
+	_assert_rejected(ordinary_full_service, "leave", full_snap, 40,
+		"AC2: replay rejected after ordinary choice commits")
+
+	# 2. AC2: Missing satchel_count in snapshot disables only part choices;
+	#    Leave and ordinary choices still commit on the same visit.
+	var missing_count_snap := _scraps_four(40, 4, [95, 0, 50, 200])
+	var missing_count_original := missing_count_snap.duplicate(true)
+	var missing_count_service := RunStitchedEventConsequence.new(ordinary_full_event, warden_catalog)
+	var missing_count_preview := missing_count_service.preview(missing_count_snap)
+	_check(missing_count_preview.get("ok") == true,
+		"AC2: snapshot without satchel_count still preflights on a mixed part/ordinary Event")
+	var missing_part_entry := _entry(missing_count_preview, "claim_pot_helm")
+	_check(missing_part_entry.get("available") == false
+		and missing_part_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and missing_part_entry.get("satchel_count") == null
+		and missing_part_entry.get("candle") == 40
+		and missing_part_entry.get("fray") == {},
+		"AC2: missing satchel_count makes part choice unavailable with null satchel_count")
+	_check(_entry(missing_count_preview, "mend_party").get("available") == true
+		and _entry(missing_count_preview, "leave").get("available") == true,
+		"AC2: missing satchel_count leaves ordinary and Leave choices available")
+	_assert_rejected(missing_count_service, "claim_pot_helm", missing_count_snap, 40,
+		"AC2: missing satchel_count part choice")
+	var missing_ordinary_receipt := missing_count_service.choose("mend_party", missing_count_snap)
+	_check(missing_ordinary_receipt.get("ok") == true and missing_ordinary_receipt.get("scraps") == 2,
+		"AC2: ordinary choice commits after missing-satchel_count refusal")
+	_assert_rejected(missing_count_service, "leave", missing_count_snap, 40,
+		"AC2: replay fails after missing-satchel_count fallback commit")
+	_check(missing_count_snap == missing_count_original,
+		"AC2: missing-satchel_count checks leave snapshot untouched")
+
+	# Also check {candle, party} snapshot (neither scraps nor satchel_count) on part Event:
+	var bare_snap := _four(40, [95, 0, 50, 200])
+	var bare_service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	_assert_rejected(bare_service, "claim_pot_helm", bare_snap, 40, "bare snapshot part choice")
+	_assert_rejected(bare_service, "buy_pot_helm", bare_snap, 40, "bare snapshot scraps+part choice")
+	var bare_leave := bare_service.choose("leave", bare_snap)
+	_check(bare_leave.get("ok") == true and bare_leave.get("candle") == 40,
+		"bare {candle, party} snapshot still commits Leave on a part Event")
+
+	# Scraps+part choice where satchel has room (5) but scraps are insufficient (1 vs -2):
+	var low_scraps_part_snap := _scraps_satchel_four(40, 1, 5, [95, 0, 50, 200])
+	var low_scraps_part_service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	var low_scraps_part_preview := low_scraps_part_service.preview(low_scraps_part_snap)
+	_check(_entry(low_scraps_part_preview, "buy_pot_helm").get("available") == false
+		and _entry(low_scraps_part_preview, "buy_pot_helm").get("scraps") == 1
+		and _entry(low_scraps_part_preview, "buy_pot_helm").get("satchel_count") == 5
+		and _entry(low_scraps_part_preview, "claim_pot_helm").get("available") == true,
+		"insufficient scraps disables only the scraps-costing part choice while free part choice stays available")
+	_assert_rejected(low_scraps_part_service, "buy_pot_helm", low_scraps_part_snap, 40,
+		"insufficient scraps on scraps+part choice")
+	var free_part_receipt := low_scraps_part_service.choose("claim_pot_helm", low_scraps_part_snap)
+	_check(free_part_receipt.get("ok") == true and free_part_receipt.get("satchel_count") == 6,
+		"free part sibling still commits after insufficient-scraps part refusal")
+
+	# Absent hero on a hero-targeted part choice:
+	var no_scarecrow_snap := _satchel_four(40, 5, [95, 0, 50, 200])
+	var absent_hero_part_service := RunStitchedEventConsequence.new(_event([
+		_choice("scarecrow_helm", "Give to absent scarecrow.",
+			_part_effect(10, -10, {"id": "warden_head_pot_helm_bonk", "tier": 1}, "hero", "scarecrow")),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	]), warden_catalog)
+	var absent_part_entry := _entry(absent_hero_part_service.preview(no_scarecrow_snap), "scarecrow_helm")
+	_check(absent_part_entry.get("available") == false
+		and absent_part_entry.get("satchel_count") == 5
+		and absent_part_entry.get("candle") == 40
+		and absent_part_entry.get("fray") == {},
+		"absent target hero makes hero-targeted part choice unavailable without incrementing satchel_count")
+	_assert_rejected(absent_hero_part_service, "scarecrow_helm", no_scarecrow_snap, 40,
+		"absent hero on part choice")
+	_check(absent_hero_part_service.choose("leave", no_scarecrow_snap).get("ok") == true,
+		"Leave commits after absent-hero part refusal")
+
+	# 3. AC3: Absent or invalid catalog, unknown part ID, illegal tiers (0, 4, fraction, string, bool, null),
+	#    and malformed part structures disable only the broken choice; legal sibling still commits.
+	var valid_part_snap := _scraps_satchel_four(40, 4, 5, [95, 0, 50, 200])
+	var missing_file_catalog := StitchedParts.load_catalog("res://data/parts/missing_parts_file.json")
+	var tampered_catalog := warden_catalog.duplicate(true)
+	tampered_catalog["parts"][0]["slot"] = "wings"
+	var mismatched_by_id := warden_catalog.duplicate(true)
+	mismatched_by_id["by_id"].erase("warden_head_pot_helm_bonk")
+	var bad_catalogs: Array = [
+		null,
+		{},
+		[],
+		"res://data/parts/warden_parts.json",
+		42,
+		missing_file_catalog,
+		{"ok": false, "parts": warden_catalog["parts"], "by_id": warden_catalog["by_id"]},
+		{"ok": true, "parts": [], "by_id": {}},
+		{"parts": "not_an_array"},
+		{"parts": warden_catalog["parts"], "unexpected": true},
+		tampered_catalog,
+		mismatched_by_id,
+		{"wrong_key": warden_catalog["parts"][0]},
+	]
+	for index in range(bad_catalogs.size()):
+		var bad_cat: Variant = bad_catalogs[index]
+		var cat_service := RunStitchedEventConsequence.new(ordinary_full_event, bad_cat)
+		var cat_preview := cat_service.preview(valid_part_snap)
+		_check(cat_preview.get("ok") == true,
+			"bad catalog %d still allows Event preflight" % index)
+		var cat_part_entry := _entry(cat_preview, "claim_pot_helm")
+		_check(cat_part_entry.get("available") == false
+			and cat_part_entry.get("part") == null
+			and cat_part_entry.get("satchel_count") == null,
+			"bad catalog %d disables part choice without exposing a part prize" % index)
+		_check(_entry(cat_preview, "mend_party").get("available") == true,
+			"bad catalog %d leaves non-part sibling available" % index)
+		_assert_rejected(cat_service, "claim_pot_helm", valid_part_snap, 40,
+			"bad catalog %d part commit" % index)
+		var cat_sibling := cat_service.choose("mend_party", valid_part_snap)
+		_check(cat_sibling.get("ok") == true and cat_sibling.get("scraps") == 2,
+			"bad catalog %d allows non-part sibling to commit" % index)
+		_assert_rejected(cat_service, "leave", valid_part_snap, 40,
+			"replay after bad catalog %d sibling commit" % index)
+
+	var broken_part_Payloads: Array = [
+		{"id": "unknown_warden_part", "tier": 2},
+		{"id": "porcelain_crown", "tier": 1},
+		{"id": "", "tier": 2},
+		{"id": "   ", "tier": 2},
+		{"id": " warden_head_pot_helm_bonk", "tier": 2},
+		{"id": "warden_head_pot_helm_bonk ", "tier": 2},
+		{"id": 42, "tier": 2},
+		{"id": null, "tier": 2},
+		{"id": "warden_head_pot_helm_bonk", "tier": 0},
+		{"id": "warden_head_pot_helm_bonk", "tier": 4},
+		{"id": "warden_head_pot_helm_bonk", "tier": -1},
+		{"id": "warden_head_pot_helm_bonk", "tier": 1.5},
+		{"id": "warden_head_pot_helm_bonk", "tier": 2.0},
+		{"id": "warden_head_pot_helm_bonk", "tier": "2"},
+		{"id": "warden_head_pot_helm_bonk", "tier": true},
+		{"id": "warden_head_pot_helm_bonk", "tier": null},
+		{"id": "warden_head_pot_helm_bonk"},
+		{"tier": 2},
+		{"id": "warden_head_pot_helm_bonk", "tier": 2, "slot": "head"},
+		{},
+		[],
+		"warden_head_pot_helm_bonk",
+		2,
+		null,
+	]
+	for index in range(broken_part_Payloads.size()):
+		var broken_event := _event([
+			_choice("broken_part", "Broken part prize.",
+				_part_effect(-10, 10, broken_part_Payloads[index])),
+			_choice("leave", "Leave.", _effect(0, 0)),
+		])
+		var broken_service := RunStitchedEventConsequence.new(broken_event, warden_catalog)
+		var broken_preview := broken_service.preview(valid_part_snap)
+		var broken_entry := _entry(broken_preview, "broken_part")
+		_check(broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null
+			and broken_entry.get("part") == null
+			and broken_entry.get("satchel_count") == null,
+			"malformed/unknown part payload %d is unavailable with null deltas/part" % index)
+		_check(_entry(broken_preview, "leave").get("available") == true,
+			"malformed/unknown part payload %d leaves sibling available" % index)
+		_assert_rejected(broken_service, "broken_part", valid_part_snap, 40,
+			"malformed/unknown part payload %d commit" % index)
+		var fallback_receipt := broken_service.choose("leave", valid_part_snap)
+		_check(fallback_receipt.get("ok") == true and fallback_receipt.get("candle") == 40,
+			"malformed/unknown part payload %d still lets sibling commit" % index)
+		_assert_rejected(broken_service, "leave", valid_part_snap, 40,
+			"replay after malformed/unknown part payload %d fallback" % index)
+
+	# 4. AC3: Bad snapshot satchel_count (-1, 7, fraction, string, bool, null, etc.) rejected:
+	var count_service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	var bad_counts: Array = [-1, 7, -9223372036854775807, 9223372036854775807, 1.5, 5.0, "5", true, false, null, [], {}]
+	for index in range(bad_counts.size()):
+		var bad_count_snap := _satchel_four(40, bad_counts[index], [95, 0, 50, 200])
+		_check(count_service.preview(bad_count_snap) == _denied_preview(),
+			"bad satchel_count %d denies preflight" % index)
+		_assert_rejected(count_service, "claim_pot_helm", bad_count_snap, 0,
+			"bad satchel_count %d commit" % index)
+		var bad_both_snap := _scraps_satchel_four(40, 4, bad_counts[index], [95, 0, 50, 200])
+		_check(count_service.preview(bad_both_snap) == _denied_preview(),
+			"bad satchel_count %d with scraps denies preflight" % index)
+		_assert_rejected(count_service, "buy_pot_helm", bad_both_snap, 0,
+			"bad satchel_count %d with scraps commit" % index)
+	var extra_snap := _scraps_satchel_four(40, 4, 5, [95, 0, 50, 200])
+	extra_snap["extra"] = 1
+	_check(count_service.preview(extra_snap) == _denied_preview(),
+		"snapshot with extra key alongside scraps and satchel_count denies preflight")
+	_assert_rejected(count_service, "claim_pot_helm", extra_snap, 0,
+		"snapshot with extra key alongside scraps and satchel_count commit")
+	_check(not count_service.is_claimed(),
+		"bad satchel_count snapshots never latch the visit")
+	var valid_recovery := count_service.choose("claim_pot_helm", valid_part_snap)
+	_check(valid_recovery.get("ok") == true
+		and valid_recovery.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and valid_recovery.get("satchel_count") == 6,
+		"same instance still commits legal part choice after bad-count refusals")
+	_assert_rejected(count_service, "leave", valid_part_snap, 40,
+		"replay refused after recovered part claim")
+
+	# 5. Global RNG invariance across part rejections and fallback commit:
+	seed(20261107)
+	var expected_reject_rng := randi()
+	seed(20261107)
+	var rng_part_service := RunStitchedEventConsequence.new(event_record, warden_catalog)
+	_check(rng_part_service.preview(full_snap).get("ok") == true, "rng full-satchel preflight")
+	_assert_rejected(rng_part_service, "claim_pot_helm", full_snap, 40, "rng full-satchel refusal")
+	_assert_rejected(rng_part_service, "claim_pot_helm", missing_count_snap, 40, "rng missing-count refusal")
+	_check(rng_part_service.choose("leave", full_snap).get("ok") == true, "rng fallback Leave claim")
+	_assert_rejected(rng_part_service, "leave", full_snap, 40, "rng replay refusal")
+	_check(randi() == expected_reject_rng,
+		"AC2: part refusals, fallback claim and replay never advance the global RNG")
