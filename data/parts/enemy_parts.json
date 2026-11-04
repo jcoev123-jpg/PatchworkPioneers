@@ -82,6 +82,33 @@
         "3": {"stat": {"prot": 15}, "ability": {"effects": {"guard": 4}}}
       },
       "text": "Take the hits meant for one ally behind your shield."
+    },
+    {
+      "id": "fray_scavenger_sack_arm",
+      "name": "Scavenger Sack Arm",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {"dmg": 1},
+      "ability": {
+        "id": "sack_sweep",
+        "name": "Sack Sweep",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {"weak": 1},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [4, 6]}},
+        "3": {"ability": {"dmg": [5, 7]}}
+      },
+      "text": "Sweep a front foe with scavenged scraps and leave them Weak."
     }
   ]
 }
