@@ -7,6 +7,10 @@ extends RefCounted
 const CATALOG_PATH := "res://data/events/v3_hero_choice_events.json"
 const HERO_IDS := ["warden", "seamstress", "tinker", "lantern_monk",
 	"rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]
+## Legacy cards runs field exactly three heroes; a Design v4 Stitched run picks
+## four of eight and places them in ranks 1-4. This admission helper
+## authenticates initial roster membership only, never rank, HP or aliveness.
+const PARTY_SIZES := [3, 4]
 
 var _eligible: Dictionary = {}
 var _valid := false
@@ -15,10 +19,13 @@ var _valid := false
 ## catalog_data can reorder/subset the authored catalog for deterministic fixtures;
 ## it cannot introduce or alter records. Invalid input rejects the whole catalog.
 func _init(party_ids: Variant = null, catalog_data: Variant = null) -> void:
-	if not party_ids is Array or party_ids.size() != 3:
+	if not party_ids is Array:
+		return
+	var roster: Array = party_ids
+	if not PARTY_SIZES.has(roster.size()):
 		return
 	var party := {}
-	for hero in party_ids:
+	for hero in roster:
 		if not hero is String or not HERO_IDS.has(hero) or party.has(hero):
 			return
 		party[hero] = true
