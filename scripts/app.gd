@@ -683,10 +683,21 @@ var stitched_preview_scraps := 0
 var stitched_roadblock_candle := 100
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
+var _stitched_hp_carry: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
 var _stitched_sewing_catalog: Dictionary = {}
 var _stitched_battle_ticket: WeakRef
+## The one-use S6 Peddler bandage service, earned by a genuine four-survivor
+## Roadblock victory followed by an authenticated Sewing Circle Leave. It has
+## its own preview gold, never the legacy run wallet, cards or run RNG.
+var stitched_preview_gold := 0
+var _stitched_bleed_carry: Dictionary = {}
+var stitched_peddler_button: Button
+var stitched_peddler_panel: Control
+var stitched_peddler_visit: RunStitchedPeddlerBandage
+var _stitched_peddler_quote: Dictionary = {}
+var _stitched_peddler_roster: Array = []
 ## This is a detached, authenticated party receipt, not an editable UI request.
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
 var _stitched_party_picks: Array = STITCHED_DEFAULT_PICKS.duplicate()
@@ -700,6 +711,9 @@ const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
 const STITCHED_SEWING_MEND_COST := 2
 const STITCHED_ROADBLOCK_CANDLE_COST := 8
+const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
+const STITCHED_PEDDLER_PRICE := 10
+const STITCHED_PREVIEW_WIN_GOLD := 10
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
@@ -1371,6 +1385,18 @@ func _build_title() -> void:
 	stitched_fight_button.custom_minimum_size = Vector2(240, 56)
 	stitched_fight_button.pressed.connect(_open_stitched_fight)
 	box.add_child(stitched_fight_button)
+	# The Peddler stays hidden and unfocusable until a real Roadblock victory
+	# and Sewing Circle Leave earn it; it is never part of an unwon title.
+	stitched_peddler_button = Button.new()
+	stitched_peddler_button.name = "StitchedPeddlerButton"
+	stitched_peddler_button.text = "Stitched Peddler"
+	stitched_peddler_button.tooltip_text = "Spend Roadblock spoils on a Bleed-curing bandage"
+	stitched_peddler_button.custom_minimum_size = Vector2(240, 56)
+	stitched_peddler_button.visible = false
+	stitched_peddler_button.disabled = true
+	stitched_peddler_button.focus_mode = Control.FOCUS_NONE
+	stitched_peddler_button.pressed.connect(_open_stitched_peddler)
+	box.add_child(stitched_peddler_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
 	route_button.focus_next = route_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
@@ -1532,6 +1558,35 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 					or StitchedParts.ability_at_tier(part, int(gear["tier"])).is_empty():
 				return {}
 			hero["parts"][slot] = gear.duplicate(true)
+	# Project prior terminal-victory health only after the final worn parts are set.
+	# Torn equipment contributes no max HP; a lawful swap may lower the cap,
+	# but cannot heal a wounded survivor for free.
+	for hero in selected_heroes:
+		var hero_id := str(hero["id"])
+		if not _stitched_hp_carry.has(hero_id):
+			continue
+		var carried_hp: Variant = _stitched_hp_carry[hero_id]
+		if typeof(carried_hp) != TYPE_INT or int(carried_hp) < 0:
+			return {}
+		var worn_max: int = int(hero["max_hp"])
+		for slot in StitchedParts.SLOTS:
+			var gear: Dictionary = hero["parts"][slot]
+			if not bool(gear["torn"]):
+				var definition: Dictionary = catalog["by_id"][str(gear["id"])]
+				worn_max += int(StitchedParts.stat_at_tier(definition, int(gear["tier"])).get("max_hp", 0))
+		hero["hp"] = mini(int(carried_hp), worn_max)
+	# Carried Bleed is a positive integer keyed by canonical hero ID only, and
+	# only for heroes this party actually seats. A malformed entry fails the
+	# whole admission rather than silently healing a wounded hero.
+	for carried_id in _stitched_bleed_carry:
+		var carried_value: Variant = _stitched_bleed_carry[carried_id]
+		if not str(carried_id) in _stitched_party_picks \
+				or typeof(carried_value) != TYPE_INT or int(carried_value) <= 0:
+			return {}
+	for hero in selected_heroes:
+		var hero_id := str(hero["id"])
+		if _stitched_bleed_carry.has(hero_id):
+			hero["statuses"] = {"bleed": int(_stitched_bleed_carry[hero_id])}
 	config["heroes"] = selected_heroes
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
@@ -1626,6 +1681,10 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_party_draft:
 		if not id in checked:
 			return
+	# An identical confirmation of the same four heroes in the same rank order
+	# keeps the offer already earned; only a real change may invalidate it.
+	var party_changed: bool = _stitched_party_draft != _stitched_party_picks \
+		or receipt.get("heroes", []) != _stitched_party_receipt.get("heroes", [])
 	# Update nothing until the complete canonical receipt has passed.
 	_stitched_party_picks = _stitched_party_draft.duplicate()
 	_stitched_party_receipt = receipt.duplicate(true)
@@ -1633,6 +1692,17 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_gear_overrides.keys():
 		if not id in _stitched_party_picks:
 			_stitched_gear_overrides.erase(id)
+	for id in _stitched_hp_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
+	for id in _stitched_bleed_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_bleed_carry.erase(id)
+	# A changed party cannot inherit an earlier victory's Peddler offer; an
+	# unchanged one must not lose it without a purchase or a free Leave.
+	if party_changed:
+		_stitched_peddler_roster.clear()
+		_refresh_stitched_peddler_button()
 	_stitched_picker_sync()
 
 
@@ -1726,6 +1796,7 @@ func _open_stitched_fight() -> bool:
 	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
@@ -1950,6 +2021,28 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
+		# This exact, once-only stage is the sole HP source. A lost hero is not
+		# carried; failed, retreated and replayed exits leave the ledger untouched.
+		for id in _stitched_party_picks:
+			_stitched_hp_carry.erase(id)
+		for hero in heroes:
+			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
+		# One preview gold award belongs to this authenticated victory exit alone.
+		# It never enters the legacy run/title wallets or uses global RNG.
+		stitched_preview_gold += STITCHED_PREVIEW_WIN_GOLD
+		# Only a positive integer Bleed status survives the fight, carried by
+		# canonical hero ID. Anything else is dropped, never guessed.
+		_stitched_bleed_carry.clear()
+		for hero in heroes:
+			var statuses: Variant = hero.get("statuses", {})
+			if not statuses is Dictionary:
+				continue
+			var bleed: Variant = (statuses as Dictionary).get("bleed", 0)
+			if typeof(bleed) == TYPE_INT and int(bleed) > 0:
+				_stitched_bleed_carry[str(hero["id"])] = int(bleed)
+		# A fresh terminal victory supersedes any Peddler offer won earlier.
+		_stitched_peddler_roster.clear()
+		_refresh_stitched_peddler_button()
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
 		stitched_preview_scraps += 1
@@ -2284,6 +2377,8 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 			next_overrides[hero_id] = carried
 	_stitched_gear_overrides = next_overrides
 	_close_stitched_sewing()
+	# The Peddler is earned only by this exact terminal victory + Circle Leave.
+	_offer_stitched_peddler(swap_final["heroes"])
 	return receipt
 
 
@@ -2322,6 +2417,353 @@ func _close_stitched_fight() -> void:
 		title_view.show()
 		if is_instance_valid(stitched_fight_button):
 			stitched_fight_button.grab_focus.call_deferred()
+
+
+## The winning survivors, by ID and rank, are the only Peddler customers. The
+## roster is rebuilt from the app's own carried HP/Bleed, so a reselected or
+## unliving party fails closed instead of inheriting an earlier offer.
+func _offer_stitched_peddler(survivors: Array) -> void:
+	_stitched_peddler_roster.clear()
+	if survivors.size() == 4 and _stitched_party_picks.size() == 4:
+		var roster: Array = []
+		for hero_raw in survivors:
+			if not hero_raw is Dictionary:
+				roster.clear()
+				break
+			var hero: Dictionary = hero_raw
+			var hero_id := str(hero.get("id", ""))
+			var rank: Variant = hero.get("rank")
+			var statuses := {}
+			if hero_id.is_empty() or not hero_id in _stitched_party_picks \
+					or not _stitched_hp_carry.has(hero_id) \
+					or typeof(rank) != TYPE_INT or int(rank) < 1 or int(rank) > 4:
+				roster.clear()
+				break
+			if _stitched_bleed_carry.has(hero_id):
+				var bleed: Variant = _stitched_bleed_carry[hero_id]
+				if typeof(bleed) != TYPE_INT or int(bleed) <= 0:
+					roster.clear()
+					break
+				statuses["bleed"] = int(bleed)
+			roster.append({"id": hero_id, "name": str(hero.get("name", hero_id)),
+				"rank": int(rank), "statuses": statuses})
+		if roster.size() == 4:
+			roster.sort_custom(func(a, b): return int(a["rank"]) < int(b["rank"]))
+			_stitched_peddler_roster = roster
+	if _stitched_peddler_living_roster().is_empty():
+		_stitched_peddler_roster.clear()
+	_refresh_stitched_peddler_button()
+
+
+## A fully detached, currently lawful rank roster (ranks 1..4, four living
+## selected heroes and exactly the carried Bleed statuses), or [] to fail closed.
+func _stitched_peddler_living_roster() -> Array:
+	if _stitched_peddler_roster.size() != 4 or _stitched_party_picks.size() != 4:
+		return []
+	var ids := {}
+	var ranks := {}
+	var roster: Array = []
+	for hero_raw in _stitched_peddler_roster:
+		if not hero_raw is Dictionary:
+			return []
+		var hero: Dictionary = hero_raw
+		var hero_id := str(hero.get("id", ""))
+		var rank: Variant = hero.get("rank")
+		if hero_id.is_empty() or not hero_id in _stitched_party_picks or ids.has(hero_id) \
+				or not _stitched_hp_carry.has(hero_id) \
+				or typeof(rank) != TYPE_INT or int(rank) < 1 or int(rank) > 4 \
+				or ranks.has(int(rank)):
+			return []
+		var statuses: Variant = hero.get("statuses")
+		if not statuses is Dictionary:
+			return []
+		var carried := {}
+		if _stitched_bleed_carry.has(hero_id):
+			var bleed: Variant = _stitched_bleed_carry[hero_id]
+			if typeof(bleed) != TYPE_INT or int(bleed) <= 0:
+				return []
+			carried["bleed"] = int(bleed)
+		if statuses != carried:
+			return []
+		ids[hero_id] = true
+		ranks[int(rank)] = true
+		roster.append({"id": hero_id, "name": str(hero.get("name", hero_id)),
+			"rank": int(rank), "statuses": carried})
+	if ids.size() != 4 or ranks.size() != 4:
+		return []
+	roster.sort_custom(func(a, b): return int(a["rank"]) < int(b["rank"]))
+	return roster
+
+
+## Shows the title Peddler button only while a lawful earned roster waits, and
+## keeps it inside the title's keyboard ring only at that moment.
+func _refresh_stitched_peddler_button() -> void:
+	if not is_instance_valid(stitched_peddler_button):
+		return
+	var ready: bool = not _stitched_peddler_roster.is_empty() \
+		and stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel)
+	stitched_peddler_button.visible = ready
+	stitched_peddler_button.disabled = not ready
+	stitched_peddler_button.focus_mode = Control.FOCUS_ALL if ready else Control.FOCUS_NONE
+	if not is_instance_valid(title_view) or not title_view.is_inside_tree() \
+			or not is_instance_valid(stitched_fight_button) or not is_instance_valid(start_button):
+		return
+	if ready:
+		stitched_fight_button.focus_next = stitched_fight_button.get_path_to(stitched_peddler_button)
+		stitched_peddler_button.focus_next = stitched_peddler_button.get_path_to(start_button)
+		stitched_peddler_button.focus_previous = stitched_peddler_button.get_path_to(
+			stitched_fight_button)
+		start_button.focus_previous = start_button.get_path_to(stitched_peddler_button)
+	else:
+		stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
+		start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
+
+
+## The title-accessible Peddler: one quoted bandage for a genuinely bleeding
+## survivor, or a free Leave. Only an earned roster can open it.
+func _open_stitched_peddler() -> bool:
+	if is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null \
+			or deck != null or run_map != null or run_rng != null \
+			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
+			or is_instance_valid(battle_view) \
+			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+		return false
+	var roster := _stitched_peddler_living_roster()
+	if roster.is_empty():
+		return false
+	var visit := RunStitchedPeddlerBandage.open_stitched(
+		STITCHED_PEDDLER_NODE_ID, roster, stitched_preview_gold, STITCHED_PEDDLER_PRICE)
+	if not visit.is_valid() or not visit.is_open():
+		return false
+	var quote := visit.read_state()
+	if quote.get("ok") != true or quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or quote.get("status") != RunStitchedPeddlerBandage.OPEN \
+			or int(quote.get("price", 0)) != STITCHED_PEDDLER_PRICE \
+			or int(quote.get("gold", -1)) != stitched_preview_gold:
+		return false
+	var built := _mount_stitched_peddler(visit, quote)
+	var panel: Control = built.get("panel")
+	if panel == null:
+		return false
+	# Store only the exact snapshot this panel displays; every callback below
+	# must present it back unchanged.
+	stitched_peddler_visit = visit
+	stitched_peddler_panel = panel
+	_stitched_peddler_quote = quote.duplicate(true)
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_view.hide()
+	var first: Button = built.get("first")
+	if first != null and is_instance_valid(first) and not first.disabled:
+		first.grab_focus()
+	else:
+		panel.grab_focus()
+	return true
+
+
+## Gothic-themed visit board. Framing is shipped textile art; only the existing
+## theme supplies button chrome, so nothing is drawn in code.
+func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
+		quote: Dictionary) -> Dictionary:
+	if not visit.is_valid() or not visit.is_open():
+		return {}
+	var panel := Control.new()
+	panel.name = "StitchedPeddler"
+	panel.theme = load("res://themes/gothic_theme.tres")
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.focus_mode = Control.FOCUS_ALL
+	var frame := NinePatchRect.new()
+	frame.name = "PeddlerFrame"
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+		frame.patch_margin_left = 24
+		frame.patch_margin_right = 24
+		frame.patch_margin_top = 24
+		frame.patch_margin_bottom = 24
+	frame.position = Vector2(120, 40)
+	frame.size = Vector2(1040, 640)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.text = "STITCHED PEDDLER  ·  BLEED BANDAGES"
+	heading.position = Vector2(165, 78)
+	heading.size = Vector2(960, 54)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 27)
+	panel.add_child(heading)
+	var description := Label.new()
+	description.text = "A hooded peddler boils a strip of felt and threads it through the wound. One bandage cures one hero's Bleed."
+	description.position = Vector2(170, 143)
+	description.size = Vector2(950, 64)
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(description)
+	var wallet := Label.new()
+	wallet.name = "PeddlerQuote"
+	wallet.text = "PREVIEW GOLD  %d    ·    ONE BANDAGE  %d    ·    LEAVE IS FREE" % [
+		int(quote["gold"]), int(quote["price"])]
+	wallet.position = Vector2(183, 212)
+	wallet.size = Vector2(910, 36)
+	wallet.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(wallet)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(180, 266)
+	scroll.size = Vector2(920, 270)
+	panel.add_child(scroll)
+	var offers := VBoxContainer.new()
+	offers.custom_minimum_size.x = 890
+	offers.add_theme_constant_override("separation", 10)
+	scroll.add_child(offers)
+	var state: Dictionary = quote.duplicate(true)
+	var first: Button = null
+	var bleeding := 0
+	for hero_row in quote["heroes"]:
+		var hero_id := str(hero_row["id"])
+		var hero_name := str(hero_row.get("name", hero_id))
+		var statuses: Dictionary = hero_row["statuses"]
+		var bleed := int(statuses.get("bleed", 0))
+		var eligible: bool = bleed > 0 and hero_id in quote["eligible"]
+		if eligible:
+			bleeding += 1
+		var affordable: bool = int(quote["gold"]) >= int(quote["price"])
+		var button := Button.new()
+		button.name = "Bandage_" + hero_id
+		button.custom_minimum_size = Vector2(850, 52)
+		button.disabled = not eligible or not affordable
+		button.focus_mode = Control.FOCUS_NONE if button.disabled else Control.FOCUS_ALL
+		if eligible:
+			button.text = "Bandage %d %s · cures Bleed %d · %d gold" % [
+				int(hero_row["rank"]), hero_name, bleed, int(quote["price"])]
+			button.tooltip_text = "Spend %d preview gold to cure only %s's Bleed" % [
+				int(quote["price"]), hero_name]
+		else:
+			button.text = "%d %s · not bleeding" % [int(hero_row["rank"]), hero_name]
+			button.tooltip_text = "Only a hero carrying Bleed can wear a bandage"
+		if eligible and not affordable:
+			button.text = "Bandage %d %s · needs %d gold" % [
+				int(hero_row["rank"]), hero_name, int(quote["price"])]
+			button.tooltip_text = "The quote is %d preview gold; this hero keeps the Bleed" % int(
+				quote["price"])
+		button.pressed.connect(_stitched_peddler_buy.bind(
+			hero_id, state.duplicate(true), weakref(panel)))
+		offers.add_child(button)
+		if not button.disabled and first == null:
+			first = button
+	if bleeding == 0:
+		var empty := Label.new()
+		empty.text = "No survivor is bleeding. The peddler has nothing to stitch."
+		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		offers.add_child(empty)
+	var leave_button := Button.new()
+	leave_button.name = "PeddlerLeave"
+	leave_button.text = "Leave the Peddler · free"
+	leave_button.position = Vector2(405, 570)
+	leave_button.size = Vector2(470, 54)
+	leave_button.pressed.connect(_stitched_peddler_leave.bind(
+		state.duplicate(true), weakref(panel)))
+	panel.add_child(leave_button)
+	if first == null:
+		first = leave_button
+	return {"panel": panel, "first": first}
+
+
+## Buys exactly one quoted bandage for one eligible hero and closes the visit.
+## A stale, forged, duplicated or unaffordable request changes nothing.
+func _stitched_peddler_buy(hero_id: String, expected_snapshot: Dictionary,
+		source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_peddler_panel \
+			or not is_instance_valid(panel) or not panel.is_visible_in_tree() \
+			or stitched_peddler_visit == null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or _stitched_peddler_quote != expected_snapshot \
+			or not hero_id in expected_snapshot.get("eligible", []):
+		return {"ok": false, "error": "stale Peddler bandage"}
+	if int(expected_snapshot.get("price", 0)) != STITCHED_PEDDLER_PRICE \
+			or int(expected_snapshot.get("gold", -1)) != stitched_preview_gold \
+			or stitched_preview_gold < STITCHED_PEDDLER_PRICE:
+		return {"ok": false, "error": "unaffordable Peddler bandage"}
+	var expected_heroes: Array = expected_snapshot.get("heroes", []).duplicate(true)
+	var matched := false
+	for hero in expected_heroes:
+		if str(hero.get("id", "")) != hero_id:
+			continue
+		var statuses: Variant = hero.get("statuses")
+		if not statuses is Dictionary or int((statuses as Dictionary).get("bleed", 0)) <= 0:
+			return {"ok": false, "error": "the hero is not bleeding"}
+		(statuses as Dictionary).erase("bleed")
+		matched = true
+	if not matched:
+		return {"ok": false, "error": "unknown Peddler hero"}
+	var receipt: Dictionary = stitched_peddler_visit.choose_bandage(
+		hero_id, STITCHED_PEDDLER_NODE_ID, expected_snapshot)
+	if receipt.get("ok") != true \
+			or receipt.get("decision") != RunStitchedPeddlerBandage.BUY_BANDAGE \
+			or receipt.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or receipt.get("hero_id") != hero_id \
+			or int(receipt.get("price", 0)) != STITCHED_PEDDLER_PRICE \
+			or int(receipt.get("charged_gold", 0)) != STITCHED_PEDDLER_PRICE \
+			or int(receipt.get("gold", -1)) != stitched_preview_gold - STITCHED_PEDDLER_PRICE \
+			or receipt.get("heroes") != expected_heroes:
+		return {"ok": false, "error": "Peddler bandage receipt rejected"}
+	stitched_preview_gold = int(receipt["gold"])
+	# Only the chosen hero's carried Bleed is cured. HP, equipment, satchel,
+	# scraps and candle belong to other owners and stay untouched.
+	_stitched_bleed_carry.erase(hero_id)
+	_stitched_peddler_roster.clear()
+	_close_stitched_peddler()
+	return receipt
+
+
+## Leaves the Peddler for free, preserving every carried status and resource.
+func _stitched_peddler_leave(expected_snapshot: Dictionary, source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_peddler_panel \
+			or not is_instance_valid(panel) or not panel.is_visible_in_tree() \
+			or stitched_peddler_visit == null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or _stitched_peddler_quote != expected_snapshot:
+		return {"ok": false, "error": "stale Peddler"}
+	var receipt: Dictionary = stitched_peddler_visit.leave(
+		STITCHED_PEDDLER_NODE_ID, expected_snapshot)
+	if receipt.get("ok") != true \
+			or receipt.get("decision") != RunStitchedPeddlerBandage.LEAVE \
+			or receipt.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or int(receipt.get("charged_gold", 1)) != 0 \
+			or int(receipt.get("gold", -1)) != stitched_preview_gold \
+			or receipt.get("heroes") != expected_snapshot.get("heroes", []):
+		return {"ok": false, "error": "Peddler Leave receipt rejected"}
+	_stitched_peddler_roster.clear()
+	_close_stitched_peddler()
+	return receipt
+
+
+func _close_stitched_peddler() -> void:
+	var panel := stitched_peddler_panel
+	# Retire app authority before removing controls; queued input is then inert.
+	stitched_peddler_panel = null
+	stitched_peddler_visit = null
+	_stitched_peddler_quote.clear()
+	if is_instance_valid(panel):
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+	if is_instance_valid(title_view):
+		title_view.show()
+	_refresh_stitched_peddler_button()
+	if is_instance_valid(stitched_peddler_button) and stitched_peddler_button.visible:
+		stitched_peddler_button.grab_focus.call_deferred()
+	elif is_instance_valid(stitched_fight_button):
+		stitched_fight_button.grab_focus.call_deferred()
+
 
 ## Full-screen Quilt village with no run, RNG, deck or currency allocation.
 func _open_base() -> bool:

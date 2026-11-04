@@ -744,7 +744,9 @@
           "acc": 86,
           "dmg": [3, 6],
           "crit": 0,
-          "effects": {},
+          "effects": {
+            "bleed": 2
+          },
           "self_move": 0,
           "move": "attack2"
         },
