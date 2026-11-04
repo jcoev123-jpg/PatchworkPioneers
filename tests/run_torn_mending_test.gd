@@ -12,6 +12,7 @@ func _initialize() -> void:
 	_test_tinker_floor()
 	_test_defeat_and_bad_battles()
 	_test_vital_receipts()
+	_test_hero_gated_vitals()
 	_test_deterministic_rng()
 	_finish()
 
@@ -549,3 +550,161 @@ func _test_vital_receipts() -> void:
 				"vital", service.read_state().heroes, true))
 			_check(service.apply_rest("later_rest", service.read_state().heroes, true).ok,
 				"Rest remains valid after authored HP and cap changes")
+
+func _named_gated_service(picks: Array) -> RunTornMending:
+	var admission := RunV3PartyAdmission.admit(picks)
+	_check(admission.ok and admission.party.size() == 3, "canonical trio admission")
+	if not admission.ok:
+		return RunTornMending.new()
+	var party := CombatParty.new(admission.party)
+	_check(party.is_valid(), "canonical CombatParty for hero gate")
+	var service := RunTornMending.new(party.get_heroes())
+	_check(service.is_valid(), "canonical named trio has authentic full HP")
+	return service
+
+
+func _later_slot_party(required: String) -> Array:
+	match required:
+		"warden": return ["rag_duelist", "warden", "tinker"]
+		"lantern_monk": return ["warden", "lantern_monk", "tinker"]
+		"rag_duelist": return ["warden", "rag_duelist", "tinker"]
+		"scarecrow": return ["warden", "scarecrow", "tinker"]
+		"yarn_ranger": return ["warden", "seamstress", "yarn_ranger"]
+		"button_golem": return ["warden", "button_golem", "tinker"]
+		_: return ["warden", "seamstress", "tinker"]
+
+
+func _vital_opening(state: Dictionary, required: String, gold: int = 60, scraps: int = 6) -> Dictionary:
+	for actor in state.heroes:
+		if actor.id == required:
+			return {"gold": gold, "scraps": scraps, "hero": {
+				"id": actor.id, "hp": actor.hp, "max_hp": actor.max_hp}}
+	return {}
+
+
+func _test_hero_gated_vitals() -> void:
+	var records: Array = RunV3HeroVitalEventGate.load_shipped_catalog().get("events", [])
+	_check(not records.is_empty(), "canonical hero-gated records load")
+	var seen: Dictionary = {}
+	for record in records:
+		var required: String = record.required_hero
+		for choice in record.choices:
+			var service := _named_gated_service(_later_slot_party(required))
+			if not service.is_valid():
+				continue
+			var old := service.read_state()
+			var target := -1
+			var ids: Array = []
+			for index in range(old.heroes.size()):
+				ids.append(old.heroes[index].id)
+				if old.heroes[index].id == required:
+					target = index
+			_check(target > 0, record.id + " required living hero behind another living actor")
+			if target < 0:
+				continue
+			var snapshot := _vital_opening(old, required)
+			var snapshot_copy := snapshot.duplicate(true)
+			var gate := RunV3HeroVitalEventGate.new(ids)
+			_check(gate.is_valid(), "valid shipped gate " + record.id)
+			if not gate.is_valid():
+				continue
+			var visit := gate.enter(record, snapshot)
+			_check(visit != null and visit.is_valid(), "genuine named visit " + record.id)
+			if visit == null:
+				continue
+			var receipt := visit.choose_with_vitals(choice.id)
+			_check(receipt.ok, "real one-claim gated receipt " + record.id + "/" + choice.id)
+			if not receipt.ok:
+				continue
+			var forged := receipt.duplicate(true)
+			forged.state.hero.hp = 0
+			_reject(service, "forged named receipt", func(): return service.apply_vital_event(
+				"named_vital", record, forged, snapshot, old))
+			var stale_opening := snapshot.duplicate(true)
+			stale_opening.hero.max_hp += 1
+			_reject(service, "mismatched named snapshot", func(): return service.apply_vital_event(
+				"named_vital", record, receipt, stale_opening, old))
+			_check(service.apply_vital_event("named_vital", record, receipt, snapshot, old).ok,
+				"authenticated required owner settles " + record.id + "/" + choice.id)
+			var expected := old.duplicate(true)
+			var outcome: Dictionary = choice.outcome
+			var original: Dictionary = old.heroes[target]
+			expected.heroes[target].max_hp = original.max_hp + int(outcome.max_hp)
+			expected.heroes[target].hp = mini(original.hp + int(outcome.hp), expected.heroes[target].max_hp)
+			expected.completed_vital_events.append("named_vital")
+			for actor in old.heroes:
+				expected.vital_cap_offsets[actor.id] = int(outcome.max_hp) if actor.id == required else 0
+			_check(service.read_state() == expected,
+				"only named later-slot actor changes and canonical cap offsets/one node persist " + record.id)
+			_check(receipt.state.gold == snapshot.gold + int(outcome.gold)
+				and receipt.state.scraps == snapshot.scraps + int(outcome.scraps)
+				and receipt.state.hero.hp == expected.heroes[target].hp
+				and receipt.state.hero.max_hp == expected.heroes[target].max_hp,
+				"exact authored wallet HP/max-HP receipt " + record.id)
+			_check(snapshot == snapshot_copy, "detached original snapshot is unchanged")
+			_reject(service, "gated replay", func(): return service.apply_vital_event(
+				"named_vital", record, receipt, snapshot, service.read_state()))
+			_reject(service, "gated stale ledger", func(): return service.apply_vital_event(
+				"another", record, receipt, snapshot, old))
+			seen[record.id] = true
+	for required_event_id in [
+		"v3_warden_buckle_heart_ward", "v3_seamstress_crimson_quilt_surgeon",
+		"v3_tinker_copper_needle_greenhouse", "v3_lantern_monk_thimble_moon_vigil",
+		"v3_rag_duelist_velvet_straw_mender", "v3_scarecrow_strawheart_alarm",
+		"v3_yarn_ranger_starladder_bolas", "v3_button_golem_rivet_choir",
+		"v3_tinker_blunderbuss_fuse_well",
+	]:
+		_check(seen.has(required_event_id),
+			"required authored gated record exercised for all its choices: " + required_event_id)
+
+	var seam_record: Dictionary = {}
+	for record in records:
+		if record.required_hero == "seamstress":
+			seam_record = record
+			break
+	_check(not seam_record.is_empty(), "Seamstress negative event exists")
+	if seam_record.is_empty():
+		return
+	var service := _named_gated_service(["warden", "seamstress", "tinker"])
+	var old := service.read_state()
+	var opening := _vital_opening(old, "seamstress")
+	var visit := RunV3HeroVitalEventGate.new(["warden", "seamstress", "tinker"]).enter(seam_record, opening)
+	_check(visit != null, "negative cases use a real canonical visit")
+	if visit == null:
+		return
+	var receipt := visit.choose_with_vitals("stitch_wound")
+	_check(receipt.ok, "negative witness carries genuine receipt")
+	if not receipt.ok:
+		return
+	var edited := seam_record.duplicate(true)
+	edited.erase("required_hero")
+	_reject(service, "known event stripped required owner", func(): return service.apply_vital_event(
+		"vital", edited, receipt, opening, old))
+	edited = seam_record.duplicate(true)
+	edited.required_hero = "tinker"
+	_reject(service, "known event forged required owner", func(): return service.apply_vital_event(
+		"vital", edited, receipt, opening, old))
+	edited = seam_record.duplicate(true)
+	edited.choices[0].outcome.hp += 1
+	_reject(service, "known event forged choice outcome", func(): return service.apply_vital_event(
+		"vital", edited, receipt, opening, old))
+	edited = seam_record.duplicate(true)
+	edited.id = "unknown_forged_gated_record"
+	_reject(service, "unknown event cannot claim gated targeting", func(): return service.apply_vital_event(
+		"vital", edited, receipt, opening, old))
+	var wrong := opening.duplicate(true)
+	wrong.hero = {"id": old.heroes[0].id, "hp": old.heroes[0].hp, "max_hp": old.heroes[0].max_hp}
+	_reject(service, "first actor cannot replace required owner", func(): return service.apply_vital_event(
+		"vital", seam_record, receipt, wrong, old))
+	var insolvent := opening.duplicate(true)
+	insolvent.gold = 0
+	_reject(service, "unaffordable gate price", func(): return service.apply_vital_event(
+		"vital", seam_record, receipt, insolvent, old))
+	_reject(service, "wrong claimed choice", func(): return service.apply_vital_event(
+		"vital", seam_record, {"choice_id": "leave"}, opening, old))
+	var absent := _named_gated_service(["warden", "lantern_monk", "tinker"])
+	_reject(absent, "required hero absent", func(): return absent.apply_vital_event(
+		"absent", seam_record, receipt, opening, absent.read_state()))
+	_down(service, "tear_seamstress", 1)
+	_reject(service, "required hero Torn", func(): return service.apply_vital_event(
+		"vital", seam_record, receipt, opening, service.read_state()))
