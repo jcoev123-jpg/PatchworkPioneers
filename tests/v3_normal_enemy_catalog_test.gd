@@ -54,6 +54,7 @@ func _initialize() -> void:
 	_test_doll_named_strikes()
 	_test_bobbin_quilt_named_strikes()
 	_test_named_termite_split_authority()
+	_test_snake_imp_ram_named_strikes()
 	if failures.is_empty():
 		print("v3_normal_enemy_catalog_test: PASS (", checks, " checks)")
 	else:
@@ -175,7 +176,8 @@ func _new_expected() -> Dictionary:
 		"zipper_snake": {"id": "zipper_snake", "name": "Zipper Snake", "max_hp": 24, "art_path": "res://assets/paper/enemies/zipper_snake.png",
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": -1, "weight": 2},
-				{"type": "attack", "amount": 6, "weight": 3}]}}
+				{"type": "attack", "amount": 6, "weight": 3},
+				{"type": "attack", "amount": 7, "hits": 2, "move": "attack2", "weight": 1}]}}
 	}
 
 func _test_normal_attack_minimum() -> void:
@@ -1010,7 +1012,9 @@ func _harder_expected() -> Dictionary:
 			"intent": {"target": "lowest_living_hp", "actions": [
 				{"type": "debuff", "amount": 2, "status": "exposed", "weight": 2},
 				{"type": "attack", "amount": 6, "weight": 3},
-				{"type": "debuff", "amount": 1, "status": "blind_next_attack", "weight": 2}]}}
+				{"type": "debuff", "amount": 1, "status": "blind_next_attack", "weight": 2},
+				{"type": "attack", "amount": 7, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1}]}}
 	}
 
 ## The canonical authored two-hit marker, either as JSON delivers it (an integral
@@ -2118,7 +2122,9 @@ func _tough_pair_expected() -> Dictionary:
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
 				{"type": "block", "amount": 7, "weight": 2},
-				{"type": "attack", "amount": 8, "weight": 3}]}},
+				{"type": "attack", "amount": 8, "weight": 3},
+				{"type": "attack", "amount": 7, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 9, "move": "attack3", "weight": 1}]}},
 		"razor_ribbon_wraith": {"id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith",
 			"max_hp": 27, "revive_once": true, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
@@ -2196,7 +2202,7 @@ func _test_tough_normal_pair_live_catalog_and_bands() -> void:
 		_check(not slot.is_empty(),
 			"shipped harder normal intent validates as a weighted slot: " + String(id))
 		var actions: Array = slot.get("actions", [])
-		_check(actions.size() == (3 if id == "spindle_ram" else 5),
+		_check(actions.size() == 5,
 			"shipped harder normal authors exactly its own alternatives: " + String(id))
 		for entry in actions:
 			_check(int(entry.get("weight", 0)) > 0,
@@ -4697,8 +4703,8 @@ func _test_bobbin_bat_quilt_termite_live_bands() -> void:
 
 func _test_imp_authored_blind_paid_miss() -> void:
 	var imp := _find(_load_parsed(), "inkbrush_imp")
-	_check(not imp.is_empty() and imp.intent.actions.size() == 3,
-		"Blind paid-miss fixture reads genuine three-option Imp")
+	_check(not imp.is_empty() and imp.intent.actions.size() == 5,
+		"Blind paid-miss fixture reads genuine five-option Imp")
 	if imp.is_empty():
 		return
 	var party := _party()
@@ -5828,3 +5834,115 @@ func _test_hound_named_strikes() -> void:
 					and bound.scheduler.get_intents() == before[3], "Hound attacks preserve peers, source, cache and RNG")
 				traces.append([bound.intents, receipt, witness.hits, party.get_heroes(), bound.enemies.get_enemies(), bound.rng.state])
 			_check(traces.size() == 2 and traces[0] == traces[1], "same-seed Hound phase and RNG replay exactly")
+
+
+## Whole live-material records, unmodified weights, real bound announcements and phases.
+func _test_snake_imp_ram_named_strikes() -> void:
+	var material := RunAuthoredBattleEntry._floor_band_material(null)
+	_check(material.get("ok") == true, "named trio obtains genuine Fight material")
+	if not material.get("ok", false):
+		return
+	var names := {"zipper_snake": {"attack2": "Coil Crush"},
+		"inkbrush_imp": {"attack2": "Brush Swat", "attack3": "Ink Spit"},
+		"spindle_ram": {"attack2": "Horn Charge", "attack3": "Yarn Hurl"}}
+	for id in names:
+		var record: Dictionary = material.get("records", {}).get(id, {})
+		_check(not record.is_empty() and _norm(record) == _norm(_find(_load_parsed(), id)),
+			"Fight material retains exact complete named record: " + id)
+		var band := _band_containing(material.pools, id)
+		_check(not band.is_empty(), "named normal retains existing floor eligibility: " + id)
+		if record.is_empty() or band.is_empty():
+			continue
+		for count in [2, 3]:
+			var reached := false
+			for seed_value in range(128):
+				var rng := RandomNumberGenerator.new()
+				rng.seed = seed_value
+				var picked := RunV3FloorBandRoster.new().pick(_floor_in_band(band), count, rng, material.pools)
+				if picked.get("ok", false) and picked.get("enemy_ids", []).has(id):
+					_check(picked.enemy_ids.size() == count, "named normal enters real two/three-foe band")
+					reached = true
+					break
+			_check(reached, "seeded band can select named normal: " + id)
+		var reached: Array = []
+		for seed_value in range(256):
+			var bound := _bind_records(seed_value, [record])
+			_check(bound.ok and bound.scheduler.is_bound(), "complete named record binds: " + id)
+			if not bound.ok:
+				break
+			var actions: Array = bound.scheduler.get_intents()
+			var move: String = actions[0].get("move", "")
+			if not names[id].has(move) or reached.has(move):
+				continue
+			var amount := 9 if id == "spindle_ram" and move == "attack3" else 6 if move == "attack3" else 7
+			var hits := 2 if id == "zipper_snake" or (id == "spindle_ram" and move == "attack2") or (id == "inkbrush_imp" and move == "attack3") else 1
+			var target := 3 if id == "inkbrush_imp" else 1
+			var expected := {"type": "attack", "amount": amount, "move": move,
+				"enemy_position": 1, "target_position": target}
+			if hits == 2:
+				expected.hits = 2
+			_check(actions == [expected], "weighted announcement retains exact authored amount/hits/move/target")
+			for block in [0, 2, 4, 10]:
+				var traces: Array = []
+				for replay in range(2):
+					var battle := _bind_records(seed_value, [record])
+					_check(battle.ok and battle.party.is_valid() and battle.enemies.is_valid()
+						and battle.party.gain_block(target, block)
+						and battle.scheduler.get_intents() == [expected], "same-seed replay faces real Block and authentic target")
+					var before := [battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state, battle.scheduler.get_intents()]
+					var fallback := "res://assets/paper/enemies/%s_attack.png" % id
+					for catalog in [LiveMovePoseCatalog.new(), MissingCrusherPose.new()]:
+						var pose: Dictionary = catalog.lookup_enemy(id, expected, fallback)
+						_check(pose.get("name") == names[id][move] and pose.get("pose") == move
+							and pose.get("named_art") == "res://assets/paper/enemies/%s_%s.png" % [id, move]
+							and pose.get("art") == (pose.get("named_art") if pose.get("art_available") else fallback),
+							"authentic manifest name/pose and available-art fallback")
+						if catalog is MissingCrusherPose:
+							_check(pose.get("fallback_used") == true and pose.art == fallback, "forced missing art retains readable named fallback")
+					for field in ["move", "hits", "amount", "target_position", "enemy_position"]:
+						var bad := expected.duplicate(true)
+						bad[field] = "attack4" if field == "move" else 1 if field == "hits" else 99 if field == "amount" else 4 if field == "target_position" else 2
+						_check(CombatEnemyPhase.new().execute_phase(battle.party, battle.enemies, [bad], null, true)
+							== {"ok": false, "events": []}, "forged named request fails closed: " + field)
+					var stale := record.duplicate(true)
+					for index in range(stale.intent.actions.size() - 1, -1, -1):
+						if stale.intent.actions[index].get("move") == move:
+							stale.intent.actions.remove_at(index)
+					var stale_enemies := CombatEnemies.new([stale])
+					var stale_before := stale_enemies.get_enemies()
+					_check(stale_enemies.is_valid() and CombatEnemyPhase.new().execute_phase(battle.party,
+						stale_enemies, [expected], null, true) == {"ok": false, "events": []}
+						and stale_enemies.get_enemies() == stale_before, "stale source no longer authorizes removed named move")
+					_check([battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state,
+						battle.scheduler.get_intents()] == before, "pose reads and all refusals leave actors/cache/RNG unchanged")
+					var witness := WraithHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(battle.party, battle.enemies, [expected], witness, true)
+					var events: Array = []
+					var packets: Array = []
+					var hp: int = before[0][target - 1].hp
+					var remaining: int = block
+					for hit in range(hits):
+						var packet: int = (4 if hit == 0 else 3) if hits == 2 and amount == 7 else 3 if hits == 2 else amount
+						var next_hp := hp - maxi(0, packet - remaining)
+						var next_block := maxi(0, remaining - packet)
+						packets.append([packet, hp, remaining, next_hp, next_block])
+						hp = next_hp
+						remaining = next_block
+						events.append({"type": "attack", "enemy_position": 1, "target_position": target,
+							"move": move, "applied": true, "actual_target_position": target, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+					var heroes: Array = before[0].duplicate(true)
+					heroes[target - 1].hp = hp
+					heroes[target - 1].block = remaining
+					_check(receipt == {"ok": true, "events": events} and witness.hits == packets,
+						"real phase yields exact ordered 4+3, 3+3 or single-hit Block-before-HP receipts")
+					_check(battle.party.get_heroes() == heroes and battle.enemies.get_enemies() == before[1]
+						and battle.rng.state == before[2] and battle.scheduler.get_intents() == before[3],
+						"named phase preserves every peer/source/cache and spends no RNG")
+					traces.append([receipt, witness.hits, battle.party.get_heroes(), battle.enemies.get_enemies(), battle.rng.state])
+				_check(traces.size() == 2 and traces[0] == traces[1], "same-seed named phase replays exactly")
+			reached.append(move)
+			if reached.size() == names[id].size():
+				break
+		for move in names[id]:
+			_check(reached.has(move), "full weighted live record reaches " + id + ":" + move)

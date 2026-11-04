@@ -343,6 +343,8 @@ static func _floor_band_material(band_pools: Variant, tough_catalog_text: Varian
             {"type": "shove", "amount": 0, "direction": 1, "weight": 2},
             {"type": "block", "amount": 7, "weight": 2},
             {"type": "attack", "amount": 8, "weight": 3},
+            {"type": "attack", "amount": 7, "hits": 2, "move": "attack2", "weight": 1},
+            {"type": "attack", "amount": 9, "move": "attack3", "weight": 1},
         ]},
     }
     # Compare in the catalog parser's numeric representation (JSON action

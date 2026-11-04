@@ -59,7 +59,9 @@ func _expected() -> Dictionary:
 			"intent": {"target": "front", "actions": [
 				{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
 				{"type": "block", "amount": 7, "weight": 2},
-				{"type": "attack", "amount": 8, "weight": 3}]}},
+				{"type": "attack", "amount": 8, "weight": 3},
+				{"type": "attack", "amount": 7, "hits": 2, "move": "attack2", "weight": 1},
+				{"type": "attack", "amount": 9, "move": "attack3", "weight": 1}]}},
 		"razor_ribbon_wraith": {"id": "razor_ribbon_wraith", "name": "Razor Ribbon Wraith",
 			"max_hp": 27, "revive_once": true, "art_path": "res://assets/paper/enemies/razor_ribbon_wraith.png",
 			"intent": {"target": "lowest_living_hp", "actions": [
@@ -199,6 +201,15 @@ func _is_authored_alternative(record: Dictionary, announced: Dictionary) -> bool
 	for raw in actions:
 		if raw is Dictionary and _norm(_without_weight(raw)) == _norm(body):
 			return true
+	# The unarmed Ram's Charge telegraph is a display projection of its own
+	# authored unkeyed Attack 8, never an extra source alternative: recognize
+	# only that exact zero-damage body and reject any extra or missing field.
+	if record.get("id") == "spindle_ram" and record.get("charge") == true \
+			and _norm(body) == _norm({"type": "attack", "amount": 0}):
+		for raw in actions:
+			if raw is Dictionary and int(raw.get("weight", 0)) == 3 \
+					and _norm(_without_weight(raw)) == _norm({"type": "attack", "amount": 8}):
+				return true
 	return false
 
 
@@ -316,6 +327,10 @@ func _test_weighted_alternatives() -> void:
 		"Spindle Ram pads 7 Block with weight 2")
 	_check(_contains_weighted(ram_actions, {"type": "attack", "amount": 8}, 3),
 		"Spindle Ram rams for 8 with weight 3")
+	_check(_contains_weighted(ram_actions, {"type": "attack", "amount": 7, "hits": 2, "move": "attack2"}, 1),
+		"Spindle Ram Horn Charges for 7 twice with weight 1")
+	_check(_contains_weighted(ram_actions, {"type": "attack", "amount": 9, "move": "attack3"}, 1),
+		"Spindle Ram hurls 9 damage with weight 1")
 	var wraith_actions: Array = _find(parsed, "razor_ribbon_wraith").get("intent", {}).get("actions", [])
 	_check(_contains_weighted(wraith_actions, {"type": "debuff", "status": "bleed", "amount": 2}, 2),
 		"Razor Ribbon Wraith rips Bleed 2 with weight 2")
@@ -383,6 +398,22 @@ func _test_seeded_announcements_and_priority_target() -> void:
 		_check(_is_authored_alternative(advanced_source, advance[index]),
 			"the advanced announcement is still authored: "
 				+ String(advanced_source.get("id", "")))
+	# The Charge telegraph is the one recognized display projection: only the
+	# Ram's own unkeyed Attack 8 may surface as the exact zero-damage body.
+	var telegraph := {"type": "attack", "amount": 0, "enemy_position": 1, "target_position": 1}
+	_check(_is_authored_alternative(ram, telegraph),
+		"the unarmed Ram's zero-damage telegraph is its authored Attack 8 display")
+	for malformed in [
+			{"type": "attack", "amount": 1, "enemy_position": 1, "target_position": 1},
+			{"type": "attack", "amount": 0, "hits": 2, "enemy_position": 1, "target_position": 1},
+			{"type": "attack", "amount": 0, "move": "attack2", "enemy_position": 1, "target_position": 1}]:
+		_check(not _is_authored_alternative(ram, malformed),
+			"only the exact Charge telegraph display projection is recognized: " + str(malformed))
+	_check(_is_authored_alternative(ram, {"type": "attack", "amount": 7, "hits": 2,
+		"move": "attack2", "enemy_position": 1, "target_position": 1}),
+		"named Ram attacks remain literal authored alternatives")
+	_check(not _is_authored_alternative(wraith, telegraph),
+		"the Charge display projection never applies to another enemy")
 	_check(_norm(_load()) == snapshot,
 		"binding, reading and advancing never mutate the source records")
 	_check(FileAccess.get_file_as_string(PATH) == source_text,

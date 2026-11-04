@@ -1097,12 +1097,12 @@ func _mounted_ram_charge(app) -> void:
 		if source.get("id") == "spindle_ram":
 			ram = source.duplicate(true)
 	_check(ram.get("charge") == true
-		and ram.get("intent", {}).get("actions", []).size() == 3
+		and ram.get("intent", {}).get("actions", []).size() == 5
 		and ram["intent"]["actions"][2].get("amount") == 8.0,
 		"AC1 live precondition: genuine Ram authors Charge and attack 8")
 	if ram.is_empty():
 		return
-	# Pin the *authentic* attack alternative (the other two are already
+	# Pin the *authentic* attack alternative (the other four are already
 	# catalog-checked); the app, scheduler, CombatRoundFlow and HUD are real.
 	ram["intent"]["actions"] = [ram["intent"]["actions"][2]]
 	starter[0] = ram
@@ -1331,7 +1331,7 @@ func _mounted_ram_guard_redirect(app) -> void:
 		if source.get("id") == "spindle_ram":
 			ram = source.duplicate(true)
 	_check(ram.get("charge") == true
-		and ram.get("intent", {}).get("actions", []).size() == 3
+		and ram.get("intent", {}).get("actions", []).size() == 5
 		and ram["intent"]["actions"][2].get("amount") == 8.0,
 		"guard redirect precondition: genuine Ram authors Charge and attack 8")
 	if ram.is_empty():
