@@ -7,6 +7,11 @@ extends SceneTree
 ## equips only the four starters on the existing seamstress hero and drives real StitchedRules
 ## turns. Nothing here wires the kit into the title screen, a live fight, rewards or a picker:
 ## this slice is data plus a seeded rules witness, so no player-facing path is claimed.
+##
+## The rear-rank support slice additionally proves that the three ally-support abilities keep
+## working after the Seamstress is displaced into the fourth hero rank: a real foe hit wounds
+## the rank-1 Warden, two real Moves carry her back to rank 4, and her next real turn casts the
+## equipped Mending Knot, Shielding Hem or Patchwork Poultice on that Warden.
 
 const PARTS_PATH := "res://data/parts/seamstress_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
@@ -49,13 +54,27 @@ const ALL_PART_IDS := [
 	"seamstress_tether_loop_spools",
 	"seamstress_bobbin_snag_spools",
 ]
+## The three ally-support abilities that must keep working from the rear hero rank 4, with their
+## tier-I heal and Guard numbers. Only their base launch arrays changed in the catalog.
+const REAR_SUPPORT_CASES := {
+	"seamstress_mending_knot_hat": {"heal": 4, "guard": 0},
+	"seamstress_shielding_hem_coat": {"heal": 2, "guard": 2},
+	"seamstress_poultice_apron": {"heal": 3, "guard": 1},
+}
+## The Poultice is the alternative torso, so its own fresh battle wears it instead of the coat.
+const POULTICE_KIT := {
+	"head": "seamstress_mending_knot_hat",
+	"arms": "seamstress_thread_prick_needle",
+	"torso": "seamstress_poultice_apron",
+	"legs": "seamstress_tether_loop_spools",
+}
 
 ## The authored acceptance contract, one row per part id, indexed by tier - 1.
 const EXPECTED := {
 	"seamstress_mending_knot_hat": {
 		"name": "Mending Knot Hat", "slot": "head", "stat_key": "acc", "stat": [2, 3, 4],
 		"ability_id": "mending_knot", "ability_name": "Mending Knot", "kind": "heal",
-		"launch": [2, 3], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "skill",
+		"launch": [2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "skill",
 		"acc": 100,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [{"heal": 4}, {"heal": 6}, {"heal": 8}],
@@ -91,7 +110,7 @@ const EXPECTED := {
 	"seamstress_shielding_hem_coat": {
 		"name": "Shielding Hem Coat", "slot": "torso", "stat_key": "max_hp", "stat": [4, 6, 8],
 		"ability_id": "shielding_hem", "ability_name": "Shielding Hem", "kind": "guard",
-		"launch": [1, 2, 3], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
+		"launch": [1, 2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
 		"acc": 100,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
@@ -103,7 +122,7 @@ const EXPECTED := {
 	"seamstress_poultice_apron": {
 		"name": "Patchwork Poultice Apron", "slot": "torso", "stat_key": "prot", "stat": [5, 7, 9],
 		"ability_id": "patchwork_poultice", "ability_name": "Patchwork Poultice", "kind": "guard",
-		"launch": [2, 3], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
+		"launch": [2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
 		"acc": 100,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
@@ -145,6 +164,9 @@ func _initialize() -> void:
 	_test_negatives()
 	_test_live_starters()
 	_test_live_rejections()
+	_test_rear_launch_masks()
+	_test_rear_rank_support()
+	_test_rear_illegal_forward_launch()
 	_test_determinism()
 	if _failures.is_empty():
 		print("stitched_s4_seamstress_parts_test: PASS (", _checks, " checks)")
@@ -425,7 +447,8 @@ func _test_negatives() -> void:
 	if bool(reloaded.get("ok", false)):
 		var shipped: Dictionary = reloaded["by_id"]["seamstress_mending_knot_hat"]
 		_check(_int_dict(shipped["stat"]) == {"acc": 2}, "AC1: the shipped Mending Knot Hat keeps its authored ACC 2")
-		_check(_int_list(shipped["ability"]["launch"]) == [2, 3], "AC1: the shipped launch ranks are untouched")
+		_check(_int_list(shipped["ability"]["launch"]) == [2, 3, 4],
+			"AC1: the shipped Mending Knot launch ranks now reach the rear hero rank 4")
 
 
 # ---------------------------------------------------------------- AC2: real starter actions
@@ -650,6 +673,209 @@ func _test_live_rejections() -> void:
 			"AC2: an action attempted on a stale turn is refused")
 		_check(stale_state == stale.state_snapshot() and stale_rng == stale.rng_state(),
 			"AC2: the stale-turn refusal preserved the complete state and RNG")
+
+
+# ---------------------------------------------------------------- AC1/AC2: rear-rank launch masks
+
+## The three edited support records, resolved at tiers I-III, admit the rear hero rank 4 while
+## keeping their ally target masks at ranks 1-4. Only the base launch arrays changed.
+func _test_rear_launch_masks() -> void:
+	var raw: Variant = _read_json(PARTS_PATH)
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the edited catalog still loads through StitchedParts.load_catalog")
+	if not bool(catalog.get("ok", false)) or not raw is Dictionary:
+		return
+	var document: Dictionary = raw
+	var raw_parts: Variant = document.get("parts", [])
+	for part_id in REAR_SUPPORT_CASES:
+		var part: Dictionary = catalog["by_id"][part_id]
+		var spec: Dictionary = EXPECTED[part_id]
+		_check(_int_list(part["ability"]["launch"]) == _int_list(spec["launch"]),
+			"AC1: the shipped %s base launch array is %s" % [part_id, str(spec["launch"])])
+		_check(_int_list(part["ability"]["target"]) == _int_list(spec["target"]),
+			"AC1: the shipped " + part_id + " still targets ally ranks 1-4")
+		_check(_raw_launch_for(raw_parts, part_id) == _int_list(spec["launch"]),
+			"AC1: the authored JSON record of " + part_id + " carries the edited launch array")
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			var tag := "%s tier %d" % [part_id, tier]
+			var launch_mask := int(ability["launch_mask"])
+			# A stitched tier overrides numbers only, never the launch reach.
+			_check(_int_list(ability["launch"]) == _int_list(spec["launch"]),
+				"AC2: " + tag + " keeps the rear-rank launch array")
+			_check(launch_mask == StitchedParts.rank_mask(_int_list(ability["launch"])),
+				"AC2: " + tag + " launch mask is derived from its authored ranks")
+			_check(StitchedParts.ranks_allowed(launch_mask, MAX_RANK),
+				"AC2: " + tag + " validates a launch from the rear hero rank 4")
+			var target_mask := int(ability["target_mask"])
+			for rank in range(MIN_RANK, MAX_RANK + 1):
+				_check(StitchedParts.ranks_allowed(target_mask, rank),
+					"AC2: " + tag + " still targets allied rank %d" % rank)
+		var base_mask := int(part["ability"]["launch_mask"])
+		if part_id == "seamstress_shielding_hem_coat":
+			_check(StitchedParts.ranks_allowed(base_mask, 1),
+				"AC1: Shielding Hem still launches from rank 1")
+		else:
+			_check(not StitchedParts.ranks_allowed(base_mask, 1),
+				"AC1: " + part_id + " still refuses a rank-1 launch")
+	# The one description that named the old reach now names ranks 2-4.
+	_check(str(catalog["by_id"]["seamstress_mending_knot_hat"]["text"]).contains("ranks 2-4"),
+		"AC1: the Mending Knot description names its new reach from ranks 2-4")
+	# The five untouched parts keep their exact authored launch ranks.
+	for part_id in ALL_PART_IDS:
+		if REAR_SUPPORT_CASES.has(part_id):
+			continue
+		_check(_int_list(catalog["by_id"][part_id]["ability"]["launch"])
+			== _int_list(EXPECTED[part_id]["launch"]),
+			"AC1: the untouched " + part_id + " keeps its authored launch ranks")
+
+
+func _raw_launch_for(raw_parts: Variant, part_id: String) -> Array:
+	if not raw_parts is Array:
+		return []
+	for entry in raw_parts:
+		if entry is Dictionary and str(entry.get("id", "")) == part_id:
+			var ability: Variant = entry.get("ability")
+			if ability is Dictionary:
+				return _int_list(ability.get("launch"))
+			return []
+	return []
+
+
+# ---------------------------------------------------------------- AC2: real rear-rank support
+
+## One fresh seeded battle per support part: a real foe hit wounds the rank-1 Warden, two real
+## Moves carry the Seamstress back to rank 4, and her next turn casts the support part on that
+## Warden. The shipped preview file is never edited; the wound is prepared in the in-memory copy.
+func _test_rear_rank_support() -> void:
+	for part_id in REAR_SUPPORT_CASES:
+		var kit: Dictionary = POULTICE_KIT if part_id == "seamstress_poultice_apron" else STARTER_PARTS
+		var spec: Dictionary = REAR_SUPPORT_CASES[part_id]
+		var witness := _rear_support_witness(kit)
+		_check(not witness.is_empty(),
+			"AC2: a fixed seed gives the %s a real wound and two legal Moves back to rank 4" % part_id)
+		if witness.is_empty():
+			continue
+		var battle: StitchedRules = witness["battle"]
+		var seamstress := battle.get_unit("seamstress")
+		_check(int(seamstress["rank"]) == MAX_RANK,
+			"AC2: " + part_id + " is worn by the Seamstress standing in the rear hero rank 4")
+		_check(_worn_part_id(seamstress, part_id) == part_id,
+			"AC2: the fresh battle really equips " + part_id)
+		var warden_before := battle.get_unit("warden")
+		var before_hp := int(warden_before["hp"])
+		_check(int(warden_before["rank"]) == 1 and before_hp > 0
+			and before_hp < int(warden_before["max_hp"]),
+			"AC2: the rank-1 Warden is living and deliberately wounded before the cast")
+		_check(battle.current_actor_id() == "seamstress",
+			"AC2: the Seamstress reaches her own real turn in rank 4")
+		var receipt := battle.use_part(part_id, 1)
+		_check(bool(receipt.get("ok", false)),
+			"AC2: " + part_id + " casts on the rank-1 ally from rank 4")
+		if not bool(receipt.get("ok", false)) or receipt.get("results", []).is_empty():
+			continue
+		_check(str(receipt.get("part", "")) == part_id,
+			"AC2: the receipt names the equipped part " + part_id)
+		var result: Dictionary = receipt["results"][0]
+		_check(str(result["target"]) == "warden" and str(result["target_side"]) == "hero"
+			and int(result["target_rank"]) == 1,
+			"AC2: " + part_id + " reaches the wounded Warden in rank 1 on the hero side")
+		var expected_heal := int(spec["heal"])
+		_check(_status_amount(result.get("statuses", []), "heal") == expected_heal,
+			"AC2: %s heals exactly its tier-I %d HP" % [part_id, expected_heal])
+		var warden_after := battle.get_unit("warden")
+		_check(int(warden_after["hp"])
+			== mini(int(warden_after["max_hp"]), before_hp + expected_heal),
+			"AC2: the Warden's real HP rises by the healed %d" % expected_heal)
+		var guard := int(spec["guard"])
+		if guard == 0:
+			_check(not _has_status(result.get("statuses", []), "guard")
+				and not battle.get_unit("seamstress")["statuses"].has("guard"),
+				"AC2: Mending Knot applies no Guard; it stays a pure heal")
+			continue
+		var entry := _status_entry(result.get("statuses", []), "guard")
+		_check(not entry.is_empty() and int(entry.get("duration", 0)) == guard
+			and str(entry.get("guards", "")) == "warden",
+			"AC2: %s applies Guard %d over the Warden through the receipt" % [part_id, guard])
+		var actor := battle.get_unit("seamstress")
+		_check(int(actor["statuses"].get("guard", 0)) == guard
+			and str(actor["guard_target"]) == "warden",
+			"AC2: the real Guard %d status on the Seamstress names the Warden" % guard)
+
+
+## A real foe hit on the in-memory copy wounds the Warden, then two real Moves carry the
+## Seamstress from rank 2 through 3 into 4 on her own turns.
+func _rear_support_witness(kit: Dictionary) -> Dictionary:
+	for seed_value in range(1, 150):
+		var battle := _build_battle(seed_value, 1, kit, false)
+		if battle == null:
+			return {}
+		if not _to(battle, "fray_scavenger"):
+			continue
+		var attack := battle.use_foe_ability("sack_swing", 1)
+		if not bool(attack.get("ok", false)) or attack.get("results", []).is_empty():
+			continue
+		if not bool(attack["results"][0].get("hit", false)):
+			continue
+		if str(attack["results"][0].get("target", "")) != "warden":
+			continue
+		var wounded := battle.get_unit("warden")
+		if int(wounded["hp"]) <= 0 or int(wounded["hp"]) >= int(wounded["max_hp"]):
+			continue
+		if not _to(battle, "seamstress"):
+			continue
+		if int(battle.get_unit("seamstress")["rank"]) != 2:
+			continue
+		var first := battle.move(1)
+		if not bool(first.get("ok", false)) or int(first.get("to", 0)) != 3:
+			continue
+		if not _to(battle, "seamstress"):
+			continue
+		var second := battle.move(1)
+		if not bool(second.get("ok", false)) or int(second.get("to", 0)) != 4:
+			continue
+		if not _to(battle, "seamstress"):
+			continue
+		return {"battle": battle, "seed": seed_value, "moves": [first, second]}
+	return {}
+
+
+func _worn_part_id(unit: Dictionary, part_id: String) -> String:
+	var worn: Dictionary = unit.get("parts", {})
+	for slot in worn:
+		if str(worn[slot].get("id", "")) == part_id:
+			return part_id
+	return ""
+
+
+## After a real Move forward into rank 1, Mending Knot (launch 2-4) fails atomically.
+func _test_rear_illegal_forward_launch() -> void:
+	var battle := _build_battle(23)
+	if battle == null:
+		return
+	if not _to(battle, "seamstress"):
+		_check(false, "AC3: the rank-2 Seamstress reaches her first real turn")
+		return
+	_check(int(battle.get_unit("seamstress")["rank"]) == 2,
+		"AC3: the forward-launch witness starts from rank 2")
+	var step := battle.move(-1)
+	_check(bool(step.get("ok", false)) and int(battle.get_unit("seamstress")["rank"]) == 1,
+		"AC3: a real Move swaps the Seamstress forward into rank 1")
+	if not _to(battle, "seamstress"):
+		_check(false, "AC3: the moved Seamstress reaches her next real turn")
+		return
+	var state := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var turn := battle.current_actor_id()
+	var round_number := battle.round_number()
+	var refused := battle.use_part("seamstress_mending_knot_hat", 1)
+	_check(not bool(refused.get("ok", false))
+		and str(refused.get("error", "")).contains("cannot launch from rank 1"),
+		"AC3: Mending Knot refuses to launch from rank 1 after the real move forward")
+	_check(state == battle.state_snapshot() and rng == battle.rng_state()
+		and turn == battle.current_actor_id() and round_number == battle.round_number(),
+		"AC3: the illegal rank-1 launch preserved the snapshot, turn, round and seeded RNG")
 
 
 # ---------------------------------------------------------------- AC3: determinism and tracing
