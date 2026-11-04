@@ -1087,6 +1087,46 @@
         { "id": "catch_falling_spools", "text": "Catch the falling spools (lose 5 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
         { "id": "leave", "text": "Let the candlelit spools sway overhead", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_sable_sheep_seam_scales",
+      "title": "The Seam Scales",
+      "description": "A stout midnight-blue sheep doll balances two brass weighing pans, one cradling a stitched heart and the other a frayed spool, beneath an amber awning.",
+      "choices": [
+        { "id": "weigh_warm_stuffing", "text": "Spend 2 scraps to balance a warm heart seam (heal 6 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 6, "max_hp": 1 } },
+        { "id": "sell_heavy_heart", "text": "Carry the heavy heart pan (lose 4 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the sheep's brass scales settle", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_peacock_mourning_fan",
+      "title": "The Peacock's Mourning Fan",
+      "description": "A plump oxblood peacock puppet opens a towering black-lace funeral fan, its stitched silver button-eyes glinting above a single candle.",
+      "choices": [
+        { "id": "mend_fan_ribs", "text": "Pay 16 gold to reinforce the mourning fan (+2 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "pluck_brittle_ribs", "text": "Pull sharp fan ribs (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the peacock folding its funeral fan", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_boar_needle_harp",
+      "title": "The Needle Harp",
+      "description": "A chunky rust-felt boar ragdoll plucks a crescent copper harp strung with silver sewing needles, its blunt padded tusks haloed by warm lamplight.",
+      "choices": [
+        { "id": "tune_heart_strings", "text": "Pay 12 gold and 1 scrap to tune the heart strings (heal 4 HP; gain 2 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 4, "max_hp": 2 } },
+        { "id": "play_torn_chord", "text": "Play the torn needle chord (lose 6 HP; gain 23 gold)", "outcome": { "gold": 23, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the boar's last harp note fade", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_plum_beetle_lantern_lift",
+      "title": "The Lantern Lift",
+      "description": "A squat plum-and-midnight-teal beetle doll braces a quilt-lined iron lift on its shell; tiny brass candle cages sway overhead in the dark.",
+      "choices": [
+        { "id": "ride_quilt_lift", "text": "Spend 1 scrap to ride beneath the warm quilts (heal 9 HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 9, "max_hp": 0 } },
+        { "id": "haul_cages", "text": "Trade 2 lasting heart stitches hauling candle cages (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the lantern lift descend without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
