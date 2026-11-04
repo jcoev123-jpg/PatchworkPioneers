@@ -109,6 +109,33 @@
         "3": {"ability": {"dmg": [5, 7]}}
       },
       "text": "Sweep a front foe with scavenged scraps and leave them Weak."
+    },
+    {
+      "id": "moth_scribe_inkbrush_arm",
+      "name": "Inkbrush Arm",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {"dmg": 1},
+      "ability": {
+        "id": "ink_stroke",
+        "name": "Ink Stroke",
+        "kind": "ranged",
+        "launch": [2, 3, 4],
+        "target": [1, 2, 3],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 88,
+        "dmg": [3, 5],
+        "crit": 0,
+        "effects": {"weak": 1},
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [4, 6]}},
+        "3": {"ability": {"dmg": [5, 7]}}
+      },
+      "text": "Ink a foe from the back ranks and leave them Weak."
     }
   ]
 }

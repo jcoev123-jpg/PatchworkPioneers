@@ -153,6 +153,50 @@
         { "id": "trade_mirror_thread", "text": "Surrender 3 scrap bundles to repair the mirror's edge", "outcome": { "gold": 0, "scraps": -3 } },
         { "id": "leave", "text": "Back away from the laughing reflections (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_midnight_needle_ferryman",
+      "title": "The Midnight Needle Ferry",
+      "description": "A squat button-eyed ferryman plants an enormous silver needle oar across a black quilt river; three hooded doll sentries pull the ferry's oxblood rope taut.",
+      "fight_choice_id": "seize_needle_oar",
+      "choices": [
+        { "id": "seize_needle_oar", "text": "Seize the giant needle oar and face the ferry sentries (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_ferry_token", "text": "Pay 18 gold for a stitched night-ferry token", "outcome": { "gold": -18, "scraps": 0 } },
+        { "id": "leave", "text": "Follow the dim bank instead (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_glass_eye_marionette_gate",
+      "title": "The Glass-Eye Marionette Gate",
+      "description": "A huge cloudy glass-button eye hangs over a pin-laced gate as four plump velvet marionette guards tug their stiff strings into a barricade.",
+      "fight_choice_id": "cut_puppet_barrier",
+      "choices": [
+        { "id": "cut_puppet_barrier", "text": "Cut the puppet strings and confront the dangling guards (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_glass_thread", "text": "Offer 2 scrap bundles to loosen the gate's puppet strings", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Back away while the glass eye stays shut (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_briar_hem_funeral_parade",
+      "title": "The Briar-Hem Procession",
+      "description": "Three round mourning dolls haul a coffin-sized brass thimble beneath a mossy briar arch; a stout bell-bearing marshal bars the candlelit lane.",
+      "fight_choice_id": "challenge_briar_marshal",
+      "choices": [
+        { "id": "challenge_briar_marshal", "text": "Challenge the briar-hem marshal and its mourners (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "purchase_briar_seal", "text": "Pay 22 gold for the marshal's stitched passage seal", "outcome": { "gold": -22, "scraps": 0 } },
+        { "id": "leave", "text": "Let the mourning parade pass ahead (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ashen_candle_clocktower",
+      "title": "The Ashen Wick Clocktower",
+      "description": "A leaning quilted clocktower turns a giant unlit candle into its hour hand; squat pin-helmet dolls brace a brass pendulum across the road.",
+      "fight_choice_id": "break_pendulum_line",
+      "choices": [
+        { "id": "break_pendulum_line", "text": "Break the brass pendulum line and fight the clock guards (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "surrender_wick_scraps", "text": "Surrender 3 scrap bundles for the clock guards' safe passage", "outcome": { "gold": 0, "scraps": -3 } },
+        { "id": "leave", "text": "Wait outside the tower until the guards leave (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
