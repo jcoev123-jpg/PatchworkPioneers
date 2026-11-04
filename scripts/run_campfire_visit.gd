@@ -9,24 +9,68 @@ const OPEN := "open"
 const HEALED := "healed"
 const LEFT := "left"
 
+## Opt-in Design v4 four-hero mode. The legacy two-argument service stays the
+## playable cards-mode path; this Stitched branch is service-only until S6
+## wires the real four-hero run roster, meters and gothic stop panel.
+const STITCHED := "stitched"
+const STITCHED_OPEN := "stitched_open"
+const STITCHED_DECIDED := "stitched_decided"
+const MEND := "mend"
+const TELL_TALES := "tell_tales"
+const TRIM_THE_WICK := "trim_the_wick"
+const STITCHED_LEAVE := "leave"
+
+const STITCHED_PARTY_SIZE := 4
+const STITCHED_FRAY_MAX := 200
+const STITCHED_CANDLE_MAX := 100
+const MEND_HEAL_PERCENT := 30
+const TALES_FRAY_REDUCTION := 25
+const WICK_CANDLE_RESTORE := 50
+
 var _node_id: String = ""
 var _heroes: Array = []
 var _status: String = INVALID
+var _mode: String = ""
+var _candle: int = 0
 
 
-func _init(node_id: Variant = null, run_heroes: Variant = null) -> void:
+func _init(node_id: Variant = null, run_heroes: Variant = null,
+		mode: Variant = null, candle: Variant = null) -> void:
 	if not _valid_node_id(node_id) or typeof(run_heroes) != TYPE_ARRAY:
 		return
-	# Share exactly Rest's admission rules, including rejecting total defeat.
-	# Validate before copying; no invalid data can become an open visit.
-	if not RunRestRecovery._is_valid_roster(run_heroes):
+	if mode == null:
+		# Legacy three-hero service, byte-for-byte unchanged.
+		# Share exactly Rest's admission rules, including rejecting total defeat.
+		# Validate before copying; no invalid data can become an open visit.
+		if not RunRestRecovery._is_valid_roster(run_heroes):
+			return
+		_node_id = node_id
+		_heroes = run_heroes.duplicate(true)
+		_status = OPEN
 		return
+	# Opt-in Stitched mode; any other mode argument fails closed.
+	if typeof(mode) != TYPE_STRING or mode != STITCHED:
+		return
+	if not _is_valid_stitched_party(run_heroes, candle):
+		return
+	_mode = STITCHED
 	_node_id = node_id
 	_heroes = run_heroes.duplicate(true)
-	_status = OPEN
+	_candle = int(candle)
+	_status = STITCHED_OPEN
 
 
 func read_state() -> Dictionary:
+	if _mode == STITCHED:
+		return {
+			"ok": _status != INVALID,
+			"node_id": _node_id,
+			"status": _status,
+			"mode": STITCHED,
+			"quote": _stitched_quote(),
+			"heroes": _heroes.duplicate(true),
+			"candle": _candle,
+		}
 	return {
 		"ok": _status != INVALID,
 		"node_id": _node_id,
@@ -55,6 +99,118 @@ func leave(expected_node_id: Variant, expected_heroes: Variant) -> Dictionary:
 		return _rejected()
 	_status = LEFT
 	return _receipt("leave")
+
+
+## The single Stitched selection. It accepts only the current node, a detached
+## expected open-state snapshot (heroes and candle) and one quoted decision.
+## A refusal never consumes the visit or changes held state.
+func select(decision: Variant, expected_node_id: Variant,
+		expected_heroes: Variant, expected_candle: Variant) -> Dictionary:
+	if not _matches_stitched_open(expected_node_id, expected_heroes, expected_candle) or not _is_stitched_decision(decision):
+		return _stitched_rejected()
+	var updated: Array = _heroes.duplicate(true)
+	var candle: int = _candle
+	match String(decision):
+		MEND:
+			for hero in updated:
+				var max_hp: int = int(hero["max_hp"])
+				# floor(30% of max HP), capped at max HP; a Hanging 0-HP hero
+				# receives exactly this heal, with no revive-first bonus.
+				@warning_ignore("integer_division")
+				var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+				hero["hp"] = mini(max_hp, int(hero["hp"]) + amount)
+		TELL_TALES:
+			for hero in updated:
+				hero["fray"] = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+		TRIM_THE_WICK:
+			candle = mini(STITCHED_CANDLE_MAX, candle + WICK_CANDLE_RESTORE)
+		STITCHED_LEAVE:
+			pass
+		_:
+			return _stitched_rejected()
+	_heroes = updated
+	_candle = candle
+	_status = STITCHED_DECIDED
+	return _stitched_receipt(String(decision))
+
+
+func _stitched_quote() -> Dictionary:
+	return {
+		"text": (
+			"Four ragdoll stitches settle round the guttering flame. Mend "
+			+ "each hero for 30% of their utmost HP, Tell Tales to unravel "
+			+ "25 FRAY from every hero, Trim the Wick to recover 50 CANDLE, "
+			+ "or Leave the fire as it is."
+		),
+		"choices": [MEND, TELL_TALES, TRIM_THE_WICK, STITCHED_LEAVE],
+	}
+
+
+func _matches_stitched_open(expected_node_id: Variant,
+		expected_heroes: Variant, expected_candle: Variant) -> bool:
+	return (
+		_status == STITCHED_OPEN
+		and _valid_node_id(expected_node_id)
+		and expected_node_id == _node_id
+		and typeof(expected_heroes) == TYPE_ARRAY
+		and expected_heroes == _heroes
+		and RunRestRecovery._is_integral_number(expected_candle)
+		and int(expected_candle) == _candle
+	)
+
+
+static func _is_stitched_decision(decision: Variant) -> bool:
+	if typeof(decision) != TYPE_STRING:
+		return false
+	var value: String = decision
+	return value == MEND or value == TELL_TALES or value == TRIM_THE_WICK or value == STITCHED_LEAVE
+
+
+static func _is_valid_stitched_party(party: Variant, candle: Variant) -> bool:
+	if typeof(party) != TYPE_ARRAY or party.size() != STITCHED_PARTY_SIZE:
+		return false
+	if not RunRestRecovery._is_integral_number(candle):
+		return false
+	var candle_value := int(candle)
+	if candle_value < 0 or candle_value > STITCHED_CANDLE_MAX:
+		return false
+	var ids: Dictionary = {}
+	for index in range(STITCHED_PARTY_SIZE):
+		var hero: Variant = party[index]
+		if typeof(hero) != TYPE_DICTIONARY:
+			return false
+		if not hero.has("id") or typeof(hero["id"]) != TYPE_STRING:
+			return false
+		var hero_id: String = hero["id"]
+		if hero_id.strip_edges().is_empty() or ids.has(hero_id):
+			return false
+		ids[hero_id] = true
+		for field in ["position", "max_hp", "hp", "fray"]:
+			if not hero.has(field) or not RunRestRecovery._is_integral_number(hero[field]):
+				return false
+		if int(hero["position"]) != index + 1:
+			return false
+		var max_hp: int = int(hero["max_hp"])
+		if max_hp <= 0 or int(hero["hp"]) < 0 or int(hero["hp"]) > max_hp:
+			return false
+		var fray: int = int(hero["fray"])
+		if fray < 0 or fray > STITCHED_FRAY_MAX:
+			return false
+	return true
+
+
+static func _stitched_rejected() -> Dictionary:
+	return {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
+
+
+func _stitched_receipt(decision: String) -> Dictionary:
+	return {
+		"ok": true,
+		"decision": decision,
+		"node_id": _node_id,
+		"heroes": _heroes.duplicate(true),
+		"candle": _candle,
+	}
 
 
 func _matches_open_visit(expected_node_id: Variant, expected_heroes: Variant) -> bool:
