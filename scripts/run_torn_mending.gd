@@ -166,32 +166,48 @@ func apply_rest(node_id: Variant, expected_heroes: Variant, between_nodes: Varia
 	return _accepted()
 
 
-## Recompute ordinary vitality against the first living actor; an authenticated
-## Warden-specific vital event instead targets its required living Warden.
+## Canonical hero-gated visits target their required living actor in any slot;
+## the ordinary vitality rotation still settles against the first living actor.
+## Authenticate authored IDs from the shipped catalog before dispatch: a
+## modified/missing required_hero on a known ID must never become ordinary.
 func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
 		snapshot: Dictionary, expected: Dictionary) -> Dictionary:
 	if not _valid or _defeated or expected != read_state() or not _valid_id(node) \
 		or _used_nodes.has(node):
 		return _rejected()
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var authored: Variant = catalog.get("events")
+	if not authored is Array:
+		return _rejected()
+	var gated := false
+	for entry in authored:
+		if entry is Dictionary and entry.get("id") == record.get("id"):
+			gated = true
+			break
+
 	var target := -1
-	var bound_warden: RunV3HeroVitalEventGate = null
-	if record.get("id") == "v3_warden_buckle_heart_ward":
-		# This authored hero-specific visit settles against the living Warden,
-		# not whichever picked hero happens to stand first in the party.
+	var bound_gate: RunV3HeroVitalEventGate = null
+	if gated:
 		var party_ids: Array = []
-		for hero in _heroes:
-			party_ids.append(hero.id)
-		var canonical := RunV3HeroVitalEventGate.new(party_ids)
-		if not canonical.is_valid():
+		for actor in _heroes:
+			party_ids.append(actor.id)
+		var gate := RunV3HeroVitalEventGate.new(party_ids)
+		if not gate.is_valid():
 			return _rejected()
-		bound_warden = canonical.enter(record, snapshot)
-		if bound_warden == null or not bound_warden.is_valid():
+		# enter() verifies every supplied field against the canonical record,
+		# required-hero party membership and the detached opening snapshot.
+		bound_gate = gate.enter(record, snapshot)
+		if bound_gate == null or not bound_gate.is_valid():
 			return _rejected()
+		var required_id: String = bound_gate.get_event().required_hero
 		for index in range(_heroes.size()):
-			if _heroes[index].id == "warden" and _heroes[index].hp > 0:
+			if _heroes[index].id == required_id and _heroes[index].hp > 0:
 				target = index
 				break
 	else:
+		# An unknown ID cannot authorize hero selection by claiming a gate.
+		if record.has("required_hero"):
+			return _rejected()
 		for index in range(_heroes.size()):
 			if _heroes[index].hp > 0:
 				target = index
@@ -201,7 +217,10 @@ func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
 	var hero: Dictionary = _heroes[target]
 	if snapshot.get("hero") != {"id": hero.id, "hp": hero.hp, "max_hp": hero.max_hp}:
 		return _rejected()
-	var claim: Dictionary = bound_warden.choose_with_vitals(receipt.get("choice_id")) if bound_warden != null else \
+	# Recreate the receipt from the authenticated canonical visit (or the
+	# ordinary selector). Compare the whole settled wallet and vitals before
+	# publishing a single node, cap-offset and hero mutation.
+	var claim: Dictionary = bound_gate.choose_with_vitals(receipt.get("choice_id")) if bound_gate != null else \
 		RunEventChoice.new(record).choose_with_vitals(receipt.get("choice_id"), snapshot)
 	if not claim.get("ok", false) or claim != receipt:
 		return _rejected()
@@ -211,7 +230,6 @@ func apply_vital_event(node: Variant, record: Dictionary, receipt: Dictionary,
 	_vital_nodes.append(node)
 	_refresh_vital_cap_offsets()
 	return _accepted()
-
 
 ## Keep cap evidence independent of read_state so a tampered hero cannot
 ## authenticate its own cap. Recompute only after accepted cap transactions.
