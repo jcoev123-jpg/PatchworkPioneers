@@ -22,6 +22,9 @@ func _initialize() -> void:
     _test_insufficient_gold_and_leave()
     _test_stale_and_forged_inputs()
     _test_invalid_open()
+    _test_stitched_calm()
+    _test_stitched_leave_and_refusals()
+    _test_stitched_invalid_open_and_detachment()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -400,3 +403,275 @@ func _test_invalid_open() -> void:
                 "invalid-open removal " + str(entry["node"]))
         _reject(visit, STRIKE, before["visit_id"], before["node_id"], before,
                 "invalid-open Leave " + str(entry["node"]), true)
+
+
+# ------------------------------------------------------------------ Stitched calm
+
+const HERO_IDS := ["warden", "seamstress", "tinker", "lantern_monk"]
+
+
+## Four distinct ranked heroes with full nested data; only "fray" is the calmed field.
+func _s_heroes(frays: Array) -> Array:
+    var heroes: Array = []
+    for i in 4:
+        heroes.append({
+            "id": HERO_IDS[i], "position": i + 1, "fray": frays[i],
+            "hp": 20 + i, "max_hp": 30 + i, "flags": {"torn": i == 2, "marks": [i, "stitch"]},
+            "parts": [{"id": "part_%d" % i, "slot": "arm", "state": {"worn": true, "uses": [1, 2]}}],
+        })
+    return heroes
+
+
+func _s_open(heroes: Variant, gold: Variant = 100, price: Variant = 75,
+        node: Variant = NODE) -> RunUnpickerVisit:
+    return RunUnpickerVisit.open_stitched(node, heroes, gold, price)
+
+
+func _s_calm(visit: RunUnpickerVisit, hero: Variant, snapshot: Dictionary) -> Dictionary:
+    return visit.calm_hero(hero, snapshot["visit_id"], snapshot["node_id"], snapshot)
+
+
+func _s_reject(visit: RunUnpickerVisit, hero: Variant, visit_id: Variant, node_id: Variant,
+        snapshot: Variant, label: String, mode: String = "calm") -> void:
+    var before := visit.read_state()
+    var used := visit.is_consumed()
+    var result: Dictionary
+    if mode == "leave":
+        result = visit.leave(visit_id, node_id, snapshot)
+    elif mode == "remove":
+        result = visit.remove_card(hero, visit_id, node_id, snapshot)
+    else:
+        result = visit.calm_hero(hero, visit_id, node_id, snapshot)
+    _check(result.get("ok", true) == false, label + ": rejected")
+    _check(visit.read_state() == before and visit.is_consumed() == used,
+            label + ": whole ledger, heroes, wallet and retry right identical")
+    for key in ["heroes", "gold", "price", "receipt", "visit_id", "node_id"]:
+        _check(result.get(key) == before.get(key), label + ": unchanged returned " + key)
+    _check(result.get("action") == "" and result.get("charged_gold") == 0
+            and result.get("calmed_hero_id") == "",
+            label + ": no phantom action, payment or calmed hero")
+
+
+func _test_stitched_calm() -> void:
+    var frays := [70, 20, 200, 0]
+    var heroes := _s_heroes(frays)
+    var original := heroes.duplicate(true)
+    var visit := _s_open(heroes)
+    _check(visit.is_valid() and not visit.is_consumed(), "stitched four-hero visit opens")
+    var source := visit.read_state()
+    var quote := visit.quote()
+    _check(quote["ok"] and quote["choices"] == ["calm_hero", "leave"] and quote["price"] == 75
+            and quote["calm_amount"] == 50 and quote["hero_ids"] == HERO_IDS
+            and quote["visit_id"] == source["visit_id"] and quote["node_id"] == NODE,
+            "quote discloses the authorized caller price and exactly calm_hero + leave")
+    _check(source["mode"] == "stitched" and source["heroes"] == original and source["gold"] == 100
+            and source["price"] == 75 and source["node_id"] == NODE
+            and not source["receipt"].is_empty() and not source["visit_id"].is_empty(),
+            "read_state discloses node, visit, heroes, wallet and price")
+    # A different quoted price is charged exactly: the price is external input.
+    var other := _s_open(_s_heroes(frays), 100, 40)
+    _check(other.is_valid() and other.quote()["price"] == 40
+            and _s_calm(other, "warden", other.read_state())["charged_gold"] == 40
+            and other.read_state()["gold"] == 60, "any positive affordable quote is charged exactly")
+    var expected_fray := {"warden": 20, "seamstress": 0, "tinker": 150}
+    for target in expected_fray:
+        var fresh := _s_open(_s_heroes(frays))
+        var snap := fresh.read_state()
+        seed(8821)
+        var next_draw := randi()
+        seed(8821)
+        var paid := _s_calm(fresh, target, snap)
+        _check(paid["ok"] == true and paid["action"] == "calm_hero" and paid["calmed_hero_id"] == target
+                and paid["fray_after"] == expected_fray[target]
+                and paid["fray_before"] == frays[HERO_IDS.find(target)],
+                "calm " + target + " by 50 clamped at zero")
+        _check(paid["charged_gold"] == 75 and paid["gold"] == 25 and fresh.is_consumed()
+                and paid["consumed"] == true, "exact 75 debit once and visit consumed: " + target)
+        var expected_heroes := _s_heroes(frays)
+        expected_heroes[HERO_IDS.find(target)]["fray"] = expected_fray[target]
+        _check(paid["heroes"] == expected_heroes and paid["heroes"].size() == 4,
+                "only " + target + " FRAY changed; every other hero and field preserved")
+        _check(paid["node_id"] == NODE and paid["visit_id"] == snap["visit_id"]
+                and paid["source_snapshot"] == snap and paid["source_receipt"] == snap["receipt"]
+                and paid["receipt"] != paid["source_receipt"],
+                "receipt bound to node/visit with pre-commit source proof: " + target)
+        _check(fresh.quote()["choices"].is_empty() and not fresh.quote()["ok"],
+                "consumed stitched visit offers nothing")
+        _s_reject(fresh, target, snap["visit_id"], NODE, snap, "replayed calm " + target)
+        _s_reject(fresh, null, snap["visit_id"], NODE, snap, "post-calm Leave " + target, "leave")
+        _check(randi() == next_draw, "stitched calm and refusals draw no global RNG")
+    # A hero with no FRAY cannot be charged for nothing and the visit stays open.
+    var zero := _s_open(_s_heroes(frays))
+    var zero_source := zero.read_state()
+    _s_reject(zero, "lantern_monk", zero_source["visit_id"], NODE, zero_source,
+            "calm hero already at zero FRAY")
+    _check(_s_calm(zero, "warden", zero_source)["ok"] == true,
+            "visit stays open after zero-FRAY refusal")
+    _check(heroes == original, "caller hero input unchanged")
+
+
+func _test_stitched_leave_and_refusals() -> void:
+    var frays := [70, 20, 200, 0]
+    var visit := _s_open(_s_heroes(frays))
+    var snap := visit.read_state()
+    # Cross-mode actions are refused in both directions.
+    _s_reject(visit, STRIKE, snap["visit_id"], NODE, snap, "remove_card on stitched visit", "remove")
+    var legacy := _make_visit(_deck(), 200)
+    var legacy_snap := legacy.read_state()
+    _check(not legacy_snap.has("mode") and not legacy_snap.has("heroes")
+            and legacy.quote()["choices"] == ["remove_card", "leave"],
+            "legacy visit shape carries no Stitched fields")
+    var legacy_before := legacy.read_state()
+    var cross := legacy.calm_hero("warden", legacy_snap["visit_id"], NODE, legacy_snap)
+    _check(cross.get("ok") == false and legacy.read_state() == legacy_before
+            and not legacy.is_consumed(), "calm_hero on legacy visit refused and changes nothing")
+    _check(_remove(legacy, STRIKE, legacy_snap)["ok"], "legacy visit still removes after cross-mode refusal")
+    # Wrong identity, node and snapshots.
+    _s_reject(visit, "warden", "wrong-visit", NODE, snap, "wrong visit ID")
+    _s_reject(visit, "warden", snap["visit_id"], "other-node", snap, "wrong node ID")
+    _s_reject(visit, "warden", snap["visit_id"], NODE, {}, "omitted snapshot")
+    _s_reject(visit, "warden", snap["visit_id"], NODE, null, "null snapshot")
+    for field in ["heroes", "gold", "price", "receipt", "node_id", "visit_id", "consumed", "mode"]:
+        var stale := snap.duplicate(true)
+        if field == "heroes":
+            stale["heroes"][0]["fray"] += 1
+        elif field == "gold" or field == "price":
+            stale[field] += 1
+        elif field == "consumed":
+            stale[field] = true
+        else:
+            stale[field] = "wrong"
+        _s_reject(visit, "warden", snap["visit_id"], NODE, stale, "stale " + field)
+        _s_reject(visit, "warden", snap["visit_id"], NODE, stale, "stale Leave " + field, "leave")
+    _s_reject(visit, "warden", snap["visit_id"], "other-node", snap, "stale Leave node", "leave")
+    _s_reject(visit, "warden", "wrong-visit", NODE, snap, "stale Leave visit", "leave")
+    for target in ["", " ", "missing_hero", null, 12, " warden", "Warden"]:
+        _s_reject(visit, target, snap["visit_id"], NODE, snap, "invalid target: " + str(target))
+    # Independent visits never authorize each other.
+    var twin := _s_open(_s_heroes(frays))
+    var twin_snap := twin.read_state()
+    _check(twin_snap["visit_id"] != snap["visit_id"] and twin_snap["receipt"] == snap["receipt"],
+            "same-input stitched visits share the economic receipt but not the visit identity")
+    _s_reject(twin, "warden", snap["visit_id"], NODE, snap, "other visit's intent")
+    # Unaffordable quote: refused, visit stays open for Leave.
+    var poor := _s_open(_s_heroes(frays), 74, 75)
+    var poor_snap := poor.read_state()
+    _check(poor.is_valid() and poor.quote()["ok"] and poor.quote()["price"] == 75,
+            "unaffordable quote is still disclosed")
+    _s_reject(poor, "warden", poor_snap["visit_id"], NODE, poor_snap, "unaffordable calm")
+    var left := poor.leave(poor_snap["visit_id"], NODE, poor_snap)
+    _check(left["ok"] == true and left["action"] == "leave" and left["charged_gold"] == 0
+            and left["gold"] == 74 and left["heroes"] == _s_heroes(frays) and poor.is_consumed(),
+            "Leave after refused calm spends nothing and keeps all four heroes")
+    _s_reject(poor, "warden", poor_snap["visit_id"], NODE, poor_snap, "calm after Leave")
+    _s_reject(poor, null, poor_snap["visit_id"], NODE, poor_snap, "repeated Leave", "leave")
+    # Plain Leave on an affordable visit, after every refusal above.
+    var left_ok := visit.leave(snap["visit_id"], NODE, snap)
+    _check(left_ok["ok"] == true and left_ok["gold"] == 100 and left_ok["charged_gold"] == 0
+            and left_ok["heroes"] == _s_heroes(frays) and left_ok["source_snapshot"] == snap
+            and visit.is_consumed() and visit.quote()["choices"].is_empty(),
+            "Leave consumes once, spends nothing and preserves all four heroes")
+    # Exact-price boundary and retry after every refusal.
+    var exact := _s_open(_s_heroes(frays), 75, 75)
+    var exact_snap := exact.read_state()
+    var exact_paid := _s_calm(exact, "seamstress", exact_snap)
+    _check(exact_paid["ok"] == true and exact_paid["gold"] == 0 and exact_paid["charged_gold"] == 75,
+            "exactly affordable quote spends the wallet to zero")
+
+
+func _test_stitched_invalid_open_and_detachment() -> void:
+    var frays := [70, 20, 200, 0]
+    var bad_cases: Array = []
+    var three := _s_heroes(frays)
+    three.pop_back()
+    bad_cases.append({"label": "three heroes", "heroes": three})
+    var five := _s_heroes(frays)
+    five.append(five[0].duplicate(true))
+    bad_cases.append({"label": "five heroes", "heroes": five})
+    bad_cases.append({"label": "null heroes", "heroes": null})
+    bad_cases.append({"label": "dictionary heroes", "heroes": {}})
+    var dup_id := _s_heroes(frays)
+    dup_id[1]["id"] = "warden"
+    bad_cases.append({"label": "repeated id", "heroes": dup_id})
+    for blank in ["", " ", " warden", 5, null]:
+        var bad_id := _s_heroes(frays)
+        bad_id[0]["id"] = blank
+        bad_cases.append({"label": "bad id " + str(blank), "heroes": bad_id})
+    var not_dict := _s_heroes(frays)
+    not_dict[2] = "tinker"
+    bad_cases.append({"label": "hero not a dictionary", "heroes": not_dict})
+    var dup_pos := _s_heroes(frays)
+    dup_pos[3]["position"] = 1
+    bad_cases.append({"label": "repeated rank", "heroes": dup_pos})
+    for rank in [0, 5, -1, 1.0, "2"]:
+        var bad_rank := _s_heroes(frays)
+        bad_rank[1]["position"] = rank
+        bad_cases.append({"label": "bad rank " + str(rank), "heroes": bad_rank})
+    for fray in [-1, 201, 20.5, 20.0, "20", null]:
+        var bad_fray := _s_heroes(frays)
+        bad_fray[1]["fray"] = fray
+        bad_cases.append({"label": "bad fray " + str(fray), "heroes": bad_fray})
+    var no_fray := _s_heroes(frays)
+    no_fray[0].erase("fray")
+    bad_cases.append({"label": "missing fray", "heroes": no_fray})
+    for entry in bad_cases:
+        var bad := _s_open(entry["heroes"])
+        _check(not bad.is_valid() and not bad.is_consumed() and not bad.quote()["ok"]
+                and bad.quote()["choices"] == [], "invalid roster fails closed: " + entry["label"])
+        var bad_state := bad.read_state()
+        _check(bad.calm_hero("warden", bad_state["visit_id"], bad_state["node_id"], bad_state)["ok"] == false
+                and bad.leave(bad_state["visit_id"], bad_state["node_id"], bad_state)["ok"] == false
+                and not bad.is_consumed(), "invalid roster cannot calm or Leave: " + entry["label"])
+    var wallet_price_cases: Array = [
+        {"label": "negative gold", "gold": -1, "price": 75},
+        {"label": "string gold", "gold": "100", "price": 75},
+        {"label": "float gold", "gold": 100.0, "price": 75},
+        {"label": "null gold", "gold": null, "price": 75},
+        {"label": "zero price", "gold": 100, "price": 0},
+        {"label": "negative price", "gold": 100, "price": -5},
+        {"label": "fractional price", "gold": 100, "price": 75.5},
+        {"label": "integral float price", "gold": 100, "price": 75.0},
+        {"label": "string price", "gold": 100, "price": "75"},
+        {"label": "null price", "gold": 100, "price": null},
+    ]
+    for entry in wallet_price_cases:
+        _check(not _s_open(_s_heroes(frays), entry["gold"], entry["price"]).is_valid(),
+                "invalid wallet or quote fails closed: " + entry["label"])
+    for node in ["", " ", " " + NODE, NODE + " ", null, 7]:
+        _check(not _s_open(_s_heroes(frays), 100, 75, node).is_valid(),
+                "invalid node fails closed: " + str(node))
+    _check(_s_open(_s_heroes(frays), 0, 75).is_valid() and _s_open(_s_heroes(frays), 100, 1).is_valid(),
+            "zero wallet and one-gold quote are legal openings")
+    # Detachment of caller input, state, quote and receipt, and no RNG draw.
+    var local_rng := RandomNumberGenerator.new()
+    local_rng.seed = 6113
+    var local_before := local_rng.state
+    seed(6113)
+    var global_next := randi()
+    seed(6113)
+    var heroes := _s_heroes(frays)
+    var visit := _s_open(heroes)
+    heroes[0]["fray"] = 199
+    heroes[0]["parts"][0]["state"]["uses"].clear()
+    heroes.clear()
+    _check(visit.read_state()["heroes"] == _s_heroes(frays),
+            "caller mutation after open does not reach the service")
+    var snap := visit.read_state()
+    snap["heroes"][1]["flags"]["marks"].clear()
+    snap["heroes"].clear()
+    _check(visit.read_state()["heroes"] == _s_heroes(frays), "read_state nested heroes are detached")
+    var fresh_snap := visit.read_state()
+    var paid := _s_calm(visit, "warden", fresh_snap)
+    _check(paid["ok"] == true, "detachment fixture calm succeeds")
+    paid["heroes"][0]["parts"][0]["state"]["uses"].clear()
+    paid["heroes"][2]["flags"].clear()
+    paid["source_snapshot"]["heroes"].clear()
+    var expected := _s_heroes(frays)
+    expected[0]["fray"] = 20
+    _check(visit.read_state()["heroes"] == expected and fresh_snap["heroes"] == _s_heroes(frays),
+            "returned receipt nested heroes do not alias service or source snapshot")
+    _check(local_rng.state == local_before and randi() == global_next,
+            "Stitched open, refusals, calm and Leave consume no local/global RNG")
+    var legacy := _make_visit(_deck(), 175)
+    _check(legacy.is_valid() and legacy.quote()["choices"] == ["remove_card", "leave"]
+            and legacy.quote()["price"] == 75, "legacy constructor is unaffected by Stitched mode")

@@ -16,6 +16,15 @@ var _next_stitch_id: int = 1
 var _valid := false
 var _consumed := false
 var _source_snapshot: Dictionary = {}
+# Opt-in Stitched FRAY-calming mode (see open_stitched). Never set by the legacy
+# constructor, so every six-argument card-removal visit is unchanged.
+var _stitched := false
+var _heroes: Array = []
+var _quoted_price: int = 0
+
+const STITCHED_PARTY_SIZE := 4
+const FRAY_MAX := 200
+const CALM_AMOUNT := 50
 
 
 func _init(node_id: Variant = null, deck_ids: Variant = null, gold: Variant = null,
@@ -51,6 +60,51 @@ func _init(node_id: Variant = null, deck_ids: Variant = null, gold: Variant = nu
     _source_snapshot = read_state()
 
 
+## Opt-in Stitched Unpicker: pay an already-authorized, caller-supplied gold quote
+## to calm exactly ONE of four ranked heroes by 50 FRAY, or Leave. The price is
+## external input (the run owner's approved quote), never assigned here. Returns
+## an invalid visit when any input is malformed. Scene-free, no RNG.
+static func open_stitched(node_id: Variant, heroes: Variant, gold: Variant,
+        quoted_price: Variant) -> RunUnpickerVisit:
+    var visit := RunUnpickerVisit.new()
+    visit._open_stitched(node_id, heroes, gold, quoted_price)
+    return visit
+
+
+func _open_stitched(node_id: Variant, heroes: Variant, gold: Variant, quoted_price: Variant) -> void:
+    if typeof(node_id) != TYPE_STRING or node_id.is_empty() or node_id != node_id.strip_edges():
+        return
+    if typeof(heroes) != TYPE_ARRAY or heroes.size() != STITCHED_PARTY_SIZE:
+        return
+    if typeof(gold) != TYPE_INT or gold < 0 or typeof(quoted_price) != TYPE_INT or quoted_price <= 0:
+        return
+    var ids: Dictionary = {}
+    var positions: Dictionary = {}
+    for hero in heroes:
+        if typeof(hero) != TYPE_DICTIONARY:
+            return
+        var id: Variant = hero.get("id")
+        var position: Variant = hero.get("position")
+        var fray: Variant = hero.get("fray")
+        if typeof(id) != TYPE_STRING or id.is_empty() or id != id.strip_edges() or ids.has(id):
+            return
+        if typeof(position) != TYPE_INT or position < 1 or position > STITCHED_PARTY_SIZE \
+                or positions.has(position):
+            return
+        if typeof(fray) != TYPE_INT or fray < 0 or fray > FRAY_MAX:
+            return
+        ids[id] = true
+        positions[position] = true
+    _node_id = node_id
+    _stitched = true
+    _heroes = heroes.duplicate(true)
+    _gold = gold
+    _quoted_price = quoted_price
+    _valid = true
+    _visit_id = JSON.stringify([get_instance_id(), _node_id, _ledger_receipt()]).sha256_text()
+    _source_snapshot = read_state()
+
+
 func is_valid() -> bool:
     return _valid
 
@@ -62,6 +116,8 @@ func is_consumed() -> bool:
 func _ledger_receipt() -> String:
     if not _valid:
         return ""
+    if _stitched:
+        return JSON.stringify(["stitched", _node_id, _heroes, _gold, _quoted_price]).sha256_text()
     var ids: Array = _descriptors.keys()
     ids.sort()
     var sorted_registry: Array = []
@@ -74,6 +130,20 @@ func _ledger_receipt() -> String:
 ## Complete detached source/current state. Supply this as expected_snapshot
 ## along with its visit_id and node_id for either decision.
 func read_state() -> Dictionary:
+    if _stitched:
+        # Stitched mode exposes its own full state; the legacy shape is untouched.
+        return {
+            "valid": _valid,
+            "consumed": _consumed,
+            "visit_id": _visit_id,
+            "node_id": _node_id,
+            "mode": "stitched",
+            "heroes": _heroes.duplicate(true),
+            "gold": _gold,
+            "price": _quoted_price,
+            "calm_amount": CALM_AMOUNT,
+            "receipt": _ledger_receipt(),
+        }
     return {
         "valid": _valid,
         "consumed": _consumed,
@@ -91,6 +161,20 @@ func read_state() -> Dictionary:
 
 ## Exactly two available decisions; selecting the card is part of remove_card.
 func quote() -> Dictionary:
+    if _stitched:
+        var open := _valid and not _consumed
+        var hero_ids: Array = []
+        for hero in _heroes:
+            hero_ids.append(hero["id"])
+        return {
+            "ok": open,
+            "visit_id": _visit_id,
+            "node_id": _node_id,
+            "price": _quoted_price,
+            "calm_amount": CALM_AMOUNT,
+            "hero_ids": hero_ids if open else [],
+            "choices": ["calm_hero", "leave"] if open else [],
+        }
     return {
         "ok": _valid and not _consumed,
         "visit_id": _visit_id,
@@ -134,15 +218,52 @@ func _receipt(ok: bool, action: String = "", removed_card_id: String = "",
     var result := read_state()
     result["ok"] = ok
     result["action"] = action
-    result["removed_card_id"] = removed_card_id
+    if _stitched:
+        result["calmed_hero_id"] = ""
+        result["fray_before"] = 0
+        result["fray_after"] = 0
+    else:
+        result["removed_card_id"] = removed_card_id
     result["charged_gold"] = charged_gold
     result["source_snapshot"] = _source_snapshot.duplicate(true)
     result["source_receipt"] = _source_snapshot.get("receipt", "")
     return result
 
 
+## Stitched mode only: calm exactly one named hero by 50 FRAY (never below zero)
+## for the quoted gold. An unaffordable, stale or invalid attempt changes nothing
+## and leaves the visit open for Leave. A hero already at 0 FRAY is refused so no
+## gold is paid for no effect.
+func calm_hero(hero_id: Variant, expected_visit_id: Variant,
+        expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
+    if not _stitched or not _matches_source(expected_visit_id, expected_node_id, expected_snapshot):
+        return _receipt(false)
+    if typeof(hero_id) != TYPE_STRING or hero_id.is_empty() or hero_id != hero_id.strip_edges():
+        return _receipt(false)
+    if _gold < _quoted_price:
+        return _receipt(false)
+    var index := -1
+    for i in _heroes.size():
+        if _heroes[i]["id"] == hero_id:
+            index = i
+    if index < 0 or int(_heroes[index]["fray"]) <= 0:
+        return _receipt(false)
+    var before: int = _heroes[index]["fray"]
+    var after: int = maxi(0, before - CALM_AMOUNT)
+    _heroes[index]["fray"] = after
+    _gold -= _quoted_price
+    _consumed = true
+    var result := _receipt(true, "calm_hero", "", _quoted_price)
+    result["calmed_hero_id"] = hero_id
+    result["fray_before"] = before
+    result["fray_after"] = after
+    return result
+
+
 func remove_card(card_id: Variant, expected_visit_id: Variant,
         expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
+    if _stitched:
+        return _receipt(false)
     if not _matches_source(expected_visit_id, expected_node_id, expected_snapshot):
         return _receipt(false)
     if typeof(card_id) != TYPE_STRING or card_id.is_empty() or card_id != card_id.strip_edges():
