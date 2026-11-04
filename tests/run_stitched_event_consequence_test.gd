@@ -7,6 +7,7 @@ var failures: Array[String] = []
 var checks: int = 0
 
 const FOUR := ["warden", "seamstress", "tinker", "button_golem"]
+const FOUR_WITH_MONK := ["warden", "seamstress", "tinker", "lantern_monk"]
 const REQUIRED_IDS := [
 	"warden",
 	"seamstress",
@@ -41,6 +42,8 @@ func _initialize() -> void:
 	_test_part_prize_rejections()
 	_test_gold_bargains()
 	_test_gold_rejections()
+	_test_required_hero_party_and_hero_gates()
+	_test_required_hero_rejections()
 	_finish()
 
 
@@ -2089,4 +2092,550 @@ func _test_gold_rejections() -> void:
 		"AC3: same instance still commits a legal gold choice after invalid-snapshot refusals")
 	_assert_rejected(bad_gold_service, "leave", valid_gold_four, 50,
 		"AC3: replay refused after recovered gold claim")
+
+
+func _required_hero_effect(candle: int, fray: int, required_hero: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {
+		"candle": candle,
+		"fray": fray,
+		"target": target,
+		"required_hero": required_hero,
+	}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _four_with_monk(candle: int, frays: Array) -> Dictionary:
+	var pairs: Array = []
+	for index in range(frays.size()):
+		pairs.append([FOUR_WITH_MONK[index], frays[index]])
+	return _snapshot(candle, pairs)
+
+
+func _choice_ids(preview: Dictionary) -> Array:
+	var ids: Array = []
+	for entry in preview.get("choices", []):
+		if entry is Dictionary:
+			ids.append(entry.get("choice_id", ""))
+	return ids
+
+
+func _required_hero_bargain_event() -> Dictionary:
+	return _event([
+		_choice("monk_prayer", "The Lantern Monk chants over the party's seams.",
+			_required_hero_effect(25, -25, "lantern_monk", "party")),
+		_choice("tend", "Tend the seamstress's seam.",
+			_effect(25, -25, "hero", "seamstress")),
+		_choice("leave", "Leave the shrine untouched.",
+			_effect(0, 0, "party")),
+	], "ev_stitched_lantern_monk_shrine")
+
+
+func _test_required_hero_party_and_hero_gates() -> void:
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var catalog_original := warden_catalog.duplicate(true)
+	_check(bool(warden_catalog.get("ok", false)),
+		"required_hero fixture loads Warden part catalog")
+
+	# AC1: Two valid four-hero fixtures (one without Lantern Monk, one with Lantern Monk),
+	# a gated party effect (required_hero="lantern_monk", +25 candle / -25 fray),
+	# an ordinary hero-targeted effect (seamstress) and an ungated Leave.
+	var without_monk := _four(40, [95, 0, 50, 200])
+	var without_monk_original := without_monk.duplicate(true)
+	var with_monk := _four_with_monk(40, [95, 0, 50, 200])
+	var with_monk_original := with_monk.duplicate(true)
+	var event_record := _required_hero_bargain_event()
+	var event_original := event_record.duplicate(true)
+
+	var service_absent := RunStitchedEventConsequence.new(event_record)
+	var preview_absent := service_absent.preview(without_monk)
+	_check(preview_absent.get("ok") == true
+		and preview_absent.get("event_id") == "ev_stitched_lantern_monk_shrine"
+		and preview_absent.get("candle") == 40,
+		"AC1: preflight succeeds at candle 40 without Lantern Monk")
+	_check(_choice_ids(preview_absent) == ["tend", "leave"],
+		"AC1: absent required_hero excludes the gated choice from preview.choices and preserves visible choice order")
+	_check(_entry(preview_absent, "monk_prayer") == {},
+		"AC1: hidden gated choice is omitted from preview.choices rather than shown disabled")
+
+	var absent_tend_entry := _entry(preview_absent, "tend")
+	_check(absent_tend_entry.get("available") == true
+		and absent_tend_entry.get("target") == "hero"
+		and absent_tend_entry.get("hero_id") == "seamstress"
+		and absent_tend_entry.get("candle_delta") == 25
+		and absent_tend_entry.get("fray_delta") == -25
+		and absent_tend_entry.get("candle") == 65
+		and absent_tend_entry.get("fray") == {"seamstress": -25}
+		and _receipt_keys(absent_tend_entry) == [
+			"available", "candle", "candle_delta", "choice_id",
+			"fray", "fray_delta", "hero_id", "target",
+		],
+		"AC1/AC3: ordinary hero-targeted sibling retains exact 8-key preview shape when gated choice is hidden")
+
+	var absent_leave_entry := _entry(preview_absent, "leave")
+	_check(absent_leave_entry.get("available") == true
+		and absent_leave_entry.get("target") == "party"
+		and absent_leave_entry.get("hero_id") == ""
+		and absent_leave_entry.get("candle") == 40
+		and absent_leave_entry.get("fray") == {}
+		and _receipt_keys(absent_leave_entry) == [
+			"available", "candle", "candle_delta", "choice_id",
+			"fray", "fray_delta", "hero_id", "target",
+		],
+		"AC1/AC3: ungated Leave remains available with exact 8-key preview shape when gated choice is hidden")
+
+	# AC1: With [warden, seamstress, tinker, lantern_monk], the gated choice appears in authored order,
+	# previews candle 65 and -25 fray for all four party members.
+	var service_present := RunStitchedEventConsequence.new(event_record)
+	var preview_present := service_present.preview(with_monk)
+	_check(preview_present.get("ok") == true
+		and preview_present.get("event_id") == "ev_stitched_lantern_monk_shrine"
+		and preview_present.get("candle") == 40,
+		"AC1: preflight succeeds at candle 40 with Lantern Monk present")
+	_check(_choice_ids(preview_present) == ["monk_prayer", "tend", "leave"],
+		"AC1: present required_hero keeps all three choices in exact authored order")
+
+	var monk_entry := _entry(preview_present, "monk_prayer")
+	_check(monk_entry.get("available") == true
+		and monk_entry.get("target") == "party"
+		and monk_entry.get("hero_id") == ""
+		and monk_entry.get("candle_delta") == 25
+		and monk_entry.get("fray_delta") == -25
+		and monk_entry.get("candle") == 65
+		and monk_entry.get("fray") == {
+			"warden": -25,
+			"seamstress": -25,
+			"tinker": -25,
+			"lantern_monk": -25,
+		}
+		and _receipt_keys(monk_entry) == [
+			"available", "candle", "candle_delta", "choice_id",
+			"fray", "fray_delta", "hero_id", "target",
+		],
+		"AC1: party-targeted Lantern-Monk-required choice previews candle 65 and -25 fray for all four active heroes")
+
+	# Relative order preservation when the gated choice is authored in middle or last slot, and on a 2-choice event:
+	var middle_gated_event := _event([
+		_choice("tend", "Tend seamstress.", _effect(25, -25, "hero", "seamstress")),
+		_choice("monk_prayer", "Monk prayer.", _required_hero_effect(25, -25, "lantern_monk", "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	_check(_choice_ids(RunStitchedEventConsequence.new(middle_gated_event).preview(without_monk)) == ["tend", "leave"]
+		and _choice_ids(RunStitchedEventConsequence.new(middle_gated_event).preview(with_monk)) == ["tend", "monk_prayer", "leave"],
+		"AC1: middle-slot gated choice preserves relative order of visible choices")
+
+	var last_gated_event := _event([
+		_choice("tend", "Tend seamstress.", _effect(25, -25, "hero", "seamstress")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+		_choice("monk_prayer", "Monk prayer.", _required_hero_effect(25, -25, "lantern_monk", "party")),
+	])
+	_check(_choice_ids(RunStitchedEventConsequence.new(last_gated_event).preview(without_monk)) == ["tend", "leave"]
+		and _choice_ids(RunStitchedEventConsequence.new(last_gated_event).preview(with_monk)) == ["tend", "leave", "monk_prayer"],
+		"AC1: last-slot gated choice preserves relative order of visible choices")
+
+	var two_choice_gated_event := _event([
+		_choice("monk_prayer", "Monk prayer.", _required_hero_effect(25, -25, "lantern_monk", "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	var two_absent_preview := RunStitchedEventConsequence.new(two_choice_gated_event).preview(without_monk)
+	var two_present_preview := RunStitchedEventConsequence.new(two_choice_gated_event).preview(with_monk)
+	_check(_choice_ids(two_absent_preview) == ["leave"]
+		and _choice_ids(two_present_preview) == ["monk_prayer", "leave"],
+		"AC1: two-choice event with gated choice filters to [leave] when absent and [monk_prayer, leave] when present")
+
+	# AC1: Candle clamp to 0..100 on gated party choice:
+	var high_candle_monk := _four_with_monk(90, [95, 0, 50, 200])
+	var clamp_service := RunStitchedEventConsequence.new(event_record)
+	var clamp_preview := clamp_service.preview(high_candle_monk)
+	_check(_entry(clamp_preview, "monk_prayer").get("candle") == 100
+		and _entry(clamp_preview, "monk_prayer").get("fray") == {
+			"warden": -25, "seamstress": -25, "tinker": -25, "lantern_monk": -25,
+		},
+		"AC1: gated party choice clamps candle 90 + 25 to 100 in preview")
+	var clamp_receipt := clamp_service.choose("monk_prayer", high_candle_monk)
+	_check(clamp_receipt.get("ok") == true and clamp_receipt.get("candle") == 100,
+		"AC1/AC2: gated party choice clamps candle 90 + 25 to 100 in choose()")
+
+	var low_candle_monk := _four_with_monk(10, [95, 0, 50, 200])
+	var low_clamp_service := RunStitchedEventConsequence.new(_event([
+		_choice("monk_dim", "Dim the lantern.", _required_hero_effect(-25, -10, "lantern_monk", "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	]))
+	_check(_entry(low_clamp_service.preview(low_candle_monk), "monk_dim").get("candle") == 0,
+		"AC1: gated party choice clamps candle 10 - 25 to 0 in preview")
+	_check(low_clamp_service.choose("monk_dim", low_candle_monk).get("candle") == 0,
+		"AC1/AC2: gated party choice clamps candle 10 - 25 to 0 in choose()")
+
+	# AC2: Choosing the hidden choice when required_hero is missing fails without consuming the visit,
+	# snapshot, catalog, or RNG; a subsequent Leave or other eligible choice still claims once; replay fails.
+	seed(20261110)
+	var expected_rng_absent := randi()
+	seed(20261110)
+
+	_assert_rejected(service_absent, "monk_prayer", without_monk, 40,
+		"AC2: hidden choice rejected when required_hero is absent")
+	_check(not service_absent.is_claimed() and service_absent.is_valid(),
+		"AC2: rejecting hidden choice does not latch or consume the visit")
+	var leave_after_hidden := service_absent.choose("leave", without_monk)
+	_check(leave_after_hidden.get("ok") == true
+		and leave_after_hidden.get("event_id") == "ev_stitched_lantern_monk_shrine"
+		and leave_after_hidden.get("choice_id") == "leave"
+		and leave_after_hidden.get("target") == "party"
+		and leave_after_hidden.get("hero_id") == ""
+		and leave_after_hidden.get("candle") == 40
+		and leave_after_hidden.get("fray") == {}
+		and _receipt_keys(leave_after_hidden) == [
+			"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+		],
+		"AC2: subsequent Leave claims once after hidden choice rejection")
+	_check(service_absent.is_claimed() and not service_absent.is_valid(),
+		"AC2: subsequent Leave latches the visit")
+	_assert_rejected(service_absent, "leave", without_monk, 40,
+		"AC2: replay after Leave is denied")
+	_assert_rejected(service_absent, "tend", without_monk, 40,
+		"AC2: sibling choice after Leave claim is denied")
+	_check(randi() == expected_rng_absent,
+		"AC2: hidden choice refusal, Leave claim and replay never advance global RNG")
+
+	# Also verify another eligible non-Leave choice ("tend") claims once after hidden choice rejection:
+	var service_absent_tend := RunStitchedEventConsequence.new(event_record)
+	_assert_rejected(service_absent_tend, "monk_prayer", without_monk, 40,
+		"AC2: hidden choice rejected before ordinary hero choice")
+	var tend_after_hidden := service_absent_tend.choose("tend", without_monk)
+	_check(tend_after_hidden.get("ok") == true
+		and tend_after_hidden.get("choice_id") == "tend"
+		and tend_after_hidden.get("target") == "hero"
+		and tend_after_hidden.get("hero_id") == "seamstress"
+		and tend_after_hidden.get("candle") == 65
+		and tend_after_hidden.get("fray") == {"seamstress": -25},
+		"AC2: other eligible choice claims once after hidden choice rejection")
+	_assert_rejected(service_absent_tend, "tend", without_monk, 40,
+		"AC2: replay after eligible sibling claim is denied")
+
+	# AC2: Given the required hero present, choosing the gated choice succeeds and a repeated claim fails.
+	seed(20261111)
+	var expected_rng_present := randi()
+	seed(20261111)
+
+	var monk_receipt := service_present.choose("monk_prayer", with_monk)
+	_check(monk_receipt.get("ok") == true
+		and monk_receipt.get("event_id") == "ev_stitched_lantern_monk_shrine"
+		and monk_receipt.get("choice_id") == "monk_prayer"
+		and monk_receipt.get("target") == "party"
+		and monk_receipt.get("hero_id") == ""
+		and monk_receipt.get("candle") == 65
+		and monk_receipt.get("fray") == {
+			"warden": -25,
+			"seamstress": -25,
+			"tinker": -25,
+			"lantern_monk": -25,
+		}
+		and _receipt_keys(monk_receipt) == [
+			"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target",
+		],
+		"AC2: gated party choice returns exact previewed candle/fray and 7-key receipt shape")
+	_check(service_present.is_claimed() and not service_present.is_valid(),
+		"AC2: claiming gated choice consumes the single visit")
+	_assert_rejected(service_present, "monk_prayer", with_monk, 40,
+		"AC2: repeated claim of gated choice fails")
+	_assert_rejected(service_present, "leave", with_monk, 40,
+		"AC2: Leave after gated choice claim fails")
+	_check(service_present.preview(with_monk) == _denied_preview(),
+		"AC2: claimed gated visit denies preflight")
+	_check(randi() == expected_rng_present,
+		"AC2: gated choice claim and replay never advance global RNG")
+	_check(without_monk == without_monk_original
+		and with_monk == with_monk_original
+		and event_record == event_original,
+		"AC1/AC2: caller snapshots and authored event record remain untouched")
+
+	# AC2: Gated choice with optional gold, scraps and part receipt fields:
+	var gated_full_effect := {
+		"candle": 25,
+		"fray": -25,
+		"target": "party",
+		"required_hero": "lantern_monk",
+		"scraps": -2,
+		"gold": -12,
+		"part": {"id": "warden_head_pot_helm_bonk", "tier": 2},
+	}
+	var gated_bargain_event := _event([
+		_choice("monk_relic", "The Lantern Monk consecrates the pot helm.", gated_full_effect),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_monk_relic")
+	var full_without_monk := _gold_scraps_satchel_four(40, 4, 30, 5, [95, 0, 50, 200])
+	var full_with_monk := _four_with_monk(40, [95, 0, 50, 200])
+	full_with_monk["scraps"] = 4
+	full_with_monk["gold"] = 30
+	full_with_monk["satchel_count"] = 5
+	var full_with_monk_original := full_with_monk.duplicate(true)
+
+	var relic_absent_service := RunStitchedEventConsequence.new(gated_bargain_event, warden_catalog)
+	var relic_absent_preview := relic_absent_service.preview(full_without_monk)
+	_check(_choice_ids(relic_absent_preview) == ["leave"]
+		and _entry(relic_absent_preview, "monk_relic") == {},
+		"AC1/AC2: gated choice with gold/scraps/part is hidden when required_hero is absent")
+	var result_relic_absent := relic_absent_service.choose("monk_relic", full_without_monk)
+	_check(result_relic_absent == _refusal(40) and not relic_absent_service.is_claimed(),
+		"AC2: hidden gated gold/scraps/part choice fails without consuming visit")
+	_check(relic_absent_service.choose("leave", full_without_monk).get("ok") == true,
+		"AC2: Leave claims after hidden gated gold/scraps/part choice refusal")
+
+	var relic_present_service := RunStitchedEventConsequence.new(gated_bargain_event, warden_catalog)
+	var relic_present_preview := relic_present_service.preview(full_with_monk)
+	var relic_entry := _entry(relic_present_preview, "monk_relic")
+	_check(relic_entry.get("available") == true
+		and relic_entry.get("candle") == 65
+		and relic_entry.get("scraps_delta") == -2
+		and relic_entry.get("scraps") == 2
+		and relic_entry.get("gold_delta") == -12
+		and relic_entry.get("gold") == 18
+		and relic_entry.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and relic_entry.get("satchel_count") == 6
+		and relic_entry.get("fray") == {
+			"warden": -25, "seamstress": -25, "tinker": -25, "lantern_monk": -25,
+		},
+		"AC2: gated choice with gold/scraps/part previews all optional receipt fields")
+	var relic_receipt := relic_present_service.choose("monk_relic", full_with_monk)
+	_check(relic_receipt.get("ok") == true
+		and relic_receipt.get("candle") == 65
+		and relic_receipt.get("scraps_delta") == -2
+		and relic_receipt.get("scraps") == 2
+		and relic_receipt.get("gold_delta") == -12
+		and relic_receipt.get("gold") == 18
+		and relic_receipt.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 2}
+		and relic_receipt.get("satchel_count") == 6
+		and relic_receipt.get("fray") == {
+			"warden": -25, "seamstress": -25, "tinker": -25, "lantern_monk": -25,
+		},
+		"AC2: gated choice with gold/scraps/part returns exact receipt fields")
+	_assert_rejected(relic_present_service, "monk_relic", full_with_monk, 40,
+		"AC2: repeated claim on gated gold/scraps/part choice fails")
+	_check(full_with_monk == full_with_monk_original and warden_catalog == catalog_original,
+		"AC2: gated gold/scraps/part choice preserves snapshot and catalog detachment")
+
+	# Exercise a required_hero different from a target="hero" hero_id, requiring BOTH to be present:
+	var cross_hero_event := _event([
+		_choice("monk_mends_seamstress", "The Lantern Monk steadies the Seamstress's needle.",
+			_required_hero_effect(20, -15, "lantern_monk", "hero", "seamstress")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_cross_hero_gate")
+
+	# 1) Both required_hero ("lantern_monk") and target hero_id ("seamstress") present:
+	var both_present_service := RunStitchedEventConsequence.new(cross_hero_event)
+	var both_present_preview := both_present_service.preview(with_monk)
+	_check(_choice_ids(both_present_preview) == ["monk_mends_seamstress", "leave"],
+		"target=hero with distinct required_hero appears when both heroes are in the party")
+	var cross_entry := _entry(both_present_preview, "monk_mends_seamstress")
+	_check(cross_entry.get("available") == true
+		and cross_entry.get("target") == "hero"
+		and cross_entry.get("hero_id") == "seamstress"
+		and cross_entry.get("candle") == 60
+		and cross_entry.get("fray") == {"seamstress": -15},
+		"target=hero with distinct required_hero directs fray intent solely to hero_id")
+	var cross_receipt := both_present_service.choose("monk_mends_seamstress", with_monk)
+	_check(cross_receipt.get("ok") == true
+		and cross_receipt.get("target") == "hero"
+		and cross_receipt.get("hero_id") == "seamstress"
+		and cross_receipt.get("candle") == 60
+		and cross_receipt.get("fray") == {"seamstress": -15},
+		"target=hero with distinct required_hero commits with sole hero_id fray intent")
+	_assert_rejected(both_present_service, "monk_mends_seamstress", with_monk, 40,
+		"replay of distinct required_hero + hero_id choice fails")
+
+	# 2) hero_id ("seamstress") present, required_hero ("lantern_monk") absent:
+	var req_missing_service := RunStitchedEventConsequence.new(cross_hero_event)
+	var req_missing_preview := req_missing_service.preview(without_monk)
+	_check(_choice_ids(req_missing_preview) == ["leave"]
+		and _entry(req_missing_preview, "monk_mends_seamstress") == {},
+		"target=hero choice is hidden when required_hero is absent even if hero_id is present")
+	_assert_rejected(req_missing_service, "monk_mends_seamstress", without_monk, 40,
+		"target=hero choice rejected when required_hero is absent")
+	_check(req_missing_service.choose("leave", without_monk).get("ok") == true,
+		"Leave claims after absent required_hero rejection on target=hero choice")
+
+	# 3) required_hero ("lantern_monk") present, hero_id ("seamstress") absent:
+	var target_missing_snap := _snapshot(40, [
+		["warden", 95], ["rag_duelist", 0], ["tinker", 50], ["lantern_monk", 200],
+	])
+	var target_missing_service := RunStitchedEventConsequence.new(cross_hero_event)
+	var target_missing_preview := target_missing_service.preview(target_missing_snap)
+	var target_missing_entry := _entry(target_missing_preview, "monk_mends_seamstress")
+	_check(target_missing_entry.get("available") == false
+		and target_missing_entry.get("candle") == 40
+		and target_missing_entry.get("fray") == {},
+		"target=hero choice with present required_hero but absent hero_id is unavailable and projects no change")
+	_assert_rejected(target_missing_service, "monk_mends_seamstress", target_missing_snap, 40,
+		"target=hero choice rejected when hero_id is absent even though required_hero is present")
+	_check(target_missing_service.choose("leave", target_missing_snap).get("ok") == true,
+		"Leave claims after absent hero_id rejection on gated target=hero choice")
+
+	# Canonical eight-ID coverage for required_hero:
+	for hero_id in REQUIRED_IDS:
+		var canonical_event := _event([
+			_choice("gated", "Hero gate.", _required_hero_effect(15, -10, hero_id, "party")),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		])
+		var other_id := "warden" if hero_id != "warden" else "seamstress"
+		var present_snap := _snapshot(50, [[hero_id, 80], [other_id, 60]])
+		var absent_snap := _snapshot(50, [[other_id, 60]])
+		var present_svc := RunStitchedEventConsequence.new(canonical_event)
+		var absent_svc := RunStitchedEventConsequence.new(canonical_event)
+		_check(_choice_ids(present_svc.preview(present_snap)) == ["gated", "leave"]
+			and present_svc.choose("gated", present_snap).get("fray") == {hero_id: -10, other_id: -10},
+			"canonical required_hero %s admits and commits party fray when present" % hero_id)
+		_check(_choice_ids(absent_svc.preview(absent_snap)) == ["leave"]
+			and absent_svc.choose("gated", absent_snap).get("ok") == false
+			and absent_svc.choose("leave", absent_snap).get("ok") == true,
+			"canonical required_hero %s hides and rejects gated choice when absent" % hero_id)
+
+
+func _test_required_hero_rejections() -> void:
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var with_monk := _four_with_monk(40, [95, 0, 50, 200])
+	var without_monk := _four(40, [95, 0, 50, 200])
+
+	# 1. Unaffordable optional costs (scraps, gold) and full satchel (6) on a choice with a present required_hero:
+	var gated_cost_event := _event([
+		_choice("monk_scraps", "Spend 2 scraps with the Monk.", {
+			"candle": 20, "fray": -20, "target": "party", "required_hero": "lantern_monk", "scraps": -2,
+		}),
+		_choice("monk_gold", "Spend 12 gold with the Monk.", {
+			"candle": 20, "fray": -20, "target": "party", "required_hero": "lantern_monk", "gold": -12,
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	var low_purses_monk := _four_with_monk(40, [95, 0, 50, 200])
+	low_purses_monk["scraps"] = 1
+	low_purses_monk["gold"] = 5
+	var cost_service := RunStitchedEventConsequence.new(gated_cost_event)
+	var cost_preview := cost_service.preview(low_purses_monk)
+	_check(_choice_ids(cost_preview) == ["monk_scraps", "monk_gold", "leave"],
+		"present required_hero choices remain visible in preview when optional costs are unaffordable")
+	_check(_entry(cost_preview, "monk_scraps").get("available") == false
+		and _entry(cost_preview, "monk_scraps").get("scraps") == 1
+		and _entry(cost_preview, "monk_scraps").get("candle") == 40
+		and _entry(cost_preview, "monk_scraps").get("fray") == {}
+		and _entry(cost_preview, "monk_gold").get("available") == false
+		and _entry(cost_preview, "monk_gold").get("gold") == 5
+		and _entry(cost_preview, "monk_gold").get("candle") == 40
+		and _entry(cost_preview, "monk_gold").get("fray") == {},
+		"unaffordable gated scraps/gold choices report available=false and unprojected balances")
+	_assert_rejected(cost_service, "monk_scraps", low_purses_monk, 40,
+		"unaffordable scraps on gated choice")
+	_assert_rejected(cost_service, "monk_gold", low_purses_monk, 40,
+		"unaffordable gold on gated choice")
+	_check(cost_service.choose("leave", low_purses_monk).get("ok") == true,
+		"Leave still claims after unaffordable gated cost rejections")
+
+	var gated_part_event := _event([
+		_choice("monk_helm", "Receive the helm from the Monk.", {
+			"candle": 10, "fray": -10, "target": "party", "required_hero": "lantern_monk",
+			"part": {"id": "warden_head_pot_helm_bonk", "tier": 2},
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	var full_satchel_monk := _four_with_monk(40, [95, 0, 50, 200])
+	full_satchel_monk["satchel_count"] = 6
+	var full_satchel_service := RunStitchedEventConsequence.new(gated_part_event, warden_catalog)
+	var full_satchel_preview := full_satchel_service.preview(full_satchel_monk)
+	_check(_choice_ids(full_satchel_preview) == ["monk_helm", "leave"]
+		and _entry(full_satchel_preview, "monk_helm").get("available") == false
+		and _entry(full_satchel_preview, "monk_helm").get("satchel_count") == 6
+		and _entry(full_satchel_preview, "monk_helm").get("candle") == 40
+		and _entry(full_satchel_preview, "monk_helm").get("fray") == {},
+		"gated part choice at full satchel_count=6 is visible with available=false and count 6")
+	_assert_rejected(full_satchel_service, "monk_helm", full_satchel_monk, 40,
+		"full satchel on gated part choice")
+	_check(full_satchel_service.choose("leave", full_satchel_monk).get("ok") == true,
+		"Leave still claims after full-satchel gated part rejection")
+
+	# 2. AC3: Unknown hero names, empty strings, padded strings, wrong case, and non-string required_hero
+	#    are malformed outcomes (NOT permissive absences!) for both target="party" and target="hero".
+	var invalid_gates: Array = [
+		"",
+		" ",
+		"   ",
+		"porcelain_doll",
+		"clockwork_hound",
+		"Lantern_Monk",
+		"LANTERN_MONK",
+		" lantern_monk",
+		"lantern_monk ",
+		42,
+		0,
+		1.5,
+		true,
+		false,
+		null,
+		["lantern_monk"],
+		{"id": "lantern_monk"},
+	]
+	for index in range(invalid_gates.size()):
+		var bad_gate: Variant = invalid_gates[index]
+		for target_mode in ["party", "hero"]:
+			var broken_choice := _choice(
+				"broken",
+				"Invalid required_hero.",
+				_required_hero_effect(25, -25, bad_gate, target_mode, "seamstress")
+			)
+			for snap in [with_monk, without_monk]:
+				var svc := RunStitchedEventConsequence.new(_event([
+					broken_choice,
+					_choice("leave", "Leave.", _effect(0, 0, "party")),
+				]))
+				var prev := svc.preview(snap)
+				_check(prev.get("ok") == true,
+					"AC3: invalid required_hero %d (%s) keeps readable event preflight" % [index, target_mode])
+				_check(_choice_ids(prev) == ["broken", "leave"],
+					"AC3: invalid required_hero %d (%s) is a malformed outcome kept in preview, not a hidden gate" % [index, target_mode])
+				var broken_entry := _entry(prev, "broken")
+				_check(broken_entry.get("available") == false
+					and broken_entry.get("candle_delta") == null
+					and broken_entry.get("fray_delta") == null
+					and broken_entry.get("candle") == 40
+					and broken_entry.get("fray") == {},
+					"AC3: invalid required_hero %d (%s) reports available=false and null deltas" % [index, target_mode])
+				_assert_rejected(svc, "broken", snap, 40,
+					"AC3: invalid required_hero %d (%s) commit" % [index, target_mode])
+				var fallback := svc.choose("leave", snap)
+				_check(fallback.get("ok") == true and fallback.get("candle") == 40,
+					"AC3: legal sibling still claims after invalid required_hero %d (%s)" % [index, target_mode])
+				_assert_rejected(svc, "leave", snap, 40,
+					"AC3: replay after invalid required_hero %d (%s) sibling claim" % [index, target_mode])
+
+	# Extra malformed combinations with required_hero (party with hero_id, hero without hero_id, extra key):
+	var extra_broken_choices: Array = [
+		{"id": "broken", "text": "Party with hero_id and required_hero.", "stitched_effect": {
+			"candle": 25, "fray": -25, "target": "party",
+			"hero_id": "seamstress", "required_hero": "lantern_monk",
+		}},
+		{"id": "broken", "text": "Hero without hero_id but with required_hero.", "stitched_effect": {
+			"candle": 25, "fray": -25, "target": "hero",
+			"required_hero": "lantern_monk",
+		}},
+		{"id": "broken", "text": "Extra unknown key alongside required_hero.", "stitched_effect": {
+			"candle": 25, "fray": -25, "target": "party",
+			"required_hero": "lantern_monk", "extra": 1,
+		}},
+	]
+	for index in range(extra_broken_choices.size()):
+		var svc := RunStitchedEventConsequence.new(_event([
+			extra_broken_choices[index],
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		]))
+		var prev := svc.preview(without_monk)
+		var broken_entry := _entry(prev, "broken")
+		_check(_choice_ids(prev) == ["broken", "leave"]
+			and broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null,
+			"AC3: malformed structural required_hero choice %d is shown malformed, not hidden" % index)
+		_assert_rejected(svc, "broken", without_monk, 40,
+			"AC3: malformed structural required_hero choice %d commit" % index)
+		_check(svc.choose("leave", without_monk).get("ok") == true,
+			"AC3: Leave claims after malformed structural required_hero choice %d" % index)
+
 
