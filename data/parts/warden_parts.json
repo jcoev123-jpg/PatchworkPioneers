@@ -1,0 +1,449 @@
+{
+  "version": 1,
+  "parts": [
+    {
+      "id": "warden_head_pot_helm_bonk",
+      "name": "Pot Helm Bonk",
+      "slot": "head",
+      "owner": "warden",
+      "stat": {
+        "acc": 5
+      },
+      "ability": {
+        "id": "head_pot_helm_bonk_move",
+        "name": "Pot Helm Bonk",
+        "kind": "melee",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          4,
+          6
+        ],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              8
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "acc": 95,
+            "dmg": [
+              7,
+              10
+            ]
+          }
+        }
+      },
+      "text": "Bonk a forward foe and loosen its stitching with Weak."
+    },
+    {
+      "id": "warden_head_helmet_rattle",
+      "name": "Helmet Rattle",
+      "slot": "head",
+      "owner": "warden",
+      "stat": {
+        "crit": 4
+      },
+      "ability": {
+        "id": "head_helmet_rattle_move",
+        "name": "Helmet Rattle",
+        "kind": "melee",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          3,
+          5
+        ],
+        "crit": 0,
+        "effects": {
+          "weak": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              5,
+              7
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              6,
+              9
+            ],
+            "crit": 8
+          }
+        }
+      },
+      "text": "Rattle a nearby foe into Weakness."
+    },
+    {
+      "id": "warden_arms_shield_catch",
+      "name": "Shield Catch",
+      "slot": "arms",
+      "owner": "warden",
+      "stat": {
+        "dmg": 1
+      },
+      "ability": {
+        "id": "arms_shield_catch_move",
+        "name": "Shield Catch",
+        "kind": "guard",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "guard": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "guard": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "guard": 4
+            }
+          }
+        }
+      },
+      "text": "Catch attacks directed at one allied doll with a sewn Guard."
+    },
+    {
+      "id": "warden_arms_rivet_pummel",
+      "name": "Rivet Pummel",
+      "slot": "arms",
+      "owner": "warden",
+      "stat": {
+        "dmg": 2
+      },
+      "ability": {
+        "id": "arms_rivet_pummel_move",
+        "name": "Rivet Pummel",
+        "kind": "melee",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          5,
+          7
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              6,
+              9
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              8,
+              11
+            ],
+            "acc": 95
+          }
+        }
+      },
+      "text": "Double-fist a front foe and tangle its thread."
+    },
+    {
+      "id": "warden_torso_iron_challenge",
+      "name": "Iron Challenge",
+      "slot": "torso",
+      "owner": "warden",
+      "stat": {
+        "max_hp": 6,
+        "prot": 5
+      },
+      "ability": {
+        "id": "torso_iron_challenge_move",
+        "name": "Iron Challenge",
+        "kind": "buff",
+        "launch": [
+          1
+        ],
+        "target": [
+          1
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "thorns": 2
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "thorns": 3
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "thorns": 4
+            }
+          }
+        }
+      },
+      "text": "Brace the iron-clad torso in the front rank and challenge incoming blows with Thorns."
+    },
+    {
+      "id": "warden_torso_buckle_rebound",
+      "name": "Buckle Rebound",
+      "slot": "torso",
+      "owner": "warden",
+      "stat": {
+        "max_hp": 5,
+        "prot": 8
+      },
+      "ability": {
+        "id": "torso_buckle_rebound_move",
+        "name": "Buckle Rebound",
+        "kind": "buff",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2
+        ],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [
+          0,
+          0
+        ],
+        "crit": 0,
+        "effects": {
+          "thorns": 3,
+          "riposte": 1
+        },
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "effects": {
+              "thorns": 4,
+              "riposte": 2
+            }
+          }
+        },
+        "3": {
+          "ability": {
+            "effects": {
+              "thorns": 5,
+              "riposte": 3
+            }
+          }
+        }
+      },
+      "text": "Brace in buckled felt; recoil with Thorns and Riposte."
+    },
+    {
+      "id": "warden_legs_rim_toss",
+      "name": "Rim Toss",
+      "slot": "legs",
+      "owner": "warden",
+      "stat": {
+        "speed": 1,
+        "dodge": 2
+      },
+      "ability": {
+        "id": "legs_rim_toss_move",
+        "name": "Rim Toss",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          5,
+          8
+        ],
+        "crit": 0,
+        "effects": {
+          "mark": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              6,
+              10
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              8,
+              12
+            ],
+            "effects": {
+              "mark": 2
+            }
+          }
+        }
+      },
+      "text": "Throw the shield rim as an independent ranged hit; mark the impact. No Block is spent."
+    },
+    {
+      "id": "warden_legs_shield_toss",
+      "name": "Shield Toss",
+      "slot": "legs",
+      "owner": "warden",
+      "stat": {
+        "speed": 2,
+        "dodge": 3
+      },
+      "ability": {
+        "id": "legs_shield_toss_move",
+        "name": "Shield Toss",
+        "kind": "ranged",
+        "launch": [
+          1,
+          2
+        ],
+        "target": [
+          1,
+          2,
+          3
+        ],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [
+          5,
+          7
+        ],
+        "crit": 0,
+        "effects": {
+          "tangled": 1
+        },
+        "self_move": 0,
+        "move": "attack2"
+      },
+      "tiers": {
+        "2": {
+          "ability": {
+            "dmg": [
+              6,
+              9
+            ]
+          }
+        },
+        "3": {
+          "ability": {
+            "dmg": [
+              8,
+              11
+            ],
+            "effects": {
+              "tangled": 2
+            }
+          }
+        }
+      },
+      "text": "Hurl the stitched shield at a distant foe for fixed damage and Tangled; no card Block arithmetic."
+    }
+  ]
+}

@@ -2,6 +2,9 @@ extends SceneTree
 
 const PARTY_A := ["warden", "seamstress", "tinker"]
 const PARTY_B := ["lantern_monk", "rag_duelist", "tinker"]
+## Design v4 Stitched runs pick four of eight heroes; this roster is the
+## four-hero counterpart of PARTY_A used by the admission tests below.
+const STITCHED_PARTY := ["warden", "seamstress", "tinker", "lantern_monk"]
 const NEW_CHOICES := {
 	"v3_warden_copper_chain_ferry": {"brace_ferry_chain": [20, 0], "buy_brass_buckles": [-14, 2], "leave": [0, 0]},
 	"v3_seamstress_needle_oracle": {"untangle_oracle_thread": [24, -1], "buy_oracle_silk": [-18, 3], "leave": [0, 0]},
@@ -88,6 +91,7 @@ func _initialize() -> void:
 	_test_new_choice_receipts()
 	_test_batch_choice_receipts()
 	_test_invalid_parties()
+	_test_four_hero_stitched_admission()
 	_test_invalid_catalogs()
 	_test_isolation()
 	_test_actionable_named_examples()
@@ -303,10 +307,19 @@ func _test_batch_choice_receipts() -> void:
 
 
 func _test_invalid_parties() -> void:
+	# A four-distinct-hero roster is no longer invalid: Design v4 Stitched runs
+	# pick four of eight (see _test_four_hero_stitched_admission). Only 3- or
+	# 4-hero rosters of unique canonical IDs are admitted, so 1, 2, 5 and any
+	# duplicate/unknown/blank/non-string member still fail closed.
 	for party in [null, {}, "warden", [], ["warden"], ["warden", "seamstress"],
-		["warden", "seamstress", "tinker", "scarecrow"], ["warden", "warden", "tinker"],
-		["warden", "unknown", "tinker"], ["warden", "", "tinker"],
-		["warden", 1, "tinker"], ["warden", null, "tinker"], ["Warden", "seamstress", "tinker"]]:
+		["warden", "seamstress", "tinker", "lantern_monk", "scarecrow"],
+		["warden", "seamstress", "tinker", "lantern_monk", "rag_duelist", "scarecrow"],
+		["warden", "warden", "tinker"], ["warden", "warden", "tinker", "lantern_monk"],
+		["warden", "unknown", "tinker"], ["warden", "unknown", "tinker", "lantern_monk"],
+		["warden", "", "tinker"], ["warden", "seamstress", "tinker", ""],
+		["warden", 1, "tinker"], ["warden", "seamstress", "tinker", 1],
+		["warden", null, "tinker"], ["warden", "seamstress", "tinker", null],
+		["Warden", "seamstress", "tinker"], ["warden", "Seamstress", "tinker", "lantern_monk"]]:
 		var service := RunV3HeroEventOffers.new(party)
 		var rng := RandomNumberGenerator.new()
 		rng.seed = 409
@@ -320,6 +333,229 @@ func _test_invalid_parties() -> void:
 		var state_prev := rng_prev.state
 		_check(service.select_actionable_event_with_preview(rng_prev, [], {"gold": 30, "scraps": 3}) == {"ok": false, "event": {}, "preview": {}}
 			and rng_prev.state == state_prev, "invalid party fails closed with preview: " + str(party))
+	# The same four-hero roster the loop above no longer rejects is a valid
+	# Design v4 Stitched admission: offers, entry and receipt all work.
+	var stitched := RunV3HeroEventOffers.new(STITCHED_PARTY)
+	_check(stitched.is_valid() and not stitched.get_offers().is_empty()
+		and stitched.enter("v3_warden_shield_menders") != null,
+		"four-distinct-hero Stitched party is a valid admission, not an invalid one")
+
+
+## AC1/AC2/AC3: a Design v4 Stitched roster of four distinct canonical heroes
+## must reach the same authentic hero-gated Event offers as a legacy three-hero
+## roster, with unchanged one-visit wallet settlement and seeded selection.
+func _test_four_hero_stitched_admission() -> void:
+	var reversed := catalog.duplicate(true)
+	reversed["events"].reverse()
+	var service := RunV3HeroEventOffers.new(STITCHED_PARTY)
+	var reordered := RunV3HeroEventOffers.new(STITCHED_PARTY, reversed)
+	var rank_order := RunV3HeroEventOffers.new(["lantern_monk", "tinker", "warden", "seamstress"])
+	_check(service.is_valid() and reordered.is_valid() and rank_order.is_valid(),
+		"four distinct canonical hero IDs are admitted regardless of catalog or rank order")
+	if not service.is_valid() or not reordered.is_valid() or not rank_order.is_valid():
+		return
+
+	# AC1: exactly the shipped records whose required_hero is on this roster.
+	# Derived per required_hero from the authored catalog, never a catalog total
+	# or a full ordered ID list.
+	var expected_ids: Array[String] = []
+	for record in catalog["events"]:
+		if STITCHED_PARTY.has(record["required_hero"]):
+			expected_ids.append(record["id"])
+	expected_ids.sort()
+	var offered_ids: Array[String] = []
+	for offer in service.get_offers():
+		offered_ids.append(offer["id"])
+		_check(STITCHED_PARTY.has(offer.get("required_hero")),
+			"four-hero offer belongs to the roster by required_hero: " + str(offer.get("id")))
+	offered_ids.sort()
+	_check(offered_ids == expected_ids,
+		"four-hero offers are exactly the records whose required_hero is on the roster")
+	var rank_ids: Array[String] = []
+	for offer in rank_order.get_offers():
+		rank_ids.append(offer["id"])
+	rank_ids.sort()
+	_check(rank_ids == expected_ids, "roster rank order does not change the four-hero offer set")
+
+	# Concrete anchors: present Warden and Lantern Monk records, absent Scarecrow.
+	for anchor in [["v3_warden_shield_menders", true],
+		["v3_lantern_monk_moth_vigil", true], ["v3_scarecrow_crow_roost", false]]:
+		var anchor_id: String = anchor[0]
+		var admitted: bool = anchor[1]
+		var authored := _by_id(catalog["events"], anchor_id)
+		_check(not authored.is_empty(), "four-hero anchor exists in the shipped catalog: " + anchor_id)
+		var offer := _by_id(service.get_offers(), anchor_id)
+		_check((not offer.is_empty()) == admitted, "four-hero offer presence by required_hero: " + anchor_id)
+		_check(_by_id(reordered.get_offers(), anchor_id) == offer,
+			"reversed catalog leaves the four-hero offer unchanged: " + anchor_id)
+		var anchor_visit := service.enter(anchor_id)
+		if not admitted:
+			_check(anchor_visit == null, "absent Scarecrow Event denies entry on a four-hero roster: " + anchor_id)
+			continue
+		_check(anchor_visit is RunEventChoice and anchor_visit.is_valid() and not anchor_visit.is_claimed(),
+			"four-hero roster opens a real unclaimed visit: " + anchor_id)
+		if anchor_visit == null:
+			continue
+		_check(offer == authored and anchor_visit.get_event() == authored,
+			"four-hero detached offer and visit snapshot are the authentic authored record: " + anchor_id)
+
+	# AC2: v3_lantern_monk_moth_vigil buy_wax settles {30,3} -> {18,5} once.
+	var vigil_id := "v3_lantern_monk_moth_vigil"
+	var wallet := {"gold": 30, "scraps": 3}
+	var preview_visit := service.enter(vigil_id)
+	var preview_visit_two := service.enter(vigil_id)
+	_check(preview_visit != null and preview_visit_two != null and preview_visit != preview_visit_two,
+		"each four-hero enter(id) opens a distinct fresh RunEventChoice")
+	if preview_visit == null or preview_visit_two == null:
+		return
+	_check(preview_visit.is_valid() and not preview_visit.is_claimed()
+		and preview_visit_two.is_valid() and not preview_visit_two.is_claimed(),
+		"four-hero visits start valid and unclaimed")
+	var preview := preview_visit.preview_wallet_choices(wallet)
+	_check(preview.get("ok") == true and preview.get("event_id") == vigil_id,
+		"four-hero moth vigil previews authentically")
+	var buy_quote := _find_choice_quote(preview.get("choices", []), "buy_wax")
+	var leave_quote := _find_choice_quote(preview.get("choices", []), "leave")
+	_check(buy_quote == {"choice_id": "buy_wax", "gold_delta": -12, "scraps_delta": 2,
+		"affordable": true, "wallet": {"gold": 18, "scraps": 5}},
+		"four-hero buy_wax previews -12 gold/+2 scraps from {30,3}")
+	_check(leave_quote == {"choice_id": "leave", "gold_delta": 0, "scraps_delta": 0,
+		"affordable": true, "wallet": {"gold": 30, "scraps": 3}},
+		"four-hero Leave previews a zero wallet delta")
+	var receipt := preview_visit.choose_with_wallet("buy_wax", wallet)
+	_check(receipt == {"ok": true, "event_id": vigil_id, "choice_id": "buy_wax",
+		"wallet": {"gold": 18, "scraps": 5}} and wallet == {"gold": 30, "scraps": 3},
+		"four-hero buy_wax claim receipt equals the preview and detaches the caller wallet")
+	_check(receipt.get("wallet") == buy_quote.get("wallet"),
+		"four-hero preview and claim agree on the exact settled wallet")
+	_check(preview_visit.is_claimed() and not preview_visit.is_valid(),
+		"four-hero accepted claim latches the visit")
+	_check(preview_visit.choose_with_wallet("buy_wax", {"gold": 18, "scraps": 5}) == {
+		"ok": false, "event_id": "", "choice_id": "", "wallet": {"gold": 18, "scraps": 5}},
+		"four-hero accepted choice cannot be replayed")
+	_check(not preview_visit.choose_with_wallet("leave", {"gold": 18, "scraps": 5})["ok"],
+		"four-hero alternate choice is blocked after the claim")
+	var leave_receipt := preview_visit_two.choose_with_wallet("leave", wallet)
+	_check(leave_receipt == {"ok": true, "event_id": vigil_id, "choice_id": "leave",
+		"wallet": {"gold": 30, "scraps": 3}} and preview_visit_two.is_claimed(),
+		"four-hero Leave settles with zero wallet delta on its own visit")
+
+	# Unaffordable hero choices refuse without latching, then Leave recovers.
+	var poor_wallet := {"gold": 0, "scraps": 0}
+	var poor_visit := service.enter(vigil_id)
+	_check(poor_visit != null and poor_visit.is_valid(), "four-hero poor visit opens")
+	if poor_visit != null:
+		for bad_choice in ["buy_wax", "stale_choice", "", null]:
+			_check(poor_visit.choose_with_wallet(bad_choice, poor_wallet) == {
+				"ok": false, "event_id": "", "choice_id": "", "wallet": poor_wallet},
+				"four-hero unaffordable/stale choice refuses unchanged: " + str(bad_choice))
+			_check(poor_visit.is_valid() and not poor_visit.is_claimed(),
+				"four-hero refusal does not consume the claim")
+		_check(not poor_visit.choose_with_wallet("leave", {"gold": -1, "scraps": 0})["ok"]
+			and not poor_visit.is_claimed(), "four-hero invalid wallet does not claim")
+		_check(poor_visit.choose_with_wallet("leave", poor_wallet)["ok"] and poor_visit.is_claimed(),
+			"four-hero refusal recovers with the authored Leave")
+
+	# AC3: seeded actionable selection over the four-hero roster.
+	for wallet_case in [{"gold": 0, "scraps": 0}, {"gold": 30, "scraps": 3}]:
+		var candidates := _expected_actionable_ids(STITCHED_PARTY, wallet_case)
+		_check(not candidates.is_empty(),
+			"four-hero roster has actionable candidates at " + str(wallet_case))
+		_check(candidates.has("v3_warden_shield_menders") and candidates.has("v3_lantern_monk_moth_vigil")
+			and not candidates.has("v3_scarecrow_crow_roost"),
+			"four-hero candidates follow required_hero presence at " + str(wallet_case))
+		if wallet_case == {"gold": 0, "scraps": 0}:
+			_check(not candidates.has("v3_seamstress_thread_cart"),
+				"four-hero {0,0} pool omits the Leave-only seamstress thread cart")
+		if wallet_case == {"gold": 30, "scraps": 3}:
+			_check(candidates.has("v3_seamstress_thread_cart"),
+				"four-hero funded pool includes the now-affordable seamstress thread cart")
+		if candidates.is_empty():
+			continue
+		for seed_val in [5101, 5202, 5303, 5404]:
+			var rng_preview := RandomNumberGenerator.new()
+			rng_preview.seed = seed_val
+			var rng_rev := RandomNumberGenerator.new()
+			rng_rev.seed = seed_val
+			var rng_ref := RandomNumberGenerator.new()
+			rng_ref.seed = seed_val
+			var expected_id: String = candidates[rng_ref.randi_range(0, candidates.size() - 1)]
+			var expected_record := _by_id(catalog["events"], expected_id)
+			var expected_preview := RunEventChoice.new(expected_record).preview_wallet_choices(wallet_case)
+			var res_preview := service.select_actionable_event_with_preview(rng_preview, null, wallet_case)
+			var res_rev := reordered.select_actionable_event_with_preview(rng_rev, [], wallet_case)
+			_check(res_preview == {"ok": true, "event": expected_record, "preview": expected_preview},
+				"four-hero with-preview selection matches the sorted candidate draw: "
+				+ str(wallet_case) + "/" + str(seed_val))
+			_check(res_rev == res_preview,
+				"four-hero reversed catalog yields the identical offer and preview: " + str(seed_val))
+			_check(rng_preview.state == rng_ref.state and rng_rev.state == rng_ref.state,
+				"four-hero with-preview selection consumes exactly one randi_range draw: " + str(seed_val))
+			_check(STITCHED_PARTY.has(res_preview["event"].get("required_hero"))
+				and _has_affordable_non_leave(res_preview["event"], wallet_case),
+				"four-hero selection offers a roster record with an affordable non-Leave choice")
+			var rng_bare := RandomNumberGenerator.new()
+			rng_bare.seed = seed_val
+			var rng_bare_ref := RandomNumberGenerator.new()
+			rng_bare_ref.seed = seed_val
+			rng_bare_ref.randi_range(0, candidates.size() - 1)
+			var res_bare := service.select_actionable_event(rng_bare, null, wallet_case)
+			_check(res_bare == {"ok": true, "event": expected_record} and rng_bare.state == rng_bare_ref.state,
+				"four-hero bare selection agrees with the with-preview API on one draw: " + str(seed_val))
+
+	# Exclusions filter before sorting and sampling, with one draw on success.
+	var exclusions := ["v3_warden_shield_menders", "unknown_stitched_event", "v3_scarecrow_crow_roost"]
+	var exclusions_snapshot := exclusions.duplicate()
+	var excluded_candidates := _expected_actionable_ids(STITCHED_PARTY, {"gold": 30, "scraps": 3}, exclusions)
+	_check(not excluded_candidates.has("v3_warden_shield_menders") and not excluded_candidates.is_empty(),
+		"four-hero exclusion removes the party Event but keeps other candidates")
+	for seed_val in [5501, 5502, 5503, 5504, 5505, 5506]:
+		if excluded_candidates.is_empty():
+			break
+		var rng_ex := RandomNumberGenerator.new()
+		rng_ex.seed = seed_val
+		var rng_ex_ref := RandomNumberGenerator.new()
+		rng_ex_ref.seed = seed_val
+		var expected_ex_id: String = excluded_candidates[
+			rng_ex_ref.randi_range(0, excluded_candidates.size() - 1)]
+		var res_ex := service.select_actionable_event(rng_ex, exclusions, {"gold": 30, "scraps": 3})
+		_check(res_ex == {"ok": true, "event": _by_id(catalog["events"], expected_ex_id)}
+			and rng_ex.state == rng_ex_ref.state,
+			"four-hero excluded selection never offers the excluded ID: " + str(seed_val))
+		_check(res_ex["event"].get("id") != "v3_warden_shield_menders",
+			"four-hero excluded ID is absent from the selected record")
+	_check(exclusions == exclusions_snapshot, "four-hero selection never mutates caller exclusions")
+
+	# Exhaustion and malformed wallets consume zero caller draws.
+	var all_roster_ids: Array[String] = []
+	for record in catalog["events"]:
+		if STITCHED_PARTY.has(record["required_hero"]):
+			all_roster_ids.append(record["id"])
+	var rng_zero := RandomNumberGenerator.new()
+	rng_zero.seed = 5601
+	var state_zero := rng_zero.state
+	_check(service.select_actionable_event(rng_zero, all_roster_ids, {"gold": 500, "scraps": 50})
+		== {"ok": false, "event": {}} and rng_zero.state == state_zero,
+		"fully excluded four-hero pool rejects with zero caller draws")
+	_check(service.select_actionable_event_with_preview(rng_zero, [], {"gold": 30})
+		== {"ok": false, "event": {}, "preview": {}} and rng_zero.state == state_zero,
+		"malformed four-hero wallet rejects with zero caller draws")
+	_check(service.select_actionable_event_with_preview(rng_zero, [], {"gold": 30, "scraps": 3, "extra": 0})
+		== {"ok": false, "event": {}, "preview": {}} and rng_zero.state == state_zero,
+		"three-key four-hero wallet rejects with zero caller draws")
+
+	# AC4: a tampered catalog is still wholly rejected for a four-hero roster.
+	var forged := _by_id(catalog["events"], "v3_warden_shield_menders").duplicate(true)
+	forged["choices"][0]["outcome"]["gold"] = 999
+	var forged_service := RunV3HeroEventOffers.new(STITCHED_PARTY, {"events": [forged]})
+	var rng_forged := RandomNumberGenerator.new()
+	rng_forged.seed = 5701
+	var state_forged := rng_forged.state
+	_check(not forged_service.is_valid() and forged_service.get_offers().is_empty()
+		and forged_service.enter("v3_warden_shield_menders") == null
+		and forged_service.select_actionable_event(rng_forged, [], {"gold": 30, "scraps": 3})
+			== {"ok": false, "event": {}} and rng_forged.state == state_forged,
+		"four-hero roster rejects a tampered catalog fail-closed with zero caller draws")
 
 
 func _reject_catalog(source: Variant) -> void:

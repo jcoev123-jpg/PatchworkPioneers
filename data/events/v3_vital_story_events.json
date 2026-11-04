@@ -1127,6 +1127,46 @@
         { "id": "haul_cages", "text": "Trade 2 lasting heart stitches hauling candle cages (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Let the lantern lift descend without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_buttonbone_abacus",
+      "title": "The Button-Bone Abacus",
+      "description": "A stout moss-velvet tallykeeper doll turns a doorway-sized abacus strung with bone buttons; one amber candle glows behind the stitched ledger.",
+      "choices": [
+        { "id": "count_heart_beads", "text": "Spend 2 scraps to string two heart beads (heal 4 HP; gain 2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 4, "max_hp": 2 } },
+        { "id": "pawn_last_bead", "text": "Pawn two lasting heart beads (lose 2 max HP; gain 27 gold)", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the tallykeeper finish counting", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_blacklace_cuckoo_house",
+      "title": "The Black-Lace Cuckoo House",
+      "description": "A round midnight-blue cuckoo puppet peers from a house-sized clock hatch lined in black lace; its little brass bell glints beneath a warm candle.",
+      "choices": [
+        { "id": "wind_warding_call", "text": "Pay 15 gold to hear the warm cuckoo call (heal 9 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "free_stuck_cuckoo", "text": "Pull the stiff brass shutters (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Wait for the cuckoo door to close", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moonwell_needle_ladle",
+      "title": "The Moonwell Ladle",
+      "description": "A button-eyed plum-cloth wellkeeper lifts an enormous silver ladle from a moonlit vat of quilted water; bone-white stitches ripple around its rim.",
+      "choices": [
+        { "id": "warm_ladle_seam", "text": "Pay 12 gold and 1 scrap for the warm ladle seam (heal 6 HP; gain 1 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 6, "max_hp": 1 } },
+        { "id": "dredge_cold_buttons", "text": "Dredge sharp buttons from the well (lose 6 HP; gain 21 gold and 1 scrap)", "outcome": { "gold": 21, "scraps": 1, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the still moonwell undisturbed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rustwax_whirligig",
+      "title": "The Rustwax Whirligig",
+      "description": "A squat oxblood windkeeper doll grips a giant brass whirligig with four quilted vane wings; amber wax drips from the motionless hub into fog.",
+      "choices": [
+        { "id": "align_heart_vanes", "text": "Spend 3 scraps to stitch a stronger windward heart (+4 max HP)", "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 4 } },
+        { "id": "catch_loose_flags", "text": "Catch the whirling brass flags (lose 4 HP; gain 20 gold)", "outcome": { "gold": 20, "scraps": 0, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the whirligig point into the mist", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
