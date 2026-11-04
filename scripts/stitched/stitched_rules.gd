@@ -706,6 +706,7 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"dead": false,
 		"miss_streak": 0,
 		"guard_target": "",
+		"dodge_buff": {},
 	}
 	_recompute_stats(unit)
 	unit["hp"] = int(unit["max_hp"])
@@ -793,6 +794,7 @@ func _build_foe(entry: Variant, rank: int) -> Dictionary:
 		"dead": false,
 		"miss_streak": 0,
 		"guard_target": "",
+		"dodge_buff": {},
 	}
 	return {"ok": true, "error": "", "unit": unit}
 
@@ -856,6 +858,23 @@ func _recompute_stats(unit: Dictionary) -> void:
 	unit["prot"] = int(unit["base_prot"]) + int(totals["prot"])
 	unit["speed"] = int(unit["base_speed"]) + int(totals["speed"])
 	unit["dodge"] = int(unit["base_dodge"]) + int(totals["dodge"])
+
+
+## Temporary Dodge is separate from permanent gear totals and costs no RNG.
+static func effective_dodge(unit: Dictionary) -> int:
+	return int(unit.get("dodge", 0)) + int(unit.get("dodge_buff", {}).get("amount", 0))
+
+
+func _spend_dodge_turn(unit: Dictionary) -> void:
+	var buff: Dictionary = unit.get("dodge_buff", {})
+	if buff.is_empty():
+		return
+	if bool(buff.get("skip", false)):
+		buff["skip"] = false  # The self-cast turn does not eat its own protection.
+		return
+	buff["turns"] = int(buff["turns"]) - 1
+	if int(buff["turns"]) <= 0:
+		unit["dodge_buff"] = {}
 
 
 func _begin_round() -> void:
@@ -937,9 +956,11 @@ func _enter_turn() -> void:
 			_turn_index += 1
 			continue
 		if _tick_turn_start(unit):
+			_spend_dodge_turn(unit)
 			_turn_index += 1
 			continue
 		if str(unit["side"]) == "hero" and _unravelled_turn(unit):
+			_spend_dodge_turn(unit)
 			_turn_index += 1
 			continue
 		return
@@ -989,6 +1010,7 @@ func _begin_hanging_or_death(unit: Dictionary) -> void:
 func _advance_turn() -> void:
 	if _outcome != "ongoing":
 		return
+	_spend_dodge_turn(_current_unit())
 	_turn_index += 1
 	_enter_turn()
 
@@ -1134,7 +1156,7 @@ func _resolve_attack(
 	var foe_acc := int(candle_band()["enemy_acc"]) if str(actor["side"]) == "foe" else 0
 	var chance := hit_chance(
 		int(ability["acc"]) + int(actor["acc"]) + foe_acc,
-		int(target.get("dodge", 0)),
+		effective_dodge(target),
 		int(actor["miss_streak"])
 	)
 	receipt["hit_chance"] = chance
@@ -1206,6 +1228,16 @@ func _apply_effects(
 	var effects: Dictionary = ability["effects"]
 	for key in effects:
 		var value := int(effects[key])
+		if key == "duration":
+			continue  # Paired metadata only; never a status.
+		if key == "dodge":
+			if str(target["side"]) != "heap":
+				target["dodge_buff"] = {
+					"amount": value, "turns": int(effects["duration"]),
+					"skip": str(actor["id"]) == str(target["id"]),
+				}
+				receipt["statuses"].append({"status": "dodge", "amount": value, "duration": int(effects["duration"])})
+			continue
 		if key == "fray":
 			if str(actor["side"]) == "foe" and str(target["side"]) == "hero" and not bool(target["lost"]):
 				receipt["fray_event"] = _change_fray(target, value)
@@ -1619,6 +1651,7 @@ func _lose_hero(hero: Dictionary) -> Dictionary:
 	hero["hanging"] = false
 	hero["hp"] = 0
 	hero["statuses"] = {}
+	hero["dodge_buff"] = {}
 	_thread_cuts.erase(str(hero["id"]))
 	var stored: Array = []
 	var overflow: Array = []
@@ -1658,6 +1691,8 @@ func _crosses_cut(a: int, b: int) -> bool:
 
 func _finish_cleanup() -> void:
 	_thread_cuts.clear()
+	for unit in _units.values():
+		unit["dodge_buff"] = {}
 
 
 func _unravelled_turn(hero: Dictionary) -> bool:
