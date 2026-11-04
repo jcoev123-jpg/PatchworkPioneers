@@ -676,12 +676,17 @@ var stitched_event_panel: LiveEventChoicePanel
 var stitched_event_gate: RunV3FightEventGate
 var stitched_sewing_panel: Control
 var stitched_sewing_visit: RunStitchedSewingSwap
+var stitched_sewing_mend_visit: RunStitchedSewingMend
 var stitched_preview_satchel: Array = []
+var stitched_preview_scraps := 0
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
+var _stitched_mend_quote: Dictionary = {}
+var _stitched_sewing_catalog: Dictionary = {}
 var _stitched_battle_ticket: WeakRef
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
+const STITCHED_SEWING_MEND_COST := 2
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
 const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
@@ -1503,6 +1508,7 @@ func _open_stitched_fight() -> bool:
 	# run objects exist until a separately authenticated Fight is committed.
 	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null \
 			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
@@ -1692,6 +1698,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
+		# One preview scrap comes from this authenticated victory exit alone.
+		# It never enters the legacy run/title wallets or uses global RNG.
+		stitched_preview_scraps += 1
 		# Only this encounter's own dead foes pay, and each pays through the one
 		# canonical S5 trophy the enemy roster resolved for it.
 		for foe_id in STITCHED_ROADBLOCK_FOES:
@@ -1711,6 +1720,7 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 
 func _open_stitched_sewing(heroes: Array) -> bool:
 	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null \
 			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
 			or not title_view.is_visible_in_tree():
 		return false
@@ -1729,7 +1739,10 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 			return false
 	var visit := RunStitchedSewingSwap.new(
 		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_satchel, catalog["by_id"])
-	if visit.read_state().get("ok") != true:
+	var mend_visit := RunStitchedSewingMend.new(
+		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_scraps,
+		STITCHED_SEWING_MEND_COST, catalog["by_id"])
+	if visit.read_state().get("ok") != true or mend_visit.read_state().get("ok") != true:
 		return false
 	var panel := Control.new()
 	panel.name = "StitchedSewingCircle"
@@ -1737,6 +1750,8 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.focus_mode = Control.FOCUS_ALL
 	stitched_sewing_visit = visit
+	stitched_sewing_mend_visit = mend_visit
+	_stitched_sewing_catalog = catalog["by_id"].duplicate(true)
 	stitched_sewing_panel = panel
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -1748,15 +1763,21 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 func _refresh_stitched_sewing() -> void:
 	var panel := stitched_sewing_panel
 	var visit := stitched_sewing_visit
-	if not is_instance_valid(panel) or visit == null:
+	var mend_visit := stitched_sewing_mend_visit
+	if not is_instance_valid(panel) or visit == null or mend_visit == null:
 		return
 	for old_child in panel.get_children():
 		panel.remove_child(old_child)
 		old_child.queue_free()
 	var quote: Dictionary = visit.quote()
-	if quote.get("ok") != true or quote.get("open") != true:
+	var mend_quote: Dictionary = mend_visit.quote()
+	if quote.get("ok") != true or quote.get("open") != true \
+			or mend_quote.get("ok") != true or mend_quote.get("open") != true \
+			or quote["state"]["heroes"] != mend_quote["state"]["heroes"] \
+			or int(mend_quote["scraps"]) != stitched_preview_scraps:
 		return
 	_stitched_sewing_quote = quote.duplicate(true)
+	_stitched_mend_quote = mend_quote.duplicate(true)
 	# All the framing is shipped textile artwork, never code-drawn panels.
 	var frame := NinePatchRect.new()
 	var art_path := "res://assets/paper/ui/panel_felt.png"
@@ -1785,8 +1806,9 @@ func _refresh_stitched_sewing() -> void:
 	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(description)
 	var count := Label.new()
-	count.text = "SATCHEL  %d / %d    ·    No gold, scraps or thread spent" % [
-		int(quote["satchel_count"]), int(quote["satchel_max"])]
+	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn arms: %d scraps" % [
+		int(quote["satchel_count"]), int(quote["satchel_max"]),
+		stitched_preview_scraps, STITCHED_SEWING_MEND_COST]
 	count.position = Vector2(183, 224)
 	count.size = Vector2(910, 36)
 	panel.add_child(count)
@@ -1800,6 +1822,7 @@ func _refresh_stitched_sewing() -> void:
 	scroll.add_child(offers)
 	var first_button: Button
 	var expected_state: Dictionary = quote["state"].duplicate(true)
+	var mend_state: Dictionary = mend_quote["state"].duplicate(true)
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
 			if str(slot_row["slot"]) != "arms":
@@ -1807,6 +1830,30 @@ func _refresh_stitched_sewing() -> void:
 			var worn: Dictionary = slot_row["worn"]
 			var hero_name := str(hero_row["name"])
 			var blocked := str(slot_row["blocked"])
+			# Only actual torn arms are offered a Mend control. Unaffordable
+			# and lost-hero requests remain visible but disabled with a reason.
+			if bool(worn["torn"]):
+				for mend_hero in mend_quote["heroes"]:
+					if str(mend_hero["hero_id"]) != str(hero_row["hero_id"]):
+						continue
+					for mend_slot in mend_hero["slots"]:
+						if str(mend_slot["slot"]) != "arms":
+							continue
+						var mend_button := Button.new()
+						mend_button.name = "Mend_%s_arms" % str(hero_row["hero_id"])
+						mend_button.custom_minimum_size = Vector2(850, 48)
+						mend_button.disabled = not bool(mend_slot["can_mend"])
+						mend_button.focus_mode = Control.FOCUS_NONE if mend_button.disabled else Control.FOCUS_ALL
+						var reason := str(mend_slot["blocked"])
+						mend_button.text = "Mend %s's torn %s · %d scraps%s" % [
+							hero_name, str(worn["name"]), int(mend_slot["cost"]),
+							(" — " + reason) if not reason.is_empty() else ""]
+						mend_button.tooltip_text = reason
+						mend_button.pressed.connect(_stitched_sewing_mend.bind(
+							str(hero_row["hero_id"]), "arms", mend_state.duplicate(true), weakref(panel)))
+						offers.add_child(mend_button)
+						if not mend_button.disabled and first_button == null:
+							first_button = mend_button
 			if not blocked.is_empty():
 				var warning := Label.new()
 				warning.text = "%s · %s — %s" % [hero_name, str(worn["name"]), blocked]
@@ -1836,12 +1883,74 @@ func _refresh_stitched_sewing() -> void:
 		leave_button.grab_focus()
 
 
+# Both independent services must describe the same real node, equipped party,
+# preview balance and displayed snapshots before either can change the visit.
+func _stitched_sewing_consistent() -> bool:
+	if stitched_sewing_visit == null or stitched_sewing_mend_visit == null:
+		return false
+	var swap_state: Dictionary = stitched_sewing_visit.read_state()
+	var mend_state: Dictionary = stitched_sewing_mend_visit.read_state()
+	return swap_state.get("ok") == true and mend_state.get("ok") == true \
+		and swap_state.get("open") == true and mend_state.get("open") == true \
+		and swap_state.get("node_id") == STITCHED_SEWING_NODE_ID \
+		and mend_state.get("node_id") == STITCHED_SEWING_NODE_ID \
+		and swap_state.get("heroes") == mend_state.get("heroes") \
+		and swap_state.get("satchel") == stitched_preview_satchel \
+		and mend_state.get("scraps") == stitched_preview_scraps \
+		and mend_state.get("mend_cost") == STITCHED_SEWING_MEND_COST \
+		and _stitched_sewing_quote.get("state") == swap_state \
+		and _stitched_mend_quote.get("state") == mend_state
+
+
+func _stitched_sewing_mend(hero_id: String, slot: String,
+		expected_state: Dictionary, source: WeakRef) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
+			or is_instance_valid(stitched_fight_view) or not _stitched_sewing_consistent() \
+			or _stitched_mend_quote.get("state", {}) != expected_state:
+		return {"ok": false, "error": "stale Sewing Circle mend"}
+	var offered := false
+	for hero_row in _stitched_mend_quote.get("heroes", []):
+		if str(hero_row["hero_id"]) != hero_id:
+			continue
+		for slot_row in hero_row["slots"]:
+			if str(slot_row["slot"]) == slot and slot == "arms" \
+					and bool(slot_row["can_mend"]) and bool(slot_row["worn"]["torn"]):
+				offered = true
+	if not offered:
+		return {"ok": false, "error": "not a quoted affordable torn arm"}
+	var receipt: Dictionary = stitched_sewing_mend_visit.mend(
+		hero_id, slot, STITCHED_SEWING_NODE_ID, expected_state)
+	if receipt.get("ok") != true or receipt.get("source_state") != expected_state \
+			or receipt.get("charged_scraps") != STITCHED_SEWING_MEND_COST \
+			or receipt.get("scraps") != stitched_preview_scraps - STITCHED_SEWING_MEND_COST:
+		return {"ok": false, "error": "mend rejected"}
+	# Rebind the swap ledger to the exact mended party, keeping satchel order;
+	# close its previous authority so an old state cannot be used again.
+	var rebound := RunStitchedSewingSwap.new(
+		STITCHED_SEWING_NODE_ID, receipt["state"]["heroes"],
+		stitched_preview_satchel, _stitched_sewing_catalog)
+	if rebound.read_state().get("ok") != true:
+		return {"ok": false, "error": "could not rebind swap visit"}
+	stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, _stitched_sewing_quote["state"])
+	stitched_sewing_visit = rebound
+	stitched_preview_scraps = int(receipt["scraps"])
+	for changed in receipt["changed_heroes"]:
+		var changed_id := str(changed["id"])
+		var carried: Dictionary = _stitched_gear_overrides.get(changed_id, {}).duplicate(true)
+		carried[slot] = changed["parts"][slot].duplicate(true)
+		_stitched_gear_overrides[changed_id] = carried
+	_refresh_stitched_sewing()
+	return receipt
+
+
 func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 		expected_state: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
 			or stitched_sewing_visit == null or is_instance_valid(stitched_fight_view) \
-			or _stitched_sewing_quote.get("state", {}) != expected_state:
+			or _stitched_sewing_quote.get("state", {}) != expected_state \
+			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
 	# Authorise only a currently displayed compatible quote, not arbitrary
 	# client-supplied indices or a cloned receipt.
@@ -1861,6 +1970,15 @@ func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 		hero_id, slot, satchel_index, STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") != true or receipt.get("source_state") != expected_state:
 		return {"ok": false, "error": "swap rejected"}
+	# A successful swap changes the authoritative hero snapshot used by Mend.
+	# Retire the old mend authority and rebind without awarding or spending scrap.
+	var rebound := RunStitchedSewingMend.new(
+		STITCHED_SEWING_NODE_ID, receipt["state"]["heroes"], stitched_preview_scraps,
+		STITCHED_SEWING_MEND_COST, _stitched_sewing_catalog)
+	if rebound.read_state().get("ok") != true:
+		return {"ok": false, "error": "could not rebind mend visit"}
+	stitched_sewing_mend_visit.leave(STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
+	stitched_sewing_mend_visit = rebound
 	stitched_preview_satchel = receipt["satchel"].duplicate(true)
 	for changed in receipt["changed_heroes"]:
 		var changed_id := str(changed["id"])
@@ -1875,11 +1993,15 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
 			or stitched_sewing_visit == null \
-			or _stitched_sewing_quote.get("state", {}) != expected_state:
+			or _stitched_sewing_quote.get("state", {}) != expected_state \
+			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
 	var receipt: Dictionary = stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") == true:
-		_close_stitched_sewing()
+		var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
+			STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
+		if mend_receipt.get("ok") == true:
+			_close_stitched_sewing()
 	return receipt
 
 
@@ -1887,7 +2009,10 @@ func _close_stitched_sewing() -> void:
 	var panel := stitched_sewing_panel
 	stitched_sewing_panel = null
 	stitched_sewing_visit = null
+	stitched_sewing_mend_visit = null
 	_stitched_sewing_quote.clear()
+	_stitched_mend_quote.clear()
+	_stitched_sewing_catalog.clear()
 	if is_instance_valid(panel):
 		if panel.get_parent() == self:
 			remove_child(panel)
