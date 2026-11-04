@@ -2058,7 +2058,7 @@ func _refresh_stitched_sewing() -> void:
 	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	panel.add_child(description)
 	var count := Label.new()
-	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn arms: %d scraps" % [
+	count.text = "SATCHEL  %d / %d    ·    PREVIEW SCRAPS  %d    ·    Mend torn parts: %d scraps" % [
 		int(quote["satchel_count"]), int(quote["satchel_max"]),
 		stitched_preview_scraps, STITCHED_SEWING_MEND_COST]
 	count.position = Vector2(183, 224)
@@ -2077,22 +2077,20 @@ func _refresh_stitched_sewing() -> void:
 	var mend_state: Dictionary = mend_quote["state"].duplicate(true)
 	for hero_row in quote["heroes"]:
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) != "arms":
-				continue
 			var worn: Dictionary = slot_row["worn"]
 			var hero_name := str(hero_row["name"])
 			var blocked := str(slot_row["blocked"])
-			# Only actual torn arms are offered a Mend control. Unaffordable
+			# Only quoted torn worn parts get a Mend control. Unaffordable
 			# and lost-hero requests remain visible but disabled with a reason.
 			if bool(worn["torn"]):
 				for mend_hero in mend_quote["heroes"]:
 					if str(mend_hero["hero_id"]) != str(hero_row["hero_id"]):
 						continue
 					for mend_slot in mend_hero["slots"]:
-						if str(mend_slot["slot"]) != "arms":
+						if str(mend_slot["slot"]) != str(slot_row["slot"]):
 							continue
 						var mend_button := Button.new()
-						mend_button.name = "Mend_%s_arms" % str(hero_row["hero_id"])
+						mend_button.name = "Mend_%s_%s" % [str(hero_row["hero_id"]), str(slot_row["slot"])]
 						mend_button.custom_minimum_size = Vector2(850, 48)
 						mend_button.disabled = not bool(mend_slot["can_mend"])
 						mend_button.focus_mode = Control.FOCUS_NONE if mend_button.disabled else Control.FOCUS_ALL
@@ -2102,7 +2100,7 @@ func _refresh_stitched_sewing() -> void:
 							(" — " + reason) if not reason.is_empty() else ""]
 						mend_button.tooltip_text = reason
 						mend_button.pressed.connect(_stitched_sewing_mend.bind(
-							str(hero_row["hero_id"]), "arms", mend_state.duplicate(true), weakref(panel)))
+							str(hero_row["hero_id"]), str(slot_row["slot"]), mend_state.duplicate(true), weakref(panel)))
 						offers.add_child(mend_button)
 						if not mend_button.disabled and first_button == null:
 							first_button = mend_button
@@ -2166,11 +2164,11 @@ func _stitched_sewing_mend(hero_id: String, slot: String,
 		if str(hero_row["hero_id"]) != hero_id:
 			continue
 		for slot_row in hero_row["slots"]:
-			if str(slot_row["slot"]) == slot and slot == "arms" \
+			if str(slot_row["slot"]) == slot \
 					and bool(slot_row["can_mend"]) and bool(slot_row["worn"]["torn"]):
 				offered = true
 	if not offered:
-		return {"ok": false, "error": "not a quoted affordable torn arm"}
+		return {"ok": false, "error": "not a quoted affordable torn part"}
 	var receipt: Dictionary = stitched_sewing_mend_visit.mend(
 		hero_id, slot, STITCHED_SEWING_NODE_ID, expected_state)
 	if receipt.get("ok") != true or receipt.get("source_state") != expected_state \
@@ -2244,16 +2242,48 @@ func _stitched_sewing_swap(hero_id: String, slot: String, satchel_index: int,
 func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
 	if panel == null or panel != stitched_sewing_panel or not panel.is_visible_in_tree() \
-			or stitched_sewing_visit == null \
+			or stitched_sewing_visit == null or is_instance_valid(stitched_fight_view) \
 			or _stitched_sewing_quote.get("state", {}) != expected_state \
 			or not _stitched_sewing_consistent():
 		return {"ok": false, "error": "stale Sewing Circle"}
+	var mend_expected: Dictionary = _stitched_mend_quote["state"].duplicate(true)
 	var receipt: Dictionary = stitched_sewing_visit.leave(STITCHED_SEWING_NODE_ID, expected_state)
-	if receipt.get("ok") == true:
-		var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
-			STITCHED_SEWING_NODE_ID, _stitched_mend_quote["state"])
-		if mend_receipt.get("ok") == true:
-			_close_stitched_sewing()
+	if receipt.get("ok") != true:
+		return {"ok": false, "error": "swap Leave rejected"}
+	var mend_receipt: Dictionary = stitched_sewing_mend_visit.leave(
+		STITCHED_SEWING_NODE_ID, mend_expected)
+	if mend_receipt.get("ok") != true:
+		return {"ok": false, "error": "mend Leave rejected"}
+	# Only both authenticated, one-shot terminal receipts can carry equipment.
+	# A service's closed state preserves exactly the worn heroes it was given.
+	var swap_final: Dictionary = receipt.get("state", {})
+	var mend_final: Dictionary = mend_receipt.get("state", {})
+	if receipt.get("action") != "leave" or mend_receipt.get("action") != "leave" \
+			or receipt.get("node_id") != STITCHED_SEWING_NODE_ID \
+			or mend_receipt.get("node_id") != STITCHED_SEWING_NODE_ID \
+			or receipt.get("source_state") != expected_state \
+			or mend_receipt.get("source_state") != mend_expected \
+			or swap_final.get("open") != false or mend_final.get("open") != false \
+			or swap_final.get("version") != int(expected_state["version"]) + 1 \
+			or mend_final.get("version") != int(mend_expected["version"]) + 1 \
+			or swap_final.get("heroes") != mend_final.get("heroes") \
+			or swap_final.get("heroes") != expected_state.get("heroes") \
+			or swap_final.get("satchel") != stitched_preview_satchel \
+			or mend_final.get("scraps") != stitched_preview_scraps:
+		return {"ok": false, "error": "inconsistent Sewing Circle Leave"}
+	var next_overrides: Dictionary = _stitched_gear_overrides.duplicate(true)
+	for hero in swap_final["heroes"]:
+		var hero_id := str(hero["id"])
+		var carried: Dictionary = next_overrides.get(hero_id, {}).duplicate(true)
+		for slot in StitchedParts.SLOTS:
+			var worn: Dictionary = hero["parts"][slot]
+			if bool(worn["torn"]):
+				# Do not replace lawful swap/mend overrides or unrelated gear.
+				carried[slot] = worn.duplicate(true)
+		if not carried.is_empty():
+			next_overrides[hero_id] = carried
+	_stitched_gear_overrides = next_overrides
+	_close_stitched_sewing()
 	return receipt
 
 
