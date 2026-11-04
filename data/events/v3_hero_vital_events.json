@@ -98,6 +98,50 @@
         { "id": "bleed_fuse_heat", "text": "Endure 4 HP of hot fuse sparks to earn 21 gold", "outcome": { "gold": 21, "scraps": 0, "hp": -4, "max_hp": 0 } },
         { "id": "leave", "text": "Cap the fuse and walk past the well", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_blackmoth_bell",
+      "title": "The Blackmoth Bell",
+      "description": "The Lantern Monk's moth halo wheels around a giant black-felt funeral bell; its glowing lantern reveals warm stitches beneath the clapper.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        { "id": "ring_moth_chimes", "text": "Spend 2 scraps to ring the moth chimes (heal 9 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 9, "max_hp": 0 } },
+        { "id": "give_bell_wick", "text": "Unpick 2 max HP from the lantern wick for 22 gold", "outcome": { "gold": 22, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the great black moth-bell fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_needle_duel_ledger",
+      "title": "The Needle Duel Ledger",
+      "description": "A crimson cape hangs over a coffin-tall duelling ledger; the Rag Duelist's needle rapier pins an unsigned oath beneath one oxblood candle.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "redeem_cape_oath", "text": "Pay 15 gold to bind an enduring cape oath (+3 max HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pawn_rapier_ribbon", "text": "Cut 6 HP of cape ribbon loose to collect 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Withdraw the rapier and leave the ledger closed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_crowbell_harvest",
+      "title": "The Crowbell Harvest",
+      "description": "The Scarecrow's black crow pecks a bell sewn from dried leaves while its forked pitchfork props open an enormous straw-stuffed harvest gate.",
+      "required_hero": "scarecrow",
+      "choices": [
+        { "id": "pack_harvest_straw", "text": "Spend 1 scrap packing the gate's warm straw (heal 7 HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 7, "max_hp": 0 } },
+        { "id": "strip_harvest_seam", "text": "Unpick 2 max HP of straw stuffing for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the crow ring its lonely harvest bell", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_quarry_of_buttons",
+      "title": "The Button Quarry",
+      "description": "Giant slate-blue buttons protrude from a moss-lit quarry wall; the Button Golem braces its round fists against a loose brass disc as lantern dust falls.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "fit_quarry_button", "text": "Pay 21 gold to sew in a huge quarry button (+4 max HP)", "outcome": { "gold": -21, "scraps": 0, "hp": 0, "max_hp": 4 } },
+        { "id": "pry_bronze_disc", "text": "Lose 5 HP levering out a bronze disc (gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the quarry's heavy buttons in the stone", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
