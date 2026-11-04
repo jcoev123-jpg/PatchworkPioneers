@@ -698,7 +698,11 @@ var _stitched_bleed_carry: Dictionary = {}
 var stitched_peddler_button: Button
 var stitched_peddler_panel: Control
 var stitched_peddler_visit: RunStitchedPeddlerBandage
+var stitched_peddler_candle_visit: RunPeddlerVisit
 var _stitched_peddler_quote: Dictionary = {}
+var _stitched_peddler_candle_state: Dictionary = {}
+var _stitched_peddler_candle_quote: Dictionary = {}
+var _stitched_peddler_generation := 0
 var _stitched_peddler_roster: Array = []
 ## This is a detached, authenticated party receipt, not an editable UI request.
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
@@ -1800,7 +1804,7 @@ func _open_stitched_fight() -> bool:
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
-			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
+			or stitched_peddler_candle_visit != null or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
 			or is_instance_valid(battle_view) or _route_from_base \
@@ -2659,6 +2663,8 @@ func _stitched_peddler_living_roster() -> Array:
 		var rank: Variant = hero.get("rank")
 		if hero_id.is_empty() or not hero_id in _stitched_party_picks or ids.has(hero_id) \
 				or not _stitched_hp_carry.has(hero_id) \
+				or typeof(_stitched_hp_carry[hero_id]) != TYPE_INT \
+				or int(_stitched_hp_carry[hero_id]) <= 0 \
 				or typeof(rank) != TYPE_INT or int(rank) < 1 or int(rank) > 4 \
 				or ranks.has(int(rank)):
 			return []
@@ -2689,7 +2695,8 @@ func _refresh_stitched_peddler_button() -> void:
 	if not is_instance_valid(stitched_peddler_button):
 		return
 	var ready: bool = not _stitched_peddler_roster.is_empty() \
-		and stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel)
+		and stitched_peddler_visit == null and stitched_peddler_candle_visit == null \
+		and not is_instance_valid(stitched_peddler_panel)
 	stitched_peddler_button.visible = ready
 	stitched_peddler_button.disabled = not ready
 	stitched_peddler_button.focus_mode = Control.FOCUS_ALL if ready else Control.FOCUS_NONE
@@ -2711,6 +2718,7 @@ func _refresh_stitched_peddler_button() -> void:
 ## survivor, or a free Leave. Only an earned roster can open it.
 func _open_stitched_peddler() -> bool:
 	if is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or stitched_peddler_candle_visit != null \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -2734,15 +2742,41 @@ func _open_stitched_peddler() -> bool:
 			or int(quote.get("price", 0)) != STITCHED_PEDDLER_PRICE \
 			or int(quote.get("gold", -1)) != stitched_preview_gold:
 		return false
-	var built := _mount_stitched_peddler(visit, quote)
+	# A distinct opt-in candle ledger shares this single earned Peddler
+	# entrance and wallet, never the legacy run/shop economy.
+	var candle_visit := RunPeddlerVisit.open_stitched_candle(
+		STITCHED_PEDDLER_NODE_ID, stitched_roadblock_candle,
+		stitched_preview_gold, STITCHED_PEDDLER_PRICE)
+	if not candle_visit.is_valid() or not candle_visit.is_open():
+		return false
+	var candle_state: Dictionary = candle_visit.read_state()
+	var candle_quote: Dictionary = candle_visit.quote()
+	if candle_state.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or candle_state.get("status") != RunPeddlerVisit.STITCHED_OPEN \
+			or candle_state.get("candle") != stitched_roadblock_candle \
+			or candle_state.get("gold") != stitched_preview_gold \
+			or candle_state.get("item", {}).get("price") != STITCHED_PEDDLER_PRICE \
+			or candle_quote.get("ok") != true \
+			or candle_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or candle_quote.get("price") != STITCHED_PEDDLER_PRICE \
+			or candle_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
+			or candle_quote.get("choices", []) != [
+				RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]:
+		return false
+	var generation := _stitched_peddler_generation + 1
+	var built := _mount_stitched_peddler(
+		visit, quote, candle_state, candle_quote, generation)
 	var panel: Control = built.get("panel")
 	if panel == null:
 		return false
-	# Store only the exact snapshot this panel displays; every callback below
-	# must present it back unchanged.
+	# Both displayed ledgers belong to one exact panel generation.
 	stitched_peddler_visit = visit
+	stitched_peddler_candle_visit = candle_visit
 	stitched_peddler_panel = panel
 	_stitched_peddler_quote = quote.duplicate(true)
+	_stitched_peddler_candle_state = candle_state.duplicate(true)
+	_stitched_peddler_candle_quote = candle_quote.duplicate(true)
+	_stitched_peddler_generation = generation
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	title_view.hide()
@@ -2757,11 +2791,14 @@ func _open_stitched_peddler() -> bool:
 ## Gothic-themed visit board. Framing is shipped textile art; only the existing
 ## theme supplies button chrome, so nothing is drawn in code.
 func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
-		quote: Dictionary) -> Dictionary:
-	if not visit.is_valid() or not visit.is_open():
+		quote: Dictionary, candle_state: Dictionary, candle_quote: Dictionary,
+		generation: int) -> Dictionary:
+	if not visit.is_valid() or not visit.is_open() \
+			or candle_state.get("ok") != true or candle_quote.get("ok") != true:
 		return {}
 	var panel := Control.new()
 	panel.name = "StitchedPeddler"
+	panel.set_meta("peddler_generation", generation)
 	panel.theme = load("res://themes/gothic_theme.tres")
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.focus_mode = Control.FOCUS_ALL
@@ -2779,14 +2816,14 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(frame)
 	var heading := Label.new()
-	heading.text = "STITCHED PEDDLER  ·  BLEED BANDAGES"
+	heading.text = "STITCHED PEDDLER  ·  BANDAGES & CANDLE STUBS"
 	heading.position = Vector2(165, 78)
 	heading.size = Vector2(960, 54)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	heading.add_theme_font_size_override("font_size", 27)
 	panel.add_child(heading)
 	var description := Label.new()
-	description.text = "A hooded peddler boils a strip of felt and threads it through the wound. One bandage cures one hero's Bleed."
+	description.text = "The hooded peddler offers one bandage to cure a hero's Bleed, or a candle stub to restore up to 25 light. Choose just one."
 	description.position = Vector2(170, 143)
 	description.size = Vector2(950, 64)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2794,7 +2831,7 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 	panel.add_child(description)
 	var wallet := Label.new()
 	wallet.name = "PeddlerQuote"
-	wallet.text = "PREVIEW GOLD  %d    ·    ONE BANDAGE  %d    ·    LEAVE IS FREE" % [
+	wallet.text = "PREVIEW GOLD  %d    ·    BANDAGE OR CANDLE STUB  %d    ·    LEAVE FREE" % [
 		int(quote["gold"]), int(quote["price"])]
 	wallet.position = Vector2(183, 212)
 	wallet.size = Vector2(910, 36)
@@ -2845,9 +2882,32 @@ func _mount_stitched_peddler(visit: RunStitchedPeddlerBandage,
 			first = button
 	if bleeding == 0:
 		var empty := Label.new()
-		empty.text = "No survivor is bleeding. The peddler has nothing to stitch."
+		empty.text = "No survivor is bleeding. Candle stubs remain available."
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		offers.add_child(empty)
+	var candle_button := Button.new()
+	candle_button.name = "PeddlerCandleStub"
+	candle_button.custom_minimum_size = Vector2(850, 56)
+	var candle_now := int(candle_state["candle"])
+	var candle_gain := mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
+		RunPeddlerVisit.CANDLE_MAX - candle_now)
+	var candle_affordable := int(candle_quote["gold"]) >= int(candle_quote["price"])
+	candle_button.disabled = candle_gain <= 0 or not candle_affordable
+	candle_button.focus_mode = Control.FOCUS_NONE if candle_button.disabled \
+		else Control.FOCUS_ALL
+	candle_button.text = "Candle stub · +%d CANDLE (to %d / 100) · %d gold" % [
+		candle_gain, candle_now + candle_gain, int(candle_quote["price"])]
+	if candle_gain == 0:
+		candle_button.text = "Candle full (100 / 100) · no stub needed"
+	elif not candle_affordable:
+		candle_button.text = "Candle stub · needs %d gold" % int(candle_quote["price"])
+	candle_button.tooltip_text = "Buy a candle stub instead of a bandage; +25 CANDLE, capped at 100"
+	candle_button.pressed.connect(_stitched_peddler_buy_candle.bind(
+		state.duplicate(true), candle_state.duplicate(true),
+		candle_quote.duplicate(true), weakref(panel), generation))
+	offers.add_child(candle_button)
+	if first == null and not candle_button.disabled:
+		first = candle_button
 	var leave_button := Button.new()
 	leave_button.name = "PeddlerLeave"
 	leave_button.text = "Leave the Peddler · free"
@@ -2910,6 +2970,89 @@ func _stitched_peddler_buy(hero_id: String, expected_snapshot: Dictionary,
 	return receipt
 
 
+## One mutually exclusive candle-stub purchase from the exact on-screen visit.
+## Check the complete displayed bandage and candle ledgers, this panel's own
+## generation and the current earned living party before accepting any debit.
+func _stitched_peddler_buy_candle(expected_bandage: Dictionary,
+		expected_candle: Dictionary, expected_quote: Dictionary,
+		source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or not is_instance_valid(panel) or panel != stitched_peddler_panel \
+			or not panel.is_visible_in_tree() \
+			or generation != _stitched_peddler_generation \
+			or panel.get_meta("peddler_generation", -1) != generation \
+			or stitched_peddler_visit == null or not stitched_peddler_visit.is_open() \
+			or stitched_peddler_candle_visit == null \
+			or not stitched_peddler_candle_visit.is_open() \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or _stitched_peddler_quote != expected_bandage \
+			or stitched_peddler_visit.read_state() != expected_bandage \
+			or _stitched_peddler_candle_state != expected_candle \
+			or _stitched_peddler_candle_quote != expected_quote \
+			or stitched_peddler_candle_visit.read_state() != expected_candle \
+			or stitched_peddler_candle_visit.quote() != expected_quote:
+		return {"ok": false, "error": "stale Peddler candle"}
+	var roster := _stitched_peddler_living_roster()
+	if roster.size() != 4 or roster != expected_bandage.get("heroes", []) \
+			or expected_bandage.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_bandage.get("status") != RunStitchedPeddlerBandage.OPEN \
+			or expected_bandage.get("gold") != stitched_preview_gold \
+			or expected_bandage.get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_candle.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_candle.get("status") != RunPeddlerVisit.STITCHED_OPEN \
+			or expected_candle.get("gold") != stitched_preview_gold \
+			or expected_candle.get("candle") != stitched_roadblock_candle \
+			or expected_candle.get("item", {}).get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or expected_quote.get("item") != RunPeddlerVisit.CANDLE_STUB \
+			or expected_quote.get("candle") != stitched_roadblock_candle \
+			or expected_quote.get("gold") != stitched_preview_gold \
+			or expected_quote.get("price") != STITCHED_PEDDLER_PRICE \
+			or expected_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
+			or stitched_preview_gold < STITCHED_PEDDLER_PRICE \
+			or stitched_roadblock_candle >= RunPeddlerVisit.CANDLE_MAX:
+		return {"ok": false, "error": "unauthorized Peddler candle"}
+	var before := stitched_roadblock_candle
+	var before_gold := stitched_preview_gold
+	var after := mini(RunPeddlerVisit.CANDLE_MAX,
+		before + RunPeddlerVisit.CANDLE_STUB_RESTORE)
+	var receipt: Dictionary = stitched_peddler_candle_visit.select_stitched(
+		RunPeddlerVisit.BUY_CANDLE_STUB, STITCHED_PEDDLER_NODE_ID,
+		stitched_peddler_candle_visit.read_state())
+	if receipt.get("ok") != true \
+			or receipt.get("decision") != RunPeddlerVisit.BUY_CANDLE_STUB \
+			or receipt.get("node_id") != STITCHED_PEDDLER_NODE_ID \
+			or receipt.get("mode") != RunPeddlerVisit.STITCHED \
+			or receipt.get("item") != RunPeddlerVisit.CANDLE_STUB \
+			or receipt.get("status") != RunPeddlerVisit.STITCHED_USED \
+			or receipt.get("consumed") != true \
+			or receipt.get("price") != STITCHED_PEDDLER_PRICE \
+			or receipt.get("charged_gold") != STITCHED_PEDDLER_PRICE \
+			or receipt.get("gold") != before_gold - STITCHED_PEDDLER_PRICE \
+			or receipt.get("candle_before") != before \
+			or receipt.get("candle") != after \
+			or receipt.get("restored") != after - before \
+			or receipt.get("state") != stitched_peddler_candle_visit.read_state() \
+			or not stitched_peddler_candle_visit.is_consumed():
+		return {"ok": false, "error": "Peddler candle receipt rejected"}
+	# Retire the other service before publishing the accepted candle receipt.
+	var bandage_left: Dictionary = stitched_peddler_visit.leave(
+		STITCHED_PEDDLER_NODE_ID, expected_bandage)
+	if bandage_left.get("ok") != true \
+			or bandage_left.get("decision") != RunStitchedPeddlerBandage.LEAVE \
+			or bandage_left.get("charged_gold") != 0 \
+			or bandage_left.get("gold") != before_gold \
+			or bandage_left.get("heroes") != roster:
+		return {"ok": false, "error": "Peddler alternative did not retire"}
+	stitched_preview_gold = int(receipt["gold"])
+	stitched_roadblock_candle = int(receipt["candle"])
+	_stitched_peddler_roster.clear()
+	_close_stitched_peddler()
+	return receipt
+
+
 ## Leaves the Peddler for free, preserving every carried status and resource.
 func _stitched_peddler_leave(expected_snapshot: Dictionary, source: WeakRef) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
@@ -2936,10 +3079,21 @@ func _stitched_peddler_leave(expected_snapshot: Dictionary, source: WeakRef) -> 
 
 func _close_stitched_peddler() -> void:
 	var panel := stitched_peddler_panel
+	# Every exit retires both one-use ledgers; neither an old bandage nor an
+	# old candle button may later spend from a superseded panel.
+	if stitched_peddler_visit != null and stitched_peddler_visit.is_open():
+		stitched_peddler_visit.leave(STITCHED_PEDDLER_NODE_ID,
+			stitched_peddler_visit.read_state())
+	if stitched_peddler_candle_visit != null:
+		stitched_peddler_candle_visit.close()
 	# Retire app authority before removing controls; queued input is then inert.
 	stitched_peddler_panel = null
 	stitched_peddler_visit = null
+	stitched_peddler_candle_visit = null
 	_stitched_peddler_quote.clear()
+	_stitched_peddler_candle_state.clear()
+	_stitched_peddler_candle_quote.clear()
+	_stitched_peddler_generation += 1
 	if is_instance_valid(panel):
 		if panel.get_parent() == self:
 			remove_child(panel)
