@@ -1,0 +1,87 @@
+{
+  "version": 1,
+  "note": "Design v4 (Stitched) S3-prep enemy part slice: one droppable body part per named enemy (Scissor Crab, Moth Swarm, Felt Bulwark), owner 'any' so any hero can wear it. Tier I is the base fields; tiers 2 and 3 are partial overrides. Data only: live drops, reward wiring and dodge/guard runtime effects arrive with S3.",
+  "parts": [
+    {
+      "id": "scissor_crab_claw_arm",
+      "name": "Scissor Claw",
+      "slot": "arms",
+      "owner": "any",
+      "stat": {"dmg": 1},
+      "ability": {
+        "id": "snip",
+        "name": "Snip",
+        "kind": "melee",
+        "launch": [1, 2],
+        "target": [1, 2],
+        "target_side": "enemy",
+        "multi": false,
+        "acc": 90,
+        "dmg": [4, 7],
+        "crit": 0,
+        "effects": {"bleed": 2},
+        "self_move": 0,
+        "move": "attack"
+      },
+      "tiers": {
+        "2": {"ability": {"dmg": [5, 8], "effects": {"bleed": 3}}},
+        "3": {"ability": {"dmg": [6, 9], "effects": {"bleed": 4}}}
+      },
+      "text": "Clip a front foe and open a bleeding seam."
+    },
+    {
+      "id": "moth_swarm_wings",
+      "name": "Tatter Wings",
+      "slot": "legs",
+      "owner": "any",
+      "stat": {"dodge": 5},
+      "ability": {
+        "id": "flutter_back",
+        "name": "Flutter Back",
+        "kind": "move",
+        "launch": [1, 2, 3],
+        "target": [1, 2, 3],
+        "target_side": "self",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"dodge": 5, "duration": 1},
+        "self_move": 1,
+        "move": "skill"
+      },
+      "tiers": {
+        "2": {"stat": {"dodge": 7}, "ability": {"effects": {"dodge": 7, "duration": 1}}},
+        "3": {"stat": {"dodge": 10}, "ability": {"effects": {"dodge": 10, "duration": 1}}}
+      },
+      "text": "Flutter one rank back and briefly gain Dodge."
+    },
+    {
+      "id": "felt_bulwark_button_shield",
+      "name": "Button Shield Torso",
+      "slot": "torso",
+      "owner": "any",
+      "stat": {"prot": 10},
+      "ability": {
+        "id": "button_shield",
+        "name": "Button Shield",
+        "kind": "guard",
+        "launch": [1, 2],
+        "target": [1, 2, 3, 4],
+        "target_side": "ally",
+        "multi": false,
+        "acc": 100,
+        "dmg": [0, 0],
+        "crit": 0,
+        "effects": {"guard": 2},
+        "self_move": 0,
+        "move": "guard"
+      },
+      "tiers": {
+        "2": {"stat": {"prot": 12}, "ability": {"effects": {"guard": 3}}},
+        "3": {"stat": {"prot": 15}, "ability": {"effects": {"guard": 4}}}
+      },
+      "text": "Take the hits meant for one ally behind your shield."
+    }
+  ]
+}
