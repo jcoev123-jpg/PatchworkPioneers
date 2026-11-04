@@ -32,6 +32,10 @@ var _heroes: Array = []
 var _status: String = INVALID
 var _mode: String = ""
 var _candle: int = 0
+# Opt-in part-swap extension (null/empty unless opened with a satchel).
+var _swap: RunStitchedSewingSwap = null
+var _satchel: Array = []
+var _swap_state: Dictionary = {}
 
 
 func _init(node_id: Variant = null, run_heroes: Variant = null,
@@ -60,9 +64,87 @@ func _init(node_id: Variant = null, run_heroes: Variant = null,
 	_status = STITCHED_OPEN
 
 
+## Opt-in Stitched entry point: the usual four-hero Campfire plus a satchel of
+## 0..6 spare parts and the canonical part catalog (StitchedParts "by_id").
+## Heroes must also carry full worn slot records. Any invalid input fails
+## closed and returns the same invalid visit as a rejected constructor call.
+static func open_stitched_with_satchel(node_id: Variant, run_heroes: Variant,
+		candle: Variant, satchel: Variant, catalog_by_id: Variant) -> RunCampfireVisit:
+	var visit := RunCampfireVisit.new(node_id, run_heroes, STITCHED, candle)
+	if visit._status != STITCHED_OPEN:
+		return RunCampfireVisit.new()
+	var swap := RunStitchedSewingSwap.new(node_id, run_heroes, satchel, catalog_by_id)
+	var swap_state: Dictionary = swap.read_state()
+	if swap_state.get("ok") != true:
+		return RunCampfireVisit.new()
+	visit._swap = swap
+	visit._swap_state = swap_state
+	# Hold the swap authority's normalised records so later comparisons agree.
+	visit._heroes = swap_state["heroes"].duplicate(true)
+	visit._satchel = swap_state["satchel"].duplicate(true)
+	return visit
+
+
+## The detached part-swap quote of an opted-in visit (empty otherwise).
+func swap_quote() -> Dictionary:
+	if _swap == null:
+		return {}
+	return _swap.quote()
+
+
+## One optional same-slot exchange before the single recovery decision.
+## expected_state is the latest swap state ("swap_state" of read_state() or of
+## the previous swap receipt) or the complete latest read_state().
+func swap_part(hero_id: Variant, slot: Variant, satchel_index: Variant,
+		expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	if _swap == null or _status != STITCHED_OPEN:
+		return _swap_rejected("no open part-swap opportunity")
+	if not _valid_node_id(expected_node_id) or expected_node_id != _node_id:
+		return _swap_rejected("wrong node")
+	if typeof(expected_state) != TYPE_DICTIONARY:
+		return _swap_rejected("expected state must be a dictionary")
+	var swap_expected: Variant = expected_state
+	if expected_state.has("swap_state"):
+		if JSON.stringify(expected_state, "", true) != JSON.stringify(read_state(), "", true):
+			return _swap_rejected("stale or forged state")
+		swap_expected = expected_state["swap_state"]
+	var result: Dictionary = _swap.swap(hero_id, slot, satchel_index, expected_node_id, swap_expected)
+	if result.get("ok") != true:
+		return _swap_rejected(str(result.get("error", "swap refused")))
+	# Reconcile only the committed gear records and the satchel.
+	var changed: Array = result.get("changed_heroes", [])
+	for changed_hero in changed:
+		for index in range(_heroes.size()):
+			if str(_heroes[index]["id"]) == str(changed_hero["id"]):
+				_heroes[index]["parts"] = changed_hero["parts"].duplicate(true)
+	_satchel = result["satchel"].duplicate(true)
+	_swap_state = result["state"].duplicate(true)
+	return {
+		"ok": true,
+		"error": "",
+		"action": "swap",
+		"node_id": _node_id,
+		"hero_id": str(hero_id),
+		"slot": str(slot),
+		"satchel_index": int(satchel_index),
+		"worn_before": result["worn_before"].duplicate(true),
+		"worn_after": result["worn_after"].duplicate(true),
+		"satchel_before": result["satchel_before"].duplicate(true),
+		"satchel_after": result["satchel_after"].duplicate(true),
+		"heroes": _heroes.duplicate(true),
+		"satchel": _satchel.duplicate(true),
+		"candle": _candle,
+		"swap_state": _swap_state.duplicate(true),
+	}
+
+
+func _swap_rejected(message: String) -> Dictionary:
+	return {"ok": false, "error": message}
+
+
 func read_state() -> Dictionary:
 	if _mode == STITCHED:
-		return {
+		var state := {
 			"ok": _status != INVALID,
 			"node_id": _node_id,
 			"status": _status,
@@ -71,6 +153,11 @@ func read_state() -> Dictionary:
 			"heroes": _heroes.duplicate(true),
 			"candle": _candle,
 		}
+		if _swap != null:
+			state["satchel"] = _satchel.duplicate(true)
+			state["swap_state"] = _swap_state.duplicate(true)
+			state["swap_quote"] = _swap.quote()
+		return state
 	return {
 		"ok": _status != INVALID,
 		"node_id": _node_id,
@@ -131,6 +218,11 @@ func select(decision: Variant, expected_node_id: Variant,
 	_heroes = updated
 	_candle = candle
 	_status = STITCHED_DECIDED
+	if _swap != null:
+		# The one decision also closes the swap opportunity.
+		var closed: Dictionary = _swap.leave(_node_id, _swap_state)
+		if closed.get("ok") == true:
+			_swap_state = closed["state"].duplicate(true)
 	return _stitched_receipt(String(decision))
 
 
@@ -204,13 +296,16 @@ static func _stitched_rejected() -> Dictionary:
 
 
 func _stitched_receipt(decision: String) -> Dictionary:
-	return {
+	var receipt := {
 		"ok": true,
 		"decision": decision,
 		"node_id": _node_id,
 		"heroes": _heroes.duplicate(true),
 		"candle": _candle,
 	}
+	if _swap != null:
+		receipt["satchel"] = _satchel.duplicate(true)
+	return receipt
 
 
 func _matches_open_visit(expected_node_id: Variant, expected_heroes: Variant) -> bool:
