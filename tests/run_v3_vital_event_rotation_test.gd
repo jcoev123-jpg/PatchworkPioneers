@@ -1642,11 +1642,13 @@ func _test_default_selector_unchanged_with_actionable() -> void:
 
 func _party_heroes(h1_id: String, h1_hp: int, h1_max: int,
 		h2_id: String, h2_hp: int, h2_max: int,
-		h3_id: String, h3_hp: int, h3_max: int) -> Array:
+		h3_id: String, h3_hp: int, h3_max: int,
+		h4_id: String, h4_hp: int, h4_max: int) -> Array:
 	return [
 		{"id": h1_id, "hp": h1_hp, "max_hp": h1_max},
 		{"id": h2_id, "hp": h2_hp, "max_hp": h2_max},
 		{"id": h3_id, "hp": h3_hp, "max_hp": h3_max},
+		{"id": h4_id, "hp": h4_hp, "max_hp": h4_max},
 	]
 
 
@@ -1756,7 +1758,7 @@ func _assert_forced_party_actionable_rejects(
 func _test_party_actionable_ac1_admission() -> void:
 	var rotation := RunV3VitalEventRotation.new()
 	_check(rotation.is_catalog_valid(), "shipped rotation is valid for party actionable AC1 admission")
-	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30)
+	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30, "hero_fourth", 2, 30)
 	var wallet := {"gold": 0, "scraps": 0}
 	var admitted := _assert_forced_party_actionable_admits(
 		rotation, "v3_needle_thorn_garden", wallet, party, 71001,
@@ -1765,25 +1767,61 @@ func _test_party_actionable_ac1_admission() -> void:
 	_check(admitted == source_by_id.get("v3_needle_thorn_garden", {}),
 		"returned record for AC1 matches authentic Needle-Thorn Garden catalog entry")
 
-	var party_front_able := _party_heroes("hero_front", 12, 30, "hero_mid", 2, 30, "hero_back", 0, 30)
+	var party_front_able := _party_heroes("hero_front", 12, 30, "hero_mid", 2, 30, "hero_back", 0, 30, "hero_fourth", 2, 30)
 	_assert_forced_party_actionable_admits(
 		rotation, "v3_needle_thorn_garden", wallet, party_front_able, 71002,
 		"Garden when front is 12 HP, second is 2 HP, third is Torn"
 	)
 
-	var party_third_able := _party_heroes("hero_front", 0, 30, "hero_mid", 2, 30, "hero_back", 12, 30)
+	var party_third_able := _party_heroes("hero_front", 0, 30, "hero_mid", 2, 30, "hero_back", 12, 30, "hero_fourth", 2, 30)
 	_assert_forced_party_actionable_admits(
 		rotation, "v3_needle_thorn_garden", wallet, party_third_able, 71003,
 		"Garden when front is Torn, second is 2 HP, third is 12 HP"
 	)
 
-	var infirmary_party := _party_heroes("nurse_front", 2, 20, "nurse_mid", 10, 20, "nurse_back", 0, 20)
+	var party_fourth_only := _party_heroes("warden", 2, 30, "seamstress", 2, 30, "tinker", 2, 30, "lantern_monk", 12, 30)
+	var garden_record: Dictionary = source_by_id.get("v3_needle_thorn_garden", {})
+	for idx in range(4):
+		var member: Dictionary = party_fourth_only[idx]
+		var member_service := RunEventChoice.new(garden_record)
+		var member_preview := member_service.preview_vital_choices({
+			"gold": wallet["gold"],
+			"scraps": wallet["scraps"],
+			"hero": member.duplicate(true),
+		})
+		_check(member_preview.get("ok") == true,
+			"fourth-only Garden preview succeeds for member %d" % idx)
+		var harvest_preview := _preview_choice(member_preview, "harvest_thorns")
+		var balm_preview := _preview_choice(member_preview, "buy_rose_balm")
+		var leave_preview := _preview_choice(member_preview, "leave")
+		_check(balm_preview.get("affordable") == false and leave_preview.get("affordable") == true,
+			"fourth-only Garden preview keeps balm unaffordable and leave affordable for member %d" % idx)
+		if idx < 3:
+			_check(harvest_preview.get("affordable") == false
+				and not RunV3VitalEventRotation.is_choice_actionable(harvest_preview, int(member["hp"])),
+				"first three heroes at 2 HP are not actionable for harvest_thorns (member %d)" % idx)
+		else:
+			_check(harvest_preview.get("affordable") == true
+				and harvest_preview.get("hp_delta") == -6
+				and harvest_preview.get("scraps_delta") == 3
+				and harvest_preview.get("gold_delta") == 0
+				and harvest_preview.get("max_hp_delta") == 0
+				and RunV3VitalEventRotation.is_choice_actionable(harvest_preview, int(member["hp"])),
+				"fourth hero at 12 HP is actionable for harvest_thorns")
+	var admitted_fourth := _assert_forced_party_actionable_admits(
+		rotation, "v3_needle_thorn_garden", wallet, party_fourth_only, 71006,
+		"Garden when first three are 2 HP and only fourth hero is 12 HP"
+	)
+	_check(admitted_fourth == garden_record,
+		"fourth-only admission returns exact authentic Needle-Thorn Garden record")
+
+	var infirmary_party := _party_heroes("nurse_front", 2, 20, "nurse_mid", 10, 20, "nurse_back", 0, 20, "nurse_fourth", 2, 20)
 	_assert_forced_party_actionable_admits(
 		rotation, "v3_lantern_quilt_infirmary", wallet, infirmary_party, 71004,
 		"Infirmary when front is 2 HP, second is 10 HP, third is Torn"
 	)
 
-	var shrine_party := _party_heroes("shrine_front", 10, 10, "shrine_mid", 10, 14, "shrine_back", 0, 10)
+	var shrine_party := _party_heroes("shrine_front", 10, 10, "shrine_mid", 10, 14, "shrine_back", 0, 10, "shrine_fourth", 10, 10)
 	_assert_forced_party_actionable_admits(
 		rotation, "v3_button_heart_shrine", wallet, shrine_party, 71005,
 		"Button-Heart Shrine when front max_hp is 10, second max_hp is 14, third is Torn"
@@ -1795,31 +1833,31 @@ func _test_party_actionable_ac2_denials() -> void:
 	_check(rotation.is_catalog_valid(), "shipped rotation is valid for party actionable AC2 denials")
 	var wallet := {"gold": 0, "scraps": 0}
 
-	var all_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 0, 30)
+	var all_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 0, 30, "h4", 2, 30)
 	_assert_forced_party_actionable_rejects(
 		rotation, "v3_needle_thorn_garden", wallet, all_living_low, 72001,
 		"Needle-Thorn Garden with all living heroes at 2 HP, zero gold"
 	)
 
-	var all_three_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 2, 30)
+	var all_three_living_low := _party_heroes("h1", 2, 30, "h2", 2, 30, "h3", 2, 30, "h4", 2, 30)
 	_assert_forced_party_actionable_rejects(
 		rotation, "v3_needle_thorn_garden", wallet, all_three_living_low, 72002,
-		"Needle-Thorn Garden with all three living heroes at 2 HP, zero gold"
+		"Needle-Thorn Garden with all four living heroes at 2 HP, zero gold"
 	)
 
-	var two_torn_one_low := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 2, 30)
+	var two_torn_one_low := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 2, 30, "h4", 0, 30)
 	_assert_forced_party_actionable_rejects(
 		rotation, "v3_needle_thorn_garden", wallet, two_torn_one_low, 72003,
 		"Needle-Thorn Garden with two Torn heroes and one living hero at 2 HP"
 	)
 
-	var all_torn := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 0, 30)
+	var all_torn := _party_heroes("h1", 0, 30, "h2", 0, 30, "h3", 0, 30, "h4", 0, 30)
 	_assert_forced_party_actionable_rejects(
 		rotation, "v3_needle_thorn_garden", wallet, all_torn, 72004,
-		"Needle-Thorn Garden with all three heroes Torn"
+		"Needle-Thorn Garden with all four heroes Torn"
 	)
 
-	var party_able := _party_heroes("h1", 2, 30, "h2", 12, 30, "h3", 0, 30)
+	var party_able := _party_heroes("h1", 2, 30, "h2", 12, 30, "h3", 0, 30, "h4", 2, 30)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 72005
 	var rng_before := rng.state
@@ -1841,7 +1879,7 @@ func _test_party_actionable_ac2_denials() -> void:
 func _test_party_actionable_ac3_replay_and_settlement() -> void:
 	var shipped := RunV3VitalEventRotation.new()
 	var all_ids: Array = shipped.get_vital_event_ids()
-	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30)
+	var party := _party_heroes("hero_front", 2, 30, "hero_mid", 12, 30, "hero_back", 0, 30, "hero_fourth", 2, 30)
 	var wallet := {"gold": 0, "scraps": 0}
 
 	var admitted := _assert_forced_party_actionable_admits(
@@ -1871,7 +1909,7 @@ func _test_party_actionable_ac3_replay_and_settlement() -> void:
 	anchor_excluded.erase("v3_button_heart_shrine")
 	anchor_excluded.erase("v3_needle_thorn_garden")
 	var mixed_wallet := {"gold": 10, "scraps": 0}
-	var mixed_party := _party_heroes("h1", 2, 10, "h2", 10, 10, "h3", 0, 10)
+	var mixed_party := _party_heroes("h1", 2, 10, "h2", 10, 10, "h3", 0, 10, "h4", 2, 10)
 	var expected_subset := _independent_party_actionable_ids(shipped, anchor_excluded, mixed_wallet, mixed_party)
 	_check(expected_subset == ["v3_lantern_quilt_infirmary", "v3_needle_thorn_garden"],
 		"mixed party snapshot qualifies Infirmary and Garden while excluding Leave-only Shrine")
@@ -1931,12 +1969,41 @@ func _test_party_actionable_ac3_replay_and_settlement() -> void:
 		{"ok": false, "event_id": "", "choice_id": "", "state": mid_snapshot_before},
 		"second settlement on claimed party choice refuses")
 
+	var fourth_party := _party_heroes("hero_front", 2, 30, "hero_mid", 2, 30, "hero_back", 2, 30, "hero_fourth", 12, 30)
+	var fourth_garden := _assert_forced_party_actionable_admits(
+		shipped, "v3_needle_thorn_garden", wallet, fourth_party, 73003,
+		"Garden for fourth-hero AC3 settlement"
+	)
+	var fourth_service := RunEventChoice.new(fourth_garden)
+	var fourth_snapshot := {
+		"gold": wallet["gold"],
+		"scraps": wallet["scraps"],
+		"hero": fourth_party[3].duplicate(true),
+	}
+	var fourth_snapshot_before := fourth_snapshot.duplicate(true)
+	var fourth_preview := fourth_service.preview_vital_choices(fourth_snapshot)
+	_check(fourth_preview.get("ok") == true
+		and _preview_choice(fourth_preview, "harvest_thorns").get("affordable") == true,
+		"fourth hero preview succeeds and harvest_thorns is affordable")
+	var fourth_receipt := fourth_service.choose_with_vitals("harvest_thorns", fourth_snapshot)
+	_check(fourth_receipt == {
+		"ok": true,
+		"event_id": "v3_needle_thorn_garden",
+		"choice_id": "harvest_thorns",
+		"state": {
+			"gold": 0,
+			"scraps": 3,
+			"hero": {"id": "hero_fourth", "hp": 6, "max_hp": 30},
+		},
+	} and fourth_service.is_claimed() and fourth_snapshot == fourth_snapshot_before,
+		"fourth hero harvest_thorns settles once through RunEventChoice with exact deltas")
+
 
 func _test_party_actionable_ac4_malformed_inputs() -> void:
 	var shipped := RunV3VitalEventRotation.new()
 	var valid_wallet := {"gold": 10, "scraps": 2}
 	var valid_wallet_before := valid_wallet.duplicate(true)
-	var valid_heroes := _party_heroes("h1", 10, 20, "h2", 15, 25, "h3", 0, 20)
+	var valid_heroes := _party_heroes("h1", 10, 20, "h2", 15, 25, "h3", 0, 20, "h4", 12, 20)
 	var valid_heroes_before := valid_heroes.duplicate(true)
 	var valid_excluded := ["v3_lantern_quilt_infirmary"]
 	var valid_excluded_before := valid_excluded.duplicate(true)
@@ -1980,6 +2047,8 @@ func _test_party_actionable_ac4_malformed_inputs() -> void:
 
 	var h1 := {"id": "h1", "hp": 10, "max_hp": 20}
 	var h2 := {"id": "h2", "hp": 15, "max_hp": 25}
+	var h3 := {"id": "h3", "hp": 12, "max_hp": 20}
+	var h4 := {"id": "h4", "hp": 10, "max_hp": 20}
 	var bad_heroes_list: Array = [
 		null,
 		42,
@@ -1988,22 +2057,27 @@ func _test_party_actionable_ac4_malformed_inputs() -> void:
 		[],
 		[h1],
 		[h1, h2],
-		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20}, {"id": "h4", "hp": 10, "max_hp": 20}],
-		[h1, null, h2],
-		[h1, "h2", h2],
-		[h1, h2, {"id": "h3", "hp": 10}],
-		[h1, h2, {"id": "h3", "max_hp": 20}],
-		[h1, h2, {"hp": 10, "max_hp": 20}],
-		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20, "extra": 1}],
-		[h1, h2, {"id": "", "hp": 10, "max_hp": 20}],
-		[h1, h2, {"id": "   ", "hp": 10, "max_hp": 20}],
-		[h1, h2, {"id": "h1", "hp": 10, "max_hp": 20}],
-		[h1, h2, {"id": "h3", "hp": -1, "max_hp": 20}],
-		[h1, h2, {"id": "h3", "hp": 21, "max_hp": 20}],
-		[h1, h2, {"id": "h3", "hp": 10.0, "max_hp": 20}],
-		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 20.0}],
-		[h1, h2, {"id": "h3", "hp": 10, "max_hp": 9}],
-		[{"id": "h1", "hp": 0, "max_hp": 20}, {"id": "h2", "hp": 0, "max_hp": 20}, {"id": "h3", "hp": 0, "max_hp": 20}],
+		[h1, h2, h3],
+		[h1, h2, h3, h4, {"id": "h5", "hp": 10, "max_hp": 20}],
+		[h1, null, h2, h3],
+		[h1, h2, h3, null],
+		[h1, "h2", h2, h3],
+		[h1, h2, h3, "h4"],
+		[h1, h2, h3, {"id": "h4", "hp": 10}],
+		[h1, h2, h3, {"id": "h4", "max_hp": 20}],
+		[h1, h2, h3, {"hp": 10, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h4", "hp": 10, "max_hp": 20, "extra": 1}],
+		[h1, h2, h3, {"id": "", "hp": 10, "max_hp": 20}],
+		[h1, h2, h3, {"id": "   ", "hp": 10, "max_hp": 20}],
+		[h1, h2, {"id": "h1", "hp": 10, "max_hp": 20}, h4],
+		[h1, h2, h3, {"id": "h1", "hp": 10, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h3", "hp": 10, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h4", "hp": -1, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h4", "hp": 21, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h4", "hp": 10.0, "max_hp": 20}],
+		[h1, h2, h3, {"id": "h4", "hp": 10, "max_hp": 20.0}],
+		[h1, h2, h3, {"id": "h4", "hp": 10, "max_hp": 9}],
+		[{"id": "h1", "hp": 0, "max_hp": 20}, {"id": "h2", "hp": 0, "max_hp": 20}, {"id": "h3", "hp": 0, "max_hp": 20}, {"id": "h4", "hp": 0, "max_hp": 20}],
 	]
 	for bad_h in bad_heroes_list:
 		var h_copy: Variant = bad_h.duplicate(true) if bad_h is Dictionary or bad_h is Array else bad_h
@@ -2115,7 +2189,7 @@ func _test_full_health_paid_heal_suppression() -> void:
 		"AC2: 11/11 HP hero with 0 gold admits bath via borrow_lining max-HP trade")
 
 	# 5. Party selection: All-full party vs wounded party members
-	var full_party := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 10, 10)
+	var full_party := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 10, 10, "h4", 10, 10)
 	var full_party_before := full_party.duplicate(true)
 	var wallet_15 := {"gold": 15, "scraps": 0}
 	var wallet_15_before := wallet_15.duplicate(true)
@@ -2135,7 +2209,7 @@ func _test_full_health_paid_heal_suppression() -> void:
 		"AC4: party rejection preserves caller party and wallet")
 
 	# b) Other wounded party members: h2 wounded (9/10), others full (10/10)
-	var h2_wounded := _party_heroes("h1", 10, 10, "h2", 9, 10, "h3", 10, 10)
+	var h2_wounded := _party_heroes("h1", 10, 10, "h2", 9, 10, "h3", 10, 10, "h4", 10, 10)
 	var party_oracle := RandomNumberGenerator.new()
 	party_oracle.seed = 82001
 	party_oracle.randi_range(0, 0)
@@ -2146,25 +2220,30 @@ func _test_full_health_paid_heal_suppression() -> void:
 		"AC3: party admission consumes exactly one draw")
 
 	# c) h1 wounded (9/10), others full
-	var h1_wounded := _party_heroes("h1", 9, 10, "h2", 10, 10, "h3", 10, 10)
+	var h1_wounded := _party_heroes("h1", 9, 10, "h2", 10, 10, "h3", 10, 10, "h4", 10, 10)
 	var party_adm_h1 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h1_wounded)
 	_check(party_adm_h1.get("ok") == true and party_adm_h1.get("event", {}).get("id") == bath_id,
 		"AC2/AC3: party with wounded h1 admits bath")
 
 	# d) h3 wounded (9/10), others full
-	var h3_wounded := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 9, 10)
+	var h3_wounded := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 9, 10, "h4", 10, 10)
 	var party_adm_h3 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h3_wounded)
 	_check(party_adm_h3.get("ok") == true and party_adm_h3.get("event", {}).get("id") == bath_id,
 		"AC2/AC3: party with wounded h3 admits bath")
 
 	# e) Torn hero (0/10) + remaining heroes full (10/10): rejects
-	var torn_and_full := _party_heroes("h1", 0, 10, "h2", 10, 10, "h3", 10, 10)
+	var h4_wounded := _party_heroes("h1", 10, 10, "h2", 10, 10, "h3", 10, 10, "h4", 9, 10)
+	var party_adm_h4 := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, h4_wounded)
+	_check(party_adm_h4.get("ok") == true and party_adm_h4.get("event", {}).get("id") == bath_id,
+		"AC2/AC3: party with wounded h4 admits bath")
+
+	var torn_and_full := _party_heroes("h1", 0, 10, "h2", 10, 10, "h3", 10, 10, "h4", 10, 10)
 	var party_rej_torn := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, torn_and_full)
 	_check(party_rej_torn == {"ok": false, "event": {}},
 		"AC1/AC3: torn hero + full heroes rejects bath")
 
 	# f) Torn hero (0/10) + wounded hero (9/10) + full hero (10/10): admits
-	var torn_and_wounded := _party_heroes("h1", 0, 10, "h2", 9, 10, "h3", 10, 10)
+	var torn_and_wounded := _party_heroes("h1", 0, 10, "h2", 9, 10, "h3", 10, 10, "h4", 10, 10)
 	var party_adm_torn := rotation.select_party_actionable_event(party_rng, bath_excluded, wallet_15, torn_and_wounded)
 	_check(party_adm_torn.get("ok") == true and party_adm_torn.get("event", {}).get("id") == bath_id,
 		"AC2/AC3: torn hero + wounded hero admits bath")
