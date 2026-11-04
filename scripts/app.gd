@@ -683,6 +683,7 @@ var _stitched_battle_ticket: WeakRef
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
+const STITCHED_SACK_ID := "fray_scavenger_sack_arm"
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1623,6 +1624,13 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			stitched_preview_satchel.append({
 				"id": STITCHED_CLAW_ID, "slot": "arms", "tier": 1, "torn": false,
 			})
+		var scavenger: Dictionary = battle.get_unit("fray_scavenger")
+		if str(scavenger.get("side", "")) == "foe" and bool(scavenger.get("dead", false)) \
+				and int(scavenger.get("hp", -1)) == 0 \
+				and stitched_preview_satchel.size() < RunStitchedSewingSwap.SATCHEL_CAP:
+			stitched_preview_satchel.append({
+				"id": STITCHED_SACK_ID, "slot": "arms", "tier": 1, "torn": false,
+			})
 		_open_stitched_sewing(heroes)
 
 
@@ -1635,7 +1643,8 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	if config.is_empty():
 		return false
 	var catalog := StitchedParts.build_catalog(config["parts"])
-	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STITCHED_CLAW_ID):
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STITCHED_CLAW_ID) \
+			or not catalog["by_id"].has(STITCHED_SACK_ID):
 		return false
 	var visit := RunStitchedSewingSwap.new(
 		STITCHED_SEWING_NODE_ID, heroes, stitched_preview_satchel, catalog["by_id"])
@@ -1643,6 +1652,7 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 		return false
 	var panel := Control.new()
 	panel.name = "StitchedSewingCircle"
+	panel.theme = load("res://themes/gothic_theme.tres")
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.focus_mode = Control.FOCUS_ALL
 	stitched_sewing_visit = visit
@@ -1680,14 +1690,14 @@ func _refresh_stitched_sewing() -> void:
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_child(frame)
 	var heading := Label.new()
-	heading.text = "SEWING CIRCLE  ·  THE SCISSOR CRAB'S SPOILS"
+	heading.text = "SEWING CIRCLE  ·  SPOILS OF THE STITCHED ROADBLOCK"
 	heading.position = Vector2(165, 78)
 	heading.size = Vector2(960, 54)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	heading.add_theme_font_size_override("font_size", 27)
 	panel.add_child(heading)
 	var description := Label.new()
-	description.text = "A severed claw waits at the stitcher's table. Choose a living hero and exchange arms without coin."
+	description.text = "A claw and a scavenger's sack await the needle. Choose a living hero and exchange arms without coin."
 	description.position = Vector2(170, 143)
 	description.size = Vector2(950, 64)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
