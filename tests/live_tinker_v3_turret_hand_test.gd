@@ -4,7 +4,8 @@ const TURRET := CombatTinkerV3TurretCards.CARDS
 
 
 ## A real mounted battle whose back-seat Tinker holds two copies of `id`. Every enemy announces a plain
-## Block, so a genuine End Turn harms no hero; "kill" leaves one attacker alive at `kill_hp`.
+## Block, so a genuine End Turn harms no hero; "kill" leaves one attacker alive at `kill_hp`, "hound" is the
+## catalog Spoolback Hound alone, and "status" is one ordinary living enemy behind 2 Block.
 func _begin(id: String, mode: String = "plain", kill_hp: int = 3) -> Control:
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -25,6 +26,8 @@ func _begin(id: String, mode: String = "plain", kill_hp: int = 3) -> Control:
 		{"id": "third", "name": "Third", "max_hp": 40}])
 	if mode == "hound":
 		app.enemies = CombatEnemies.new([_catalog_hound()])
+	elif mode == "status":
+		app.enemies = CombatEnemies.new([{"id": "first", "name": "First", "max_hp": 40}])
 	_check(app.party.is_valid() and app.enemies.is_valid(), "Tinker seated third and a valid enemy roster")
 	var second: Array = [{"type": "block", "amount": 1}]
 	if mode == "kill":
@@ -40,6 +43,9 @@ func _begin(id: String, mode: String = "plain", kill_hp: int = 3) -> Control:
 	if mode == "hound":
 		app.enemy_intents = CombatEnemyIntents.new([
 			{"enemy_position": 1, "pattern": [{"type": "attack", "amount": 7, "target_position": 1}]}])
+	if mode == "status":
+		app.enemy_intents = CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
 	_check(app.enemy_intents.is_valid(), "announced enemy schedule is valid")
 	app.enemy_attacks = app.enemy_intents.get_intents()
 	app.battle_result = CombatBattleResult.new(app.party, app.enemies)
@@ -107,6 +113,7 @@ func _press_end_turn(keyboard: bool) -> void:
 
 ## Independent oracle for one accepted End Turn: each live turret ticks in deployment order through the real
 ## resolver on detached enemies with a copy of the run RNG, then the next hand is drawn from that copy.
+## Returns [enemy HP, shot targets, next hand, final RNG state, tick receipts].
 func _oracle() -> Array:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = app.run_rng.seed
@@ -116,16 +123,19 @@ func _oracle() -> Array:
 	enemies._enemies.assign(roster.duplicate(true))
 	var resolver := CombatTinkerV3TurretCards.new()
 	var targets: Array[int] = []
+	var receipts: Array[Dictionary] = []
 	for state in app.round_flow.get_turrets():
 		var receipt: Dictionary = resolver.tick_turret(state, enemies, rng)
 		_check(receipt.ok, "oracle tick is legal")
 		targets.append(int(receipt.get("target_position", -1)))
+		receipts.append(receipt)
 	var none: Array[String] = []
 	var next := CombatDeck.new(none, rng)
 	next.draw_pile.assign(app.deck.draw_pile)
 	next.discard_pile.assign(app.deck.discard_pile + app.deck.hand)
 	next.start_turn()
-	return [enemies.get_enemies().map(func(enemy): return enemy.hp), targets, next.hand.duplicate(), rng.state]
+	return [enemies.get_enemies().map(func(enemy): return enemy.hp), targets, next.hand.duplicate(),
+		rng.state, receipts]
 
 
 ## AC1 and AC2: a paid live deployment, then three accepted End Turns of seeded shots and no fourth.
@@ -241,6 +251,224 @@ func _failed_end_turn(id: String) -> void:
 	await _dispose()
 
 
+## The exact hits CombatStatuses' canonical rule makes from each printed base (3 and 4): Exposed 1 floors
+## 4.5 to 4 (6 for 4), Tangled N>0 adds its flat +2 once whatever N is, and both combine to 6 or 8.
+func _status_expectations() -> Dictionary:
+	return {
+		"tinker_v3_wind_up_turret": {"plain": 3, "tangled": 5, "exposed": 4, "both": 6},
+		"tinker_v3_wind_up_turret_plus": {"plain": 4, "tangled": 6, "exposed": 6, "both": 8},
+	}
+
+
+## The expectation row a status map selects: only already-present Exposed/Tangled can change a shot.
+func _status_case(statuses: Dictionary) -> String:
+	var exposed: int = int(statuses.get("exposed", 0))
+	var tangled: int = int(statuses.get("tangled", 0))
+	if exposed > 0 and tangled > 0:
+		return "both"
+	if exposed > 0:
+		return "exposed"
+	if tangled > 0:
+		return "tangled"
+	return "plain"
+
+
+## The status map one enemy owner-turn boundary leaves behind (Bleed/Weak/Exposed/Tangled count down once).
+func _aged_statuses(statuses: Dictionary) -> Dictionary:
+	var aged: Dictionary = {}
+	for name in ["bleed", "weak", "exposed", "tangled"]:
+		var count: int = int(statuses.get(name, 0))
+		if count > 1:
+			aged[name] = count - 1
+	return aged
+
+
+## A genuine paid service deployment plus a real single living enemy at 40 HP behind 2 Block carrying
+## `statuses`. Returns [pending state, enemies, run RNG, deck, party].
+func _status_fixture(id: String, statuses: Dictionary) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 357
+	var deck := CombatDeck.new([id, id, "warden_strike", "warden_brace", "seamstress_mend"], rng)
+	_check(deck.start_turn() and deck.hand.count(id) == 2 and deck.energy == 3,
+		id + ": the service fixture opens a real five-card hand at three energy")
+	var party := CombatParty.new([{"id": "warden", "name": "Warden", "max_hp": 40},
+		{"id": "seamstress", "name": "Seamstress", "max_hp": 30},
+		{"id": "tinker", "name": "Tinker", "max_hp": 26}])
+	var deploy: Dictionary = CombatTinkerV3TurretCards.new().play_card(deck, party, id, 0)
+	_check(deploy.get("ok") == true and CombatTinkerV3TurretCards.is_pending_instance(deploy.get("state")),
+		id + ": the service fixture really pays for and registers a turret")
+	var enemies := CombatEnemies.new([{"id": "first", "name": "First", "max_hp": 40}])
+	_check(enemies.is_valid() and enemies.gain_block(1, 2),
+		id + ": the single-enemy service roster is valid and starts behind 2 Block")
+	if not statuses.is_empty():
+		enemies._enemies[0]["statuses"] = statuses.duplicate(true)
+	return [deploy.get("state", {}), enemies, rng, deck, party]
+
+
+## AC1 and AC2 at the service level: one authentic paid turret fires once at a single already-status-bearing
+## living enemy behind 2 Block; the hit is CombatStatuses' canonical adjustment of the printed base, applied
+## through Block before HP, and the statuses are read but never consumed.
+func _status_service(id: String) -> void:
+	var expected: Dictionary = _status_expectations()[id]
+	var base: int = int(TURRET[id].damage)
+	var rules := CombatStatuses.new()
+	var cases: Array = [
+		["no statuses", {}, expected["plain"]],
+		["zero Tangled", {"tangled": 0}, expected["plain"]],
+		["Tangled 1", {"tangled": 1}, expected["tangled"]],
+		["Tangled 2", {"tangled": 2}, expected["tangled"]],
+		["Exposed 1", {"exposed": 1}, expected["exposed"]],
+		["Exposed 1 and Tangled 1", {"exposed": 1, "tangled": 1}, expected["both"]],
+		["Exposed 1 and Tangled 2", {"exposed": 1, "tangled": 2}, expected["both"]],
+	]
+	for case in cases:
+		var statuses: Dictionary = case[1]
+		var expected_damage: int = int(case[2])
+		var label := "%s service %s" % [id, case[0]]
+		var fixture := _status_fixture(id, statuses)
+		var state: Dictionary = fixture[0]
+		var enemies: CombatEnemies = fixture[1]
+		var rng: RandomNumberGenerator = fixture[2]
+		var statuses_before: Dictionary = enemies.get_enemy(1).get("statuses", {}).duplicate(true)
+		var state_before: Dictionary = state.duplicate(true)
+		var rng_before: int = rng.state
+		_check(int(enemies.get_enemy(1).get("block")) == 2 and int(enemies.get_enemy(1).get("hp")) == 40,
+			label + ": the witness really starts at 40 HP behind 2 Block")
+		_check(CombatTinkerV3TurretCards.turret_definition(id).get("effects", {})
+			.get("turret", {}).get("damage") == base,
+			label + ": the printed catalogue still carries its own base damage")
+		var hit: Dictionary = CombatTinkerV3TurretCards.new().tick_turret(state, enemies, rng)
+		_check(hit.get("ok") == true and hit.get("reason") == "ticked", label + ": the tick is accepted")
+		_check(hit.get("damage") == expected_damage and hit.get("stored_damage") == base,
+			label + ": the shot deals " + str(expected_damage) + " from the printed " + str(base))
+		_check(rules.adjusted_attack_damage(base, {}, statuses) == expected_damage,
+			label + ": CombatStatuses itself computes the same once-only adjustment")
+		_check(hit.get("target_position") == 1 and hit.get("target_id") == "first"
+			and hit.get("target_statuses") == statuses_before,
+			label + ": the sole living enemy is chosen and its status map is quoted")
+		_check(hit.get("block_absorbed") == mini(2, expected_damage)
+			and hit.get("hp_loss") == expected_damage - mini(2, expected_damage),
+			label + ": Block absorbs the first 2 before any HP loss")
+		_check(hit.get("enemy_block_before") == 2 and hit.get("enemy_hp_before") == 40
+			and hit.get("damage_dealt") == expected_damage,
+			label + ": the receipt quotes the pre-hit record and accounts for the whole hit")
+		var after: Dictionary = enemies.get_enemy(1)
+		_check(after.get("block") == 0 and after.get("hp") == 40 - (expected_damage - 2),
+			label + ": exactly " + str(expected_damage - 2) + " HP is lost after 2 Block")
+		_check(after.get("statuses", {}) == statuses_before,
+			label + ": the shot reads the statuses and never consumes them")
+		_check(state == state_before and hit.get("state", {}).get("remaining") == 2,
+			label + ": the caller's instance is untouched and exactly one beat is spent")
+		_check(rng.state == rng_before and hit.get("rng_consumed") == false,
+			label + ": a sole living target costs no RNG")
+
+
+## AC3 at the service level: a malformed living target status map refuses the whole tick before the target
+## RNG, Block, HP or a remaining-beat decrement, and leaves the paid instance and roster exactly as paid.
+func _status_refusal(id: String) -> void:
+	for bad in [{"exposed": "1"}, {"tangled": -1}, {"exposed": 1.0}, {"weak": true},
+			{"poison": 1}, {"dodge_next_attack": 2}, {"cannot_buff_next_turn": false}, [],
+			{"tangled": 1, "blind_next_attack": "1"}]:
+		var fixture := _status_fixture(id, {})
+		var state: Dictionary = fixture[0]
+		var enemies: CombatEnemies = fixture[1]
+		var rng: RandomNumberGenerator = fixture[2]
+		enemies._enemies[0]["statuses"] = bad
+		var state_before: Dictionary = state.duplicate(true)
+		var roster_before: Array = enemies.get_enemies()
+		var rng_before: int = rng.state
+		var hit: Dictionary = CombatTinkerV3TurretCards.new().tick_turret(state, enemies, rng)
+		var label := "%s bad statuses %s" % [id, str(bad)]
+		_check(hit.get("ok") == false and hit.get("reason") == "malformed_statuses",
+			label + ": the tick is refused")
+		_check(state == state_before and state.get("remaining") == 3, label + ": no beat is spent")
+		_check(enemies.get_enemies() == roster_before, label + ": Block, HP and the bad map are untouched")
+		_check(int(enemies.get_enemy(1).get("hp")) == 40 and int(enemies.get_enemy(1).get("block")) == 2,
+			label + ": no HP and no Block change")
+		_check(rng.state == rng_before, label + ": the target RNG is never drawn")
+
+
+## AC3: a status-adjusted confirmed shot is still exactly one Enrage stack on the catalog Spoolback Hound,
+## with the status read but not consumed.
+func _status_enrage(id: String) -> void:
+	var fixture := _status_fixture(id, {})
+	var state: Dictionary = fixture[0]
+	var rng: RandomNumberGenerator = fixture[2]
+	var enemies := CombatEnemies.new([_catalog_hound()])
+	_check(enemies.is_valid() and enemies.get_enemy(1).get("enrage") == true
+		and enemies.gain_block(1, 2), id + ": the Enrage status fixture is the catalog Hound behind 2 Block")
+	enemies._enemies[0]["statuses"] = {"tangled": 1}
+	var expected: int = int(_status_expectations()[id]["tangled"])
+	var hit: Dictionary = CombatTinkerV3TurretCards.new().tick_turret(state, enemies, rng)
+	_check(hit.get("ok") == true and hit.get("damage") == expected
+		and hit.get("block_absorbed") == 2 and hit.get("hp_loss") == expected - 2,
+		id + ": the status-adjusted shot still lands through Block first")
+	_check(enemies.get_enemy(1).get("enrage_stacks") == 1
+		and enemies.get_enemy(1).get("hp") == 28 - (expected - 2)
+		and enemies.get_enemy(1).get("statuses") == {"tangled": 1},
+		id + ": one status-adjusted positive shot commits exactly one Enrage stack and consumes no status")
+
+
+## AC1 and AC2 on the real mounted path: one accepted End Turn fires the authentic turret at a single
+## already-status-bearing living enemy behind 2 Block, before that enemy's announced Block action.
+func _status_mounted(id: String, statuses: Dictionary, keyboard: bool) -> void:
+	var case_name := _status_case(statuses)
+	var expected: int = int(_status_expectations()[id][case_name])
+	var panel := await _begin(id, "status")
+	if panel == null:
+		await _dispose()
+		return
+	app.enemies._enemies[0]["statuses"] = statuses.duplicate(true)
+	var label := "%s mounted %s" % [id, case_name]
+	await _play(panel, keyboard)
+	_check(app.round_flow.get_turrets().size() == 1 and app.deck.energy == 1,
+		label + ": the held turret is paid and registered through the real hand")
+	var enemy: Dictionary = app.enemies.get_enemy(1)
+	_check(enemy.get("hp") == 40 and enemy.get("block") == 2 and enemy.get("statuses") == statuses,
+		label + ": the witness starts at 40 HP behind 2 Block with its statuses already present")
+	var oracle := _oracle()
+	var receipt: Dictionary = oracle[4][0]
+	await _press_end_turn(keyboard)
+	_check(app.deck.turn_active and _hp() == oracle[0],
+		label + ": the accepted End Turn lands the oracle's exact HP")
+	_check(oracle[1] == [1] and receipt.get("damage") == expected and receipt.get("block_absorbed") == 2,
+		label + ": the shot deals " + str(expected) + " and only the first 2 Block are absorbed")
+	_check(receipt.get("hp_loss") == expected - 2
+		and app.enemies.get_enemy(1).get("hp") == 40 - (expected - 2),
+		label + ": exactly " + str(expected - 2) + " HP is lost after Block")
+	_check(app.enemies.get_enemy(1).get("block") == 1,
+		label + ": the enemy's own announced Block lands only after the fuller shot")
+	_check(receipt.get("rng_consumed") == false and receipt.get("target_statuses") == statuses,
+		label + ": the sole living target costs no RNG and its statuses are read once")
+	_check(app.enemies.get_enemy(1).get("statuses") == _aged_statuses(statuses),
+		label + ": the turret consumes no status; only the enemy owner-turn boundary ages one")
+	_check(app.deck.hand == oracle[2] and app.run_rng.state == oracle[3],
+		label + ": the shot precedes the same seeded next hand")
+	var left: Array = app.round_flow.get_turrets()
+	_check(left.size() == 1 and left[0].remaining == 2 and left[0].damage == int(TURRET[id].damage)
+		and left[0].card_id == id, label + ": one beat is spent and the printed base stays stored")
+	await _dispose()
+
+
+## AC3 on the mounted path: a malformed target status map refuses the real End Turn with no shot, no spent
+## beat, no HP/Block change and no RNG draw.
+func _status_mounted_refusal(id: String) -> void:
+	var panel := await _begin(id, "status")
+	if panel == null:
+		await _dispose()
+		return
+	await _play(panel, false)
+	app.enemies._enemies[0]["statuses"] = {"tangled": "2"}
+	var before := _model_state()
+	await _press_end_turn(false)
+	_check(app.enemies.get_enemy(1).get("hp") == 40 and app.enemies.get_enemy(1).get("block") == 2,
+		id + ": a refused mounted End Turn leaves the witness HP and Block untouched")
+	_check(_model_state() == before and app.round_flow.get_turrets().size() == 1
+		and app.round_flow.get_turrets()[0].remaining == 3,
+		id + ": a malformed target status map refuses the mounted End Turn with no shot, beat or RNG")
+	await _dispose()
+
+
 ## AC3: stale, displaced, unheld, underfunded, closed or forged requests never pay, register or draw.
 ## Stage 0 mutates before the press; stage 1 mutates while the press is armed and waiting for release;
 ## stage 2 mutates after a keyboard accept is queued but before its deferred activation.
@@ -336,6 +564,13 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var keyboard := false
 	for id: String in TURRET:
+		_status_service(id)
+		_status_refusal(id)
+		_status_enrage(id)
+		for statuses in [{}, {"tangled": 2}, {"exposed": 1}, {"exposed": 1, "tangled": 1}]:
+			var statuses_map: Dictionary = statuses
+			await _status_mounted(id, statuses_map, keyboard if statuses.is_empty() else not keyboard)
+		await _status_mounted_refusal(id)
 		await _success(id, keyboard)
 		await _success(id, not keyboard)
 		await _hound(id, keyboard)
