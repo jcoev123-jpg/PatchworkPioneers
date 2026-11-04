@@ -1,0 +1,272 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/stitched/stitched_part_inspector.gd" id="1_script"]
+[ext_resource type="Theme" path="res://themes/gothic_theme.tres" id="2_theme"]
+
+[node name="StitchedPartInspector" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+theme = ExtResource("2_theme")
+script = ExtResource("1_script")
+
+[node name="Backdrop" type="Panel" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Title" type="Label" parent="."]
+layout_mode = 0
+offset_left = 33.0
+offset_top = 21.0
+offset_right = 948.0
+offset_bottom = 91.0
+theme_type_variation = &"PatchHeading"
+theme_override_font_sizes/font_size = 42
+text = "THE STITCHED RELIQUARY"
+
+[node name="Subtitle" type="Label" parent="."]
+layout_mode = 0
+offset_left = 35.0
+offset_top = 82.0
+offset_right = 950.0
+offset_bottom = 107.0
+theme_override_font_sizes/font_size = 17
+text = "An unaltered record of sewn-in strengths, ranks and rites"
+
+[node name="CloseButton" type="Button" parent="."]
+layout_mode = 0
+offset_left = 1082.0
+offset_top = 36.0
+offset_right = 1247.0
+offset_bottom = 87.0
+focus_mode = 2
+theme_type_variation = &"PatchHeadingButton"
+theme_override_font_sizes/font_size = 23
+text = "Close"
+
+[node name="CatalogPanel" type="Panel" parent="."]
+layout_mode = 0
+offset_left = 28.0
+offset_top = 127.0
+offset_right = 493.0
+offset_bottom = 692.0
+
+[node name="CatalogHeading" type="Label" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 16.0
+offset_right = 449.0
+offset_bottom = 59.0
+theme_type_variation = &"PatchHeading"
+theme_override_font_sizes/font_size = 27
+text = "SLOTS OF THE SEWN"
+
+[node name="CatalogInstruction" type="Label" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 59.0
+offset_right = 445.0
+offset_bottom = 88.0
+theme_override_font_sizes/font_size = 17
+text = "Select a slot, then a part to examine"
+
+[node name="SlotHead" type="Button" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 99.0
+offset_right = 120.0
+offset_bottom = 146.0
+focus_mode = 2
+toggle_mode = true
+text = "HEAD"
+
+[node name="SlotArms" type="Button" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 128.0
+offset_top = 99.0
+offset_right = 230.0
+offset_bottom = 146.0
+focus_mode = 2
+toggle_mode = true
+text = "ARMS"
+
+[node name="SlotTorso" type="Button" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 238.0
+offset_top = 99.0
+offset_right = 340.0
+offset_bottom = 146.0
+focus_mode = 2
+toggle_mode = true
+text = "TORSO"
+
+[node name="SlotLegs" type="Button" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 348.0
+offset_top = 99.0
+offset_right = 450.0
+offset_bottom = 146.0
+focus_mode = 2
+toggle_mode = true
+text = "LEGS"
+
+[node name="PartScroll" type="ScrollContainer" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 18.0
+offset_top = 168.0
+offset_right = 450.0
+offset_bottom = 500.0
+horizontal_scroll_mode = 0
+
+[node name="PartRows" type="VBoxContainer" parent="CatalogPanel/PartScroll"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 9
+
+[node name="StatusLabel" type="Label" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 516.0
+offset_right = 448.0
+offset_bottom = 551.0
+theme_override_font_sizes/font_size = 18
+text = "No parts supplied."
+
+[node name="DetailsPanel" type="Panel" parent="."]
+layout_mode = 0
+offset_left = 512.0
+offset_top = 127.0
+offset_right = 1252.0
+offset_bottom = 692.0
+
+[node name="PartName" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 25.0
+offset_top = 17.0
+offset_right = 718.0
+offset_bottom = 69.0
+theme_type_variation = &"PatchHeading"
+theme_override_font_sizes/font_size = 34
+text = "No part selected"
+
+[node name="PartMeta" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 75.0
+offset_right = 713.0
+offset_bottom = 105.0
+theme_override_font_sizes/font_size = 17
+text = "Choose a supplied part to inspect its stitches."
+
+[node name="PartText" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 116.0
+offset_right = 708.0
+offset_bottom = 177.0
+theme_override_font_sizes/font_size = 20
+autowrap_mode = 3
+
+[node name="Divider" type="HSeparator" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 25.0
+offset_top = 188.0
+offset_right = 713.0
+offset_bottom = 197.0
+
+[node name="TierHeading" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 27.0
+offset_top = 204.0
+offset_right = 391.0
+offset_bottom = 234.0
+theme_type_variation = &"PatchHeading"
+theme_override_font_sizes/font_size = 23
+text = "STITCH TIER"
+
+[node name="TierI" type="Button" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 25.0
+offset_top = 243.0
+offset_right = 153.0
+offset_bottom = 287.0
+focus_mode = 2
+toggle_mode = true
+text = "I"
+
+[node name="TierII" type="Button" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 163.0
+offset_top = 243.0
+offset_right = 291.0
+offset_bottom = 287.0
+focus_mode = 2
+toggle_mode = true
+text = "II"
+
+[node name="TierIII" type="Button" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 301.0
+offset_top = 243.0
+offset_right = 429.0
+offset_bottom = 287.0
+focus_mode = 2
+toggle_mode = true
+text = "III"
+
+[node name="StatLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 301.0
+offset_right = 709.0
+offset_bottom = 338.0
+theme_override_font_sizes/font_size = 20
+
+[node name="AbilityLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 345.0
+offset_right = 709.0
+offset_bottom = 382.0
+theme_override_font_sizes/font_size = 20
+
+[node name="RanksLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 389.0
+offset_right = 709.0
+offset_bottom = 424.0
+theme_override_font_sizes/font_size = 19
+
+[node name="NumbersLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 430.0
+offset_right = 709.0
+offset_bottom = 467.0
+theme_override_font_sizes/font_size = 20
+
+[node name="EffectsLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 471.0
+offset_right = 709.0
+offset_bottom = 510.0
+theme_override_font_sizes/font_size = 20
+autowrap_mode = 3
+
+[node name="MovementLine" type="Label" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 26.0
+offset_top = 519.0
+offset_right = 709.0
+offset_bottom = 549.0
+theme_override_font_sizes/font_size = 19
