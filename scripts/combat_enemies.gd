@@ -175,10 +175,16 @@ static func authentic_broodling_mother(mother: Dictionary, position: int) -> boo
 	var actual: Array = slot["actions"]
 	var expected: Array = [
 		{"weight": 4 if queen else 3, "action": {"type": "attack",
-			"amount": 25 if queen else 7}}
+			"amount": 5 if queen else 7}}
 	]
 	if queen:
 		expected.append({"weight": 2, "action": {"type": "summon", "amount": 0}})
+		expected.append({"weight": 1, "action": {
+			"type": "attack", "amount": 6, "hits": 2, "move": "attack2"}})
+		expected.append({"weight": 1, "action": {
+			"type": "attack", "amount": 9, "move": "attack3"}})
+		expected.append({"weight": 1, "action": {
+			"type": "attack", "amount": 10, "move": "attack4"}})
 	else:
 		expected = [
 			{"weight": 2, "action": {"type": "snip_block", "amount": 0}},

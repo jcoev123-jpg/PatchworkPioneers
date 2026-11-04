@@ -134,7 +134,9 @@ const KEYWORD_ELITES := {
 		"target": "lowest_living_hp", "actions": [
 			{"type": "attack", "amount": 8, "weight": 4},
 			{"type": "debuff", "status": "weak", "amount": 2, "weight": 2},
-			{"type": "block", "amount": 6, "weight": 1}]}}
+			{"type": "block", "amount": 6, "weight": 1},
+			{"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1}]}}
 const PATTERNS := {
 	"needle_marshal_elite": [
 		{"enemy_position":1,"pattern":[
@@ -1400,7 +1402,7 @@ func _test_hexer_lash() -> void:
 	var peers := {
 		"needle_marshal": [5, 4, 6], "scissor_bailiff": [9, 8, 7], "zipper_hauler": [8, 10, 6],
 		"needle_briar_guard": [9, 8, 7], "spool_snarekeeper": [8, 9, 6],
-		"pincushion_matriarch": [9, 8, 10], "spool_leech": [8]}
+		"pincushion_matriarch": [9, 8, 10], "spool_leech": [8, 6, 10]}
 	for id in peers:
 		var peer := _record(elites, id)
 		var amounts: Array = []
@@ -3211,6 +3213,7 @@ func _test_keyword_elites() -> void:
 			_test_weighted_named_strikes(record)
 		else:
 			_leech_drain(record)
+			_test_leech_named_strikes(record)
 	# Earlier tests validate every field of all six earlier identities by ID.
 	_check(catalog == untouched and _catalog(ELITES) == untouched,
 		"keyword elite tests preserve the real catalog and parsed inputs")
@@ -4002,3 +4005,170 @@ func _weighted_phase_replay(record: Dictionary, seed_value: int) -> Array:
 		and seen.has("shove" if record.id == "spool_snarekeeper" else "block") and seen.has("debuff"), "full weighted replay exercises all five alternatives")
 	trace[-1].append([scheduler.get_intents(), rng.state])
 	return trace
+
+
+## Catalog-backed Spool Leech: the two shipped named alternatives must bind to
+## a real wounded source and a uniquely lowest-HP, living hero. No encounter is
+## claimed; this is the production weighted scheduler/phase/pose contract.
+func _test_leech_named_strikes(record: Dictionary) -> void:
+	_check(record.get("id") == "spool_leech"
+		and record.get("drain") == true and record.get("chew_block_on_attack") == true
+		and record.get("max_hp") == 42 and record.get("intent", {}).get("target") == "lowest_living_hp",
+		"Leech named attack prerequisites are real authored metadata")
+	var witnesses := {}
+	for seed_value in range(1, 201):
+		var oracle := _rng(seed_value)
+		var roll := oracle.randi_range(1, 9)
+		if roll in [8, 9]:
+			var move := "attack2" if roll == 8 else "attack3"
+			if not witnesses.has(move):
+				var result := _announcements(record, seed_value, 1)
+				_check(result.size() == 1 and result[0].size() == 1
+					and result[0][0].get("move") == move,
+					"real Leech weighted schedule admits " + move)
+				witnesses[move] = seed_value
+		if witnesses.size() == 2:
+			break
+	for move in ["attack2", "attack3"]:
+		_check(witnesses.has(move), "seeded weight-one Leech witness: " + move)
+		if not witnesses.has(move):
+			continue
+		var amount := 6 if move == "attack2" else 10
+		var hits := 2 if move == "attack2" else 1
+		var title := "Thread Drain" if move == "attack2" else "Body Slam"
+		var fallback := "res://assets/paper/enemies/spool_leech_attack.png"
+		var named_art := "res://assets/paper/enemies/spool_leech_%s.png" % move
+		for forced in [false, true]:
+			# Missing HP, target Block, target HP. The last case proves two
+			# separate 3-point receipts (3+2 HP loss, never a six-point hit).
+			for scenario in [[12, 0, 10], [12, 7, 10], [2, 7, 10], [12, 0, 5]]:
+				var history: Array = []
+				for replay in range(2):
+					var source := record.duplicate(true)
+					if forced:
+						source.intent.actions = source.intent.actions.filter(
+							func(a: Dictionary) -> bool: return a.get("move", "") == move)
+						_check(source.intent.actions.size() == 1
+							and source.intent.actions[0] in record.intent.actions,
+							"forced Leech retains exactly one genuine authored alternative")
+					var f := _new_elite_fixture(source)
+					var party: CombatParty = f.party
+					var enemies: CombatEnemies = f.enemies
+					var missing: int = scenario[0]
+					var shield: int = scenario[1]
+					var hp: int = scenario[2]
+					_check(enemies.apply_damage(1, missing)
+						and party.apply_damage(2, 30 - hp) and party.gain_block(2, shield)
+						and not party.is_downed(2) and party.get_hero(2).hp == hp
+						and party.get_hero(2).block == shield
+						and party.get_hero(1).hp > hp and party.get_hero(3).hp > hp
+						and enemies.get_enemy(1).hp == 42 - missing,
+						"wounded genuine Leech faces living uniquely lowest-HP hero")
+					var rng := _rng(witnesses[move])
+					var oracle := _rng(witnesses[move])
+					var scheduler := CombatEnemyIntents.new([
+						{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+					var bound := scheduler.is_valid() and scheduler.bind_battle(enemies, party, rng)
+					_check(bound and scheduler.is_bound(), "wounded Leech binds real policy scheduler")
+					if not bound:
+						continue
+					if not forced:
+						_check(oracle.randi_range(1, 9) == (8 if move == "attack2" else 9),
+							"independent nine-weight oracle chooses the named Leech strike")
+					var expected := {"type": "attack", "amount": amount,
+						"move": move, "enemy_position": 1, "target_position": 2}
+					if hits == 2:
+						expected["hits"] = 2
+					var input := scheduler.get_intents()
+					_check(input == [expected] and rng.state == oracle.state
+						and scheduler.get_intents() == input,
+						"genuine weighted/forced announcement chooses lowest living HP without extra RNG")
+					var pose := LiveMovePoseCatalog.new().lookup_enemy("spool_leech", expected, fallback)
+					_check(pose.get("name") == title and pose.get("pose") == move
+						and pose.get("covers") == ["attack"] and pose.get("named_art") == named_art
+						and pose.get("art_available") == ResourceLoader.exists(named_art, "Texture2D")
+						and pose.get("art") == (named_art if pose.get("art_available") else fallback),
+						"Leech manifest provides exact named pose and real asset/fallback")
+					_check(MissingMoveArt.new().lookup_enemy("spool_leech", expected, fallback) == {
+						"name": title, "pose": move, "covers": ["attack"], "named_art": named_art,
+						"art": fallback, "art_available": false, "fallback_used": true},
+						"Leech missing named art preserves identity using normal fallback")
+					var before := [party.get_heroes(), enemies.get_enemies(), rng.state, input.duplicate(true)]
+					for change in [{"move": "attack4"},
+							{"move": "attack3" if move == "attack2" else "attack2"},
+							{"amount": amount + 1}, {"hits": 3},
+							{"hits": 1 if hits == 2 else 2},
+							{"target_position": 0}, {"target_position": 4},
+							{"target_position": "2"}, {"enemy_position": 2}]:
+						var forged := [expected.merged(change, true)]
+						var forged_before := forged.duplicate(true)
+						_check(CombatEnemyPhase.new().execute_phase(party, enemies, forged, null, true)
+							== {"ok": false, "events": []} and forged == forged_before
+							and [party.get_heroes(), enemies.get_enemies(), rng.state, scheduler.get_intents()] ==
+							[before[0], before[1], before[2], before[3]],
+							"forged Leech move/amount/hits/target/source fails atomically: " + str(change))
+					var original: Dictionary = enemies.get_enemy(1).intent
+					enemies._enemies[0].intent.actions = original.actions.filter(
+						func(a: Dictionary) -> bool: return a.get("move", "") != move)
+					var stale_actors := enemies.get_enemies()
+					_check(CombatEnemyPhase.new().execute_phase(party, enemies, input, null, true)
+						== {"ok": false, "events": []}
+						and enemies.get_enemies() == stale_actors and party.get_heroes() == before[0]
+						and rng.state == before[2] and scheduler.get_intents() == input,
+						"expired Leech named alternative fails closed with no actor/RNG spend")
+					enemies._enemies[0].intent = original
+					var witness := ZipperHitWitness.new()
+					var receipt := CombatEnemyPhase.new().execute_phase(party, enemies, input, witness, true)
+					var expected_packets: Array = []
+					var expected_events: Array = []
+					var remaining: int = hp
+					for hit in range(hits):
+						var packet: int = amount / hits
+						var after_hp: int = maxi(0, remaining - packet)
+						expected_packets.append([packet, remaining, 0, after_hp, 0])
+						expected_events.append({"type": "attack", "enemy_position": 1,
+							"target_position": 2, "move": move, "applied": true,
+							"actual_target_position": 2, "redirected": false,
+							"retaliation_damage": 0, "retaliatory_damage": 0})
+						remaining = after_hp
+					var heroes: Array = before[0].duplicate(true)
+					heroes[1].hp = remaining
+					heroes[1].block = 0
+					var foes: Array = before[1].duplicate(true)
+					foes[0].hp = mini(42, 42 - missing + hp - remaining)
+					_check(receipt == {"ok": true, "events": expected_events}
+						and witness.packets == expected_packets
+						and party.get_heroes() == heroes and enemies.get_enemies() == foes
+						and rng.state == before[2] and scheduler.get_intents() == input
+						and input == before[3],
+						"Leech named hits chew Block, drain per actual packet and cap at 42")
+					var trace := [input, receipt, witness.packets, party.get_heroes(),
+						enemies.get_enemies(), rng.state]
+					if replay == 0:
+						history = trace
+					else:
+						_check(trace == history, "same-seed named Leech phase/packet/RNG replay")
+
+		# Negative control: with chew absent, protective Block prevents all
+		# damage and heals zero despite the valid Drain flag.
+		var plain := record.duplicate(true)
+		plain.erase("chew_block_on_attack")
+		plain.intent.actions = plain.intent.actions.filter(
+			func(a: Dictionary) -> bool: return a.get("move", "") == move)
+		var no_chew := _new_elite_fixture(plain)
+		var p: CombatParty = no_chew.party
+		var e: CombatEnemies = no_chew.enemies
+		_check(e.apply_damage(1, 12) and p.apply_damage(2, 20)
+			and p.gain_block(2, 10) and p.get_hero(2).hp == 10,
+			"negative Leech has 30 HP and ten real Block on lowest living hero")
+		var seed_rng := _rng(witnesses[move])
+		var scheduler := CombatEnemyIntents.new([
+			{"enemy_position": 1, "pattern": [{"type": "block", "amount": 1}]}])
+		_check(scheduler.bind_battle(e, p, seed_rng), "no-chew control is a genuine bound fight")
+		var announced := scheduler.get_intents()
+		var before_rng := seed_rng.state
+		var no_chew_result := CombatEnemyPhase.new().execute_phase(p, e, announced, null, true)
+		_check(no_chew_result.get("ok", false) and no_chew_result.get("events", []).size() == hits
+			and p.get_hero(2).hp == 10 and p.get_hero(2).block == 10 - amount
+			and e.get_enemy(1).hp == 30 and seed_rng.state == before_rng,
+			"absent Block-chew preserves HP/Drain zero; packets spend only Block")

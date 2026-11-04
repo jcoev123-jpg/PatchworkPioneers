@@ -342,13 +342,16 @@ func _test_behemoth_phase_rules() -> void:
 	var p1_intent: Dictionary = behemoth_def.get("intent", {})
 	_check(p1_intent.get("target") == "front", "shipped phase-one intent target is front")
 	var p1_actions: Array = p1_intent.get("actions", [])
-	_check(p1_actions.size() == 3, "shipped phase-one intent has exactly 3 actions")
+	_check(p1_actions.size() == 6, "shipped phase-one intent has exactly 6 actions")
 	var expected_p1_actions := [
 		{"type": "attack", "amount": 34, "weight": 4},
 		{"type": "block", "amount": 3, "weight": 2},
-		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1},
+		{"type": "attack", "amount": 30, "move": "attack2", "weight": 1},
+		{"type": "attack", "amount": 22, "hits": 2, "move": "attack3", "weight": 1},
+		{"type": "attack", "amount": 38, "move": "attack4", "weight": 1}
 	]
-	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 34 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+	_check(p1_actions == expected_p1_actions, "shipped phase-one actions match attack 34 (wt 4), block 3 (wt 2), weak 1 (wt 1) plus the three weight-1 named attacks")
 
 	# Validate Phase 2 table
 	var p2_dict: Dictionary = parsed_p2 if parsed_p2 is Dictionary else {}
@@ -358,13 +361,16 @@ func _test_behemoth_phase_rules() -> void:
 	var p2_intent: Dictionary = p2_dict.get("intent", {})
 	_check(p2_intent.get("target") == "lowest_living_hp", "phase-two intent target is lowest_living_hp")
 	var p2_actions: Array = p2_intent.get("actions", [])
-	_check(p2_actions.size() == 3, "phase-two intent has exactly 3 actions")
+	_check(p2_actions.size() == 6, "phase-two intent has exactly 6 actions")
 	var expected_p2_actions := [
 		{"type": "attack", "amount": 40, "weight": 4},
 		{"type": "block", "amount": 3, "weight": 2},
-		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+		{"type": "debuff", "amount": 1, "status": "weak", "weight": 1},
+		{"type": "attack", "amount": 36, "move": "attack2", "weight": 1},
+		{"type": "attack", "amount": 28, "hits": 2, "move": "attack3", "weight": 1},
+		{"type": "attack", "amount": 44, "move": "attack4", "weight": 1}
 	]
-	_check(p2_actions == expected_p2_actions, "phase-two actions match attack 40 (wt 4), block 3 (wt 2), weak 1 (wt 1)")
+	_check(p2_actions == expected_p2_actions, "phase-two actions match attack 40 (wt 4), block 3 (wt 2), weak 1 (wt 1) plus the three weight-1 named attacks")
 
 	# Snapshots before any projection
 	var boss_deep_before: Variant = parsed_boss.duplicate(true)
@@ -506,6 +512,38 @@ func _test_behemoth_phase_rules() -> void:
 	var bad_amt2: Dictionary = p2_dict.duplicate(true)
 	bad_amt2["intent"]["actions"][0]["amount"] = 5
 	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, bad_amt2).get("ok") == false, "attack amount 5 != 40 fails closed")
+	# Every forged part of the authenticated kit fails closed: a swapped move,
+	# dropped/rewritten hits, changed weights, invented keys or an extra action.
+	var forged_move_p2: Dictionary = p2_dict.duplicate(true)
+	forged_move_p2["intent"]["actions"][3]["move"] = "attack3"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, forged_move_p2).get("ok") == false, "phase-two swapped attack2 move fails closed")
+	var forged_move_p1: Dictionary = behemoth_def.duplicate(true)
+	forged_move_p1["intent"]["actions"][3]["move"] = "attack4"
+	_check(CombatBehemothPhaseRules.select_phase(forged_move_p1, 22, p2_dict).get("ok") == false, "phase-one swapped attack2 move fails closed")
+	var forged_move_p1_amt: Dictionary = behemoth_def.duplicate(true)
+	forged_move_p1_amt["intent"]["actions"][4]["amount"] = 28
+	_check(CombatBehemothPhaseRules.select_phase(forged_move_p1_amt, 22, p2_dict).get("ok") == false, "phase-one phased-in attack3 amount fails closed")
+	var forged_missing_hits: Dictionary = p2_dict.duplicate(true)
+	forged_missing_hits["intent"]["actions"][4].erase("hits")
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, forged_missing_hits).get("ok") == false, "phase-two two-packet attack without hits fails closed")
+	var forged_hits_one: Dictionary = p2_dict.duplicate(true)
+	forged_hits_one["intent"]["actions"][4]["hits"] = 1
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, forged_hits_one).get("ok") == false, "phase-two single-packet hits 1 fails closed")
+	var forged_hits_three: Dictionary = behemoth_def.duplicate(true)
+	forged_hits_three["intent"]["actions"][4]["hits"] = 3
+	_check(CombatBehemothPhaseRules.select_phase(forged_hits_three, 22, p2_dict).get("ok") == false, "phase-one hits 3 fails closed")
+	var forged_weight_p2: Dictionary = p2_dict.duplicate(true)
+	forged_weight_p2["intent"]["actions"][3]["weight"] = 2
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, forged_weight_p2).get("ok") == false, "phase-two weight 2 named attack fails closed")
+	var forged_weight_p1: Dictionary = behemoth_def.duplicate(true)
+	forged_weight_p1["intent"]["actions"][5]["weight"] = 4
+	_check(CombatBehemothPhaseRules.select_phase(forged_weight_p1, 22, p2_dict).get("ok") == false, "phase-one weight 4 attack4 fails closed")
+	var invented_key: Dictionary = p2_dict.duplicate(true)
+	invented_key["intent"]["actions"][0]["status"] = "weak"
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, invented_key).get("ok") == false, "phase-two invented key on the base attack fails closed")
+	var extra_action: Dictionary = p2_dict.duplicate(true)
+	extra_action["intent"]["actions"].append({"type": "attack", "amount": 44, "move": "attack4", "weight": 1})
+	_check(CombatBehemothPhaseRules.select_phase(behemoth_def, 21, extra_action).get("ok") == false, "phase-two appended seventh action fails closed")
 	# The repaired inversion is part of the exact contract: the old phase-one
 	# 40 and the old phase-two 4 are no longer accepted by either validator.
 	var old_p1_amt: Dictionary = behemoth_def.duplicate(true)

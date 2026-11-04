@@ -229,6 +229,92 @@ const WARDEN_V3_CASES := [
 		"keywords": ["Guard", "Taunt"], "guard": true, "taunt": true, "toss": false},
 ]
 
+
+## AC1/AC2: the 20 authentic V3 Tinker Combat Scrap printings (8 starter, 12 pool),
+## looked up by named ID in V3TinkerStarterCards and V3TinkerPoolCards.
+const TINKER_V3_CASES := [
+	{"catalog": "starter", "id": "tinker_v3_cog_shot",
+		"line": "Deal 5. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 5.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_cog_shot_plus",
+		"line": "Deal 7. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 7.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_casing_ward",
+		"line": "Gain 5 Block. Gain 1 Combat Scrap.",
+		"phrases": ["Gain 5 Block.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_casing_ward_plus",
+		"line": "Gain 7 Block. Gain 1 Combat Scrap.",
+		"phrases": ["Gain 7 Block.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_scrap_bomb",
+		"line": "Deal 4 to all. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 4 to all.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_scrap_bomb_plus",
+		"line": "Deal 6 to all. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 6 to all.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_tune_up",
+		"line": "Draw 1. Gain 1 Combat Scrap.",
+		"phrases": ["Draw 1.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "starter", "id": "tinker_v3_tune_up_plus",
+		"line": "Draw 2. Gain 1 Combat Scrap.",
+		"phrases": ["Draw 2.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_brass_casing",
+		"line": "Deal 4. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 4.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_brass_casing_plus",
+		"line": "Deal 6. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 6.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_gear_brace",
+		"line": "Gain 5 Block. Gain 1 Combat Scrap.",
+		"phrases": ["Gain 5 Block.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_gear_brace_plus",
+		"line": "Gain 7 Block. Gain 1 Combat Scrap.",
+		"phrases": ["Gain 7 Block.", "Gain 1 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_spare_screws",
+		"line": "Draw 1. Gain 2 Combat Scrap.",
+		"phrases": ["Draw 1.", "Gain 2 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 2, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_spare_screws_plus",
+		"line": "Draw 1. Gain 2 Combat Scrap.",
+		"phrases": ["Draw 1.", "Gain 2 Combat Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 2, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_spring_clamp",
+		"line": "Deal 3. Weak 1. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 3. Weak 1.", "Gain 1 Combat Scrap."],
+		"keywords": ["Weak 1", "Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_spring_clamp_plus",
+		"line": "Deal 4. Weak 1. Gain 1 Combat Scrap.",
+		"phrases": ["Deal 4. Weak 1.", "Gain 1 Combat Scrap."],
+		"keywords": ["Weak 1", "Combat Scrap"], "gain": 1, "is_spender": false},
+	{"catalog": "pool", "id": "tinker_v3_overload",
+		"line": "Deal 2. Spend all Combat Scrap for +3 damage per Scrap.",
+		"phrases": ["Deal 2.", "Spend all Combat Scrap for +3 damage per Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 0, "is_spender": true},
+	{"catalog": "pool", "id": "tinker_v3_overload_plus",
+		"line": "Deal 3. Spend all Combat Scrap for +4 damage per Scrap.",
+		"phrases": ["Deal 3.", "Spend all Combat Scrap for +4 damage per Scrap."],
+		"keywords": ["Combat Scrap"], "gain": 0, "is_spender": true},
+	{"catalog": "pool", "id": "tinker_v3_scrapstorm",
+		"line": "Deal 3 to all. Spend up to 3 Combat Scrap for +1 per spent Scrap to each living enemy.",
+		"phrases": ["Deal 3 to all.", "Spend up to 3 Combat Scrap for +1 per spent Scrap to each living enemy."],
+		"keywords": ["Combat Scrap"], "gain": 0, "is_spender": true},
+	{"catalog": "pool", "id": "tinker_v3_scrapstorm_plus",
+		"line": "Deal 4 to all. Spend up to 3 Combat Scrap for +1 per spent Scrap to each living enemy.",
+		"phrases": ["Deal 4 to all.", "Spend up to 3 Combat Scrap for +1 per spent Scrap to each living enemy."],
+		"keywords": ["Combat Scrap"], "gain": 0, "is_spender": true},
+]
+
 var failures: Array[String] = []
 var checks := 0
 var warden := WardenPoolCards.new()
@@ -243,6 +329,8 @@ var v3_seamstress_starter := V3SeamstressStarterCards.new()
 var v3_seamstress_pool := V3SeamstressPoolCards.new()
 var v3_warden_starter := V3WardenStarterCards.new()
 var v3_warden_pool := V3WardenPoolCards.new()
+var v3_tinker_starter := V3TinkerStarterCards.new()
+var v3_tinker_pool := V3TinkerPoolCards.new()
 
 
 func _initialize() -> void:
@@ -276,6 +364,9 @@ func _initialize() -> void:
 	_test_warden_v3_faces()
 	_test_warden_v3_help()
 	_test_warden_v3_negative()
+	_test_tinker_v3_faces()
+	_test_tinker_v3_help()
+	_test_tinker_v3_negative()
 	_check(randi() == expected_global, "short-line formatting draws no global RNG")
 	for failure in failures:
 		printerr(failure)
@@ -2867,3 +2958,282 @@ func _test_warden_v3_negative() -> void:
 		and not _has_keyword_row(tether_card, "Shield Toss"), "Tether Loop has no V3 Warden rows")
 
 
+
+func _tinker_v3_definition(catalog: String, card_id: String) -> Dictionary:
+	if catalog == "starter":
+		return v3_tinker_starter.get_definition(card_id)
+	return v3_tinker_pool.get_definition(card_id)
+
+
+func _test_tinker_v3_faces() -> void:
+	for entry in TINKER_V3_CASES:
+		var catalog: String = str(entry["catalog"])
+		var card_id: String = str(entry["id"])
+		var expected_line: String = str(entry["line"])
+		var expected_phrases: Array = entry["phrases"]
+		var definition := _tinker_v3_definition(catalog, card_id)
+		_check(not definition.is_empty(), "Tinker V3 catalog record exists: " + card_id)
+		if definition.is_empty():
+			continue
+		var original: Dictionary = definition.duplicate(true)
+		var described: Dictionary = CardShortRules.describe(definition)
+		var line := str(described.get("line", ""))
+		_check(described.get("known") == true, "face record is known: " + card_id)
+		_check(not bool(described.get("unknown", true)),
+			"face record is fully described, no fallback: " + card_id)
+		_check(line == expected_line,
+			"short face for %s: got '%s', want '%s'" % [card_id, line, expected_line])
+		var phrases: Array = described.get("phrases", [])
+		_check(phrases.size() == expected_phrases.size(),
+			"phrases count for %s: got %d, want %d" % [card_id, phrases.size(), expected_phrases.size()])
+		for i in range(mini(phrases.size(), expected_phrases.size())):
+			_check(str(phrases[i]) == str(expected_phrases[i]),
+				"phrase %d for %s: got '%s', want '%s'" % [i, card_id, str(phrases[i]), str(expected_phrases[i])])
+		_check(CardShortRules.line(definition) == expected_line,
+			"CardShortRules.line matches for " + card_id)
+		_check(CardShortRules.is_authored_v3_tinker_combat_scrap(definition),
+			"is_authored_v3_tinker_combat_scrap match for " + card_id)
+		_check(CardShortRules.is_authored_combat_scrap(definition),
+			"is_authored_combat_scrap alias match for " + card_id)
+		# Gain cards mention Combat Scrap once per cast (including Scrap Bomb)
+		if not bool(entry["is_spender"]):
+			var gain_amount: int = int(entry["gain"])
+			_check(line.count("Combat Scrap") == 1,
+				"Combat Scrap mentioned exactly once on face: " + card_id)
+			_check(line.count("Gain") == (2 if (card_id.contains("ward") or card_id.contains("brace")) else 1),
+				"Gain clause count correct: " + card_id)
+			_check(line.contains("Gain %d Combat Scrap." % gain_amount),
+				"gain clause amount correct: " + card_id)
+			_check(not line.contains("wallet"), "face never mentions wallet: " + card_id)
+		else:
+			# Spenders print full spend rule without flat extra hit
+			if card_id.begins_with("tinker_v3_overload"):
+				_check(line.contains("Spend all Combat Scrap"),
+					"Overload states 'Spend all Combat Scrap': " + card_id)
+				var per_scrap := 4 if card_id.ends_with("_plus") else 3
+				_check(line.contains("%d damage per Scrap" % per_scrap),
+					"Overload states '%d damage per Scrap': " % per_scrap + card_id)
+				var base_dmg := 3 if card_id.ends_with("_plus") else 2
+				_check(line.begins_with("Deal %d." % base_dmg),
+					"Overload base damage preserved: " + card_id)
+			elif card_id.begins_with("tinker_v3_scrapstorm"):
+				_check(line.contains("Spend up to 3 Combat Scrap"),
+					"Scrapstorm states 'Spend up to 3 Combat Scrap': " + card_id)
+				_check(line.contains("+1 per spent Scrap to each living enemy"),
+					"Scrapstorm states '+1 per spent Scrap to each living enemy': " + card_id)
+				var base_dmg := 4 if card_id.ends_with("_plus") else 3
+				_check(line.begins_with("Deal %d to all." % base_dmg),
+					"Scrapstorm base damage preserved: " + card_id)
+		_check(definition == original, "Tinker V3 record never mutated: " + card_id)
+
+
+func _test_tinker_v3_help() -> void:
+	for entry in TINKER_V3_CASES:
+		var catalog: String = str(entry["catalog"])
+		var card_id: String = str(entry["id"])
+		var expected_keywords: Array = entry["keywords"]
+		var definition := _tinker_v3_definition(catalog, card_id)
+		var original: Dictionary = definition.duplicate(true)
+		var rows: Array[Dictionary] = CardKeywordGlossary.describe(definition)
+		_check(rows.size() == expected_keywords.size(),
+			"Tinker V3 Help rows count for %s: got %d, want %d" % [card_id, rows.size(), expected_keywords.size()])
+		for i in range(mini(rows.size(), expected_keywords.size())):
+			var row_kw := str(rows[i].get("keyword", ""))
+			var exp_kw := str(expected_keywords[i])
+			_check(row_kw == exp_kw,
+				"Tinker V3 Help row %d keyword for %s: got '%s', want '%s'" % [i, card_id, row_kw, exp_kw])
+			var explanation := str(rows[i].get("explanation", ""))
+			if exp_kw == "Combat Scrap":
+				_check(explanation == CardKeywordGlossary.COMBAT_SCRAP_EXPLANATION,
+					"Combat Scrap explanation matches COMBAT_SCRAP_EXPLANATION for " + card_id)
+				_check(explanation.contains("combat-local counter") or explanation.contains("during battle"),
+					"Combat Scrap explanation mentions per-combat counter: " + card_id)
+				_check(explanation.contains("wallet scraps") and explanation.contains("never"),
+					"Combat Scrap explanation distinguishes from wallet scraps: " + card_id)
+				_check(explanation.contains("Overload") and explanation.contains("all"),
+					"Combat Scrap explanation explains Overload spends all: " + card_id)
+				_check(explanation.contains("Scrapstorm") and explanation.contains("up to 3"),
+					"Combat Scrap explanation explains Scrapstorm limit: " + card_id)
+				_check(explanation.contains("retains") or explanation.contains("surplus"),
+					"Combat Scrap explanation mentions retained surplus: " + card_id)
+			elif exp_kw == "Weak 1":
+				_check(explanation.contains("25% less attack damage"),
+					"Spring Clamp retains Weak Help row: " + card_id)
+		# Assert detached results (mutating rows array doesn't affect subsequent calls)
+		if not rows.is_empty():
+			rows[0]["keyword"] = "TAMPERED"
+			_check(CardKeywordGlossary.describe(definition)[0]["keyword"] != "TAMPERED",
+				"glossary return dictionaries are detached for " + card_id)
+		_check(definition == original, "Tinker V3 record never mutated: " + card_id)
+
+
+func _test_tinker_v3_negative() -> void:
+	var shot := v3_tinker_starter.get_definition("tinker_v3_cog_shot")
+	var ward := v3_tinker_starter.get_definition("tinker_v3_casing_ward")
+	var bomb := v3_tinker_starter.get_definition("tinker_v3_scrap_bomb")
+	var tune := v3_tinker_starter.get_definition("tinker_v3_tune_up")
+	var brass := v3_tinker_pool.get_definition("tinker_v3_brass_casing")
+	var gear := v3_tinker_pool.get_definition("tinker_v3_gear_brace")
+	var screws := v3_tinker_pool.get_definition("tinker_v3_spare_screws")
+	var clamp := v3_tinker_pool.get_definition("tinker_v3_spring_clamp")
+	var overload := v3_tinker_pool.get_definition("tinker_v3_overload")
+	var storm := v3_tinker_pool.get_definition("tinker_v3_scrapstorm")
+
+	# 1. Non-dictionary inputs
+	_check(not CardShortRules.is_authored_combat_scrap(null), "scrap null is false")
+	_check(not CardShortRules.is_authored_combat_scrap({}), "scrap empty is false")
+	_check(not CardShortRules.is_authored_v3_tinker_combat_scrap(null), "v3 tinker scrap null is false")
+	_check(not CardShortRules.is_authored_v3_tinker_combat_scrap({}), "v3 tinker scrap empty is false")
+
+	# 2. Forged flag / effect types and values
+	var effect_probes := [
+		["combat_scrap_gain 0", shot.duplicate(true), "combat_scrap_gain", 0],
+		["combat_scrap_gain negative", shot.duplicate(true), "combat_scrap_gain", -1],
+		["combat_scrap_gain string", shot.duplicate(true), "combat_scrap_gain", "1"],
+		["combat_scrap_gain float", shot.duplicate(true), "combat_scrap_gain", 1.0],
+		["combat_scrap_gain bool", shot.duplicate(true), "combat_scrap_gain", true],
+		["damage_per_combat_scrap 0", overload.duplicate(true), "damage_per_combat_scrap", 0],
+		["damage_per_combat_scrap negative", overload.duplicate(true), "damage_per_combat_scrap", -2],
+		["damage_per_combat_scrap string", overload.duplicate(true), "damage_per_combat_scrap", "3"],
+		["consume_all_combat_scrap false", overload.duplicate(true), "consume_all_combat_scrap", false],
+		["consume_all_combat_scrap int 1", overload.duplicate(true), "consume_all_combat_scrap", 1],
+		["consume_all_combat_scrap string", overload.duplicate(true), "consume_all_combat_scrap", "true"],
+		["combat_scrap_spend_max 0", storm.duplicate(true), "combat_scrap_spend_max", 0],
+		["combat_scrap_spend_max negative", storm.duplicate(true), "combat_scrap_spend_max", -1],
+		["combat_scrap_spend_max string", storm.duplicate(true), "combat_scrap_spend_max", "3"],
+		["bonus_damage_per_combat_scrap 0", storm.duplicate(true), "bonus_damage_per_combat_scrap", 0],
+		["bonus_damage_per_combat_scrap negative", storm.duplicate(true), "bonus_damage_per_combat_scrap", -1],
+		["bonus_damage_per_combat_scrap string", storm.duplicate(true), "bonus_damage_per_combat_scrap", "1"],
+	]
+	for case_def in effect_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var key: String = str(case_def[2])
+		(probe["effects"] as Dictionary)[key] = case_def[3]
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_combat_scrap(probe), "%s fails is_authored_combat_scrap" % label)
+		_check(CardShortRules.has_unknown(probe), "%s reports has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s ends with fallback: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Combat Scrap"), "%s receives no Combat Scrap help row" % label)
+		_check(probe == before, "%s probe not mutated" % label)
+
+	# 3. Missing expected effect keys
+	var missing_key_probes := [
+		["overload missing damage_per_combat_scrap", overload.duplicate(true), "damage_per_combat_scrap"],
+		["overload missing consume_all_combat_scrap", overload.duplicate(true), "consume_all_combat_scrap"],
+		["storm missing combat_scrap_spend_max", storm.duplicate(true), "combat_scrap_spend_max"],
+		["storm missing bonus_damage_per_combat_scrap", storm.duplicate(true), "bonus_damage_per_combat_scrap"],
+	]
+	for case_def in missing_key_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var key: String = str(case_def[2])
+		(probe["effects"] as Dictionary).erase(key)
+		_check(not CardShortRules.is_authored_combat_scrap(probe), "%s fails is_authored_combat_scrap" % label)
+		_check(CardShortRules.has_unknown(probe), "%s reports has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s ends with fallback: %s" % [label, line])
+		_check(not _has_keyword_row(probe, "Combat Scrap"), "%s receives no Combat Scrap help row" % label)
+
+	# 4. Broken upgrade links
+	var shot_no_up := shot.duplicate(true)
+	shot_no_up.erase("upgrade_id")
+	var shot_with_up_of := shot.duplicate(true)
+	shot_with_up_of["upgrade_of"] = "tinker_v3_cog_shot"
+	var shot_plus := v3_tinker_starter.get_definition("tinker_v3_cog_shot_plus")
+	var shot_plus_no_up_of := shot_plus.duplicate(true)
+	shot_plus_no_up_of.erase("upgrade_of")
+	var shot_plus_with_up_id := shot_plus.duplicate(true)
+	shot_plus_with_up_id["upgrade_id"] = "tinker_v3_cog_shot_plus_plus"
+	var shot_mismatched_up := shot.duplicate(true)
+	shot_mismatched_up["upgrade_id"] = "tinker_v3_casing_ward_plus"
+
+	var overload_no_base := overload.duplicate(true)
+	overload_no_base.erase("base_id")
+	var overload_wrong_base := overload.duplicate(true)
+	overload_wrong_base["base_id"] = "tinker_v3_scrapstorm"
+	var overload_wrong_is_up := overload.duplicate(true)
+	overload_wrong_is_up["is_upgrade"] = true
+	var overload_plus := v3_tinker_pool.get_definition("tinker_v3_overload_plus")
+	var overload_plus_wrong_is_up := overload_plus.duplicate(true)
+	overload_plus_wrong_is_up["is_upgrade"] = false
+	var overload_plus_wrong_up_id := overload_plus.duplicate(true)
+	overload_plus_wrong_up_id["upgrade_id"] = "tinker_v3_scrapstorm_plus"
+
+	var broken_links := [
+		shot_no_up, shot_with_up_of, shot_plus_no_up_of, shot_plus_with_up_id, shot_mismatched_up,
+		overload_no_base, overload_wrong_base, overload_wrong_is_up,
+		overload_plus_wrong_is_up, overload_plus_wrong_up_id
+	]
+	for probe in broken_links:
+		_check(not CardShortRules.is_authored_combat_scrap(probe), "broken upgrade link fails is_authored_combat_scrap")
+		_check(CardShortRules.has_unknown(probe), "broken upgrade link has_unknown")
+		_check(not _has_keyword_row(probe, "Combat Scrap"), "broken upgrade link has no Combat Scrap row")
+
+	# 5. Core metadata mutation probes
+	var meta_probes := [
+		["changed id", shot.duplicate(true), "id", "tinker_v3_forged_shot"],
+		["deleted id", shot.duplicate(true), "id", null],
+		["non-string id", shot.duplicate(true), "id", 99999],
+		["changed display_name", shot.duplicate(true), "display_name", "Forged Shot"],
+		["deleted display_name", shot.duplicate(true), "display_name", null],
+		["changed owner", shot.duplicate(true), "owner", "warden"],
+		["changed cost", shot.duplicate(true), "cost", 0],
+		["changed target_kind", shot.duplicate(true), "target_kind", "self"],
+		["changed from_positions", shot.duplicate(true), "from_positions", [1]],
+		["changed to_positions", shot.duplicate(true), "to_positions", [1]],
+		["changed rarity", overload.duplicate(true), "rarity", "common"],
+		["changed reward_eligible", shot.duplicate(true), "reward_eligible", true],
+		["changed starting_copies", shot.duplicate(true), "starting_copies", 3],
+		["changed illustration_path", shot.duplicate(true), "illustration_path", "res://other.png"],
+		["extra top-level field", shot.duplicate(true), "counterfeit", true],
+		["extra effect weak", shot.duplicate(true), "effects", {"damage": 5, "combat_scrap_gain": 1, "weak": 1}],
+		["extra effect bleed", overload.duplicate(true), "effects", {"damage": 2, "damage_per_combat_scrap": 3, "consume_all_combat_scrap": true, "bleed": 2}],
+	]
+	for case_def in meta_probes:
+		var label: String = str(case_def[0])
+		var probe: Dictionary = case_def[1]
+		var field: String = str(case_def[2])
+		var val: Variant = case_def[3]
+		if val == null:
+			probe.erase(field)
+		else:
+			probe[field] = val
+		var before := probe.duplicate(true)
+		_check(not CardShortRules.is_authored_combat_scrap(probe), "%s fails is_authored_combat_scrap" % label)
+		_check(CardShortRules.has_unknown(probe), "%s has_unknown" % label)
+		var line := CardShortRules.line(probe)
+		_check(line.ends_with(UNKNOWN_FALLBACK), "%s face ends with fallback" % label)
+		_check(not _has_keyword_row(probe, "Combat Scrap"), "%s receives no Combat Scrap help row" % label)
+		_check(probe == before, "%s probe not mutated" % label)
+
+	# 6. Wind-up Turret and Jury-rig are NOT in this Combat Scrap text task and retain honest fallback
+	var turret := v3_tinker_pool.get_definition("tinker_v3_wind_up_turret")
+	_check(not CardShortRules.is_authored_combat_scrap(turret), "Wind-up Turret is not Combat Scrap")
+	_check(CardShortRules.has_unknown(turret), "Wind-up Turret has_unknown")
+	_check(CardShortRules.line(turret).ends_with(UNKNOWN_FALLBACK), "Wind-up Turret retains fallback: " + CardShortRules.line(turret))
+	_check(not _has_keyword_row(turret, "Combat Scrap"), "Wind-up Turret receives no Combat Scrap row")
+
+	var jury := v3_tinker_pool.get_definition("tinker_v3_jury_rig")
+	_check(not CardShortRules.is_authored_combat_scrap(jury), "Jury-rig is not Combat Scrap")
+	_check(CardShortRules.has_unknown(jury), "Jury-rig has_unknown")
+	_check(CardShortRules.line(jury).ends_with(UNKNOWN_FALLBACK), "Jury-rig retains fallback: " + CardShortRules.line(jury))
+	_check(not _has_keyword_row(jury, "Combat Scrap"), "Jury-rig receives no Combat Scrap row")
+
+	# 7. Unrelated cards do not borrow Combat Scrap
+	var draw_fire := warden.get_definition("warden_draw_fire")
+	_check(not CardShortRules.is_authored_combat_scrap(draw_fire), "legacy Draw Fire is not Combat Scrap")
+	_check(not _has_keyword_row(draw_fire, "Combat Scrap"), "legacy Draw Fire receives no Combat Scrap row")
+
+	var cloud := lantern_monk_pool.get_definition("lantern_monk_moth_cloud")
+	_check(not CardShortRules.is_authored_combat_scrap(cloud), "Moth Cloud is not Combat Scrap")
+	_check(not _has_keyword_row(cloud, "Combat Scrap"), "Moth Cloud receives no Combat Scrap row")
+
+	var dive := scarecrow_starter.get_definition("scarecrow_crow_dive")
+	_check(not CardShortRules.is_authored_combat_scrap(dive), "Crow Dive is not Combat Scrap")
+	_check(not _has_keyword_row(dive, "Combat Scrap"), "Crow Dive receives no Combat Scrap row")
+
+	var tether_card := v3_seamstress_starter.get_definition("seamstress_v3_tether_loop")
+	_check(not CardShortRules.is_authored_combat_scrap(tether_card), "Tether Loop is not Combat Scrap")
+	_check(not _has_keyword_row(tether_card, "Combat Scrap"), "Tether Loop receives no Combat Scrap row")

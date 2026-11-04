@@ -3881,6 +3881,26 @@ func _mounted_plaque_reflow(scene: PackedScene) -> void:
 		app.free()
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
 		return
+	# The Leech's authored Block alternative has no hero target at all, so a
+	# fixed seed may legitimately open on it. Advance the real bound scheduler
+	# a bounded number of times until it announces a genuine targeted attack or
+	# debuff, then present that authentic announcement. A witness is required.
+	var targeted := false
+	for attempt in range(12):
+		var announced: Dictionary = app.enemy_intents.get_intents()[0]
+		if announced.get("type") in ["attack", "debuff"] \
+				and announced.get("target_position") is int \
+				and announced["target_position"] >= 1 and announced["target_position"] <= 3:
+			targeted = true
+			break
+		_check(app.enemy_intents.advance_turn(),
+			"real bound Leech scheduler advances toward a targeted announcement")
+	_check(targeted, "seeded Leech announces a genuine targeted attack or debuff")
+	if not targeted:
+		app.free()
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(FIXTURE))
+		return
+	presenter._refresh()
 	_check(app.enemies.apply_statuses({1: {"weak": 2}, 2: {"bleed": 3}}),
 		"real roster accepts current status updates")
 	# Exercise all three plaques on one actor, as a contact/status layout stress case.

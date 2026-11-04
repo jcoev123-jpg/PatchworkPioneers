@@ -140,6 +140,67 @@ func _alternate_refusal() -> void:
 		"noncanonical Queen schedule fails before any RNG or cache mutation")
 
 
+## Every canonical Boss's authored named attacks really reach the routed
+## announcement, the live manifest and the production packet resolution.
+func _named_kits() -> void:
+	var expected := {
+		"patchwork_behemoth": {"attack2": ["Knuckle Slam", 30, 1],
+			"attack3": ["Stuffing Hurl", 22, 2], "attack4": ["Rope Lash", 38, 1]},
+		"sewing_machine_colossus": {"attack2": ["Needle Drive", 9, 1],
+			"attack3": ["Bobbin Shot", 6, 2], "attack4": ["Treadle Stomp", 10, 1]},
+		"moth_queen": {"attack2": ["Dust Gale", 6, 2],
+			"attack3": ["Pin Crown Dive", 9, 1], "attack4": ["Devour", 10, 1]},
+	}
+	for id in expected:
+		var fixture: Dictionary = _seeded(witnesses.get(id, {}).get("seed", 0))
+		_check(not fixture.is_empty() and fixture.entry.get("success", false),
+			"routed Boss entry exists for the named kit: " + id)
+		if fixture.is_empty() or not fixture.entry.get("success", false):
+			continue
+		var enemies: CombatEnemies = fixture.entry.enemies
+		var intents: CombatEnemyIntents = fixture.entry.intents
+		var party := _party()
+		_check(party.is_valid() and enemies.get_enemy(1).id == id
+			and intents.bind_battle(enemies, party, fixture.rng),
+			"routed Boss binds its full weighted kit: " + id)
+		if not intents.is_bound():
+			continue
+		var strike_path := "res://assets/paper/enemies/%s_attack.png" % id
+		var seen := {}
+		for turn in range(160):
+			var shown := intents.get_intents()
+			if shown.size() != 1:
+				break
+			var action: Dictionary = shown[0]
+			if action.get("type") == "attack" and action.has("move"):
+				var move := String(action.move)
+				var spec: Array = expected[id][move]
+				_check(action.get("amount") == spec[1]
+					and int(action.get("hits", 1)) == spec[2],
+					"routed %s announces its authored total and packets: %s" % [move, id])
+				var receipt := LiveMovePoseCatalog.new().lookup_enemy(id, action, strike_path)
+				_check(receipt.get("name") == spec[0] and receipt.get("pose") == move,
+					"live manifest names the routed %s: %s" % [move, id])
+				if not seen.has(move):
+					var fresh := _party()
+					var target := int(action.get("target_position", 0))
+					var hp_before: int = fresh.get_hero(target).hp
+					_check(hp_before > 1 and fresh.gain_block(target, spec[1] - 1),
+						"named Boss strike recipient holds one point less Block: " + id)
+					var resolved := CombatEnemyPhase.new().execute_phase(
+						fresh, enemies, [action], null, true)
+					_check(resolved.get("ok", false) and resolved.events.size() == spec[2]
+						and resolved.events.all(func(beat: Dictionary) -> bool: return beat.applied)
+						and hp_before - fresh.get_hero(target).hp == 1
+						and fresh.get_hero(target).block == 0,
+						"living routed %s resolves one hit per authored packet: %s" % [move, id])
+				seen[move] = true
+			if not intents.advance_turn():
+				break
+		for move in expected[id]:
+			_check(seen.has(move), "genuine routed selection announced " + id + " " + move)
+
+
 func _packets_and_badge() -> void:
 	var fixture: Dictionary = _seeded(witnesses.get("sewing_machine_colossus", {}).get("seed", 0))
 	if fixture.is_empty() or not fixture.entry.get("success", false):
@@ -157,12 +218,14 @@ func _packets_and_badge() -> void:
 	var action: Dictionary = {}
 	for turn in range(32):
 		var shown := intents.get_intents()
-		if shown.size() == 1 and shown[0].get("type") == "attack":
+		if shown.size() == 1 and shown[0].get("type") == "attack" \
+				and shown[0].get("amount") == 6 and shown[0].get("hits") == 2 \
+				and not shown[0].has("move"):
 			action = shown[0]
 			break
 		if not intents.advance_turn():
 			break
-	_check(action.get("hits") == 2 and action.get("amount") == 24
+	_check(action.get("hits") == 2 and action.get("amount") == 6
 		and action.get("target_position") == 1,
 		"genuine seeded Colossus announces its authored two-packet front attack")
 	if action.is_empty() or action.get("hits") != 2:
@@ -171,21 +234,21 @@ func _packets_and_badge() -> void:
 	root.add_child(badge)
 	badge.size = Vector2(LiveEnemyIntentBadge.BADGE_WIDTH, LiveEnemyIntentBadge.BADGE_HEIGHT)
 	badge.show_intent(action, false, false, CombatEnemyIntents.policy_for(enemies, 1))
-	_check(badge.hit_count == 2 and badge.hit_damage == 12
-		and badge.amount == 24 and badge.readable_text.contains("24")
+	_check(badge.hit_count == 2 and badge.hit_damage == 3
+		and badge.amount == 6 and badge.readable_text.contains("6")
 		and badge.tooltip_text.contains("two"),
 		"mounted shipped intent badge identifies both real hit packets")
 	var original_hp: int = party.get_hero(1).hp
-	_check(original_hp == 40 and party.gain_block(1, 7),
+	_check(original_hp == 40 and party.gain_block(1, 2),
 		"front hero starts alive with genuine Block before both packets")
 	var resolved := CombatEnemyPhase.new().execute_phase(
 		party, enemies, [action], null, true)
 	_check(resolved.get("ok", false) and resolved.get("events", []).size() == 2
 		and resolved.events[0].applied and resolved.events[1].applied,
 		"one real Colossus announcement produces two applied phase events")
-	_check(party.get_hero(1).block == 0 and party.get_hero(1).hp == 23
+	_check(party.get_hero(1).block == 0 and party.get_hero(1).hp == 36
 		and party.get_hero(2).hp == 30 and party.get_hero(3).hp == 26,
-		"first 12-damage packet consumes seven Block, second deals its own twelve")
+		"first 3-damage packet consumes two Block and deals one HP; second deals its own three")
 	# Existing Warden reactions run for each Colossus packet, not once per
 	# announcement: one living Warden and one authentic Colossus, no stand-ins.
 	var reacting_party := _party()
@@ -202,8 +265,8 @@ func _packets_and_badge() -> void:
 		and countered.events[0].applied and countered.events[1].applied
 		and countered.events[0].get("retaliation_damage", -1) == 3
 		and countered.events[1].get("retaliation_damage", -1) == 3
-		and reacting_party.get_hero(1).hp == 16 and reacting_boss.get_enemy(1).hp == 90,
-		"both twelve-point hits independently trigger real Warden Thorns 3")
+		and reacting_party.get_hero(1).hp == 34 and reacting_boss.get_enemy(1).hp == 90,
+		"both three-point hits independently trigger real Warden Thorns 3")
 	badge.queue_free()
 
 
@@ -286,6 +349,7 @@ func _run() -> void:
 	_boss_cases()
 	_alternate_refusal()
 	_packets_and_badge()
+	_named_kits()
 	_routed_victory()
 	for failure in failures:
 		printerr(failure)

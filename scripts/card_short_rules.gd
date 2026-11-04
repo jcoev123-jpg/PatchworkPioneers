@@ -23,7 +23,9 @@ const KNOWN_EFFECT_KEYS := [
 	"next_turn_energy", "expires", "blind", "blind_next_attack",
 	"dodge_next_attack", "exhaust", "cannot_buff_next_turn", "ignore_block",
 	"tether_share_percent", "guard_next_hit", "damage_equal_to_owner_block",
-	"bonus_damage", "taunt_next_enemy_turn",
+	"bonus_damage", "taunt_next_enemy_turn", "combat_scrap_gain",
+	"damage_per_combat_scrap", "consume_all_combat_scrap",
+	"combat_scrap_spend_max", "bonus_damage_per_combat_scrap",
 ]
 ## The two V3 one-shot descriptors the face names beside the classic effects.
 ## They are printed design wording only: this formatter assumes no enemy attack
@@ -146,6 +148,33 @@ const V3_WARDEN_SHIELD_TOSS_IDS: Array[String] = [
 	"warden_v3_shield_toss_plus",
 ]
 
+## The authentic V3 Tinker Combat Scrap printings (starter and pool).
+const V3_TINKER_COMBAT_SCRAP_STARTER_IDS: Array[String] = [
+	"tinker_v3_cog_shot",
+	"tinker_v3_cog_shot_plus",
+	"tinker_v3_casing_ward",
+	"tinker_v3_casing_ward_plus",
+	"tinker_v3_scrap_bomb",
+	"tinker_v3_scrap_bomb_plus",
+	"tinker_v3_tune_up",
+	"tinker_v3_tune_up_plus",
+]
+
+const V3_TINKER_COMBAT_SCRAP_POOL_IDS: Array[String] = [
+	"tinker_v3_brass_casing",
+	"tinker_v3_brass_casing_plus",
+	"tinker_v3_gear_brace",
+	"tinker_v3_gear_brace_plus",
+	"tinker_v3_spare_screws",
+	"tinker_v3_spare_screws_plus",
+	"tinker_v3_spring_clamp",
+	"tinker_v3_spring_clamp_plus",
+	"tinker_v3_overload",
+	"tinker_v3_overload_plus",
+	"tinker_v3_scrapstorm",
+	"tinker_v3_scrapstorm_plus",
+]
+
 
 ## One description of a validated card record:
 ## {known: bool, phrases: Array[String], line: String, unknown: bool}
@@ -174,6 +203,7 @@ static func describe(definition: Variant, applied: Dictionary = {}) -> Dictionar
 		_self_sentence(card, effects),
 		_v3_guard_sentence(card, effects),
 		_v3_taunt_sentence(card, effects),
+		_v3_tinker_scrap_sentence(card, effects),
 	]:
 		var sentence := str(part.get("sentence", ""))
 		if bool(part.get("unknown", false)):
@@ -237,6 +267,14 @@ static func has_unknown(definition: Variant) -> bool:
 	if (effects.has("damage_equal_to_owner_block") or effects.has("bonus_damage")) \
 			and not is_authored_v3_shield_toss(card):
 		return true
+	# V3 Tinker Combat Scrap effect keys are known only in their authentic catalog printings;
+	# any forged, altered, mis-owned or re-scoped card stays an honest unknown.
+	for key in [
+		"combat_scrap_gain", "damage_per_combat_scrap", "consume_all_combat_scrap",
+		"combat_scrap_spend_max", "bonus_damage_per_combat_scrap"
+	]:
+		if effects.has(key) and not is_authored_combat_scrap(card):
+			return true
 	return false
 
 
@@ -339,6 +377,123 @@ static func _v3_taunt_sentence(card: Dictionary, effects: Dictionary) -> Diction
 	if not flag is bool or not bool(flag):
 		return {"sentence": "", "unknown": true}
 	return {"sentence": "Taunt.", "unknown": false}
+
+## True when this exact record is one of the authentic V3 Tinker Combat Scrap printings.
+static func is_authored_v3_tinker_combat_scrap(definition: Variant) -> bool:
+	return _is_authentic_v3_tinker_combat_scrap_card(definition)
+
+
+static func is_authored_combat_scrap(definition: Variant) -> bool:
+	return is_authored_v3_tinker_combat_scrap(definition)
+
+
+static func _catalog_v3_tinker_definition(card_id: String) -> Dictionary:
+	if V3_TINKER_COMBAT_SCRAP_STARTER_IDS.has(card_id):
+		return V3TinkerStarterCards.new().get_definition(card_id)
+	if V3_TINKER_COMBAT_SCRAP_POOL_IDS.has(card_id):
+		return V3TinkerPoolCards.new().get_definition(card_id)
+	return {}
+
+
+static func _is_authentic_v3_tinker_combat_scrap_card(definition: Variant) -> bool:
+	if not definition is Dictionary:
+		return false
+	var card: Dictionary = definition
+	var id_value: Variant = card.get("id")
+	if not id_value is String:
+		return false
+	var card_id: String = id_value
+	var is_starter := V3_TINKER_COMBAT_SCRAP_STARTER_IDS.has(card_id)
+	var is_pool := V3_TINKER_COMBAT_SCRAP_POOL_IDS.has(card_id)
+	if not is_starter and not is_pool:
+		return false
+	var canonical: Dictionary = _catalog_v3_tinker_definition(card_id)
+	if canonical.is_empty():
+		return false
+	if not _deep_exact_equal(card, canonical):
+		return false
+	var effects_value: Variant = card.get("effects")
+	if not effects_value is Dictionary:
+		return false
+	if not _deep_exact_equal(effects_value, canonical.get("effects", {})):
+		return false
+	if is_starter:
+		if canonical.has("upgrade_id"):
+			if canonical.has("upgrade_of"):
+				return false
+			var plus_id_val: Variant = canonical["upgrade_id"]
+			if not plus_id_val is String:
+				return false
+			var plus_id: String = plus_id_val
+			var plus_canonical: Dictionary = _catalog_v3_tinker_definition(plus_id)
+			if plus_canonical.is_empty() or str(plus_canonical.get("upgrade_of", "")) != card_id:
+				return false
+		elif canonical.has("upgrade_of"):
+			if canonical.has("upgrade_id"):
+				return false
+			var base_id_val: Variant = canonical["upgrade_of"]
+			if not base_id_val is String:
+				return false
+			var base_id: String = base_id_val
+			var base_canonical: Dictionary = _catalog_v3_tinker_definition(base_id)
+			if base_canonical.is_empty() or str(base_canonical.get("upgrade_id", "")) != card_id:
+				return false
+		else:
+			return false
+	elif is_pool:
+		if not canonical.has("base_id") or not canonical.has("upgrade_id") or not canonical.has("is_upgrade"):
+			return false
+		var is_plus: bool = bool(canonical.get("is_upgrade", false))
+		var base_id: String = str(canonical.get("base_id", ""))
+		var plus_id: String = str(canonical.get("upgrade_id", ""))
+		if not is_plus:
+			if card_id != base_id:
+				return false
+			var plus_canonical: Dictionary = _catalog_v3_tinker_definition(plus_id)
+			if plus_canonical.is_empty() or str(plus_canonical.get("base_id", "")) != card_id or not bool(plus_canonical.get("is_upgrade", false)):
+				return false
+		else:
+			if card_id != plus_id:
+				return false
+			var base_canonical: Dictionary = _catalog_v3_tinker_definition(base_id)
+			if base_canonical.is_empty() or str(base_canonical.get("upgrade_id", "")) != card_id or bool(base_canonical.get("is_upgrade", true)):
+				return false
+	return true
+
+
+static func _has_tinker_scrap_effects(effects: Dictionary) -> bool:
+	for key in [
+		"combat_scrap_gain", "damage_per_combat_scrap", "consume_all_combat_scrap",
+		"combat_scrap_spend_max", "bonus_damage_per_combat_scrap"
+	]:
+		if effects.has(key):
+			return true
+	return false
+
+
+static func _v3_tinker_scrap_sentence(card: Dictionary, effects: Dictionary) -> Dictionary:
+	if not _has_tinker_scrap_effects(effects):
+		return {}
+	if not is_authored_combat_scrap(card):
+		return {"sentence": "", "unknown": true}
+	if effects.has("combat_scrap_gain"):
+		var amount := _amount(effects["combat_scrap_gain"], -1)
+		if amount <= 0:
+			return {"sentence": "", "unknown": true}
+		return {"sentence": "Gain %d Combat Scrap." % amount, "unknown": false}
+	if effects.has("damage_per_combat_scrap") and effects.has("consume_all_combat_scrap"):
+		var per := _amount(effects["damage_per_combat_scrap"], -1)
+		var consume: Variant = effects["consume_all_combat_scrap"]
+		if per <= 0 or not consume is bool or not bool(consume):
+			return {"sentence": "", "unknown": true}
+		return {"sentence": "Spend all Combat Scrap for +%d damage per Scrap." % per, "unknown": false}
+	if effects.has("combat_scrap_spend_max") and effects.has("bonus_damage_per_combat_scrap"):
+		var spend_max := _amount(effects["combat_scrap_spend_max"], -1)
+		var bonus := _amount(effects["bonus_damage_per_combat_scrap"], -1)
+		if spend_max <= 0 or bonus <= 0:
+			return {"sentence": "", "unknown": true}
+		return {"sentence": "Spend up to %d Combat Scrap for +%d per spent Scrap to each living enemy." % [spend_max, bonus], "unknown": false}
+	return {"sentence": "", "unknown": true}
 
 
 ## Reads the detached canonical record from the V3 Warden catalogs.

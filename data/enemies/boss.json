@@ -3,19 +3,28 @@
     "intent": {"target": "front", "actions": [
       {"type": "attack", "amount": 34, "weight": 4},
       {"type": "block", "amount": 3, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1},
+      {"type": "attack", "amount": 30, "move": "attack2", "weight": 1},
+      {"type": "attack", "amount": 22, "hits": 2, "move": "attack3", "weight": 1},
+      {"type": "attack", "amount": 38, "move": "attack4", "weight": 1}
     ]}},
   {"id": "sewing_machine_colossus", "name": "Sewing-Machine Colossus", "max_hp": 96,
     "art_path": "res://assets/paper/enemies/sewing_machine_colossus.png",
     "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 24, "hits": 2, "weight": 4},
+      {"type": "attack", "amount": 6, "hits": 2, "weight": 4},
       {"type": "block", "amount": 5, "weight": 2},
-      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1}
+      {"type": "debuff", "amount": 1, "status": "weak", "weight": 1},
+      {"type": "attack", "amount": 9, "move": "attack2", "weight": 1},
+      {"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1},
+      {"type": "attack", "amount": 10, "move": "attack4", "weight": 1}
     ]}},
   {"id": "moth_queen", "name": "Moth Queen", "max_hp": 90,
     "art_path": "res://assets/paper/enemies/moth_queen.png",
     "intent": {"target": "front", "actions": [
-      {"type": "attack", "amount": 25, "weight": 4},
-      {"type": "summon", "amount": 0, "weight": 2}
+      {"type": "attack", "amount": 5, "weight": 4},
+      {"type": "summon", "amount": 0, "weight": 2},
+      {"type": "attack", "amount": 6, "hits": 2, "move": "attack2", "weight": 1},
+      {"type": "attack", "amount": 9, "move": "attack3", "weight": 1},
+      {"type": "attack", "amount": 10, "move": "attack4", "weight": 1}
     ]}}
 ]

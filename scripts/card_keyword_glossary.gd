@@ -126,6 +126,10 @@ const TAUNT_EXPLANATION := "Taunt forces all targetable enemy attacks during the
 ## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
 const SHIELD_TOSS_KEYWORD := "Shield Toss"
 const SHIELD_TOSS_EXPLANATION := "Shield Toss deals damage equal to the Warden's unspent current Block at the moment the attack resolves, plus any authored bonus damage. Resolving the attack does not consume or spend the Warden's Block, leaving that Block intact to absorb later damage."
+## Combat Scrap is the Tinker's V3 combat-local counter.
+## Only authentic catalog printings that CardShortRules authenticates receive this Help row.
+const COMBAT_SCRAP_KEYWORD := "Combat Scrap"
+const COMBAT_SCRAP_EXPLANATION := "Combat Scrap is the Tinker's combat-local counter accumulated during battle, never the run's wallet scraps currency. It resets after each battle and cannot be spent outside combat. Overload consumes all held Combat Scrap to deal bonus damage (+3 damage per Scrap, +4 upgraded). Scrapstorm spends up to 3 Combat Scrap (+1 damage per spent Scrap to each living enemy) and retains any remaining surplus."
 
 
 static func describe(definition: Variant) -> Array[Dictionary]:
@@ -230,6 +234,9 @@ static func describe(definition: Variant) -> Array[Dictionary]:
 	var v3_toss := _warden_toss_line(definition)
 	if not v3_toss.is_empty():
 		lines.append(v3_toss)
+	var v3_scrap := _v3_combat_scrap_line(definition)
+	if not v3_scrap.is_empty():
+		lines.append(v3_scrap)
 	return lines
 
 
@@ -755,6 +762,11 @@ static func _warden_toss_line(definition: Dictionary) -> Dictionary:
 	if not CardShortRules.is_authored_v3_shield_toss(definition):
 		return {}
 	return {"keyword": SHIELD_TOSS_KEYWORD, "explanation": SHIELD_TOSS_EXPLANATION}
+
+static func _v3_combat_scrap_line(definition: Dictionary) -> Dictionary:
+	if not CardShortRules.is_authored_combat_scrap(definition):
+		return {}
+	return {"keyword": COMBAT_SCRAP_KEYWORD, "explanation": COMBAT_SCRAP_EXPLANATION}
 
 
 ## Tether is the Seamstress's authored two-foe link and confirmed-hit echo.

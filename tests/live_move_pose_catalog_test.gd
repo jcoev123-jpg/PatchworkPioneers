@@ -44,10 +44,21 @@ func _initialize() -> void:
 	check_move(catalog.lookup_hero("seamstress", "skill", FALLBACK), "Mending Stitch", "skill")
 	check_move(catalog.lookup_enemy("thread_biter", {"type": "block", "amount": 2}, FALLBACK),
 		"Fraying Coil", "skill")
-	for pair in [["attack3", "Stuffing Hurl"], ["attack4", "Rope Lash"]]:
-		var boss_action := attack.duplicate(true)
-		boss_action["move"] = pair[0]
-		check_move(catalog.lookup_enemy("patchwork_behemoth", boss_action, FALLBACK), pair[1], pair[0])
+	for boss in [
+			["patchwork_behemoth", [["attack2", "Knuckle Slam"],
+				["attack3", "Stuffing Hurl"], ["attack4", "Rope Lash"]]],
+			["sewing_machine_colossus", [["attack2", "Needle Drive"],
+				["attack3", "Bobbin Shot"], ["attack4", "Treadle Stomp"]]],
+			["moth_queen", [["attack2", "Dust Gale"],
+				["attack3", "Pin Crown Dive"], ["attack4", "Devour"]]]]:
+		for pair in boss[1]:
+			var boss_action := attack.duplicate(true)
+			boss_action["move"] = pair[0]
+			check_move(catalog.lookup_enemy(boss[0], boss_action, FALLBACK), pair[1], pair[0])
+	var two_packet := {"type": "attack", "amount": 22, "hits": 2, "move": "attack3",
+		"target_position": 1, "enemy_position": 1}
+	check_move(catalog.lookup_enemy("patchwork_behemoth", two_packet, FALLBACK),
+		"Stuffing Hurl", "attack3")
 	first["name"] = "changed"
 	first["covers"].append("changed")
 	for repeat in range(5):

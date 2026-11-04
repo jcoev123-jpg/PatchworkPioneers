@@ -11,6 +11,7 @@ func _initialize() -> void:
 	_test_real_boss_threshold()
 	_test_locked_phase_one_attack()
 	_test_phase_two_actions()
+	_test_named_attacks()
 	_test_seeded_replay()
 	_test_round_phase_crossing()
 	_test_round_unravel_action_kinds()
@@ -99,6 +100,10 @@ func _behemoth_seed() -> int:
 
 
 func _test_quilt_phases() -> void:
+	var authored_p1 := _authored_actions("res://data/enemies/boss.json", "patchwork_behemoth")
+	var authored_p2 := _authored_actions(CombatBehemothPhaseRules.PHASE_TWO_PATH, "")
+	_check(authored_p1.size() == 6 and authored_p2.size() == 6,
+		"authoritative catalogs expose both six-action Boss kits")
 	for tier in [0, 1, 2]:
 		var battle := _start_boss(_behemoth_seed(), false, tier)
 		var replay := _start_boss(_behemoth_seed(), false, tier)
@@ -107,9 +112,38 @@ func _test_quilt_phases() -> void:
 			continue
 		var baseline := _start_boss(_behemoth_seed())
 		_check(battle.rng.state == baseline.rng.state, "tier bonuses add no Boss RNG draws")
-		for intent in battle.enemies.get_enemy(1).intent.actions:
-			if intent.type == "attack":
-				_check(intent.amount == 34 + tier, "phase one adds the tier exactly once")
+		_check_scaled_kit(battle.enemies.get_enemy(1).intent.actions, authored_p1, tier,
+			"phase one adds the tier exactly once to every authored attack")
+		# The live tier-scaled Boss legally starts above the authored 84 HP.
+		# Its very first advance, with no prior damage, must still select the
+		# next weighted action from the genuine catalog and run RNG.
+		var full_hp: int = battle.enemies.get_enemy(1).hp
+		_check(full_hp == CombatBehemothPhaseRules.maximum_hp_for_tier(tier),
+			"tier %d Boss starts at its authorized maximum HP" % tier)
+		if tier > 0:
+			_check(full_hp > CombatBehemothPhaseRules.BOSS_MAX_HP,
+				"tier %d Boss legitimately starts above the authored 84 HP" % tier)
+		var state_before: int = battle.rng.state
+		var oracle := _next_phase_oracle(battle, full_hp, state_before)
+		_check(not oracle.is_empty() and battle.intents.advance_turn()
+			and battle.rng.state != state_before
+			and battle.rng.state == oracle.get("rng")
+			and battle.intents.get_intents() == [oracle.get("intent")]
+			and battle.intents._boss_phase == CombatBehemothPhaseRules.PHASE_ONE
+			and CombatEnemyIntents.policy_for(battle.enemies, 1) == "front",
+			"full tier-%d HP advance commits a fresh phase-one weighted action" % tier)
+		_check(battle.intents._slots[0].target == "front"
+			and battle.intents._slots[0].actions.size() == CombatBehemothPhaseRules.PHASE_ACTION_COUNT,
+			"full tier-%d HP advance keeps the authored phase-one kit" % tier)
+		var replay_state: int = replay.rng.state
+		var replay_oracle := _next_phase_oracle(replay, full_hp, replay_state)
+		_check(not replay_oracle.is_empty() and replay.intents.advance_turn()
+			and replay.rng.state == replay_oracle.get("rng")
+			and replay.intents.get_intents() == [replay_oracle.get("intent")],
+			"same seed and tier reproduce the full-HP advance receipt: %d" % tier)
+		_check(battle.rng.state == replay.rng.state
+			and battle.intents.get_intents() == replay.intents.get_intents(),
+			"full-HP advance receipts are identical across same-seed battles: %d" % tier)
 		for current in [battle, replay]:
 			var hp: int = current.enemies.get_enemy(1).hp
 			_check(current.enemies.apply_damage(1, hp - 21) and current.intents.advance_turn(),
@@ -118,11 +152,70 @@ func _test_quilt_phases() -> void:
 			"same tier and seed reproduce phase-two announcement and RNG")
 		var maximum: int = battle.enemies.get_enemy(1).max_hp
 		for turn in range(3):
-			for intent in battle.enemies.get_enemy(1).intent.actions:
-				if intent.type == "attack":
-					_check(intent.amount == 40 + tier, "phase two retains exactly one bonus across turns")
+			_check_scaled_kit(battle.enemies.get_enemy(1).intent.actions, authored_p2, tier,
+				"phase two retains exactly one tier bonus across turns")
 			_check(battle.enemies.get_enemy(1).max_hp == maximum and battle.intents.advance_turn(),
 				"phase changes and repeated announcements never scale HP again")
+		# The authorized upper bound still fails closed: forged HP above the
+		# tier maximum is rejected before any next-turn weighted draw.
+		var forged := _start_boss(_behemoth_seed(), false, tier)
+		_check(not forged.is_empty(), "tier %d Boss exists for the forged-HP bound" % tier)
+		if not forged.is_empty():
+			var forged_rng: int = forged.rng.state
+			var forged_locked: Array = forged.intents.get_intents()
+			forged.enemies._enemies[0]["hp"] = \
+				CombatBehemothPhaseRules.maximum_hp_for_tier(tier) + 1
+			_check(not forged.intents.advance_turn() and forged.rng.state == forged_rng
+				and forged.intents.get_intents() == forged_locked,
+				"HP above the authorized tier-%d maximum fails closed without RNG drift" % tier)
+	# The real round flow the player uses must publish a fresh weighted
+	# announcement at a full tier-scaled HP, not keep the stale phase-one cache.
+	var round := _start_boss(_behemoth_seed(), true, 2)
+	_check(not round.is_empty(), "tier-2 routed Boss round binds for the live advance")
+	if not round.is_empty():
+		var round_hp: int = round.enemies.get_enemy(1).hp
+		_check(round_hp == CombatBehemothPhaseRules.maximum_hp_for_tier(2)
+			and round.flow.begin_fight(), "tier-2 round opens its real first hand at full HP")
+		var round_oracle := _next_phase_oracle(round, round_hp, round.rng.state)
+		_check(not round_oracle.is_empty() and round.flow.end_turn()
+			and round.intents.get_intents() == [round_oracle.get("intent")]
+			and round.intents._boss_phase == CombatBehemothPhaseRules.PHASE_ONE,
+			"live tier-2 round advances to a freshly drawn weighted announcement")
+
+
+## Read one authoritative authored action list without normalizing its numbers.
+func _authored_actions(path: String, boss_id: String) -> Array:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if parsed is Array:
+		for record in parsed:
+			if record is Dictionary and record.get("id") == boss_id:
+				return record.get("intent", {}).get("actions", [])
+		return []
+	if parsed is Dictionary:
+		return parsed.get("intent", {}).get("actions", [])
+	return []
+
+
+## Every authored alternative must still be there, in order, with exactly one
+## earned tier bonus on its attack total and no packet/move rewrite.
+func _check_scaled_kit(live_actions: Array, authored: Array, tier: int, label: String) -> void:
+	if live_actions.size() != authored.size():
+		_check(false, label + ": live kit keeps the authored alternatives")
+		return
+	for index in range(authored.size()):
+		var live: Dictionary = live_actions[index]
+		var base: Dictionary = authored[index]
+		if base.get("type") == "attack":
+			_check(live.get("amount") == int(base.get("amount")) + tier
+				and live.get("type") == "attack"
+				and live.get("move") == base.get("move")
+				and int(live.get("hits", 1)) == int(base.get("hits", 1)),
+				label + ": alternative %d" % index)
+		else:
+			_check(live.get("type") == base.get("type")
+				and live.get("amount") == base.get("amount")
+				and live.get("weight") == base.get("weight"),
+				label + ": unchanged skill alternative %d" % index)
 
 
 func _hurt_to_phase_two(battle: Dictionary) -> bool:
@@ -171,8 +264,9 @@ func _test_real_boss_threshold() -> void:
 
 ## Find a fixed seeded run whose genuine weighted next roll announces each
 ## particular authored action. The action is then executed by the production
-## executor with no test-only modifications to the weighted catalog.
-func _seeded_phase_action(kind: String) -> Dictionary:
+## executor with no test-only modifications to the weighted catalog. The base
+## attack is the unkeyed original one; the named attacks are covered separately.
+func _seeded_phase_action(kind: String, base_only := false) -> Dictionary:
 	for seed_value in range(1, 130):
 		var battle := _start_boss(seed_value)
 		if battle.is_empty():
@@ -184,14 +278,15 @@ func _seeded_phase_action(kind: String) -> Dictionary:
 		if not _hurt_to_phase_two(battle):
 			return {}
 		var announcement: Array[Dictionary] = battle.intents.get_intents()
-		if announcement.size() == 1 and announcement[0].get("type") == kind:
+		if announcement.size() == 1 and announcement[0].get("type") == kind \
+				and (not base_only or not announcement[0].has("move")):
 			battle["seed"] = seed_value
 			return battle
 	return {}
 
 
 func _test_phase_two_actions() -> void:
-	var attack := _seeded_phase_action("attack")
+	var attack := _seeded_phase_action("attack", true)
 	var block := _seeded_phase_action("block")
 	var weak := _seeded_phase_action("debuff")
 	_check(not attack.is_empty() and not block.is_empty() and not weak.is_empty(),
@@ -219,7 +314,7 @@ func _test_phase_two_actions() -> void:
 		"40 damage consumes 2 Block then downs announced hero 2 and spares untargeted heroes")
 	# The announced target can fall during the player turn. Tied fallback HP
 	# chooses front position 1 over back position 3 (both at 8).
-	var fallback := _seeded_phase_action("attack")
+	var fallback := _seeded_phase_action("attack", true)
 	_check(not fallback.is_empty(), "identical seeded attack replay exists for fallback")
 	if not fallback.is_empty():
 		var target: CombatParty = fallback.party
@@ -254,6 +349,75 @@ func _test_phase_two_actions() -> void:
 	_check(debuffed.get("ok", false) and debuffed.events[0].applied
 		and weak.party.get_hero(2).get("statuses", {}).get("weak", 0) == 1,
 		"authored Weak 1 resolves using real special-action/status service")
+
+
+## Find a real seeded Boss fight whose genuine weighted roll announces one
+## authored named attack, in phase one or after the real 21-HP transition.
+func _seeded_named_action(move: String, phase_two: bool) -> Dictionary:
+	for seed_value in range(1, 200):
+		var battle := _start_boss(seed_value)
+		if battle.is_empty():
+			continue
+		if phase_two:
+			var party: CombatParty = battle.party
+			if not party.apply_damage(1, 32) or not party.apply_damage(2, 25) \
+					or not party.apply_damage(3, 18):
+				continue
+			if not _hurt_to_phase_two(battle):
+				continue
+		var announcement: Array[Dictionary] = battle.intents.get_intents()
+		if announcement.size() == 1 and announcement[0].get("move") == move:
+			battle["seed"] = seed_value
+			return battle
+	return {}
+
+
+## Authenticate one announced named attack against the shipped manifest and
+## resolve it once on the real party: exact total, exact packets.
+func _check_named_resolution(battle: Dictionary, move: String, total: int, hits: int,
+		target: int, title: String, label: String) -> void:
+	var announcement: Array[Dictionary] = battle.intents.get_intents()
+	var action: Dictionary = announcement[0] if announcement.size() == 1 else {}
+	_check(action.get("type") == "attack" and action.get("amount") == total
+		and action.get("move") == move and int(action.get("hits", 1)) == hits
+		and action.get("enemy_position") == 1 and action.get("target_position") == target,
+		label + ": announces " + move + " " + title + " for its authored total")
+	var receipt := LiveMovePoseCatalog.new().lookup_enemy("patchwork_behemoth", action,
+		"res://assets/paper/enemies/patchwork_behemoth_attack.png")
+	_check(receipt.get("name") == title and receipt.get("pose") == move
+		and String(receipt.get("named_art", "")).ends_with("patchwork_behemoth_%s.png" % move),
+		label + ": live manifest names the announced pose " + title)
+	var party: CombatParty = battle.party
+	var hp_before: int = party.get_hero(target).hp
+	_check(hp_before > 1 and party.gain_block(target, total - 1),
+		label + ": living recipient holds one point less Block than the total")
+	var resolved := CombatEnemyPhase.new().execute_phase(
+		party, battle.enemies, announcement, null, true)
+	_check(resolved.get("ok", false) and resolved.events.size() == hits
+		and resolved.events.all(func(beat: Dictionary) -> bool: return beat.applied)
+		and hp_before - party.get_hero(target).hp == 1
+		and party.get_hero(target).block == 0,
+		label + ": living source resolves exactly one hit per authored packet")
+
+
+## Each phase of the real Boss announces and resolves its three named attacks.
+func _test_named_attacks() -> void:
+	var expected := {
+		"attack2": ["Knuckle Slam", 30, 1, 36],
+		"attack3": ["Stuffing Hurl", 22, 2, 28],
+		"attack4": ["Rope Lash", 38, 1, 44],
+	}
+	for move in expected:
+		var one := _seeded_named_action(move, false)
+		_check(not one.is_empty(), "real seeded Boss announces phase-one " + move)
+		if not one.is_empty():
+			_check_named_resolution(one, move, expected[move][1], expected[move][2], 1,
+				expected[move][0], "phase one " + move)
+		var two := _seeded_named_action(move, true)
+		_check(not two.is_empty(), "real seeded Boss announces phase-two " + move)
+		if not two.is_empty():
+			_check_named_resolution(two, move, expected[move][3], expected[move][2], 2,
+				expected[move][0], "phase two " + move)
 
 
 func _replay(seed_value: int) -> Array:
@@ -321,7 +485,8 @@ func _test_locked_phase_one_attack() -> void:
 		if candidate.is_empty():
 			continue
 		var intent: Array[Dictionary] = candidate.intents.get_intents()
-		if intent.size() == 1 and intent[0].get("type") == "attack":
+		if intent.size() == 1 and intent[0].get("type") == "attack" \
+				and not intent[0].has("move"):
 			battle = candidate
 			break
 	_check(not battle.is_empty(), "seeded real Boss initially announces a phase-one attack")
@@ -360,7 +525,10 @@ func _round_boss_with_action(kind: String) -> Dictionary:
 		if battle.is_empty():
 			continue
 		var announced: Array[Dictionary] = battle.intents.get_intents()
-		if announced.size() == 1 and announced[0].get("type") == kind:
+		# The plain original attack keeps the exact 34-damage arithmetic below;
+		# the named alternatives are covered by their own seeded witnesses.
+		if announced.size() == 1 and announced[0].get("type") == kind \
+				and (kind != "attack" or not announced[0].has("move")):
 			battle["seed"] = seed_value
 			return battle
 	return {}
@@ -386,15 +554,17 @@ func _round_snapshot(battle: Dictionary) -> Dictionary:
 
 
 ## Independent weighted oracle: the authored phase selector supplies the
-## genuine JSON actions/weights. A COPY of the live pre-advance RNG state
-## makes exactly one legitimate 1..total weighted draw. No guessed action.
-func _next_phase_two_oracle(battle: Dictionary, rng_state: int) -> Dictionary:
+## genuine JSON actions/weights for one real Boss HP and earned tier. A COPY of
+## the live pre-advance RNG state makes exactly one legitimate 1..total weighted
+## draw. No guessed action.
+func _next_phase_oracle(battle: Dictionary, hp: int, rng_state: int) -> Dictionary:
 	var choice := CombatBehemothPhaseRules.select_phase(
-		battle.intents._boss_definition, 21, battle.intents._phase_two_record)
-	if not choice.get("ok", false) or choice.get("phase") != 2:
+		battle.intents._boss_definition, hp, battle.intents._phase_two_record,
+		battle.intents._quilt_tier)
+	if not choice.get("ok", false):
 		return {}
 	var weighted := CombatEnemyIntents._weighted_slot(1, choice.intent)
-	if weighted.is_empty() or weighted.target != "lowest_living_hp":
+	if weighted.is_empty():
 		return {}
 	var total := 0
 	for entry in weighted.actions:
@@ -411,10 +581,20 @@ func _next_phase_two_oracle(battle: Dictionary, rng_state: int) -> Dictionary:
 	if action.is_empty():
 		return {}
 	action["enemy_position"] = 1
-	if action.type in ["attack", "debuff", "shove"]:
+	if action.type in ["attack", "debuff", "shove", "snip_block"]:
 		action["target_position"] = CombatEnemyIntents.priority_target(
 			battle.party, weighted.target)
-	return {"intent": action, "rng": oracle_rng.state}
+	return {"intent": action, "rng": oracle_rng.state, "phase": choice.get("phase"),
+		"policy": weighted.target}
+
+
+## Independent weighted oracle for the phase-two announcement at 21 HP.
+func _next_phase_two_oracle(battle: Dictionary, rng_state: int) -> Dictionary:
+	var oracle := _next_phase_oracle(battle, 21, rng_state)
+	if oracle.is_empty() or oracle.get("phase") != 2 \
+			or oracle.get("policy") != "lowest_living_hp":
+		return {}
+	return {"intent": oracle.get("intent"), "rng": oracle.get("rng")}
 
 
 func _test_round_phase_crossing() -> void:

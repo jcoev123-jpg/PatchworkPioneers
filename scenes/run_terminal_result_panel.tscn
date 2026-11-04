@@ -46,24 +46,24 @@ mouse_filter = 2
 
 [node name="PaperPanel" type="PanelContainer" parent="."]
 layout_mode = 1
-anchor_left = 0.03
-anchor_top = 0.015
-anchor_right = 0.97
-anchor_bottom = 0.985
+anchor_left = 0.045
+anchor_top = 0.025
+anchor_right = 0.955
+anchor_bottom = 0.975
 grow_horizontal = 2
 grow_vertical = 2
 
 [node name="ContentMargin" type="MarginContainer" parent="PaperPanel"]
 layout_mode = 2
-theme_override_constants/margin_left = 18
-theme_override_constants/margin_top = 10
-theme_override_constants/margin_right = 18
-theme_override_constants/margin_bottom = 10
+theme_override_constants/margin_left = 14
+theme_override_constants/margin_top = 8
+theme_override_constants/margin_right = 14
+theme_override_constants/margin_bottom = 8
 
 [node name="ResultContent" type="VBoxContainer" parent="PaperPanel/ContentMargin"]
 layout_mode = 2
-theme_override_constants/separation = 9
-alignment = 0
+theme_override_constants/separation = 6
+alignment = 1
 
 [node name="TopStitches" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
 layout_mode = 2
@@ -71,13 +71,14 @@ text = "×    ×    ×    ×    ×    ×    ×    ×    ×    ×"
 horizontal_alignment = 1
 
 [node name="ResultTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 56)
+custom_minimum_size = Vector2(0, 50)
+size_flags_horizontal = 4
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
 
 [node name="ResultDescription" type="Label" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 28)
+custom_minimum_size = Vector2(0, 26)
 layout_mode = 2
 horizontal_alignment = 1
 vertical_alignment = 1
@@ -86,8 +87,7 @@ autowrap_mode = 3
 [node name="HeroRecap" type="VBoxContainer" parent="PaperPanel/ContentMargin/ResultContent"]
 visible = false
 layout_mode = 2
-size_flags_vertical = 3
-size_flags_stretch_ratio = 3.0
+size_flags_vertical = 1
 theme_override_constants/separation = 6
 
 [node name="HeroRecapTitle" type="Label" parent="PaperPanel/ContentMargin/ResultContent/HeroRecap"]
@@ -118,7 +118,7 @@ mouse_filter = 2
 
 [node name="StitchedSection" type="PanelContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger"]
 visible = false
-custom_minimum_size = Vector2(0, 148)
+custom_minimum_size = Vector2(0, 0)
 layout_mode = 2
 size_flags_horizontal = 3
 
@@ -139,7 +139,7 @@ text = "KEPT SEWN CARDS"
 
 [node name="StitchedScroll" type="ScrollContainer" parent="PaperPanel/ContentMargin/ResultContent/RunLedger/StitchedSection/DetailMargin/DetailContent"]
 clip_contents = true
-custom_minimum_size = Vector2(0, 88)
+custom_minimum_size = Vector2(0, 0)
 layout_mode = 2
 size_flags_vertical = 3
 focus_mode = 2
@@ -151,7 +151,7 @@ size_flags_horizontal = 3
 theme_override_constants/separation = 5
 
 [node name="ReturnButton" type="Button" parent="PaperPanel/ContentMargin/ResultContent"]
-custom_minimum_size = Vector2(0, 52)
+custom_minimum_size = Vector2(0, 48)
 layout_mode = 2
 size_flags_horizontal = 4
 focus_mode = 2
