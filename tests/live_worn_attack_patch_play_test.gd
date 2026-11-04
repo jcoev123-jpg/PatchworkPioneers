@@ -365,7 +365,8 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		mitt: bool = false, stitch_pair: Array = [], scope: bool = false,
 		head_status: bool = false, visor: String = "", heavy: bool = false,
 		needle: bool = false, upgrade_card: Variant = false,
-		pool_id: String = "", direct_id: String = "") -> bool:
+		pool_id: String = "", direct_id: String = "",
+		red_id: String = "") -> bool:
 	worn_wardrobe = null
 	# Only the predecessor is terminally settled to reach a genuine connected
 	# route quickly. Every asserted patch attack below hits a live next Fight.
@@ -472,6 +473,15 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		# Two owned copies permit a same-turn second physical cast.
 		app.run_deck.append(direct_id)
 		app.run_deck.append(direct_id)
+	if not red_id.is_empty():
+		# Test only genuine authored V3 cards promoted into this run's owned deck;
+		# the mounted hand then draws and pays the physical copies normally.
+		var red := CombatSeamstressV3RedThreadCards.new()
+		_check(red.is_authentic_card(red_id), "real V3 catalog printing owned by seeded run")
+		if not red.is_authentic_card(red_id):
+			return false
+		app.run_deck.append(red_id)
+		app.run_deck.append(red_id)
 	if visor == "absent":
 		# A genuinely unpatched run: the real deck owns both Rivet variants but
 		# no wardrobe is ever bound for this battle.
@@ -1059,6 +1069,7 @@ func _run() -> void:
 	await _visor_cases(fixture)
 	await _mitt_heavy_cases(fixture)
 	await _needle_mounted_cases(fixture)
+	await _needle_v3_red_thread_mounted_cases(fixture)
 	await _needle_pool_mounted_cases(fixture)
 	await _tinker_direct_needle_cases(fixture)
 	await _needle_heavy_mounted_cases(fixture)
@@ -1900,6 +1911,110 @@ func _needle_state() -> Array:
 		rules._needle_used if rules != null else null,
 		rules._pending_needle.duplicate(true) if rules != null else null,
 		rules._turn if rules != null else null, rules._ticket if rules != null else null]
+
+
+## V3 red-thread cards use the *other* mounted hand selector, but must borrow
+## this exact combat's SupportHand Heirloom / LiveAttackPreview Pinned pair.
+func _needle_v3_red_thread_mounted_cases(fixture: Dictionary) -> void:
+	var ids := [
+		"seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus",
+		"seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+		"seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus",
+	]
+	var replay := {}
+	var scenarios := [
+		{"id": ids[0], "wearer": "seamstress", "pinner": "warden", "block": 0},
+		{"id": ids[1], "wearer": "seamstress", "pinner": "seamstress", "block": 0},
+		{"id": ids[2], "wearer": "seamstress", "pinner": "warden", "block": 40},
+		{"id": ids[3], "wearer": "seamstress", "pinner": "warden", "block": 0},
+		{"id": ids[4], "wearer": "seamstress", "pinner": "warden", "block": 0},
+		{"id": ids[5], "wearer": "seamstress", "pinner": "warden", "block": 0},
+		{"id": ids[0], "wearer": "warden", "pinner": "warden", "block": 0},
+		{"id": ids[2], "wearer": "", "pinner": "warden", "block": 0},
+		{"id": ids[1], "wearer": "seamstress", "pinner": "", "block": 0},
+		{"id": ids[0], "wearer": "seamstress", "pinner": "warden", "block": 0},
+	]
+	for index in range(scenarios.size()):
+		var spec: Dictionary = scenarios[index]
+		var id: String = spec.id
+		var wearer: String = spec.wearer
+		if not await _entry(fixture, wearer, false, false, false, [], false, false,
+				"", false, wearer != "", false, "", "", id):
+			_check(false, "real mounted red-thread Needle fixture: " + id)
+			continue
+		var hand = app.get_node("LiveSupportHand")
+		var adapter = app.get_node("LiveAreaAttackAction/LiveSeamstressSingleBleedHand")
+		var rules: CombatHeirloomPatchTriggers = hand._heirloom
+		var pinned: CombatPinned = presenter._pinned
+		_check(adapter != null and pinned != null and app.deck.turn_active
+			and app.enemies.get_enemy(1).hp > 0 and app.party.get_hero(2).hp > 0
+			and (rules == null if wearer == "" else rules != null
+				and rules._pinned == pinned and rules._party == app.party
+				and rules._enemies == app.enemies),
+			"nonvacuous V3 physical hand and carried needle authority: " + id)
+		if adapter == null or pinned == null:
+			await _click(app.return_button)
+			continue
+		if not spec.pinner.is_empty():
+			_check(pinned.pin_enemy(app.enemies, 1, spec.pinner),
+				"real original enemy carries a Pin for V3 " + id)
+		if spec.block > 0:
+			_check(app.enemies.gain_block(1, spec.block),
+				"real V3 enemy has sufficient Block to absorb entire hit")
+		if not await _ensure_held(id):
+			await _click(app.return_button)
+			continue
+		var panel := _panel(id)
+		_check(panel != null and adapter._bindings.has(panel),
+			"genuine V3 held panel registered to Seamstress selector")
+		if panel == null:
+			await _click(app.return_button)
+			continue
+		var before := _needle_state()
+		await _click(panel)
+		_check(adapter._choice.get("id") == id and adapter._targets.has(1)
+			and adapter.target_strip != null, "physical V3 card mounts live enemy target strip")
+		_check(_needle_state() == before,
+			"V3 arm/forecast never quotes, spends or changes RNG and latch")
+		if adapter.target_strip == null:
+			await _click(app.return_button)
+			continue
+		var old: Dictionary = app.enemies.get_enemy(1)
+		var authored := CombatSeamstressV3RedThreadCards.new()._catalog_definition(id)
+		var bonus := 1 if wearer == "seamstress" and not spec.pinner.is_empty() and ids.find(id) < 4 else 0
+		await _click(adapter._targets[1])
+		var receipt: Dictionary = adapter.last_event
+		var now: Dictionary = app.enemies.get_enemy(1)
+		var raw: int = int(authored.effects.get("damage", 0))
+		var expected := raw + bonus
+		_check(receipt.get("ok", false) and receipt.get("card_id") == id
+			and receipt.get("printed_damage") == raw and receipt.get("base_damage") == expected
+			and receipt.get("damage") == expected
+			and receipt.get("block_absorbed") == mini(old.block, expected)
+			and receipt.get("hp_loss") == mini(old.hp, maxi(0, expected - old.block))
+			and now.block == old.block - receipt.block_absorbed
+			and now.hp == old.hp - receipt.hp_loss,
+			"V3 held hit has exact +1 before statuses or no excluded bonus: " + id)
+		_check(receipt.get("bleed_applied") == int(authored.effects.bleed) + 1
+			and now.get("statuses", {}).get("bleed", 0) == int(old.get("statuses", {}).get("bleed", 0)) + int(authored.effects.bleed) + 1
+			and receipt.get("weak_applied") == int(authored.effects.get("weak", 0))
+			and app.deck.energy == before[0][15] - 1
+			and app.deck.hand.count(id) == before[0][12].count(id) - 1
+			and app.deck.discard_pile.count(id) == before[0][14].count(id) + 1
+			and app.run_rng.state == before[0][10],
+			"V3 held Bleed/Weak, one energy, one discard, unchanged RNG: " + id)
+		if rules != null:
+			_check(rules._needle_used == (bonus == 1) and rules._pending_needle.is_empty(),
+				"only authentic confirmed V3 attack consumes once-per-turn Needle")
+		if id == ids[4] or id == ids[5]:
+			_check(receipt.damage == 0 and now.hp == old.hp and now.block == old.block,
+				"Scarlet Knot is exclusively status application")
+		var snapshot := [receipt.duplicate(true), now.duplicate(true), app.run_rng.state]
+		if replay.has(id) and index == scenarios.size() - 1:
+			_check(replay[id] == snapshot, "mounted identical-seed V3 action replays exactly")
+		elif index == 0:
+			replay[id] = snapshot
+		await _click(app.return_button)
 
 
 func _needle_mounted_cases(fixture: Dictionary) -> void:

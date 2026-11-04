@@ -29,6 +29,10 @@ const NEEDLE_WARDEN_TOSS := [
     "warden_v3_rim_toss", "warden_v3_rim_toss_plus",
     "warden_v3_shield_toss", "warden_v3_shield_toss_plus",
 ]
+const NEEDLE_V3_RED_THREAD := [
+    "seamstress_v3_thread_prick", "seamstress_v3_thread_prick_plus",
+    "seamstress_v3_needle_rain", "seamstress_v3_needle_rain_plus",
+]
 
 
 ## Only the exact authored printings extend the starter authority. Tinker's six
@@ -45,6 +49,9 @@ func _needle_definition(card_id: String) -> Dictionary:
         return (WardenPoolCards.new().get_definition(card_id)
             if card_id.begins_with("warden_")
             else SeamstressPoolCards.new().get_definition(card_id))
+    if NEEDLE_V3_RED_THREAD.has(card_id):
+        var red := CombatSeamstressV3RedThreadCards.new()
+        return red._catalog_definition(card_id) if red.is_authentic_card(card_id) else {}
     if NEEDLE_WARDEN_TOSS.has(card_id):
         if card_id == "warden_v3_rim_toss" or card_id == "warden_v3_rim_toss_plus":
             return V3WardenStarterCards.new().get_definition(card_id)
@@ -316,6 +323,9 @@ func authorizes_needle_hit(quote: Dictionary, party: CombatParty,
             "warden_v3_shield_toss_plus": {"damage_equal_to_owner_block": true, "bonus_damage": 3},
         }.get(card_id, {})
         if effects != expected_effects:
+            return false
+    elif NEEDLE_V3_RED_THREAD.has(card_id):
+        if owner != "seamstress" or not CombatSeamstressV3RedThreadCards.new().is_authentic_card(card_id):
             return false
     elif not definition["effects"].get("damage") is int:
         return false

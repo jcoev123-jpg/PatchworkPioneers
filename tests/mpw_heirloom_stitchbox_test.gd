@@ -152,6 +152,7 @@ func _run() -> void:
 	await _test_routed_needle_echo_purchase(app)
 	app.free()
 	_test_heirloom_needle()
+	_test_heirloom_v3_red_thread()
 	_test_heirloom_hem()
 	_test_heirloom_binding_and_immutability()
 	await process_frame
@@ -466,6 +467,143 @@ func _test_heirloom_needle() -> void:
 		"downed attacker never quotes")
 
 
+
+
+## Genuine V3 starter/pool attack metadata, single-hit Block/HP contact and
+## the paid red-thread resolver share the original Heirloom authority.
+func _test_heirloom_v3_red_thread() -> void:
+	var ids := CombatHeirloomPatchTriggers.NEEDLE_V3_RED_THREAD
+	_check(ids.size() == 4 and not ids.has("seamstress_v3_scarlet_knot"),
+		"four exact V3 attack printings, no status-only Scarlet Knot")
+	var first_replay: Dictionary = {}
+	for id in ids:
+		var service := CombatSeamstressV3RedThreadCards.new()
+		var authored: Dictionary = (V3SeamstressStarterCards.new().get_definition(id)
+			if id.begins_with("seamstress_v3_thread_prick")
+			else V3SeamstressPoolCards.new().get_definition(id))
+		_check(service.is_authentic_card(id) and not authored.is_empty()
+			and authored.get("effects", {}).get("damage", 0) > 0,
+			"authentic starter/pool V3 strike printing: " + id)
+		for pinner in ["seamstress", "warden"]:
+			var f := _heirloom_fixture("seamstress")
+			var rules: CombatHeirloomPatchTriggers = f.rules
+			var foes: CombatEnemies = f.foes
+			var deck: CombatDeck = f.deck
+			_check(deck.combat_state.start_player_turn() and foes.get_enemy(1).hp > 0
+				and f.party.get_hero(2).hp > 0 and f.pins.pin_enemy(foes, 1, pinner),
+				"nonvacuous V3 attacker, target, active paid deck and real " + pinner + " Pin")
+			deck.hand.append(id)
+			if pinner == "warden":
+				_check(foes.gain_block(1, 40), "real V3 Block-absorbed contact")
+			var before := foes.get_enemy(1)
+			var rng_before: int = f.rng.state
+			var quote: Dictionary = rules.quote_needle_hit("seamstress", 1, id)
+			_check(quote.get("ok", false) and quote.get("bonus_damage", 0) == 1
+				and rules.authorizes_needle_hit(quote, f.party, foes, id, 1),
+				"exact V3 ID authorized before spend: " + id)
+			var receipt := service.play_card(deck, f.party, foes, id, 1, rules, quote)
+			var after := foes.get_enemy(1)
+			var expected: int = int(authored.effects.damage) + 1
+			_check(receipt.get("ok", false) and receipt.get("printed_damage") == authored.effects.damage
+				and receipt.get("base_damage") == expected and receipt.get("damage") == expected
+				and receipt.get("block_absorbed") == mini(before.block, expected)
+				and receipt.get("hp_loss") == mini(before.hp, maxi(0, expected - before.block))
+				and after.hp == before.hp - receipt.hp_loss
+				and after.block == before.block - receipt.block_absorbed,
+				"sealed +1 is pre-status raw damage and real Block/HP contact: " + id)
+			_check(receipt.get("bleed_applied") == int(authored.effects.bleed) + 1
+				and int(after.get("statuses", {}).get("bleed", 0)) == int(before.get("statuses", {}).get("bleed", 0)) + int(authored.effects.bleed) + 1
+				and deck.discard_pile.count(id) == 1 and deck.hand.count(id) == 0
+				and deck.energy == 2 and f.rng.state == rng_before
+				and rules._needle_used and rules._pending_needle.is_empty(),
+				"status, one payment, unchanged RNG and once-per-turn latch: " + id)
+			_check(not rules.quote_needle_hit("seamstress", 1, id).ok,
+				"V3 repeat cannot reclaim spent Needle")
+			_check(rules.start_player_turn() and rules.quote_needle_hit("seamstress", 1, id).ok,
+				"V3 next player turn re-arms without RNG")
+			if pinner == "seamstress":
+				_check(f.pins.pinner_for_enemy(1) == "seamstress",
+					"same-pinner's real Pin remains assigned")
+			var observation := {"receipt": receipt, "after": after, "rng": f.rng.state}
+			if pinner == "warden":
+				if first_replay.has(id):
+					_check(first_replay[id] == observation, "same-seed V3 replay: " + id)
+				else:
+					first_replay[id] = observation
+
+	for id in ["seamstress_v3_scarlet_knot", "seamstress_v3_scarlet_knot_plus"]:
+		var f := _heirloom_fixture("seamstress")
+		_check(f.pins.pin_enemy(f.foes, 1, "warden")
+			and not f.rules.quote_needle_hit("seamstress", 1, id).ok,
+			"authentic status-only Scarlet cannot quote Needle: " + id)
+	var invalid := _heirloom_fixture("seamstress")
+	_check(invalid.pins.pin_enemy(invalid.foes, 1, "warden"), "stale V3 quote pin prerequisite")
+	invalid.deck.combat_state.start_player_turn()
+	var id: String = ids[0]
+	invalid.deck.hand.append(id)
+	_check(not invalid.rules.quote_needle_hit("warden", 1, id).ok
+		and not invalid.rules.quote_needle_hit("seamstress", 0, id).ok
+		and not invalid.rules.quote_needle_hit("seamstress", 1, "seamstress_v3_fake").ok,
+		"wrong owner, slot and forged catalog ID fail before a quote")
+	var stale: Dictionary = invalid.rules.quote_needle_hit("seamstress", 1, id)
+	_check(stale.ok and invalid.pins.clear_pin(1), "real Pin removed after quote")
+	var before_deck := [invalid.deck.hand.duplicate(), invalid.deck.discard_pile.duplicate(),
+		invalid.deck.energy, invalid.foes.get_enemies(), invalid.rng.state]
+	var refused := CombatSeamstressV3RedThreadCards.new().play_card(invalid.deck,
+		invalid.party, invalid.foes, id, 1, invalid.rules, stale)
+	_check(not refused.ok and invalid.rules._pending_needle.is_empty()
+		and not invalid.rules._needle_used
+		and before_deck == [invalid.deck.hand, invalid.deck.discard_pile,
+			invalid.deck.energy, invalid.foes.get_enemies(), invalid.rng.state],
+		"stale V3 quote cancels with zero card, HP, Block, status, RNG or latch change")
+	_check(invalid.pins.pin_enemy(invalid.foes, 1, "warden"), "payment refusal real Pin")
+	invalid.deck.combat_state.energy = 0
+	var unaffordable: Dictionary = invalid.rules.quote_needle_hit("seamstress", 1, id)
+	var unpaid := [invalid.deck.hand.duplicate(), invalid.deck.discard_pile.duplicate(),
+		invalid.foes.get_enemies(), invalid.rng.state]
+	var no_pay := CombatSeamstressV3RedThreadCards.new().play_card(invalid.deck,
+		invalid.party, invalid.foes, id, 1, invalid.rules, unaffordable)
+	_check(unaffordable.ok and not no_pay.ok and not invalid.rules._needle_used
+		and invalid.rules._pending_needle.is_empty()
+		and unpaid == [invalid.deck.hand, invalid.deck.discard_pile,
+			invalid.foes.get_enemies(), invalid.rng.state],
+		"failed genuine payment cannot spend, injure, bleed, draw RNG or consume latch")
+	invalid.deck.combat_state.energy = 3
+	var genuine: Dictionary = invalid.rules.quote_needle_hit("seamstress", 1, id)
+	var tampered_quote: Dictionary = genuine.duplicate(true)
+	tampered_quote["card_id"] = "seamstress_v3_scarlet_knot"
+	var immutable := [invalid.deck.hand.duplicate(), invalid.deck.discard_pile.duplicate(),
+		invalid.deck.energy, invalid.foes.get_enemies(), invalid.rng.state]
+	var forged := CombatSeamstressV3RedThreadCards.new().play_card(invalid.deck,
+		invalid.party, invalid.foes, id, 1, invalid.rules, tampered_quote)
+	_check(genuine.ok and not forged.ok and not invalid.rules._needle_used
+		and invalid.rules._pending_needle.is_empty()
+		and immutable == [invalid.deck.hand, invalid.deck.discard_pile,
+			invalid.deck.energy, invalid.foes.get_enemies(), invalid.rng.state],
+		"tampered Scarlet-claim quote is refused atomically before red-thread payment")
+	var altered := CombatSeamstressV3RedThreadCards.new()._catalog_definition(id)
+	altered["effects"]["damage"] = int(altered.effects.damage) + 20
+	_check(not CombatSeamstressV3RedThreadCards.new()._authentic(
+		altered, id, CombatSeamstressV3RedThreadCards.CARDS[id]),
+		"forged printed damage cannot authenticate as the genuine V3 catalog line")
+	var no_pin := _heirloom_fixture("seamstress")
+	var wrong_wearer := _heirloom_fixture("warden")
+	var dead := _heirloom_fixture("seamstress")
+	_check(not no_pin.rules.quote_needle_hit("seamstress", 1, id).ok
+		and wrong_wearer.pins.pin_enemy(wrong_wearer.foes, 1, "warden")
+		and not wrong_wearer.rules.quote_needle_hit("seamstress", 1, id).ok,
+		"unpinned V3 target and genuinely wrong sewn wearer cannot quote")
+	_check(dead.foes.apply_damage(1, 100)
+		and not dead.rules.quote_needle_hit("seamstress", 1, id).ok,
+		"dead original enemy cannot receive V3 Needle entitlement")
+	var torn_v3 := _heirloom_fixture("seamstress")
+	var torn_before: Dictionary = torn_v3.torn.read_state()
+	var torn_after: Array = torn_before.heroes.duplicate(true)
+	torn_after[1]["hp"] = 0
+	_check(torn_v3.torn.observe_battle_end("v3-torn", torn_before.heroes, torn_after).ok
+		and not torn_v3.rules.is_current()
+		and not torn_v3.rules.quote_needle_hit("seamstress", 1, id).ok,
+		"genuine torn Seamstress ledger cancels V3 Needle authority")
 
 
 func _test_heirloom_hem() -> void:

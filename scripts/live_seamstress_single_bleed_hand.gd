@@ -523,7 +523,25 @@ func _commit(position: int, enemy_id: String, token: int) -> void:
 			# This exact gauge is consumed by the actual end-turn round flow.
 			authorities.flow._unravel = authorities.unravel
 	elif card_id in V3_IDS:
-		event = _v3_service.play_card(_deck, _party, _enemies, card_id, position)
+		# Only the paid, physically selected V3 attack may borrow the carried
+		# Heirloom and the same Pinned authority mounted in this real battle.
+		var needle_rules: CombatHeirloomPatchTriggers = null
+		var needle_quote := {}
+		if card_id in CombatHeirloomPatchTriggers.NEEDLE_V3_RED_THREAD:
+			var app = _app()
+			var hand = app.get_node_or_null("LiveSupportHand")
+			var attack = app.get_node_or_null("LiveAttackPreview")
+			if hand != null and attack != null and attack._battle == _battle \
+					and attack._deck == _deck and attack._pinned != null:
+				var current: CombatHeirloomPatchTriggers = hand.current_attack_heirloom(_deck, _party)
+				if current != null and current._pinned == attack._pinned \
+						and current._enemies == _enemies and current._party == _party:
+					var offered: Dictionary = current.quote_needle_hit("seamstress", position, card_id)
+					if offered.get("ok", false):
+						needle_rules = current
+						needle_quote = offered
+		event = _v3_service.play_card(_deck, _party, _enemies, card_id,
+			position, needle_rules, needle_quote)
 	else:
 		event = _service.play_card(_deck, _party, _enemies, card_id, position)
 	_cancel()

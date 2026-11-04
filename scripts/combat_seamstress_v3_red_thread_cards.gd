@@ -127,19 +127,41 @@ func is_authentic_card(card_id: Variant) -> bool:
 ## `target_position` must name a living original enemy slot in the printed TO window; a slain or
 ## out-of-range slot fails closed and is never replaced by a surviving "compacted" slot.
 func play_card(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: Variant, target_position: int = 0) -> Dictionary:
-	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position)
+		card_id: Variant, target_position: int = 0,
+		needle_rules: CombatHeirloomPatchTriggers = null,
+		needle_quote: Dictionary = {}) -> Dictionary:
+	var needle_bonus := 0
+	if needle_rules != null or not needle_quote.is_empty():
+		if needle_rules == null or not card_id is String \
+				or card_id not in CombatHeirloomPatchTriggers.NEEDLE_V3_RED_THREAD \
+				or not needle_rules.authorizes_needle_hit(needle_quote, party, enemies,
+					card_id, target_position):
+			if needle_rules != null:
+				needle_rules.cancel_needle_hit()
+			return _refusal("invalid_needle_quote")
+		needle_bonus = 1
+	var plan: Dictionary = _prepare(deck, party, enemies, card_id, target_position,
+		false, needle_bonus)
 	if not plan.get("ok", false):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return plan
 	# Every operation below is guaranteed by the complete preflight above: the turn is active, the
 	# exact held ID is affordable, the unique living owner sits in a printed seat, the target is a
 	# living original enemy slot and both printed status additions are admissible. Keep the
 	# defensive returns so an unexpected model change still fails closed.
 	if not deck.try_spend_energy(plan["cost"]):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _refusal("insufficient_energy")
 	if not deck.discard_played(plan["card_id"]):
+		if needle_rules != null:
+			needle_rules.cancel_needle_hit()
 		return _refusal("card_not_held")
-	return _resolve_plan(enemies, plan)
+	var receipt := _resolve_plan(enemies, plan)
+	if needle_rules != null:
+		needle_rules.finish_needle_hit(needle_quote, receipt)
+	return receipt
 
 
 ## Only detached transaction authorities are supplied here. The enclosing stitch
@@ -216,7 +238,8 @@ func _resolve_plan(enemies: CombatEnemies, plan: Dictionary) -> Dictionary:
 
 ## Read-only preflight of the whole transaction. Returns a detached plan or a refusal receipt.
 func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
-		card_id: Variant, target_position: int, staged: bool = false) -> Dictionary:
+		card_id: Variant, target_position: int, staged: bool = false,
+		needle_bonus: int = 0) -> Dictionary:
 	if (deck == null and not staged) or party == null or enemies == null:
 		return _refusal("invalid_request")
 	if not staged and (deck.combat_state == null or deck._rng == null or not deck.turn_active):
@@ -323,7 +346,11 @@ func _prepare(deck: CombatDeck, party: CombatParty, enemies: CombatEnemies,
 	# Size the exact hit before payment: a positive printed base that the shared status rules
 	# collapse to zero is an arithmetic overflow, never a silent free hit.
 	var printed_damage: int = int(card["damage"])
-	var base_damage := printed_damage
+	if needle_bonus < 0 or needle_bonus > 1 or staged and needle_bonus != 0 \
+			or needle_bonus > 0 and not CombatHeirloomPatchTriggers.NEEDLE_V3_RED_THREAD.has(id) \
+			or printed_damage > CombatStatuses.MAX_INT - needle_bonus:
+		return _refusal("invalid_needle_quote")
+	var base_damage := printed_damage + needle_bonus
 	var damage := 0
 	if base_damage > 0:
 		damage = _statuses.adjusted_attack_damage(base_damage, attacker_statuses,
