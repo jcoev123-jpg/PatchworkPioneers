@@ -1377,9 +1377,15 @@ func _stitched_floor_config() -> Dictionary:
 			or not preview.get("parts") is Array:
 		return {}
 	var roster := StitchedEnemyCatalog.load_catalog()
-	var warden := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
-	if not bool(roster.get("ok", false)) or not bool(warden.get("ok", false)):
+	if not bool(roster.get("ok", false)):
 		return {}
+	var owner_ids := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var owner_catalogs: Dictionary = {}
+	for owner_id in owner_ids:
+		var loaded := StitchedParts.load_catalog("res://data/parts/%s_parts.json" % owner_id)
+		if not bool(loaded.get("ok", false)):
+			return {}
+		owner_catalogs[owner_id] = loaded
 	var foes: Array = []
 	var seen_foes: Dictionary = {}
 	for entry in preview["foes"]:
@@ -1400,51 +1406,89 @@ func _stitched_floor_config() -> Dictionary:
 		if str(entry.get("owner", "")) == "any":
 			generic.append(entry)
 	var definitions: Array = []
-	definitions.append_array(warden["parts"])
+	for owner_id in owner_ids:
+		for part in owner_catalogs[owner_id]["parts"]:
+			if str(part.get("owner", "")) != owner_id:
+				return {}
+			definitions.append(part)
 	definitions.append_array(generic)
 	definitions.append_array(roster["parts"])
+	# One combined validator rejects an ID collision between any two catalogs.
 	var catalog := StitchedParts.build_catalog(definitions)
 	if not bool(catalog.get("ok", false)):
 		return {}
-	var starter := {
-		"head": "warden_head_pot_helm_bonk",
-		"arms": "warden_arms_shield_catch",
-		"torso": "warden_torso_iron_challenge",
-		"legs": "warden_legs_rim_toss",
+	var starters := {
+		"warden": {
+			"head": "warden_head_pot_helm_bonk",
+			"arms": "warden_arms_shield_catch",
+			"torso": "warden_torso_iron_challenge",
+			"legs": "warden_legs_rim_toss",
+		},
+		"seamstress": {
+			"head": "seamstress_mending_knot_hat",
+			"arms": "seamstress_thread_prick_needle",
+			"torso": "seamstress_shielding_hem_coat",
+			"legs": "seamstress_tether_loop_spools",
+		},
+		"tinker": {
+			"head": "tinker_head_cog_shot",
+			"arms": "tinker_arms_scrap_bomb",
+			"torso": "tinker_torso_casing_ward",
+			"legs": "tinker_legs_tune_up",
+		},
+		"lantern_monk": {
+			"head": "lantern_monk_head_moth_wink",
+			"arms": "lantern_monk_arms_wick_spark",
+			"torso": "lantern_monk_torso_lamplight_wash",
+			"legs": "lantern_monk_legs_pole_shelter",
+		},
 	}
-	var fallback := {
-		"head": "any_head_needle_pin",
-		"arms": "any_arm_red_thread",
-		"torso": "any_torso_felt_coat",
-		"legs": "any_legs_stitch_step",
-	}
-	for slot in StitchedParts.SLOTS:
-		if not catalog["by_id"].has(starter[slot]) or not catalog["by_id"].has(fallback[slot]):
-			return {}
-		if str(catalog["by_id"][starter[slot]]["slot"]) != slot \
-				or str(catalog["by_id"][fallback[slot]]["slot"]) != slot:
-			return {}
+	# Authenticate each authored starter before the screen or battle is created.
+	for owner_id in owner_ids:
+		for slot in StitchedParts.SLOTS:
+			var part_id: String = starters[owner_id][slot]
+			var part: Dictionary = catalog["by_id"].get(part_id, {})
+			if part.is_empty() or str(part.get("owner", "")) != owner_id \
+					or str(part.get("slot", "")) != slot \
+					or StitchedParts.ability_at_tier(part, 1).is_empty():
+				return {}
 	var config := preview.duplicate(true)
+	var seen_heroes: Dictionary = {}
 	for hero in config["heroes"]:
 		if not hero is Dictionary or not hero.get("parts") is Dictionary:
 			return {}
-		if str(hero.get("id", "")) == "warden":
-			hero["parts"] = starter.duplicate(true)
-		else:
-			# The S2 Tinker borrowed the prototype Warden IDs. Keep all three
-			# other heroes on the already authored generic kit.
-			for slot in StitchedParts.SLOTS:
-				hero["parts"][slot] = fallback[slot]
-	# Only equipment committed at Sewing Circle travels into the next Fight.
-	for hero in config["heroes"]:
-		var carried: Dictionary = _stitched_gear_overrides.get(str(hero["id"]), {})
+		var hero_id := str(hero.get("id", ""))
+		if not starters.has(hero_id) or seen_heroes.has(hero_id):
+			return {}
+		seen_heroes[hero_id] = true
+		var worn: Dictionary = {}
 		for slot in StitchedParts.SLOTS:
-			if carried.has(slot):
-				var gear: Dictionary = carried[slot]
-				if not catalog["by_id"].has(str(gear.get("id", ""))) \
-						or str(catalog["by_id"][str(gear["id"])]["slot"]) != slot:
-					return {}
-				hero["parts"][slot] = gear.duplicate(true)
+			worn[slot] = {"id": starters[hero_id][slot], "tier": 1, "torn": false}
+		hero["parts"] = worn
+	if seen_heroes.size() != owner_ids.size():
+		return {}
+	# Only equipment committed at Sewing Circle travels into the next Fight.
+	# A compatible foreign trophy is legal; its owner's identity is not the wearer.
+	for hero in config["heroes"]:
+		var carry_value: Variant = _stitched_gear_overrides.get(str(hero["id"]), {})
+		if not carry_value is Dictionary:
+			return {}
+		var carried: Dictionary = carry_value
+		for slot in StitchedParts.SLOTS:
+			if not carried.has(slot):
+				continue
+			if not carried[slot] is Dictionary:
+				return {}
+			var gear: Dictionary = carried[slot]
+			var part_id := str(gear.get("id", ""))
+			var part: Dictionary = catalog["by_id"].get(part_id, {})
+			if part.is_empty() or str(part.get("slot", "")) != slot \
+					or not gear.get("tier") is int \
+					or int(gear["tier"]) < StitchedParts.MIN_TIER \
+					or int(gear["tier"]) > StitchedParts.MAX_TIER \
+					or not gear.get("torn") is bool:
+				return {}
+			hero["parts"][slot] = gear.duplicate(true)
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
 	config["seed"] = 4982026
