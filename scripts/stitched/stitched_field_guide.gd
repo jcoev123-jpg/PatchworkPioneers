@@ -39,7 +39,8 @@ var _active := false
 
 func _ready() -> void:
 	name = "StitchedFieldGuide"
-	theme = GOTHIC
+	# Live play inherits App's Gothic theme; a local Theme would break the shared
+	# downstream-control theme inheritance contract.
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_NONE
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

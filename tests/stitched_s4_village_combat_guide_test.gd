@@ -138,10 +138,10 @@ func _run() -> void:
 		"Enter opens actual modal overlay and focuses first tab")
 	_check(view.get_children().filter(func(node: Node) -> bool: return node is StitchedFieldGuide).size() == 1,
 		"guide has exactly one mounted instance")
-	_check(guide.theme == load("res://themes/gothic_theme.tres")
+	_check(guide.theme == null and StitchedFieldGuide.GOTHIC == load("res://themes/gothic_theme.tres")
 		and guide.get_node("FeltPanel") is NinePatchRect
 		and (guide.get_node("FeltPanel") as NinePatchRect).texture != null,
-		"existing Gothic theme and supplied felt art mount")
+		"inherited Gothic theme contract and supplied felt art mount")
 	var texts := [
 		["Friendly ranks", "1 (front)", "4 (back)", "Foes", "2–3 foes",
 			"fourth", "summon or split", "SPEED + 1d8", "seeded RNG",
