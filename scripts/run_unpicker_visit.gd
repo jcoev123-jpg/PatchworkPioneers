@@ -163,17 +163,21 @@ func read_state() -> Dictionary:
 func quote() -> Dictionary:
     if _stitched:
         var open := _valid and not _consumed
+        # Only name heroes the paid calm can actually help: the party must afford
+        # the quote and the hero must have FRAY to remove. Held roster order.
         var hero_ids: Array = []
-        for hero in _heroes:
-            hero_ids.append(hero["id"])
+        if open and _gold >= _quoted_price:
+            for hero in _heroes:
+                if int(hero["fray"]) > 0:
+                    hero_ids.append(hero["id"])
         return {
             "ok": open,
             "visit_id": _visit_id,
             "node_id": _node_id,
             "price": _quoted_price,
             "calm_amount": CALM_AMOUNT,
-            "hero_ids": hero_ids if open else [],
-            "choices": ["calm_hero", "leave"] if open else [],
+            "hero_ids": hero_ids,
+            "choices": (["calm_hero", "leave"] if not hero_ids.is_empty() else ["leave"]) if open else [],
         }
     return {
         "ok": _valid and not _consumed,

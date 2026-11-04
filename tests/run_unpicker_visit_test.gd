@@ -25,6 +25,7 @@ func _initialize() -> void:
     _test_stitched_calm()
     _test_stitched_leave_and_refusals()
     _test_stitched_invalid_open_and_detachment()
+    _test_stitched_quote_actionability()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -461,7 +462,8 @@ func _test_stitched_calm() -> void:
     var source := visit.read_state()
     var quote := visit.quote()
     _check(quote["ok"] and quote["choices"] == ["calm_hero", "leave"] and quote["price"] == 75
-            and quote["calm_amount"] == 50 and quote["hero_ids"] == HERO_IDS
+            and quote["calm_amount"] == 50 and quote["hero_ids"] == ["warden", "seamstress", "tinker"]
+            and not quote["hero_ids"].has("lantern_monk")
             and quote["visit_id"] == source["visit_id"] and quote["node_id"] == NODE,
             "quote discloses the authorized caller price and exactly calm_hero + leave")
     _check(source["mode"] == "stitched" and source["heroes"] == original and source["gold"] == 100
@@ -675,3 +677,75 @@ func _test_stitched_invalid_open_and_detachment() -> void:
     var legacy := _make_visit(_deck(), 175)
     _check(legacy.is_valid() and legacy.quote()["choices"] == ["remove_card", "leave"]
             and legacy.quote()["price"] == 75, "legacy constructor is unaffected by Stitched mode")
+
+
+## Quote lists only heroes the paid calm can help, and only to a party that can pay.
+func _test_stitched_quote_actionability() -> void:
+    var frays := [70, 20, 200, 0]
+    var local_rng := RandomNumberGenerator.new()
+    local_rng.seed = 7741
+    var local_before := local_rng.state
+    seed(7741)
+    var global_next := randi()
+    seed(7741)
+    # Affordable: nonzero-FRAY heroes only, in held rank order; every listed ID is calmable.
+    var visit := _s_open(_s_heroes(frays), 75, 75)
+    var source := visit.read_state()
+    var quote := visit.quote()
+    _check(quote["ok"] and quote["hero_ids"] == ["warden", "seamstress", "tinker"]
+            and quote["choices"] == ["calm_hero", "leave"] and quote["price"] == 75
+            and quote["calm_amount"] == 50 and quote["visit_id"] == source["visit_id"]
+            and quote["node_id"] == NODE, "exact 75/75 quotes the three frayed heroes")
+    _check(visit.read_state() == source and not visit.is_consumed()
+            and visit.quote() == quote, "quoting is read-only and repeatable")
+    var returned: Array = quote["hero_ids"]
+    returned.clear()
+    _check(visit.quote()["hero_ids"] == ["warden", "seamstress", "tinker"],
+            "returned hero_ids are detached from the service")
+    for id in visit.quote()["hero_ids"]:
+        var probe := _s_open(_s_heroes(frays), 75, 75)
+        _check(_s_calm(probe, id, probe.read_state())["ok"] == true,
+                "every quoted hero is actually calmable: " + str(id))
+    # One gold short: Leave only, price and open identity preserved.
+    var poor := _s_open(_s_heroes(frays), 74, 75)
+    var poor_source := poor.read_state()
+    var poor_quote := poor.quote()
+    _check(poor_quote["ok"] and poor_quote["hero_ids"] == [] and poor_quote["choices"] == ["leave"]
+            and poor_quote["price"] == 75 and poor_quote["calm_amount"] == 50
+            and poor_quote["visit_id"] == poor_source["visit_id"] and poor_quote["node_id"] == NODE,
+            "74 gold against 75 advertises only Leave and no heroes")
+    var left := poor.leave(poor_source["visit_id"], NODE, poor_source)
+    _check(left["ok"] == true and left["action"] == "leave" and left["charged_gold"] == 0
+            and left["gold"] == 74 and poor.is_consumed() and poor.quote()["choices"] == []
+            and poor.quote()["hero_ids"] == [] and not poor.quote()["ok"],
+            "Leave stays free and accepted on an unaffordable quote")
+    # No hero with FRAY: affordable but Leave only.
+    var calm := _s_open(_s_heroes([0, 0, 0, 0]), 500, 75)
+    var calm_source := calm.read_state()
+    var calm_quote := calm.quote()
+    _check(calm_quote["ok"] and calm_quote["hero_ids"] == [] and calm_quote["choices"] == ["leave"]
+            and calm_quote["price"] == 75, "all-zero FRAY party advertises only Leave")
+    var calm_left := calm.leave(calm_source["visit_id"], NODE, calm_source)
+    _check(calm_left["ok"] == true and calm_left["charged_gold"] == 0 and calm_left["gold"] == 500
+            and calm_left["heroes"] == _s_heroes([0, 0, 0, 0]) and calm.is_consumed(),
+            "Leave on an all-zero FRAY party is accepted and free")
+    # A single hero at 1 FRAY is enough, at rank position 3.
+    var one := _s_open(_s_heroes([0, 0, 1, 0]), 75, 75)
+    var one_quote := one.quote()
+    _check(one_quote["hero_ids"] == ["tinker"] and one_quote["choices"] == ["calm_hero", "leave"],
+            "1 FRAY hero is quoted with calm_hero and Leave")
+    var one_paid := _s_calm(one, "tinker", one.read_state())
+    _check(one_paid["ok"] == true and one_paid["fray_before"] == 1 and one_paid["fray_after"] == 0
+            and one_paid["charged_gold"] == 75, "1 FRAY hero calms to zero for the quoted price")
+    # A consumed or invalid visit still has empty choices and IDs.
+    var done := _s_open(_s_heroes(frays), 75, 75)
+    _s_calm(done, "warden", done.read_state())
+    var done_quote := done.quote()
+    _check(not done_quote["ok"] and done_quote["choices"] == [] and done_quote["hero_ids"] == [],
+            "consumed visit quotes nothing")
+    var bad_quote := _s_open(_s_heroes(frays), 75, 0).quote()
+    _check(not bad_quote["ok"] and bad_quote["choices"] == []
+            and (not bad_quote.has("hero_ids") or bad_quote["hero_ids"].is_empty()),
+            "invalid visit quotes nothing and names no heroes")
+    _check(local_rng.state == local_before and randi() == global_next,
+            "quote, calm and Leave draw no local/global RNG")
