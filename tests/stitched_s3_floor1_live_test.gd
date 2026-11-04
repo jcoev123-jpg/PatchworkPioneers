@@ -160,6 +160,23 @@ func _run() -> void:
 		seed(global_seed)
 		app.stitched_fight_button.pressed.emit()
 		await process_frame
+		var panel: LiveEventChoicePanel = app.stitched_event_panel
+		_check(panel != null and panel.has_open_event() and panel.is_visible_in_tree() \
+			and app.stitched_event_gate != null and app.stitched_event_gate.is_valid() \
+			and not app.title_view.is_visible_in_tree(),
+			"ordinary title opens the authentic Roadblock offer before any battle")
+		if panel == null:
+			app.free()
+			continue
+		var choices := panel.get_choice_buttons()
+		_check(choices.size() == 3 and not choices[0].disabled and choices[1].disabled \
+			and not choices[2].disabled and app.stitched_fight_view == null,
+			"Roadblock Fight is available, the zero-wallet toll is disabled, and Leave is available")
+		if choices.size() != 3:
+			app.free()
+			continue
+		choices[0].pressed.emit()
+		await process_frame
 		var stage: StitchedBattleScreen = app.stitched_fight_view
 		_check(stage != null and stage.is_visible_in_tree() and not app.title_view.is_visible_in_tree(),
 			"clicking ordinary title control mounts Floor 01")

@@ -672,6 +672,10 @@ var route_button: Button
 var base_button: Button
 var stitched_fight_button: Button
 var stitched_fight_view: StitchedBattleScreen
+var stitched_event_panel: LiveEventChoicePanel
+var stitched_event_gate: RunV3FightEventGate
+const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
+const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
 var _route_from_base := false
@@ -1331,8 +1335,8 @@ func _build_title() -> void:
 	box.add_child(base_button)
 	stitched_fight_button = Button.new()
 	stitched_fight_button.name = "StitchedFightButton"
-	stitched_fight_button.text = "Stitched Fight"
-	stitched_fight_button.tooltip_text = "Floor 01 · four-rank Stitched combat"
+	stitched_fight_button.text = "Stitched Roadblock"
+	stitched_fight_button.tooltip_text = "Face the Stitchline Roadblock before Floor 01 combat"
 	stitched_fight_button.custom_minimum_size = Vector2(240, 56)
 	stitched_fight_button.pressed.connect(_open_stitched_fight)
 	box.add_child(stitched_fight_button)
@@ -1412,9 +1416,150 @@ func _stitched_floor_config() -> Dictionary:
 
 
 func _open_stitched_fight() -> bool:
-	if is_instance_valid(stitched_fight_view) or deck != null or run_map != null \
+	# The title button admits only the authored Roadblock visit. No combat or
+	# run objects exist until a separately authenticated Fight is committed.
+	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
+			or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
+			or is_instance_valid(battle_view) or _route_from_base \
 			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+		return false
+	var gate := RunV3FightEventGate.new(STITCHED_ROADBLOCK_ID)
+	if not gate.is_valid() or gate.get_event_id() != STITCHED_ROADBLOCK_ID:
+		return false
+	var record: Dictionary = gate.get_event()
+	var preview: Dictionary = gate.preview_choices(STITCHED_TITLE_WALLET.duplicate(true))
+	if not preview.get("ok", false) or preview.get("event_id") != STITCHED_ROADBLOCK_ID \
+			or preview.get("fight_choice_id") != gate.get_fight_choice_id() \
+			or not preview.get("choices") is Array:
+		return false
+	var rows: Array = preview["choices"]
+	var authored: Array = record.get("choices", [])
+	if rows.size() != 3 or authored.size() != rows.size():
+		return false
+	var afforded: Dictionary = {}
+	for index in range(rows.size()):
+		if not rows[index] is Dictionary or not authored[index] is Dictionary:
+			return false
+		var row: Dictionary = rows[index]
+		var choice_id: String = str(row.get("choice_id", ""))
+		if choice_id != str(authored[index].get("id", "")) \
+				or typeof(row.get("affordable")) != TYPE_BOOL:
+			return false
+		afforded[choice_id] = row["affordable"]
+		var request: Dictionary = row.get("fight_request", {})
+		if request != ({"node_type": "Fight"} if choice_id == gate.get_fight_choice_id() else {}):
+			return false
+	if afforded.get(gate.get_fight_choice_id()) != true \
+			or afforded.get("leave") != true or afforded.get("pay_road_toll") != false:
+		return false
+	var panel := preload("res://scenes/event_choice_panel.tscn").instantiate() as LiveEventChoicePanel
+	if panel == null:
+		return false
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	if not panel.open_event_with_wallet(record, STITCHED_TITLE_WALLET.duplicate(true)):
+		remove_child(panel)
+		panel.queue_free()
+		return false
+	var buttons := panel.get_choice_buttons()
+	if buttons.size() != rows.size():
+		panel.close_event()
+		remove_child(panel)
+		panel.queue_free()
+		return false
+	for index in range(rows.size()):
+		var row: Dictionary = rows[index]
+		var forecast := row.duplicate(true)
+		forecast.erase("fight_request")
+		if not is_instance_valid(buttons[index]) \
+				or buttons[index].disabled == bool(row["affordable"]) \
+				or panel._wallet_previews.get(str(row["choice_id"]), {}) != forecast:
+			panel.close_event()
+			remove_child(panel)
+			panel.queue_free()
+			return false
+	stitched_event_gate = gate
+	stitched_event_panel = panel
+	panel.wallet_choice_committed.connect(_commit_stitched_roadblock.bind(weakref(panel), gate))
+	title_view.hide()
+	buttons[0].grab_focus.call_deferred()
+	return true
+
+
+func _commit_stitched_roadblock(receipt: Dictionary, source: WeakRef, gate: RunV3FightEventGate) -> void:
+	var panel := source.get_ref() as LiveEventChoicePanel if source != null else null
+	if panel == null or panel != stitched_event_panel or panel.get_parent() != self \
+			or not panel.is_visible_in_tree() or not panel.has_open_event() \
+			or not panel._wallet_mode or panel._offered_wallet != STITCHED_TITLE_WALLET \
+			or panel._selector == null or not panel._selector.is_claimed() \
+			or gate == null or gate != stitched_event_gate or not gate.is_valid() \
+			or panel._selector.get_event() != gate.get_event() \
+			or not is_instance_valid(title_view) or title_view.is_visible_in_tree() \
+			or deck != null or run_map != null or run_rng != null \
+			or is_instance_valid(stitched_fight_view) or is_instance_valid(base_screen) \
+			or is_instance_valid(route_view) or is_instance_valid(party_picker):
+		return
+	# The panel's actual committed choice is the only UI witness. Do not trust
+	# any supplied fight_request or node_type (especially Elite or Boss).
+	if receipt != panel._committed_choice or receipt.size() != 4 \
+			or receipt.get("ok") != true or receipt.get("event_id") != STITCHED_ROADBLOCK_ID \
+			or receipt.get("wallet") != STITCHED_TITLE_WALLET:
+		return
+	var choice_id: Variant = receipt.get("choice_id")
+	var preview: Dictionary = gate.preview_choices(STITCHED_TITLE_WALLET.duplicate(true))
+	if preview.get("ok") != true:
+		return
+	var affordable := false
+	for row_raw in preview.get("choices", []):
+		if row_raw is Dictionary and row_raw.get("choice_id") == choice_id:
+			affordable = row_raw.get("affordable") == true
+			break
+	if not affordable:
+		return
+	# A new, once-only gate settles the same choice and immutable title wallet.
+	# A cloned/forged/stale panel receipt cannot promote a visit into combat.
+	var admitted: Dictionary = gate.choose_with_wallet(choice_id, STITCHED_TITLE_WALLET.duplicate(true))
+	var fight_ok: bool = admitted.get("ok") == true \
+			and admitted.get("event_id") == STITCHED_ROADBLOCK_ID \
+			and admitted.get("choice_id") == gate.get_fight_choice_id() \
+			and admitted.get("wallet") == STITCHED_TITLE_WALLET \
+			and admitted.get("fight_request") == {"node_type": "Fight"}
+	_retire_stitched_roadblock()
+	if not fight_ok or not _begin_stitched_battle(admitted, gate):
+		_restore_stitched_title()
+
+
+func _retire_stitched_roadblock() -> void:
+	var panel := stitched_event_panel
+	# Drop app authority before removing buttons; queued input is then inert.
+	stitched_event_panel = null
+	stitched_event_gate = null
+	if is_instance_valid(panel):
+		panel.close_event()
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+
+
+func _restore_stitched_title() -> void:
+	if is_instance_valid(title_view):
+		title_view.show()
+		if is_instance_valid(stitched_fight_button):
+			stitched_fight_button.grab_focus.call_deferred()
+
+
+func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) -> bool:
+	if gate == null or not gate.is_claimed() or admission.get("ok") != true \
+			or admission.get("event_id") != STITCHED_ROADBLOCK_ID \
+			or admission.get("choice_id") != gate.get_fight_choice_id() \
+			or admission.get("wallet") != STITCHED_TITLE_WALLET \
+			or admission.get("fight_request") != {"node_type": "Fight"} \
+			or stitched_event_gate != null or is_instance_valid(stitched_event_panel) \
+			or is_instance_valid(stitched_fight_view) or deck != null or run_map != null \
+			or run_rng != null or not is_instance_valid(title_view) \
+			or title_view.is_visible_in_tree():
 		return false
 	var data := _stitched_floor_config()
 	if data.is_empty():
@@ -1426,7 +1571,6 @@ func _open_stitched_fight() -> bool:
 	stitched_fight_view = stage
 	stage.exit_requested.connect(_stitched_fight_exit.bind(weakref(stage)))
 	add_child(stage)
-	title_view.hide()
 	return true
 
 
@@ -1832,7 +1976,9 @@ func _admit_party(ids: Array[String], source: WeakRef, opening: int) -> void:
 
 
 func _open_route(admission: Dictionary = {}) -> void:
-	if deck != null or run_map != null or (is_instance_valid(party_picker) and admission.is_empty()):
+	if is_instance_valid(stitched_event_panel) or is_instance_valid(stitched_fight_view) \
+			or stitched_event_gate != null or deck != null or run_map != null \
+			or (is_instance_valid(party_picker) and admission.is_empty()):
 		return
 	if not admission.is_empty() and (not is_instance_valid(party_picker) \
 		or party_picker._open or not party_picker._latched \
@@ -8211,6 +8357,9 @@ func _return_from_battle(button) -> void:
 
 
 func _return_to_title() -> void:
+	_retire_stitched_roadblock()
+	if is_instance_valid(stitched_fight_view):
+		_close_stitched_fight()
 	_retire_party_picker()
 	_party_receipt.clear()
 	if is_instance_valid(unpicker_view):
