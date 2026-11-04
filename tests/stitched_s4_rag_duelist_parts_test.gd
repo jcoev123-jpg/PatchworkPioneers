@@ -141,7 +141,7 @@ const EXPECTED := {
 			{"dodge": 40, "duration": 1},
 			{"dodge": 45, "duration": 1},
 		],
-		"self_move": [0, 0, 0],
+		"self_move": [1, 1, 1],
 	},
 }
 
@@ -173,10 +173,13 @@ var _cached_catalog: Dictionary = {}
 func _initialize() -> void:
 	_test_catalog()
 	_test_tiers()
+	_test_flourish_catalog()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
 	_test_live_tiers()
+	_test_flourish_retreat()
+	_test_flourish_blocked()
 	_test_lunge_blocked()
 	_test_riposte()
 	_test_dodge()
@@ -380,6 +383,81 @@ func _test_tiers() -> void:
 				"AC1: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_dmg = dmg
 			previous_effects = effects
+
+
+# ---------------------------------------------------------------- AC1: Cape Flourish backward step
+
+## The named alternative legs part is the only backward-moving wearable: its base +1 is inherited
+## by every stitch tier while the starter Cape Slip stays stationary and weaker.
+func _test_flourish_catalog() -> void:
+	var catalog := StitchedParts.load_catalog(PARTS_PATH)
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the shipped catalog loads for the Cape Flourish contract: " + str(catalog.get("error", "")))
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	var flourish_id := str(ALTERNATE_PARTS["legs"])
+	var slip_id := str(STARTER_PARTS["legs"])
+	_check(flourish_id == "rag_duelist_legs_cape_flourish" and slip_id == "rag_duelist_legs_cape_slip",
+		"AC1: the contract names Cape Flourish and Cape Slip by id, never by list position")
+	_check(by_id.has(flourish_id), "AC1: the catalog authors the named Cape Flourish entry")
+	_check(by_id.has(slip_id), "AC1: the catalog still authors the Cape Slip starter")
+	if not by_id.has(flourish_id) or not by_id.has(slip_id):
+		return
+	var flourish: Dictionary = by_id[flourish_id]
+	var slip: Dictionary = by_id[slip_id]
+	_check(str(flourish["name"]) == "Cape Flourish" and str(flourish["slot"]) == "legs"
+		and str(flourish["owner"]) == OWNER,
+		"AC1: Cape Flourish keeps its name, legs slot and owner")
+	_check(_int_dict(flourish["stat"]) == {"speed": 1, "dodge": 5},
+		"AC1: Cape Flourish keeps its authored base stat")
+	var flourish_dodge := [35, 40, 45]
+	var expected_mask := StitchedParts.rank_mask([1, 2, 3])
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(flourish, tier)
+		var tag := "Cape Flourish tier %d" % tier
+		_check(not ability.is_empty(), "AC1: " + tag + " resolves through ability_at_tier")
+		if ability.is_empty():
+			continue
+		_check(str(ability["id"]) == "rag_duelist_legs_cape_flourish_move",
+			"AC1: " + tag + " keeps its ability id")
+		_check(str(ability["move"]) == "skill", "AC1: " + tag + " keeps its authored skill pose")
+		_check(_int_list(ability["launch"]) == [1, 2, 3],
+			"AC1: " + tag + " keeps the authored launch ranks")
+		_check(_int_list(ability["target"]) == [1, 2, 3],
+			"AC1: " + tag + " keeps the authored target ranks")
+		_check(int(ability["launch_mask"]) == expected_mask and int(ability["target_mask"]) == expected_mask,
+			"AC1: " + tag + " keeps the authored launch and target masks")
+		_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), MAX_RANK),
+			"AC1: " + tag + " cannot launch from rank 4")
+		_check(int(ability["self_move"]) == 1 and int(ability["self_move"]) == int(EXPECTED[flourish_id]["self_move"][tier - 1]),
+			"AC1: " + tag + " inherits the base one-rank backward step")
+		_check(_int_dict(ability["effects"]) == {"dodge": flourish_dodge[tier - 1], "duration": 1},
+			"AC1: " + tag + " keeps its one-turn temporary Dodge %d" % flourish_dodge[tier - 1])
+	# Cape Slip is the stationary starter with its own weaker Dodge ladder.
+	var slip_dodge := [25, 30, 35]
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(slip, tier)
+		var tag := "Cape Slip tier %d" % tier
+		_check(int(ability.get("self_move", -99)) == 0,
+			"AC1: " + tag + " still never moves its wearer")
+		_check(_int_list(ability["launch"]) == [1, 2, 3],
+			"AC1: " + tag + " still launches from ranks 1-3")
+		_check(_int_dict(ability["effects"]) == {"dodge": slip_dodge[tier - 1], "duration": 1},
+			"AC1: " + tag + " keeps its authored one-turn Dodge %d" % slip_dodge[tier - 1])
+	# No other wearable in this hero kit gained a backward step from this change.
+	var backward := 0
+	for part_id in by_id:
+		var ability := StitchedParts.ability_at_tier(by_id[part_id], 1)
+		var self_move := int(ability.get("self_move", 0))
+		if str(part_id) == flourish_id:
+			continue
+		_check(self_move <= 0, "AC1: only Cape Flourish steps backward: " + str(part_id))
+		if self_move == 1:
+			backward += 1
+	_check(backward == 0, "AC1: no other Rag Duelist part authors a backward self move")
+	_check(int(StitchedParts.ability_at_tier(by_id[flourish_id], 1).get("self_move", 0)) == 1,
+		"AC1: Cape Flourish is the single backward-moving part in this kit")
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
@@ -688,6 +766,131 @@ func _test_live_tiers() -> void:
 				_check(int(battle.get_unit("rag_duelist")["rank"]) == 1
 					and int(battle.get_unit("seamstress")["rank"]) == 2,
 					"AC2: " + tag + " really moves both heroes on the board")
+
+
+# ---------------------------------------------------------------- AC2: a real backward dodge step
+
+## A worn Cape Flourish is cast on the Duelist's own rank on three genuine scheduled turns of one
+## in-memory S2 fixture: rank 1 to 2, then 2 to 3, then 3 to 4, each with a real adjacent swap.
+func _test_flourish_retreat() -> void:
+	var flourish_id := str(ALTERNATE_PARTS["legs"])
+	var companions := ["seamstress", "tinker", "lantern_monk"]
+	var flourish_dodge := [35, 40, 45]
+	for tier in [1, 2, 3]:
+		var battle := _build_battle(31, tier, _kit_for(flourish_id), 0, false)
+		if battle == null:
+			_check(false, "AC2: the four-hero/three-foe fixture builds with Cape Flourish at tier %d" % tier)
+			continue
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3,
+			"AC2: the Cape Flourish fixture keeps four heroes and three foes at tier %d" % tier)
+		_check(str(battle.get_unit(OWNER)["parts"]["legs"]["id"]) == flourish_id,
+			"AC2: the Duelist wears Cape Flourish in its legs slot at tier %d" % tier)
+		for step in range(3):
+			var from_rank := step + 1
+			var ally := str(companions[step])
+			var tag := "Cape Flourish tier %d rank %d" % [tier, from_rank]
+			if not _to(battle, OWNER):
+				_check(false, "AC2: " + tag + " reaches a genuine scheduled Duelist turn")
+				break
+			_check(int(battle.get_unit(OWNER)["rank"]) == from_rank,
+				"AC2: " + tag + " really starts the Duelist at that rank")
+			_check(int(battle.get_unit(ally)["rank"]) == from_rank + 1,
+				"AC2: " + tag + " has the authored adjacent ally behind the Duelist")
+			var receipt := battle.use_part(flourish_id, from_rank)
+			_check(bool(receipt.get("ok", false)),
+				"AC2: " + tag + " casts on the Duelist's own rank: " + str(receipt.get("error", "")))
+			if not bool(receipt.get("ok", false)):
+				break
+			_check(str(receipt.get("part", "")) == flourish_id,
+				"AC2: " + tag + " reports the equipped Cape Flourish")
+			_check(str(receipt.get("ability", "")) == "rag_duelist_legs_cape_flourish_move",
+				"AC2: " + tag + " resolves the authored ability id")
+			_check(str(receipt.get("actor", "")) == OWNER,
+				"AC2: " + tag + " is used by the Rag Duelist")
+			var move: Dictionary = receipt.get("self_move", {})
+			_check(bool(move.get("ok", false)), "AC2: " + tag + " resolves its one-rank backward step")
+			_check(int(move.get("from", 0)) == from_rank and int(move.get("to", 0)) == from_rank + 1,
+				"AC2: " + tag + " steps exactly one rank backward")
+			_check(str(move.get("swapped", "")) == ally,
+				"AC2: " + tag + " swaps with the adjacent ally behind it")
+			_check(int(battle.get_unit(OWNER)["rank"]) == from_rank + 1
+				and int(battle.get_unit(ally)["rank"]) == from_rank,
+				"AC2: " + tag + " really moves both heroes on the board")
+			var duelist := battle.get_unit(OWNER)
+			var buff: Dictionary = duelist.get("dodge_buff", {})
+			_check(int(buff.get("amount", 0)) == flourish_dodge[tier - 1],
+				"AC2: " + tag + " stores its temporary Dodge %d" % flourish_dodge[tier - 1])
+			_check(int(buff.get("turns", 0)) == 1,
+				"AC2: " + tag + " grants one turn of temporary Dodge")
+			_check(_status_value(receipt["results"][0].get("statuses", []), "dodge") == flourish_dodge[tier - 1],
+				"AC2: " + tag + " reports the granted Dodge")
+		# The rank-4 Duelist is one step past the authored launch mask.
+		if not _to(battle, OWNER):
+			_check(false, "AC3: the rank-4 Duelist still reaches a genuine scheduled turn at tier %d" % tier)
+			continue
+		_check(int(battle.get_unit(OWNER)["rank"]) == MAX_RANK,
+			"AC3: the back-stepping Duelist ends at rank 4 at tier %d" % tier)
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var buff_before: Dictionary = battle.get_unit(OWNER).get("dodge_buff", {}).duplicate(true)
+		var refused := battle.use_part(flourish_id, MAX_RANK)
+		_check(not bool(refused.get("ok", false))
+			and str(refused.get("error", "")).contains("cannot launch from rank 4"),
+			"AC3: Cape Flourish refuses to launch from rank 4 at tier %d" % tier)
+		_check(before == battle.state_snapshot() and rng == battle.rng_state(),
+			"AC3: the rank-4 refusal preserved state, turn pointer and RNG")
+		_check(battle.current_actor_id() == OWNER,
+			"AC3: the rank-4 refusal never spends the Duelist's turn")
+		_check(battle.get_unit(OWNER).get("dodge_buff", {}) == buff_before,
+			"AC3: the rank-4 refusal applies no new temporary Dodge")
+
+
+# ---------------------------------------------------------------- AC3: blocked backward step is atomic
+
+## Every current preflight reason refuses the Cape Flourish step before its Dodge, movement,
+## turn or RNG, at each authored launch rank.
+func _test_flourish_blocked() -> void:
+	var flourish_id := str(ALTERNATE_PARTS["legs"])
+	var companions := ["seamstress", "tinker", "lantern_monk"]
+	var block_kinds := ["tangled wearer", "tangled ally", "snipped wearer thread", "snipped ally thread"]
+	for rank in [MIN_RANK, 2, 3]:
+		var ally := str(companions[rank - 1])
+		for kind in block_kinds:
+			var tag := "rank %d %s" % [rank, kind]
+			var battle := _build_battle(43 + rank, 2, _kit_for(flourish_id), rank - 1, false)
+			if battle == null:
+				_check(false, "AC3: the Cape Flourish fixture builds for the " + tag)
+				continue
+			if not _to(battle, OWNER):
+				_check(false, "AC3: the Duelist reaches its genuine scheduled turn for the " + tag)
+				continue
+			_check(int(battle.get_unit(OWNER)["rank"]) == rank
+				and int(battle.get_unit(ally)["rank"]) == rank + 1,
+				"AC3: the " + tag + " fixture really places the wearer and the destination ally")
+			match kind:
+				"tangled wearer":
+					battle._units[OWNER]["statuses"]["tangled"] = 1
+				"tangled ally":
+					battle._units[ally]["statuses"]["tangled"] = 1
+				"snipped wearer thread":
+					battle._thread_cuts[OWNER] = rank
+				"snipped ally thread":
+					battle._thread_cuts[ally] = rank
+			var before := battle.state_snapshot()
+			var rng := battle.rng_state()
+			var refused := battle.use_part(flourish_id, rank)
+			_check(not bool(refused.get("ok", false))
+				and str(refused.get("error", "")).contains("self move is blocked"),
+				"AC3: a " + tag + " refuses the mandatory backward step")
+			_check(before == battle.state_snapshot() and rng == battle.rng_state(),
+				"AC3: the " + tag + " refusal preserved state, turn pointer and RNG")
+			_check(battle.current_actor_id() == OWNER,
+				"AC3: the " + tag + " refusal never spends the turn")
+			var duelist := battle.get_unit(OWNER)
+			_check(int(duelist.get("dodge_buff", {}).get("amount", 0)) == 0,
+				"AC3: the " + tag + " refusal grants no temporary Dodge")
+			_check(int(duelist["rank"]) == rank and int(battle.get_unit(ally)["rank"]) == rank + 1,
+				"AC3: the " + tag + " refusal moves nobody")
 
 
 # ---------------------------------------------------------------- AC3: blocked swap is atomic
