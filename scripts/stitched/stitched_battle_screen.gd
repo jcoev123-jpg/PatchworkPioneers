@@ -35,8 +35,10 @@ var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
 var _turn_ribbon: StitchedTurnOrderRibbon
+var _candle_meter: StitchedCandleMeter
 var _foe_tickets: Dictionary = {}
 var _foe_ticket_labels: Dictionary = {}
+var _foe_ticket_target_labels: Dictionary = {}
 var _foe_intents: Dictionary = {}
 var _intent_disclosure: NinePatchRect
 var _intent_disclosure_label: Label
@@ -164,6 +166,11 @@ func _build_screen() -> void:
 	_turn_ribbon.position = Vector2(557, 46)
 	_turn_ribbon.size = Vector2(690, 42)
 	add_child(_turn_ribbon)
+	_candle_meter = StitchedCandleMeter.new()
+	_candle_meter.name = "StitchedCandleMeter"
+	_candle_meter.position = Vector2(651, 10)
+	_candle_meter.size = Vector2(340, 33)
+	add_child(_candle_meter)
 	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_label("4 HERO RANKS  •  rear to front", Rect2(40, 113, 520, 32), 20, ACCENT)
 	_label("4 FOE RANKS  •  front to rear", Rect2(705, 113, 535, 32), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -243,17 +250,18 @@ func _seat(side: String, rank: int, x: float) -> void:
 
 
 func _build_foe_intent_tickets() -> void:
-	# Four fixed sewn plates, even when rank four is initially vacant. The
-	# 150–188 ticket band sits above every puppet's 194px upper edge.
-	var plate: Texture2D = load("res://assets/paper/ui/hud_name_plate.png")
+	# Tickets occupy y=148..192: below the rank header (bottom 145),
+	# inside 126px-wide seat lanes, and above the puppets (top 194).
+	var plate: Texture2D = load("res://assets/paper/ui/panel_felt.png")
 	for rank in range(1, 5):
 		var ticket := NinePatchRect.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		ticket.position = Vector2(646 + (rank - 1) * 126, 150)
-		ticket.size = Vector2(116, 38)
+		ticket.position = Vector2(646 + (rank - 1) * 126, 148)
+		ticket.size = Vector2(116, 44)
 		ticket.texture = plate
-		ticket.patch_margin_left = 8
-		ticket.patch_margin_right = 8
+		ticket.modulate = Color("ac7777")
+		ticket.patch_margin_left = 18
+		ticket.patch_margin_right = 18
 		ticket.patch_margin_top = 8
 		ticket.patch_margin_bottom = 8
 		ticket.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -262,42 +270,72 @@ func _build_foe_intent_tickets() -> void:
 		add_child(ticket)
 		var ink := Label.new()
 		ink.name = "IntentText"
-		ink.position = Vector2(4, 2)
-		ink.size = Vector2(108, 34)
+		ink.position = Vector2(10, 0)
+		ink.size = Vector2(96, 19)
 		ink.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		ink.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ink.add_theme_font_size_override("font_size", 12)
+		ink.clip_text = true
+		ink.add_theme_font_size_override("font_size", 11)
 		ink.add_theme_color_override("font_color", PAPER)
 		ink.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		ticket.add_child(ink)
+		var target := Label.new()
+		target.name = "IntentTarget"
+		target.position = Vector2(10, 22)
+		target.size = Vector2(96, 19)
+		target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		target.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		target.clip_text = true
+		target.add_theme_font_size_override("font_size", 11)
+		target.add_theme_color_override("font_color", ACCENT)
+		target.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		ticket.add_child(target)
 		_foe_tickets[rank] = ticket
 		_foe_ticket_labels[rank] = ink
+		_foe_ticket_target_labels[rank] = target
 		ticket.mouse_entered.connect(func(): _foe_intent_enter(rank, false))
 		ticket.mouse_exited.connect(func(): _foe_intent_exit(rank, false))
 		ticket.focus_entered.connect(func(): _foe_intent_enter(rank, true))
 		ticket.focus_exited.connect(func(): _foe_intent_exit(rank, true))
-	# Focus disclosure never repurposes the separate hero forecast/status log.
-	# It fills the quiet gap on the hero side, without covering puppet faces.
+	# Independent full disclosure in the empty 148..193 hero-side strip.
+	# It does not repurpose the action forecast or the status log.
 	_intent_disclosure = NinePatchRect.new()
 	_intent_disclosure.name = "FoeIntentDisclosure"
 	_intent_disclosure.position = Vector2(22, 148)
 	_intent_disclosure.size = Vector2(592, 45)
 	_intent_disclosure.texture = plate
-	_intent_disclosure.patch_margin_left = 8
-	_intent_disclosure.patch_margin_right = 8
-	_intent_disclosure.patch_margin_top = 8
-	_intent_disclosure.patch_margin_bottom = 8
+	_intent_disclosure.modulate = Color("ac7777")
+	_intent_disclosure.patch_margin_left = 22
+	_intent_disclosure.patch_margin_right = 22
+	_intent_disclosure.patch_margin_top = 14
+	_intent_disclosure.patch_margin_bottom = 14
 	_intent_disclosure.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_intent_disclosure.visible = false
 	add_child(_intent_disclosure)
 	_intent_disclosure_label = Label.new()
 	_intent_disclosure_label.name = "FullIntent"
-	_intent_disclosure_label.position = Vector2(12, 3)
-	_intent_disclosure_label.size = Vector2(568, 39)
-	_intent_disclosure_label.add_theme_font_size_override("font_size", 12)
+	_intent_disclosure_label.position = Vector2(18, 3)
+	_intent_disclosure_label.size = Vector2(556, 39)
+	_intent_disclosure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_intent_disclosure_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_intent_disclosure_label.add_theme_font_size_override("font_size", 11)
 	_intent_disclosure_label.add_theme_color_override("font_color", PAPER)
 	_intent_disclosure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_intent_disclosure.add_child(_intent_disclosure_label)
+
+
+# Bound both rows by rendered font width; keep the complete authored name in
+# the separate hover/focus disclosure (never shorten the authority itself).
+func _fit_foe_intent_caption(value: String, label: Label) -> String:
+	var full := value.replace("\n", " ").replace("\r", " ").strip_edges().to_upper()
+	var font: Font = label.get_theme_font("font")
+	var font_size := label.get_theme_font_size("font_size")
+	if font == null or font.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= label.size.x:
+		return full
+	var shortened := full
+	while not shortened.is_empty() and font.get_string_size(shortened + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > label.size.x:
+		shortened = shortened.substr(0, shortened.length() - 1)
+	return shortened.strip_edges() + "…"
 
 
 func _foe_intent_enter(rank: int, focused: bool) -> void:
@@ -322,7 +360,16 @@ func _present_foe_intent_disclosure() -> void:
 	var rank := _intent_focus_rank if _intent_focus_rank != 0 else _intent_hover_rank
 	var ticket: NinePatchRect = _foe_tickets.get(rank)
 	_intent_disclosure.visible = ticket != null and ticket.visible
-	_intent_disclosure_label.text = ticket.tooltip_text if _intent_disclosure.visible else ""
+	var full := ticket.tooltip_text if _intent_disclosure.visible else ""
+	_intent_disclosure_label.text = full
+	if _intent_disclosure.visible:
+		var font: Font = _intent_disclosure_label.get_theme_font("font")
+		if font != null:
+			for font_size in [12, 11, 10]:
+				_intent_disclosure_label.add_theme_font_size_override("font_size", font_size)
+				if font.get_multiline_string_size(full, HORIZONTAL_ALIGNMENT_LEFT,
+						_intent_disclosure_label.size.x, font_size).y <= _intent_disclosure_label.size.y:
+					break
 	for seat_rank in _foe_ticket_labels:
 		_foe_ticket_labels[seat_rank].add_theme_color_override(
 			"font_color", ACCENT if seat_rank == rank and _intent_disclosure.visible else PAPER)
@@ -338,6 +385,7 @@ func _refresh_foe_intents() -> void:
 			ticket.visible = false
 			ticket.tooltip_text = ""
 			_foe_ticket_labels[rank].text = ""
+			_foe_ticket_target_labels[rank].text = ""
 			if _intent_focus_rank == rank:
 				_intent_focus_rank = 0
 			if _intent_hover_rank == rank:
@@ -364,7 +412,8 @@ func _refresh_foe_intents() -> void:
 			detail = ("ALL legal %s ranks %s (launch rank %d)" %
 				[side_name, ", ".join(ranks), int(intent["target_rank"])]) if bool(intent["multi"]) else (
 				"Target: %s rank %d" % [side_name, int(intent["target_rank"])])
-		_foe_ticket_labels[rank].text = heading.to_upper().substr(0, 13) + "\n" + target
+		_foe_ticket_labels[rank].text = _fit_foe_intent_caption(heading, _foe_ticket_labels[rank])
+		_foe_ticket_target_labels[rank].text = _fit_foe_intent_caption(target, _foe_ticket_target_labels[rank])
 		ticket.tooltip_text = ("%s · %s · %s\nCurrent intent; may change if ranks or statuses change" %
 			[str(intent["foe_name"]), heading, detail])
 		ticket.visible = true
@@ -496,7 +545,9 @@ func _sync_puppet(key: String, unit: Dictionary) -> void:
 
 
 func _refresh() -> void:
-	if battle == null:
+	if battle == null or not battle.is_valid():
+		if _candle_meter != null:
+			_candle_meter.clear_readout()
 		return
 	var acting := battle.get_unit(battle.current_actor_id())
 	var hero_turn := battle.current_side() == "hero" and not battle.is_over()
@@ -507,6 +558,7 @@ func _refresh() -> void:
 		entries.append(battle.get_unit(str(id)))
 	_turn_ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
 	var band: Dictionary = battle.candle_band()
+	_candle_meter.set_readout(battle.candle(), band)
 	_labels["candle"].text = "CANDLE  %d / 100  ·  %s" % [battle.candle(), str(band.get("name", "glowing")).capitalize()]
 	_labels["hero"].text = str(acting.get("name", "Battle ended"))
 	if acting.is_empty():

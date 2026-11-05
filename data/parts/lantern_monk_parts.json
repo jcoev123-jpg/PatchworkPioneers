@@ -237,7 +237,8 @@
         "kind": "debuff",
         "launch": [
           2,
-          3
+          3,
+          4
         ],
         "target": [
           1,
@@ -275,7 +276,7 @@
           }
         }
       },
-      "text": "Loose a cloud of moths; attempt Blind independently on each living foe in ranks one to four."
+      "text": "Loose a cloud of moths, even from the rear rank; attempt Blind independently on each living foe in ranks one to four."
     },
     {
       "id": "lantern_monk_arms_snuff_flame",

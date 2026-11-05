@@ -685,6 +685,10 @@ var stitched_roadblock_candle := 100
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_hp_carry: Dictionary = {}
+## Settled victory FRAY/resolve by canonical hero ID, never by seated rank.
+var _stitched_fray_carry: Dictionary = {}
+## Victory-only ID -> ending rank; not a draft or user-authored rank request.
+var _stitched_rank_carry: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
 var _stitched_mend_quote: Dictionary = {}
 var _stitched_upgrade_quote: Dictionary = {}
@@ -1625,6 +1629,52 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 		var hero_id := str(hero["id"])
 		if _stitched_bleed_carry.has(hero_id):
 			hero["statuses"] = {"bleed": int(_stitched_bleed_carry[hero_id])}
+	# A FRAY receipt is a complete pair, validated before rules setup can roll.
+	for carried_id in _stitched_fray_carry:
+		if typeof(carried_id) != TYPE_STRING or not carried_id in _stitched_party_picks:
+			return {}
+		var value: Variant = _stitched_fray_carry[carried_id]
+		if not value is Dictionary or value.size() != 2 \
+				or not value.has("fray") or not value.has("resolve"):
+			return {}
+		var fray: Variant = value["fray"]
+		var mood: Variant = value["resolve"]
+		if typeof(fray) != TYPE_INT or int(fray) < 0 or int(fray) >= StitchedRules.FRAY_MAX \
+				or typeof(mood) != TYPE_STRING \
+				or not str(mood) in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+				or (str(mood) in StitchedS1BEffects.RESOLVE_TRAITS \
+				and int(fray) < StitchedRules.FRAY_RECOVER) \
+				or (str(mood).is_empty() and int(fray) >= StitchedRules.FRAY_RESOLVE):
+			return {}
+	for hero in selected_heroes:
+		var id := str(hero["id"])
+		if _stitched_fray_carry.has(id):
+			hero["fray"] = _stitched_fray_carry[id]["fray"]
+			hero["resolve"] = _stitched_fray_carry[id]["resolve"]
+	# Rules assign ranks by hero-array position, not by the rank field. Apply
+	# authenticated formation only AFTER equipment, wounded HP and Bleed are
+	# projected by canonical ID; any foreign/partial/duplicate rank fails closed.
+	if not _stitched_rank_carry.is_empty():
+		if _stitched_rank_carry.size() != 4:
+			return {}
+		var arranged: Array = [null, null, null, null]
+		for hero in selected_heroes:
+			var id := str(hero["id"])
+			if not _stitched_rank_carry.has(id):
+				return {}
+			var carried_rank: Variant = _stitched_rank_carry[id]
+			if typeof(carried_rank) != TYPE_INT or int(carried_rank) < 1 \
+					or int(carried_rank) > 4 or arranged[int(carried_rank) - 1] != null:
+				return {}
+			arranged[int(carried_rank) - 1] = hero
+		for id in _stitched_rank_carry:
+			if typeof(id) != TYPE_STRING or not id in _stitched_party_picks:
+				return {}
+		if arranged.has(null):
+			return {}
+		selected_heroes = arranged
+		for index in range(4):
+			selected_heroes[index]["rank"] = index + 1
 	config["heroes"] = selected_heroes
 	config["parts"] = catalog["parts"]
 	config["foes"] = foes
@@ -1736,9 +1786,14 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_bleed_carry.keys():
 		if not id in _stitched_party_picks:
 			_stitched_bleed_carry.erase(id)
+	for id in _stitched_fray_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_fray_carry.erase(id)
 	# A changed party cannot inherit an earlier victory's Peddler offer; an
 	# unchanged one must not lose it without a purchase or a free Leave.
 	if party_changed:
+		# A new confirmed selection starts from StitchedPartyAdmission order.
+		_stitched_rank_carry.clear()
 		_stitched_peddler_roster.clear()
 		_stitched_campfire_roster.clear()
 		_stitched_campfire_authorized_roster.clear()
@@ -2065,9 +2120,47 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
+	# Validate all four settled hero receipts before any victory authority moves.
+	var settled_fray: Dictionary = {}
+	if won and heroes.size() == 4:
+		for hero in heroes:
+			var id: Variant = hero.get("id")
+			var amount: Variant = hero.get("fray")
+			var mood: Variant = hero.get("resolve")
+			if typeof(id) != TYPE_STRING or not id in _stitched_party_picks \
+					or settled_fray.has(id) or typeof(amount) != TYPE_INT \
+					or int(amount) < 0 or int(amount) >= StitchedRules.FRAY_MAX \
+					or typeof(mood) != TYPE_STRING \
+					or not str(mood) in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+					or (str(mood) in StitchedS1BEffects.RESOLVE_TRAITS \
+					and int(amount) < StitchedRules.FRAY_RECOVER) \
+					or (str(mood).is_empty() and int(amount) >= StitchedRules.FRAY_RESOLVE):
+				won = false
+				break
+			settled_fray[id] = {"fray": amount, "resolve": mood}
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
+		# A complete four-survivor victory is the only source of rank carry.
+		# A partial/lost or malformed formation never overwrites prior ranks.
+		if heroes.size() == 4:
+			var ending_ranks: Dictionary = {}
+			var used_ranks: Dictionary = {}
+			for hero in heroes:
+				var id: Variant = hero.get("id")
+				var rank: Variant = hero.get("rank")
+				if typeof(id) != TYPE_STRING or not id in _stitched_party_picks \
+						or ending_ranks.has(id) or typeof(rank) != TYPE_INT \
+						or int(rank) < 1 or int(rank) > 4 or used_ranks.has(rank):
+					ending_ranks.clear()
+					break
+				ending_ranks[id] = rank
+				used_ranks[rank] = true
+			if ending_ranks.size() == 4:
+				_stitched_rank_carry = ending_ranks
+				# Rank carry and FRAY share the same genuine four-survivor proof.
+				if settled_fray.size() == 4:
+					_stitched_fray_carry = settled_fray
 		# This exact, once-only stage is the sole HP source. A lost hero is not
 		# carried; failed, retreated and replayed exits leave the ledger untouched.
 		for id in _stitched_party_picks:
@@ -2906,9 +2999,13 @@ func _open_stitched_peddler() -> bool:
 			or candle_quote.get("ok") != true \
 			or candle_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
 			or candle_quote.get("price") != STITCHED_PEDDLER_PRICE \
-			or candle_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
-			or candle_quote.get("choices", []) != [
-				RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]:
+			or candle_quote.get("restore") != mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
+				RunPeddlerVisit.CANDLE_MAX - stitched_roadblock_candle) \
+			or candle_quote.get("choices", []) != (
+				[RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]
+				if int(candle_quote.get("restore", 0)) > 0
+				and stitched_preview_gold >= STITCHED_PEDDLER_PRICE
+				else [RunPeddlerVisit.STITCHED_LEAVE]):
 		return false
 	# The spare-stock authority is the same validated part catalog used by
 	# the real Roadblock and Sewing Circle, never a hand-built UI offer.
@@ -3217,7 +3314,8 @@ func _stitched_peddler_buy_candle(expected_bandage: Dictionary,
 			or expected_quote.get("candle") != stitched_roadblock_candle \
 			or expected_quote.get("gold") != stitched_preview_gold \
 			or expected_quote.get("price") != STITCHED_PEDDLER_PRICE \
-			or expected_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
+			or expected_quote.get("restore") != mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
+				RunPeddlerVisit.CANDLE_MAX - stitched_roadblock_candle) \
 			or stitched_preview_gold < STITCHED_PEDDLER_PRICE \
 			or stitched_roadblock_candle >= RunPeddlerVisit.CANDLE_MAX:
 		return {"ok": false, "error": "unauthorized Peddler candle"}

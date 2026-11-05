@@ -131,11 +131,22 @@ func read_state() -> Dictionary:
 	}
 
 
-## The open quote: the bandage at the caller's exact price for the genuinely
-## bleeding hero IDs, plus the free Leave. Closed or invalid visits quote none.
+## The open quote: the caller's exact price and the genuinely bleeding hero IDs
+## are always disclosed, but Buy is offered only when it is actionable (at least
+## one bleeding hero and the wallet covers the price). Free Leave is always
+## offered. "can_buy"/"blocked" explain why. This is advisory only: authority
+## stays in choose_bandage. Closed or invalid visits quote no choices.
 func quote() -> Dictionary:
 	if _status != OPEN:
 		return {"ok": false, "choices": []}
+	var eligible := _eligible_ids()
+	var blocked := ""
+	if eligible.is_empty():
+		blocked = "no bleeding heroes"
+	elif _gold < _quoted_price:
+		blocked = "not enough gold"
+	var can_buy := blocked.is_empty()
+	var choices: Array = [BUY_BANDAGE, LEAVE] if can_buy else [LEAVE]
 	return {
 		"ok": true,
 		"mode": MODE,
@@ -143,8 +154,10 @@ func quote() -> Dictionary:
 		"item": BANDAGE,
 		"price": _quoted_price,
 		"gold": _gold,
-		"eligible": _eligible_ids(),
-		"choices": [BUY_BANDAGE, LEAVE],
+		"eligible": eligible,
+		"can_buy": can_buy,
+		"blocked": blocked,
+		"choices": choices,
 	}
 
 

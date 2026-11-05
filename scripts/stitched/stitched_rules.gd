@@ -701,6 +701,19 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		if not worn["ok"]:
 			return {"ok": false, "error": str(worn["error"]), "unit": {}}
 		parts[slot] = worn["equipment"]
+	# Carry a settled FRAY state verbatim; never perform a setup-time resolve roll.
+	var starting_fray: Variant = entry.get("fray", 0)
+	var starting_resolve: Variant = entry.get("resolve", "")
+	if typeof(starting_fray) != TYPE_INT or int(starting_fray) < 0 \
+			or int(starting_fray) >= FRAY_MAX:
+		return {"ok": false, "error": "hero " + unit_id + " has invalid starting fray", "unit": {}}
+	if typeof(starting_resolve) != TYPE_STRING or not str(starting_resolve) in \
+			(["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS):
+		return {"ok": false, "error": "hero " + unit_id + " has invalid starting resolve", "unit": {}}
+	if (str(starting_resolve) in StitchedS1BEffects.RESOLVE_TRAITS \
+			and int(starting_fray) < FRAY_RECOVER) \
+			or (str(starting_resolve).is_empty() and int(starting_fray) >= FRAY_RESOLVE):
+		return {"ok": false, "error": "hero " + unit_id + " has inconsistent fray/resolve", "unit": {}}
 	var unit := {
 		"id": unit_id,
 		"name": name,
@@ -719,8 +732,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"prot": 0,
 		"crit": 0,
 		"dmg_bonus": 0,
-		"fray": 0,
-		"resolve": "",
+		"fray": int(starting_fray),
+		"resolve": str(starting_resolve),
 		"statuses": starting_statuses,
 		"parts": parts,
 		"abilities": [],
