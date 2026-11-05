@@ -6,6 +6,7 @@ extends Control
 signal exit_requested
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
+const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
 const SLOTS := ["head", "arms", "torso", "legs"]
 const STATUS_ORDER := [
@@ -32,6 +33,7 @@ var _seat_buttons: Dictionary = {}
 var _puppets: Dictionary = {}
 var _figure_hits: Dictionary = {}
 var _foot_plates: Dictionary = {}
+var _rank_meters: Dictionary = {}
 var _status_disclosure: NinePatchRect
 var _status_disclosure_label: Label
 var _part_buttons: Dictionary = {}
@@ -143,6 +145,7 @@ func _button(title: String, rect: Rect2, callback: Callable) -> Button:
 	button.add_theme_color_override("font_color", PAPER)
 	button.add_theme_color_override("font_hover_color", ACCENT)
 	button.add_theme_color_override("font_focus_color", ACCENT)
+	CHROME.style_button(button)
 	button.pressed.connect(callback)
 	add_child(button)
 	return button
@@ -181,7 +184,7 @@ func _build_screen() -> void:
 		add_child(backdrop)
 	_panel(Rect2(0, 60, 1280, 500), Color(0.045, 0.05, 0.075, 0.28))
 	_sewn_panel(Rect2(12, 10, 1256, 82))
-	_sewn_panel(Rect2(12, 557, 1256, 155))
+	CHROME.action_tray(self, Rect2(12, 557, 1256, 155))
 	_sewn_panel(Rect2(19, 562, 221, 144))
 	_sewn_panel(Rect2(246, 562, 780, 144))
 	_sewn_panel(Rect2(1031, 562, 230, 144))
@@ -249,8 +252,10 @@ func _build_screen() -> void:
 	toggle.size = Vector2(202, 29)
 	toggle.button_pressed = reduced_motion
 	toggle.add_theme_font_size_override("font_size", 14)
+	CHROME.style_button(toggle)
 	toggle.toggled.connect(set_reduced_motion)
 	add_child(toggle)
+	_action_buttons["reduce_motion"] = toggle
 	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 676, 208, 29), func(): exit_requested.emit())
 	# Equally spaced back-to-front ranks on one quilt, with a clear centre aisle.
 	# Each 170px slot centres its own fitted authored figure and underfoot plaque.
@@ -306,7 +311,7 @@ func _seat(side: String, rank: int, x: float) -> void:
 	var tag := _button("", Rect2(foot_x + 11, 506, 148, 23),
 		func(): submit_target(side, rank))
 	tag.name = "RankPlate" + side.capitalize() + str(rank)
-	tag.flat = true
+	tag.flat = false
 	tag.add_theme_font_size_override("font_size", 16)
 	tag.clip_text = true
 	tag.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -314,6 +319,10 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_seat_buttons[key] = tag
 	_labels[key] = _label("", Rect2(foot_x + 11, 530, 148, 22), 15, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
 	_labels[key].clip_text = true
+	_labels[key].horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_labels[key].add_theme_color_override("font_outline_color", Color("25181d"))
+	_labels[key].add_theme_constant_override("outline_size", 2)
+	_rank_meters[key] = CHROME.make_rank_meters(self, side, foot_x)
 
 
 func _build_status_disclosure() -> void:
@@ -638,6 +647,7 @@ func _refresh() -> void:
 			var button: Button = _seat_buttons[key]
 			var heap := _heap_at(rank) if side == "foe" and unit.is_empty() else {}
 			var occupied := not unit.is_empty() or not heap.is_empty()
+			CHROME.present_rank(_rank_meters[key], unit, side)
 			_foot_plates[key].visible = occupied
 			button.visible = occupied
 			_labels[key].visible = occupied
