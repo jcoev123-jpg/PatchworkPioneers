@@ -43,8 +43,8 @@ func _run() -> void:
 		_check(stage.walk != null and stage.expected.dolls.size() == 4, "mounted tests have actual four-doll rules")
 		var random := RandomNumberGenerator.new()
 		random.seed = StitchedWalkScreen.PREVIEW_SEED
-		var oracle := StitchedWalkRules.start(random, "walls", stage.expected.dolls, stage.expected.pockets)
-		_check(oracle != null and oracle.snapshot() == stage.expected, "screen starts through exact S8a seed API")
+		var oracle := StitchedWalkRules.start(random, "walls", stage.expected.dolls, stage.expected.pockets, null, true)
+		_check(oracle != null and oracle.snapshot() == stage.expected, "screen opts into seeded mimic scheduling")
 		_check(stage.layers.size() == 3 and stage.trailing.size() == 4 and stage.switch_buttons.size() == 4, "nonempty mounted layer and rank controls")
 		for index in stage.layers.size():
 			_check(stage.layers[index].texture != null and stage.layers[index].get_rect() == StitchedWalkScreen.VIEW, "ordered authored layer geometry")
@@ -64,7 +64,7 @@ func _run() -> void:
 			if stage.trailing[index].visible:
 				visible_dolls += 1
 				_check(stage.trailing[index].texture != null and stage.rank_labels[index].text.begins_with("Rank " + str(index + 1)), "trailing doll art retains real ranks")
-		_check(visible_dolls == 3, "exactly three other dolls visible on look-back")
+		_check(visible_dolls == 3 and stage.shadow_picture.visible == oracle.shadow_visible(), "three real trailing dolls plus only scheduled shadow")
 		stage.candle = 0
 		stage.refresh()
 		_check(stage.readout.text.contains("snuffed") and stage.trailing[3].modulate.a < 0.2, "candle band fades distant dolls")
@@ -109,7 +109,8 @@ func _run() -> void:
 			_check(stage.receipts.back() == receipt and stage.travel == null, "reduced forward immediate and authoritative")
 		_check(stage.forward_button.disabled and stage.back_button.disabled, "finished walk disables movement")
 		_reject(stage, "forward", {})
-		_check(stage.expected.pending.is_empty() and stage.expected.rng == random.state, "no curio or horror resolution or action RNG draws")
+		_check(stage.expected.pending == oracle.snapshot().pending and stage.expected.pending.size() == (1 if stage.expected.shadow.present else 0)
+			and stage.expected.rng == random.state, "only unresolved mimic deferred, with no action RNG draws")
 		if repeat == 0:
 			replays = stage.receipts.duplicate(true)
 		else:
@@ -123,6 +124,8 @@ func _run() -> void:
 	await process_frame
 	_check(neutral.eye_profile == "neutral" and not neutral.eye_overlay.visible, "unknown head metadata safely neutral")
 	neutral.free()
+	await _public_mount()
+	await _mimic_mounts()
 	await _deferred_items()
 	var source := FileAccess.get_file_as_string("res://scripts/stitched/walk/stitched_walk_screen.gd")
 	for forbidden in ["func _draw", "draw_", "StyleBoxFlat.new", "GradientTexture", "GPUParticles", "randi()", "randomize()"]:
@@ -131,6 +134,71 @@ func _run() -> void:
 		printerr(failure)
 	print("stitched_s8b_walk_screen_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)
+
+
+func _public_mount() -> void:
+	var app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	var boot = root.get_node("LiveWebPlaytestBoot")
+	_check(await boot.enter_preview(app, boot.screen_from_query("?screen=stitched_walk")), "public URL mounts real app Walk")
+	var stage: StitchedWalkScreen = boot.walk_view
+	_check(is_instance_valid(stage) and stage.is_visible_in_tree() and stage.expected.has("shadow"), "real public mount opts into S8c scheduling")
+	if is_instance_valid(stage):
+		stage.set_reduced_motion(true)
+		while stage.expected.step < stage.expected.shadow.step:
+			stage.forward_button.pressed.emit()
+		stage.back_button.pressed.emit()
+		_check(stage.shadow_picture.visible == stage.expected.shadow.present, "real URL LOOK BACK reaches seeded reveal")
+		stage.exit_button.pressed.emit()
+		await process_frame
+		_check(boot.walk_view == null and app.title_view.is_visible_in_tree() and app.run_rng == null, "public exit restores title without allocating live route combat")
+	app.free()
+
+
+func _mimic_mounts() -> void:
+	var witnesses := {true: 0, false: 0}
+	for seed_number in range(16):
+		var stage := StitchedWalkScreen.new()
+		_check(stage.begin(seed_number), "public seeded mimic witness starts")
+		root.add_child(stage)
+		await process_frame
+		stage.set_reduced_motion(true)
+		while stage.expected.step < stage.expected.shadow.step:
+			stage.forward_button.pressed.emit()
+		stage.back_button.pressed.emit()
+		var present: bool = stage.expected.shadow.present
+		witnesses[present] += 1
+		var visible := int(stage.shadow_picture.visible)
+		for picture in stage.trailing:
+			visible += int(picture.visible)
+		_check(visible == (4 if present else 3), "only seeded shadow shows four trailing figures")
+		_check(stage.snip_button.visible == present and stage.clue.visible == present, "SNIP and clue only for shadow")
+		if present:
+			_check(stage.shadow_picture.texture != null and stage.shadow_label.text.contains("Loose seam"), "authored fallback and distinct stitched clue mounted")
+			for doll in stage.expected.dolls:
+				if doll.id == stage.expected.shadow.disguise:
+					_check(stage.shadow_label.text.begins_with("Rank %d - %s" % [doll.rank, doll.name]), "extra doll uses actual disguised rank and name")
+			for index in [1, 2, 3]:
+				stage.switch_buttons[index].pressed.emit()
+				stage.back_button.pressed.emit()
+				_check(stage.clue.visible and not stage.clue.text.is_empty(), "all eye profiles retain readable clue")
+				if index == 1:
+					_check(stage.clue.text.contains("seams"), "glass eyes expose seams")
+				if index == 3:
+					_check(stage.clue.text.contains("breathing"), "stitched ears hear breathing")
+			_check(stage.snip_picker.item_count == 4, "three real targets and extra doll")
+			for control in [stage.snip_picker, stage.snip_button]:
+				_check(control.is_visible_in_tree() and control.focus_mode == Control.FOCUS_ALL
+					and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(control.get_global_rect()), "SNIP reachable by mouse and keyboard")
+			stage.snip_picker.select(3)
+			stage.snip_button.pressed.emit()
+			_check(stage.receipts.back().ok and stage.expected.shadow.removed and not stage.shadow_picture.visible
+				and not stage.snip_button.visible, "mounted SNIP delegates correct target and clears shadow")
+		else:
+			_reject(stage, "snip", {"target": "extra_thread_shadow"})
+		stage.free()
+	_check(witnesses[true] > 0 and witnesses[false] > 0, "non-vacuous shadow and ordinary public seeds")
 
 
 func _deferred_items() -> void:

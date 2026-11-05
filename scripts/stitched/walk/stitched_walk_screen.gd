@@ -29,6 +29,11 @@ var eye_readout: Label
 var feedback: Label
 var eye_overlay: TextureRect
 var travel: Tween
+var shadow_picture: TextureRect
+var shadow_label: Label
+var clue: Label
+var snip_picker: OptionButton
+var snip_button: Button
 
 
 func begin(seed_number: int = PREVIEW_SEED) -> bool:
@@ -48,7 +53,7 @@ func begin(seed_number: int = PREVIEW_SEED) -> bool:
 		pockets[dolls[index].id] = supplies[index].duplicate()
 	var random := RandomNumberGenerator.new()
 	random.seed = seed_number
-	walk = StitchedWalkRules.start(random, "walls", dolls, pockets)
+	walk = StitchedWalkRules.start(random, "walls", dolls, pockets, null, true)
 	if walk == null:
 		return false
 	art = parsed
@@ -104,7 +109,11 @@ func _ready() -> void:
 		trailing.append(_picture(self, "TrailingRank" + str(index + 1), Rect2(90 + index * 206, 240, 150, 240)))
 		trailing[index].stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		rank_labels.append(_label(Rect2(70 + index * 206, 484, 190, 42), ""))
+	shadow_picture = _picture(self, "ExtraThreadShadow", Rect2(90, 240, 150, 240))
+	shadow_picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	shadow_label = _label(Rect2(70, 484, 220, 64), "")
 	eye_overlay = _picture(self, "EyeTreatment", VIEW)
+	clue = _label(Rect2(40, 202, 900, 36), "")
 	readout = _label(Rect2(40, 26, 1190, 38), "")
 	eye_readout = _label(Rect2(40, 64, 900, 32), "")
 	forward_button = _button("FORWARD", Rect2(980, 106, 250, 48), func(): command("forward"))
@@ -130,7 +139,15 @@ func _ready() -> void:
 	motion.toggled.connect(set_reduced_motion)
 	add_child(motion)
 	exit_button = _button("BACK TO TITLE", Rect2(980, 492, 250, 44), func(): exit_requested.emit())
-	feedback = _label(Rect2(40, 622, 1190, 60), "Walk preview. Choose a doll to borrow its eyes and pocket.")
+	snip_picker = OptionButton.new()
+	snip_picker.position = Vector2(650, 610)
+	snip_picker.size = Vector2(300, 42)
+	CHROME.style_button(snip_picker)
+	add_child(snip_picker)
+	snip_button = _button("SNIP THREAD", Rect2(980, 610, 250, 42), func():
+		if snip_picker.selected >= 0:
+			command("snip", {"target": snip_picker.get_item_metadata(snip_picker.selected)}))
+	feedback = _label(Rect2(40, 660, 1190, 40), "Walk preview. Choose a doll to borrow its eyes and pocket.")
 	if walk != null:
 		refresh()
 		forward_button.grab_focus()
@@ -229,7 +246,8 @@ func refresh() -> void:
 		layers[index].modulate = Color.WHITE * (0.35 + depth * 0.16)
 		layers[index].modulate.a = 1
 	if expected.looking_back:
-		layers[0].texture = texture_or_fallback(art.look_back.path, art.look_back.fallback)
+		layers[0].texture = texture_or_fallback(art.look_back.path, art.look_back.fallback) if walk.shadow_visible() \
+			else texture_or_fallback(art.look_back.fallback, art.fallbacks[0])
 	var viewpoint: Dictionary = {}
 	var selected_target: Variant = target_picker.get_item_metadata(target_picker.selected) if target_picker.selected >= 0 else ""
 	target_picker.clear()
@@ -266,6 +284,35 @@ func refresh() -> void:
 		eye_overlay.size = VIEW.size
 	eye_overlay.modulate = {"neutral": Color.WHITE, "cracked": Color("b87f69b0"), "glass": Color("90cfdf90"), "one_eye": Color("111018fa"), "ears": Color("dbc19e90")}[eye_profile]
 	eye_readout.text = "%s's eyes  /  %s  /  %s" % [viewpoint.name, eye_profile.replace("_", " "), "LOOKING BACK" if expected.looking_back else "FRONT"]
+	var shadow_visible := walk.shadow_visible()
+	shadow_picture.visible = shadow_visible
+	shadow_label.visible = shadow_visible
+	clue.visible = shadow_visible
+	snip_picker.clear()
+	if shadow_visible:
+		var shadow: Dictionary = expected.shadow
+		for index in expected.dolls.size():
+			var doll: Dictionary = expected.dolls[index]
+			if doll.id == expected.viewpoint:
+				shadow_picture.position = trailing[index].position
+				shadow_label.position = rank_labels[index].position
+			if doll.id == shadow.disguise:
+				shadow_picture.texture = texture_or_fallback(shadow.art_path, "res://assets/paper/heroes/" + doll.id + ".png")
+				shadow_label.text = "Rank %d - %s\nLoose seam" % [doll.rank, doll.name]
+		clue.text = {"glass": "Glass eyes: the extra doll's seams do not join.",
+			"ears": "Stitched ears: the loose-seamed doll is breathing."}.get(eye_profile,
+			"You own four dolls. Four follow? One has a loose seam.")
+		for target in walk.snip_targets():
+			var caption := "Loose-seamed extra doll"
+			for doll in expected.dolls:
+				if doll.id == target:
+					caption = "Rank %d - %s" % [doll.rank, doll.name]
+			var index := snip_picker.item_count
+			snip_picker.add_item(caption)
+			snip_picker.set_item_metadata(index, target)
+	snip_picker.visible = shadow_visible and snip_picker.item_count > 0
+	snip_button.visible = snip_picker.visible
+	snip_button.disabled = not snip_picker.visible
 	readout.text = "%s   |   Step %d/%d   |   Candle %d - %s   |   WHIRR %d/100" % [expected.corridor.name, expected.step, expected.corridor.steps, candle, band.name, expected.whirr]
 	var pocket: Array = expected.pockets[expected.viewpoint]
 	for index in pocket_buttons.size():
