@@ -103,9 +103,11 @@ func _initialize() -> void:
 	_test_actionable_preview_invalids_and_isolation()
 	_test_v3_hero_vital_event_gate()
 	_test_four_hero_vital_gate_admission()
+	_test_stitched_survivor_offers()
 	_check(_replay(257) == _replay(257), "whole offer/entry/receipt sequence replays exactly")
 	_check(_replay_actionable(257) == _replay_actionable(257), "seeded actionable selection and settlement sequence replays exactly")
 	_check(_replay_actionable_with_preview(257) == _replay_actionable_with_preview(257), "seeded actionable selection with preview and settlement sequence replays exactly")
+	_check(_replay_stitched_survivor(257) == _replay_stitched_survivor(257), "seeded stitched survivor selection and settlement sequence replays exactly")
 	_check(catalog == before, "all operations preserve authored catalog")
 	_check(run_rng.state == state and randi() == expected_global, "all paths consume neither unpassed seeded nor global RNG")
 	for failure in failures:
@@ -1992,3 +1994,345 @@ func _test_four_hero_vital_gate_admission() -> void:
 	_check(not visit.choose_with_vitals("leave", expected_state)["ok"],
 		"alternate choice is blocked once the four-hero visit is claimed")
 
+
+
+func _expected_survivor_actionable_ids(party: Array, lost_ids: Array, wallet: Dictionary, excluded: Array = [], source_events: Array = []) -> Array[String]:
+	var events_list: Array = catalog["events"] if source_events.is_empty() else source_events
+	var excluded_map := {}
+	for item in excluded:
+		excluded_map[item] = true
+	var lost_map := {}
+	for item in lost_ids:
+		lost_map[item] = true
+	var ids: Array[String] = []
+	for record in events_list:
+		var hero: String = record.get("required_hero", "")
+		var event_id: String = record.get("id", "")
+		if not party.has(hero) or lost_map.has(hero) or excluded_map.has(event_id):
+			continue
+		if _has_affordable_non_leave(record, wallet):
+			ids.append(event_id)
+	ids.sort()
+	return ids
+
+
+## AC1/AC2/AC3/AC4: Stitched survivor Event offers exclude explicitly LOST heroes,
+## keep affordable non-Leave options for survivors, never exclude unmarked Hanging
+## heroes, sample lexicographical IDs on 1 RNG draw, reject legacy 3-hero callers,
+## and settle wallet outcomes identically with fresh visits while rejecting replay.
+func _test_stitched_survivor_offers() -> void:
+	var service := RunV3HeroEventOffers.new(STITCHED_PARTY)
+	_check(service.is_valid(), "STITCHED_PARTY service is valid for survivor offers")
+	if not service.is_valid():
+		return
+
+	var wallet := {"gold": 30, "scraps": 3}
+	var warden_anchor := "v3_warden_shield_menders"
+	var seamstress_anchor := "v3_seamstress_thread_cart"
+	var tinker_anchor := "v3_tinker_clockwork_wagon"
+	var monk_anchor := "v3_lantern_monk_moth_vigil"
+
+	# AC1: LOST ["warden"] never selects warden events; surviving dolls appear across seeds.
+	var seen_heroes_1 := {}
+	for seed_val in range(6001, 6021):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_val
+		var res := service.select_stitched_survivor_event_with_preview(rng, ["warden"], null, wallet)
+		_check(res.get("ok") == true, "AC1: LOST warden selection succeeds: " + str(seed_val))
+		var hero: String = res.get("event", {}).get("required_hero", "")
+		_check(hero != "warden", "AC1: LOST warden never selected: " + str(seed_val))
+		_check(["seamstress", "tinker", "lantern_monk"].has(hero), "AC1: surviving hero selected: " + str(hero))
+		_check(res.get("event", {}).get("id") != warden_anchor, "AC1: warden anchor never selected when warden is LOST")
+		_check(res.get("preview", {}).get("ok") == true and res.get("preview", {}).get("event_id") == res.get("event", {}).get("id"),
+			"AC1: genuine preview matching selected event")
+		seen_heroes_1[hero] = true
+	_check(seen_heroes_1.has("seamstress") and seen_heroes_1.has("tinker") and seen_heroes_1.has("lantern_monk"),
+		"AC1: all 3 surviving heroes appear across seeds when warden is LOST")
+
+	# AC1: LOST ["warden", "tinker"] excludes both; seamstress and lantern monk appear.
+	var seen_heroes_2 := {}
+	for seed_val in range(6101, 6121):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_val
+		var res := service.select_stitched_survivor_event_with_preview(rng, ["warden", "tinker"], null, wallet)
+		_check(res.get("ok") == true, "AC1: LOST warden+tinker selection succeeds: " + str(seed_val))
+		var hero: String = res.get("event", {}).get("required_hero", "")
+		_check(hero != "warden" and hero != "tinker", "AC1: LOST warden and tinker never selected: " + str(seed_val))
+		_check(["seamstress", "lantern_monk"].has(hero), "AC1: surviving hero seamstress/monk selected: " + str(hero))
+		_check(res.get("event", {}).get("id") != warden_anchor and res.get("event", {}).get("id") != tinker_anchor,
+			"AC1: neither warden nor tinker anchor selected")
+		seen_heroes_2[hero] = true
+	_check(seen_heroes_2.has("seamstress") and seen_heroes_2.has("lantern_monk"),
+		"AC1: both surviving heroes appear across seeds when warden and tinker are LOST")
+
+	# AC1: Hanging hero (HP=0 context) is NOT excluded unless explicitly passed in lost_ids.
+	# When lost_ids is [] or ["tinker"], an unmarked 0-HP Warden remains eligible and selectable.
+	var hanging_selected_warden := false
+	for seed_val in range(6201, 6230):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_val
+		var res := service.select_stitched_survivor_event_with_preview(rng, [], null, wallet)
+		_check(res.get("ok") == true, "AC1: unmarked hanging hero selection succeeds")
+		if res.get("event", {}).get("required_hero") == "warden":
+			hanging_selected_warden = true
+			_check(res.get("preview", {}).get("ok") == true, "AC1: hanging warden event previews authentically")
+	_check(hanging_selected_warden, "AC1: unmarked 0-HP hanging Warden remains eligible and is selected when not in lost_ids")
+
+	var hanging_selected_warden_with_tinker_lost := false
+	for seed_val in range(6250, 6280):
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_val
+		var res := service.select_stitched_survivor_event_with_preview(rng, ["tinker"], null, wallet)
+		_check(res.get("ok") == true, "AC1: selection with tinker lost succeeds")
+		if res.get("event", {}).get("required_hero") == "warden":
+			hanging_selected_warden_with_tinker_lost = true
+	_check(hanging_selected_warden_with_tinker_lost,
+		"AC1: unmarked 0-HP Warden remains eligible when tinker is marked LOST")
+
+	# AC2: Authored catalog filtering, sorted IDs, exactly 1 RNG draw, reordered catalog invariance.
+	var reversed := catalog.duplicate(true)
+	reversed["events"].reverse()
+	var reordered := RunV3HeroEventOffers.new(STITCHED_PARTY, reversed)
+	_check(reordered.is_valid(), "AC2: reordered STITCHED_PARTY service is valid")
+
+	for wallet_case in [{"gold": 0, "scraps": 0}, {"gold": 18, "scraps": 1}, {"gold": 30, "scraps": 3}]:
+		for lost_case in [[], ["warden"], ["seamstress", "tinker"], ["lantern_monk"]]:
+			var expected := _expected_survivor_actionable_ids(STITCHED_PARTY, lost_case, wallet_case)
+			for seed_val in [6301, 6302, 6303, 6304]:
+				var rng_test := RandomNumberGenerator.new()
+				rng_test.seed = seed_val
+				var rng_reord := RandomNumberGenerator.new()
+				rng_reord.seed = seed_val
+				var oracle_rng := RandomNumberGenerator.new()
+				oracle_rng.seed = seed_val
+
+				var res_test := service.select_stitched_survivor_event_with_preview(rng_test, lost_case, null, wallet_case)
+				var res_reord := reordered.select_stitched_survivor_event_with_preview(rng_reord, lost_case, [], wallet_case)
+
+				if expected.is_empty():
+					_check(res_test == {"ok": false, "event": {}, "preview": {}}
+						and res_reord == res_test
+						and rng_test.state == oracle_rng.state
+						and rng_reord.state == oracle_rng.state,
+						"AC2: empty candidate pool refuses with 0 draws: " + str(wallet_case) + "/" + str(lost_case))
+				else:
+					var pick_idx := oracle_rng.randi_range(0, expected.size() - 1)
+					var exp_id: String = expected[pick_idx]
+					var exp_record := _by_id(catalog["events"], exp_id)
+					var exp_preview := RunEventChoice.new(exp_record).preview_wallet_choices(wallet_case)
+
+					_check(res_test == {"ok": true, "event": exp_record, "preview": exp_preview},
+						"AC2: selection matches expected oracle record and preview: " + str(wallet_case) + "/" + str(lost_case) + "/" + str(seed_val))
+					_check(res_reord == res_test,
+						"AC2: reversed catalog yields identical selection and preview: " + str(seed_val))
+					_check(rng_test.state == oracle_rng.state and rng_reord.state == oracle_rng.state,
+						"AC2: selection consumes exactly one randi_range draw: " + str(seed_val))
+					_check(not lost_case.has(res_test["event"].get("required_hero")),
+						"AC2: selected hero is not in lost_ids")
+
+	# AC2: Zero wallet with only Leave-only options rejects with 0 RNG draws.
+	var seamstress_only_lost := ["warden", "tinker", "lantern_monk"]
+	var exclude_non_cart: Array[String] = []
+	for off in service.get_offers():
+		if off.get("required_hero") == "seamstress" and off.get("id") != "v3_seamstress_thread_cart":
+			exclude_non_cart.append(off.get("id"))
+	var rng_poor := RandomNumberGenerator.new()
+	rng_poor.seed = 6401
+	var s_poor := rng_poor.state
+	var res_poor := service.select_stitched_survivor_event_with_preview(rng_poor, seamstress_only_lost, exclude_non_cart, {"gold": 0, "scraps": 0})
+	_check(res_poor == {"ok": false, "event": {}, "preview": {}} and rng_poor.state == s_poor,
+		"AC2: Leave-only survivor event rejected with 0 RNG draws at {0,0}")
+
+	# AC2: All four heroes marked LOST uniformly refuses with 0 RNG draws.
+	var all_four_lost := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var rng_all_lost := RandomNumberGenerator.new()
+	rng_all_lost.seed = 6402
+	var s_all_lost := rng_all_lost.state
+	var res_all_lost := service.select_stitched_survivor_event_with_preview(rng_all_lost, all_four_lost, null, {"gold": 50, "scraps": 5})
+	_check(res_all_lost == {"ok": false, "event": {}, "preview": {}} and rng_all_lost.state == s_all_lost,
+		"AC2: all four heroes LOST uniformly refuses with 0 RNG draws")
+
+	# AC2: Exhausting exclusions refuses with 0 RNG draws.
+	var all_stitched_ids: Array[String] = []
+	for off in service.get_offers():
+		all_stitched_ids.append(off["id"])
+	var rng_exh := RandomNumberGenerator.new()
+	rng_exh.seed = 6403
+	var s_exh := rng_exh.state
+	var res_exh := service.select_stitched_survivor_event_with_preview(rng_exh, ["warden"], all_stitched_ids, {"gold": 50, "scraps": 5})
+	_check(res_exh == {"ok": false, "event": {}, "preview": {}} and rng_exh.state == s_exh,
+		"AC2: fully excluded catalog refuses with 0 RNG draws")
+
+	# AC3: Require native Array of unique canonical String IDs in bound party; reject malformed.
+	var rng_val := RandomNumberGenerator.new()
+	rng_val.seed = 6501
+	var s_val := rng_val.state
+	var good_wallet := {"gold": 30, "scraps": 3}
+	var good_exclusions := ["v3_warden_shield_menders"]
+
+	for bad_lost in [
+		null, {}, "warden", 123, true, false,
+		[null], [123], [true], [{}], [[]],
+		[""], ["   "], ["\t"],
+		["warden", "warden"],
+		["unknown_hero"],
+		["rag_duelist"],
+		["scarecrow"],
+		["yarn_ranger"],
+		["button_golem"],
+		["warden", "rag_duelist"],
+		["warden", ""],
+		["warden", null],
+	]:
+		var bad_copy: Variant = bad_lost.duplicate(true) if bad_lost is Dictionary or bad_lost is Array else bad_lost
+		var res_bad := service.select_stitched_survivor_event_with_preview(rng_val, bad_lost, good_exclusions, good_wallet)
+		_check(res_bad == {"ok": false, "event": {}, "preview": {}}
+			and rng_val.state == s_val
+			and bad_lost == bad_copy,
+			"AC3: invalid lost_ids fails closed with 0 draws: " + str(bad_lost))
+
+	for bad_rng in [null, 0, 257, "rng", {}, [], service]:
+		_check(service.select_stitched_survivor_event_with_preview(bad_rng, ["warden"], good_exclusions, good_wallet) == {
+			"ok": false, "event": {}, "preview": {}}, "AC3: invalid rng rejected: " + str(bad_rng))
+	_check(rng_val.state == s_val, "AC3: invalid RNG leaves test RNG untouched")
+
+	for bad_wallet in [
+		null, {}, {"gold": 10}, {"scraps": 1},
+		{"gold": 10, "scraps": 1, "extra": 0},
+		{"gold": -1, "scraps": 0}, {"gold": 0, "scraps": -1},
+		{"gold": 10.0, "scraps": 0}, {"gold": "10", "scraps": 0},
+		[], "wallet", 10,
+	]:
+		var b_copy: Variant = bad_wallet.duplicate(true) if bad_wallet is Dictionary or bad_wallet is Array else bad_wallet
+		var res_bw := service.select_stitched_survivor_event_with_preview(rng_val, ["warden"], good_exclusions, bad_wallet)
+		_check(res_bw == {"ok": false, "event": {}, "preview": {}}
+			and rng_val.state == s_val
+			and bad_wallet == b_copy,
+			"AC3: invalid wallet rejected with 0 draws: " + str(bad_wallet))
+
+	for bad_excl in [
+		"", "v3_warden_shield_menders", {}, 123,
+		[""], ["   "], [null], [123],
+		["v3_warden_shield_menders", ""],
+	]:
+		var e_copy: Variant = bad_excl.duplicate(true) if bad_excl is Dictionary or bad_excl is Array else bad_excl
+		var res_be := service.select_stitched_survivor_event_with_preview(rng_val, ["warden"], bad_excl, good_wallet)
+		_check(res_be == {"ok": false, "event": {}, "preview": {}}
+			and rng_val.state == s_val
+			and bad_excl == e_copy,
+			"AC3: invalid excluded_ids rejected with 0 draws: " + str(bad_excl))
+
+	# AC3: Legacy three-hero service refusal.
+	var legacy_service := RunV3HeroEventOffers.new(PARTY_A)
+	_check(legacy_service.is_valid(), "AC3: legacy three-hero service is valid")
+	for lost_arg in [[], ["warden"], ["seamstress"]]:
+		var rng_leg := RandomNumberGenerator.new()
+		rng_leg.seed = 6502
+		var s_leg := rng_leg.state
+		var res_leg := legacy_service.select_stitched_survivor_event_with_preview(rng_leg, lost_arg, null, good_wallet)
+		_check(res_leg == {"ok": false, "event": {}, "preview": {}} and rng_leg.state == s_leg,
+			"AC3: legacy 3-hero service refuses select_stitched_survivor_event_with_preview: " + str(lost_arg))
+	var rng_leg2 := RandomNumberGenerator.new()
+	rng_leg2.seed = 6503
+	_check(legacy_service.select_actionable_event_with_preview(rng_leg2, null, good_wallet).get("ok") == true,
+		"AC3: legacy 3-hero select_actionable_event_with_preview still succeeds")
+	_check(legacy_service.select_actionable_event(rng_leg2, null, good_wallet).get("ok") == true,
+		"AC3: legacy 3-hero select_actionable_event still succeeds")
+	_check(legacy_service.enter("v3_warden_shield_menders") != null,
+		"AC3: legacy 3-hero enter still succeeds")
+
+	# AC4: lost_ids [] side-by-side equivalence with select_actionable_event_with_preview.
+	for seed_val in range(6601, 6615):
+		var rng_legacy := RandomNumberGenerator.new()
+		rng_legacy.seed = seed_val
+		var rng_surv := RandomNumberGenerator.new()
+		rng_surv.seed = seed_val
+		var res_legacy := service.select_actionable_event_with_preview(rng_legacy, ["v3_warden_shield_menders"], good_wallet)
+		var res_surv := service.select_stitched_survivor_event_with_preview(rng_surv, [], ["v3_warden_shield_menders"], good_wallet)
+		_check(res_surv == res_legacy,
+			"AC4: zero-LOST opt-in equals existing with-preview selection: " + str(seed_val))
+		_check(rng_surv.state == rng_legacy.state,
+			"AC4: zero-LOST opt-in equals existing with-preview one-draw RNG state: " + str(seed_val))
+
+	# AC4: Enter selected Event by real ID, preview parity, settle once, verify wallet and replay rejection.
+	var rng_settle := RandomNumberGenerator.new()
+	rng_settle.seed = 6701
+	var sel := service.select_stitched_survivor_event_with_preview(rng_settle, ["warden"], null, {"gold": 28, "scraps": 2})
+	_check(sel.get("ok") == true, "AC4: selection for settlement succeeds")
+	var sel_event: Dictionary = sel["event"]
+	var sel_preview: Dictionary = sel["preview"]
+	var sel_id: String = sel_event["id"]
+	var visit := service.enter(sel_id)
+	_check(visit != null and visit.is_valid() and not visit.is_claimed(), "AC4: enter(selected_id) opens fresh visit")
+	if visit != null:
+		var fresh_preview := visit.preview_wallet_choices({"gold": 28, "scraps": 2})
+		_check(fresh_preview == sel_preview, "AC4: preview parity between selection preview and fresh RunEventChoice")
+		var affordable_choice_id := ""
+		var target_wallet := {}
+		for ch in fresh_preview.get("choices", []):
+			if ch.get("choice_id") != "leave" and ch.get("affordable") == true:
+				affordable_choice_id = ch["choice_id"]
+				target_wallet = ch["wallet"]
+				break
+		_check(affordable_choice_id != "", "AC4: found affordable non-Leave choice in selected event")
+		var user_wallet := {"gold": 28, "scraps": 2}
+		var receipt := visit.choose_with_wallet(affordable_choice_id, user_wallet)
+		_check(receipt == {"ok": true, "event_id": sel_id, "choice_id": affordable_choice_id, "wallet": target_wallet},
+			"AC4: visit settles once matching forecast")
+		_check(user_wallet == {"gold": 28, "scraps": 2}, "AC4: caller wallet remains detached and unmodified")
+		_check(visit.is_claimed() and not visit.is_valid(), "AC4: visit is latched after claim")
+		_check(visit.choose_with_wallet(affordable_choice_id, target_wallet) == {
+			"ok": false, "event_id": "", "choice_id": "", "wallet": target_wallet},
+			"AC4: replay on claimed visit is rejected")
+		_check(visit.choose_with_wallet("leave", target_wallet).get("ok") == false,
+			"AC4: alternate choice also rejected after claim")
+
+	# Detached copies and non-mutation isolation.
+	var orig_offers := service.get_offers()
+	sel["ok"] = false
+	sel["event"]["id"] = "forged_id"
+	sel["event"]["choices"].clear()
+	sel["preview"]["ok"] = false
+	_check(service.enter("forged_id") == null, "AC4: mutated return copy never affects service")
+	_check(service.get_offers() == orig_offers, "AC4: service offers remain pristine")
+
+
+func _replay_stitched_survivor(value: int) -> Array:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = value
+	var service := RunV3HeroEventOffers.new(STITCHED_PARTY)
+	var visited: Array[String] = []
+	var wallet := {"gold": 28, "scraps": 2}
+	var trace: Array = []
+	var lost_schedule: Array = [["warden"], ["warden", "tinker"], ["seamstress"], []]
+	for step in range(lost_schedule.size()):
+		var lost: Array = lost_schedule[step]
+		var outcome := service.select_stitched_survivor_event_with_preview(rng, lost, visited, wallet)
+		_check(outcome["ok"], "survivor replay selects an event at step " + str(step))
+		if not outcome["ok"]:
+			break
+		var event_id: String = outcome["event"]["id"]
+		visited.append(event_id)
+		var preview: Dictionary = outcome["preview"]
+		_check(preview.get("ok", false) and preview.get("event_id") == event_id,
+			"preview matches event in survivor replay")
+		var chosen_id := ""
+		var chosen_wallet := {}
+		for choice in preview.get("choices", []):
+			if choice.get("choice_id") != "leave" and choice.get("affordable") == true:
+				chosen_id = choice["choice_id"]
+				chosen_wallet = choice["wallet"]
+				break
+		_check(chosen_id != "", "survivor replay finds affordable non-Leave choice")
+		var visit := service.enter(event_id)
+		_check(visit != null and visit.is_valid() and not visit.is_claimed(),
+			"survivor replay opens fresh authentic visit")
+		if visit == null:
+			break
+		var receipt := visit.choose_with_wallet(chosen_id, wallet)
+		_check(receipt["ok"] and receipt["wallet"] == chosen_wallet
+			and visit.is_claimed() and not visit.is_valid(),
+			"survivor replay settlement receipt matches forecast and latches claim")
+		wallet = receipt["wallet"]
+		trace.append({"outcome": outcome, "receipt": receipt, "rng_state": str(rng.state)})
+	return trace

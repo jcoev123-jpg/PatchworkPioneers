@@ -13,6 +13,7 @@ const HERO_IDS := ["warden", "seamstress", "tinker", "lantern_monk",
 const PARTY_SIZES := [3, 4]
 
 var _eligible: Dictionary = {}
+var _party_ids: Array[String] = []
 var _valid := false
 
 
@@ -25,10 +26,12 @@ func _init(party_ids: Variant = null, catalog_data: Variant = null) -> void:
 	if not PARTY_SIZES.has(roster.size()):
 		return
 	var party := {}
+	var bound_ids: Array[String] = []
 	for hero in roster:
 		if not hero is String or not HERO_IDS.has(hero) or party.has(hero):
 			return
 		party[hero] = true
+		bound_ids.append(hero)
 	var file := FileAccess.open(CATALOG_PATH, FileAccess.READ)
 	if file == null:
 		return
@@ -60,6 +63,7 @@ func _init(party_ids: Variant = null, catalog_data: Variant = null) -> void:
 		if party.has(record["required_hero"]):
 			eligible[event_id] = record.duplicate(true)
 	_eligible = eligible
+	_party_ids = bound_ids
 	_valid = true
 
 
@@ -82,6 +86,36 @@ func enter(event_id: Variant) -> RunEventChoice:
 	return RunEventChoice.new(_eligible[event_id])
 
 
+func _collect_actionable_ids(wallet: Variant, excluded_ids: Variant, lost_set: Dictionary = {}) -> Array[String]:
+	if not _valid_wallet(wallet):
+		return []
+	var excluded := {}
+	if excluded_ids != null:
+		if typeof(excluded_ids) != TYPE_ARRAY:
+			return []
+		for item in excluded_ids:
+			if not (item is String) or (item as String).strip_edges().is_empty():
+				return []
+			excluded[item] = true
+	var actionable_ids: Array[String] = []
+	for event_id in _eligible:
+		var record: Dictionary = _eligible[event_id]
+		if not lost_set.is_empty() and lost_set.has(record.get("required_hero")):
+			continue
+		if excluded.has(event_id):
+			continue
+		var selector := RunEventChoice.new(record)
+		if not selector.is_valid():
+			return []
+		var preview := selector.preview_wallet_choices(wallet)
+		if not preview.get("ok", false):
+			return []
+		if _has_affordable_non_leave_choice(preview):
+			actionable_ids.append(event_id)
+	actionable_ids.sort()
+	return actionable_ids
+
+
 ## Uniformly samples one party-eligible authored event that is not in excluded_ids
 ## and has at least one affordable non-Leave choice for wallet.
 ## Rejects with {ok: false, event: {}} without advancing rng when the service,
@@ -90,29 +124,9 @@ func select_actionable_event(rng: Variant, excluded_ids: Variant = null, wallet:
 	var rejected := {"ok": false, "event": {}}
 	if not _valid or not (rng is RandomNumberGenerator) or not _valid_wallet(wallet):
 		return rejected
-	var excluded := {}
-	if excluded_ids != null:
-		if typeof(excluded_ids) != TYPE_ARRAY:
-			return rejected
-		for item in excluded_ids:
-			if not (item is String) or (item as String).strip_edges().is_empty():
-				return rejected
-			excluded[item] = true
-	var actionable_ids: Array[String] = []
-	for event_id in _eligible:
-		if excluded.has(event_id):
-			continue
-		var selector := RunEventChoice.new(_eligible[event_id])
-		if not selector.is_valid():
-			return rejected
-		var preview := selector.preview_wallet_choices(wallet)
-		if not preview.get("ok", false):
-			return rejected
-		if _has_affordable_non_leave_choice(preview):
-			actionable_ids.append(event_id)
+	var actionable_ids := _collect_actionable_ids(wallet, excluded_ids)
 	if actionable_ids.is_empty():
 		return rejected
-	actionable_ids.sort()
 	var index: int = (rng as RandomNumberGenerator).randi_range(0, actionable_ids.size() - 1)
 	var chosen_id: String = actionable_ids[index]
 	return {"ok": true, "event": _eligible[chosen_id].duplicate(true)}
@@ -143,6 +157,51 @@ func select_actionable_event_with_preview(rng: Variant, excluded_ids: Variant = 
 	return {
 		"ok": true,
 		"event": (selected_event as Dictionary).duplicate(true),
+		"preview": preview.duplicate(true),
+	}
+
+
+## Uniformly samples one surviving party-eligible authored event that is not in
+## excluded_ids, whose required_hero is not in lost_ids, and has at least one
+## affordable non-Leave choice for wallet. Valid only for 4-hero Stitched services.
+## Returns detached canonical event record and an authentic RunEventChoice wallet preview.
+## Rejects with {ok: false, event: {}, preview: {}} without advancing rng when the
+## service, rng, lost_ids, excluded_ids or wallet is invalid, or when no actionable record remains.
+func select_stitched_survivor_event_with_preview(
+	rng: Variant,
+	lost_ids: Variant,
+	excluded_ids: Variant = null,
+	wallet: Variant = null
+) -> Dictionary:
+	var rejected := {"ok": false, "event": {}, "preview": {}}
+	if not _valid or _party_ids.size() != 4:
+		return rejected
+	if not (rng is RandomNumberGenerator) or not _valid_wallet(wallet):
+		return rejected
+	if typeof(lost_ids) != TYPE_ARRAY:
+		return rejected
+	var lost_set := {}
+	for item in lost_ids:
+		if not (item is String):
+			return rejected
+		var hero_id: String = item
+		if not _party_ids.has(hero_id) or lost_set.has(hero_id):
+			return rejected
+		lost_set[hero_id] = true
+	var actionable_ids := _collect_actionable_ids(wallet, excluded_ids, lost_set)
+	if actionable_ids.is_empty():
+		return rejected
+	var index: int = (rng as RandomNumberGenerator).randi_range(0, actionable_ids.size() - 1)
+	var chosen_id: String = actionable_ids[index]
+	var visit := enter(chosen_id)
+	if visit == null or not visit.is_valid():
+		return rejected
+	var preview := visit.preview_wallet_choices(wallet)
+	if not preview.get("ok", false) or preview.get("event_id") != chosen_id:
+		return rejected
+	return {
+		"ok": true,
+		"event": _eligible[chosen_id].duplicate(true),
 		"preview": preview.duplicate(true),
 	}
 
