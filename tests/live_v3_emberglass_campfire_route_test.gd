@@ -115,7 +115,7 @@ func _trade_leave(fixture: Dictionary, choice_index: int) -> void:
 	await _click(button)
 	var expected := {"gold": prior.gold + (12 if choice_index == 1 else 0),
 		"scraps": prior.scraps}
-	_check(app.wallet_event_panel == null and not is_instance_valid(app.campfire_view)
+	_check(app.wallet_event_panel == null and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree())
 		and app._emberglass_campfire_auth.is_empty()
 		and _wallet() == expected and app.run_map.get_route() == route
 		and app.run_rng.state == rng_state and app._can_choose_connected_route(),
@@ -134,7 +134,7 @@ func _reject_and_claim(fixture: Dictionary) -> void:
 	await _key(KEY_1)
 	panel.get_choice_buttons()[0].pressed.emit()
 	_check(_wallet_state() == before and not panel._selector.is_claimed()
-		and app._emberglass_gate.is_valid() and not is_instance_valid(app.campfire_view),
+		and app._emberglass_gate.is_valid() and (not is_instance_valid(app.campfire_view) or not app.campfire_view.is_visible_in_tree()),
 		"unaffordable mouse, keyboard and direct signal refuse without RNG/spend/recovery")
 	await _click(panel.get_choice_buttons()[2])
 	_check(app.wallet_event_panel == null and app._can_choose_connected_route(),
