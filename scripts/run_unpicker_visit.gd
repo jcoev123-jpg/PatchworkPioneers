@@ -21,7 +21,15 @@ var _source_snapshot: Dictionary = {}
 var _stitched := false
 var _heroes: Array = []
 var _quoted_price: int = 0
+# Opt-in expanded Stitched mode: spare body parts may be unpicked into scraps for a
+# caller-supplied positive yield quote. Unset for the original four-argument visit.
+var _expanded := false
+var _satchel: Array = []
+var _scraps: int = 0
+var _scrap_yield: int = 0
 
+const SATCHEL_MAX := 6
+const SPARE_SLOTS := ["head", "arms", "torso", "legs"]
 const STITCHED_PARTY_SIZE := 4
 const FRAY_MAX := 200
 const CALM_AMOUNT := 50
@@ -65,13 +73,47 @@ func _init(node_id: Variant = null, deck_ids: Variant = null, gold: Variant = nu
 ## external input (the run owner's approved quote), never assigned here. Returns
 ## an invalid visit when any input is malformed. Scene-free, no RNG.
 static func open_stitched(node_id: Variant, heroes: Variant, gold: Variant,
-        quoted_price: Variant) -> RunUnpickerVisit:
+        quoted_price: Variant, satchel: Variant = null, scraps: Variant = null,
+        quoted_scrap_yield: Variant = null) -> RunUnpickerVisit:
     var visit := RunUnpickerVisit.new()
-    visit._open_stitched(node_id, heroes, gold, quoted_price)
+    visit._open_stitched(node_id, heroes, gold, quoted_price, satchel, scraps, quoted_scrap_yield)
     return visit
 
 
-func _open_stitched(node_id: Variant, heroes: Variant, gold: Variant, quoted_price: Variant) -> void:
+## True when the optional satchel, scraps and scrap-yield quote are all well formed.
+static func _valid_scrap_inputs(satchel: Variant, scraps: Variant, scrap_yield: Variant) -> bool:
+    if typeof(satchel) != TYPE_ARRAY or satchel.size() > SATCHEL_MAX:
+        return false
+    if typeof(scraps) != TYPE_INT or scraps < 0:
+        return false
+    if typeof(scrap_yield) != TYPE_INT or scrap_yield <= 0 or scraps > MAX_INT - scrap_yield:
+        return false
+    for spare in satchel:
+        if typeof(spare) != TYPE_DICTIONARY or spare.size() != 4:
+            return false
+        var id: Variant = spare.get("id")
+        var slot: Variant = spare.get("slot")
+        var tier: Variant = spare.get("tier")
+        var torn: Variant = spare.get("torn")
+        if typeof(id) != TYPE_STRING or id.is_empty() or id != id.strip_edges():
+            return false
+        if typeof(slot) != TYPE_STRING or not SPARE_SLOTS.has(slot):
+            return false
+        if typeof(tier) != TYPE_INT or tier < 1 or tier > 3 or typeof(torn) != TYPE_BOOL:
+            return false
+    return true
+
+
+func _open_stitched(node_id: Variant, heroes: Variant, gold: Variant, quoted_price: Variant,
+        satchel: Variant = null, scraps: Variant = null, quoted_scrap_yield: Variant = null) -> void:
+    # All three optional inputs omitted keeps the original behavior; all three must
+    # be supplied (and valid) to opt in. Any partial set fails closed.
+    var supplied := 0
+    for extra in [satchel, scraps, quoted_scrap_yield]:
+        if extra != null:
+            supplied += 1
+    if supplied != 0 and (supplied != 3 or not _valid_scrap_inputs(satchel, scraps, quoted_scrap_yield)):
+        return
     if typeof(node_id) != TYPE_STRING or node_id.is_empty() or node_id != node_id.strip_edges():
         return
     if typeof(heroes) != TYPE_ARRAY or heroes.size() != STITCHED_PARTY_SIZE:
@@ -100,6 +142,11 @@ func _open_stitched(node_id: Variant, heroes: Variant, gold: Variant, quoted_pri
     _heroes = heroes.duplicate(true)
     _gold = gold
     _quoted_price = quoted_price
+    if supplied == 3:
+        _expanded = true
+        _satchel = satchel.duplicate(true)
+        _scraps = scraps
+        _scrap_yield = quoted_scrap_yield
     _valid = true
     _visit_id = JSON.stringify([get_instance_id(), _node_id, _ledger_receipt()]).sha256_text()
     _source_snapshot = read_state()
@@ -117,6 +164,9 @@ func _ledger_receipt() -> String:
     if not _valid:
         return ""
     if _stitched:
+        if _expanded:
+            return JSON.stringify(["stitched", _node_id, _heroes, _gold, _quoted_price,
+                    _satchel, _scraps, _scrap_yield]).sha256_text()
         return JSON.stringify(["stitched", _node_id, _heroes, _gold, _quoted_price]).sha256_text()
     var ids: Array = _descriptors.keys()
     ids.sort()
@@ -132,7 +182,7 @@ func _ledger_receipt() -> String:
 func read_state() -> Dictionary:
     if _stitched:
         # Stitched mode exposes its own full state; the legacy shape is untouched.
-        return {
+        var state := {
             "valid": _valid,
             "consumed": _consumed,
             "visit_id": _visit_id,
@@ -144,6 +194,11 @@ func read_state() -> Dictionary:
             "calm_amount": CALM_AMOUNT,
             "receipt": _ledger_receipt(),
         }
+        if _expanded:
+            state["satchel"] = _satchel.duplicate(true)
+            state["scraps"] = _scraps
+            state["scrap_yield"] = _scrap_yield
+        return state
     return {
         "valid": _valid,
         "consumed": _consumed,
@@ -170,15 +225,36 @@ func quote() -> Dictionary:
             for hero in _heroes:
                 if int(hero["fray"]) > 0:
                     hero_ids.append(hero["id"])
-        return {
+        var choices: Array = []
+        if open:
+            if not hero_ids.is_empty():
+                choices.append("calm_hero")
+            if _expanded and not _satchel.is_empty():
+                choices.append("unpick_spare")
+            choices.append("leave")
+        var quoted := {
             "ok": open,
             "visit_id": _visit_id,
             "node_id": _node_id,
             "price": _quoted_price,
             "calm_amount": CALM_AMOUNT,
             "hero_ids": hero_ids,
-            "choices": (["calm_hero", "leave"] if not hero_ids.is_empty() else ["leave"]) if open else [],
+            "choices": choices,
         }
+        if _expanded:
+            var spares: Array = []
+            var indices: Array = []
+            if open:
+                for i in _satchel.size():
+                    var spare: Dictionary = _satchel[i]
+                    indices.append(i)
+                    spares.append({"index": i, "id": spare["id"], "slot": spare["slot"],
+                            "tier": spare["tier"], "torn": spare["torn"]})
+            quoted["spare_indices"] = indices
+            quoted["spares"] = spares
+            quoted["scrap_yield"] = _scrap_yield
+            quoted["scraps"] = _scraps
+        return quoted
     return {
         "ok": _valid and not _consumed,
         "visit_id": _visit_id,
@@ -226,6 +302,11 @@ func _receipt(ok: bool, action: String = "", removed_card_id: String = "",
         result["calmed_hero_id"] = ""
         result["fray_before"] = 0
         result["fray_after"] = 0
+        if _expanded:
+            result["removed_part"] = {}
+            result["scraps_before"] = _scraps
+            result["scraps_after"] = _scraps
+            result["credited_scraps"] = 0
     else:
         result["removed_card_id"] = removed_card_id
     result["charged_gold"] = charged_gold
@@ -261,6 +342,30 @@ func calm_hero(hero_id: Variant, expected_visit_id: Variant,
     result["calmed_hero_id"] = hero_id
     result["fray_before"] = before
     result["fray_after"] = after
+    return result
+
+
+## Expanded Stitched mode only: dismantle exactly one spare satchel part (selected
+## by index, so repeated IDs stay distinct) into the caller-quoted scrap yield.
+## Gold and every hero field are untouched. Any invalid request changes nothing
+## and leaves the visit open for Leave.
+func unpick_spare(satchel_index: Variant, expected_visit_id: Variant,
+        expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
+    if not _stitched or not _expanded \
+            or not _matches_source(expected_visit_id, expected_node_id, expected_snapshot):
+        return _receipt(false)
+    if typeof(satchel_index) != TYPE_INT or satchel_index < 0 or satchel_index >= _satchel.size():
+        return _receipt(false)
+    var removed: Dictionary = _satchel[satchel_index].duplicate(true)
+    var before := _scraps
+    _satchel.remove_at(satchel_index)
+    _scraps = before + _scrap_yield
+    _consumed = true
+    var result := _receipt(true, "unpick_spare")
+    result["removed_part"] = removed
+    result["scraps_before"] = before
+    result["scraps_after"] = _scraps
+    result["credited_scraps"] = _scrap_yield
     return result
 
 

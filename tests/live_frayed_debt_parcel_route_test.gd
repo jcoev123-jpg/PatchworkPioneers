@@ -34,6 +34,9 @@ func _parcel_fixture(terminal: String = "Fight", stitched: bool = false) -> Dict
 	hints.push_front(39502)
 	# Revalidate the post-catalog five-Event-to-Fight witness first; fallback stays intact.
 	hints.push_front(68181)
+	# Genuine five-Event-to-Fight witness after the four Stitched nightroad
+	# wallet records shifted the sorted generic draw; oracle still rechecks it.
+	hints.push_front(689968)
 	if terminal == "Unpicker":
 		hints.push_front(392622) # Revalidated actual post-catalog Unpicker terminal.
 		hints.push_front(862443) # Shipped real Unpicker-terminal witness; independently revalidated below.

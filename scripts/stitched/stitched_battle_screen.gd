@@ -31,6 +31,13 @@ var _target_ranks: Dictionary = {}
 var _seat_buttons: Dictionary = {}
 var _puppets: Dictionary = {}
 var _part_buttons: Dictionary = {}
+var _part_help_buttons: Dictionary = {}
+var _part_cues: Dictionary = {}
+var _part_disclosure: NinePatchRect
+var _part_disclosure_text: RichTextLabel
+var _part_help_dialog: AcceptDialog
+var _part_hover_slot := ""
+var _part_focus_slot := ""
 var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
@@ -180,8 +187,19 @@ func _build_screen() -> void:
 	_label("SEWN ABILITIES · CHOOSE A PART, THEN A LIT RANK", Rect2(264, 462, 750, 28), 19, ACCENT)
 	for index in range(4):
 		var slot: String = SLOTS[index]
-		_part_buttons[slot] = _button(slot.capitalize(), Rect2(266 + index * 187, 496, 178, 44),
+		var x := 266 + index * 187
+		_part_buttons[slot] = _button(slot.capitalize(), Rect2(x, 496, 147, 44),
 			func(): select_part(slot))
+		_part_buttons[slot].name = "Worn" + slot.capitalize()
+		_part_buttons[slot].add_theme_font_size_override("font_size", 13)
+		_part_buttons[slot].clip_text = true
+		_part_buttons[slot].text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		_part_help_buttons[slot] = _button("?", Rect2(x + 151, 496, 27, 44),
+			func(): _open_part_help(slot))
+		_part_help_buttons[slot].name = "Inspect" + slot.capitalize()
+		_part_help_buttons[slot].add_theme_font_size_override("font_size", 16)
+		_bind_part_inspection(_part_buttons[slot], slot)
+		_bind_part_inspection(_part_help_buttons[slot], slot)
 	_labels["preview"] = _label("", Rect2(266, 542, 740, 48), 14, MUTED)
 	_labels["preview"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["preview"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -203,6 +221,7 @@ func _build_screen() -> void:
 	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1042, 468, 208, 125), 18, MUTED)
 	_labels["log"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["log"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_build_part_disclosure()
 	var toggle := CheckButton.new()
 	toggle.text = "Reduce motion"
 	toggle.position = Vector2(1045, 597)
@@ -590,16 +609,29 @@ func _refresh() -> void:
 			_labels[key].text = ("HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])] if not unit.is_empty() else ("SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() else "EMPTY")) + (" · " + ", ".join(flags) if not flags.is_empty() else "")
 	_refresh_foe_intents()
 	_target_ranks.clear()
+	var actor_key := str(acting.get("id", "")) if hero_turn else ""
+	if _displayed_actor != actor_key:
+		_displayed_actor = actor_key
+		_part_hover_slot = ""
+		_part_focus_slot = ""
+	_part_cues.clear()
 	for slot in SLOTS:
 		var button: Button = _part_buttons[slot]
-		var equipped: Dictionary = acting.get("parts", {}).get(slot, {})
-		var id := str(equipped.get("id", ""))
-		var definition: Dictionary = parts.get(id, {})
+		var help: Button = _part_help_buttons[slot]
+		var equipped: Dictionary = acting.get("parts", {}).get(slot, {}) if hero_turn else {}
 		var can_use := hero_turn and _valid_part(acting, equipped)
+		var reason := _part_lock_reason(acting, equipped) if hero_turn else "No active hero"
+		var cue := StitchedPartActionCues.format_action(acting if hero_turn else {},
+			slot, equipped, parts, can_use, reason)
+		_part_cues[slot] = cue
 		button.disabled = not can_use
-		button.text = (str(definition.get("name", slot.capitalize())) if not id.is_empty() else slot.capitalize()) + (" [TORN]" if bool(equipped.get("torn", false)) else "")
+		button.text = str(cue["title"])
+		button.tooltip_text = str(cue["full"])
+		help.disabled = not hero_turn
+		help.tooltip_text = "Inspect " + str(cue["full"])
 		if slot == _selected_part and not can_use:
 			_selected_part = ""
+	_present_part_disclosure()
 	if hero_turn and not _selected_part.is_empty():
 		var selected: Dictionary = acting["parts"][_selected_part]
 		var ability: Dictionary = StitchedParts.ability_at_tier(parts[str(selected["id"])], int(selected["tier"]))
@@ -620,6 +652,122 @@ func _refresh() -> void:
 	_action_buttons["retreat"].disabled = not hero_turn or battle.is_boss_encounter()
 	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
 	_present_forecast()
+
+
+func _build_part_disclosure() -> void:
+	# Reuse the sewn image ticket over the existing log area, never the target
+	# forecast or any active controls. Long help can scroll independently.
+	_part_disclosure = NinePatchRect.new()
+	_part_disclosure.name = "WornPartDisclosure"
+	_part_disclosure.texture = load("res://assets/paper/ui/hud_name_plate.png") as Texture2D
+	_part_disclosure.position = Vector2(1036, 463)
+	_part_disclosure.size = Vector2(222, 130)
+	_part_disclosure.patch_margin_left = 20
+	_part_disclosure.patch_margin_right = 20
+	_part_disclosure.patch_margin_top = 12
+	_part_disclosure.patch_margin_bottom = 12
+	_part_disclosure.mouse_filter = Control.MOUSE_FILTER_PASS
+	_part_disclosure.visible = false
+	add_child(_part_disclosure)
+	_part_disclosure_text = RichTextLabel.new()
+	_part_disclosure_text.name = "FullWornPart"
+	_part_disclosure_text.position = Vector2(9, 6)
+	_part_disclosure_text.size = Vector2(202, 118)
+	_part_disclosure_text.add_theme_color_override("default_color", PAPER)
+	_part_disclosure_text.add_theme_font_size_override("normal_font_size", 12)
+	_part_disclosure_text.scroll_active = true
+	_part_disclosure_text.fit_content = false
+	_part_disclosure_text.selection_enabled = true
+	_part_disclosure_text.mouse_filter = Control.MOUSE_FILTER_STOP
+	_part_disclosure_text.focus_mode = Control.FOCUS_NONE
+	_part_disclosure.add_child(_part_disclosure_text)
+	_part_help_dialog = AcceptDialog.new()
+	_part_help_dialog.name = "WornPartFullHelp"
+	_part_help_dialog.title = "Worn sewn ability"
+	_part_help_dialog.min_size = Vector2i(640, 360)
+	add_child(_part_help_dialog)
+
+
+func _bind_part_inspection(button: Button, slot: String) -> void:
+	button.mouse_entered.connect(func(): _part_inspect_enter(slot, false))
+	button.mouse_exited.connect(func(): _part_inspect_exit(slot, false))
+	button.focus_entered.connect(func(): _part_inspect_enter(slot, true))
+	button.focus_exited.connect(func(): _part_inspect_exit(slot, true))
+
+
+func _part_inspect_enter(slot: String, focused: bool) -> void:
+	if not _part_help_buttons.has(slot) or _part_help_buttons[slot].disabled:
+		return
+	if focused:
+		_part_focus_slot = slot
+	else:
+		_part_hover_slot = slot
+	_present_part_disclosure()
+	_present_forecast()
+
+
+func _part_inspect_exit(slot: String, focused: bool) -> void:
+	if focused and _part_focus_slot == slot:
+		_part_focus_slot = ""
+	elif not focused and _part_hover_slot == slot:
+		_part_hover_slot = ""
+	_present_part_disclosure()
+	_present_forecast()
+
+
+func _part_inspected_slot() -> String:
+	return _part_focus_slot if not _part_focus_slot.is_empty() else _part_hover_slot
+
+
+func _present_part_disclosure() -> void:
+	if _part_disclosure == null:
+		return
+	var slot := _part_inspected_slot()
+	var cue: Dictionary = _part_cues.get(slot, {})
+	_part_disclosure.visible = not cue.is_empty() and not _part_help_buttons[slot].disabled
+	if not _part_disclosure.visible:
+		_part_disclosure_text.text = ""
+		return
+	var full := str(cue["full"])
+	if _part_disclosure_text.text != full:
+		_part_disclosure_text.text = full
+	_part_disclosure_text.tooltip_text = full
+	_part_disclosure.tooltip_text = full
+
+
+func _open_part_help(slot: String) -> void:
+	if not _part_help_buttons.has(slot) or _part_help_buttons[slot].disabled:
+		return
+	var cue: Dictionary = _part_cues.get(slot, {})
+	if cue.is_empty():
+		return
+	_part_help_dialog.title = str(cue["title"])
+	_part_help_dialog.dialog_text = str(cue["full"])
+	_part_help_dialog.popup_centered()
+
+
+func _part_lock_reason(actor: Dictionary, equipped: Dictionary) -> String:
+	if battle == null or actor.is_empty() or battle.is_over() or battle.current_side() != "hero":
+		return "No active hero"
+	var id := str(equipped.get("id", ""))
+	if id.is_empty():
+		return "Unfilled — no worn part"
+	if not parts.has(id):
+		return "Unknown worn part"
+	if bool(equipped.get("torn", false)):
+		return "TORN — mend at Sewing Circle"
+	var ability := StitchedParts.ability_at_tier(parts[id], int(equipped.get("tier", 1)))
+	if ability.is_empty():
+		return "No ability on worn part"
+	if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(actor.get("rank", 0))):
+		return "Wrong launch rank (current R%d)" % int(actor.get("rank", 0))
+	var blocked: Dictionary = battle._self_move_gate(actor, ability)
+	if not blocked.is_empty():
+		return "Movement/thread lock: " + str(blocked.get("error", "self-move blocked"))
+	for rank in range(1, 5):
+		if not battle._legal_targets(actor, ability, rank).is_empty():
+			return ""
+	return "No legal target (rank or thread restrictions)"
 
 
 func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
@@ -673,8 +821,11 @@ func _present_forecast() -> void:
 		var key_parts := _inspected_seat.split("_")
 		if key_parts.size() == 2:
 			forecast = StitchedTargetForecast.for_rank(battle, acting, ability, str(key_parts[0]), int(key_parts[1]))
-	_labels["preview"].text = str(forecast.get("text", generic))
-	_labels["preview"].tooltip_text = str(forecast.get("tooltip", ""))
+	var inspected_slot := _part_inspected_slot()
+	var cue: Dictionary = _part_cues.get(inspected_slot, {})
+	# Lit-rank hit/damage is always more important than an ability's help digest.
+	_labels["preview"].text = str(forecast.get("text", cue.get("digest", generic)))
+	_labels["preview"].tooltip_text = str(forecast.get("tooltip", cue.get("full", "")))
 	for key in _seat_buttons:
 		var detail := _seat_detail_for(key)
 		var tip := str(forecast.get("tooltip", "")) if key == _inspected_seat else ""

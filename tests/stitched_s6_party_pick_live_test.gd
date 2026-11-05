@@ -111,7 +111,8 @@ func _win(stage: StitchedBattleScreen) -> Dictionary:
 func _exercise() -> Dictionary:
 	var app := _fresh()
 	await process_frame
-	_check(_neutral(app) and app.stitched_fight_button.is_visible_in_tree(),
+	_check(not app._stitched_party_locked and _neutral(app) \
+		and app.stitched_fight_button.is_visible_in_tree(),
 		"real title has Roadblock without ordinary run or wallet")
 	var offer: LiveEventChoicePanel = await _offer(app)
 	_check(offer != null and offer.has_open_event() and app.stitched_event_gate != null,
@@ -267,6 +268,24 @@ func _exercise() -> Dictionary:
 		app.free()
 		await process_frame
 		return win
+	var earned_hp: Dictionary = {}
+	var earned_ranks: Dictionary = {}
+	var earned_fray: Dictionary = {}
+	var earned_bleed: Dictionary = {}
+	var wounded := 0
+	for hero in stage.battle.get_heroes():
+		var id := str(hero["id"])
+		earned_hp[id] = int(hero["hp"])
+		earned_ranks[id] = int(hero["rank"])
+		earned_fray[id] = {"fray": hero["fray"], "resolve": hero["resolve"]}
+		var bleed: Variant = hero.get("statuses", {}).get("bleed", 0)
+		if typeof(bleed) == TYPE_INT and int(bleed) > 0:
+			earned_bleed[id] = bleed
+		if int(hero["hp"]) < int(hero["max_hp"]):
+			wounded += 1
+	_check(earned_hp.size() == 4 and earned_ranks.size() == 4 and wounded > 0 \
+		and not app._stitched_party_locked,
+		"real battle has four earned survivors including wounded HP; no pre-Leave lock")
 	stage._action_buttons["exit"].pressed.emit()
 	var circle: Control = app.stitched_sewing_panel
 	_check(circle != null and app.stitched_sewing_visit != null \
@@ -296,28 +315,108 @@ func _exercise() -> Dictionary:
 	_check(not swapped_id.is_empty() and not swapped_arm.is_empty(),
 		"mounted Circle swap commits real named trophy to a chosen hero")
 	var leave: Button = circle.find_child("SewingLeave", true, false)
+	_check(is_instance_valid(leave) and leave.focus_mode != Control.FOCUS_NONE \
+		and not app._stitched_party_locked,
+		"real Circle Leave is keyboard focusable and lock is absent until success")
 	if leave != null:
 		leave.pressed.emit()
 	await process_frame
+	var carry: Dictionary = {"hp": app._stitched_hp_carry.duplicate(true),
+		"ranks": app._stitched_rank_carry.duplicate(true),
+		"fray": app._stitched_fray_carry.duplicate(true),
+		"bleed": app._stitched_bleed_carry.duplicate(true),
+		"gear": app._stitched_gear_overrides.duplicate(true),
+		"satchel": app.stitched_preview_satchel.duplicate(true),
+		"scraps": app.stitched_preview_scraps,
+		"gold": app.stitched_preview_gold,
+		"candle": app.stitched_roadblock_candle,
+		"stop": app._stitched_postvictory_stop_available}
 	_check(app.stitched_sewing_panel == null and app.title_view.is_visible_in_tree() \
-		and app._stitched_party_picks == ALT and _neutral(app),
-		"Circle Leave retires visit and preserves confirmed party")
+		and app._stitched_party_locked and app._stitched_party_picks == ALT \
+		and carry["hp"] == earned_hp and carry["ranks"] == earned_ranks \
+		and carry["fray"] == earned_fray and carry["bleed"] == earned_bleed \
+		and carry["stop"] == true and _neutral(app),
+		"authentic Circle Leave alone locks the four earned IDs and canonical carry")
 	var next_offer: LiveEventChoicePanel = await _offer(app)
 	_check(next_offer != null and app._stitched_party_picks == ALT \
 		and app._stitched_party_receipt == wanted,
 		"fresh Roadblock retains selected party instead of resetting defaults")
 	if next_offer != null:
-		next_offer.get_choice_buttons()[0].pressed.emit()
+		var read_only := next_offer.find_child("StitchedPartyPicker", true, false)
+		var choices := next_offer.get_choice_buttons()
+		var read_only_labels: Array = read_only.find_children("*", "Label", true, false) if read_only != null else []
+		var labels_match := read_only_labels.size() == 5
+		for hero in wanted["heroes"]:
+			var found := false
+			for display in read_only_labels:
+				if display.text == "%d  %s" % [hero["rank"], hero["name"]]:
+					found = true
+			labels_match = labels_match and found
+		_check(labels_match, "locked panel visibly names and seats all four earned survivors")
+		_check(read_only != null and read_only.find_children("*", "CheckBox", true, false).is_empty() \
+			and app._stitched_party_checkboxes.is_empty() \
+			and not is_instance_valid(app._stitched_party_confirm_button) \
+			and not is_instance_valid(app._stitched_party_cancel_button) \
+			and choices.size() == 3 and not choices[0].disabled and not choices[2].disabled \
+			and choices[0].focus_mode != Control.FOCUS_NONE \
+			and choices[2].focus_mode != Control.FOCUS_NONE,
+			"mounted locked roster shows survivors without editable controls; real Fight/Leave stay focusable")
+		var lock_source: WeakRef = weakref(next_offer)
+		var lock_gate: RunV3FightEventGate = app.stitched_event_gate
+		var lock_generation: int = next_offer._generation
+		seed(176602)
+		var expected_forged_rng := randi()
+		seed(176602)
+		app._stitched_picker_changed(false, ALT[0], lock_source, lock_gate, lock_generation)
+		app._stitched_picker_changed(true, DEFAULT[0], lock_source, lock_gate, lock_generation)
+		app._stitched_picker_confirm(lock_source, lock_gate, lock_generation)
+		app._stitched_picker_cancel(lock_source, lock_gate, lock_generation)
+		app._stitched_picker_changed(false, ALT[0], stale_source, stale_gate, stale_generation)
+		app._stitched_picker_confirm(stale_source, stale_gate, stale_generation)
+		app._stitched_picker_cancel(stale_source, stale_gate, stale_generation)
+		_check(app._stitched_party_picks == ALT and app._stitched_party_draft == ALT \
+			and app._stitched_party_receipt == wanted and not lock_gate.is_claimed() \
+			and app._stitched_hp_carry == carry["hp"] \
+			and app._stitched_rank_carry == carry["ranks"] \
+			and app._stitched_fray_carry == carry["fray"] \
+			and app._stitched_bleed_carry == carry["bleed"] \
+			and app._stitched_gear_overrides == carry["gear"] \
+			and app.stitched_preview_satchel == carry["satchel"] \
+			and app.stitched_preview_scraps == carry["scraps"] \
+			and app.stitched_preview_gold == carry["gold"] \
+			and app.stitched_roadblock_candle == carry["candle"] \
+			and app._stitched_postvictory_stop_available == carry["stop"] \
+			and randi() == expected_forged_rng and _neutral(app),
+			"forged current/stale picker signals cannot reseat party, consume RNG or change earned resources/stop")
+		choices[0].pressed.emit()
 	var next_stage: StitchedBattleScreen = app.stitched_fight_view
-	_check(next_stage != null and next_stage.battle.get_heroes().size() == 4,
+	_check(next_stage != null and next_stage.battle != null \
+		and next_stage.battle.get_heroes().size() == 4,
 		"fresh authentic Fight remounts chosen four")
 	var next_initial: Dictionary = {}
 	if next_stage != null:
 		next_initial = next_stage.battle.state_snapshot()
 		var next_unit := next_stage.battle.get_unit(swapped_id)
-		_check(next_unit.get("parts", {}).get("arms", {}).get("id") == swapped_arm \
-			and next_unit.get("rank") == wanted["heroes"][wanted["hero_ids"].find(swapped_id)]["rank"],
-			"only selected hero ID carries Circle gear into next seeded Fight")
+		var mounted_hp: Dictionary = {}
+		var mounted_ranks: Dictionary = {}
+		var mounted_fray: Dictionary = {}
+		var mounted_bleed: Dictionary = {}
+		for hero in next_stage.battle.get_heroes():
+			var id := str(hero["id"])
+			mounted_hp[id] = int(hero["hp"])
+			mounted_ranks[id] = int(hero["rank"])
+			mounted_fray[id] = {"fray": hero["fray"], "resolve": hero["resolve"]}
+			var bleed: Variant = hero.get("statuses", {}).get("bleed", 0)
+			if typeof(bleed) == TYPE_INT and int(bleed) > 0:
+				mounted_bleed[id] = bleed
+		_check(mounted_hp == earned_hp and mounted_ranks == earned_ranks \
+			and mounted_fray == earned_fray and mounted_bleed == earned_bleed \
+			and next_stage.config.get("candle") == maxi(0, int(carry["candle"]) - app.STITCHED_ROADBLOCK_CANDLE_COST) \
+			and app.stitched_roadblock_candle == next_stage.config.get("candle") \
+			and next_unit.get("parts", {}).get("arms", {}).get("id") == swapped_arm \
+			and next_unit.get("rank") == earned_ranks.get(swapped_id) \
+			and next_stage.battle.get_heroes().size() == 4,
+			"new real Fight preserves all earned IDs, wounds, FRAY, Bleed, ranks, gear and debits only normal candle")
 		next_stage._action_buttons["exit"].pressed.emit()
 	await process_frame
 	var trace := {"first": win, "circle_heroes": circle_ids,
