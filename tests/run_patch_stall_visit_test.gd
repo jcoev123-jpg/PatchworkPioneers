@@ -485,6 +485,9 @@ func _run_open_stitched() -> void:
 	_check(not lv.leave(ls.visit_id, "node_s", ls.snapshot).ok, "stitched Leave latches")
 	_check_closed_quote(lv, lq, ls, "stitched Leave")
 
+	# Decision gating: Buy Patch only while an unsold offer is affordable (real authored 100-gold rows).
+	_check_stitched_decision_gating(authored, party)
+
 	# AC4: preview then reconcile exactly once.
 	var av := RunPatchStallVisit.open_stitched("node_s", party, owned, 150, offers)
 	var as_ := av.read_state()
@@ -502,3 +505,90 @@ func _run_open_stitched() -> void:
 	_check_closed_quote(av, aq, as_, "stitched reconcile")
 
 	_check(rng.state == rng_state and randi() == expected_global, "stitched service draws no global or run RNG")
+
+
+## Stitched quote advertises Buy Patch only when some offered patch is unsold and
+## affordable; the three priced rows (and sold flags) are always kept.
+func _check_stitched_decision_gating(authored: Dictionary, party: Array) -> void:
+	var ids := ["stitched_badge", "button_eye", "quilted_coat"]
+	var offers: Array = []
+	for id in ids:
+		var price := _authored_price(authored, id)
+		_check(price == 100, "gating fixture authored price " + id)
+		offers.append({"id": id, "price": price})
+
+	# Mixed: two owned (sold) beside one genuinely purchasable offer, exactly 100 gold.
+	var mixed_owned := ["stitched_badge", "button_eye"]
+	var mixed := RunPatchStallVisit.open_stitched("node_g", party, mixed_owned, 100, offers)
+	_check(mixed.is_valid(), "mixed gating visit opens")
+	var mixed_state := mixed.read_state()
+	var mixed_quote := mixed.quote()
+	_check(mixed_quote == {"offers": [
+			{"id": "stitched_badge", "price": 100, "sold": true},
+			{"id": "button_eye", "price": 100, "sold": true},
+			{"id": "quilted_coat", "price": 100, "sold": false}],
+		"decisions": ["buy_patch", "leave"]}, "mixed owned/unowned exact-100 quote keeps three rows and Buy Patch")
+	for sold_id in mixed_owned:
+		_check(not mixed.buy_patch(sold_id, mixed_state.visit_id, "node_g", mixed_state.snapshot).ok
+			and mixed.preview_purchase(sold_id, mixed_state.visit_id, "node_g", mixed_state.snapshot).is_empty(),
+			"owned patch refused and not previewable " + sold_id)
+	_check(mixed.read_state() == mixed_state and mixed.quote() == mixed_quote and not mixed.is_consumed(),
+		"rejected owned buys change nothing")
+	var buy := mixed.buy_patch("quilted_coat", mixed_state.visit_id, "node_g", mixed_state.snapshot)
+	_check(buy.ok and buy.receipt == {"kind": "trinket", "id": "quilted_coat", "price": 100}
+		and buy.ledger == {"party_ids": party, "owned_patch_ids": mixed_owned + ["quilted_coat"], "gold": 0},
+		"exact-100 buy spends exactly 100 and adds only the unsold patch")
+	_check(mixed.is_consumed() and not mixed.buy_patch("quilted_coat", mixed_state.visit_id, "node_g", mixed_state.snapshot).ok
+		and not mixed.leave(mixed_state.visit_id, "node_g", mixed_state.snapshot).ok,
+		"purchase closes the visit and refuses replay and Leave")
+	var mixed_closed := mixed.quote()
+	_check(mixed_closed == {"offers": [], "decisions": []}, "closed mixed quote is actionless")
+
+	# 99 gold against three 100-gold offers: rows kept, only Leave.
+	var poor := RunPatchStallVisit.open_stitched("node_g", party, [], 99, offers)
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	_check(poor.is_valid() and poor_quote == {"offers": [
+			{"id": "stitched_badge", "price": 100, "sold": false},
+			{"id": "button_eye", "price": 100, "sold": false},
+			{"id": "quilted_coat", "price": 100, "sold": false}],
+		"decisions": ["leave"]}, "99-gold quote keeps three priced rows but only Leave")
+	for id in ids:
+		_check(not poor.buy_patch(id, poor_state.visit_id, "node_g", poor_state.snapshot).ok
+			and poor.preview_purchase(id, poor_state.visit_id, "node_g", poor_state.snapshot).is_empty(),
+			"99-gold buy refused and preview empty " + id)
+	_check(poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"99-gold refusals are nonmutating")
+	var poor_leave := poor.leave(poor_state.visit_id, "node_g", poor_state.snapshot)
+	_check(poor_leave.ok and poor_leave.ledger == {"party_ids": party, "owned_patch_ids": [], "gold": 99}
+		and poor.is_consumed() and not poor.leave(poor_state.visit_id, "node_g", poor_state.snapshot).ok
+		and poor.quote() == {"offers": [], "decisions": []}, "99-gold Leave closes once and quote is actionless")
+
+	# All offered patches already owned with ample gold: rows flagged sold, only Leave.
+	var all_owned := RunPatchStallVisit.open_stitched("node_g", party, ids.duplicate(), 500, offers)
+	var all_state := all_owned.read_state()
+	var all_quote := all_owned.quote()
+	_check(all_owned.is_valid() and all_quote == {"offers": [
+			{"id": "stitched_badge", "price": 100, "sold": true},
+			{"id": "button_eye", "price": 100, "sold": true},
+			{"id": "quilted_coat", "price": 100, "sold": true}],
+		"decisions": ["leave"]}, "all-owned quote keeps sold rows but only Leave")
+	for id in ids:
+		_check(not all_owned.buy_patch(id, all_state.visit_id, "node_g", all_state.snapshot).ok
+			and all_owned.preview_purchase(id, all_state.visit_id, "node_g", all_state.snapshot).is_empty(),
+			"all-owned buy refused and preview empty " + id)
+	_check(all_owned.read_state() == all_state and all_owned.quote() == all_quote and not all_owned.is_consumed(),
+		"all-owned refusals are nonmutating")
+	var all_leave := all_owned.leave(all_state.visit_id, "node_g", all_state.snapshot)
+	_check(all_leave.ok and all_leave.ledger == {"party_ids": party, "owned_patch_ids": ids, "gold": 500}
+		and all_owned.is_consumed() and not all_owned.leave(all_state.visit_id, "node_g", all_state.snapshot).ok,
+		"all-owned Leave closes once without spending")
+
+	# Mixed price list: an unsold offer above the wallet does not hide a cheaper affordable one.
+	var tiered := [{"id": "stitched_badge", "price": 100}, {"id": "button_eye", "price": 60}, {"id": "quilted_coat", "price": 100}]
+	var tiered_visit := RunPatchStallVisit.open_stitched("node_g", party, [], 70, tiered)
+	_check(tiered_visit.quote().decisions == ["buy_patch", "leave"] and tiered_visit.quote().offers.size() == 3,
+		"any affordable unsold offer keeps Buy Patch")
+	var tiered_owned := RunPatchStallVisit.open_stitched("node_g", party, ["button_eye"], 70, tiered)
+	_check(tiered_owned.quote().decisions == ["leave"] and tiered_owned.quote().offers.size() == 3,
+		"owned cheap offer plus unaffordable others leaves only Leave")
