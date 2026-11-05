@@ -50,7 +50,7 @@ const FROZEN_PARTS := {
 		"stat": {"max_hp": 5, "prot": 6},
 	},
 	"lantern_monk_legs_moth_shroud": {
-		"name": "Moth Shroud", "launch": [2, 3], "target": [1, 2, 3, 4], "side": "ally",
+		"name": "Moth Shroud", "launch": [2, 3, 4], "target": [1, 2, 3, 4], "side": "ally",
 		"multi": false, "acc": 100, "dmg": [0, 0], "effects": {"dodge": 10, "duration": 2},
 		"move": "guard", "stat": {"speed": 1, "dodge": 4},
 	},
@@ -101,6 +101,10 @@ func _initialize() -> void:
 	_test_rank4_moth_cloud(2, 500990, 30, "tier II")
 	_test_rank4_moth_cloud(3, 501030, 30, "tier III")
 	_test_rank4_wick_spark(1, 500030, 60)
+	_test_rank4_moth_shroud(1, 501560, 40, 10, "tier I")
+	_test_rank4_moth_shroud(2, 501600, 40, 14, "tier II")
+	_test_rank4_moth_shroud(3, 501640, 40, 18, "tier III")
+	_test_moth_shroud_rejections()
 	_test_rank2_moth_cloud_replay()
 	_test_guard_and_shroud()
 	_test_rejection_no_spend()
@@ -122,10 +126,11 @@ func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
 
 
-## Wick Spark alone may launch from hero rank 4; every other frozen part stays limited to
-## the authored ranks 1-3. Used for the base ability and every stitch tier's inherited mask.
+## Wick Spark and Moth Shroud may launch from hero rank 4; every other frozen part stays
+## limited to the authored ranks 1-3. Used for the base ability and every stitch tier's
+## inherited mask.
 func _rank4_launch_contract(id: String, mask: int) -> bool:
-	if id == STARTERS["arms"]:
+	if id == STARTERS["arms"] or id == ALTERNATES["legs"]:
 		return StitchedParts.ranks_allowed(mask, 2) and StitchedParts.ranks_allowed(mask, 3) \
 			and StitchedParts.ranks_allowed(mask, 4) and not StitchedParts.ranks_allowed(mask, 1)
 	return not StitchedParts.ranks_allowed(mask, 4)
@@ -265,8 +270,8 @@ func _test_catalog() -> void:
 
 
 ## The starter torso launches from hero ranks 2-4 with an all-ally multi heal. Every field,
-## tier override, label and stat in the eight-part file stays frozen except Wick Spark's
-## authored launch, which gains rank 4 in _test_wick_spark_launch.
+## tier override, label and stat in the eight-part file stays frozen except the authored
+## rank-4 launches of Wick Spark and Moth Shroud.
 func _test_lamplight_wash_launch() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: catalog with Lamplight Wash's fourth launch rank validates")
@@ -324,7 +329,7 @@ func _test_lamplight_wash_launch() -> void:
 		and int(ability["effects"]["heal"]) == 2,
 		"AC3: tier reads never replace Lamplight Wash's base ability in memory")
 	# The six other untouched parts stay byte-for-byte equivalent in rules terms, including
-	# their base and tier II/III launch masks: only Wick Spark may gain rank-4 launch.
+	# their base and tier II/III launch masks: only Wick Spark and Moth Shroud gain rank 4.
 	for id in FROZEN_PARTS:
 		var frozen: Dictionary = FROZEN_PARTS[id]
 		var other: Dictionary = cat["by_id"][id]
@@ -342,7 +347,7 @@ func _test_lamplight_wash_launch() -> void:
 			and str(other_ability["move"]) == str(frozen["move"]),
 			"AC1: frozen base part unchanged: " + id)
 		_check(_rank4_launch_contract(id, int(other_ability["launch_mask"])),
-			"AC1: only Wick Spark gains rank-4 launch at base tier: " + id)
+			"AC1: only Wick Spark and Moth Shroud gain rank-4 launch at base tier: " + id)
 		for tier in [1, 2, 3]:
 			var tier_ability := StitchedParts.ability_at_tier(other, tier)
 			var expected := {
@@ -363,7 +368,7 @@ func _test_lamplight_wash_launch() -> void:
 			_check(tier_ability["launch"] == frozen["launch"]
 				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
 				and _rank4_launch_contract(id, int(tier_ability["launch_mask"])),
-				"AC1: only Wick Spark tier %d gains rank-4 launch: %s" % [tier, id])
+				"AC1: only Wick Spark and Moth Shroud tier %d gain rank-4 launch: %s" % [tier, id])
 			_check(tier_ability["target"] == frozen["target"]
 				and int(tier_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
 				and str(tier_ability["target_side"]) == str(frozen["side"])
@@ -945,6 +950,205 @@ func _test_rank4_wick_spark(tier: int, seed_start: int, seed_count: int) -> void
 		break
 	_check(witnessed,
 		"AC2: a real seeded rank-4 Wick Spark damages and Blinds the living rank-1 foe")
+
+
+## S4 completion: Moth Shroud's base launch list gains hero rank 4, so the Monk's alternate
+## legs can shelter one ally from the rear rank. Its target list already reaches allied ranks
+## 1-4; tier II/III only raise the Dodge amount and inherit the new base launch. A real seeded
+## 4v3 preview with the Monk in rank 4 proves the authored part casts on the rank-1 Warden.
+func _test_rank4_moth_shroud(
+	tier: int, seed_start: int, seed_count: int, expected_dodge: int, label: String
+) -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "%s: catalog with Moth Shroud's rank-4 launch validates" % label)
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][ALTERNATES["legs"]]
+	var rear_launch := [2, 3, 4]
+	var launch_mask := StitchedParts.rank_mask(rear_launch)
+	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	_check(launch_mask != 0 and launch_mask != full_mask
+		and launch_mask == (StitchedParts.ALL_RANKS_MASK & ~(1 << 1))
+		and not StitchedParts.ranks_allowed(launch_mask, 1),
+		"%s: hero ranks 2-4 derive a launch mask that still excludes rank 1" % label)
+	_check(str(part["id"]) == "lantern_monk_legs_moth_shroud"
+		and str(part["name"]) == "Moth Shroud" and str(part["slot"]) == "legs"
+		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"speed": 1, "dodge": 4},
+		"%s: Moth Shroud keeps its name, legs slot, owner and +1 SPEED/+4 DODGE stat" % label)
+	var ability := StitchedParts.ability_at_tier(part, tier)
+	var valid := StitchedParts.validate_ability(ability)
+	_check(bool(valid.get("ok", false)), "%s: Moth Shroud tier %d ability validates" % [label, tier])
+	if not bool(valid.get("ok", false)):
+		return
+	var checked: Dictionary = valid["ability"]
+	_check(str(checked["id"]) == "lantern_monk_legs_moth_shroud_move"
+		and str(checked["name"]) == "Moth Shroud" and str(checked["kind"]) == "buff"
+		and checked["launch"] == rear_launch and int(checked["launch_mask"]) == launch_mask
+		and checked["target"] == [1, 2, 3, 4] and int(checked["target_mask"]) == full_mask
+		and str(checked["target_side"]) == "ally" and not bool(checked["multi"])
+		and int(checked["acc"]) == 100 and checked["dmg"] == [0, 0] and int(checked["crit"]) == 0
+		and int(checked["mark_damage"]) == 0
+		and int(checked["effects"].get("dodge", 0)) == expected_dodge
+		and int(checked["effects"].get("duration", 0)) == 2
+		and int(checked["self_move"]) == 0 and str(checked["move"]) == "guard",
+		"%s: Moth Shroud tier %d launches from [2,3,4] at one ally with Dodge %d for two turns"
+			% [label, tier, expected_dodge])
+	for rank in [2, 3, 4]:
+		_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+			"%s: Moth Shroud tier %d may launch from hero rank %d" % [label, tier, rank])
+	for rank in [0, 1, 5]:
+		_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+			"%s: Moth Shroud tier %d never launches from rank %d" % [label, tier, rank])
+	for rank in [1, 2, 3, 4]:
+		_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+			"%s: Moth Shroud tier %d reaches allied rank %d" % [label, tier, rank])
+	for rank in [0, 5]:
+		_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+			"%s: Moth Shroud tier %d never targets rank %d" % [label, tier, rank])
+	_check(StitchedParts.stat_at_tier(part, tier) == {"speed": 1, "dodge": 4},
+		"%s: Moth Shroud tier %d keeps its authored slot stat" % [label, tier])
+	_check(str(part["text"]) == "Wrap one ally in a fluttering moth shroud, granting temporary Dodge for two turns.",
+		"%s: Moth Shroud keeps its current short rules text" % label)
+	_check(part["ability"]["launch"] == rear_launch and part["ability"]["target"] == [1, 2, 3, 4]
+		and int(part["ability"]["effects"]["dodge"]) == 10,
+		"%s: tier reads never replace Moth Shroud's base fields in memory" % label)
+
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle(ALTERNATES["legs"], tier, seed_value, true)
+		if b == null:
+			continue
+		if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+			continue
+		if str(b.get_unit("lantern_monk")["parts"]["legs"]["id"]) != ALTERNATES["legs"]:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var warden_before := b.get_unit("warden")
+		if warden_before.is_empty() or int(warden_before.get("rank", -1)) != 1 \
+				or bool(warden_before.get("lost", false)) or int(warden_before["hp"]) <= 0:
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(ALTERNATES["legs"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 1 or str(receipts[0].get("target", "")) != "warden":
+			continue
+		var receipt: Dictionary = receipts[0]
+		if not bool(receipt.get("hit", false)):
+			continue
+		var warden_after := b.get_unit("warden")
+		var buff: Dictionary = warden_after.get("dodge_buff", {})
+		if int(buff.get("amount", 0)) != expected_dodge or int(buff.get("turns", 0)) != 2:
+			continue
+		witnessed = true
+		_check(str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "lantern_monk"
+			and str(cast.get("part", "")) == ALTERNATES["legs"]
+			and str(cast.get("ability", "")) == "lantern_monk_legs_moth_shroud_move",
+			"%s: hero rank 4 Moth Shroud runs as the equipped Monk legs part (seed %d)"
+				% [label, seed_value])
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"%s: the acting Monk really stands in hero rank 4 (seed %d)" % [label, seed_value])
+		_check(receipts.size() == 1 and str(receipt.get("target_side", "")) == "hero"
+			and int(receipt.get("target_rank", -1)) == 1,
+			"%s: exactly one genuine rank-1 ally receipt (seed %d)" % [label, seed_value])
+		_check(int(StitchedRules.effective_dodge(warden_after))
+			== int(StitchedRules.effective_dodge(warden_before)) + expected_dodge
+			and int(warden_after["hp"]) == int(warden_before["hp"])
+			and int(receipt.get("damage", -1)) == 0
+			and int(warden_after["rank"]) == int(warden_before["rank"]),
+			"%s: the Warden really gains Dodge %d with no damage or movement (seed %d)"
+				% [label, expected_dodge, seed_value])
+		_check(receipt.get("statuses", []).any(func(status): return str(status.get("status", "")) == "dodge" and int(status.get("amount", 0)) == expected_dodge and int(status.get("duration", 0)) == 2),
+			"%s: the receipt carries the bounded Dodge status (seed %d)" % [label, seed_value])
+		var after := b.state_snapshot()
+		var advanced := int(after["round"]) > int(before["round"]) \
+			or (int(after["round"]) == int(before["round"]) and int(after["turn_index"]) > int(before["turn_index"]))
+		_check(advanced and after != before and b.current_actor_id() != "lantern_monk",
+			"%s: the cast spends the Monk's genuine turn and changes real battle state (seed %d)"
+				% [label, seed_value])
+		var replay := _battle(ALTERNATES["legs"], tier, seed_value, true)
+		if replay == null or not _to(replay, "lantern_monk"):
+			_check(false, "%s: same-seed replay reached the Monk's turn (seed %d)" % [label, seed_value])
+		else:
+			var replayed := replay.use_part(ALTERNATES["legs"], 1)
+			_check(replayed == cast and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"%s: same-seed rank-4 Moth Shroud replays receipt, snapshot and RNG (seed %d)"
+					% [label, seed_value])
+		break
+	_check(witnessed, "%s: a real seeded rank-4 Moth Shroud shelters the rank-1 Warden" % label)
+
+
+## AC3: now that Moth Shroud may launch from the rear rank, a genuine rank-1 Monk still refuses
+## it, out-of-range ally ranks refuse, and unequipped, torn, stale and malformed copies fail
+## closed without spending a turn, changing battle state or advancing seeded RNG.
+func _test_moth_shroud_rejections() -> void:
+	var b := _battle(ALTERNATES["legs"], 1, 501520, true)
+	if b == null or not _to(b, "lantern_monk"):
+		_check(false, "AC3: Moth Shroud rejection witness receives a real scheduled turn")
+	else:
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4
+			and str(b.get_unit("lantern_monk")["parts"]["legs"]["id"]) == ALTERNATES["legs"],
+			"AC3: Moth Shroud rejection witness really stands in hero rank 4 with it equipped")
+		_reject_without_spend(b, ALTERNATES["legs"], 0, "Moth Shroud out-of-range ally rank 0")
+		_reject_without_spend(b, ALTERNATES["legs"], 5, "Moth Shroud out-of-range ally rank 5")
+		var cast := b.use_part(ALTERNATES["legs"], 1)
+		_check(bool(cast.get("ok", false)) and cast.get("results", []).size() == 1,
+			"AC3: the same rank-4 Monk legally casts Moth Shroud once")
+		_reject_without_spend(b, ALTERNATES["legs"], 1, "stale off-turn Moth Shroud")
+
+	var plain := _battle("", 1, 501521, true)
+	if plain == null or not _to(plain, "lantern_monk"):
+		_check(false, "AC3: unequipped Moth Shroud witness receives a real scheduled turn")
+	else:
+		_check(str(plain.get_unit("lantern_monk")["parts"]["legs"]["id"]) == STARTERS["legs"],
+			"AC3: the unequipped witness really has Pole Shelter in the legs slot")
+		_reject_without_spend(plain, ALTERNATES["legs"], 1, "unequipped Moth Shroud")
+
+	var torn_config := _config(ALTERNATES["legs"], 1, 501522, true)
+	torn_config["heroes"][3]["parts"]["legs"] = {"id": ALTERNATES["legs"], "tier": 1, "torn": true}
+	var torn_created := StitchedRules.create(torn_config)
+	_check(bool(torn_created.get("ok", false)), "AC3: a real torn Moth Shroud enters a rank-4 battle")
+	if bool(torn_created.get("ok", false)):
+		var torn: StitchedRules = torn_created["battle"]
+		if _to(torn, "lantern_monk"):
+			_reject_without_spend(torn, ALTERNATES["legs"], 1, "torn Moth Shroud")
+		else:
+			_check(false, "AC3: torn Moth Shroud witness receives a real turn")
+
+	var front_config := _config(ALTERNATES["legs"], 1, 501523)
+	var monk: Dictionary = front_config["heroes"].pop_at(1)
+	front_config["heroes"].insert(0, monk)
+	var front_created := StitchedRules.create(front_config)
+	_check(bool(front_created.get("ok", false)), "AC3: a real rank-1 Moth Shroud loadout enters battle")
+	if bool(front_created.get("ok", false)):
+		var front: StitchedRules = front_created["battle"]
+		_check(int(front.get_unit("lantern_monk")["rank"]) == 1,
+			"AC3: rank-1 Moth Shroud witness really stands in hero rank 1")
+		if _to(front, "lantern_monk"):
+			_check(str(front.get_unit("lantern_monk")["parts"]["legs"]["id"]) == ALTERNATES["legs"],
+				"AC3: the rank-1 witness really has Moth Shroud equipped")
+			_reject_without_spend(front, ALTERNATES["legs"], 2, "Moth Shroud forbidden from hero rank 1")
+		else:
+			_check(false, "AC3: rank-1 Moth Shroud witness receives a real turn")
+
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC3: catalog available for copied Moth Shroud validator checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var source: Dictionary = cat["by_id"][ALTERNATES["legs"]]
+	for bad_launch in [[2, 3, 4, 4], [2, 3, 4, 5], [0, 2, 3, 4]]:
+		var copy: Dictionary = source.duplicate(true)
+		copy["ability"]["launch"] = bad_launch
+		_check(not bool(StitchedParts.validate_part(copy).get("ok", false)),
+			"AC3: copied Moth Shroud launch %s still fails validation" % str(bad_launch))
+	var wrong_target: Dictionary = source.duplicate(true)
+	wrong_target["ability"]["target"] = [1, 2, 3, 5]
+	_check(not bool(StitchedParts.validate_part(wrong_target).get("ok", false)),
+		"AC3: copied Moth Shroud with ally rank 5 still fails validation")
 
 
 ## Rank 2 stays a legal launch rank after the data change, and the identical seed and action
