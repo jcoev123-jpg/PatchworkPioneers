@@ -18,7 +18,7 @@ static func format_action(actor: Dictionary, slot: String, worn: Dictionary,
 		var title := "%s · %s" % [heading, missing]
 		var reason := lock_reason if not lock_reason.is_empty() else "No equipped ability"
 		var full := "%s\n%s\nLOCKED: %s" % [title, "ID: " + id if not id.is_empty() else "No worn part", reason]
-		return {"title": title, "digest": missing + " · " + reason, "full": full,
+		return {"title": title, "digest": missing + " · LOCKED", "full": full,
 			"usable": false, "part_id": id, "tier": tier}
 	var ability := StitchedParts.ability_at_tier(part, tier)
 	var stat := StitchedParts.stat_at_tier(part, tier)
@@ -39,11 +39,21 @@ static func format_action(actor: Dictionary, slot: String, worn: Dictionary,
 	var part_text := str(part.get("tiers", {}).get(str(tier), {}).get("text", part.get("text", "")))
 	var rank := int(actor.get("rank", 0))
 	var status := "READY" if usable else "LOCKED: " + (lock_reason if not lock_reason.is_empty() else "Unavailable")
-	var digest := "%s · %s · DMG %d–%d · ACC %d · CRIT +%d\n%s R%s → %s R%s · %s" % [
-		str(ability.get("name", "")), str(ability.get("kind", "")).to_upper(),
-		int(dmg[0]), int(dmg[1]), int(ability.get("acc", 0)), int(ability.get("crit", 0)),
-		"LAUNCH", _ranks(ability.get("launch", [])), str(ability.get("target_side", "")).to_upper(),
-		_ranks(ability.get("target", [])), status]
+	# One line in the mounted HUD. Detailed accuracy, crit and lock reasons stay
+	# verbatim in full help; the digest keeps the current tier's actionable facts.
+	var summary := effect_rows.duplicate()
+	if int(dmg[1]) > 0:
+		summary.push_front("DMG %d–%d" % [int(dmg[0]), int(dmg[1])])
+	if int(ability.get("mark_damage", 0)) > 0:
+		summary.append("MARK DMG +%d" % int(ability["mark_damage"]))
+	if move_step != 0:
+		summary.append("STEP FRONT" if move_step < 0 else "STEP BACK")
+	var digest := "%s %s · %sLAUNCH R%s → %s R%s%s · %s" % [
+		str(ability.get("name", "")), roman,
+		", ".join(summary) + " · " if not summary.is_empty() else "",
+		_ranks(ability.get("launch", [])), str(ability.get("target_side", "")).to_upper(),
+		_ranks(ability.get("target", [])), " ALL" if bool(ability.get("multi", false)) else "",
+		"READY" if usable else "LOCKED"]
 	var full := "%s\nID: %s · Worn by: %s (rank %d)\nStitch stat: %s\n%s (%s) · ID: %s\n%s\nLaunch ranks: %s · Target: %s ranks %s\nMulti: %s · ACC: %d · Damage: %d–%d · Crit bonus: +%d\nEffects: %s · Mark damage: +%d\nSelf-move: %s · Pose: %s\n%s" % [
 		title, id, str(actor.get("name", actor.get("id", ""))), rank,
 		", ".join(stat_rows) if not stat_rows.is_empty() else "none",

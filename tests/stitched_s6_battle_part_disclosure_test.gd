@@ -29,6 +29,60 @@ func _actor_turn(stage: StitchedBattleScreen, id: String) -> bool:
 	return stage.battle.current_actor_id() == id
 
 
+func _assert_digest(stage: StitchedBattleScreen, slot: String, label: String) -> void:
+	var before := _view_state(stage)
+	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
+	var worn: Dictionary = actor.get("parts", {}).get(slot, {})
+	var cue: Dictionary = stage._part_cues[slot]
+	var digest := str(cue["digest"])
+	var preview: Label = stage._labels["preview"]
+	var usable := stage._valid_part(actor, worn)
+	_check(bool(cue["usable"]) == usable and digest.ends_with("READY" if usable else "LOCKED"),
+		label + ": digest truthfully exposes action status")
+	if not usable:
+		_check(str(cue["full"]).contains(stage._part_lock_reason(actor, worn)),
+			label + ": full help retains the exact blocked reason")
+	if stage.parts.has(str(worn.get("id", ""))):
+		var ability := StitchedParts.ability_at_tier(stage.parts[str(worn["id"])], int(worn["tier"]))
+		_check(digest.begins_with(str(ability["name"]) + " " +
+			str(StitchedPartActionCues.ROMAN[int(worn["tier"])])) and
+			digest.contains("LAUNCH R" + ",".join(ability["launch"].map(func(r): return str(r)))) and
+			digest.contains(str(ability["target_side"]).to_upper() + " R" +
+				",".join(ability["target"].map(func(r): return str(r)))),
+			label + ": current-tier identity and exact launch/target envelope")
+		if int(ability["dmg"][1]) > 0:
+			_check(digest.contains("DMG %d–%d" % [int(ability["dmg"][0]), int(ability["dmg"][1])]),
+				label + ": actual tier damage range")
+		for effect in ability["effects"]:
+			_check(digest.contains("%s %d" % [str(effect).to_upper(), int(ability["effects"][effect])]),
+				label + ": actual tier effect " + str(effect))
+		if int(ability["self_move"]) != 0:
+			_check(digest.contains("STEP FRONT" if int(ability["self_move"]) < 0 else "STEP BACK"),
+				label + ": mandatory movement disclosed")
+		if int(ability["mark_damage"]) > 0:
+			_check(digest.contains("MARK DMG +%d" % int(ability["mark_damage"])),
+				label + ": marked-target damage disclosed")
+		_check(digest.contains(" ALL ·") == bool(ability["multi"]), label + ": multi-target scope")
+	else:
+		_check(digest == ("Unfilled" if str(worn.get("id", "")).is_empty() else "Unknown worn part") +
+			" · LOCKED", label + ": missing slot contains no borrowed ability facts")
+	stage._part_help_buttons[slot].mouse_entered.emit()
+	await process_frame
+	var font := preview.get_theme_font("font")
+	var font_size := preview.get_theme_font_size("font_size")
+	_check(preview.is_visible_in_tree() and preview.size == Vector2(749, 26) and font != null and font_size > 0,
+		label + ": actual mounted preview geometry and font exist")
+	_check(preview.text == digest and not digest.contains("\n") and not digest.contains("\r") and
+		font.get_string_size(digest, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= preview.size.x and
+		preview.get_line_count() == 1 and font.get_height(font_size) <= preview.size.y,
+		label + ": complete digest fits one measured line in the live preview: " + digest)
+	_check(stage._part_disclosure.visible and stage._part_disclosure_text.text == cue["full"] and
+		preview.tooltip_text == cue["full"] and not stage._part_help_buttons[slot].disabled,
+		label + ": pointer help and preview tooltip retain full disclosure")
+	stage._part_help_buttons[slot].mouse_exited.emit()
+	_check(_view_state(stage) == before, label + ": inspection preserves seeded state, RNG, receipts and selection")
+
+
 func _assert_cues(stage: StitchedBattleScreen, label: String) -> void:
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	_check(not actor.is_empty() and actor.get("side") == "hero", label + ": active hero exists")
@@ -68,6 +122,7 @@ func _assert_cues(stage: StitchedBattleScreen, label: String) -> void:
 			not stage._part_help_buttons[slot].disabled and
 			stage._part_help_buttons[slot].tooltip_text.contains(full),
 			label + ": independently focusable full help in " + slot)
+		await _assert_digest(stage, slot, label + " " + slot)
 
 
 func _run() -> void:
@@ -89,7 +144,7 @@ func _run() -> void:
 	_check(stage._part_buttons.size() == 4 and stage._part_help_buttons.size() == 4 and
 		stage._part_disclosure != null and stage.battle.current_side() == "hero" and
 		stage.receipts.is_empty(), "live mounted screen has four action/help pairs and initial hero turn")
-	_assert_cues(stage, "initial")
+	await _assert_cues(stage, "initial")
 
 	var quiet := _view_state(stage)
 	stage._part_help_buttons["head"].mouse_entered.emit()
@@ -121,6 +176,7 @@ func _run() -> void:
 		stage._part_cues["head"]["title"].contains(str(stage.parts["warden_head_button_eye"]["name"])) and
 		str(stage.parts["warden_head_button_eye"]["owner"]) == "warden",
 		"foreign Warden part stays equipped and described on Tinker, without owner substitution")
+	await _assert_cues(stage, "foreign parts on Tinker")
 	var replaced_head: Dictionary = stage.battle._units["tinker"]["parts"]["head"]
 	var old_head_id := str(replaced_head["id"])
 	replaced_head["id"] = "any_head_needle_pin"
@@ -129,6 +185,7 @@ func _run() -> void:
 		str(stage._part_cues["head"]["title"]).contains("Needle Pin") and
 		not str(stage._part_cues["head"]["full"]).contains("Button Eye"),
 		"live equipment replacement refreshes the actual current part, not a cached owner's part")
+	await _assert_digest(stage, "head", "replaced head")
 	replaced_head["id"] = old_head_id
 	stage._refresh()
 	var old_arms: Dictionary = stage.battle._units["tinker"]["parts"]["arms"]
@@ -138,28 +195,31 @@ func _run() -> void:
 		str(stage._part_cues["arms"]["title"]).contains("Unfilled") and
 		not str(stage._part_cues["arms"]["full"]).contains("Brace") and
 		not stage.select_part("arms"), "unfilled slot is truthful, inspectable and unselectable")
+	await _assert_digest(stage, "arms", "unfilled")
 	stage.battle._units["tinker"]["parts"]["arms"] = {"id": "nonexistent_part", "tier": 1, "torn": false}
 	stage._refresh()
 	_check(stage._part_buttons["arms"].disabled and
 		str(stage._part_cues["arms"]["title"]).contains("Unknown worn part") and
 		not str(stage._part_cues["arms"]["full"]).contains("Brace"),
 		"unknown equipped part never borrows an existing part's details")
+	await _assert_digest(stage, "arms", "unknown")
 	stage.battle._units["tinker"]["parts"]["arms"] = old_arms
 	stage._refresh()
 	_check(_actor_turn(stage, "seamstress") and
 		stage._part_cues["arms"]["part_id"] == "any_arm_red_thread" and
 		str(stage._part_cues["arms"]["full"]).contains("Red Thread"),
 		"Seamstress exposes her actual foreign-capable red thread")
+	await _assert_cues(stage, "Seamstress")
 
 	_check(_actor_turn(stage, "warden"), "precondition: Warden appears in seeded initiative")
-	_assert_cues(stage, "Warden tier I")
+	await _assert_cues(stage, "Warden tier I")
 	var worn: Dictionary = stage.battle._units["warden"]["parts"]["torso"]
 	var previous := str(stage._part_cues["torso"]["full"])
 	var base := StitchedParts.ability_at_tier(stage.parts[str(worn["id"])], 1)
 	for tier in [2, 3]:
 		worn["tier"] = tier
 		stage._refresh()
-		_assert_cues(stage, "Warden tier " + str(tier))
+		await _assert_cues(stage, "Warden tier " + str(tier))
 		var tier_ability := StitchedParts.ability_at_tier(stage.parts[str(worn["id"])], tier)
 		var tier_stat := StitchedParts.stat_at_tier(stage.parts[str(worn["id"])], tier)
 		_check(tier_ability["effects"] != base["effects"] and
@@ -186,6 +246,7 @@ func _run() -> void:
 		not stage.select_part("head") and
 		not bool(stage.submit_part(str(helm["id"]), 1).get("ok", false)),
 		"torn worn part is refused, deselected and still has separately accessible truthful help")
+	await _assert_digest(stage, "head", "torn")
 	stage._part_help_buttons["head"].grab_focus()
 	await process_frame
 	_check(stage._part_disclosure.visible and
@@ -203,6 +264,7 @@ func _run() -> void:
 		str(stage._part_cues["head"]["full"]).contains("Wrong launch rank") and
 		not stage.select_part("head") and not bool(stage.submit_part(str(helm["id"]), 1).get("ok", false)),
 		"incorrect launch rank shows the real gate and refuses action")
+	await _assert_digest(stage, "head", "wrong rank")
 	_check(_view_state(stage) == wrong_quiet, "wrong-rank refusal preserves snapshot and RNG")
 
 	stage.battle._units["warden"]["rank"] = 1
@@ -216,6 +278,7 @@ func _run() -> void:
 		str(stage._part_cues["head"]["full"]).contains("No legal target") and
 		not stage.select_part("head") and not bool(stage.submit_part(str(helm["id"]), 1).get("ok", false)),
 		"actual rules target gate refuses an ability with no living legal foe")
+	await _assert_digest(stage, "head", "no target")
 	_check(_view_state(stage) == no_target_quiet, "no-target refusal is pure")
 
 	stage.battle._units = initial_units.duplicate(true)
@@ -228,6 +291,18 @@ func _run() -> void:
 		stage._part_buttons["legs"].disabled and not stage._part_help_buttons["legs"].disabled and
 		str(stage._part_cues["legs"]["full"]).contains("Movement/thread lock") and
 		not stage.select_part("legs"), "mandatory move uses rules gate, exposes movement/thread lock")
+	await _assert_digest(stage, "legs", "movement lock")
+	stage.battle._units = initial_units.duplicate(true)
+	for hero_id in ["warden", "seamstress", "tinker", "lantern_monk"]:
+		_check(_actor_turn(stage, hero_id), "tier matrix: seeded hero turn exists for " + hero_id)
+		for tier in [1, 2, 3]:
+			for slot in StitchedBattleScreen.SLOTS:
+				stage.battle._units[hero_id]["parts"][slot]["tier"] = tier
+			stage._refresh()
+			var matrix_quiet := _view_state(stage)
+			await _assert_cues(stage, hero_id + " all parts tier " + str(tier))
+			stage._refresh()
+			_check(_view_state(stage) == matrix_quiet, "tier matrix: refresh and all reads preserve state/RNG/receipts")
 	stage.battle._units = initial_units.duplicate(true)
 	stage.battle._turn_index = initial_turn
 	stage._refresh()
@@ -283,6 +358,11 @@ func _run() -> void:
 				stage.receipts[before]["ability"] == ability["id"] and
 				(stage.battle.current_actor_id() != actor_id or stage.battle.is_over()),
 				"actual mounted action/target buttons commit one correct ability and advance rules turn")
+			var matching_receipts := 0
+			for receipt in stage.receipts.slice(before):
+				if receipt.get("action") == "ability" and receipt.get("actor") == actor_id:
+					matching_receipts += 1
+			_check(matching_receipts == 1, "mounted legal action commits exactly one hero ability receipt")
 			committed = true
 			break
 		if committed:
