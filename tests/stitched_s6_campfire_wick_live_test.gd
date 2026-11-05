@@ -10,6 +10,13 @@ var fail_campfire_mount := false
 var mount_attempts := 0
 var mount_candle: Variant
 var mount_state: Dictionary
+func _mount_stitched_campfire_event(quote: Dictionary, generation: int) -> Dictionary:
+	mount_attempts += 1
+	mount_candle = stitched_roadblock_candle
+	mount_state = quote["state"].duplicate(true)
+	if fail_campfire_mount:
+		return {}
+	return super._mount_stitched_campfire_event(quote, generation)
 func _mount_stitched_campfire(state: Dictionary, generation: int,
 		swap_quote: Dictionary) -> Dictionary:
 	mount_attempts += 1
@@ -113,7 +120,7 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		"abilities": abilities, "rounds": stage.battle.round_number()}
 
 
-func _prepare(winning_fight_candle: int = -1) -> Dictionary:
+func _prepare(winning_fight_candle: int = -1, spend_reward := false) -> Dictionary:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	var script := GDScript.new()
 	script.source_code = MOUNT_SCRIPT
@@ -147,7 +154,10 @@ func _prepare(winning_fight_candle: int = -1) -> Dictionary:
 	# admission, victory and stop is through the mounted app and service.
 	if winning_fight_candle >= 0:
 		app.stitched_roadblock_candle = winning_fight_candle
+	if spend_reward:
+		app.stitched_preview_scraps = 1
 	var stage: StitchedBattleScreen = await _admit(app)
+	var earned_battle: StitchedRules = stage.battle
 	var won: Dictionary = _victory(stage)
 	_check(won.get("outcome") == "victory" and won.get("steps", 0) > 0 \
 		and won.get("abilities", 0) > 0 and stage.battle.get_foes().size() == 3,
@@ -182,6 +192,19 @@ func _prepare(winning_fight_candle: int = -1) -> Dictionary:
 		and not app._open_stitched_campfire() \
 		and app._stitched_hp_carry == wounds,
 		"forged Circle Leave cannot mint a stop")
+	if spend_reward:
+		var upgrade: Button
+		for button: Button in circle.find_children("Upgrade_*", "Button", true, false):
+			if not button.disabled:
+				upgrade = button
+				break
+		_check(upgrade != null and app.stitched_preview_scraps == 2,
+			"poor witness has a real affordable Circle upgrade before Leave")
+		if upgrade != null:
+			upgrade.pressed.emit()
+			await process_frame
+		circle = app.stitched_sewing_panel
+		_check(app.stitched_preview_scraps == 0, "real Circle purchase spends the available scraps")
 	circle.get_node("SewingLeave").pressed.emit()
 	await process_frame
 	_check(app.stitched_sewing_panel == null \
@@ -197,7 +220,7 @@ func _prepare(winning_fight_candle: int = -1) -> Dictionary:
 		and app._stitched_postvictory_stop_available,
 		"stale Circle Leave cannot mint another stop")
 	return {"app": app, "survivors": survivors, "wounds": wounds,
-		"wounded": wounded}
+		"wounded": wounded, "battle": earned_battle}
 
 
 func _admission_refusals(app: Node) -> void:
@@ -276,11 +299,19 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 			"full CANDLE service refuses unoffered Wick without closing")
 	var entrance := before.duplicate(true)
 	before["candle"] = maxi(0, int(before["candle"]) - 8)
+	before["scraps"] -= 1
 	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var event_panel: Control = app.stitched_campfire_panel
+	var paid: Button = event_panel.find_child("Emberglass_light_the_embers", true, false)
+	_check(paid != null and not paid.disabled and app.stitched_campfire_visit == null,
+		"earned Campfire first shows the affordable authored Emberglass Event")
+	if paid != null:
+		paid.pressed.emit()
 	await process_frame
 	_check(_resources(app) == before and not app._open_stitched_campfire()
 		and _resources(app) == before,
-		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
+		"Campfire Event entry debits eight and paid service one scrap from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	if panel == null or visit == null:
@@ -289,7 +320,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		await process_frame
 		return {}
 	var expected: Dictionary = app._stitched_campfire_state.duplicate(true)
-	_check(app.mount_candle == entrance["candle"]
+	_check(app.mount_candle == before["candle"]
 		and app.mount_state == expected and expected["candle"] == before["candle"],
 		"panel builder sees projected state while the original ledger is still unspent")
 	var generation: int = app._stitched_campfire_generation
@@ -448,11 +479,19 @@ func _leave_wick() -> void:
 	var before: Dictionary = _resources(app)
 	var entrance := before.duplicate(true)
 	before["candle"] = maxi(0, int(before["candle"]) - 8)
+	before["scraps"] -= 1
 	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var event_panel: Control = app.stitched_campfire_panel
+	var paid: Button = event_panel.find_child("Emberglass_light_the_embers", true, false)
+	_check(paid != null and not paid.disabled and app.stitched_campfire_visit == null,
+		"earned Campfire first shows the affordable authored Emberglass Event")
+	if paid != null:
+		paid.pressed.emit()
 	await process_frame
 	_check(_resources(app) == before and not app._open_stitched_campfire()
 		and _resources(app) == before,
-		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
+		"Campfire Event entry debits eight and paid service one scrap from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	_check(panel != null and visit != null, "Leave witness mounts the authenticated panel")
