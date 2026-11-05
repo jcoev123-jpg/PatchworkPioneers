@@ -194,6 +194,22 @@ func _fixtures() -> Dictionary:
 	# none is pinned by index or position.
 	hints.append_array([10931, 19449, 25847, 26864, 30368, 38150, 65096, 236841,
 		318470, 323038])
+	# Genuine map/toll/rotation witnesses after the four Stitched nightroad
+	# wallet stories joined the sorted generic pool. Each is revalidated by
+	# the real RNG draw and mounted-route assertions below; keep all earlier
+	# candidates so the regression retains historical coverage.
+	# These witnesses were reported by the bounded fallback on the failing run.
+	hints.append_array([34863, 67544, 105474, 169935, 196391, 198423,
+		209681, 217163, 247418, 293259, 331902, 387023, 424259])
+	# Four rarer authentic six-Event map/toll/rotation witnesses remain after
+	# the Stitched catalog append. Verify each with the same seeded oracle
+	# and mounted Event assertions as every historical seed.
+	hints.append_array([568709, 585763, 631278, 1685060])
+	# Genuine six-Event map/toll witnesses found beyond the bounded first
+	# 499999-seed fallback after this append: estate_sale, thimble_well,
+	# v3_patchwork_lighthouse and loose_seam. The real fixture rechecks
+	# each draw; these do not bypass its fail-closed or replay coverage.
+	hints.append_array([568709, 585763, 631278, 1685060])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
