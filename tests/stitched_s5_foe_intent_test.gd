@@ -57,7 +57,8 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 		var foe := stage._unit_at("foe", rank)
 		var ticket: NinePatchRect = stage._foe_tickets[rank]
 		if foe.is_empty():
-			_check(not ticket.visible and not stage._foe_intents.has(rank),
+			_check(not ticket.visible and not stage._foe_intents.has(rank)
+				and ticket.foe_id.is_empty() and ticket.foe_rank == 0,
 				"empty, fallen or heap rank %d has no misleading ticket" % rank)
 			continue
 		found += 1
@@ -75,7 +76,8 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 				and intent["affected_ranks"] == expected["affected_ranks"]
 				and bool(intent["multi"]) == bool(expected["multi"]),
 				"rank %d matches independent round-rotated legal choice, target and all targets" % rank)
-		_check(ticket.tooltip_text.contains(str(foe["name"])) and
+		_check(ticket.foe_id == str(foe["id"]) and ticket.foe_rank == rank and
+			ticket.tooltip_text.contains(str(foe["name"])) and
 			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change"),
 			"foe rank %d names actual actor and provisionality" % rank)
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
@@ -89,7 +91,7 @@ func _caption_fits(label: Label) -> bool:
 
 
 func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> void:
-	var sewn: Texture2D = load("res://assets/paper/ui/panel_felt.png")
+	var sewn: Texture2D = load("res://assets/paper/ui/hud_name_plate.png")
 	_check(sewn != null and stage._foe_tickets.size() == 4
 		and stage._foe_ticket_labels.size() == 4 and stage._foe_ticket_target_labels.size() == 4,
 		"all mounted foe ranks reuse authored dark felt tickets with two caption rows")
@@ -105,14 +107,14 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 		var ability: Label = stage._foe_ticket_labels[rank]
 		var target: Label = stage._foe_ticket_target_labels[rank]
 		_check(ticket.texture == sewn and stage._intent_disclosure.texture == sewn
-			and ticket.modulate == Color("ac7777")
+			and ticket.self_modulate == Color("62464a")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
 			and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(681 + (rank - 1) * 150, 150)
-			and rectangle.size == Vector2(116, 44)
+			and rectangle.position == Vector2(667 + (rank - 1) * 150, 143)
+			and rectangle.size == Vector2(144, 62)
 			and not rectangle.intersects(header)
 			and (rank == 1 or not rectangle.intersects(previous))
-			and rectangle.end.x <= 1280 and rectangle.end.y <= 200
+			and rectangle.end.x <= 1280 and rectangle.end.y <= 220
 			and absf(rectangle.get_center().x - (puppet.global_position.x + puppet.size.x * 0.5)) < 2.0
 			and not rectangle.intersects(stage._foot_plates["foe_" + str(rank)].get_global_rect()),
 			"dark intent rank %d floats above painted figures and clear of caption/neighbor" % rank)
@@ -124,19 +126,22 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
 				"rank %d ticket clears actual posed authored art, not obsolete Puppet Control top" % rank)
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket
+			and ability.get_theme_font_size("font_size") >= 20
+			and target.get_theme_font_size("font_size") >= 15
+			and ability.size.x >= 124 and target.size.x >= 124
 			and ability.position.y + ability.size.y <= target.position.y
 			and target.position.y + target.size.y <= ticket.size.y
-			and ability.get_theme_color("font_color") == StitchedBattleScreen.PAPER
-			and target.get_theme_color("font_color") == StitchedBattleScreen.ACCENT
+			and ability.get_theme_color("font_color") == StitchedFoeIntentPlate.BONE
+			and target.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
 			and _caption_fits(ability) and _caption_fits(target),
 			"bone/amber two-row caption rank %d fits without wrapping or overlap" % rank)
 		previous = rectangle
 	_check(painted_count == expected_count,
 		"intent geometry inspects every actually painted foe, including newly occupied fourth rank")
 	var detail := stage._intent_disclosure.get_global_rect()
-	_check(stage._intent_disclosure.modulate == Color("ac7777")
-		and detail.position == Vector2(22, 143) and detail.end.y <= 192
-		and detail.end.x <= 640
+	_check(stage._intent_disclosure.self_modulate == Color("62464a")
+		and detail.position == Vector2(22, 140) and detail.end.y <= 220
+		and detail.end.x <= 660
 		and stage._intent_disclosure_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 		and stage._intent_disclosure_label.get_theme_color("font_color") == StitchedBattleScreen.PAPER,
 		"full dark disclosure stays in hero-side overhead air, not over a figure")
@@ -222,6 +227,7 @@ func _run() -> void:
 	_check_geometry(stage, 4)
 	_check(battle.get_foes().size() == 4 and stage._foe_tickets[3].visible
 		and stage._foe_tickets[4].visible
+		and stage._foe_tickets[4].foe_id == str(fourth["id"])
 		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(fourth["id"])))
 		and _caption_fits(stage._foe_ticket_labels[4]),
 		"post-admission four occupied foe ranks all retain authoritative intent tickets")
@@ -328,6 +334,13 @@ func _run() -> void:
 		and stage._labels["log"].text == log_before and stage._selected_part == selection_before
 		and stage.legal_targets() == legal_before and stage.receipts == receipts_before,
 		"intents leave selected part, target legality, target forecast and seat log untouched")
+	var motion_before := stage.reduced_motion
+	stage.set_reduced_motion(not motion_before)
+	stage._refresh()
+	stage.set_reduced_motion(motion_before)
+	_check(battle.state_snapshot() == state_before and battle.rng_state() == rng_before
+		and stage.receipts == receipts_before and battle.current_actor_id() == current_before,
+		"reduced motion switch and repeated ticket refresh remain passive")
 	_check(state_before == battle.state_snapshot() and rng_before == battle.rng_state()
 		and order_before == battle.turn_order() and current_before == battle.current_actor_id()
 		and round_before == battle.round_number() and randi() == expected_global,
@@ -392,6 +405,13 @@ func _run() -> void:
 		"dead foe replaced with scrap heap has no ticket or selectable intent")
 	battle._units = original_units.duplicate(true)
 	battle._heaps = original_heaps.duplicate(true)
+	stage._refresh()
+	battle._units[sample_id]["lost"] = true
+	stage._refresh()
+	_check(not stage._foe_tickets[sample_rank].visible and not stage._foe_intents.has(sample_rank)
+		and stage._foe_tickets[sample_rank].foe_id.is_empty(),
+		"LOST foe leaves neither visible ticket nor stale identity")
+	battle._units = original_units.duplicate(true)
 	stage._refresh()
 	_verify_receipt(stage)
 	host.free()
