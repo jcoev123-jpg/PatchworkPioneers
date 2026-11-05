@@ -88,29 +88,38 @@ func _caption_fits(label: Label) -> bool:
 			label.get_theme_font_size("font_size")).x <= label.size.x + 0.5)
 
 
-func _check_geometry(stage: StitchedBattleScreen) -> void:
+func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> void:
 	var sewn: Texture2D = load("res://assets/paper/ui/panel_felt.png")
 	_check(sewn != null and stage._foe_tickets.size() == 4
 		and stage._foe_ticket_labels.size() == 4 and stage._foe_ticket_target_labels.size() == 4,
-		"all four mounted foe ranks reuse the authored dark felt art with two caption rows")
+		"all mounted foe ranks reuse authored dark felt tickets with two caption rows")
 	var previous := Rect2()
-	var header := Rect2(705, 113, 535, 32)
+	var header := Rect2(710, 105, 545, 30)
+	var painted_count := 0
 	for rank in range(1, 5):
 		var ticket: NinePatchRect = stage._foe_tickets[rank]
 		var rectangle := ticket.get_global_rect()
-		var puppet: Rect2 = stage._puppets["foe_" + str(rank)].get_global_rect()
+		var puppet: Control = stage._puppets["foe_" + str(rank)]
+		var art: Rect2 = puppet.posed_actor_rect()
+		var painted := Rect2(puppet.global_position + art.position, art.size)
 		var ability: Label = stage._foe_ticket_labels[rank]
 		var target: Label = stage._foe_ticket_target_labels[rank]
 		_check(ticket.texture == sewn and stage._intent_disclosure.texture == sewn
 			and ticket.modulate == Color("ac7777")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
 			and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(646 + (rank - 1) * 126, 148)
+			and rectangle.position == Vector2(725 + (rank - 1) * 120, 144)
 			and rectangle.size == Vector2(116, 44)
-			and not rectangle.intersects(header) and rectangle.end.y <= puppet.position.y
+			and not rectangle.intersects(header)
 			and (rank == 1 or not rectangle.intersects(previous))
-			and rectangle.end.x <= 1280 and rectangle.end.y < 194,
-			"dark sewn focusable ticket rank %d clears header, neighbour and puppet face" % rank)
+			and rectangle.end.x <= 1280 and rectangle.end.y < 192,
+			"dark intent rank %d floats above painted figures and clear of caption/neighbor" % rank)
+		if puppet.visible:
+			painted_count += 1
+			_check(not painted.intersects(rectangle) and rectangle.end.y <= painted.position.y
+				and painted.size.y >= 275.0 and painted.end.y <= 514.0
+				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
+				"rank %d ticket clears actual posed authored art, not obsolete Puppet Control top" % rank)
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket
 			and ability.position.y + ability.size.y <= target.position.y
 			and target.position.y + target.size.y <= ticket.size.y
@@ -119,15 +128,20 @@ func _check_geometry(stage: StitchedBattleScreen) -> void:
 			and _caption_fits(ability) and _caption_fits(target),
 			"bone/amber two-row caption rank %d fits without wrapping or overlap" % rank)
 		previous = rectangle
+	_check(painted_count == expected_count,
+		"intent geometry inspects every actually painted foe, including newly occupied fourth rank")
 	var detail := stage._intent_disclosure.get_global_rect()
 	_check(stage._intent_disclosure.modulate == Color("ac7777")
-		and detail.position == Vector2(22, 148) and detail.end.y <= 194
+		and detail.position == Vector2(22, 143) and detail.end.y <= 192
 		and detail.end.x <= 640
 		and stage._intent_disclosure_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 		and stage._intent_disclosure_label.get_theme_color("font_color") == StitchedBattleScreen.PAPER,
-		"full dark disclosure wraps in the open hero-side band, not over any face")
-	# Dummy headless raster cannot capture pixels, so assert mounted viewport and
-	# actual authored texture, child geometry, colours and all occupied bounds.
+		"full dark disclosure stays in hero-side overhead air, not over a figure")
+	for rank in range(1, 5):
+		var hero: Control = stage._puppets["hero_" + str(rank)]
+		var hero_rect: Rect2 = hero.posed_actor_rect()
+		_check(not Rect2(hero.global_position + hero_rect.position, hero_rect.size).intersects(detail),
+			"rank %d hero's actual painted bounds do not intersect intent disclosure" % rank)
 	_check(root.get_viewport().get_visible_rect().size == Vector2(1280, 720),
 		"headless 1280x720 Gothic viewport has the intended visual bounds")
 
@@ -197,10 +211,12 @@ func _run() -> void:
 	# Model the public post-summon board state without advancing combat: all
 	# three original foes stay occupied while a distinct live fourth enters.
 	var fourth: Dictionary = battle._units[str(battle.get_foes()[2]["id"])].duplicate(true)
-	fourth["id"] = "foe:admitted_fourth"
+	fourth["id"] = "ragling"
+	fourth["name"] = "Ragling"
 	fourth["rank"] = 4
 	battle._units[fourth["id"]] = fourth
 	stage._refresh()
+	_check_geometry(stage, 4)
 	_check(battle.get_foes().size() == 4 and stage._foe_tickets[3].visible
 		and stage._foe_tickets[4].visible
 		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(fourth["id"])))
@@ -216,6 +232,7 @@ func _run() -> void:
 	var original_rank := int(arriving["rank"])
 	arriving["rank"] = 4
 	stage._refresh()
+	_check_geometry(stage, 3)
 	_check(stage._foe_tickets[4].visible and not stage._foe_tickets[original_rank].visible
 		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(arriving["id"])))
 		and _caption_fits(stage._foe_ticket_labels[4]),

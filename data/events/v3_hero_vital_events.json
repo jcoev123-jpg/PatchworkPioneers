@@ -318,6 +318,50 @@
         { "id": "unspool_mooring", "text": "Unspool 2 max HP of mooring wool to recover 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Let the little ferry swing across the dark water", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_shieldbell_mourning_path",
+      "title": "The Shieldbell Mourning Path",
+      "description": "An overturned brass mourning bell blocks a moonlit path; the Warden props its cracked lip with a vast quilted shield while stitched bell ropes twitch beneath.",
+      "required_hero": "warden",
+      "choices": [
+        { "id": "brace_shieldbell", "text": "Spend 2 scraps shoring the bell's shieldrest (heal 8 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 0 } },
+        { "id": "lift_bell_lining", "text": "Trade 2 max HP of old shield lining for 26 gold", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the bell quiet in the brambles", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_wax_tally_ossuary",
+      "title": "The Wax-Tally Ossuary",
+      "description": "A bone-white cabinet of tiny stitched urns hangs above wax scales; the Lantern Monk's saffron pole lantern lights names sewn onto each hanging tag.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        { "id": "seal_wax_tags", "text": "Pay 16 gold to seal warm wax into the robe (+2 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 } },
+        { "id": "collect_spent_wicks", "text": "Give 5 HP of wick-stuffing to salvage 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the wax weights settle without a sound", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_velvet_needle_organ",
+      "title": "The Velvet Needle Organ",
+      "description": "A roadside organ of upright silver needles plays itself beneath oxblood drapes; the Rag Duelist's torn cape catches on a reed shaped like a rapier.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "retie_organ_cape", "text": "Pay 17 gold for a stitched cape bandage (heal 9 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 9, "max_hp": 0 } },
+        { "id": "play_razor_refrain", "text": "Play the needle keys (lose 5 HP; earn 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the organ hum behind the closed curtains", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_gravestone_press",
+      "title": "The Button-Eyed Gravestone Press",
+      "description": "A squat stone press stamped with great button eyes leans over a patchwork memorial cloth; the Button Golem's round fists fit its missing counterweights.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "reset_press_stitches", "text": "Spend 2 scraps resetting the button weights (heal 7 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "pry_gilt_button", "text": "Trade 3 max HP of brass buttons for 29 gold", "outcome": { "gold": 29, "scraps": 0, "hp": 0, "max_hp": -3 } },
+        { "id": "leave", "text": "Leave the buttons in their mossy sockets", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

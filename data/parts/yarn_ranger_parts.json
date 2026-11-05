@@ -308,7 +308,8 @@
         "name": "Purling Barrage",
         "kind": "ranged",
         "launch": [
-          3
+          3,
+          4
         ],
         "target": [
           1,

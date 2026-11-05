@@ -28,6 +28,12 @@ const BOLAS_SPECS := {
 	"dmg": [[2, 4], [3, 5], [4, 7]],
 	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
 }
+const PURLING_ID := "yarn_ranger_arms_purling_barrage"
+const PURLING_LAUNCH := [3, 4]
+const PURLING_SPECS := {
+	"dmg": [[5, 8], [7, 10], [9, 12]],
+	"effects": [{"exposed": 1}, {"exposed": 2}, {"exposed": 3}],
+}
 const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
 		"ability": "yarn_ranger_head_needle_nock_move",
@@ -59,7 +65,7 @@ const UNCHANGED_PARTS := {
 		"stat": {"max_hp": 5, "prot": 3},
 	},
 	"yarn_ranger_arms_purling_barrage": {
-		"launch": [3], "target": [1, 2, 3], "side": "enemy", "multi": false,
+		"launch": [3, 4], "target": [1, 2, 3], "side": "enemy", "multi": false,
 		"acc": 92, "dmg": [5, 8], "effects": {"exposed": 1}, "move": "attack",
 		"stat": {"dmg": 2},
 	},
@@ -82,9 +88,11 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_head_launch_tiers()
 	_test_arms_launch_tiers()
+	_test_purling_launch_tiers()
 	_test_each_tier()
 	_test_rank_four_head_launch()
 	_test_rank_four_bolas_launch()
+	_test_rank_four_purling_launch()
 	_test_multi_tangled()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
@@ -198,6 +206,20 @@ func _rank_one_battle(seed_value: int = 505040) -> StitchedRules:
 	return battle
 
 
+## A fresh in-memory copy of the same fixture with the equipped Ranger moved to hero rank two.
+func _rank_two_battle(selected_part: String, tier: int = 1, seed_value: int = 505040) -> StitchedRules:
+	var config := _config(selected_part, tier, seed_value)
+	if config.is_empty():
+		return null
+	var ranger: Dictionary = config["heroes"].pop_at(2)
+	config["heroes"].insert(1, ranger)
+	var created := StitchedRules.create(config)
+	if not bool(created.get("ok", false)):
+		return null
+	var battle: StitchedRules = created["battle"]
+	return battle
+
+
 ## Both needle-bow HEAD abilities keep their authored numbers at every tier while the launch
 ## mask gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
 func _test_head_launch_tiers() -> void:
@@ -254,6 +276,110 @@ func _test_arms_launch_tiers() -> void:
 			and ability["effects"] == BOLAS_SPECS["effects"][tier - 1]
 			and str(ability["move"]) == "attack" and int(ability["self_move"]) == 0,
 			"AC1: tier %d Wool Bolas keeps authored damage, Tangled and pose" % tier)
+
+
+## Purling Barrage keeps its authored single-target numbers at every tier while its launch
+## mask gains hero rank four. Rank two stays illegal, and enemy reach stays ranks 1-3.
+func _test_purling_launch_tiers() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][PURLING_ID]
+	_check(str(part["slot"]) == "arms" and str(part["owner"]) == "yarn_ranger"
+		and part["stat"] == {"dmg": 2},
+		"AC1: Purling Barrage stays a Yarn Ranger arms part with its authored dmg stat")
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var mask := int(ability["launch_mask"])
+		var reachable := true
+		for rank in PURLING_LAUNCH:
+			reachable = reachable and StitchedParts.ranks_allowed(mask, rank)
+		var excluded := true
+		for rank in [0, 1, 2, 5]:
+			excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
+		_check(ability["launch"] == PURLING_LAUNCH
+			and mask == StitchedParts.rank_mask(PURLING_LAUNCH) and reachable and excluded,
+			"AC1: tier %d Purling Barrage launches from 3,4 and refuses 0,1,2,5" % tier)
+		_check(ability["target"] == [1, 2, 3]
+			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+			and int(ability["acc"]) == 92 and int(ability["crit"]) == 0
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack",
+			"AC1: tier %d Purling Barrage stays a single-target enemy 1-3 attack" % tier)
+		_check(ability["dmg"] == PURLING_SPECS["dmg"][tier - 1]
+			and ability["effects"] == PURLING_SPECS["effects"][tier - 1],
+			"AC1: tier %d Purling Barrage keeps authored damage and Exposed" % tier)
+
+
+## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
+## wearing her alternate Purling Barrage arms. A genuine seeded miss is a legal shot.
+func _test_rank_four_purling_launch() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for tier in [1, 2, 3]:
+		var b := _rank_four_battle(PURLING_ID, tier)
+		_check(b != null, "AC2: fresh S2 battle equips rank-four Ranger with tier %d Purling Barrage" % tier)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 4
+			and str(ranger["parts"]["arms"]["id"]) == PURLING_ID,
+			"AC2: tier %d Purling Barrage is worn in the arms slot at hero rank four" % tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC2: rank-four Ranger reaches her actual turn for tier %d Purling Barrage" % tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		var before := b.state_snapshot()
+		var receipt := b.use_part(PURLING_ID, 1)
+		var after := b.state_snapshot()
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+			and str(receipt.get("actor", "")) == "yarn_ranger"
+			and str(receipt.get("part", "")) == PURLING_ID
+			and str(receipt.get("ability", "")) == "yarn_ranger_arms_purling_barrage_move"
+			and results.size() == 1
+			and str(results[0].get("target_side", "")) == "foe"
+			and int(results[0].get("target_rank", 0)) == 1,
+			"AC2: rank-four tier %d Purling Barrage legally fires one shot at the living rank-one foe: %s"
+				% [tier, str(receipt.get("error", ""))])
+		_check(after != before and (int(after["round"]) > int(before["round"])
+			or (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) > int(before["turn_index"]))),
+			"AC2: rank-four tier %d Purling Barrage advances the real turn" % tier)
+		# A bounded explicit seed window witnesses an actual hit, damage and the tier's
+		# Exposed from rank four; the matching fresh battle must replay identically.
+		var witnessed := false
+		for seed_value in range(504040, 504072):
+			var shot_battle := _rank_four_battle(PURLING_ID, tier, seed_value)
+			if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+				continue
+			var shot := shot_battle.use_part(PURLING_ID, 1)
+			if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 1:
+				continue
+			var result: Dictionary = shot["results"][0]
+			if not bool(result.get("hit", false)) or int(result.get("damage", 0)) <= 0:
+				continue
+			var target_id := str(result.get("target", ""))
+			if target_id.is_empty():
+				continue
+			var foe := shot_battle.get_unit(target_id)
+			var exposed := int(PURLING_SPECS["effects"][tier - 1]["exposed"])
+			if int(foe["statuses"].get("exposed", 0)) < exposed:
+				continue
+			var replay := _rank_four_battle(PURLING_ID, tier, seed_value)
+			if replay == null or not _to(replay, "yarn_ranger"):
+				continue
+			var replay_shot := replay.use_part(PURLING_ID, 1)
+			witnessed = shot == replay_shot \
+				and shot_battle.state_snapshot() == replay.state_snapshot() \
+				and shot_battle.rng_state() == replay.rng_state()
+			if witnessed:
+				break
+		_check(witnessed,
+			"AC2: a bounded real seed shows rank-four tier %d Purling Barrage hitting rank one for damage and Exposed %d, with an identical replay"
+				% [tier, int(PURLING_SPECS["effects"][tier - 1]["exposed"])])
 
 
 ## The authentic seeded battle: the same four heroes and the same three foes, Ranger at rank
@@ -671,6 +797,27 @@ func _test_invalid_and_no_spend() -> void:
 		_check(_to(front, "yarn_ranger"), "AC3: rank-one Ranger obtains real scheduled turn")
 		if front.current_actor_id() == "yarn_ranger":
 			_reject_without_spend(front, STARTERS["arms"], 1, "rank-one Wool Bolas launch")
+	var rank_two := _rank_two_battle(PURLING_ID)
+	_check(rank_two != null, "AC3: same real four-hero fixture allows Ranger rank two")
+	if rank_two != null:
+		var two_ranger := rank_two.get_unit("yarn_ranger")
+		_check(int(two_ranger["rank"]) == 2
+			and str(two_ranger["parts"]["arms"]["id"]) == PURLING_ID,
+			"AC3: rank-two Ranger wears Purling Barrage in the arms slot")
+		_check(_to(rank_two, "yarn_ranger"), "AC3: rank-two Ranger obtains real scheduled turn")
+		if rank_two.current_actor_id() == "yarn_ranger":
+			var front_foe := rank_two.get_unit("fray_scavenger")
+			_check(int(front_foe["rank"]) == 1 and int(front_foe["hp"]) > 0,
+				"AC3: rank-two Purling refusal still has a living enemy at target rank one")
+			_reject_without_spend(rank_two, PURLING_ID, 1, "rank-two Purling Barrage launch")
+	var rear_purling := _rank_four_battle(PURLING_ID)
+	_check(rear_purling != null, "AC3: fresh rank-four Purling Barrage battle exists")
+	if rear_purling != null:
+		_check(_to(rear_purling, "yarn_ranger"),
+			"AC3: rank-four Purling Ranger obtains real scheduled turn")
+		if rear_purling.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(rear_purling, PURLING_ID, 4,
+				"Purling Barrage enemy target rank 4 has no living foe")
 
 
 func _trace(seed_value: int) -> Dictionary:

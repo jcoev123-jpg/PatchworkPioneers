@@ -141,7 +141,7 @@ func _prepare(extra_aborts: int) -> Node:
 	stage._action_buttons["exit"].pressed.emit()
 	await process_frame
 	_check(app.stitched_sewing_panel != null and app.stitched_preview_gold == 10 \
-		and app.stitched_roadblock_candle == 100 - (extra_aborts + 2) * 8,
+		and app.stitched_roadblock_candle == 100 - (extra_aborts + 3) * 8,
 		"earned 10 preview gold is published only after terminal victory")
 	if app.stitched_sewing_panel == null:
 		return app
@@ -528,13 +528,13 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var uncapped: Dictionary = await _success(2)
 	_check(not uncapped.is_empty() and uncapped.get("gain") == 25 \
-		and uncapped.get("entry") == 77,
-		"legal repeated entry plus Peddler toll produces +25 stub and next entry at 77")
+		and uncapped.get("entry") == 69,
+		"legal repeated entry plus Circle and Peddler tolls produce +25 stub and next entry at 69")
 	var capped: Dictionary = await _success(0)
-	_check(not capped.is_empty() and capped.get("before") == 76 \
-		and capped.get("after") == 100 and capped.get("gain") == 24 \
-		and capped.get("entry") == 92,
-		"near-full candle caps +25 at 100, then the real Fight enters at 92")
+	_check(not capped.is_empty() and capped.get("before") == 68 \
+		and capped.get("after") == 93 and capped.get("gain") == 25 \
+		and capped.get("entry") == 85,
+		"Circle and Peddler tolls leave room for +25, then the real Fight enters at 85")
 	await _zero_entry()
 	await _full_entry()
 	await _blocked()
