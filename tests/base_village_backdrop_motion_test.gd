@@ -70,7 +70,7 @@ func _state() -> Array:
 		view.selected_warden_path_id(), view.wallet_label.text,
 		view.village_title_label.text, view.path_hint_label.text,
 		view.tinker_hint_label.text, view.warden_hint_label.text,
-		view.set_out_button.text, view.back_button.text, view.deck_button.text,
+		view.set_out_button.text, view.back_button.text, view.parts_button.text,
 		root.gui_get_focus_owner()]
 
 func _near(a: Rect2, b: Rect2) -> bool:
@@ -190,10 +190,10 @@ func _run() -> void:
 		and view.village_title_label.text == "Quilt village"
 		and view.set_out_button.text == "Set out"
 		and view.back_button.text == "Back to title"
-		and view.deck_button.text == "Browse kits"
+		and view.parts_button.text == "Parts & spoils"
 		and view.path_buttons.size() >= 2 and view.tinker_buttons.size() >= 2
 		and view.warden_buttons.size() >= 2 and view.difficulty_buttons.size() == 3,
-		"wallet, title, gallery, Path/difficulty buttons and caption remain live")
+		"wallet, title, parts modal, Path/difficulty buttons and caption remain live")
 	_phase_checks()
 	await _lifecycle()
 	view.close_village()
@@ -205,9 +205,9 @@ func _run() -> void:
 		_check(view.open_village(23, 7) and is_zero_approx(view._backdrop_elapsed)
 			and view.is_processing(), "reopen begins zero phase at cycle %d" % cycle)
 		await _frames()
-		await _click(view.deck_button)
-		_check(view.deck_gallery.is_open(), "actual starter-kit gallery opens")
-		view.deck_gallery.dismiss()
+		await _click(view.parts_button)
+		_check(view.field_guide.is_open() and view.field_guide.part_atlas.is_visible_in_tree(), "actual parts inspector opens")
+		view._on_field_guide_close_requested()
 		await _frames()
 		if cycle == 0:
 			await _click(view.back_button)

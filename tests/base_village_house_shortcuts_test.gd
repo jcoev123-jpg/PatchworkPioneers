@@ -101,8 +101,8 @@ func _run() -> void:
 		and root.get_visible_rect().encloses(hero_rect)
 		and root.get_visible_rect().encloses(camp_rect),
 		"1280x720 clickable areas lie wholly inside real Heroes/Camp landmarks above boards")
-	var clear := (_rects_clear(heroes, camp) and _rects_clear(heroes, view.deck_button)
-		and _rects_clear(camp, view.deck_button)
+	var clear := (_rects_clear(heroes, camp) and _rects_clear(heroes, view.parts_button)
+		and _rects_clear(camp, view.parts_button)
 		and _rects_clear(heroes, view.back_button)
 		and _rects_clear(camp, view.back_button)
 		and _rects_clear(heroes, view.set_out_button)
@@ -111,7 +111,7 @@ func _run() -> void:
 		and _rects_clear(camp, view.wallet_label))
 	for board in [view.path_panel, view.tinker_panel, view.warden_panel]:
 		clear = clear and _rects_clear(heroes, board) and _rects_clear(camp, board)
-	_check(clear, "shortcuts do not cover Deck, wallet, Back, Set out or any Path board")
+	_check(clear, "shortcuts do not cover Parts, wallet, Back, Set out or any Path board")
 	_check(heroes.focus_next == heroes.get_path_to(camp)
 		and camp.focus_previous == camp.get_path_to(heroes)
 		and view.back_button.focus_next == view.back_button.get_path_to(heroes),
@@ -147,15 +147,15 @@ func _run() -> void:
 	view._on_heroes_house_pressed()
 	_check(path_requests.size() == 1 and view.selected_path_id() == String(options[0]["id"]),
 		"stale Heroes activation cannot mutate a confirmed Path")
-	await _mouse(view.deck_button)
-	_check(view.deck_gallery.is_open() and heroes.disabled and camp.disabled,
-		"Deck's original gallery opens and suppresses both shortcuts")
+	await _mouse(view.parts_button)
+	_check(view.field_guide.is_open() and view.field_guide.part_atlas.is_visible_in_tree() and heroes.disabled and camp.disabled,
+		"Parts inspector opens and suppresses both shortcuts")
 	view._on_camp_house_pressed()
-	_check(set_out_count == 0, "Camp cannot start a run through an open gallery")
-	view._on_deck_closed()
+	_check(set_out_count == 0, "Camp cannot start a run through an open parts modal")
+	view._on_field_guide_close_requested()
 	await _frames()
-	_check(not view.deck_gallery.is_open() and not camp.disabled,
-		"closing gallery restores eligible Camp landmark")
+	_check(not view.field_guide.is_open() and not camp.disabled,
+		"closing parts modal restores eligible Camp landmark")
 	await _mouse(camp)
 	_check(set_out_count == 1 and view._set_out_pending and view.set_out_button.disabled
 		and camp.disabled and back_count == 0,

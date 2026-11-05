@@ -81,7 +81,7 @@ func _state() -> Array:
 		view.selected_tinker_path_id(), view.selected_warden_path_id(),
 		view._set_out_pending, view._back_pending, view._path_pending,
 		view._tinker_pending, view._warden_pending, view._difficulty_request,
-		view.deck_gallery.is_open(), back_calls, set_out_calls, path_calls,
+		view.field_guide._atlas_is_open(), back_calls, set_out_calls, path_calls,
 		tinker_calls, warden_calls, difficulty_calls]
 
 
@@ -193,7 +193,7 @@ func _run() -> void:
 	var witness := _state()
 	view._on_back_pressed()
 	view._on_set_out_pressed()
-	view._on_deck_pressed()
+	view._on_parts_pressed()
 	view._on_heroes_house_pressed()
 	view._on_camp_house_pressed()
 	view._on_path_pressed(String(seam[0]["id"]))
@@ -208,7 +208,7 @@ func _run() -> void:
 	_check(guide.is_open() and view.get_children().filter(func(node: Node) -> bool: return node is StitchedFieldGuide).size() == 1,
 		"repeated entry is inert, with no duplicate overlay")
 	_check(_state() == witness and randi() == next_rng,
-		"all stale underlying actions preserve signals, wallet, choice, gallery and seeded RNG")
+		"all stale underlying actions preserve signals, wallet, choice, parts inspector and seeded RNG")
 	await _click(guide.close_button)
 	_check(not guide.is_open() and not guide.visible and root.gui_get_focus_owner() == entry
 		and not entry.disabled, "pointer Close dismisses and restores guide entry focus")
@@ -217,15 +217,15 @@ func _run() -> void:
 	await _key(KEY_ESCAPE)
 	_check(not guide.is_open() and root.gui_get_focus_owner() == entry,
 		"Escape dismisses and restores guide entry focus")
-	await _click(view.deck_button)
-	_check(view.deck_gallery.is_open() and entry.disabled,
-		"real starter-kit gallery stays separate and blocks guide entry")
+	await _click(view.parts_button)
+	_check(view.field_guide.is_open() and entry.disabled,
+		"Parts opens nested inspector and blocks both Base entries")
 	view._on_guide_pressed()
-	_check(not guide.is_open(), "gallery-open stale guide request is inert")
-	view._on_deck_closed()
+	_check(guide.is_open() and guide.part_atlas.is_visible_in_tree(), "Parts-open stale guide request is inert")
+	view._on_field_guide_close_requested()
 	await _frames()
-	_check(not view.deck_gallery.is_open() and not entry.disabled,
-		"closing Deck gallery restores the guide entry")
+	_check(not view.field_guide.is_open() and not entry.disabled,
+		"closing Parts inspector restores the guide entry")
 	view._on_set_out_pressed()
 	_check(view._set_out_pending and entry.disabled and set_out_calls == 1,
 		"pending Set out blocks guide without changing existing one-shot dispatch")

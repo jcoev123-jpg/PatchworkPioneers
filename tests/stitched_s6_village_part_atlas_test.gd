@@ -71,7 +71,7 @@ func _state() -> Array:
     return [view.wallet_label.text, view.selected_path_id(), view.selected_tinker_path_id(),
         view.selected_warden_path_id(), view._back_pending, view._set_out_pending,
         view._path_pending, view._tinker_pending, view._warden_pending,
-        view._difficulty_request, view.deck_gallery.is_open(), calls.duplicate(true)]
+        view._difficulty_request, view.field_guide._atlas_is_open(), calls.duplicate(true)]
 
 
 func _line(inspector: StitchedPartInspector, name: String) -> String:
@@ -235,7 +235,7 @@ func _run() -> void:
     var witness := _state()
     view._on_back_pressed()
     view._on_set_out_pressed()
-    view._on_deck_pressed()
+    view._on_parts_pressed()
     view._on_heroes_house_pressed()
     view._on_camp_house_pressed()
     view._on_path_pressed(str(seam[0]["id"]))
@@ -297,6 +297,22 @@ func _run() -> void:
     await _click(entry)
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree(), "nested atlas still works after parent hide/show")
+    view._on_field_guide_close_requested()
+    guide.catalog_paths[1] = "res://missing-direct-parts-catalog.json"
+    await _click(view.parts_button)
+    _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
+        and inspector.part_ids_in_slot("head").is_empty()
+        and (inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
+        and _line(inspector, "NumbersLine").is_empty()
+        and guide.atlas_status.text.contains("UNAVAILABLE"),
+        "direct Parts doorway also rejects a partial catalog with no stale rows or facts")
+    await _key(KEY_ESCAPE)
+    _check(view.parts_button.has_focus() and not view.parts_button.disabled,
+        "failed direct doorway restores Parts focus")
+    guide.catalog_paths[1] = FOES
+    await _click(view.parts_button)
+    _check(inspector.is_visible_in_tree() and inspector.select_part("scissor_crab_claw_arm"),
+        "direct house recovers authentic foe inspection after invalid source")
     view.close_village()
     _check(not guide.is_open() and not inspector.visible and entry.disabled
         and not view.has_open_village() and inspector.selected_part_id.is_empty(),
