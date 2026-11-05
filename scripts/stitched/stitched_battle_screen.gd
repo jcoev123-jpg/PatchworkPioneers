@@ -199,8 +199,8 @@ func _build_screen() -> void:
 	_candle_meter.size = Vector2(340, 33)
 	add_child(_candle_meter)
 	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
-	_label("HEROES  ·  back 4 → front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
-	_label("FOES  ·  front 1 → back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
+	_label("HEROES  ·  back 4 to front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
+	_label("FOES  ·  front 1 to back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_labels["hero"] = _label("", Rect2(27, 564, 202, 25), 18, ACCENT)
 	_labels["stats"] = _label("", Rect2(27, 590, 204, 86), 13)
 	_labels["stats"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
@@ -252,12 +252,14 @@ func _build_screen() -> void:
 	toggle.toggled.connect(set_reduced_motion)
 	add_child(toggle)
 	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 676, 208, 29), func(): exit_requested.emit())
-	# Back ranks draw first; near-centre front figures overlap the back figures
-	# naturally, without any individual seat backdrop or gameplay rank shuffle.
+	# Equally spaced back-to-front ranks on one quilt, with a clear centre aisle.
+	# Each 170px slot centres its own fitted authored figure and underfoot plaque.
+	# Draw back ranks first; targeting still follows the actual occupied art.
 	for side in ["hero", "foe"]:
 		for rank in range(4, 0, -1):
-			var px := (360.0 - (rank - 1) * 108.0) if side == "hero" else (620.0 + (rank - 1) * 110.0)
-			_seat(side, rank, px)
+			var centre := (541.0 - (rank - 1) * 150.0) if side == "hero" else (
+				739.0 + (rank - 1) * 150.0)
+			_seat(side, rank, centre - 85.0)
 	_build_foe_intent_tickets()
 	_build_status_disclosure()
 	# Pose manifest is optional: it only selects authored pixels, never a game action.
@@ -273,8 +275,8 @@ func _seat(side: String, rank: int, x: float) -> void:
 	var puppet := ROSTER.Puppet.new()
 	puppet.name = "StageFigure" + side.capitalize() + str(rank)
 	puppet.position = Vector2(x, -6)
-	puppet.size = Vector2(330, 520)
-	puppet.stage_height = 520
+	puppet.size = Vector2(170, 508)
+	puppet.stage_height = 508
 	puppet.intent_band = 0
 	puppet.tag_height = 0
 	puppet.slot = rank
@@ -296,20 +298,21 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_bind_seat_signals(hit, key)
 	add_child(hit)
 	_figure_hits[key] = hit
-	# Art-backed underfoot plates replace the old 116x275 seat boxes.
-	var foot_x := x + 105.0
-	var plate := _sewn_panel(Rect2(foot_x, 514, 120, 39), Color("88777fae"))
+	# Enlarged art-backed plate: each 170px patch has two readable 148px
+	# text rows. The patches' sewn edges may meet, but text rows never do.
+	var foot_x := x
+	var plate := _sewn_panel(Rect2(foot_x, 505, 170, 50), Color("88777fae"))
 	_foot_plates[key] = plate
-	var tag := _button("", Rect2(foot_x + 2, 515, 116, 20),
+	var tag := _button("", Rect2(foot_x + 11, 506, 148, 23),
 		func(): submit_target(side, rank))
 	tag.name = "RankPlate" + side.capitalize() + str(rank)
 	tag.flat = true
-	tag.add_theme_font_size_override("font_size", 12)
+	tag.add_theme_font_size_override("font_size", 16)
 	tag.clip_text = true
 	tag.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
-	_labels[key] = _label("", Rect2(foot_x + 3, 535, 114, 16), 11, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
+	_labels[key] = _label("", Rect2(foot_x + 11, 530, 148, 22), 15, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
 	_labels[key].clip_text = true
 
 
@@ -374,7 +377,8 @@ func _build_foe_intent_tickets() -> void:
 	for rank in range(1, 5):
 		var ticket := NinePatchRect.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		ticket.position = Vector2(725 + (rank - 1) * 120, 144)
+		# Centre each ticket over its actual foe slot, including summoned rank 4.
+		ticket.position = Vector2(681 + (rank - 1) * 150, 150)
 		ticket.size = Vector2(116, 44)
 		ticket.texture = plate
 		ticket.modulate = Color("ac7777")

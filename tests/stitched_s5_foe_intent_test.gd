@@ -108,16 +108,19 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 			and ticket.modulate == Color("ac7777")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
 			and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(725 + (rank - 1) * 120, 144)
+			and rectangle.position == Vector2(681 + (rank - 1) * 150, 150)
 			and rectangle.size == Vector2(116, 44)
 			and not rectangle.intersects(header)
 			and (rank == 1 or not rectangle.intersects(previous))
-			and rectangle.end.x <= 1280 and rectangle.end.y < 192,
+			and rectangle.end.x <= 1280 and rectangle.end.y <= 200
+			and absf(rectangle.get_center().x - (puppet.global_position.x + puppet.size.x * 0.5)) < 2.0
+			and not rectangle.intersects(stage._foot_plates["foe_" + str(rank)].get_global_rect()),
 			"dark intent rank %d floats above painted figures and clear of caption/neighbor" % rank)
 		if puppet.visible:
 			painted_count += 1
 			_check(not painted.intersects(rectangle) and rectangle.end.y <= painted.position.y
-				and painted.size.y >= 275.0 and painted.end.y <= 514.0
+				and painted.size.y >= 120.0 and painted.size.y <= 280.0
+				and painted.end.y <= 503.0
 				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
 				"rank %d ticket clears actual posed authored art, not obsolete Puppet Control top" % rank)
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket

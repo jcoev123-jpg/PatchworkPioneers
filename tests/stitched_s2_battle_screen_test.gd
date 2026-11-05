@@ -45,7 +45,7 @@ func _figure_click(stage: StitchedBattleScreen, key: String) -> void:
 	stage._figure_hits[key].gui_input.emit(mouse)
 
 
-func _verify_stage_art(stage: StitchedBattleScreen) -> void:
+func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 	var backdrop := stage.get_node_or_null("SharedStitchedBackdrop") as TextureRect
 	_check(backdrop != null and backdrop.texture != null and
 		backdrop.get_global_rect() == Rect2(0, 60, 1280, 500),
@@ -53,12 +53,17 @@ func _verify_stage_art(stage: StitchedBattleScreen) -> void:
 	var actual := 0
 	var first_foot := -1.0
 	var plate_texture: Texture2D = load("res://assets/paper/ui/panel_felt.png")
+	var visible_art: Array[Dictionary] = []
+	var name_rows: Array[Rect2] = []
+	var hp_rows: Array[Rect2] = []
 	for side in ["hero", "foe"]:
 		for rank in range(1, 5):
 			var key: String = side + "_" + str(rank)
 			var puppet: Control = stage._puppets[key]
 			var hit: Control = stage._figure_hits[key]
 			var foot: NinePatchRect = stage._foot_plates[key]
+			var tag: Button = stage._seat_buttons[key]
+			var hp: Label = stage._labels[key]
 			var painted := _painted_bounds(puppet)
 			var unit := stage._unit_at(side, rank)
 			if unit.is_empty():
@@ -66,28 +71,52 @@ func _verify_stage_art(stage: StitchedBattleScreen) -> void:
 					"empty %s R%d has no figure, mouse hotspot or ghost foot plate" % [side, rank])
 				continue
 			actual += 1
-			_check(puppet.visible and puppet.current_texture() != null
-				and painted.size.y >= 275.0 and painted.size.y <= 335.0
-				and painted.position.y >= 175.0 and painted.end.y <= 512.0
+			visible_art.append({"key": key, "rect": painted})
+			var texture: Texture2D = puppet.current_texture()
+			var aspect_limited_height := 0.0
+			if texture != null and texture.get_width() > 0:
+				aspect_limited_height = (puppet.size.x - 8.0) * float(texture.get_height()) / float(texture.get_width())
+			_check(puppet.visible and texture != null and puppet.size.x == 170.0
+				and painted.size.y >= minf(240.0, aspect_limited_height) * 0.85
+				and painted.size.y <= 280.0
+				and painted.position.y >= 194.0 and painted.end.y <= 503.0
 				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
-				"%s R%d renders genuine authored painted figure near 300px, not a tiny seat sprite" % [side, rank])
+				"%s R%d keeps its genuine aspect-fitted figure large within its 150px rank" % [side, rank])
 			var rest_foot: float = puppet.global_position.y + puppet.foot_line()
 			_check((first_foot < 0.0 or absf(first_foot - rest_foot) < 0.1)
 				and absf(rest_foot - painted.end.y) < 7.0,
-				"%s R%d actor art rests on the same fixed line, allowing authored idle breath" % [side, rank])
+				"%s R%d actor art rests on the same fixed line through idle breathing" % [side, rank])
 			first_foot = rest_foot
 			_check(hit.visible and hit.focus_mode == Control.FOCUS_ALL
 				and hit.get_global_rect().position.distance_to(painted.position) < 6.0
 				and hit.size.distance_to(painted.size) < 6.0,
-				"%s R%d has keyboard/pointer target only across the painted-figure bounds" % [side, rank])
+				"%s R%d has keyboard/pointer target only across actual posed art" % [side, rank])
 			_check(foot.visible and foot.texture == plate_texture
-				and not foot.get_global_rect().intersects(painted)
-				and foot.position.y == 514.0
-				and stage._seat_buttons[key].clip_text
-				and stage._labels[key].clip_text,
-				"%s R%d dark compact underfoot plate clears art and bounds long labels" % [side, rank])
+				and foot.get_global_rect().size == Vector2(170, 50)
+				and foot.get_global_rect().position.y == 505.0
+				and foot.get_global_rect().position.x >= 0.0
+				and foot.get_global_rect().end.x <= 1280.0
+				and foot.get_global_rect().end.y <= 557.0
+				and not foot.get_global_rect().intersects(painted),
+				"%s R%d enlarged sewn foot plate clears figure and lower action panel" % [side, rank])
+			var name_rect := tag.get_global_rect()
+			var hp_rect := hp.get_global_rect()
+			_check(tag.visible and hp.visible and tag.focus_mode == Control.FOCUS_ALL
+				and tag.clip_text and hp.clip_text
+				and tag.get_theme_font_size("font_size") >= 16
+				and hp.get_theme_font_size("font_size") >= 15
+				and name_rect.size.x >= 145.0 and hp_rect.size.x >= 145.0
+				and name_rect.size.y >= 22.0 and hp_rect.size.y >= 20.0
+				and foot.get_global_rect().encloses(name_rect)
+				and foot.get_global_rect().encloses(hp_rect)
+				and not name_rect.intersects(hp_rect)
+				and tag.tooltip_text.contains(str(unit["name"]))
+				and hp.text.contains("HP "),
+				"%s R%d keeps readable name/HP rows, focus and full status disclosure" % [side, rank])
+			name_rows.append(name_rect)
+			hp_rows.append(hp_rect)
 			_check(puppet.facing == (1.0 if side == "hero" else -1.0),
-				"%s R%d faces the opposing line" % [side, rank])
+				"%s R%d faces the opposing rank line" % [side, rank])
 		for rank in range(1, 4):
 			var front: Control = stage._puppets[side + "_" + str(rank)]
 			var back: Control = stage._puppets[side + "_" + str(rank + 1)]
@@ -96,13 +125,65 @@ func _verify_stage_art(stage: StitchedBattleScreen) -> void:
 			var a := _painted_bounds(front)
 			var b := _painted_bounds(back)
 			_check((a.get_center().x > b.get_center().x if side == "hero" else a.get_center().x < b.get_center().x)
-				and a.intersects(b),
-				"%s ranks %d/%d stand in correct direction with deliberate same-side figure overlap" % [side, rank, rank + 1])
-	_check(actual == 7, "non-vacuous 4 hero + 3 foe authored figures painted on the real battle stage")
+				and absf(a.get_center().x - b.get_center().x - (150.0 if side == "hero" else -150.0)) < 6.0,
+				"%s ranks %d/%d face correct direction with 150px centre spacing" % [side, rank, rank + 1])
+	for i in range(visible_art.size()):
+		for j in range(i + 1, visible_art.size()):
+			var a: Rect2 = visible_art[i]["rect"]
+			var b: Rect2 = visible_art[j]["rect"]
+			var intersection := a.intersection(b)
+			var shared := intersection.size.x * intersection.size.y
+			var smaller := minf(a.size.x * a.size.y, b.size.x * b.size.y)
+			_check(smaller > 0.0 and shared <= 0.15 * smaller + 0.1,
+				"%s / %s actual posed figures overlap at most 15 percent" % [
+					visible_art[i]["key"], visible_art[j]["key"]])
+	for i in range(name_rows.size()):
+		for j in range(i + 1, name_rows.size()):
+			_check(not name_rows[i].intersects(name_rows[j])
+				and not hp_rows[i].intersects(hp_rows[j]),
+				"rank %d / %d names and HP text surfaces never obscure one another" % [i, j])
+	var front_hero := _painted_bounds(stage._puppets["hero_1"])
+	var front_foe := _painted_bounds(stage._puppets["foe_1"])
+	_check(front_hero.end.x + 24.0 <= front_foe.position.x
+		and stage._foot_plates["hero_1"].get_global_rect().end.x <
+			stage._foot_plates["foe_1"].get_global_rect().position.x,
+		"front ranks and large underfoot plates leave a genuine central aisle")
+	var heading_hero := false
+	var heading_foe := false
+	for child in stage.get_children():
+		if child is Label:
+			heading_hero = heading_hero or child.text.contains("HEROES  ·  back 4 to front 1")
+			heading_foe = heading_foe or child.text.contains("FOES  ·  front 1 to back 4")
+	_check(heading_hero and heading_foe, "rank headings use supported plain-word directions")
+	_check(actual == 4 + foe_count,
+		"non-vacuous 4 hero and %d foe authentic figures occupy public ranks" % foe_count)
 	_check(stage._target_buttons.size() == 8 and stage._turn_ribbon != null
 		and stage._candle_meter != null and stage._action_buttons["pass"].position.y >= 640
 		and stage._labels["preview"].position.y >= 610,
-		"accessible rank controls, sewn order, candle, forecast and compact actions survive below stage")
+		"accessible rank controls, sewn order, candle, forecast and actions remain mounted")
+
+
+func _verify_fourth_foe(stage: StitchedBattleScreen) -> void:
+	# The existing post-summon fixture: admit a distinct authored ragling into
+	# actual combat rank four, then restore the pristine public preview.
+	var battle := stage.battle
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var original: Dictionary = battle.get_foes()[2]
+	var extra: Dictionary = battle._units[str(original["id"])].duplicate(true)
+	extra["id"] = "ragling"
+	extra["name"] = "Ragling"
+	extra["rank"] = 4
+	battle._units[extra["id"]] = extra
+	stage._refresh()
+	_check(battle.get_foes().size() == 4 and stage._puppets["foe_4"].visible
+		and stage._foe_tickets[4].visible, "genuine fourth foe has art, target and intent")
+	_verify_stage_art(stage, 4)
+	battle._units.erase(extra["id"])
+	stage._refresh()
+	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng
+		and not stage._puppets["foe_4"].visible and not stage._foe_tickets[4].visible,
+		"restoring 4v3 fixture removes fourth-rank figure and intent without RNG changes")
 
 
 func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Dictionary:
@@ -342,6 +423,7 @@ func _run() -> void:
 			battle.get_foes().size() == 3 and stage._puppets.size() == 8,
 			"mounted stage is seeded 4v3 with 8 potential stage ranks")
 		_verify_stage_art(stage)
+		_verify_fourth_foe(stage)
 		_check(stage._unit_at("foe", 4).is_empty() and
 			stage._seat_buttons.has("foe_4") and not stage._puppets["foe_4"].visible,
 			"fourth foe rank is empty, available only for a later summon")
