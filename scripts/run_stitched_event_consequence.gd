@@ -8,7 +8,7 @@ extends RefCounted
 ##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
-##      "min_fray": 1..200}
+##      "min_fray": 1..200, "required_candle_band": "bright"|...}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -21,6 +21,11 @@ extends RefCounted
 ## has fray >= min_fray. When `required_hero` is present on a party target, only
 ## that named hero can satisfy `min_fray` (companions cannot substitute).
 ## For `target: "hero"`, only the named `hero_id` is checked.
+## `required_candle_band` is an optional native String admission gate on
+## `stitched_effect` equal to one of the five lowercase band names defined by
+## StitchedS1BEffects ("snuffed", "dark", "gloom", "dim", "bright"). When present,
+## the choice is available in preview() and claimable in choose() iff the
+## opening snapshot candle matches that exact band.
 ## `scraps`, `gold`, `part`, `hp` and
 ## `require_full_candle` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
@@ -90,6 +95,14 @@ const CANONICAL_HERO_IDS := [
 	"scarecrow",
 	"yarn_ranger",
 	"button_golem",
+]
+
+const CANDLE_BAND_NAMES := [
+	"snuffed",
+	"dark",
+	"gloom",
+	"dim",
+	"bright",
 ]
 
 var _choice: RunEventChoice = null
@@ -204,6 +217,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	# An absent named hero is unavailable, so it cannot latch the visit.
 	if _target_ids(base_state, parsed_effect).is_empty():
 		return _rejection(base_candle)
+	if not _meets_candle_band(base_candle, parsed_effect):
+		return _rejection(base_candle)
 	if not _meets_min_fray(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _can_afford_candle(base_candle, parsed_effect):
@@ -269,6 +284,17 @@ func _project_candle(base_candle: int, delta: int) -> int:
 			return CANDLE_MIN
 		return base_candle + delta
 	return base_candle
+
+
+## Shared candle-band admission gate for preview and commit when
+## `required_candle_band` is present on `stitched_effect`.
+## Compares the band name for the opening snapshot candle using
+## StitchedS1BEffects.candle_band(base_candle).
+func _meets_candle_band(base_candle: int, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("has_required_candle_band", false):
+		return true
+	var band: Dictionary = StitchedS1BEffects.candle_band(base_candle)
+	return String(band.get("name", "")) == String(parsed_effect.get("required_candle_band", ""))
 
 
 ## Shared full-wick affordability gate for preview and commit when
@@ -390,6 +416,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["hp"] = {}
 	if _target_ids(base_state, parsed_effect).is_empty():
 		# The named hero is not in this party: readable deltas, no projection.
+		return entry
+	if not _meets_candle_band(int(base_state["candle"]), parsed_effect):
 		return entry
 	if not _meets_min_fray(base_state, parsed_effect):
 		return entry
@@ -603,6 +631,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_hp: bool = effect.has("hp")
 	var has_require_full_candle: bool = effect.has("require_full_candle")
 	var has_min_fray: bool = effect.has("min_fray")
+	var has_required_candle_band: bool = effect.has("required_candle_band")
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
 		+ (1 if has_part else 0)
@@ -611,6 +640,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_hp else 0)
 		+ (1 if has_require_full_candle else 0)
 		+ (1 if has_min_fray else 0)
+		+ (1 if has_required_candle_band else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -644,6 +674,15 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 			return {"ok": false}
 		if typeof(effect.get("candle")) != TYPE_INT or candle_delta >= 0:
 			return {"ok": false}
+	var required_candle_band := ""
+	if has_required_candle_band:
+		var raw_band: Variant = effect.get("required_candle_band")
+		if typeof(raw_band) != TYPE_STRING:
+			return {"ok": false}
+		var band_name: String = raw_band
+		if not CANDLE_BAND_NAMES.has(band_name):
+			return {"ok": false}
+		required_candle_band = band_name
 	var parsed := {
 		"ok": true,
 		"candle": candle_delta,
@@ -658,6 +697,8 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"has_hp": has_hp,
 		"require_full_candle": has_require_full_candle,
 		"has_min_fray": has_min_fray,
+		"has_required_candle_band": has_required_candle_band,
+		"required_candle_band": required_candle_band,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
