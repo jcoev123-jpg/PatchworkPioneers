@@ -86,6 +86,26 @@ func enter(event_id: Variant) -> RunEventChoice:
 	return RunEventChoice.new(_eligible[event_id])
 
 
+## Direct admission path for 4-hero Stitched services.
+## Accepts a canonical eligible event ID and an explicitly provided native Array of
+## distinct String IDs from this service's four-hero party, returning a fresh valid
+## RunEventChoice only when the record's required_hero is not LOST.
+## Returns null before constructing a visit on invalid service, wrong-size/malformed/
+## duplicated/out-of-party lost_ids, unauthorized/forged event_id, or when required_hero is LOST.
+func enter_stitched_survivor(event_id: Variant = null, lost_ids: Variant = null) -> RunEventChoice:
+	if not _valid or _party_ids.size() != 4:
+		return null
+	if not (event_id is String) or not _eligible.has(event_id):
+		return null
+	var lost_set: Variant = _parse_lost_ids(lost_ids)
+	if lost_set == null:
+		return null
+	var record: Dictionary = _eligible[event_id]
+	if (lost_set as Dictionary).has(record.get("required_hero")):
+		return null
+	return RunEventChoice.new(record)
+
+
 func _collect_actionable_ids(wallet: Variant, excluded_ids: Variant, lost_set: Dictionary = {}) -> Array[String]:
 	if not _valid_wallet(wallet):
 		return []
@@ -169,7 +189,7 @@ func select_actionable_event_with_preview(rng: Variant, excluded_ids: Variant = 
 ## service, rng, lost_ids, excluded_ids or wallet is invalid, or when no actionable record remains.
 func select_stitched_survivor_event_with_preview(
 	rng: Variant,
-	lost_ids: Variant,
+	lost_ids: Variant = null,
 	excluded_ids: Variant = null,
 	wallet: Variant = null
 ) -> Dictionary:
@@ -178,22 +198,15 @@ func select_stitched_survivor_event_with_preview(
 		return rejected
 	if not (rng is RandomNumberGenerator) or not _valid_wallet(wallet):
 		return rejected
-	if typeof(lost_ids) != TYPE_ARRAY:
+	var lost_set: Variant = _parse_lost_ids(lost_ids)
+	if lost_set == null:
 		return rejected
-	var lost_set := {}
-	for item in lost_ids:
-		if not (item is String):
-			return rejected
-		var hero_id: String = item
-		if not _party_ids.has(hero_id) or lost_set.has(hero_id):
-			return rejected
-		lost_set[hero_id] = true
-	var actionable_ids := _collect_actionable_ids(wallet, excluded_ids, lost_set)
+	var actionable_ids := _collect_actionable_ids(wallet, excluded_ids, lost_set as Dictionary)
 	if actionable_ids.is_empty():
 		return rejected
 	var index: int = (rng as RandomNumberGenerator).randi_range(0, actionable_ids.size() - 1)
 	var chosen_id: String = actionable_ids[index]
-	var visit := enter(chosen_id)
+	var visit := enter_stitched_survivor(chosen_id, lost_ids)
 	if visit == null or not visit.is_valid():
 		return rejected
 	var preview := visit.preview_wallet_choices(wallet)
@@ -204,6 +217,22 @@ func select_stitched_survivor_event_with_preview(
 		"event": _eligible[chosen_id].duplicate(true),
 		"preview": preview.duplicate(true),
 	}
+
+
+func _parse_lost_ids(lost_ids: Variant) -> Variant:
+	if not _valid or _party_ids.size() != 4:
+		return null
+	if typeof(lost_ids) != TYPE_ARRAY:
+		return null
+	var lost_set := {}
+	for item in lost_ids:
+		if not (item is String):
+			return null
+		var hero_id: String = item
+		if not _party_ids.has(hero_id) or lost_set.has(hero_id):
+			return null
+		lost_set[hero_id] = true
+	return lost_set
 
 
 func _valid_wallet(wallet: Variant) -> bool:

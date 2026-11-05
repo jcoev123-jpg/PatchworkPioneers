@@ -2032,6 +2032,93 @@ func _test_stitched_survivor_offers() -> void:
 	var tinker_anchor := "v3_tinker_clockwork_wagon"
 	var monk_anchor := "v3_lantern_monk_moth_vigil"
 
+	# AC1: enter_stitched_survivor direct admission on 4-hero Stitched service.
+	# 1. Empty LOST list [] admits all four anchor events as fresh distinct RunEventChoice visits.
+	var v_warden := service.enter_stitched_survivor(warden_anchor, [])
+	var v_seamstress := service.enter_stitched_survivor(seamstress_anchor, [])
+	var v_tinker := service.enter_stitched_survivor(tinker_anchor, [])
+	var v_monk := service.enter_stitched_survivor(monk_anchor, [])
+	_check(v_warden is RunEventChoice and v_warden.is_valid() and not v_warden.is_claimed(),
+		"AC1: empty LOST list admits Warden anchor direct entry")
+	_check(v_seamstress is RunEventChoice and v_seamstress.is_valid() and not v_seamstress.is_claimed(),
+		"AC1: empty LOST list admits Seamstress anchor direct entry")
+	_check(v_tinker is RunEventChoice and v_tinker.is_valid() and not v_tinker.is_claimed(),
+		"AC1: empty LOST list admits Tinker anchor direct entry")
+	_check(v_monk is RunEventChoice and v_monk.is_valid() and not v_monk.is_claimed(),
+		"AC1: empty LOST list admits Lantern Monk anchor direct entry")
+	var v_warden_second := service.enter_stitched_survivor(warden_anchor, [])
+	_check(v_warden != v_warden_second and v_warden_second.is_valid(),
+		"AC1: repeated direct survivor entries create fresh distinct visits")
+
+	# 2. Single LOST hero blocks ONLY that hero's events; other surviving heroes admit.
+	_check(service.enter_stitched_survivor(warden_anchor, ["warden"]) == null,
+		"AC1: LOST ['warden'] refuses Warden anchor direct entry")
+	_check(service.enter_stitched_survivor(seamstress_anchor, ["warden"]) != null,
+		"AC1: LOST ['warden'] admits surviving Seamstress anchor")
+	_check(service.enter_stitched_survivor(tinker_anchor, ["warden"]) != null,
+		"AC1: LOST ['warden'] admits surviving Tinker anchor")
+	_check(service.enter_stitched_survivor(monk_anchor, ["warden"]) != null,
+		"AC1: LOST ['warden'] admits surviving Lantern Monk anchor")
+
+	_check(service.enter_stitched_survivor(warden_anchor, ["seamstress"]) != null,
+		"AC1: LOST ['seamstress'] admits surviving Warden anchor")
+	_check(service.enter_stitched_survivor(seamstress_anchor, ["seamstress"]) == null,
+		"AC1: LOST ['seamstress'] refuses Seamstress anchor direct entry")
+	_check(service.enter_stitched_survivor(tinker_anchor, ["seamstress"]) != null,
+		"AC1: LOST ['seamstress'] admits surviving Tinker anchor")
+	_check(service.enter_stitched_survivor(monk_anchor, ["seamstress"]) != null,
+		"AC1: LOST ['seamstress'] admits surviving Lantern Monk anchor")
+
+	_check(service.enter_stitched_survivor(tinker_anchor, ["tinker"]) == null,
+		"AC1: LOST ['tinker'] refuses Tinker anchor direct entry")
+	_check(service.enter_stitched_survivor(warden_anchor, ["tinker"]) != null,
+		"AC1: LOST ['tinker'] admits surviving Warden anchor")
+	_check(service.enter_stitched_survivor(monk_anchor, ["lantern_monk"]) == null,
+		"AC1: LOST ['lantern_monk'] refuses Lantern Monk anchor direct entry")
+	_check(service.enter_stitched_survivor(seamstress_anchor, ["lantern_monk"]) != null,
+		"AC1: LOST ['lantern_monk'] admits surviving Seamstress anchor")
+
+	# 3. Two LOST heroes block both, admitting remaining surviving heroes.
+	_check(service.enter_stitched_survivor(warden_anchor, ["warden", "tinker"]) == null,
+		"AC1: LOST ['warden', 'tinker'] refuses Warden anchor")
+	_check(service.enter_stitched_survivor(tinker_anchor, ["warden", "tinker"]) == null,
+		"AC1: LOST ['warden', 'tinker'] refuses Tinker anchor")
+	_check(service.enter_stitched_survivor(seamstress_anchor, ["warden", "tinker"]) != null,
+		"AC1: LOST ['warden', 'tinker'] admits Seamstress anchor")
+	_check(service.enter_stitched_survivor(monk_anchor, ["warden", "tinker"]) != null,
+		"AC1: LOST ['warden', 'tinker'] admits Lantern Monk anchor")
+
+	_check(service.enter_stitched_survivor(warden_anchor, ["warden", "seamstress"]) == null,
+		"AC1: LOST ['warden', 'seamstress'] refuses Warden anchor")
+	_check(service.enter_stitched_survivor(seamstress_anchor, ["warden", "seamstress"]) == null,
+		"AC1: LOST ['warden', 'seamstress'] refuses Seamstress anchor")
+	_check(service.enter_stitched_survivor(tinker_anchor, ["warden", "seamstress"]) != null,
+		"AC1: LOST ['warden', 'seamstress'] admits Tinker anchor")
+	_check(service.enter_stitched_survivor(monk_anchor, ["warden", "seamstress"]) != null,
+		"AC1: LOST ['warden', 'seamstress'] admits Lantern Monk anchor")
+
+	# 4. All four LOST heroes uniformly refuse all four anchor direct entries.
+	var all_four_direct := ["warden", "seamstress", "tinker", "lantern_monk"]
+	_check(service.enter_stitched_survivor(warden_anchor, all_four_direct) == null,
+		"AC1: all four LOST refuses Warden anchor direct entry")
+	_check(service.enter_stitched_survivor(seamstress_anchor, all_four_direct) == null,
+		"AC1: all four LOST refuses Seamstress anchor direct entry")
+	_check(service.enter_stitched_survivor(tinker_anchor, all_four_direct) == null,
+		"AC1: all four LOST refuses Tinker anchor direct entry")
+	_check(service.enter_stitched_survivor(monk_anchor, all_four_direct) == null,
+		"AC1: all four LOST refuses Lantern Monk anchor direct entry")
+
+	# 5. Hanging hero at 0 HP is NOT treated as LOST without explicit entry in lost_ids.
+	var hanging_warden_entry := service.enter_stitched_survivor(warden_anchor, [])
+	_check(hanging_warden_entry != null and hanging_warden_entry.is_valid(),
+		"AC1: hanging Warden (HP=0 context) with [] lost_ids admits direct entry")
+	var hanging_warden_with_tinker_lost := service.enter_stitched_survivor(warden_anchor, ["tinker"])
+	_check(hanging_warden_with_tinker_lost != null and hanging_warden_with_tinker_lost.is_valid(),
+		"AC1: hanging Warden admits direct entry when Tinker is the only LOST hero")
+	var hanging_seamstress_with_warden_lost := service.enter_stitched_survivor(seamstress_anchor, ["warden"])
+	_check(hanging_seamstress_with_warden_lost != null and hanging_seamstress_with_warden_lost.is_valid(),
+		"AC1: hanging Seamstress admits direct entry when Warden is the only LOST hero")
+
 	# AC1: LOST ["warden"] never selects warden events; surviving dolls appear across seeds.
 	var seen_heroes_1 := {}
 	for seed_val in range(6001, 6021):
@@ -2190,6 +2277,35 @@ func _test_stitched_survivor_offers() -> void:
 			and rng_val.state == s_val
 			and bad_lost == bad_copy,
 			"AC3: invalid lost_ids fails closed with 0 draws: " + str(bad_lost))
+		_check(service.enter_stitched_survivor(warden_anchor, bad_lost) == null
+			and bad_lost == bad_copy,
+			"AC2: invalid lost_ids refuses enter_stitched_survivor: " + str(bad_lost))
+
+	# AC2: Omitted arguments refuse guarded direct entry fail-closed.
+	_check(service.enter_stitched_survivor(warden_anchor) == null,
+		"AC2: omitted lost_ids in 1-arg call returns null")
+	_check(service.enter_stitched_survivor() == null,
+		"AC2: omitted event_id and lost_ids in 0-arg call returns null")
+
+	# AC2: Unauthorized, forged or off-party event IDs refuse guarded direct entry.
+	var forged_cat_rec := _by_id(catalog["events"], warden_anchor).duplicate(true)
+	forged_cat_rec["choices"][0]["outcome"]["gold"] = 999
+	for bad_id in [
+		"unknown_event_id", "", "   ", null, 123, true, {},
+		"v3_scarecrow_crow_roost", "v3_rag_duelist_needle_fair",
+		"v3_yarn_ranger_knit_ford", "v3_button_golem_button_press",
+		forged_cat_rec,
+	]:
+		_check(service.enter_stitched_survivor(bad_id, []) == null,
+			"AC2: unauthorized/forged/off-party event_id returns null: " + str(bad_id))
+
+	# AC2: Non-four-hero and tampered services refuse enter_stitched_survivor.
+	var bad_roster_svc := RunV3HeroEventOffers.new(["warden", "warden", "tinker", "lantern_monk"])
+	_check(not bad_roster_svc.is_valid() and bad_roster_svc.enter_stitched_survivor(warden_anchor, []) == null,
+		"AC2: invalid party service refuses enter_stitched_survivor")
+	var tampered_svc := RunV3HeroEventOffers.new(STITCHED_PARTY, {"events": [forged_cat_rec]})
+	_check(not tampered_svc.is_valid() and tampered_svc.enter_stitched_survivor(warden_anchor, []) == null,
+		"AC2: tampered catalog service refuses enter_stitched_survivor")
 
 	for bad_rng in [null, 0, 257, "rng", {}, [], service]:
 		_check(service.select_stitched_survivor_event_with_preview(bad_rng, ["warden"], good_exclusions, good_wallet) == {
@@ -2222,7 +2338,7 @@ func _test_stitched_survivor_offers() -> void:
 			and bad_excl == e_copy,
 			"AC3: invalid excluded_ids rejected with 0 draws: " + str(bad_excl))
 
-	# AC3: Legacy three-hero service refusal.
+	# AC3/AC4: Legacy three-hero service refusal.
 	var legacy_service := RunV3HeroEventOffers.new(PARTY_A)
 	_check(legacy_service.is_valid(), "AC3: legacy three-hero service is valid")
 	for lost_arg in [[], ["warden"], ["seamstress"]]:
@@ -2232,6 +2348,8 @@ func _test_stitched_survivor_offers() -> void:
 		var res_leg := legacy_service.select_stitched_survivor_event_with_preview(rng_leg, lost_arg, null, good_wallet)
 		_check(res_leg == {"ok": false, "event": {}, "preview": {}} and rng_leg.state == s_leg,
 			"AC3: legacy 3-hero service refuses select_stitched_survivor_event_with_preview: " + str(lost_arg))
+		_check(legacy_service.enter_stitched_survivor(warden_anchor, lost_arg) == null,
+			"AC4: legacy 3-hero service refuses enter_stitched_survivor: " + str(lost_arg))
 	var rng_leg2 := RandomNumberGenerator.new()
 	rng_leg2.seed = 6503
 	_check(legacy_service.select_actionable_event_with_preview(rng_leg2, null, good_wallet).get("ok") == true,
@@ -2254,19 +2372,41 @@ func _test_stitched_survivor_offers() -> void:
 		_check(rng_surv.state == rng_legacy.state,
 			"AC4: zero-LOST opt-in equals existing with-preview one-draw RNG state: " + str(seed_val))
 
-	# AC4: Enter selected Event by real ID, preview parity, settle once, verify wallet and replay rejection.
+	# AC3: With seeded survivor selection and a {gold:28,scraps:2} wallet,
+	# the selected Event can be opened by guarded direct entry and its preview/one-time
+	# receipt matches existing RunEventChoice behavior; replay fails, and successful
+	# selection consumes one RNG draw while failures consume none.
 	var rng_settle := RandomNumberGenerator.new()
 	rng_settle.seed = 6701
-	var sel := service.select_stitched_survivor_event_with_preview(rng_settle, ["warden"], null, {"gold": 28, "scraps": 2})
-	_check(sel.get("ok") == true, "AC4: selection for settlement succeeds")
+	var rng_settle_oracle := RandomNumberGenerator.new()
+	rng_settle_oracle.seed = 6701
+	var sel_wallet := {"gold": 28, "scraps": 2}
+	var sel_wallet_before := sel_wallet.duplicate(true)
+	var sel := service.select_stitched_survivor_event_with_preview(rng_settle, ["warden"], null, sel_wallet)
+	_check(sel.get("ok") == true, "AC3: selection for settlement succeeds")
+	_check(sel_wallet == sel_wallet_before, "AC3: caller wallet untouched by selection")
+
+	# Successful selection consumes exactly one randi_range draw.
+	var exp_cands := _expected_survivor_actionable_ids(STITCHED_PARTY, ["warden"], sel_wallet)
+	rng_settle_oracle.randi_range(0, exp_cands.size() - 1)
+	_check(rng_settle.state == rng_settle_oracle.state,
+		"AC3: successful survivor selection consumes exactly one randi_range draw")
+
 	var sel_event: Dictionary = sel["event"]
 	var sel_preview: Dictionary = sel["preview"]
 	var sel_id: String = sel_event["id"]
-	var visit := service.enter(sel_id)
-	_check(visit != null and visit.is_valid() and not visit.is_claimed(), "AC4: enter(selected_id) opens fresh visit")
-	if visit != null:
-		var fresh_preview := visit.preview_wallet_choices({"gold": 28, "scraps": 2})
-		_check(fresh_preview == sel_preview, "AC4: preview parity between selection preview and fresh RunEventChoice")
+	var sel_req_hero: String = sel_event["required_hero"]
+	_check(sel_req_hero != "warden", "AC3: selected event required_hero is not the LOST hero")
+
+	# Guarded direct entry opens the selected event.
+	var guarded_visit := service.enter_stitched_survivor(sel_id, ["warden"])
+	_check(guarded_visit != null and guarded_visit.is_valid() and not guarded_visit.is_claimed(),
+		"AC3: guarded direct entry opens fresh valid unclaimed visit")
+
+	if guarded_visit != null:
+		var fresh_preview := guarded_visit.preview_wallet_choices(sel_wallet)
+		_check(fresh_preview == sel_preview,
+			"AC3: preview parity between selection preview and guarded direct entry RunEventChoice")
 		var affordable_choice_id := ""
 		var target_wallet := {}
 		for ch in fresh_preview.get("choices", []):
@@ -2274,18 +2414,41 @@ func _test_stitched_survivor_offers() -> void:
 				affordable_choice_id = ch["choice_id"]
 				target_wallet = ch["wallet"]
 				break
-		_check(affordable_choice_id != "", "AC4: found affordable non-Leave choice in selected event")
+		_check(affordable_choice_id != "", "AC3: found affordable non-Leave choice in selected event")
 		var user_wallet := {"gold": 28, "scraps": 2}
-		var receipt := visit.choose_with_wallet(affordable_choice_id, user_wallet)
+		var receipt := guarded_visit.choose_with_wallet(affordable_choice_id, user_wallet)
 		_check(receipt == {"ok": true, "event_id": sel_id, "choice_id": affordable_choice_id, "wallet": target_wallet},
-			"AC4: visit settles once matching forecast")
-		_check(user_wallet == {"gold": 28, "scraps": 2}, "AC4: caller wallet remains detached and unmodified")
-		_check(visit.is_claimed() and not visit.is_valid(), "AC4: visit is latched after claim")
-		_check(visit.choose_with_wallet(affordable_choice_id, target_wallet) == {
+			"AC3: visit settles once matching forecast")
+		_check(user_wallet == {"gold": 28, "scraps": 2}, "AC3: caller wallet remains detached and unmodified")
+		_check(guarded_visit.is_claimed() and not guarded_visit.is_valid(), "AC3: visit is latched after claim")
+		_check(guarded_visit.choose_with_wallet(affordable_choice_id, target_wallet) == {
 			"ok": false, "event_id": "", "choice_id": "", "wallet": target_wallet},
-			"AC4: replay on claimed visit is rejected")
-		_check(visit.choose_with_wallet("leave", target_wallet).get("ok") == false,
-			"AC4: alternate choice also rejected after claim")
+			"AC3: replay on claimed visit is rejected")
+		_check(guarded_visit.choose_with_wallet("leave", target_wallet).get("ok") == false,
+			"AC3: alternate choice also rejected after claim")
+
+	# Marking the required hero as LOST denies guarded entry to that same selected event.
+	_check(service.enter_stitched_survivor(sel_id, [sel_req_hero]) == null,
+		"AC3: marking the chosen event required_hero as LOST refuses direct entry")
+
+	# Failures consume zero RNG draws.
+	var rng_no_draw := RandomNumberGenerator.new()
+	rng_no_draw.seed = 6801
+	var s_no_draw := rng_no_draw.state
+	_check(service.select_stitched_survivor_event_with_preview(rng_no_draw, ["warden", "seamstress", "tinker", "lantern_monk"], null, sel_wallet) == {
+		"ok": false, "event": {}, "preview": {}} and rng_no_draw.state == s_no_draw,
+		"AC3: all four LOST consumes zero RNG draws")
+	_check(service.select_stitched_survivor_event_with_preview(rng_no_draw, ["invalid_hero"], null, sel_wallet) == {
+		"ok": false, "event": {}, "preview": {}} and rng_no_draw.state == s_no_draw,
+		"AC3: invalid lost_ids consumes zero RNG draws")
+	_check(service.select_stitched_survivor_event_with_preview(rng_no_draw, ["warden"], null, {"gold": -1, "scraps": 0}) == {
+		"ok": false, "event": {}, "preview": {}} and rng_no_draw.state == s_no_draw,
+		"AC3: invalid wallet consumes zero RNG draws")
+
+	# Legacy enter(sel_id) still opens an authentic fresh visit.
+	var legacy_visit := service.enter(sel_id)
+	_check(legacy_visit != null and legacy_visit.is_valid() and not legacy_visit.is_claimed(),
+		"AC4: legacy enter(selected_id) still opens fresh visit")
 
 	# Detached copies and non-mutation isolation.
 	var orig_offers := service.get_offers()
@@ -2293,7 +2456,8 @@ func _test_stitched_survivor_offers() -> void:
 	sel["event"]["id"] = "forged_id"
 	sel["event"]["choices"].clear()
 	sel["preview"]["ok"] = false
-	_check(service.enter("forged_id") == null, "AC4: mutated return copy never affects service")
+	_check(service.enter("forged_id") == null, "AC4: mutated return copy never affects service enter()")
+	_check(service.enter_stitched_survivor("forged_id", []) == null, "AC4: mutated return copy never affects enter_stitched_survivor")
 	_check(service.get_offers() == orig_offers, "AC4: service offers remain pristine")
 
 
@@ -2312,6 +2476,7 @@ func _replay_stitched_survivor(value: int) -> Array:
 		if not outcome["ok"]:
 			break
 		var event_id: String = outcome["event"]["id"]
+		var req_hero: String = outcome["event"]["required_hero"]
 		visited.append(event_id)
 		var preview: Dictionary = outcome["preview"]
 		_check(preview.get("ok", false) and preview.get("event_id") == event_id,
@@ -2324,11 +2489,16 @@ func _replay_stitched_survivor(value: int) -> Array:
 				chosen_wallet = choice["wallet"]
 				break
 		_check(chosen_id != "", "survivor replay finds affordable non-Leave choice")
-		var visit := service.enter(event_id)
+		var visit := service.enter_stitched_survivor(event_id, lost)
 		_check(visit != null and visit.is_valid() and not visit.is_claimed(),
-			"survivor replay opens fresh authentic visit")
+			"survivor replay opens fresh authentic visit via enter_stitched_survivor")
 		if visit == null:
 			break
+		_check(service.enter_stitched_survivor(event_id, [req_hero]) == null,
+			"survivor replay refuses guarded entry if required hero is in lost_ids")
+		var legacy_v := service.enter(event_id)
+		_check(legacy_v != null and legacy_v.is_valid(),
+			"survivor replay legacy enter still opens authentic visit")
 		var receipt := visit.choose_with_wallet(chosen_id, wallet)
 		_check(receipt["ok"] and receipt["wallet"] == chosen_wallet
 			and visit.is_claimed() and not visit.is_valid(),
