@@ -204,6 +204,9 @@ func select(decision: Variant, expected_node_id: Variant,
 	match String(decision):
 		MEND:
 			for hero in updated:
+				# A LOST doll is unpicked and is never restored by Campfire.
+				if _is_lost_hero(hero):
+					continue
 				var max_hp: int = int(hero["max_hp"])
 				# floor(30% of max HP), capped at max HP; a Hanging 0-HP hero
 				# receives exactly this heal, with no revive-first bonus.
@@ -248,6 +251,8 @@ func _stitched_choices() -> Array:
 
 func _mend_changes_party() -> bool:
 	for hero in _heroes:
+		if _is_lost_hero(hero):
+			continue
 		var max_hp: int = int(hero["max_hp"])
 		var hp: int = int(hero["hp"])
 		@warning_ignore("integer_division")
@@ -255,6 +260,12 @@ func _mend_changes_party() -> bool:
 		if mini(max_hp, hp + amount) > hp:
 			return true
 	return false
+
+
+## Only an explicit lost == true marks a LOST doll; a missing or false flag is
+## a non-lost hero (a Hanging 0-HP hero is not lost and stays healable).
+static func _is_lost_hero(hero: Variant) -> bool:
+	return typeof(hero) == TYPE_DICTIONARY and hero.get("lost", false) == true
 
 
 func _tales_changes_party() -> bool:
