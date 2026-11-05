@@ -106,6 +106,10 @@ func is_consumed() -> bool:
 func _eligible_ids() -> Array:
 	var eligible: Array = []
 	for hero in _heroes:
+		# A LOST (unpicked) doll is never a bandage target; HP 0 alone is only
+		# HANGING and stays curable. Only boolean true excludes.
+		if hero.get("lost") == true:
+			continue
 		var bleed: Variant = (hero["statuses"] as Dictionary).get(BLEED)
 		if typeof(bleed) == TYPE_INT and bleed > 0:
 			eligible.append(str(hero["id"]))
