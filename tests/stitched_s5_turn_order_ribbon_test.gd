@@ -75,6 +75,37 @@ func _verify_order(stage: StitchedBattleScreen) -> void:
 		_check(not ribbon.tag_at(i).visible, "unused tag %d has no stale actor" % i)
 
 
+func _text_fits(label: Label) -> bool:
+	if label.text.is_empty():
+		return false
+	var font := label.get_theme_font("font")
+	var font_size := label.get_theme_font_size("font_size")
+	return font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= label.size.x - 1.0 and (
+		font.get_height(font_size) <= label.size.y)
+
+
+func _check_disclosure(ribbon: StitchedTurnOrderRibbon, index: int, full_name: String, detail: String = "") -> void:
+	var tag := ribbon.tag_at(index)
+	var tip: NinePatchRect = tag.get_node("FocusTooltip")
+	var detail_label: Label = tip.get_node("TooltipText")
+	var screen := Rect2(Vector2.ZERO, Vector2(1280, 720))
+	_check(tag.visible and tag.tooltip_text.contains(full_name) and
+		detail_label.text == tag.tooltip_text and (detail.is_empty() or detail_label.text.contains(detail)),
+		"slot %d retains full public actor/status text in both disclosure channels" % index)
+	tag.mouse_entered.emit()
+	_check(tip.visible and screen.encloses(tip.get_global_rect()) and
+		detail_label.get_visible_line_count() == detail_label.get_line_count(),
+		"slot %d mouse hover shows the complete on-screen Gothic sewn tooltip" % index)
+	tag.mouse_exited.emit()
+	_check(not tip.visible, "slot %d mouse leave closes the hover tooltip" % index)
+	tag.grab_focus()
+	_check(tag.has_focus() and tip.visible and screen.encloses(tip.get_global_rect()) and
+		detail_label.get_visible_line_count() == detail_label.get_line_count(),
+		"slot %d keyboard focus discloses the same complete on-screen tooltip" % index)
+	tag.release_focus()
+	_check(not tip.visible, "slot %d keyboard blur closes its tooltip" % index)
+
+
 func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: StitchedBattleScreen) -> void:
 	var top_band := Rect2(Vector2(12, 10), Vector2(1256, 82))
 	var stage_area := Rect2(Vector2(0, 95), Vector2(1280, 360))
@@ -90,6 +121,23 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 			not rect.intersects(candle_rect) and not rect.intersects(order_rect) and
 			rect.position.x >= previous_right,
 			"tag %d in %d-slot layout fits top band without hitting stage/round/candle/header" % [i, count])
+		var portrait: TextureRect = tag.get_node("ActorPortrait")
+		var fallback: Label = tag.get_node("NameFallback")
+		var rank: Label = tag.get_node("SideRank")
+		var marker: Label = tag.get_node("NowMarker")
+		var face_rect := portrait.get_global_rect() if portrait.visible else fallback.get_global_rect()
+		var rank_rect := rank.get_global_rect()
+		var cue_rect := marker.get_global_rect()
+		_check(portrait.visible != fallback.visible and rect.encloses(face_rect) and
+			rect.encloses(rank_rect) and rect.encloses(cue_rect) and
+			not face_rect.intersects(rank_rect) and not face_rect.intersects(cue_rect) and
+			not rank_rect.intersects(cue_rect) and
+			face_rect.end.x + 3.0 <= rank_rect.position.x and
+			rank_rect.end.y + 2.0 <= cue_rect.position.y,
+			"tag %d portrait/fallback, rank and status occupy disjoint measured sewn-chip cells" % i)
+		_check(rank.clip_text and marker.clip_text and _text_fits(rank) and _text_fits(marker) and
+			(fallback.visible == false or (fallback.clip_text and _text_fits(fallback))),
+			"tag %d measured Gothic glyphs fit rank, NOW/status and name fallback labels without clipping" % i)
 		previous_right = rect.end.x
 	_check(previous_right <= 1260, "%d-slot ribbon ends before right top-band edge" % count)
 
@@ -115,6 +163,8 @@ func _run() -> void:
 		"precondition: seven authoritative round slots and a live hero following automatic foe turns")
 	_verify_order(stage)
 	_check_geometry(ribbon, 7, stage)
+	for i in range(ribbon.displayed_entries.size()):
+		_check_disclosure(ribbon, i, str(ribbon.displayed_entries[i]["name"]))
 
 	# Observe every passive path with both independent RNG streams snapshotted.
 	seed(515273)
@@ -140,8 +190,9 @@ func _run() -> void:
 	var nine: Array = _living_round_entries(battle)
 	var last_foe: Dictionary = battle.get_foes().back().duplicate(true)
 	last_foe["id"] = "author_fourth_foe_without_art"
-	last_foe["name"] = "Unknown Fourth"
+	last_foe["name"] = "Unknown Fourth Lanternmaker Who Carries Mended Bells"
 	last_foe["rank"] = 4
+	last_foe["statuses"] = {"bleed": 2}
 	nine.append(last_foe)
 	var repeated: Dictionary = battle.get_foes().front()
 	nine.append(repeated.duplicate(true))
@@ -151,9 +202,16 @@ func _run() -> void:
 		str(ribbon.displayed_entries[8]["id"]) == repeated_id and
 		ribbon.tag_at(8).tooltip_text == ribbon.tag_at(nine.find(repeated)).tooltip_text and
 		ribbon.tag_at(7).get_node("NameFallback").visible and
+		ribbon.tag_at(7).get_node("SideRank").text == "F4" and
 		ribbon.portrait_at(7).texture == null,
 		"fourth foe lacks borrowed art and a second authored boss slot remains distinct")
 	_check_geometry(ribbon, 9, stage)
+	_check(ribbon.marker_at(7).text == "BLD" and
+		ribbon.tag_at(7).tooltip_text.contains("Statuses: bleed 2"),
+		"unmapped ninth-capacity foe keeps the existing legible BLD cue and full bleed tooltip")
+	for i in range(9):
+		_check_disclosure(ribbon, i, str(ribbon.displayed_entries[i]["name"]),
+			"Statuses: bleed 2" if i == 7 else "")
 	_check(ribbon.marker_at(8).text == "NOW" and
 		ribbon.marker_at(nine.find(repeated)).text == "NOW",
 		"repeated actor is highlighted by authoritative actor ID without peeking at turn index")
@@ -163,19 +221,24 @@ func _run() -> void:
 	var lost: Dictionary = nine[1].duplicate(true)
 	dead["dead"] = true
 	lost["lost"] = true
-	var filtered: Array = [dead, nine[2], lost, nine[3]]
+	var defeated: Dictionary = nine[7].duplicate(true)
+	defeated["hp"] = 0
+	var filtered: Array = [{}, dead, nine[2], lost, defeated, nine[3]]
 	ribbon.show_order(filtered, str(dead["id"]), false)
 	_check(ribbon.displayed_entries.size() == 2 and
 		str(ribbon.displayed_entries[0]["id"]) == str(nine[2]["id"]) and
 		str(ribbon.displayed_entries[1]["id"]) == str(nine[3]["id"]) and
 		ribbon.marker_at(0).text != "NOW" and not ribbon.tag_at(2).visible,
-		"lost/dead units disappear, order holds, dead actor cannot remain active")
-	ribbon.show_order([{"id":"unmapped_no_art","name":"Lost Button Doll","side":"foe","rank":3,"hp":12}], "", false)
+		"empty/lost/dead/zero-HP entries disappear, order holds, dead actor cannot remain active")
+	ribbon.show_order([{"id":"unmapped_no_art","name":"Lost Button Doll of the Unravelled Archive",
+		"side":"foe","rank":3,"hp":12,"statuses":{"bleed":3}}], "", false)
 	_check(ribbon.displayed_entries.size() == 1 and ribbon.portrait_at(0).texture == null and
 		ribbon.tag_at(0).get_node("NameFallback").text.begins_with("Lost") and
-		ribbon.tag_at(0).tooltip_text.contains("Lost Button Doll") and
-		not ribbon.tag_at(1).visible,
+		ribbon.tag_at(0).tooltip_text.contains("Lost Button Doll of the Unravelled Archive") and
+		ribbon.marker_at(0).text == "BLD" and not ribbon.tag_at(1).visible,
 		"unmapped canonical ID has visible name/rank fallback and full tooltip, no portrait substitution")
+	_check_geometry(ribbon, 1, stage)
+	_check_disclosure(ribbon, 0, "Lost Button Doll of the Unravelled Archive", "Statuses: bleed 3")
 	ribbon.show_order(nine, repeated_id, true)
 	var any_now := false
 	for i in range(9):
@@ -196,6 +259,7 @@ func _run() -> void:
 		battle.state_snapshot() != previous,
 		"real public Pass spends one live hero action and advances seeded combat")
 	_verify_order(stage)
+	_check_geometry(ribbon, ribbon.displayed_entries.size(), stage)
 
 	# A new valid session must reconstruct tags from its own public round.
 	host.free()
