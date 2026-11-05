@@ -548,7 +548,10 @@ func _run() -> void:
 		else:
 			_check(copy.size() == 2 and copy[0] == after and copy[1] == stage.receipts,
 				"independent public entries replay identical state, RNG and ordered receipts")
-		boot.exit_stitched_preview(app)
+		stage._action_buttons["help"].pressed.emit()
+		_check(stage._action_buttons["exit"].is_visible_in_tree(),
+			"public preview exposes Back to title through Help & settings")
+		stage._action_buttons["exit"].pressed.emit()
 		await process_frame
 		_check(boot.stitched_view == null and app.title_view.is_visible_in_tree() and
 			app.run_map == null and app.deck == null, "exit unmounts isolated S2 and restores original title")

@@ -45,6 +45,7 @@ var _part_help_dialog: AcceptDialog
 var _part_hover_slot := ""
 var _part_focus_slot := ""
 var _action_buttons: Dictionary = {}
+var _utilities_open := false
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
 var _turn_ribbon: StitchedTurnOrderRibbon
@@ -242,21 +243,26 @@ func _build_screen() -> void:
 		_target_buttons[foe_key] = _button("Foe %d" % rank,
 			Rect2(642 + index * 92, 675, 88, 29), func(): submit_target("foe", rank))
 		_bind_seat_signals(_target_buttons[foe_key], foe_key)
-	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1041, 567, 207, 75), 13, MUTED)
+	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1041, 567, 207, 104), 13, MUTED)
 	_labels["log"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["log"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_build_part_disclosure()
+	_labels["help"] = _label("Pick a part, then a lit target.\nMove, Re-tie or Pass a turn.\nRetreat risks candlelight.", Rect2(1043, 567, 208, 42), 12, PAPER)
+	_action_buttons["help"] = _button("Help & settings", Rect2(1043, 675, 208, 29), func(): _set_utilities_open(true))
 	var toggle := CheckButton.new()
 	toggle.text = "Reduce motion"
-	toggle.position = Vector2(1045, 641)
-	toggle.size = Vector2(202, 29)
+	toggle.position = Vector2(1043, 611)
+	toggle.size = Vector2(208, 27)
+	toggle.focus_mode = Control.FOCUS_ALL
 	toggle.button_pressed = reduced_motion
 	toggle.add_theme_font_size_override("font_size", 14)
 	CHROME.style_button(toggle)
 	toggle.toggled.connect(set_reduced_motion)
 	add_child(toggle)
 	_action_buttons["reduce_motion"] = toggle
-	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 676, 208, 29), func(): exit_requested.emit())
+	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 642, 208, 29), func(): exit_requested.emit())
+	_action_buttons["close_help"] = _button("Close help", Rect2(1043, 675, 208, 29), func(): _set_utilities_open(false))
+	_set_utilities_open(false, false)
 	# Equally spaced back-to-front ranks on one quilt, with a clear centre aisle.
 	# Each 170px slot centres its own fitted authored figure and underfoot plaque.
 	# Draw back ranks first; targeting still follows the actual occupied art.
@@ -273,6 +279,20 @@ func _build_screen() -> void:
 		var data: Variant = JSON.parse_string(pose_file.get_as_text())
 		if data is Dictionary:
 			_pose_manifest = data
+
+
+func _set_utilities_open(value: bool, restore_focus: bool = true) -> void:
+	_utilities_open = value
+	_labels["log"].visible = not value
+	_labels["help"].visible = value
+	_action_buttons["help"].visible = not value
+	for key in ["reduce_motion", "exit", "close_help"]:
+		_action_buttons[key].visible = value
+	_present_part_disclosure()
+	if value:
+		_action_buttons["close_help"].grab_focus()
+	elif restore_focus:
+		_action_buttons["help"].grab_focus()
 
 
 func _seat(side: String, rank: int, x: float) -> void:
@@ -777,7 +797,7 @@ func _present_part_disclosure() -> void:
 		return
 	var slot := _part_inspected_slot()
 	var cue: Dictionary = _part_cues.get(slot, {})
-	_part_disclosure.visible = not cue.is_empty() and not _part_help_buttons[slot].disabled
+	_part_disclosure.visible = not _utilities_open and not cue.is_empty() and not _part_help_buttons[slot].disabled
 	if not _part_disclosure.visible:
 		_part_disclosure_text.text = ""
 		return
@@ -1064,6 +1084,10 @@ func set_reduced_motion(value: bool) -> void:
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		if _utilities_open:
+			_set_utilities_open(false)
+			get_viewport().set_input_as_handled()
+			return
 		_selected_part = ""
 		_inspected_seat = ""
 		_refresh()
