@@ -260,6 +260,8 @@ func _run() -> void:
 	hero["fray"] = 100
 	_check(StitchedTurnStatusCues.cue(hero) == "FRAY", "threshold 100 is inclusive")
 	hero["fray"] = 99
+	_check(StitchedTurnStatusCues.cue(hero) == "MARK", "positive mark follows fray in precedence before generic HERO")
+	hero["statuses"]["mark"] = 0
 	_check(StitchedTurnStatusCues.cue(hero) == "HERO" and
 		not StitchedTurnStatusCues.tooltip(hero).contains("Resolve:") and
 		not StitchedTurnStatusCues.tooltip(hero).contains("Steadfast") and
