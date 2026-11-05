@@ -230,6 +230,50 @@
         { "id": "shake_copper_rain", "text": "Shake loose the copper rain (lose 4 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -4, "max_hp": 0 } },
         { "id": "leave", "text": "Let the great canopy weather the storm", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_rivet_harp_causeway",
+      "title": "The Rivet-Harp Causeway",
+      "description": "A soot-dark bridge is strung like a vast brass harp; the Warden props its leaning rivet frame with a battered pot helmet and round stitched shield.",
+      "required_hero": "warden",
+      "choices": [
+        { "id": "brace_harp_frame", "text": "Spend 2 scraps bracing the shield strings (heal 9 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 9, "max_hp": 0 } },
+        { "id": "offer_shield_lining", "text": "Trade 5 HP of shield lining for 23 gold", "outcome": { "gold": 23, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the bronze strings fall quiet", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_lace_marionette",
+      "title": "The Lace Marionette",
+      "description": "A giant button-eyed lace marionette hangs beneath a crooked thimble lamp; the Seamstress threads her crimson needle through its velvet cuffs.",
+      "required_hero": "seamstress",
+      "choices": [
+        { "id": "stitch_lace_cuffs", "text": "Pay 18 gold to bind lasting lace cuffs (+3 max HP)", "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "unpick_cuff_threads", "text": "Unpick 5 HP of velvet for 2 scraps", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the marionette swaying beneath the lamp", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_oxblood_mothwheel",
+      "title": "The Oxblood Mothwheel",
+      "description": "An oxblood gearwheel shaped like a moth hangs over a ruined toll booth; the Tinker's mismatched goggles catch its last copper sparks.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "reinforce_gearwing", "text": "Spend 3 scraps to add a lasting gearwing seam (+4 max HP)", "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 4 } },
+        { "id": "salvage_copper_sparks", "text": "Endure 6 HP of hot copper sparks to gather 27 gold", "outcome": { "gold": 27, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the broken mothwheel still", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_crowbriar_weather_tower",
+      "title": "The Crowbriar Weather Tower",
+      "description": "An enormous black crow weather vane turns atop a thorn-stitched bell tower; the Scarecrow braces its creaking ladder with a forked pitchfork.",
+      "required_hero": "scarecrow",
+      "choices": [
+        { "id": "pad_straw_ladder", "text": "Pay 15 gold for warm straw padding (heal 10 HP)", "outcome": { "gold": -15, "scraps": 0, "hp": 10, "max_hp": 0 } },
+        { "id": "trade_tower_straw", "text": "Unpick 2 max HP of tower straw for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the crow vane turn without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

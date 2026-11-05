@@ -15,7 +15,13 @@ extends RefCounted
 ## `target: "hero"`: a valid gated choice whose `required_hero` is absent from
 ## the active party is omitted from `preview().choices` and rejected by
 ## `choose()` without latching, while `target` / `hero_id` still determine the
-## affected fray and HP recipients. `scraps`, `gold`, `part`, `hp` and
+## affected fray and HP recipients. `min_fray` is an optional native integer
+## 1..200 admission gate on `stitched_effect`. For `target: "party"` without
+## `required_hero`, the choice is available iff at least one active party member
+## has fray >= min_fray. When `required_hero` is present on a party target, only
+## that named hero can satisfy `min_fray` (companions cannot substitute).
+## For `target: "hero"`, only the named `hero_id` is checked.
+## `scraps`, `gold`, `part`, `hp` and
 ## `require_full_candle` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
 ## present, `require_full_candle` must be native boolean `true` on a strictly
@@ -275,21 +281,32 @@ func _can_afford_candle(base_candle: int, parsed_effect: Dictionary) -> bool:
 	return delta < 0 and delta >= -base_candle
 
 
-## Shared named-hero FRAY admission gate for preview and commit when
+## Shared FRAY admission gate for preview and commit when
 ## `min_fray` is present on `stitched_effect`.
+## For target: "party" without required_hero, qualifies iff at least one active
+## party member has fray >= min_fray. When required_hero is present on a party
+## target, only that named hero can satisfy the threshold.
+## For target: "hero", tests only hero_id.
 func _meets_min_fray(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
 	if not parsed_effect.get("has_min_fray", false):
 		return true
-	var gated_hero_id: String = (
-		String(parsed_effect["hero_id"])
-		if parsed_effect["target"] == TARGET_HERO
-		else String(parsed_effect["required_hero"])
-	)
 	var threshold: int = int(parsed_effect["min_fray"])
 	var party: Array = base_state["party"]
+	if parsed_effect["target"] == TARGET_HERO:
+		var hero_id: String = String(parsed_effect["hero_id"])
+		for hero in party:
+			if hero["id"] == hero_id:
+				return int(hero["fray"]) >= threshold
+		return false
+	if parsed_effect.get("has_required_hero", false):
+		var required_hero: String = String(parsed_effect["required_hero"])
+		for hero in party:
+			if hero["id"] == required_hero:
+				return int(hero["fray"]) >= threshold
+		return false
 	for hero in party:
-		if hero["id"] == gated_hero_id:
-			return int(hero["fray"]) >= threshold
+		if int(hero["fray"]) >= threshold:
+			return true
 	return false
 
 
@@ -663,8 +680,6 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 			return {"ok": false}
 		parsed["hp"] = int(hp_read["value"])
 	if has_min_fray:
-		if target == TARGET_PARTY and not has_required_hero:
-			return {"ok": false}
 		var raw_min_fray: Variant = effect.get("min_fray")
 		if typeof(raw_min_fray) != TYPE_INT:
 			return {"ok": false}

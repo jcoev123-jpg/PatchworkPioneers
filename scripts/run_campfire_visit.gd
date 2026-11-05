@@ -195,6 +195,10 @@ func select(decision: Variant, expected_node_id: Variant,
 		expected_heroes: Variant, expected_candle: Variant) -> Dictionary:
 	if not _matches_stitched_open(expected_node_id, expected_heroes, expected_candle) or not _is_stitched_decision(decision):
 		return _stitched_rejected()
+	# A choice that cannot change anything is not advertised, so it is refused
+	# here without consuming the visit or touching the swap opportunity.
+	if not _stitched_choices().has(String(decision)):
+		return _stitched_rejected()
 	var updated: Array = _heroes.duplicate(true)
 	var candle: int = _candle
 	match String(decision):
@@ -226,16 +230,62 @@ func select(decision: Variant, expected_node_id: Variant,
 	return _stitched_receipt(String(decision))
 
 
+## The ordered recovery choices that can still change the held party or candle.
+## Leave is always offered while the visit is open; a decided visit offers none.
+func _stitched_choices() -> Array:
+	var choices: Array = []
+	if _status != STITCHED_OPEN:
+		return choices
+	if _mend_changes_party():
+		choices.append(MEND)
+	if _tales_changes_party():
+		choices.append(TELL_TALES)
+	if _candle < STITCHED_CANDLE_MAX:
+		choices.append(TRIM_THE_WICK)
+	choices.append(STITCHED_LEAVE)
+	return choices
+
+
+func _mend_changes_party() -> bool:
+	for hero in _heroes:
+		var max_hp: int = int(hero["max_hp"])
+		var hp: int = int(hero["hp"])
+		@warning_ignore("integer_division")
+		var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+		if mini(max_hp, hp + amount) > hp:
+			return true
+	return false
+
+
+func _tales_changes_party() -> bool:
+	for hero in _heroes:
+		if int(hero["fray"]) > 0:
+			return true
+	return false
+
+
 func _stitched_quote() -> Dictionary:
-	return {
-		"text": (
-			"Four ragdoll stitches settle round the guttering flame. Mend "
-			+ "each hero for 30% of their utmost HP, Tell Tales to unravel "
-			+ "25 FRAY from every hero, Trim the Wick to recover 50 CANDLE, "
-			+ "or Leave the fire as it is."
-		),
-		"choices": [MEND, TELL_TALES, TRIM_THE_WICK, STITCHED_LEAVE],
-	}
+	var choices: Array = _stitched_choices()
+	if choices.is_empty():
+		return {"text": "The fire has been tended; no choice remains.", "choices": choices}
+	var phrases: Array = []
+	for choice in choices:
+		match String(choice):
+			MEND:
+				phrases.append("Mend each hero for 30% of their utmost HP")
+			TELL_TALES:
+				phrases.append("Tell Tales to unravel 25 FRAY from every hero")
+			TRIM_THE_WICK:
+				phrases.append("Trim the Wick to recover 50 CANDLE")
+			STITCHED_LEAVE:
+				phrases.append("Leave the fire as it is")
+	var text := "Four ragdoll stitches settle round the guttering flame. "
+	if phrases.size() == 1:
+		text += "No stitch needs tending tonight; " + String(phrases[0]) + "."
+	else:
+		text += ", ".join(phrases.slice(0, phrases.size() - 1)) + ", or " \
+			+ String(phrases[phrases.size() - 1]) + "."
+	return {"text": text, "choices": choices}
 
 
 func _matches_stitched_open(expected_node_id: Variant,
