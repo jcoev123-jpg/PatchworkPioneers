@@ -371,93 +371,46 @@ func _present_status_disclosure() -> void:
 
 
 func _build_foe_intent_tickets() -> void:
-	# The dark sewn intent patches float above the figures' actual painted tops.
-	# They are not affixed to old 116px-wide seat backplates.
-	var plate: Texture2D = load("res://assets/paper/ui/panel_felt.png")
+	# One presentation-only control per physical foe rank, centred at the
+	# accepted 150px intervals. Every ticket rebinds by authoritative foe ID.
 	for rank in range(1, 5):
-		var ticket := NinePatchRect.new()
+		var ticket := StitchedFoeIntentPlate.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		# Centre each ticket over its actual foe slot, including summoned rank 4.
-		ticket.position = Vector2(681 + (rank - 1) * 150, 150)
-		ticket.size = Vector2(116, 44)
-		ticket.texture = plate
-		ticket.modulate = Color("ac7777")
-		ticket.patch_margin_left = 18
-		ticket.patch_margin_right = 18
-		ticket.patch_margin_top = 8
-		ticket.patch_margin_bottom = 8
-		ticket.mouse_filter = Control.MOUSE_FILTER_STOP
-		ticket.focus_mode = Control.FOCUS_ALL
-		ticket.visible = false
+		ticket.position = Vector2(667 + (rank - 1) * 150, 143)
 		add_child(ticket)
-		var ink := Label.new()
-		ink.name = "IntentText"
-		ink.position = Vector2(10, 0)
-		ink.size = Vector2(96, 19)
-		ink.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		ink.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		ink.clip_text = true
-		ink.add_theme_font_size_override("font_size", 11)
-		ink.add_theme_color_override("font_color", PAPER)
-		ink.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ticket.add_child(ink)
-		var target := Label.new()
-		target.name = "IntentTarget"
-		target.position = Vector2(10, 22)
-		target.size = Vector2(96, 19)
-		target.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		target.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		target.clip_text = true
-		target.add_theme_font_size_override("font_size", 11)
-		target.add_theme_color_override("font_color", ACCENT)
-		target.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		ticket.add_child(target)
 		_foe_tickets[rank] = ticket
-		_foe_ticket_labels[rank] = ink
-		_foe_ticket_target_labels[rank] = target
+		_foe_ticket_labels[rank] = ticket.primary
+		_foe_ticket_target_labels[rank] = ticket.secondary
 		ticket.mouse_entered.connect(func(): _foe_intent_enter(rank, false))
 		ticket.mouse_exited.connect(func(): _foe_intent_exit(rank, false))
 		ticket.focus_entered.connect(func(): _foe_intent_enter(rank, true))
 		ticket.focus_exited.connect(func(): _foe_intent_exit(rank, true))
-	# Independent full disclosure above the hero faces, never over the art.
-	# It does not repurpose the action forecast or the status log.
+	# Full names and all affected ranks remain readable by pointer and
+	# keyboard. This independent image-backed panel never drives combat.
 	_intent_disclosure = NinePatchRect.new()
 	_intent_disclosure.name = "FoeIntentDisclosure"
-	_intent_disclosure.position = Vector2(22, 143)
-	_intent_disclosure.size = Vector2(592, 48)
-	_intent_disclosure.texture = plate
-	_intent_disclosure.modulate = Color("ac7777")
+	_intent_disclosure.position = Vector2(22, 140)
+	_intent_disclosure.size = Vector2(635, 80)
+	_intent_disclosure.texture = load("res://assets/paper/ui/hud_name_plate.png") as Texture2D
+	_intent_disclosure.self_modulate = Color("62464a")
 	_intent_disclosure.patch_margin_left = 22
 	_intent_disclosure.patch_margin_right = 22
-	_intent_disclosure.patch_margin_top = 14
-	_intent_disclosure.patch_margin_bottom = 14
+	_intent_disclosure.patch_margin_top = 13
+	_intent_disclosure.patch_margin_bottom = 13
 	_intent_disclosure.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_intent_disclosure.visible = false
+	_intent_disclosure.z_index = 3
 	add_child(_intent_disclosure)
 	_intent_disclosure_label = Label.new()
 	_intent_disclosure_label.name = "FullIntent"
-	_intent_disclosure_label.position = Vector2(18, 3)
-	_intent_disclosure_label.size = Vector2(556, 42)
+	_intent_disclosure_label.position = Vector2(15, 6)
+	_intent_disclosure_label.size = Vector2(605, 68)
 	_intent_disclosure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_intent_disclosure_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_intent_disclosure_label.add_theme_font_size_override("font_size", 11)
+	_intent_disclosure_label.add_theme_font_size_override("font_size", 15)
 	_intent_disclosure_label.add_theme_color_override("font_color", PAPER)
 	_intent_disclosure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_intent_disclosure.add_child(_intent_disclosure_label)
-
-
-# Bound both rows by rendered font width; keep the complete authored name in
-# the separate hover/focus disclosure (never shorten the authority itself).
-func _fit_foe_intent_caption(value: String, label: Label) -> String:
-	var full := value.replace("\n", " ").replace("\r", " ").strip_edges().to_upper()
-	var font: Font = label.get_theme_font("font")
-	var font_size := label.get_theme_font_size("font_size")
-	if font == null or font.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= label.size.x:
-		return full
-	var shortened := full
-	while not shortened.is_empty() and font.get_string_size(shortened + "…", HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > label.size.x:
-		shortened = shortened.substr(0, shortened.length() - 1)
-	return shortened.strip_edges() + "…"
 
 
 func _foe_intent_enter(rank: int, focused: bool) -> void:
@@ -479,66 +432,40 @@ func _foe_intent_exit(rank: int, focused: bool) -> void:
 
 
 func _present_foe_intent_disclosure() -> void:
+	if _intent_disclosure == null:
+		return
 	var rank := _intent_focus_rank if _intent_focus_rank != 0 else _intent_hover_rank
-	var ticket: NinePatchRect = _foe_tickets.get(rank)
+	var ticket: StitchedFoeIntentPlate = _foe_tickets.get(rank)
 	_intent_disclosure.visible = ticket != null and ticket.visible
 	var full := ticket.tooltip_text if _intent_disclosure.visible else ""
 	_intent_disclosure_label.text = full
 	if _intent_disclosure.visible:
 		var font: Font = _intent_disclosure_label.get_theme_font("font")
 		if font != null:
-			for font_size in [12, 11, 10]:
+			for font_size in [15, 14, 13, 12, 11]:
 				_intent_disclosure_label.add_theme_font_size_override("font_size", font_size)
 				if font.get_multiline_string_size(full, HORIZONTAL_ALIGNMENT_LEFT,
 						_intent_disclosure_label.size.x, font_size).y <= _intent_disclosure_label.size.y:
 					break
-	for seat_rank in _foe_ticket_labels:
-		_foe_ticket_labels[seat_rank].add_theme_color_override(
-			"font_color", ACCENT if seat_rank == rank and _intent_disclosure.visible else PAPER)
+	for seat_rank in _foe_tickets:
+		_foe_tickets[seat_rank].set_inspected(seat_rank == rank and _intent_disclosure.visible)
 
 
 func _refresh_foe_intents() -> void:
 	_foe_intents.clear()
 	for rank in range(1, 5):
-		var ticket: NinePatchRect = _foe_tickets[rank]
+		var ticket: StitchedFoeIntentPlate = _foe_tickets[rank]
 		var foe := _unit_at("foe", rank)
 		var intent := StitchedFoeIntent.choose(battle, foe)
 		if intent.is_empty() or not _heap_at(rank).is_empty():
-			ticket.visible = false
-			ticket.tooltip_text = ""
-			_foe_ticket_labels[rank].text = ""
-			_foe_ticket_target_labels[rank].text = ""
+			ticket.clear_intent()
 			if _intent_focus_rank == rank:
 				_intent_focus_rank = 0
 			if _intent_hover_rank == rank:
 				_intent_hover_rank = 0
 			continue
 		_foe_intents[rank] = intent
-		var heading := str(intent["ability_name"])
-		var target := ""
-		var detail := ""
-		if bool(intent["stun"]):
-			heading = "STUN"
-			detail = "STUN: next turn will be skipped"
-		elif bool(intent["pass"]):
-			heading = "PASS"
-			detail = "PASS: no currently legal ability or target"
-		else:
-			var side := str(intent["target_side"])
-			var ranks: Array[String] = []
-			for affected in intent["affected_ranks"]:
-				ranks.append(str(affected))
-			var prefix := "H" if side == "hero" else "F"
-			target = ("ALL " if bool(intent["multi"]) else "") + prefix + ",".join(ranks)
-			var side_name := "HERO" if side == "hero" else "FOE"
-			detail = ("ALL legal %s ranks %s (launch rank %d)" %
-				[side_name, ", ".join(ranks), int(intent["target_rank"])]) if bool(intent["multi"]) else (
-				"Target: %s rank %d" % [side_name, int(intent["target_rank"])])
-		_foe_ticket_labels[rank].text = _fit_foe_intent_caption(heading, _foe_ticket_labels[rank])
-		_foe_ticket_target_labels[rank].text = _fit_foe_intent_caption(target, _foe_ticket_target_labels[rank])
-		ticket.tooltip_text = ("%s · %s · %s\nCurrent intent; may change if ranks or statuses change" %
-			[str(intent["foe_name"]), heading, detail])
-		ticket.visible = true
+		ticket.present_intent(intent, rank)
 	_present_foe_intent_disclosure()
 
 
