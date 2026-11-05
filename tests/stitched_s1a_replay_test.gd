@@ -4,7 +4,7 @@ extends SceneTree
 ## The rules live in scripts/stitched/stitched_rules.gd and scripts/stitched/stitched_parts.gd;
 ## the part catalog is tests/fixtures/stitched_s1a_parts.json. Every battle below is built from
 ## authored data with one seeded RandomNumberGenerator, so all outcomes replay exactly.
-## The existing card path (CombatParty/CombatState) is checked untouched in cards mode.
+## The retained private card path (CombatParty/CombatState) is checked with an explicit test setting.
 
 const FIXTURE := "res://tests/fixtures/stitched_s1a_parts.json"
 const SETTING := "patchwork/combat_mode"
@@ -36,7 +36,7 @@ func _initialize() -> void:
 	_test_ac3_heap_blocks_compaction()
 	_test_ac3_self_move_preflight()
 	_test_ac4_boss_retreat_after_death()
-	ProjectSettings.set_setting(SETTING, "cards")
+	ProjectSettings.set_setting(SETTING, null)
 	if failures.is_empty():
 		print("stitched_s1a_replay_test: PASS (", checks, " checks)")
 	else:
@@ -800,9 +800,10 @@ func _expected_order(battle: StitchedRules, seed_value: int) -> Array:
 # ---------------------------------------------------------------- AC1
 
 func _test_ac1_modes() -> void:
-	_check(ProjectSettings.has_setting(SETTING), "AC1: project.godot authors the combat_mode setting")
-	_check(str(ProjectSettings.get_setting(SETTING)) == StitchedRules.MODE_CARDS, "AC1: the authored combat_mode is cards")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: the shipped default combat mode is cards")
+	_check(not ProjectSettings.has_setting(SETTING), "S7a: project.godot no longer authors combat_mode")
+	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: the retained private core keeps its cards fallback")
+	ProjectSettings.set_setting(SETTING, "cards")
+	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: an explicit test setting enables legacy cards mode")
 	_check(StitchedRules.uses_card_combat(), "AC1: cards mode keeps the card battle in charge")
 	var cards_config := _config(11)
 	cards_config.erase("mode")

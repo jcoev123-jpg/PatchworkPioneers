@@ -29,12 +29,6 @@ window/stretch/aspect="keep"
 
 theme/custom="res://assets/fonts/patchwork_theme.tres"
 
-[patchwork]
-
-; Design v4 "Stitched" stage S1a: the shipped game keeps the card battle ("cards").
-; "stitched" hands combat to scripts/stitched/stitched_rules.gd instead.
-combat_mode="cards"
-
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

@@ -18,6 +18,10 @@ func _check(ok: bool, message: String) -> void:
 
 func _snapshot(app) -> Array:
 	var state: Array = [app.run_seed, app.session_gold, app.run_scraps, app.run_deck.duplicate(), app.run_heroes.duplicate(true)]
+	state.append([app.run_rng.state if app.run_rng != null else null,
+		is_instance_valid(app.party_picker), is_instance_valid(app.stitched_run_panel),
+		app.stitched_run_draft.duplicate(), app.stitched_run_session != null,
+		app.title_view.is_visible_in_tree()])
 	if app.run_map != null:
 		state.append([app.run_map.get_floors(), app.run_map.get_route(), app.run_rng.state, app.act_outcome.get_state()])
 	if app.deck != null:
@@ -29,6 +33,11 @@ func _snapshot(app) -> Array:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	_check(not ProjectSettings.has_setting("patchwork/combat_mode"), "retired combat mode setting removed")
+	for screen in ["title", "base", "stitched_battle"]:
+		_check(screen in BOOT.PUBLIC_SCREENS and screen in BOOT.SCREENS, "public and direct preview supported: " + screen)
+	for screen in ["map", "battle", "reward", "shop", "rest", "event", "results"]:
+		_check(screen in BOOT.SCREENS and screen not in BOOT.PUBLIC_SCREENS, "legacy preview is direct-only: " + screen)
 	_check(root.get_node_or_null("LiveWebPlaytestBoot") != null, "startup autoload registered")
 	var boot = root.get_node("LiveWebPlaytestBoot")
 	var app = load("res://scenes/app.tscn").instantiate()
@@ -43,14 +52,52 @@ func _run() -> void:
 	for query in ["", "?other=map", "?screen", "?screen=", "?screen=unknown", "?screen=Battle",
 		"?screen=map&screen=battle", "?screen=map&screen=map", "?screen=battle%26x", "?screen=Base",
 		"?screen=base&screen=base", "?screen=base&screen=map", "?screen=base%26x", "?screen=village",
+		"?screen=map", "?screen=battle", "?screen=reward", "?screen=shop", "?screen=rest", "?screen=event", "?screen=results",
+		"?screen=title&screen=title", "?screen=stitched_battle&screen=title", "?screen=stitched_battle&screen=stitched_battle",
+		"?screen=stitched_battle%26x", "?screen=title=base", "?screen=%20title", "?screen=title%00",
+		"?screen%00=title", "?screen=title&scr%65en=base", "?screen=%6dap", "?screen=%62attle",
 		null, 12]:
 		var parsed: String = boot.screen_from_query(query)
 		_check(parsed == "", "unsupported query rejected: " + str(query))
-		_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), parsed), "unsupported request cannot start run")
+		_check(not await boot.enter_preview(app, parsed), "unsupported request cannot start run")
 		_check(_snapshot(app) == pristine and app.run_rng == null and app.run_map == null,
 			"invalid input preserves all title resources and seed")
+		_check(not boot.preview_ready and app.title_view.is_visible_in_tree(), "invalid URL never ready or leaves title")
 	_check(randi() == expected_global, "invalid input consumes no global RNG")
 	app.free()
+	# Both parts of the explicit fixture opt-in are required, before any mutation.
+	for preparation in ["none", "start_only", "route_only"]:
+		app = load("res://scenes/app.tscn").instantiate()
+		root.add_child(app)
+		await process_frame
+		if preparation == "start_only":
+			LEGACY_ENTRY.start_button(app)
+		elif preparation == "route_only":
+			LEGACY_ENTRY.route_button(app)
+		pristine = _snapshot(app)
+		seed(114116)
+		expected_global = randi()
+		seed(114116)
+		for screen in BOOT.SCREENS:
+			if screen in BOOT.PUBLIC_SCREENS:
+				continue
+			_check(not await boot.enter_preview(app, screen), "unprepared legacy preview refused: " + preparation + ": " + screen)
+			_check(_snapshot(app) == pristine and app.run_rng == null and app.run_map == null
+				and app.deck == null and not boot.preview_ready and not boot._busy,
+				"legacy refusal preserves state, RNG, title and readiness: " + screen)
+		_check(randi() == expected_global, "legacy refusal consumes no global RNG: " + preparation)
+		if preparation == "none":
+			app.start_button.pressed.emit()
+			_check(is_instance_valid(app.stitched_run_panel) and app.stitched_run_session == null
+				and app.stitched_run_draft.size() == 4 and app.run_rng == null and app.deck == null,
+				"ordinary New Run still opens the four-pick Stitched chooser after refused previews")
+			_check(not app.stitched_run_buttons.is_empty(), "Stitched chooser mounts Set out")
+			if not app.stitched_run_buttons.is_empty():
+				app.stitched_run_buttons[0].pressed.emit()
+				_check(app.stitched_run_session != null and app.stitched_run_session.heroes.size() == 4
+					and app.stitched_run_session.is_consistent() and app.run_map == null and app.deck == null,
+					"real Set out starts a consistent four-doll Stitched run")
+		app.free()
 	for screen in BOOT.SCREENS:
 		var replay: Array = []
 		for repeat in range(2):
@@ -58,17 +105,24 @@ func _run() -> void:
 			root.add_child(app)
 			await process_frame
 			boot.preview_ready = false
-			_check(boot.screen_from_query("?other=value&screen=" + screen) == screen, "exact query accepted: " + screen)
+			var public_screen: bool = screen in BOOT.PUBLIC_SCREENS
+			var parsed: String = boot.screen_from_query("?other=value&screen=" + screen)
+			_check(parsed == (screen if public_screen else ""), "query uses public allowlist: " + screen)
+			if public_screen:
+				_check(boot.screen_from_query("?scr%65en=" + screen.uri_encode()) == screen, "decoded exact public query accepted: " + screen)
 			var frames := Engine.get_process_frames()
 			seed(114115)
 			expected_global = randi()
 			seed(114115)
-			_check(await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen), "preview succeeds: " + screen)
+			if not public_screen:
+				LEGACY_ENTRY.prepare(app)
+			_check(await boot.enter_preview(app, parsed if public_screen else screen), "preview succeeds: " + screen)
 			_check(boot.preview_ready and Engine.get_process_frames() >= frames + 2, "ready follows two frames: " + screen)
 			_check(boot._expected_view(app, screen), "matching mounted live view: " + screen)
 			_check(randi() == expected_global, "preview preserves global RNG: " + screen)
 			if screen == "title":
 				_check(app.run_map == null and app.run_rng == null and app.run_deck.is_empty(), "title remains unstarted")
+				_check(app.start_button.is_visible_in_tree() and app.start_button.has_focus(), "public title keeps keyboard New Run focus")
 			elif screen == "base":
 				_check(app.run_map == null and app.run_rng == null and app.run_deck.is_empty()
 					and app.run_heroes.is_empty() and app.session_gold == 0 and app.run_scraps == 0,

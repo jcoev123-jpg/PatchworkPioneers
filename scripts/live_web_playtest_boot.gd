@@ -2,6 +2,7 @@ extends Node
 ## Opt-in exported-web fixtures. Ordinary startup never allocates a run or RNG.
 
 const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results", "stitched_battle"]
+const PUBLIC_SCREENS := ["title", "base", "stitched_battle"]
 const GOLD := 100
 const SCRAPS := 10
 var preview_ready := false
@@ -32,12 +33,16 @@ func _ready() -> void:
 func screen_from_query(query: Variant) -> String:
 	if not query is String:
 		return ""
+	# Godot's URI decoder truncates at NUL; never let a suffixed value become
+	# an exact public screen (or a malformed key become a screen key).
+	if "%00" in query:
+		return ""
 	var found: Array[String] = []
 	for field in query.trim_prefix("?").split("&"):
 		var pair: PackedStringArray = field.split("=", true, 1)
 		if pair[0].uri_decode() == "screen":
 			found.append(pair[1].uri_decode() if pair.size() == 2 else "")
-	return found[0] if found.size() == 1 and found[0] in SCREENS else ""
+	return found[0] if found.size() == 1 and found[0] in PUBLIC_SCREENS else ""
 
 
 ## Uses the same mounted controls/services as normal play; also runs without JS.
@@ -45,6 +50,10 @@ func enter_preview(app, screen: String) -> bool:
 	if screen not in SCREENS or _busy or not is_instance_valid(app) \
 		or not app.is_node_ready() or app.run_map != null or app.deck != null \
 		or not _visible(app.title_view):
+		return false
+	# Only explicit test wiring may open retained card fixtures. Reject before
+	# changing readiness, seed, wallet, picker, or any run state.
+	if screen not in PUBLIC_SCREENS and not _legacy_preview_enabled(app):
 		return false
 	_busy = true
 	preview_ready = false
@@ -120,6 +129,14 @@ func enter_preview(app, screen: String) -> bool:
 	return true
 
 
+func _legacy_preview_enabled(app) -> bool:
+	return is_instance_valid(app.start_button) and is_instance_valid(app.route_button) \
+		and app.start_button.pressed.is_connected(app.start_run_requested.emit) \
+		and not app.start_button.pressed.is_connected(Callable(app, "_open_stitched_run_picker")) \
+		and _visible(app.route_button) and not app.route_button.disabled \
+		and app.route_button.focus_mode == Control.FOCUS_ALL
+
+
 func _visible(view) -> bool:
 	return is_instance_valid(view) and view.is_inside_tree() and view.is_visible_in_tree()
 
@@ -155,7 +172,7 @@ func _expected_view(app, screen: String) -> bool:
 	return false
 
 
-## Undo only this opt-in screen. Ordinary card-start remains pristine on the same app.
+## Undo only this opt-in screen. Ordinary Stitched start remains pristine on the same app.
 func exit_stitched_preview(app) -> void:
 	if stitched_view == null or not is_instance_valid(stitched_view):
 		return
