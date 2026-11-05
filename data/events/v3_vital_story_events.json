@@ -1247,6 +1247,46 @@
         { "id": "haul_heel_blocks", "text": "Haul the swinging heel blocks (lose 5 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
         { "id": "leave", "text": "Let the boots climb without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ironlace_coffin_lift",
+      "title": "The Ironlace Coffin Lift",
+      "description": "A plump black-plaid bellhop turns a brass winch beside a coffin-shaped cloth lift; a bone button glows on its swinging counterweight.",
+      "choices": [
+        { "id": "brace_lift_rope", "text": "Spend 2 scraps to brace the lift's heart rope (heal 6 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 6, "max_hp": 1 } },
+        { "id": "carry_coffin_counterweight", "text": "Carry the heavy counterweight (lose 5 HP; gain 22 gold)", "outcome": { "gold": 22, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the coffin lift descend without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_copper_wren_thimble_organ",
+      "title": "The Wren's Thimble Organ",
+      "description": "A round soot-blue wren doll plays an organ made of giant copper thimbles; red threads tremble in the candlelit pipes.",
+      "choices": [
+        { "id": "buy_warm_organ_lining", "text": "Pay 17 gold for warm organ lining (heal 8 HP)", "outcome": { "gold": -17, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "pluck_organ_wires", "text": "Pluck the sharp organ wires (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the thimble pipes humming softly", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_owl_tear_scales",
+      "title": "The Owl's Tear Scales",
+      "description": "A round plum-velvet owl holds two brass pans, balancing a glass tear against a stitched bone button beneath a single amber lamp.",
+      "choices": [
+        { "id": "buy_second_seam", "text": "Pay 21 gold for 3 lasting max HP", "outcome": { "gold": -21, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "redeem_glass_tear", "text": "Give up 2 max HP for the glass tear's 26 gold", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the owl's scales hang level", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_amber_mole_stitch_periscope",
+      "title": "The Stitch Periscope",
+      "description": "A squat moss-felt mole peers through a towering brass periscope stitched to its coat; one golden lens lights the dark roadside.",
+      "choices": [
+        { "id": "patch_scope_seam", "text": "Pay 12 gold and 1 scrap to pad the lens seam (heal 5 HP; gain 1 max HP)", "outcome": { "gold": -12, "scraps": -1, "hp": 5, "max_hp": 1 } },
+        { "id": "haul_scope_mirror", "text": "Haul the sharp mirror free (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the periscope watching the empty road", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
