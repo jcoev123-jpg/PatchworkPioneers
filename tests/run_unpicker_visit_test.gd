@@ -26,6 +26,7 @@ func _initialize() -> void:
     _test_stitched_leave_and_refusals()
     _test_stitched_invalid_open_and_detachment()
     _test_stitched_quote_actionability()
+    _test_stitched_unpick_spare()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -749,3 +750,292 @@ func _test_stitched_quote_actionability() -> void:
             "invalid visit quotes nothing and names no heroes")
     _check(local_rng.state == local_before and randi() == global_next,
             "quote, calm and Leave draw no local/global RNG")
+
+
+# ------------------------------------------------------- Stitched spare unpicking
+
+const ARMS_ID := "warden_arms_shield_catch"
+const LEGS_ID := "warden_legs_rim_toss"
+const E_FRAYS := [70, 20, 200, 0]
+
+
+func _e_spares() -> Array:
+    return [
+        {"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false},
+        {"id": LEGS_ID, "slot": "legs", "tier": 2, "torn": true},
+    ]
+
+
+func _e_open(satchel: Variant, scraps: Variant = 1, scrap_yield: Variant = 2,
+        gold: Variant = 100, frays: Array = E_FRAYS) -> RunUnpickerVisit:
+    return RunUnpickerVisit.open_stitched(NODE, _s_heroes(frays), gold, 75, satchel, scraps, scrap_yield)
+
+
+func _e_unpick(visit: RunUnpickerVisit, index: Variant, snapshot: Dictionary) -> Dictionary:
+    return visit.unpick_spare(index, snapshot["visit_id"], snapshot["node_id"], snapshot)
+
+
+## One refused action of any kind: nothing in the visit, either balance or the
+## satchel may change, and the visit stays exactly as open as it was.
+func _e_reject(visit: RunUnpickerVisit, action: String, arg: Variant, visit_id: Variant,
+        node_id: Variant, snapshot: Variant, label: String) -> void:
+    var before := visit.read_state()
+    var used := visit.is_consumed()
+    var result: Dictionary
+    if action == "unpick":
+        result = visit.unpick_spare(arg, visit_id, node_id, snapshot)
+    elif action == "calm":
+        result = visit.calm_hero(arg, visit_id, node_id, snapshot)
+    else:
+        result = visit.leave(visit_id, node_id, snapshot)
+    _check(result.get("ok", true) == false, label + ": rejected")
+    _check(visit.read_state() == before and visit.is_consumed() == used,
+            label + ": whole visit state identical")
+    for key in ["heroes", "gold", "satchel", "scraps", "scrap_yield", "receipt"]:
+        _check(result.get(key) == before.get(key), label + ": unchanged returned " + key)
+    _check(result.get("action") == "" and result.get("charged_gold") == 0
+            and result.get("credited_scraps", 0) == 0, label + ": no phantom action or credit")
+
+
+func _test_stitched_unpick_spare() -> void:
+    var spares := _e_spares()
+    var original := _e_spares()
+    var heroes := _s_heroes(E_FRAYS)
+    var visit := RunUnpickerVisit.open_stitched(NODE, heroes, 100, 75, spares, 1, 2)
+    _check(visit.is_valid() and not visit.is_consumed(), "expanded visit opens with two spares")
+    var source := visit.read_state()
+    var quote := visit.quote()
+    _check(quote["ok"] and quote["choices"] == ["calm_hero", "unpick_spare", "leave"]
+            and quote["spare_indices"] == [0, 1] and quote["scrap_yield"] == 2
+            and quote["scraps"] == 1 and quote["price"] == 75
+            and quote["visit_id"] == source["visit_id"] and quote["node_id"] == NODE
+            and quote["spares"][0] == {"index": 0, "id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false}
+            and quote["spares"][1] == {"index": 1, "id": LEGS_ID, "slot": "legs", "tier": 2, "torn": true},
+            "quote exposes calm, unpick, Leave, selectable spares and the quoted yield")
+    _check(source["satchel"] == original and source["scraps"] == 1 and source["scrap_yield"] == 2
+            and source["gold"] == 100 and not source["receipt"].is_empty(),
+            "read_state carries satchel, scraps, yield and receipt")
+    var plain := _s_open(_s_heroes(E_FRAYS), 100, 75)
+    _check(plain.read_state()["receipt"] != source["receipt"],
+            "receipt binds the satchel, scraps and yield")
+    var other_yield := _e_open(_e_spares(), 1, 3)
+    _check(other_yield.read_state()["receipt"] != source["receipt"],
+            "receipt binds the quoted yield")
+    spares[0]["tier"] = 3
+    spares.clear()
+    heroes[0]["fray"] = 1
+    var returned_spares: Array = quote["spares"]
+    returned_spares.clear()
+    var returned_state := visit.read_state()
+    returned_state["satchel"].clear()
+    _check(visit.read_state() == source and visit.quote()["spare_indices"] == [0, 1],
+            "caller, quote and read_state copies are detached")
+
+    seed(5521)
+    var next_draw := randi()
+    seed(5521)
+    var local_rng := RandomNumberGenerator.new()
+    local_rng.seed = 5521
+    var local_before := local_rng.state
+    var paid := _e_unpick(visit, 0, source)
+    _check(paid["ok"] == true and paid["action"] == "unpick_spare"
+            and paid["removed_part"] == original[0] and paid["credited_scraps"] == 2
+            and paid["scraps_before"] == 1 and paid["scraps_after"] == 3 and paid["scraps"] == 3,
+            "index 0 unpicked into exactly the quoted 2 scraps (1 -> 3)")
+    _check(paid["satchel"] == [original[1]] and paid["gold"] == 100 and paid["charged_gold"] == 0
+            and paid["heroes"] == source["heroes"] and paid["node_id"] == NODE
+            and paid["price"] == 75 and paid["scrap_yield"] == 2,
+            "one spare gone; gold, every hero field and the quote unchanged")
+    _check(paid["visit_id"] == source["visit_id"] and paid["source_snapshot"] == source
+            and paid["source_receipt"] == source["receipt"] and paid["receipt"] != paid["source_receipt"]
+            and paid["consumed"] == true and visit.is_consumed(),
+            "source proof and new state returned; visit consumed once")
+    _check(visit.quote()["choices"] == [] and not visit.quote()["ok"]
+            and visit.quote()["spare_indices"] == [], "consumed visit offers nothing")
+    _e_reject(visit, "unpick", 1, source["visit_id"], NODE, source, "replayed unpick")
+    _e_reject(visit, "unpick", 0, source["visit_id"], NODE, source, "replayed unpick index 0")
+    _e_reject(visit, "calm", "warden", source["visit_id"], NODE, source, "calm after unpick")
+    _e_reject(visit, "leave", null, source["visit_id"], NODE, source, "Leave after unpick")
+    _check(randi() == next_draw and local_rng.state == local_before,
+            "unpick and refusals draw no local/global RNG")
+    paid["satchel"].clear()
+    paid["removed_part"]["tier"] = 3
+    paid["source_snapshot"]["satchel"].clear()
+    _check(visit.read_state()["satchel"] == [original[1]] and source["satchel"] == original
+            and heroes.size() == 4, "returned receipt is detached from the service and source")
+
+    # Index selects an instance even when IDs repeat; the survivor is the other one.
+    var dup := [{"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false},
+            {"id": ARMS_ID, "slot": "arms", "tier": 3, "torn": true}]
+    var dup_visit := _e_open(dup, 0, 2)
+    var dup_source := dup_visit.read_state()
+    var dup_paid := _e_unpick(dup_visit, 1, dup_source)
+    _check(dup_paid["ok"] and dup_paid["removed_part"]["tier"] == 3
+            and dup_paid["satchel"] == [dup[0]] and dup_paid["scraps"] == 2,
+            "index 1 removes only that duplicate-ID instance")
+    var second := _e_open(_e_spares())
+    var second_source := second.read_state()
+    _check(second_source["visit_id"] != source["visit_id"]
+            and second_source["receipt"] == source["receipt"],
+            "same inputs: shared receipt but instance-bound visit ID")
+    _e_reject(second, "unpick", 0, source["visit_id"], NODE, source, "other visit's intent")
+    var second_paid := _e_unpick(second, 1, second_source)
+    _check(second_paid["ok"] and second_paid["satchel"] == [original[0]] and second_paid["scraps"] == 3,
+            "index 1 leaves the first spare")
+
+    # Rejection table: every refusal changes nothing and Leave stays possible.
+    var guarded := _e_open(_e_spares())
+    var snap := guarded.read_state()
+    var vid: String = snap["visit_id"]
+    _e_reject(guarded, "unpick", 0, "wrong-visit", NODE, snap, "swapped visit ID")
+    _e_reject(guarded, "unpick", 0, vid, "other-node", snap, "wrong node")
+    _e_reject(guarded, "unpick", 0, vid, NODE, {}, "omitted snapshot")
+    _e_reject(guarded, "unpick", 0, vid, NODE, null, "null snapshot")
+    _e_reject(guarded, "unpick", 0, null, NODE, snap, "null visit ID")
+    for field in ["scrap_yield", "scraps", "gold", "satchel", "receipt", "heroes"]:
+        var forged := snap.duplicate(true)
+        if field == "satchel":
+            forged["satchel"][0]["tier"] = 3
+        elif field == "receipt":
+            forged["receipt"] = "forged"
+        elif field == "heroes":
+            forged["heroes"][0]["fray"] += 1
+        else:
+            forged[field] += 1
+        _e_reject(guarded, "unpick", 0, vid, NODE, forged, "forged " + field)
+    var swapped := snap.duplicate(true)
+    swapped["satchel"][0]["id"] = LEGS_ID
+    _e_reject(guarded, "unpick", 0, vid, NODE, swapped, "changed spare ID")
+    for index in [-1, 2, 5, "0", 0.0, null, true, [0]]:
+        _e_reject(guarded, "unpick", index, vid, NODE, snap, "invalid index " + str(index))
+    _e_reject(guarded, "leave", null, vid, "other-node", snap, "Leave wrong node")
+    var closed := _e_unpick(guarded, 1, snap)
+    _check(closed["ok"] and closed["satchel"] == [original[0]] and closed["scraps"] == 3,
+            "valid unpick succeeds after every refusal")
+
+    # Invalid or partial opt-in inputs fail closed with no actionable choices.
+    var bad_cases: Array = []
+    var seven: Array = []
+    for i in 7:
+        seven.append({"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false})
+    bad_cases.append(["seven spares", seven, 1, 2])
+    bad_cases.append(["dictionary satchel", {}, 1, 2])
+    bad_cases.append(["string satchel", "none", 1, 2])
+    for scraps_bad in [-1, "1", 1.0, true]:
+        bad_cases.append(["bad scraps " + str(scraps_bad), _e_spares(), scraps_bad, 2])
+    for yield_bad in [0, -3, "2", 2.0, false]:
+        bad_cases.append(["bad yield " + str(yield_bad), _e_spares(), 1, yield_bad])
+    bad_cases.append(["scrap overflow", _e_spares(), 9223372036854775807, 1])
+    bad_cases.append(["partial: satchel only", _e_spares(), null, null])
+    bad_cases.append(["partial: satchel and scraps", _e_spares(), 1, null])
+    bad_cases.append(["partial: scraps and yield", null, 1, 2])
+    bad_cases.append(["partial: yield only", null, null, 2])
+    bad_cases.append(["partial: scraps only", null, 1, null])
+    var bad_spare_edits: Array = [
+        ["spare missing torn", func(s): s.erase("torn")],
+        ["spare extra key", func(s): s["extra"] = 1],
+        ["slot outside four", func(s): s["slot"] = "hand"],
+        ["slot not a string", func(s): s["slot"] = 2],
+        ["tier zero", func(s): s["tier"] = 0],
+        ["tier four", func(s): s["tier"] = 4],
+        ["tier string", func(s): s["tier"] = "1"],
+        ["tier float", func(s): s["tier"] = 1.0],
+        ["torn string", func(s): s["torn"] = "no"],
+        ["torn null", func(s): s["torn"] = null],
+        ["empty id", func(s): s["id"] = ""],
+        ["padded id", func(s): s["id"] = " " + ARMS_ID],
+        ["numeric id", func(s): s["id"] = 5],
+    ]
+    for edit in bad_spare_edits:
+        var spare_list := _e_spares()
+        edit[1].call(spare_list[0])
+        bad_cases.append([edit[0], spare_list, 1, 2])
+    var not_dict := _e_spares()
+    not_dict[1] = "arms"
+    bad_cases.append(["spare not a dictionary", not_dict, 1, 2])
+    for entry in bad_cases:
+        var bad := _e_open(entry[1], entry[2], entry[3])
+        var bad_state := bad.read_state()
+        _check(not bad.is_valid() and not bad.is_consumed() and not bad.quote()["ok"]
+                and bad.quote()["choices"] == [], "invalid expanded open fails closed: " + entry[0])
+        _check(bad.unpick_spare(0, bad_state["visit_id"], NODE, bad_state).get("ok") == false
+                and bad.calm_hero("warden", bad_state["visit_id"], NODE, bad_state).get("ok") == false
+                and bad.leave(bad_state["visit_id"], NODE, bad_state).get("ok") == false
+                and not bad.is_consumed(), "invalid expanded open cannot act: " + entry[0])
+    var full := []
+    for i in 6:
+        full.append({"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false})
+    _check(_e_open(full).is_valid() and _e_open([]).is_valid()
+            and _e_open(_e_spares(), 0, 1).is_valid(), "six spares, empty satchel and zero scraps are legal")
+
+    # Empty satchel: no unpick choice, unpick refused, Leave still works.
+    var empty := _e_open([])
+    var empty_source := empty.read_state()
+    var empty_quote := empty.quote()
+    _check(empty_quote["choices"] == ["calm_hero", "leave"] and empty_quote["spare_indices"] == []
+            and empty_quote["spares"] == [], "empty satchel offers no unpick choice")
+    _e_reject(empty, "unpick", 0, empty_source["visit_id"], NODE, empty_source, "unpick empty satchel")
+    var empty_left := empty.leave(empty_source["visit_id"], NODE, empty_source)
+    _check(empty_left["ok"] and empty_left["scraps"] == 1 and empty_left["satchel"] == [],
+            "Leave works after refusal on an empty satchel")
+
+    # Calm in the expanded visit changes only gold and one hero's FRAY by 50.
+    var calm_visit := _e_open(_e_spares())
+    var calm_source := calm_visit.read_state()
+    var calmed := _s_calm(calm_visit, "warden", calm_source)
+    var expected_heroes := _s_heroes(E_FRAYS)
+    expected_heroes[0]["fray"] = 20
+    _check(calmed["ok"] and calmed["action"] == "calm_hero" and calmed["gold"] == 25
+            and calmed["charged_gold"] == 75 and calmed["heroes"] == expected_heroes
+            and calmed["satchel"] == original and calmed["scraps"] == 1
+            and calmed["scrap_yield"] == 2 and calmed["credited_scraps"] == 0
+            and calmed["removed_part"] == {} and calm_visit.is_consumed(),
+            "expanded calm charges only gold and calms only that hero; satchel and scraps unchanged")
+    _e_reject(calm_visit, "unpick", 0, calm_source["visit_id"], NODE, calm_source, "unpick after calm")
+    _e_reject(calm_visit, "calm", "seamstress", calm_source["visit_id"], NODE, calm_source,
+            "second calm")
+    # A party that cannot afford the gold quote can still unpick: no gold needed.
+    var poor := _e_open(_e_spares(), 1, 2, 10)
+    _check(poor.quote()["choices"] == ["unpick_spare", "leave"], "unaffordable calm leaves unpick and Leave")
+    var poor_source := poor.read_state()
+    _e_reject(poor, "calm", "warden", poor_source["visit_id"], NODE, poor_source, "unaffordable calm")
+    var poor_paid := _e_unpick(poor, 0, poor_source)
+    _check(poor_paid["ok"] and poor_paid["gold"] == 10 and poor_paid["scraps"] == 3,
+            "unpick spends no gold")
+
+    # Leave changes neither balance, hero nor spare.
+    var leave_visit := _e_open(_e_spares())
+    var leave_source := leave_visit.read_state()
+    var left := leave_visit.leave(leave_source["visit_id"], NODE, leave_source)
+    _check(left["ok"] and left["action"] == "leave" and left["gold"] == 100 and left["scraps"] == 1
+            and left["satchel"] == original and left["heroes"] == _s_heroes(E_FRAYS)
+            and left["charged_gold"] == 0 and left["credited_scraps"] == 0 and leave_visit.is_consumed(),
+            "Leave spends nothing and keeps gold, scraps, spares and heroes")
+    _e_reject(leave_visit, "unpick", 0, leave_source["visit_id"], NODE, leave_source, "unpick after Leave")
+    _e_reject(leave_visit, "calm", "warden", leave_source["visit_id"], NODE, leave_source,
+            "calm after Leave")
+
+    # The original four-argument visit and the legacy constructor stay identical.
+    var four := _s_open(_s_heroes(E_FRAYS), 100, 75)
+    var four_state := four.read_state()
+    _check(four.quote()["choices"] == ["calm_hero", "leave"] and not four_state.has("satchel")
+            and not four_state.has("scraps") and not four.quote().has("spares"),
+            "four-argument Stitched visit keeps its exact quote and state shape")
+    var four_null := RunUnpickerVisit.open_stitched(NODE, _s_heroes(E_FRAYS), 100, 75, null, null, null)
+    _check(four_null.is_valid() and four_null.read_state()["receipt"] == four_state["receipt"],
+            "all-omitted optional inputs match the four-argument visit")
+    var four_result := _e_unpick(four, 0, four_state)
+    _check(four_result.get("ok") == false and four.read_state() == four_state and not four.is_consumed(),
+            "four-argument visit refuses unpick and stays open")
+    var legacy := _make_visit(_deck(), 175)
+    var legacy_state := legacy.read_state()
+    var legacy_result := legacy.unpick_spare(0, legacy_state["visit_id"], NODE, legacy_state)
+    _check(legacy_result.get("ok") == false and legacy.read_state() == legacy_state
+            and legacy.quote()["choices"] == ["remove_card", "leave"] and not legacy.is_consumed(),
+            "legacy constructor refuses unpick and keeps card removal")
+    var cross := _e_open(_e_spares())
+    var cross_source := cross.read_state()
+    _e_reject(cross, "calm", "warden", "wrong", NODE, cross_source, "calm with wrong ID")
+    var removal := cross.remove_card(STRIKE, cross_source["visit_id"], NODE, cross_source)
+    _check(removal.get("ok") == false and cross.read_state() == cross_source,
+            "no cross-mode card removal on an expanded visit")
