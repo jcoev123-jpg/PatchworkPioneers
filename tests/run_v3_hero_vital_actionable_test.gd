@@ -16,6 +16,7 @@ func _initialize() -> void:
 	_test_ac4_gate_enter_preview_and_claim_handoff()
 	_test_ac5_rivet_choir_full_health_paid_heal_suppression()
 	_test_four_hero_stitched_party()
+	_test_direct_bound_visit_full_health_paid_heal_suppression()
 	_finish()
 
 
@@ -926,4 +927,168 @@ func _offers_actionable_for_hero(
 				break
 	ids.sort()
 	return ids
+
+
+func _find_choice(preview: Dictionary, choice_id: String) -> Dictionary:
+	for c in preview.get("choices", []):
+		if c is Dictionary and (c as Dictionary).get("choice_id") == choice_id:
+			return c
+	return {}
+
+
+## Direct-bound visit full-health paid heal suppression, capping, alternatives and claim-time revalidation.
+func _test_direct_bound_visit_full_health_paid_heal_suppression() -> void:
+	var surgeon_id := "v3_seamstress_crimson_quilt_surgeon"
+	var party_3 := ["warden", "seamstress", "tinker"]
+	var gate_3 := RunV3HeroVitalEventGate.new(party_3)
+	_check(gate_3.is_valid(), "direct-visit: 3-hero gate is valid")
+
+	# AC1: Seamstress at 30/30 HP, gold >= 12, scraps >= 0
+	# stitch_wound is visible as unaffordable with unchanged projected state.
+	# Direct choose_with_vitals("stitch_wound") refuses without spending gold or claiming.
+	var snap_30 := {"gold": 12, "scraps": 0, "hero": {"id": "seamstress", "hp": 30, "max_hp": 30}}
+	var snap_30_copy := snap_30.duplicate(true)
+	var visit_30 := gate_3.enter(surgeon_id, snap_30)
+	_check(visit_30 != null and visit_30.is_valid() and not visit_30.is_claimed(),
+		"AC1: valid unclaimed visit opened for 30/30 Seamstress")
+	if visit_30 == null:
+		return
+
+	var prev_30 := visit_30.preview_vital_choices()
+	_check(prev_30.get("ok") == true and prev_30.get("event_id") == surgeon_id,
+		"AC1: preview_vital_choices succeeds on direct visit")
+	var stitch_30 := _find_choice(prev_30, "stitch_wound")
+	_check(stitch_30.get("choice_id") == "stitch_wound", "AC1: stitch_wound row present")
+	_check(stitch_30.get("gold_delta") == -12 and stitch_30.get("scraps_delta") == 0
+		and stitch_30.get("hp_delta") == 8 and stitch_30.get("max_hp_delta") == 0,
+		"AC1: stitch_wound authored deltas preserved")
+	_check(stitch_30.get("affordable") == false,
+		"AC1: stitch_wound is visible as unaffordable/unavailable at 30/30 HP")
+	_check(stitch_30.get("state") == snap_30,
+		"AC1: stitch_wound reports unchanged projected snapshot")
+
+	# Alias preview_choices returns identical result
+	var prev_alias := visit_30.preview_choices()
+	_check(prev_alias == prev_30, "AC1: preview_choices alias matches preview_vital_choices")
+
+	# Direct choose_with_vitals refuses without spending gold or claiming the visit
+	var refuse_receipt := visit_30.choose_with_vitals("stitch_wound")
+	_check(refuse_receipt == {"ok": false, "event_id": "", "choice_id": "", "state": snap_30},
+		"AC1: direct choose_with_vitals refuses stitch_wound at full HP without taking money")
+	_check(visit_30.is_valid() and not visit_30.is_claimed(),
+		"AC1: rejected full-health paid heal leaves visit available for a later valid choice")
+	_check(snap_30 == snap_30_copy,
+		"AC1: caller snapshot preserved on refusal")
+
+	# AC2: With same authentic visit and Seamstress at 25/30 HP, gold 12:
+	# stitch_wound previews and commits exactly once for Seamstress 30/30 HP and gold 0.
+	var snap_25 := {"gold": 12, "scraps": 0, "hero": {"id": "seamstress", "hp": 25, "max_hp": 30}}
+	var snap_25_copy := snap_25.duplicate(true)
+	var visit_25 := gate_3.enter(surgeon_id, snap_25)
+	_check(visit_25 != null and visit_25.is_valid(), "AC2: 25/30 Seamstress enters visit")
+	if visit_25 != null:
+		var prev_25 := visit_25.preview_vital_choices()
+		var stitch_25 := _find_choice(prev_25, "stitch_wound")
+		_check(stitch_25.get("affordable") == true, "AC2: stitch_wound is affordable at 25/30 HP")
+		var expected_25_state := {"gold": 0, "scraps": 0, "hero": {"id": "seamstress", "hp": 30, "max_hp": 30}}
+		_check(stitch_25.get("state") == expected_25_state, "AC2: stitch_wound previews gold 0 and 30/30 HP")
+		var commit_25 := visit_25.choose_with_vitals("stitch_wound")
+		_check(commit_25 == {"ok": true, "event_id": surgeon_id, "choice_id": "stitch_wound", "state": expected_25_state},
+			"AC2: stitch_wound commits exactly once for Seamstress 30/30 HP and gold 0")
+		_check(visit_25.is_claimed() and not visit_25.is_valid(), "AC2: visit is claimed and invalidated")
+		_check(visit_25.choose_with_vitals("leave").get("ok") == false, "AC2: second claim rejected on claimed visit")
+		_check(snap_25 == snap_25_copy, "AC2: caller snapshot untouched")
+
+	# AC2: At 27/30 HP, healing still caps at 30 without changing max HP.
+	var snap_27 := {"gold": 12, "scraps": 0, "hero": {"id": "seamstress", "hp": 27, "max_hp": 30}}
+	var visit_27 := gate_3.enter(surgeon_id, snap_27)
+	_check(visit_27 != null and visit_27.is_valid(), "AC2: 27/30 Seamstress enters visit")
+	if visit_27 != null:
+		var prev_27 := visit_27.preview_vital_choices()
+		var stitch_27 := _find_choice(prev_27, "stitch_wound")
+		_check(stitch_27.get("affordable") == true, "AC2: stitch_wound affordable at 27/30 HP")
+		var expected_27_state := {"gold": 0, "scraps": 0, "hero": {"id": "seamstress", "hp": 30, "max_hp": 30}}
+		_check(stitch_27.get("state") == expected_27_state,
+			"AC2: 27/30 HP (+8) caps at 30 without changing max HP")
+		var commit_27 := visit_27.choose_with_vitals("stitch_wound")
+		_check(commit_27 == {"ok": true, "event_id": surgeon_id, "choice_id": "stitch_wound", "state": expected_27_state},
+			"AC2: 27/30 HP commits with capped 30 HP and max HP 30")
+
+	# AC2: Authenticated non-healing trade (donate_red_thread: +18 gold, -4 HP) and leave remain available at full HP.
+	var donate_30 := _find_choice(prev_30, "donate_red_thread")
+	_check(donate_30.get("affordable") == true, "AC2: donate_red_thread remains available when HP is full")
+	var expected_donate_state := {"gold": 30, "scraps": 0, "hero": {"id": "seamstress", "hp": 26, "max_hp": 30}}
+	_check(donate_30.get("state") == expected_donate_state,
+		"AC2: donate_red_thread projects gold 30 and HP 26/30")
+
+	var leave_30 := _find_choice(prev_30, "leave")
+	_check(leave_30.get("affordable") == true and leave_30.get("state") == snap_30,
+		"AC2: leave remains available when HP is full")
+
+	# Prove that after stitch_wound refusal on visit_30, player can choose leave instead
+	var leave_receipt := visit_30.choose_with_vitals("leave")
+	_check(leave_receipt == {"ok": true, "event_id": surgeon_id, "choice_id": "leave", "state": snap_30},
+		"AC2: leave commits successfully after refused paid heal")
+	_check(visit_30.is_claimed() and not visit_30.is_valid(),
+		"AC2: visit_30 latched by leave choice")
+
+	# Fresh full-health visit commits donate_red_thread
+	var visit_donate := gate_3.enter(surgeon_id, snap_30)
+	var donate_receipt := visit_donate.choose_with_vitals("donate_red_thread")
+	_check(donate_receipt == {"ok": true, "event_id": surgeon_id, "choice_id": "donate_red_thread", "state": expected_donate_state},
+		"AC2: donate_red_thread commits successfully at full HP")
+
+	# AC2: Warden reinforce_shield_seam (-2 scraps, +3 max HP) is not mistakenly suppressed
+	var warden_id := "v3_warden_buckle_heart_ward"
+	var warden_snap := {"gold": 10, "scraps": 2, "hero": {"id": "warden", "hp": 30, "max_hp": 30}}
+	var warden_visit := gate_3.enter(warden_id, warden_snap)
+	_check(warden_visit != null and warden_visit.is_valid(), "AC2: Warden visit opened")
+	if warden_visit != null:
+		var warden_prev := warden_visit.preview_vital_choices()
+		var reinforce := _find_choice(warden_prev, "reinforce_shield_seam")
+		_check(reinforce.get("affordable") == true,
+			"AC2: Warden reinforce_shield_seam (-2 scraps, +3 max HP) is not mistakenly suppressed")
+		var expected_warden_state := {"gold": 10, "scraps": 0, "hero": {"id": "warden", "hp": 30, "max_hp": 33}}
+		_check(reinforce.get("state") == expected_warden_state,
+			"AC2: reinforce_shield_seam projects scraps 0 and max HP 33")
+		var warden_commit := warden_visit.choose_with_vitals("reinforce_shield_seam")
+		_check(warden_commit == {"ok": true, "event_id": warden_id, "choice_id": "reinforce_shield_seam", "state": expected_warden_state},
+			"AC2: reinforce_shield_seam commits successfully at full HP")
+
+	# AC3: Snapshot revalidation at claim time:
+	# A visit opened at 25/30 HP refuses a full-health (30/30 HP) override passed to choose_with_vitals.
+	var visit_override := gate_3.enter(surgeon_id, snap_25)
+	_check(visit_override != null and visit_override.is_valid(), "AC3: visit_override opened at 25 HP")
+	if visit_override != null:
+		var override_snap := {"gold": 12, "scraps": 0, "hero": {"id": "seamstress", "hp": 30, "max_hp": 30}}
+		var override_refuse := visit_override.choose_with_vitals("stitch_wound", override_snap)
+		_check(override_refuse == {"ok": false, "event_id": "", "choice_id": "", "state": override_snap},
+			"AC3: claim-time full-health override is refused without spending or claiming")
+		_check(visit_override.is_valid() and not visit_override.is_claimed(),
+			"AC3: failed paid-heal override leaves visit latch intact")
+		# Valid wounded snapshot or leave can still claim the visit
+		var recovery_receipt := visit_override.choose_with_vitals("leave")
+		_check(recovery_receipt.get("ok") == true and visit_override.is_claimed(),
+			"AC3: visit recovers and claims with leave after failed override")
+
+	# AC3: 4-hero Stitched party direct entry regression
+	var party_4 := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var gate_4 := RunV3HeroVitalEventGate.new(party_4)
+	_check(gate_4.is_valid(), "AC3: 4-hero Stitched gate is valid")
+	var visit_4 := gate_4.enter(surgeon_id, snap_30)
+	_check(visit_4 != null and visit_4.is_valid() and not visit_4.is_claimed(),
+		"AC3: 4-hero direct visit opened for 30/30 Seamstress")
+	if visit_4 != null:
+		var prev_4 := visit_4.preview_vital_choices()
+		var stitch_4 := _find_choice(prev_4, "stitch_wound")
+		_check(stitch_4.get("affordable") == false and stitch_4.get("state") == snap_30,
+			"AC3: 4-hero visit suppresses stitch_wound at 30/30 HP in preview")
+		var refuse_4 := visit_4.choose_with_vitals("stitch_wound")
+		_check(refuse_4 == {"ok": false, "event_id": "", "choice_id": "", "state": snap_30},
+			"AC3: 4-hero visit refuses stitch_wound at 30/30 HP")
+		_check(visit_4.is_valid() and not visit_4.is_claimed(),
+			"AC3: 4-hero visit remains unclaimed after refusal")
+		var leave_4 := visit_4.choose_with_vitals("leave")
+		_check(leave_4.get("ok") == true and visit_4.is_claimed(),
+			"AC3: 4-hero visit claims leave after refusal")
 

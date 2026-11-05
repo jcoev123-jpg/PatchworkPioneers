@@ -205,6 +205,8 @@ func open_visit(event_target: Variant, snapshot: Variant = null) -> RunV3HeroVit
 
 ## Read-only vitality choice preview delegating to RunEventChoice.
 ## Uses the bound snapshot when snapshot is null or omitted.
+## Pure paid HP heals where projected HP equals opening HP are marked unaffordable
+## with an unchanged projected snapshot.
 func preview_vital_choices(snapshot: Variant = null) -> Dictionary:
 	var denied := {"ok": false, "event_id": "", "choices": []}
 	if not _bound_visit or not is_valid():
@@ -219,7 +221,27 @@ func preview_vital_choices(snapshot: Variant = null) -> Dictionary:
 		if parsed["snapshot"]["hero"]["id"] != _event.get("required_hero", ""):
 			return denied
 		target_snapshot = parsed["snapshot"]
-	return _choice_service.preview_vital_choices(target_snapshot)
+	var preview: Dictionary = _choice_service.preview_vital_choices(target_snapshot)
+	if not preview.get("ok", false):
+		return denied
+	var raw_choices: Variant = preview.get("choices")
+	if not (raw_choices is Array):
+		return denied
+	var opening_hp: int = target_snapshot["hero"]["hp"]
+	var result_choices: Array = []
+	for raw_entry: Variant in (raw_choices as Array):
+		if not (raw_entry is Dictionary):
+			continue
+		var entry: Dictionary = (raw_entry as Dictionary).duplicate(true)
+		if _is_wasted_paid_heal(entry, opening_hp):
+			entry["affordable"] = false
+			entry["state"] = target_snapshot.duplicate(true)
+		result_choices.append(entry)
+	return {
+		"ok": true,
+		"event_id": String(preview.get("event_id", "")),
+		"choices": result_choices,
+	}
 
 
 ## Alias for preview_vital_choices().
@@ -255,6 +277,17 @@ func choose_with_vitals(choice_id: Variant, snapshot: Variant = null) -> Diction
 			offered = true
 			break
 	if not offered:
+		return _vital_rejection(target_snapshot)
+
+	var preview: Dictionary = preview_vital_choices(target_snapshot)
+	if not preview.get("ok", false):
+		return _vital_rejection(target_snapshot)
+	var choice_entry: Dictionary = {}
+	for c: Variant in preview.get("choices", []):
+		if c is Dictionary and (c as Dictionary).get("choice_id") == target_id:
+			choice_entry = c
+			break
+	if choice_entry.is_empty() or not choice_entry.get("affordable", false):
 		return _vital_rejection(target_snapshot)
 
 	var settlement: Dictionary = _choice_service.choose_with_vitals(target_id, target_snapshot)
@@ -371,6 +404,38 @@ func select_party_actionable_event(
 ## Row eligibility helper delegating to RunV3VitalEventRotation.is_choice_actionable.
 static func is_choice_actionable(entry: Dictionary, opening_hp: int) -> bool:
 	return RunV3VitalEventRotation.is_choice_actionable(entry, opening_hp)
+
+
+## Detects an affordable pure paid HP-heal choice with hp_delta > 0, max_hp_delta == 0,
+## gold_delta <= 0, scraps_delta <= 0, at least one strictly negative payment,
+## and projected HP equal to opening HP.
+static func _is_wasted_paid_heal(entry: Dictionary, opening_hp: int) -> bool:
+	if not entry.get("affordable", false):
+		return false
+	var hp_delta: Variant = entry.get("hp_delta")
+	var max_hp_delta: Variant = entry.get("max_hp_delta")
+	var gold_delta: Variant = entry.get("gold_delta")
+	var scraps_delta: Variant = entry.get("scraps_delta")
+	if typeof(hp_delta) != TYPE_INT or typeof(max_hp_delta) != TYPE_INT or typeof(gold_delta) != TYPE_INT or typeof(scraps_delta) != TYPE_INT:
+		return false
+	var projected_state: Variant = entry.get("state")
+	if not (projected_state is Dictionary):
+		return false
+	var hero_dict: Variant = (projected_state as Dictionary).get("hero")
+	if not (hero_dict is Dictionary):
+		return false
+	var projected_hp: Variant = (hero_dict as Dictionary).get("hp")
+	if typeof(projected_hp) != TYPE_INT:
+		return false
+
+	return (
+		hp_delta > 0
+		and max_hp_delta == 0
+		and gold_delta <= 0
+		and scraps_delta <= 0
+		and (gold_delta < 0 or scraps_delta < 0)
+		and (projected_hp as int) == opening_hp
+	)
 
 
 func _bind_visit(event_target: Variant, snapshot: Variant) -> bool:

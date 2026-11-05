@@ -87,6 +87,16 @@ func _down(service: RunTornMending, node_id: String, index: int) -> Dictionary:
 	return result
 
 
+func _wound(service: RunTornMending, node_id: String, index: int, damage: int = 10) -> Dictionary:
+	var before: Array = service.read_state()["heroes"]
+	var ended: Array = before.duplicate(true)
+	ended[index]["hp"] = maxi(1, int(ended[index]["hp"]) - damage)
+	ended[index]["block"] = 0
+	var result: Dictionary = service.observe_battle_end(node_id, before, ended)
+	_check(result.get("ok") == true, node_id + " legal wounding is witnessed")
+	return result
+
+
 func _reject(service: RunTornMending, label: String, action: Callable,
 		expected_result: Dictionary = {}) -> void:
 	var prior: Dictionary = service.read_state()
@@ -592,16 +602,19 @@ func _test_hero_gated_vitals() -> void:
 			var service := _named_gated_service(_later_slot_party(required))
 			if not service.is_valid():
 				continue
-			var old := service.read_state()
 			var target := -1
-			var ids: Array = []
-			for index in range(old.heroes.size()):
-				ids.append(old.heroes[index].id)
-				if old.heroes[index].id == required:
+			var initial_heroes: Array = service.read_state()["heroes"]
+			for index in range(initial_heroes.size()):
+				if initial_heroes[index].id == required:
 					target = index
 			_check(target > 0, record.id + " required living hero behind another living actor")
 			if target < 0:
 				continue
+			_wound(service, "battle_before_" + record.id + "_" + choice.id, target, 10)
+			var old := service.read_state()
+			var ids: Array = []
+			for index in range(old.heroes.size()):
+				ids.append(old.heroes[index].id)
 			var snapshot := _vital_opening(old, required)
 			var snapshot_copy := snapshot.duplicate(true)
 			var gate := RunV3HeroVitalEventGate.new(ids)
@@ -666,6 +679,7 @@ func _test_hero_gated_vitals() -> void:
 	if seam_record.is_empty():
 		return
 	var service := _named_gated_service(["warden", "seamstress", "tinker"])
+	_wound(service, "battle_before_negative", 1, 10)
 	var old := service.read_state()
 	var opening := _vital_opening(old, "seamstress")
 	var visit := RunV3HeroVitalEventGate.new(["warden", "seamstress", "tinker"]).enter(seam_record, opening)
