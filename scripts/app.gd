@@ -739,6 +739,8 @@ var _stitched_postvictory_stop_available := false
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
 var _stitched_party_picks: Array = STITCHED_DEFAULT_PICKS.duplicate()
 var _stitched_party_receipt: Dictionary = StitchedPartyAdmission.admit(STITCHED_DEFAULT_PICKS)
+# Only an authenticated four-survivor Sewing Circle Leave makes these picks permanent.
+var _stitched_party_locked := false
 var _stitched_party_draft: Array = []
 var _stitched_party_checkboxes: Dictionary = {}
 var _stitched_party_hint: Label
@@ -763,6 +765,10 @@ const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
 ## The title Roadblock's authored trophy order. Each foe is only paid when this exact
 ## encounter actually killed it; the ids and parts come from the canonical S5 roster.
 const STITCHED_ROADBLOCK_FOES := ["scissor_crab", "fray_scavenger", "moth_scribe"]
+## Authenticated four-survivor Roadblock victories unlock this normal field.
+## IDs are resolved afresh from the validated S5 catalog, never preview kits.
+const STITCHED_FOLLOWON_ROADBLOCK_FOES := ["ragling", "scissor_crab", "moth_scribe"]
+var _stitched_roadblock_win_count := 0
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1502,15 +1508,28 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 		owner_catalogs[owner_id] = loaded
 	var foes: Array = []
 	var seen_foes: Dictionary = {}
-	for entry in preview["foes"]:
-		if not entry is Dictionary:
-			return {}
-		var foe_id := str(entry.get("id", ""))
-		if foe_id.is_empty() or seen_foes.has(foe_id):
+	var foe_ids: Array = []
+	var allowed_ids: Array = STITCHED_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count > 0:
+		foe_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES.duplicate()
+		allowed_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count == 0:
+		# The first real Fight retains the authored preview rank order.
+		for entry in preview["foes"]:
+			if not entry is Dictionary or typeof(entry.get("id")) != TYPE_STRING:
+				return {}
+			foe_ids.append(entry["id"])
+	if foe_ids.size() != 3:
+		return {}
+	for foe_id in foe_ids:
+		if typeof(foe_id) != TYPE_STRING or foe_id.is_empty() \
+				or seen_foes.has(foe_id) or not foe_id in allowed_ids:
 			return {}
 		seen_foes[foe_id] = true
 		var foe := StitchedEnemyCatalog.foe_for(roster, foe_id)
-		if foe.is_empty():
+		if foe.is_empty() or bool(foe.get("is_boss", true)) \
+				or foe.get("turns_per_round") != 1 \
+				or StitchedEnemyCatalog.trophy_for(roster, foe_id).is_empty():
 			return {}
 		foes.append(foe)
 	var generic: Array = []
@@ -1737,6 +1756,11 @@ func _stitched_picker_sync() -> void:
 	var buttons := panel.get_choice_buttons()
 	if buttons.size() != 3:
 		return
+	if _stitched_party_locked:
+		# Read-only survivors still have the original usable Fight and Leave tickets.
+		buttons[0].disabled = StitchedPartyAdmission.admit(_stitched_party_picks) != _stitched_party_receipt
+		buttons[0].focus_mode = Control.FOCUS_ALL if not buttons[0].disabled else Control.FOCUS_NONE
+		return
 	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
 	var checked := _stitched_picker_checkbox_ids()
 	var matched := checked.size() == _stitched_party_draft.size()
@@ -1763,7 +1787,7 @@ func _stitched_picker_sync() -> void:
 
 func _stitched_picker_changed(pressed: bool, id: String, source: WeakRef,
 		gate: RunV3FightEventGate, generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation) \
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation) \
 			or not id in StitchedPartyAdmission.HERO_IDS:
 		return
 	var box: CheckBox = _stitched_party_checkboxes.get(id)
@@ -1780,7 +1804,7 @@ func _stitched_picker_changed(pressed: bool, id: String, source: WeakRef,
 
 func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 		generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation):
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation):
 		return
 	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
 	var checked := _stitched_picker_checkbox_ids()
@@ -1829,7 +1853,7 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 
 func _stitched_picker_cancel(source: WeakRef, gate: RunV3FightEventGate,
 		generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation):
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation):
 		return
 	_stitched_party_draft = _stitched_party_picks.duplicate()
 	for id in StitchedPartyAdmission.HERO_IDS:
@@ -1858,6 +1882,18 @@ func _mount_stitched_party_picker(panel: LiveEventChoicePanel,
 	heading.theme_type_variation = "PatchHeading"
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	container.add_child(heading)
+	if _stitched_party_locked:
+		heading.text = "EARNED SURVIVORS  ·  Party locked"
+		for hero in party["heroes"]:
+			var survivor := Label.new()
+			survivor.text = "%d  %s" % [hero["rank"], hero["name"]]
+			survivor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			survivor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			container.add_child(survivor)
+		panel.event_content.add_child(container)
+		panel.event_content.move_child(container, panel.choices_container.get_index())
+		_stitched_picker_sync()
+		return true
 	var grid := GridContainer.new()
 	grid.name = "StitchedHeroChoices"
 	grid.columns = 4
@@ -2027,12 +2063,14 @@ func _commit_stitched_roadblock(receipt: Dictionary, source: WeakRef, gate: RunV
 	if choice_id == gate.get_fight_choice_id():
 		var party := StitchedPartyAdmission.admit(_stitched_party_picks)
 		if party.get("ok") != true or party != _stitched_party_receipt \
-				or _stitched_party_draft != _stitched_party_picks \
-				or _stitched_picker_checkbox_ids().size() != 4:
+				or _stitched_party_draft != _stitched_party_picks:
 			return
-		for id in _stitched_party_picks:
-			if not id in _stitched_picker_checkbox_ids():
+		if not _stitched_party_locked:
+			if _stitched_picker_checkbox_ids().size() != 4:
 				return
+			for id in _stitched_party_picks:
+				if not id in _stitched_picker_checkbox_ids():
+					return
 	# A new, once-only gate settles the same choice and immutable title wallet.
 	# A cloned/forged/stale panel receipt cannot promote a visit into combat.
 	var admitted: Dictionary = gate.choose_with_wallet(choice_id, STITCHED_TITLE_WALLET.duplicate(true))
@@ -2128,18 +2166,26 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	var heroes: Array = []
 	var defeated: Array = []
 	var roster: Dictionary = {}
+	var expected_foes: Array = STITCHED_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count > 0:
+		expected_foes = STITCHED_FOLLOWON_ROADBLOCK_FOES
 	if won:
 		roster = StitchedEnemyCatalog.load_catalog()
 		won = bool(roster.get("ok", false))
 		if won:
+			var seen_foes: Dictionary = {}
 			for foe in battle.get_foes():
 				var foe_id := str(foe.get("id", ""))
-				if not foe_id in STITCHED_ROADBLOCK_FOES:
+				# Dead foes may share their final compressed rank as the
+				# formation closes; identity, death and original seat count
+				# are the non-vacuous victory evidence.
+				if not foe_id in expected_foes or seen_foes.has(foe_id):
 					won = false
 					continue
+				seen_foes[foe_id] = true
 				won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
 				defeated.append(foe_id)
-			won = won and defeated.size() == STITCHED_ROADBLOCK_FOES.size()
+			won = won and defeated.size() == expected_foes.size()
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
@@ -2184,6 +2230,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 				# Rank carry and FRAY share the same genuine four-survivor proof.
 				if settled_fray.size() == 4:
 					_stitched_fray_carry = settled_fray
+					# Only the real, settled four-survivor victory advances the
+					# next title Fight. No Leave, loss or forged receipt can.
+					_stitched_roadblock_win_count += 1
 		# This exact, once-only stage is the sole HP source. A lost hero is not
 		# carried; failed, retreated and replayed exits leave the ledger untouched.
 		for id in _stitched_party_picks:
@@ -2219,7 +2268,12 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		stitched_preview_scraps += 1
 		# Only this encounter's own dead foes pay, and each pays through the one
 		# canonical S5 trophy the enemy roster resolved for it.
-		for foe_id in STITCHED_ROADBLOCK_FOES:
+		# Keep the Scissor Crab claw's established first-slot priority,
+		# even when Ragling takes the next field's first combat rank.
+		var trophy_order: Array = expected_foes.duplicate()
+		trophy_order.erase("scissor_crab")
+		trophy_order.push_front("scissor_crab")
+		for foe_id in trophy_order:
 			if not foe_id in defeated:
 				continue
 			if stitched_preview_satchel.size() >= RunStitchedSewingSwap.SATCHEL_CAP:
@@ -2231,10 +2285,10 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			stitched_preview_satchel.append({
 				"id": trophy, "slot": str(part["slot"]), "tier": 1, "torn": false,
 			})
-		_open_stitched_sewing(heroes)
+		_open_stitched_sewing(heroes, expected_foes)
 
 
-func _open_stitched_sewing(heroes: Array) -> bool:
+func _open_stitched_sewing(heroes: Array, slain_foes: Array) -> bool:
 	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
@@ -2249,7 +2303,7 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	var roster := StitchedEnemyCatalog.load_catalog()
 	if not bool(roster.get("ok", false)):
 		return false
-	for foe_id in STITCHED_ROADBLOCK_FOES:
+	for foe_id in slain_foes:
 		var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
 		if trophy.is_empty() or not catalog["by_id"].has(trophy):
 			return false
@@ -2715,6 +2769,21 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 		if not carried.is_empty():
 			next_overrides[hero_id] = carried
 	_stitched_gear_overrides = next_overrides
+	# No attempted or stale Leave may lock the roster. Require the four
+	# authenticated survivors' exact IDs and earned carry before sealing it.
+	var earned_ids: Array = []
+	for hero in swap_final["heroes"]:
+		if hero is Dictionary and typeof(hero.get("id")) == TYPE_STRING:
+			earned_ids.append(hero["id"])
+	if earned_ids.size() == 4 and _stitched_party_picks.size() == 4 \
+			and _stitched_rank_carry.size() == 4 and _stitched_hp_carry.size() == 4:
+		var same_party := true
+		for id in _stitched_party_picks:
+			if earned_ids.count(id) != 1 or not _stitched_rank_carry.has(id) \
+					or not _stitched_hp_carry.has(id):
+				same_party = false
+		if same_party:
+			_stitched_party_locked = true
 	_close_stitched_sewing()
 	# The Peddler is earned only by this exact terminal victory + Circle Leave.
 	_offer_stitched_peddler(swap_final["heroes"])

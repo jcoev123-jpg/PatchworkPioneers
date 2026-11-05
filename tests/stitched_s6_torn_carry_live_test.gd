@@ -556,60 +556,69 @@ func _trace() -> Dictionary:
 		and app._stitched_bleed_carry == before_bleed \
 		and app._stitched_fray_carry == before_fray and _no_wallet(app),
 		"stale and null battle exit callbacks cannot replace survivor HP")
-	# A draft or cancelled party edit retains HP. Only a genuine Confirm drops
-	# the deselected survivor, without touching the other three IDs.
+	# After genuine four-survivor Circle Leave, wounded earned IDs are sealed.
+	# Even a direct stale/forged checkbox/Confirm/Cancel callback cannot recruit
+	# a fresh spare or erase HP, FRAY, ranks, gear, Bleed or stop entitlement.
 	app.stitched_fight_button.pressed.emit()
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
-	_check(picker != null and app._stitched_party_checkboxes.has(hero_id),
-		"authenticated Roadblock mounts a fresh party picker after abandoned Fight")
-	if picker != null and app._stitched_party_checkboxes.has(hero_id):
+	_check(picker != null and app._stitched_party_locked
+		and app._stitched_party_checkboxes.is_empty()
+		and not is_instance_valid(app._stitched_party_confirm_button)
+		and not is_instance_valid(app._stitched_party_cancel_button),
+		"earned four survivors mount a read-only Roadblock, not a free replacement picker")
+	if picker != null:
 		var spare_id := ""
 		for id in StitchedPartyAdmission.HERO_IDS:
 			if not id in app._stitched_party_picks:
 				spare_id = str(id)
 				break
-		_check(not spare_id.is_empty(), "legal alternative hero exists for reselection")
-		var original: Dictionary = app._stitched_hp_carry.duplicate(true)
+		_check(not spare_id.is_empty(), "four survivors have a distinct spare that must stay excluded")
+		var original_picks: Array = app._stitched_party_picks.duplicate()
+		var original_receipt: Dictionary = app._stitched_party_receipt.duplicate(true)
+		var original_hp: Dictionary = app._stitched_hp_carry.duplicate(true)
 		var original_fray: Dictionary = app._stitched_fray_carry.duplicate(true)
-		app._stitched_party_checkboxes[hero_id].button_pressed = false
-		_check(app._stitched_hp_carry == original and app._stitched_rank_carry == before_ranks \
-			and app._stitched_fray_carry == original_fray \
-			and app._stitched_party_picks.has(hero_id),
-			"unfinished three-hero draft cannot clear stored HP")
-		app._stitched_party_cancel_button.pressed.emit()
-		_check(app._stitched_hp_carry == original and app._stitched_rank_carry == before_ranks \
-			and app._stitched_fray_carry == original_fray \
-			and app._stitched_party_picks.has(hero_id),
-			"Cancel restores confirmed party without modifying any HP")
-		if not spare_id.is_empty():
-			app._stitched_party_checkboxes[hero_id].button_pressed = false
-			app._stitched_party_checkboxes[spare_id].button_pressed = true
-			app._stitched_party_confirm_button.pressed.emit()
-			var remaining := true
-			for id in original:
-				if str(id) != hero_id:
-					remaining = remaining and app._stitched_hp_carry.get(id) == original[id]
-			var canonical_ranks: Dictionary = _rank_map(app._stitched_party_receipt.get("heroes", []))
-			var fresh_fray: Dictionary = {}
-			for entry in app._stitched_floor_config().get("heroes", []):
-				fresh_fray[str(entry["id"])] = {"fray": entry.get("fray", 0), "resolve": entry.get("resolve", "")}
-			var remaining_fray := true
-			for old_id in original_fray:
-				if str(old_id) != hero_id:
-					remaining_fray = remaining_fray and app._stitched_fray_carry.get(old_id) == original_fray[old_id]
-			_check(not app._stitched_hp_carry.has(hero_id) and remaining \
-				and not app._stitched_fray_carry.has(hero_id) and remaining_fray \
-				and fresh_fray.get(spare_id) == {"fray": 0, "resolve": ""} \
-				and app._stitched_rank_carry.is_empty() \
-				and _rank_map(app._stitched_floor_config().get("heroes", [])) == canonical_ranks \
-				and canonical_ranks.size() == 4 and app._stitched_party_picks.has(spare_id) \
-				and not app._stitched_party_picks.has(hero_id),
-				"confirmed reselection clears only deselected ID's wounded HP")
-		picker.get_choice_buttons()[2].pressed.emit()
+		var original_bleed: Dictionary = app._stitched_bleed_carry.duplicate(true)
+		var original_gear: Dictionary = app._stitched_gear_overrides.duplicate(true)
+		var original_stop: bool = app._stitched_postvictory_stop_available
+		var original_candle: int = app.stitched_roadblock_candle
+		var source: WeakRef = weakref(picker)
+		var gate: RunV3FightEventGate = app.stitched_event_gate
+		var generation: int = picker._generation
+		seed(61545)
+		var rng_expected: int = randi()
+		seed(61545)
+		app._stitched_picker_changed(false, hero_id, source, gate, generation)
+		app._stitched_picker_changed(true, spare_id, source, gate, generation)
+		app._stitched_picker_confirm(source, gate, generation)
+		app._stitched_picker_cancel(source, gate, generation)
+		_check(app._stitched_party_picks == original_picks
+			and app._stitched_party_draft == original_picks
+			and app._stitched_party_receipt == original_receipt
+			and not gate.is_claimed() and app._stitched_hp_carry == original_hp
+			and app._stitched_fray_carry == original_fray
+			and app._stitched_bleed_carry == original_bleed
+			and app._stitched_rank_carry == before_ranks
+			and app._stitched_gear_overrides == original_gear
+			and app.stitched_roadblock_candle == original_candle
+			and app._stitched_postvictory_stop_available == original_stop
+			and randi() == rng_expected and _no_wallet(app),
+			"locked Circle survivor cannot be exchanged by forged current picker callbacks")
+		var leave_button: Button = picker.get_choice_buttons()[2]
+		_check(not leave_button.disabled and leave_button.focus_mode != Control.FOCUS_NONE,
+			"original read-only Roadblock Leave remains keyboard focusable")
+		leave_button.pressed.emit()
 		await process_frame
-		_check(app.stitched_event_panel == null and _no_wallet(app),
-			"reselection Roadblock Leave spends no run resources")
+		_check(app.stitched_event_panel == null and app._stitched_party_locked
+			and app._stitched_party_picks == original_picks
+			and app._stitched_hp_carry == original_hp
+			and app._stitched_fray_carry == original_fray
+			and app._stitched_bleed_carry == original_bleed
+			and app._stitched_rank_carry == before_ranks
+			and app._stitched_gear_overrides == original_gear
+			and app._stitched_postvictory_stop_available == original_stop
+			and _no_wallet(app),
+			"real read-only Leave closes only the offer and preserves earned survivors")
 	app.free()
 	await process_frame
 	return trace

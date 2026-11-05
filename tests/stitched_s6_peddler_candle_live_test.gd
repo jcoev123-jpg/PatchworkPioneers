@@ -72,7 +72,9 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 				if legal.is_empty():
 					continue
 				var weight := -20
-				if str(legal[0]["side"]) == "foe":
+				if str(skill.get("kind", "")) == "heal" and bool(skill.get("multi", false)):
+					weight = 100
+				elif str(legal[0]["side"]) == "foe":
 					weight = int(skill.get("dmg", [0, 0])[1]) * 4 \
 						+ int(skill.get("dmg", [0, 0])[0])
 				elif str(skill.get("kind", "")) == "heal":
