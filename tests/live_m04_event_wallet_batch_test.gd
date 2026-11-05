@@ -211,6 +211,14 @@ func _fixtures() -> Dictionary:
 	# v3_patchwork_lighthouse and loose_seam. The real fixture rechecks
 	# each draw; these do not bypass its fail-closed or replay coverage.
 	hints.append_array([568709, 585763, 631278, 1685060])
+	# Genuine map/toll/rotation witnesses after the three Stitched midnight
+	# object-trade roadside tales (Mourning Keykeeper, Measureworm Survey,
+	# Velvet Mousetrap Stage) joined the sorted generic pool. The first six
+	# were reported by the bounded fallback on the failing run; ragpicker_cart
+	# and v3_threadmill_sewing_circle were re-derived beyond the bounded
+	# 499999-seed fallback. The real oracle below revalidates every candidate.
+	hints.append_array([21930, 88828, 105002, 316664, 427273, 454374,
+		510679, 531335])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():

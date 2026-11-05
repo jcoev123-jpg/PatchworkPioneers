@@ -54,6 +54,14 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			result["target_side"] = str(targets[0]["side"])
 			result["affected_ranks"] = ranks
 			result["multi"] = bool(ability["multi"])
+			# Authored, unmodified numbers only; never a hit/damage forecast.
+			# Deep copies prevent callers from editing the live ability catalog.
+			var authored_damage: Array = ability.get("dmg", [0, 0])
+			var authored_effects: Dictionary = ability.get("effects", {})
+			result["base_acc"] = int(ability.get("acc", 0))
+			result["base_damage"] = authored_damage.duplicate(true)
+			result["base_crit"] = int(ability.get("crit", 0))
+			result["base_effects"] = authored_effects.duplicate(true)
 			result["pass"] = false
 			return result
 	return result
