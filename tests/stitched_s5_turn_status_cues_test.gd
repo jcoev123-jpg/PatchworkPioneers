@@ -460,6 +460,226 @@ func _run() -> void:
 		"cleared foe focus tooltip has no stale bleed text")
 	_check(ribbon.get_child_count() == 9, "retains exact nine reusable tags")
 
+	# Genuine public hero/foe Blind and Tangled cues, tooltip fidelity, mounted layout and precedence.
+	var blind_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var blind_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	var tangled_hero: Dictionary = battle.get_heroes()[1].duplicate(true)
+	var tangled_foe: Dictionary = battle.get_foes()[1].duplicate(true)
+	var dual_hero: Dictionary = battle.get_heroes()[2].duplicate(true)
+	var neutral_hero: Dictionary = battle.get_heroes()[3].duplicate(true)
+
+	blind_hero["statuses"] = {"blind": 1}
+	blind_foe["statuses"] = {"blind": 1}
+	tangled_hero["statuses"] = {"tangled": 2}
+	tangled_foe["statuses"] = {"tangled": 2}
+	dual_hero["statuses"] = {"blind": 1, "tangled": 2}
+	neutral_hero["statuses"] = {}
+
+	# AC1: Pure cue assertions for blind and tangled on hero and foe
+	_check(StitchedTurnStatusCues.cue(blind_hero) == "BLND", "AC1: hero with blind 1 yields BLND cue")
+	_check(StitchedTurnStatusCues.cue(blind_foe) == "BLND", "AC1: foe with blind 1 yields BLND cue")
+	_check(StitchedTurnStatusCues.cue(tangled_hero) == "TNGL", "AC1: hero with tangled 2 yields TNGL cue")
+	_check(StitchedTurnStatusCues.cue(tangled_foe) == "TNGL", "AC1: foe with tangled 2 yields TNGL cue")
+	_check(StitchedTurnStatusCues.cue(dual_hero) == "BLND", "AC1/AC2: coexisting blind and tangled returns BLND cue")
+
+	# AC2: Tooltip disclosure lines and accurate explanation
+	var tip_b_hero := StitchedTurnStatusCues.tooltip(blind_hero)
+	var tip_b_foe := StitchedTurnStatusCues.tooltip(blind_foe)
+	var tip_t_hero := StitchedTurnStatusCues.tooltip(tangled_hero)
+	var tip_t_foe := StitchedTurnStatusCues.tooltip(tangled_foe)
+	var tip_dual := StitchedTurnStatusCues.tooltip(dual_hero)
+
+	_check(tip_b_hero.contains("Statuses: blind 1") and
+		tip_b_hero.contains("Blind: next attack misses; consumed on that attack."),
+		"AC2: blind hero tooltip contains sorted status and documented blind explanation")
+	_check(tip_b_foe.contains("Statuses: blind 1") and
+		tip_b_foe.contains("Blind: next attack misses; consumed on that attack."),
+		"AC2: blind foe tooltip contains sorted status and documented blind explanation")
+	_check(tip_t_hero.contains("Statuses: tangled 2") and
+		tip_t_hero.contains("Tangled: cannot move or be moved by its side; attacks gain +2 damage."),
+		"AC2: tangled hero tooltip contains sorted status and documented tangled explanation")
+	_check(tip_t_foe.contains("Statuses: tangled 2") and
+		tip_t_foe.contains("Tangled: cannot move or be moved by its side; attacks gain +2 damage."),
+		"AC2: tangled foe tooltip contains sorted status and documented tangled explanation")
+
+	var dual_lines := StitchedTurnStatusCues.tooltip_lines(dual_hero)
+	var dual_status_idx := dual_lines.find("Statuses: blind 1, tangled 2")
+	var dual_blind_idx := dual_lines.find("Blind: next attack misses; consumed on that attack.")
+	var dual_tangled_idx := dual_lines.find("Tangled: cannot move or be moved by its side; attacks gain +2 damage.")
+	_check(dual_status_idx >= 0 and dual_blind_idx > dual_status_idx and dual_tangled_idx > dual_blind_idx,
+		"AC2: coexisting blind and tangled preserves both effects in sorted tooltip disclosure")
+
+	# Mounted ribbon display with blind, tangled, coexisting, and neutral units
+	var status_entries := [blind_hero, tangled_foe, dual_hero, neutral_hero]
+	ribbon.show_order(status_entries, str(neutral_hero["id"]), false)
+	_check(ribbon.displayed_entries.size() == 4, "mounted ribbon shows 4 status test entries")
+	_check(ribbon.marker_at(0).text == "BLND" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC1: nonacting blind hero marker is muted BLND")
+	_check(ribbon.marker_at(1).text == "TNGL" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC1: nonacting tangled foe marker is muted TNGL")
+	_check(ribbon.marker_at(2).text == "BLND" and
+		ribbon.marker_at(2).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC1/AC2: coexisting unit marker is muted BLND")
+	_check(ribbon.marker_at(3).text == "NOW" and
+		ribbon.marker_at(3).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC3: active neutral hero marker is amber NOW")
+
+	# AC1 font-fitting measurement on mounted marker cells at 1280x720
+	for idx in range(3):
+		var tag := ribbon.tag_at(idx)
+		var marker := ribbon.marker_at(idx)
+		var font := marker.get_theme_font("font")
+		var font_size := marker.get_theme_font_size("font_size")
+		var text := marker.text
+		_check(marker.size.x >= 34.0 and
+			font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= marker.size.x - 2.0 and
+			font.get_height(font_size) <= marker.size.y,
+			"AC1: slot %d marker %s fits its measured gothic cell without clipping" % [idx, text])
+
+	# AC2: Equal tooltip on hover and keyboard focus without added nodes
+	for idx in range(3):
+		var tag := ribbon.tag_at(idx)
+		var expected_tip := StitchedTurnStatusCues.tooltip(status_entries[idx])
+		_check(tag.tooltip_text == expected_tip, "slot %d tag tooltip_text matches pure tooltip" % idx)
+		tag.grab_focus()
+		await process_frame
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == expected_tip,
+			"AC2: slot %d keyboard focus exposes exact complete tooltip" % idx)
+		tag.release_focus()
+		_check(not tag.get_node("FocusTooltip").visible, "slot %d blur hides tooltip" % idx)
+		tag.mouse_entered.emit()
+		_check(tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == expected_tip,
+			"AC2: slot %d mouse hover exposes identical tooltip to keyboard focus" % idx)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible, "slot %d mouse exit hides tooltip" % idx)
+	_check(ribbon.get_child_count() == 9, "AC2: ribbon node count preserved at 9 without added nodes")
+
+	# AC3: Active NOW transitions, actor changes, is_over, and status clearing
+	# Blind hero becomes actor
+	ribbon.show_order(status_entries, str(blind_hero["id"]), false)
+	_check(ribbon.marker_at(0).text == "NOW" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC3: active blind hero marker becomes amber NOW")
+	_check(ribbon.marker_at(1).text == "TNGL" and ribbon.marker_at(2).text == "BLND",
+		"AC3: nonacting markers remain TNGL and BLND")
+
+	# Tangled foe becomes actor
+	ribbon.show_order(status_entries, str(tangled_foe["id"]), false)
+	_check(ribbon.marker_at(0).text == "BLND" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC3: previous actor returns to BLND on turn transition")
+	_check(ribbon.marker_at(1).text == "NOW" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC3: tangled foe becomes amber NOW")
+
+	# Battle is_over returns true: NOW is superseded and accurate cues return
+	ribbon.show_order(status_entries, str(tangled_foe["id"]), true)
+	_check(ribbon.marker_at(0).text == "BLND" and ribbon.marker_at(1).text == "TNGL" and
+		ribbon.marker_at(2).text == "BLND" and ribbon.marker_at(3).text == "HERO",
+		"AC3: is_over=true clears NOW and returns truthful status markers")
+
+	# Removal of Blind and Tangled returns generic HERO/FOE and clears tooltips
+	var cleared_b := blind_hero.duplicate(true)
+	var cleared_t := tangled_foe.duplicate(true)
+	var cleared_d := dual_hero.duplicate(true)
+	cleared_b["statuses"] = {}
+	cleared_t["statuses"] = {}
+	cleared_d["statuses"] = {}
+	ribbon.show_order([cleared_b, cleared_t, cleared_d], "", false)
+	_check(ribbon.marker_at(0).text == "HERO" and ribbon.marker_at(1).text == "FOE" and
+		ribbon.marker_at(2).text == "HERO",
+		"AC3: status clearing returns generic HERO/FOE cues")
+	for idx in range(3):
+		var tag := ribbon.tag_at(idx)
+		_check(not tag.tooltip_text.contains("blind") and not tag.tooltip_text.contains("tangled") and
+			not tag.tooltip_text.contains("Blind:") and not tag.tooltip_text.contains("Tangled:"),
+			"AC3: slot %d tooltip contains no stale blind or tangled text after clearing" % idx)
+		_check(not tag.get_node("FocusTooltip/TooltipText").text.contains("blind") and
+			not tag.get_node("FocusTooltip/TooltipText").text.contains("tangled"),
+			"AC3: slot %d focus tooltip contains no stale text after clearing" % idx)
+
+	# AC3: Overlapping precedence checks:
+	# SEAM > STUN > TORN > hero resolve > hero FRAY >=100 > BLD > BLND > TNGL > MARK > HERO/FOE
+	for target_dict in [blind_hero.duplicate(true), tangled_hero.duplicate(true)]:
+		var st_name: String = "blind" if target_dict["statuses"].has("blind") else "tangled"
+		var over: Dictionary = target_dict.duplicate(true)
+		over["hanging"] = true
+		_check(StitchedTurnStatusCues.cue(over) == "SEAM", "AC3: SEAM overrides %s" % st_name)
+		over["hanging"] = false
+		over["statuses"]["stun"] = 1
+		_check(StitchedTurnStatusCues.cue(over) == "STUN", "AC3: STUN overrides %s" % st_name)
+		over["statuses"]["stun"] = 0
+		over["parts"]["head"]["torn"] = true
+		_check(StitchedTurnStatusCues.cue(over) == "TORN", "AC3: TORN overrides %s" % st_name)
+		over["parts"]["head"]["torn"] = false
+		over["resolve"] = "steadfast"
+		_check(StitchedTurnStatusCues.cue(over) == "STFD", "AC3: hero resolve overrides %s" % st_name)
+		over["resolve"] = ""
+		over["fray"] = 120
+		_check(StitchedTurnStatusCues.cue(over) == "FRAY", "AC3: hero fray >= 100 overrides %s" % st_name)
+		over["fray"] = 40
+		over["statuses"]["bleed"] = 2
+		_check(StitchedTurnStatusCues.cue(over) == "BLD", "AC3: BLD overrides %s" % st_name)
+
+	# BLND > TNGL > MARK
+	var blnd_tngl := blind_hero.duplicate(true)
+	blnd_tngl["statuses"] = {"blind": 1, "tangled": 1}
+	_check(StitchedTurnStatusCues.cue(blnd_tngl) == "BLND", "AC3: BLND overrides TNGL")
+
+	var blnd_mark := blind_hero.duplicate(true)
+	blnd_mark["statuses"] = {"blind": 1, "mark": 2}
+	_check(StitchedTurnStatusCues.cue(blnd_mark) == "BLND", "AC3: BLND overrides MARK")
+
+	var tngl_mark := tangled_hero.duplicate(true)
+	tngl_mark["statuses"] = {"tangled": 1, "mark": 2}
+	_check(StitchedTurnStatusCues.cue(tngl_mark) == "TNGL", "AC3: TNGL overrides MARK")
+
+	var mark_only := blind_hero.duplicate(true)
+	mark_only["statuses"] = {"mark": 2}
+	_check(StitchedTurnStatusCues.cue(mark_only) == "MARK", "AC3: MARK overrides HERO")
+
+	# Foe spoofing hero resolve or fray gets BLND / TNGL, never hero cues
+	var f_spoof_b := blind_foe.duplicate(true)
+	f_spoof_b["statuses"] = {"blind": 1}
+	f_spoof_b["resolve"] = "bitter"
+	f_spoof_b["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoof_b) == "BLND", "AC3: foe spoofing hero resolve/fray gets BLND")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_b).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_b).contains("FRAY:"),
+		"AC3: foe with blind does not disclose spoofed resolve or fray")
+
+	var f_spoof_t := tangled_foe.duplicate(true)
+	f_spoof_t["statuses"] = {"tangled": 2}
+	f_spoof_t["resolve"] = "bitter"
+	f_spoof_t["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoof_t) == "TNGL", "AC3: foe spoofing hero resolve/fray gets TNGL")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_t).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_t).contains("FRAY:"),
+		"AC3: foe with tangled does not disclose spoofed resolve or fray")
+
+	# AC4: Zero, negative, float, string, missing, malformed status values fail closed
+	for invalid_val in [0, -1, -3, 1.5, 2.0, "1", "blind", null, [], {}]:
+		var h_inv := blind_hero.duplicate(true)
+		var f_inv := blind_foe.duplicate(true)
+		h_inv["statuses"] = {"blind": invalid_val, "tangled": invalid_val}
+		f_inv["statuses"] = {"blind": invalid_val, "tangled": invalid_val}
+		_check(StitchedTurnStatusCues.cue(h_inv) == "HERO",
+			"AC4: invalid blind/tangled %s yields HERO fallback" % str(invalid_val))
+		_check(StitchedTurnStatusCues.cue(f_inv) == "FOE",
+			"AC4: invalid blind/tangled %s yields FOE fallback" % str(invalid_val))
+		var h_inv_tip := StitchedTurnStatusCues.tooltip(h_inv)
+		var f_inv_tip := StitchedTurnStatusCues.tooltip(f_inv)
+		_check(not h_inv_tip.contains("blind") and not h_inv_tip.contains("tangled") and
+			not h_inv_tip.contains("Blind:") and not h_inv_tip.contains("Tangled:"),
+			"AC4: invalid blind/tangled %s invents no hero condition" % str(invalid_val))
+		_check(not f_inv_tip.contains("blind") and not f_inv_tip.contains("tangled") and
+			not f_inv_tip.contains("Blind:") and not f_inv_tip.contains("Tangled:"),
+			"AC4: invalid blind/tangled %s invents no foe condition" % str(invalid_val))
+
 	for invalid_resolve in ["unknown", "STEADFAST", "Bitter", "panic", 99, null, ["steadfast"]]:
 		var invalid_hero: Dictionary = battle.get_heroes()[1].duplicate(true)
 		invalid_hero["fray"] = 45
@@ -478,7 +698,7 @@ func _run() -> void:
 	# Malformed optional fields may not masquerade as 0, a stun or torn equipment.
 	var sparse := {"id":"never_mapped_art","name":"Unknown Stitch","side":"hero","rank":4,
 		"hp":9,"max_hp":19,"speed":"bad","fray":"100","resolve":0,
-		"statuses":{"stun":"2","bleed":0,"mark":-1},"parts":{"head":{"torn":"true"}}}
+		"statuses":{"stun":"2","bleed":0,"mark":-1,"blind":0,"tangled":"bad"},"parts":{"head":{"torn":"true"}}}
 	_check(StitchedTurnStatusCues.cue(sparse) == "HERO" and
 		StitchedTurnStatusCues.torn_slots(sparse).is_empty() and
 		StitchedTurnStatusCues.tooltip(sparse).contains("HP: 9 / 19") and
@@ -486,7 +706,9 @@ func _run() -> void:
 		not StitchedTurnStatusCues.tooltip(sparse).contains("DODGE") and
 		not StitchedTurnStatusCues.tooltip(sparse).contains("FRAY") and
 		not StitchedTurnStatusCues.tooltip(sparse).contains("Statuses:") and
-		not StitchedTurnStatusCues.tooltip(sparse).contains("Resolve:"),
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Blind:") and
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Tangled:"),
 		"malformed/missing fields fail closed, without fabricated numeric stats or conditions")
 	_check(StitchedTurnStatusCues.cue({"id":"empty"}) == "" and
 		StitchedTurnStatusCues.tooltip({"id":"empty"}) == "empty",
