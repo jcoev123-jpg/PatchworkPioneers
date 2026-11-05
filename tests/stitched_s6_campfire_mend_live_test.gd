@@ -577,19 +577,24 @@ func _peddler_exclusive() -> void:
 		await process_frame
 		return
 	var before := _resources(app)
+	# The earned Peddler is its own node, so admission charges one eight-candle
+	# toll before any quoted purchase; only the candle ledger may differ here.
+	var expected := before.duplicate(true)
+	expected["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_peddler_button.pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_peddler_panel
 	_check(panel != null and app.stitched_peddler_visit != null \
+		and _resources(app) == expected \
 		and not app.stitched_campfire_button.visible and not app._open_stitched_campfire() \
 		and not app._stitched_postvictory_stop_available,
-		"Peddler selection immediately spends the same earned Campfire stop")
+		"Peddler selection spends the earned stop, debits one eight-candle toll and preserves the carry")
 	if panel != null:
 		var leave: Button = panel.find_child("PeddlerLeave", true, false)
 		_check(leave != null and not leave.disabled, "Peddler free Leave remains playable")
 		if leave != null:
 			leave.pressed.emit()
-		_check(_resources(app) == before and not app._open_stitched_campfire() \
+		_check(_resources(app) == expected and not app._open_stitched_campfire() \
 			and not app._open_stitched_peddler() and not app.stitched_campfire_button.visible \
 			and not app.stitched_peddler_button.visible,
 			"Peddler Leave cannot restore the spent Campfire option")

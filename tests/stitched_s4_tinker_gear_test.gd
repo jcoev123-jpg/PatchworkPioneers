@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_every_tier_in_real_combat()
 	_test_back_rank_shots()
+	_test_casing_ward_rank_four()
 	_test_overload_back_rank()
 	_test_heal_and_guard()
 	_test_mark_overload()
@@ -154,12 +155,46 @@ func _test_catalog() -> void:
 		"AC1: Overload uses native mark_damage rather than Combat Scrap")
 	_check(int(accepted["by_id"]["tinker_legs_spare_screws"]["ability"]["self_move"]) == 1,
 		"AC1: Spare Screws steps exactly one rank backward")
+	# AC1: Casing Ward's single self-buff works from every allied rank 1-4 at every stitch tier,
+	# while its numbers, pose and self-only targeting stay exactly as shipped.
+	var ward_part: Dictionary = accepted["by_id"]["tinker_torso_casing_ward"]
+	_check(str(ward_part["name"]) == "Casing Ward" and str(ward_part["slot"]) == "torso"
+		and str(ward_part["owner"]) == "tinker"
+		and str(ward_part["text"]) == "Fold metal casing around yourself; Thorns answer each landed blow.",
+		"AC1: Casing Ward stays Tinker's named torso part with its authored rules text")
+	var all_hero_ranks: Array = [1, 2, 3, 4]
+	for tier in [1, 2, 3]:
+		var tier_ward := StitchedParts.ability_at_tier(ward_part, tier)
+		var ward_launch := int(tier_ward["launch_mask"])
+		var ward_target := int(tier_ward["target_mask"])
+		_check(tier_ward["launch"] == all_hero_ranks and ward_launch == StitchedParts.rank_mask(all_hero_ranks),
+			"AC1: tier %d Casing Ward launches from hero ranks 1-4 with a derived mask" % tier)
+		_check(tier_ward["target"] == all_hero_ranks and ward_target == StitchedParts.rank_mask(all_hero_ranks),
+			"AC1: tier %d Casing Ward targets hero ranks 1-4 with a derived mask" % tier)
+		for rank in all_hero_ranks:
+			_check(StitchedParts.ranks_allowed(ward_launch, rank) and StitchedParts.ranks_allowed(ward_target, rank),
+				"AC1: tier %d Casing Ward allows rank %d launch and target" % [tier, rank])
+		_check(not StitchedParts.ranks_allowed(ward_launch, 0) and not StitchedParts.ranks_allowed(ward_target, 0)
+			and not StitchedParts.ranks_allowed(ward_launch, 5) and not StitchedParts.ranks_allowed(ward_target, 5),
+			"AC1: tier %d Casing Ward refuses unauthored ranks 0 and 5" % tier)
+		_check(str(tier_ward["id"]) == "tinker_casing_ward_move" and str(tier_ward["name"]) == "Casing Ward"
+			and str(tier_ward["kind"]) == "buff" and str(tier_ward["target_side"]) == "self"
+			and not bool(tier_ward["multi"]) and int(tier_ward["acc"]) == 100
+			and tier_ward["dmg"] == [0, 0] and int(tier_ward["crit"]) == 0
+			and int(tier_ward["mark_damage"]) == 0 and int(tier_ward["self_move"]) == 0
+			and str(tier_ward["move"]) == "guard",
+			"AC1: tier %d Casing Ward stays one self-only guard-pose buff with 100 ACC and no damage or move" % tier)
+		var tier_ward_stat := StitchedParts.stat_at_tier(ward_part, tier)
+		_check(int(tier_ward_stat.get("max_hp", 0)) == [5, 7, 9][tier - 1]
+			and int(tier_ward_stat.get("prot", 0)) == [4, 5, 7][tier - 1]
+			and int(tier_ward["effects"].get("thorns", 0)) == [2, 3, 4][tier - 1],
+			"AC1: tier %d Casing Ward keeps its authored HP/PROT/Thorns ladder" % tier)
 	# AC1: only the two named base launches grow to hero rank 4; every other authored launch,
 	# every tier and every named ability number stays exactly as shipped.
 	var expected_launches := {
 		"tinker_head_cog_shot": [2, 3, 4],
 		"tinker_arms_scrap_bomb": [3, 4],
-		"tinker_torso_casing_ward": [1, 2, 3],
+		"tinker_torso_casing_ward": [1, 2, 3, 4],
 		"tinker_legs_tune_up": [1, 2, 3, 4],
 		"tinker_head_spring_clamp": [2, 3],
 		"tinker_arms_overload": [2, 3, 4],
@@ -409,6 +444,182 @@ func _test_back_rank_shots() -> void:
 				"AC2: Scrap Bomb receipts each of the three living foes in ranks 1-3 exactly once")
 			_check(not StitchedParts.ranks_allowed(int(_catalog()["by_id"][part_id]["ability"]["target_mask"]), 4),
 				"AC2: Scrap Bomb still has no enemy rank-4 target")
+
+
+## Builds the shipped S2 preview with Tinker wearing the Casing Ward torso and Spare Screws legs at
+## the requested stitch tier. The preview fixture file itself is never edited; only Tinker's four
+## prototype equipped IDs change, and only the torso may be flagged torn for the fail-closed check.
+func _rank_four_ward_battle(tier: int, seed_value: int, torn_torso: bool = false) -> StitchedRules:
+	var config := _config(ALTERNATES["legs"], tier, seed_value)
+	if config.is_empty():
+		return null
+	if torn_torso:
+		config["heroes"][2]["parts"]["torso"]["torn"] = true
+	var result := StitchedRules.create(config)
+	if not bool(result.get("ok", false)):
+		return null
+	return result["battle"] as StitchedRules
+
+
+## AC2 witness: rank-3 Tinker, wearing Casing Ward and Spare Screws, swaps backward with Spare
+## Screws on her genuine turn, survives to her next scheduled turn at hero rank 4 and raises
+## Casing Ward on her own rank 4. Refusals (an ally at rank 3, ranks 0/5, the unequipped Tune Up
+## legs) are recorded just before the successful cast so the test can prove they spend nothing.
+func _rank_four_ward_witness(tier: int, seed_value: int) -> Dictionary:
+	var battle := _rank_four_ward_battle(tier, seed_value)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	var swap := battle.use_part(ALTERNATES["legs"], 3)
+	if not bool(swap.get("ok", false)) \
+		or str(swap.get("actor", "")) != "tinker" \
+		or str(swap.get("part", "")) != ALTERNATES["legs"] \
+		or str(swap.get("ability", "")) != "tinker_spare_screws_move":
+		return {}
+	if not bool(swap.get("self_move", {}).get("ok", false)) or int(swap["self_move"].get("to", 0)) != 4:
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4 or int(battle.get_unit("lantern_monk")["rank"]) != 3:
+		return {}
+	if battle.current_actor_id() == "tinker":
+		return {}
+	if not _to(battle, "tinker") or battle.is_over():
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4:
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	var refusals: Array = []
+	for target_rank in [3, 0, 5]:
+		refusals.append(battle.use_part(STARTERS["torso"], target_rank))
+	refusals.append(battle.use_part(STARTERS["legs"], 4))
+	var after_refusals := battle.state_snapshot()
+	var actor_after_refusals := battle.current_actor_id()
+	var cast := battle.use_part(STARTERS["torso"], 4)
+	if not bool(cast.get("ok", false)):
+		return {}
+	return {
+		"battle": battle,
+		"swap": swap,
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"refusals": refusals,
+		"after_refusals": after_refusals,
+		"actor_after_refusals": actor_after_refusals,
+		"cast": cast,
+		"after": battle.state_snapshot(),
+		"rng_after": battle.rng_state(),
+	}
+
+
+## AC3 witness: the same real rank-4 setup but with the worn Casing Ward torso torn; the cast
+## must refuse before spending the turn or drawing seeded RNG.
+func _rank_four_torn_ward_witness(tier: int, seed_value: int) -> Dictionary:
+	var battle := _rank_four_ward_battle(tier, seed_value, true)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	var swap := battle.use_part(ALTERNATES["legs"], 3)
+	if not bool(swap.get("ok", false)) or int(battle.get_unit("tinker")["rank"]) != 4:
+		return {}
+	if not _to(battle, "tinker") or battle.is_over():
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4:
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var refusal := battle.use_part(STARTERS["torso"], 4)
+	return {
+		"battle": battle,
+		"refusal": refusal,
+		"before": before,
+		"rng": rng,
+		"after": battle.state_snapshot(),
+		"actor": battle.current_actor_id(),
+	}
+
+
+## AC2/AC3: all three stitch tiers raise Casing Ward on Tinker's own rank 4 through real seeded
+## Stitched combat, spend exactly one genuine turn, apply 2/3/4 Thorns to the actual Tinker, replay
+## identically at the same seed, and refuse an ally/rank 0/rank 5/unequipped/torn call with no spend.
+func _test_casing_ward_rank_four() -> void:
+	for tier in [1, 2, 3]:
+		var witness: Dictionary = {}
+		var witness_seed := 0
+		for seed_value in range(499600, 499660):
+			witness = _rank_four_ward_witness(tier, seed_value)
+			if not witness.is_empty():
+				witness_seed = seed_value
+				break
+		_check(not witness.is_empty(), "AC2: real seeded rank-4 Casing Ward witness exists at tier %d" % tier)
+		if witness.is_empty():
+			continue
+		var battle: StitchedRules = witness["battle"]
+		var swap: Dictionary = witness["swap"]
+		var cast: Dictionary = witness["cast"]
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3,
+			"AC2: tier %d witness keeps the shipped four-hero/three-foe preview" % tier)
+		_check(str(swap.get("actor", "")) == "tinker" and str(swap.get("part", "")) == ALTERNATES["legs"]
+			and str(swap.get("ability", "")) == "tinker_spare_screws_move"
+			and int(swap["self_move"].get("from", 0)) == 3 and int(swap["self_move"].get("to", 0)) == 4
+			and str(swap["self_move"].get("swapped", "")) == "lantern_monk",
+			"AC2: tier %d Spare Screws really swaps rank-3 Tinker behind the rank-4 Lantern Monk" % tier)
+		_check(int(battle.get_unit("tinker")["rank"]) == 4 and int(battle.get_unit("lantern_monk")["rank"]) == 3,
+			"AC2: tier %d Tinker stays in rank 4 with the Lantern Monk in rank 3" % tier)
+		_check(str(witness["actor_before"]) == "tinker" and battle.current_actor_id() != "tinker",
+			"AC2: tier %d Casing Ward succeeds on a genuine Tinker turn and spends exactly one" % tier)
+		_check(str(cast.get("action", "")) == "ability" and str(cast.get("actor", "")) == "tinker"
+			and str(cast.get("part", "")) == STARTERS["torso"]
+			and str(cast.get("ability", "")) == "tinker_casing_ward_move" and not cast.has("self_move"),
+			"AC2: tier %d Casing Ward executes as Tinker's own equipped torso action" % tier)
+		var results: Array = cast.get("results", [])
+		_check(results.size() == 1 and str(cast.get("target", "")) == "tinker"
+			and str(results[0].get("target", "")) == "tinker"
+			and str(results[0].get("target_side", "")) == "hero"
+			and int(results[0].get("target_rank", 0)) == 4 and bool(results[0].get("hit", false)),
+			"AC2: tier %d Casing Ward yields exactly one self receipt at Tinker's own rank 4" % tier)
+		_check(int(battle.get_unit("tinker")["statuses"].get("thorns", 0)) == [2, 3, 4][tier - 1],
+			"AC2: tier %d Casing Ward leaves the actual Tinker with Thorns %d" % [tier, [2, 3, 4][tier - 1]])
+		var refusals: Array = witness["refusals"]
+		var errors: Array[String] = []
+		var all_refused := refusals.size() == 4
+		for refusal in refusals:
+			all_refused = all_refused and not bool(refusal.get("ok", false))
+			errors.append(str(refusal.get("error", "")))
+		_check(all_refused and errors[0].contains("rank 3") and errors[1].contains("rank 0")
+			and errors[2].contains("rank 5") and errors[3].contains("not equipped"),
+			"AC3: tier %d Casing Ward refuses an ally at rank 3, ranks 0/5 and the unequipped legs" % tier)
+		_check(witness["before"] == witness["after_refusals"]
+			and int(witness["rng"]) == int(witness["after_refusals"].get("rng_state", -1))
+			and str(witness["actor_after_refusals"]) == "tinker",
+			"AC3: tier %d refused casts change no state, spend no turn and draw no seeded RNG" % tier)
+		_check(not (witness["before"] == witness["after"])
+			and int(witness["after"].get("rng_state", -1)) == int(witness["rng_after"]),
+			"AC2: tier %d successful self-buff changes authoritative battle state" % tier)
+		var replay := _rank_four_ward_witness(tier, witness_seed)
+		_check(not replay.is_empty(), "AC3: tier %d rank-4 Casing Ward witness replays at seed %d" % [tier, witness_seed])
+		if not replay.is_empty():
+			_check(replay["swap"] == swap and replay["cast"] == cast
+				and replay["before"] == witness["before"]
+				and replay["after_refusals"] == witness["after_refusals"]
+				and replay["after"] == witness["after"]
+				and int(replay["rng_after"]) == int(witness["rng_after"]),
+				"AC3: tier %d equal-seed replay reproduces the swap, cast receipt, all state and exact RNG" % tier)
+		var torn: Dictionary = {}
+		for seed_value in range(499600, 499660):
+			torn = _rank_four_torn_ward_witness(tier, seed_value)
+			if not torn.is_empty():
+				break
+		_check(not torn.is_empty(), "AC3: tier %d torn Casing Ward witness reaches real rank 4" % tier)
+		if not torn.is_empty():
+			var torn_refusal: Dictionary = torn["refusal"]
+			_check(not bool(torn_refusal.get("ok", false)) and str(torn_refusal.get("error", "")).contains("torn")
+				and torn["before"] == torn["after"] and int(torn["rng"]) == int(torn["after"].get("rng_state", -1))
+				and str(torn["actor"]) == "tinker",
+				"AC3: tier %d torn Casing Ward refuses from rank 4 without state, turn or RNG change" % tier)
 
 
 ## Builds the shipped S2 preview battle with Tinker's alternate Overload arms and Spare Screws

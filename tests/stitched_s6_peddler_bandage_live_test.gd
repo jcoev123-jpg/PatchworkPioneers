@@ -271,6 +271,26 @@ func _trace() -> Dictionary:
 	_check(not app._open_stitched_peddler() and app.stitched_peddler_panel == null,
 		"a Peddler is never opened without a nonnegative integer wallet")
 	app.stitched_preview_gold = saved_gold
+	# Malformed candle authority must refuse before creating a visit or
+	# consuming the earned stop, even though an authenticated roster exists.
+	var saved_candle: int = int(app.stitched_roadblock_candle)
+	seed(30071)
+	var expected_rng := randi()
+	seed(30071)
+	for invalid_candle in [-1, 101]:
+		app.stitched_roadblock_candle = invalid_candle
+		_check(not app._open_stitched_peddler() and app.stitched_peddler_panel == null \
+			and app.stitched_peddler_visit == null \
+			and app.stitched_peddler_candle_visit == null \
+			and app.stitched_peddler_part_visit == null \
+			and app._stitched_postvictory_stop_available \
+			and app._stitched_peddler_roster == roster \
+			and app.stitched_preview_gold == saved_gold \
+			and app.stitched_roadblock_candle == invalid_candle,
+			"invalid candle admission refuses without debit, authority or RNG spend")
+	app.stitched_roadblock_candle = saved_candle
+	_check(randi() == expected_rng,
+		"invalid Peddler candle admission consumes no RNG")
 	var saved_hp_carry: Dictionary = app._stitched_hp_carry.duplicate(true)
 	var last_hero := str(roster[3]["id"])
 	app._stitched_hp_carry.erase(last_hero)
@@ -299,6 +319,7 @@ func _trace() -> Dictionary:
 		and panel.find_child("PeddlerFrame", true, false) is NinePatchRect \
 		and displayed.get("node_id") == NODE and displayed.get("mode") == "stitched" \
 		and int(displayed.get("price", 0)) == PRICE \
+		and app.stitched_roadblock_candle == maxi(0, candle_before - 8) \
 		and int(displayed.get("gold", -1)) == app.stitched_preview_gold \
 		and displayed.get("status") == "open" \
 		and target_id in displayed.get("eligible", []),
@@ -379,10 +400,10 @@ func _trace() -> Dictionary:
 		and app._stitched_gear_overrides == gear_before \
 		and app.stitched_preview_satchel == satchel_before \
 		and app.stitched_preview_scraps == scraps_before \
-		and app.stitched_roadblock_candle == candle_before \
+		and app.stitched_roadblock_candle == maxi(0, candle_before - 8) \
 		and not app.stitched_peddler_button.visible \
 		and app.title_view.is_visible_in_tree() and _no_wallet(app),
-		"one bandage spends 10 gold once, cures only its hero and preserves every other resource")
+		"one bandage spends 10 gold once, cures Bleed and preserves the paid-entry candle balance")
 	var consumed_state: Dictionary = visit.read_state()
 	var duplicated: Array = [
 		visit.choose_bandage(target_id, NODE, opened_state),
@@ -422,8 +443,8 @@ func _trace() -> Dictionary:
 	var next_opening: Dictionary = next.battle.opening_strike().duplicate(true)
 	var next_state: Dictionary = next.battle.state_snapshot()
 	var next_config: Dictionary = next.config.duplicate(true)
-	_check(next.config.get("candle") == candle_before - 8,
-		"the next Fight burns only its own authored candle entry cost")
+	_check(next.config.get("candle") == maxi(0, candle_before - 16),
+		"Peddler and next Fight each apply their own eight-point candle node entry")
 	next._action_buttons["exit"].pressed.emit()
 	await process_frame
 	_check(app.stitched_preview_gold == gold_before - PRICE \
@@ -474,6 +495,7 @@ func _trace() -> Dictionary:
 	_check(second_panel != null and second_visit != null and second_leave != null \
 		and not second_leave.disabled \
 		and int(second_quote.get("price", 0)) == PRICE \
+		and app.stitched_roadblock_candle == maxi(0, candle_second - 8) \
 		and int(second_quote.get("gold", -1)) == 10,
 		"the later Peddler quotes the same one-use bandage and a free Leave")
 	# An untargeted buy is refused for any hero the quote does not list.
@@ -510,9 +532,9 @@ func _trace() -> Dictionary:
 		and app._stitched_gear_overrides == gear_second \
 		and app.stitched_preview_satchel == satchel_second \
 		and app.stitched_preview_scraps == scraps_second \
-		and app.stitched_roadblock_candle == candle_second \
+		and app.stitched_roadblock_candle == maxi(0, candle_second - 8) \
 		and _no_wallet(app),
-		"a free Peddler Leave preserves carried Bleed and every other resource")
+		"Leave adds no cost beyond the paid Peddler entry and preserves all other carry")
 	if second_visit != null:
 		_check(not second_visit.leave(NODE, second_quote).get("ok", true) \
 			and app.stitched_preview_gold == 10 \
@@ -715,9 +737,9 @@ func _reselection_trace() -> void:
 		and app._stitched_gear_overrides == gear_before \
 		and app.stitched_preview_satchel == satchel_before \
 		and app.stitched_preview_scraps == scraps_before \
-		and app.stitched_roadblock_candle == candle_before \
+		and app.stitched_roadblock_candle == maxi(0, candle_before - 8) \
 		and _no_wallet(app),
-		"the preserved Peddler's free Leave preserves carried Bleed and every resource")
+		"the preserved Peddler's Leave retains all carry after the one entry toll")
 	app.free()
 	await process_frame
 
@@ -851,9 +873,9 @@ func _locked_roster_trace() -> void:
 		and app._stitched_gear_overrides == gear_before \
 		and app.stitched_preview_satchel == satchel_before \
 		and app.stitched_preview_scraps == scraps_before \
-		and app.stitched_roadblock_candle == candle_before \
+		and app.stitched_roadblock_candle == maxi(0, candle_before - 8) \
 		and _no_wallet(app),
-		"the preserved Peddler's free Leave preserves carried Bleed and every resource")
+		"the preserved Peddler's Leave retains all carry after the one entry toll")
 	app.free()
 	await process_frame
 
@@ -916,9 +938,9 @@ func _unaffordable_trace() -> void:
 		and app._stitched_gear_overrides == gear_before \
 		and app.stitched_preview_satchel == satchel_before \
 		and app.stitched_preview_scraps == scraps_before \
-		and app.stitched_roadblock_candle == candle_before \
+		and app.stitched_roadblock_candle == maxi(0, candle_before - 8) \
 		and _no_wallet(app),
-		"the short wallet's free Leave changes no status, resource or wallet gold")
+		"short-wallet Leave incurs no further charge after the eight-candle entry")
 	app.free()
 	await process_frame
 
