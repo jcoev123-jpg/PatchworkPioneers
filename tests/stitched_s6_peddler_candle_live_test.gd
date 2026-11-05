@@ -160,6 +160,7 @@ func _prepare(extra_aborts: int) -> Node:
 
 
 func _open(app: Node) -> Dictionary:
+	var pre_entry_candle: int = int(app.stitched_roadblock_candle)
 	app.stitched_peddler_button.pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_peddler_panel
@@ -184,6 +185,7 @@ func _open(app: Node) -> Dictionary:
 		and quote.get("restore") == mini(25, 100 - int(quote.get("candle", 0))) \
 		and quote.get("gold") == app.stitched_preview_gold \
 		and quote.get("candle") == app.stitched_roadblock_candle \
+		and app.stitched_roadblock_candle == maxi(0, pre_entry_candle - 8) \
 		and bandage_state.get("heroes", []).size() == 4 \
 		and bandage_state.get("node_id") == NODE \
 		and not app.title_view.is_visible_in_tree(),
@@ -200,12 +202,21 @@ func _success(extra_aborts: int) -> Dictionary:
 		app.free()
 		await process_frame
 		return {}
-	var before: Dictionary = _resources(app)
+	var pre_entry: Dictionary = _resources(app)
 	var opened: Dictionary = await _open(app)
 	if opened.is_empty():
 		app.free()
 		await process_frame
 		return {}
+	var before: Dictionary = _resources(app)
+	_check(before["candle"] == maxi(0, int(pre_entry["candle"]) - 8) \
+		and before["gold"] == pre_entry["gold"] \
+		and before["bleed"] == pre_entry["bleed"] \
+		and before["hp"] == pre_entry["hp"] \
+		and before["gear"] == pre_entry["gear"] \
+		and before["satchel"] == pre_entry["satchel"] \
+		and before["scraps"] == pre_entry["scraps"] and _no_legacy_wallet(app),
+		"opening earned Peddler debits exactly eight before any stub purchase")
 	var panel: Control = opened["panel"]
 	var candle: RunPeddlerVisit = opened["candle"]
 	var bandage: RunStitchedPeddlerBandage = opened["bandage"]
@@ -326,29 +337,122 @@ func _success(extra_aborts: int) -> Dictionary:
 	return result
 
 
-func _blocked(full: bool) -> void:
+## The toll clamps at zero when a genuine earned visit begins with <8 light.
+func _zero_entry() -> void:
 	var app: Node = await _prepare(0)
 	if app.stitched_preview_gold != PRICE or not app.stitched_peddler_button.visible:
 		app.free()
 		await process_frame
 		return
-	# Negative-only boundary injection after a real earned victory: no positive
-	# purchase or victory is fabricated; the public quote must disable the buy.
-	if full:
-		app.stitched_roadblock_candle = 100
-	else:
-		app.stitched_preview_gold = PRICE - 1
-	var before: Dictionary = _resources(app)
+	app.stitched_roadblock_candle = 3
+	var pre_entry: Dictionary = _resources(app)
 	var opened: Dictionary = await _open(app)
 	if opened.is_empty():
 		app.free()
 		await process_frame
 		return
+	var after_entry: Dictionary = _resources(app)
+	_check(pre_entry["candle"] == 3 and after_entry["candle"] == 0 \
+		and opened["state"].get("candle") == 0 \
+		and opened["quote"].get("restore") == 25 \
+		and opened["quote"].get("candle") == 0 \
+		and opened["button"].text.contains("+25 CANDLE") \
+		and not opened["button"].disabled \
+		and after_entry["gold"] == pre_entry["gold"] \
+		and after_entry["bleed"] == pre_entry["bleed"] \
+		and after_entry["hp"] == pre_entry["hp"] \
+		and after_entry["satchel"] == pre_entry["satchel"],
+		"low candle pays the clamped node toll once; offer accurately quotes zero")
+	opened["leave"].pressed.emit()
+	_check(_resources(app) == after_entry and app.stitched_peddler_panel == null \
+		and opened["candle"].is_consumed() \
+		and not app._open_stitched_peddler() and _no_legacy_wallet(app),
+		"Leave preserves zero candle and reopening cannot pay or earn again")
+	var next: StitchedBattleScreen = await _admit(app)
+	_check(next != null and next.battle != null and next.battle.is_valid() \
+		and next.config.get("candle") == 0 \
+		and app.stitched_roadblock_candle == 0,
+		"next actual Fight has its separate clamped eight-point entry")
+	if next != null:
+		next._action_buttons["exit"].pressed.emit()
+		await process_frame
+	app.free()
+	await process_frame
+
+
+## A full pre-entry candle is not a full stub quote: the node takes eight.
+func _full_entry() -> void:
+	var app: Node = await _prepare(0)
+	if app.stitched_preview_gold != PRICE or not app.stitched_peddler_button.visible:
+		app.free()
+		await process_frame
+		return
+	app.stitched_roadblock_candle = 100
+	var pre_entry: Dictionary = _resources(app)
+	var opened: Dictionary = await _open(app)
+	if opened.is_empty():
+		app.free()
+		await process_frame
+		return
+	var before: Dictionary = _resources(app)
+	var button: Button = opened["button"]
+	var state: Dictionary = opened["state"]
+	var quote: Dictionary = opened["quote"]
+	_check(pre_entry["candle"] == 100 and before["candle"] == 92 \
+		and state.get("candle") == 92 and quote.get("candle") == 92 \
+		and quote.get("restore") == 8 and not button.disabled \
+		and button.text.contains("+8 CANDLE") \
+		and not app._stitched_postvictory_stop_available,
+		"full pre-entry light pays eight once; the displayed stub restores eight")
+	seed(17771)
+	var expected_rng := randi()
+	seed(17771)
+	_check(not app._open_stitched_peddler() \
+		and app.stitched_peddler_panel == opened["panel"] \
+		and _resources(app) == before,
+		"open-again refuses an extra visit or entry debit")
+	button.pressed.emit()
+	var after: Dictionary = _resources(app)
+	_check(after["candle"] == 100 and after["gold"] == before["gold"] - PRICE \
+		and after["bleed"] == before["bleed"] and after["hp"] == before["hp"] \
+		and after["gear"] == before["gear"] and after["satchel"] == before["satchel"] \
+		and after["scraps"] == before["scraps"] \
+		and opened["candle"].is_consumed() and opened["bandage"].is_consumed() \
+		and app.stitched_peddler_panel == null \
+		and randi() == expected_rng and _no_legacy_wallet(app),
+		"post-toll stub caps at 100, charges only gold and retires alternatives")
+	app.free()
+	await process_frame
+
+
+## Low gold still pays the entry toll; Leave costs no additional candle.
+func _blocked() -> void:
+	var app: Node = await _prepare(0)
+	if app.stitched_preview_gold != PRICE or not app.stitched_peddler_button.visible:
+		app.free()
+		await process_frame
+		return
+	app.stitched_preview_gold = PRICE - 1
+	var pre_entry: Dictionary = _resources(app)
+	var opened: Dictionary = await _open(app)
+	if opened.is_empty():
+		app.free()
+		await process_frame
+		return
+	var before: Dictionary = _resources(app)
 	var panel: Control = opened["panel"]
 	var button: Button = opened["button"]
 	var candle: RunPeddlerVisit = opened["candle"]
 	var bandage: RunStitchedPeddlerBandage = opened["bandage"]
 	var state: Dictionary = opened["state"]
+	_check(before["candle"] == maxi(0, int(pre_entry["candle"]) - 8) \
+		and before["gold"] == pre_entry["gold"] \
+		and before["bleed"] == pre_entry["bleed"] \
+		and before["hp"] == pre_entry["hp"] \
+		and before["gear"] == pre_entry["gear"] \
+		and before["satchel"] == pre_entry["satchel"] \
+		and before["scraps"] == pre_entry["scraps"],
+		"unaffordable Peddler still debits its own node once")
 	seed(71509)
 	var expected_rng := randi()
 	seed(71509)
@@ -358,19 +462,19 @@ func _blocked(full: bool) -> void:
 	_check(button.disabled and button.focus_mode == Control.FOCUS_NONE \
 		and failed.get("ok") == false and candle.read_state() == state \
 		and _resources(app) == before and bandage.is_open(),
-		"full or unaffordable candle disables buy and refuses direct invocation")
+		"low gold disables Buy and refuses direct callback with no extra spend")
 	opened["leave"].pressed.emit()
 	_check(app.stitched_peddler_panel == null \
 		and app.stitched_peddler_candle_visit == null \
 		and candle.is_consumed() and bandage.is_consumed() \
 		and _resources(app) == before and _no_legacy_wallet(app) \
 		and randi() == expected_rng,
-		"free Leave closes both alternatives, keeps all resources and draws no RNG")
+		"Leave preserves the post-entry candle and all other resources")
 	_check(not candle.select_stitched(RunPeddlerVisit.BUY_CANDLE_STUB,
 		NODE, state).get("ok", true) \
 		and app._stitched_peddler_buy_candle(opened["bandage_state"], state,
 			opened["quote"], weakref(panel), opened["generation"]).get("ok") == false,
-		"Leave rejects later candle purchases and stale callbacks")
+		"Leave rejects later buys and stale callbacks")
 	app.free()
 	await process_frame
 
@@ -424,15 +528,16 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var uncapped: Dictionary = await _success(2)
 	_check(not uncapped.is_empty() and uncapped.get("gain") == 25 \
-		and uncapped.get("entry") == 85,
-		"legal repeated entry produces an uncapped +25 stub and next entry at 85")
+		and uncapped.get("entry") == 77,
+		"legal repeated entry plus Peddler toll produces +25 stub and next entry at 77")
 	var capped: Dictionary = await _success(0)
-	_check(not capped.is_empty() and capped.get("before") == 84 \
-		and capped.get("after") == 100 and capped.get("gain") == 16 \
+	_check(not capped.is_empty() and capped.get("before") == 76 \
+		and capped.get("after") == 100 and capped.get("gain") == 24 \
 		and capped.get("entry") == 92,
 		"near-full candle caps +25 at 100, then the real Fight enters at 92")
-	await _blocked(true)
-	await _blocked(false)
+	await _zero_entry()
+	await _full_entry()
+	await _blocked()
 	await _bandage_cross_choice()
 	for failure in failures:
 		printerr(failure)

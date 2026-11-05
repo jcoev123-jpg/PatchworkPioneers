@@ -3126,6 +3126,14 @@ func _open_stitched_peddler() -> bool:
 	var roster := _stitched_peddler_living_roster()
 	if roster.is_empty():
 		return false
+	# The earned Peddler is a separate node. Reject malformed live candle
+	# before admitting any service, without consuming the earned stop.
+	if typeof(stitched_roadblock_candle) != TYPE_INT \
+			or stitched_roadblock_candle < 0 \
+			or stitched_roadblock_candle > RunPeddlerVisit.CANDLE_MAX:
+		return false
+	var projected_candle := maxi(0,
+		stitched_roadblock_candle - STITCHED_ROADBLOCK_CANDLE_COST)
 	var visit := RunStitchedPeddlerBandage.open_stitched(
 		STITCHED_PEDDLER_NODE_ID, roster, stitched_preview_gold, STITCHED_PEDDLER_PRICE)
 	if not visit.is_valid() or not visit.is_open():
@@ -3139,7 +3147,7 @@ func _open_stitched_peddler() -> bool:
 	# A distinct opt-in candle ledger shares this single earned Peddler
 	# entrance and wallet, never the legacy run/shop economy.
 	var candle_visit := RunPeddlerVisit.open_stitched_candle(
-		STITCHED_PEDDLER_NODE_ID, stitched_roadblock_candle,
+		STITCHED_PEDDLER_NODE_ID, projected_candle,
 		stitched_preview_gold, STITCHED_PEDDLER_PRICE)
 	if not candle_visit.is_valid() or not candle_visit.is_open():
 		return false
@@ -3147,14 +3155,14 @@ func _open_stitched_peddler() -> bool:
 	var candle_quote: Dictionary = candle_visit.quote()
 	if candle_state.get("node_id") != STITCHED_PEDDLER_NODE_ID \
 			or candle_state.get("status") != RunPeddlerVisit.STITCHED_OPEN \
-			or candle_state.get("candle") != stitched_roadblock_candle \
+			or candle_state.get("candle") != projected_candle \
 			or candle_state.get("gold") != stitched_preview_gold \
 			or candle_state.get("item", {}).get("price") != STITCHED_PEDDLER_PRICE \
 			or candle_quote.get("ok") != true \
 			or candle_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
 			or candle_quote.get("price") != STITCHED_PEDDLER_PRICE \
 			or candle_quote.get("restore") != mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
-				RunPeddlerVisit.CANDLE_MAX - stitched_roadblock_candle) \
+				RunPeddlerVisit.CANDLE_MAX - projected_candle) \
 			or candle_quote.get("choices", []) != (
 				[RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]
 				if int(candle_quote.get("restore", 0)) > 0
@@ -3215,6 +3223,9 @@ func _open_stitched_peddler() -> bool:
 	_stitched_campfire_swap_satchel.clear()
 	_stitched_campfire_swap_gear.clear()
 	_refresh_stitched_peddler_button()
+	# All three quotes and the real panel are authoritative; debit once here,
+	# before any mounted button can receive an input callback.
+	stitched_roadblock_candle = projected_candle
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	title_view.hide()

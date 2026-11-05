@@ -139,6 +139,7 @@ func _prepare() -> Node:
 
 
 func _open(app: Node) -> Dictionary:
+	var pre_entry_candle: int = int(app.stitched_roadblock_candle)
 	app.stitched_peddler_button.pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_peddler_panel
@@ -168,6 +169,8 @@ func _open(app: Node) -> Dictionary:
 		and state == part.read_state() and quote == part.quote() \
 		and bstate == bandage.read_state() and cstate == candle.read_state() \
 		and cquote == candle.quote() and state.get("node_id") == NODE \
+		and cstate.get("candle") == maxi(0, pre_entry_candle - 8) \
+		and app.stitched_roadblock_candle == cstate.get("candle") \
 		and quote.get("node_id") == NODE and quote.get("price") == PRICE \
 		and state.get("gold") == app.stitched_preview_gold \
 		and state.get("satchel") == app.stitched_preview_satchel \
@@ -216,7 +219,13 @@ func _success() -> void:
 	var state: Dictionary = opened["state"]
 	var quote: Dictionary = opened["quote"]
 	var generation: int = opened["generation"]
-	_check(initial == before and initial["gold"] == PRICE \
+	_check(initial["gold"] == PRICE \
+		and before["candle"] == maxi(0, int(initial["candle"]) - 8) \
+		and before["gold"] == initial["gold"] \
+		and before["hp"] == initial["hp"] and before["bleed"] == initial["bleed"] \
+		and before["gear"] == initial["gear"] \
+		and before["satchel"] == initial["satchel"] \
+		and before["scraps"] == initial["scraps"] \
 		and before["satchel"].size() > 0 \
 		and before["satchel"].size() < RunStitchedPeddlerPart.SATCHEL_CAP \
 		and not row.disabled and row.focus_mode == Control.FOCUS_ALL \
@@ -334,12 +343,20 @@ func _blocked(full: bool) -> void:
 			app.stitched_preview_satchel.append(app.stitched_preview_satchel[0].duplicate(true))
 	else:
 		app.stitched_preview_gold = PRICE - 1
-	var before: Dictionary = _resources(app)
+	var pre_entry: Dictionary = _resources(app)
 	var opened: Dictionary = await _open(app)
 	if opened.is_empty():
 		app.free()
 		await process_frame
 		return
+	var before: Dictionary = _resources(app)
+	_check(before["candle"] == maxi(0, int(pre_entry["candle"]) - 8) \
+		and before["gold"] == pre_entry["gold"] \
+		and before["bleed"] == pre_entry["bleed"] \
+		and before["hp"] == pre_entry["hp"] \
+		and before["satchel"] == pre_entry["satchel"] \
+		and before["scraps"] == pre_entry["scraps"],
+		"unavailable spare quote still charges the one eight-candle entry")
 	var row: Button = opened["row"]
 	var part: RunStitchedPeddlerPart = opened["part"]
 	var quote: Dictionary = opened["quote"]
@@ -370,12 +387,18 @@ func _other_choice(buy_candle: bool) -> void:
 		app.free()
 		await process_frame
 		return
-	var before: Dictionary = _resources(app)
+	var pre_entry: Dictionary = _resources(app)
 	var opened: Dictionary = await _open(app)
 	if opened.is_empty():
 		app.free()
 		await process_frame
 		return
+	var before: Dictionary = _resources(app)
+	_check(before["candle"] == maxi(0, int(pre_entry["candle"]) - 8) \
+		and before["gold"] == pre_entry["gold"] \
+		and before["satchel"] == pre_entry["satchel"] \
+		and before["bleed"] == pre_entry["bleed"],
+		"competing services share one already-paid Peddler entry")
 	var action: Button = opened["panel"].find_child("PeddlerCandleStub", true, false)
 	if not buy_candle:
 		var eligible: Array = opened["bandage_state"].get("eligible", [])
