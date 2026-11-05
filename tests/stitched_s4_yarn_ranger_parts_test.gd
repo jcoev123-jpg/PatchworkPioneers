@@ -22,6 +22,12 @@ const IDS := [
 ]
 
 const HEAD_LAUNCH := [2, 3, 4]
+const BOLAS_ID := "yarn_ranger_arms_wool_bolas"
+const BOLAS_LAUNCH := [2, 3, 4]
+const BOLAS_SPECS := {
+	"dmg": [[2, 4], [3, 5], [4, 7]],
+	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
+}
 const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
 		"ability": "yarn_ranger_head_needle_nock_move",
@@ -38,7 +44,7 @@ const HEAD_SPECS := {
 }
 const UNCHANGED_PARTS := {
 	"yarn_ranger_arms_wool_bolas": {
-		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": false,
+		"launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy", "multi": false,
 		"acc": 92, "dmg": [2, 4], "effects": {"tangled": 1}, "move": "attack",
 		"stat": {"dmg": 1},
 	},
@@ -75,8 +81,10 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_head_launch_tiers()
+	_test_arms_launch_tiers()
 	_test_each_tier()
 	_test_rank_four_head_launch()
+	_test_rank_four_bolas_launch()
 	_test_multi_tangled()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
@@ -156,8 +164,8 @@ func _to(b: StitchedRules, actor_id: String, limit: int = 55) -> bool:
 
 ## A fresh in-memory copy of the same four-hero / three-foe S2 fixture, with the equipped
 ## Ranger taken out of rank three and appended at hero rank four. S6 owns live admission.
-func _rank_four_config(selected_head: String, tier: int = 1, seed_value: int = 504040) -> Dictionary:
-	var config := _config(selected_head, tier, seed_value)
+func _rank_four_config(selected_part: String, tier: int = 1, seed_value: int = 504040) -> Dictionary:
+	var config := _config(selected_part, tier, seed_value)
 	if config.is_empty():
 		return {}
 	var ranger: Dictionary = config["heroes"].pop_at(2)
@@ -165,10 +173,24 @@ func _rank_four_config(selected_head: String, tier: int = 1, seed_value: int = 5
 	return config
 
 
-func _rank_four_battle(selected_head: String, tier: int = 1, seed_value: int = 504040) -> StitchedRules:
-	var config := _rank_four_config(selected_head, tier, seed_value)
+func _rank_four_battle(selected_part: String, tier: int = 1, seed_value: int = 504040) -> StitchedRules:
+	var config := _rank_four_config(selected_part, tier, seed_value)
 	if config.is_empty():
 		return null
+	var created := StitchedRules.create(config)
+	if not bool(created.get("ok", false)):
+		return null
+	var battle: StitchedRules = created["battle"]
+	return battle
+
+
+## A fresh in-memory copy of the same fixture with the equipped Ranger moved to hero rank one.
+func _rank_one_battle(seed_value: int = 505040) -> StitchedRules:
+	var config := _config("", 1, seed_value)
+	if config.is_empty():
+		return null
+	var ranger: Dictionary = config["heroes"].pop_at(2)
+	config["heroes"].insert(0, ranger)
 	var created := StitchedRules.create(config)
 	if not bool(created.get("ok", false)):
 		return null
@@ -202,6 +224,36 @@ func _test_head_launch_tiers() -> void:
 				and int(ability["acc"]) == 93 and ability["target"] == [1, 2, 3],
 				"AC2: tier %d %s keeps authored damage, status, ACC and enemy targets"
 					% [tier, head_id])
+
+
+## Wool Bolas keeps its single-target authored numbers at every tier while its launch mask
+## gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
+func _test_arms_launch_tiers() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][BOLAS_ID]
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var mask := int(ability["launch_mask"])
+		var reachable := true
+		for rank in BOLAS_LAUNCH:
+			reachable = reachable and StitchedParts.ranks_allowed(mask, rank)
+		var excluded := true
+		for rank in [0, 1, 5]:
+			excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
+		_check(ability["launch"] == BOLAS_LAUNCH
+			and mask == StitchedParts.rank_mask(BOLAS_LAUNCH) and reachable and excluded,
+			"AC1: tier %d Wool Bolas launch mask allows 2,3,4 and refuses 0,1,5" % tier)
+		_check(ability["target"] == [1, 2, 3]
+			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+			and int(ability["acc"]) == 92 and int(ability["crit"]) == 0,
+			"AC1: tier %d Wool Bolas stays a single-target enemy 1-3 attack" % tier)
+		_check(ability["dmg"] == BOLAS_SPECS["dmg"][tier - 1]
+			and ability["effects"] == BOLAS_SPECS["effects"][tier - 1]
+			and str(ability["move"]) == "attack" and int(ability["self_move"]) == 0,
+			"AC1: tier %d Wool Bolas keeps authored damage, Tangled and pose" % tier)
 
 
 ## The authentic seeded battle: the same four heroes and the same three foes, Ranger at rank
@@ -268,6 +320,66 @@ func _test_rank_four_head_launch() -> void:
 				break
 		_check(witnessed, "AC2: a bounded real seed shows rank-four %s hitting rank one with %s"
 			% [head_id, effect])
+
+
+## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
+## wearing her own starter Wool Bolas in the arms slot. A genuine seeded miss is a legal shot.
+func _test_rank_four_bolas_launch() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var b := _rank_four_battle(BOLAS_ID)
+	_check(b != null, "AC2: fresh S2 battle equips rank-four Ranger with Wool Bolas")
+	if b == null:
+		return
+	var ranger := b.get_unit("yarn_ranger")
+	_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+		and int(ranger["rank"]) == 4
+		and str(ranger["parts"]["arms"]["id"]) == BOLAS_ID,
+		"AC2: Wool Bolas is worn in the arms slot at hero rank four against the same three foes")
+	_check(_to(b, "yarn_ranger"), "AC2: rank-four Ranger reaches her actual turn for Wool Bolas")
+	if b.current_actor_id() != "yarn_ranger":
+		return
+	var before := b.state_snapshot()
+	var receipt := b.use_part(BOLAS_ID, 1)
+	var after := b.state_snapshot()
+	var results: Array = receipt.get("results", [])
+	_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+		and str(receipt.get("actor", "")) == "yarn_ranger"
+		and str(receipt.get("part", "")) == BOLAS_ID
+		and str(receipt.get("ability", "")) == "yarn_ranger_arms_wool_bolas_move"
+		and results.size() == 1
+		and str(results[0].get("target_side", "")) == "foe"
+		and int(results[0].get("target_rank", 0)) == 1,
+		"AC2: rank-four Wool Bolas legally fires one shot at the living rank-one foe: "
+			+ str(receipt.get("error", "")))
+	_check(after != before and (int(after["round"]) > int(before["round"])
+		or (int(after["round"]) == int(before["round"])
+			and int(after["turn_index"]) > int(before["turn_index"]))),
+		"AC2: rank-four Wool Bolas advances the real turn")
+	# A bounded explicit seed window witnesses an actual hit and Tangled from rank four; the
+	# rules are untouched, so a genuine miss is skipped only while searching for that witness.
+	var witnessed := false
+	for seed_value in range(504040, 504072):
+		var shot_battle := _rank_four_battle(BOLAS_ID, 1, seed_value)
+		if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+			continue
+		var shot := shot_battle.use_part(BOLAS_ID, 1)
+		if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 1:
+			continue
+		var result: Dictionary = shot["results"][0]
+		if not bool(result.get("hit", false)):
+			continue
+		if not result["statuses"].any(func(s): return str(s.get("status", "")) == "tangled"):
+			continue
+		var target_id := str(result.get("target", ""))
+		if target_id.is_empty():
+			continue
+		var foe := shot_battle.get_unit(target_id)
+		if int(foe["statuses"].get("tangled", 0)) >= 1:
+			witnessed = true
+			break
+	_check(witnessed, "AC2: a bounded real seed shows rank-four Wool Bolas hitting rank one with Tangled")
 
 
 func _test_catalog() -> void:
@@ -525,6 +637,7 @@ func _test_invalid_and_no_spend() -> void:
 		_check(false, "AC3: valid active Ranger needed for negative actions")
 		return
 	_reject_without_spend(b, STARTERS["head"], 4, "enemy target rank 4 has no living foe")
+	_reject_without_spend(b, STARTERS["arms"], 4, "Wool Bolas enemy target rank 4 has no living foe")
 	_reject_without_spend(b, STARTERS["torso"], 0, "ally target rank 0 invalid")
 	_reject_without_spend(b, STARTERS["legs"], 1, "reel thread cannot target front foe rank 1")
 	_reject_without_spend(b, "missing_part", 1, "unequipped part")
@@ -548,7 +661,16 @@ func _test_invalid_and_no_spend() -> void:
 		var rear: StitchedRules = relocated["battle"]
 		_check(_to(rear, "yarn_ranger"), "AC3: rank-four Ranger obtains real scheduled turn")
 		if rear.current_actor_id() == "yarn_ranger":
-			_reject_without_spend(rear, STARTERS["arms"], 1, "illegal rank-four launch")
+			_reject_without_spend(rear, STARTERS["legs"], 2, "rank-four Reel Thread launch illegal")
+	var front := _rank_one_battle()
+	_check(front != null, "AC3: same real four-hero fixture allows Ranger rank one")
+	if front != null:
+		var front_ranger := front.get_unit("yarn_ranger")
+		_check(int(front_ranger["rank"]) == 1 and str(front_ranger["parts"]["arms"]["id"]) == BOLAS_ID,
+			"AC3: front-rank Ranger wears the same Wool Bolas arms")
+		_check(_to(front, "yarn_ranger"), "AC3: rank-one Ranger obtains real scheduled turn")
+		if front.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(front, STARTERS["arms"], 1, "rank-one Wool Bolas launch")
 
 
 func _trace(seed_value: int) -> Dictionary:
