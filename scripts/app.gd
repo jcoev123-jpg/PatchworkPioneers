@@ -765,6 +765,10 @@ const STITCHED_INKBRUSH_ID := "moth_scribe_inkbrush_arm"
 ## The title Roadblock's authored trophy order. Each foe is only paid when this exact
 ## encounter actually killed it; the ids and parts come from the canonical S5 roster.
 const STITCHED_ROADBLOCK_FOES := ["scissor_crab", "fray_scavenger", "moth_scribe"]
+## Authenticated four-survivor Roadblock victories unlock this normal field.
+## IDs are resolved afresh from the validated S5 catalog, never preview kits.
+const STITCHED_FOLLOWON_ROADBLOCK_FOES := ["ragling", "scissor_crab", "moth_scribe"]
+var _stitched_roadblock_win_count := 0
 const STITCHED_TITLE_WALLET := {"gold": 0, "scraps": 0}
 var base_screen: BaseScreen
 ## True only while an uncommitted opening chooser was launched from the Base.
@@ -1504,15 +1508,28 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 		owner_catalogs[owner_id] = loaded
 	var foes: Array = []
 	var seen_foes: Dictionary = {}
-	for entry in preview["foes"]:
-		if not entry is Dictionary:
-			return {}
-		var foe_id := str(entry.get("id", ""))
-		if foe_id.is_empty() or seen_foes.has(foe_id):
+	var foe_ids: Array = []
+	var allowed_ids: Array = STITCHED_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count > 0:
+		foe_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES.duplicate()
+		allowed_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count == 0:
+		# The first real Fight retains the authored preview rank order.
+		for entry in preview["foes"]:
+			if not entry is Dictionary or typeof(entry.get("id")) != TYPE_STRING:
+				return {}
+			foe_ids.append(entry["id"])
+	if foe_ids.size() != 3:
+		return {}
+	for foe_id in foe_ids:
+		if typeof(foe_id) != TYPE_STRING or foe_id.is_empty() \
+				or seen_foes.has(foe_id) or not foe_id in allowed_ids:
 			return {}
 		seen_foes[foe_id] = true
 		var foe := StitchedEnemyCatalog.foe_for(roster, foe_id)
-		if foe.is_empty():
+		if foe.is_empty() or bool(foe.get("is_boss", true)) \
+				or foe.get("turns_per_round") != 1 \
+				or StitchedEnemyCatalog.trophy_for(roster, foe_id).is_empty():
 			return {}
 		foes.append(foe)
 	var generic: Array = []
@@ -2149,18 +2166,26 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 	var heroes: Array = []
 	var defeated: Array = []
 	var roster: Dictionary = {}
+	var expected_foes: Array = STITCHED_ROADBLOCK_FOES
+	if _stitched_roadblock_win_count > 0:
+		expected_foes = STITCHED_FOLLOWON_ROADBLOCK_FOES
 	if won:
 		roster = StitchedEnemyCatalog.load_catalog()
 		won = bool(roster.get("ok", false))
 		if won:
+			var seen_foes: Dictionary = {}
 			for foe in battle.get_foes():
 				var foe_id := str(foe.get("id", ""))
-				if not foe_id in STITCHED_ROADBLOCK_FOES:
+				# Dead foes may share their final compressed rank as the
+				# formation closes; identity, death and original seat count
+				# are the non-vacuous victory evidence.
+				if not foe_id in expected_foes or seen_foes.has(foe_id):
 					won = false
 					continue
+				seen_foes[foe_id] = true
 				won = won and bool(foe.get("dead", false)) and int(foe.get("hp", -1)) == 0
 				defeated.append(foe_id)
-			won = won and defeated.size() == STITCHED_ROADBLOCK_FOES.size()
+			won = won and defeated.size() == expected_foes.size()
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
@@ -2205,6 +2230,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 				# Rank carry and FRAY share the same genuine four-survivor proof.
 				if settled_fray.size() == 4:
 					_stitched_fray_carry = settled_fray
+					# Only the real, settled four-survivor victory advances the
+					# next title Fight. No Leave, loss or forged receipt can.
+					_stitched_roadblock_win_count += 1
 		# This exact, once-only stage is the sole HP source. A lost hero is not
 		# carried; failed, retreated and replayed exits leave the ledger untouched.
 		for id in _stitched_party_picks:
@@ -2240,7 +2268,12 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		stitched_preview_scraps += 1
 		# Only this encounter's own dead foes pay, and each pays through the one
 		# canonical S5 trophy the enemy roster resolved for it.
-		for foe_id in STITCHED_ROADBLOCK_FOES:
+		# Keep the Scissor Crab claw's established first-slot priority,
+		# even when Ragling takes the next field's first combat rank.
+		var trophy_order: Array = expected_foes.duplicate()
+		trophy_order.erase("scissor_crab")
+		trophy_order.push_front("scissor_crab")
+		for foe_id in trophy_order:
 			if not foe_id in defeated:
 				continue
 			if stitched_preview_satchel.size() >= RunStitchedSewingSwap.SATCHEL_CAP:
@@ -2252,10 +2285,10 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			stitched_preview_satchel.append({
 				"id": trophy, "slot": str(part["slot"]), "tier": 1, "torn": false,
 			})
-		_open_stitched_sewing(heroes)
+		_open_stitched_sewing(heroes, expected_foes)
 
 
-func _open_stitched_sewing(heroes: Array) -> bool:
+func _open_stitched_sewing(heroes: Array, slain_foes: Array) -> bool:
 	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
@@ -2270,7 +2303,7 @@ func _open_stitched_sewing(heroes: Array) -> bool:
 	var roster := StitchedEnemyCatalog.load_catalog()
 	if not bool(roster.get("ok", false)):
 		return false
-	for foe_id in STITCHED_ROADBLOCK_FOES:
+	for foe_id in slain_foes:
 		var trophy := StitchedEnemyCatalog.trophy_for(roster, str(foe_id))
 		if trophy.is_empty() or not catalog["by_id"].has(trophy):
 			return false
