@@ -713,6 +713,14 @@ var _stitched_peddler_generation := 0
 var _stitched_peddler_roster: Array = []
 ## This separate four-hero health authority is earned by the same terminal
 ## Roadblock + Circle Leave and competes for ONE postvictory stop.
+var stitched_postevent_button: Button
+var stitched_postevent_panel: Control
+var stitched_postevent_visit: RunStitchedEventConsequence
+var _stitched_postevent_roster: Array = []
+var _stitched_postevent_snapshot: Dictionary = {}
+var _stitched_postevent_quote: Dictionary = {}
+var _stitched_postevent_offered: Dictionary = {}
+var _stitched_postevent_generation := 0
 var stitched_campfire_button: Button
 var stitched_campfire_panel: Control
 var stitched_campfire_visit: RunCampfireVisit
@@ -743,6 +751,9 @@ const STITCHED_SEWING_UPGRADE_COST := 2
 const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
 const STITCHED_CAMPFIRE_NODE_ID := "s6_stitched_roadblock_campfire"
+const STITCHED_EVENT_ID := "s6_stitched_lantern_bobbin_ferry"
+const STITCHED_EVENT_PATH := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
+const STITCHED_EVENT_CHOICES := ["pay_gold", "mend_wick", "leave"]
 const STITCHED_PEDDLER_PRICE := 10
 const STITCHED_PEDDLER_PART_ID := "warden_head_helmet_rattle"
 const STITCHED_PREVIEW_WIN_GOLD := 10
@@ -1439,6 +1450,16 @@ func _build_title() -> void:
 	stitched_campfire_button.focus_mode = Control.FOCUS_NONE
 	stitched_campfire_button.pressed.connect(_open_stitched_campfire)
 	box.add_child(stitched_campfire_button)
+	stitched_postevent_button = Button.new()
+	stitched_postevent_button.name = "StitchedEventButton"
+	stitched_postevent_button.text = "Stitched Event"
+	stitched_postevent_button.tooltip_text = "Visit the Lantern Bobbin Ferry after a four-survivor Roadblock"
+	stitched_postevent_button.custom_minimum_size = Vector2(240, 56)
+	stitched_postevent_button.visible = false
+	stitched_postevent_button.disabled = true
+	stitched_postevent_button.focus_mode = Control.FOCUS_NONE
+	stitched_postevent_button.pressed.connect(_open_stitched_postevent)
+	box.add_child(stitched_postevent_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
 	route_button.focus_next = route_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
@@ -1800,6 +1821,7 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 		_stitched_campfire_swap_roster.clear()
 		_stitched_campfire_swap_satchel.clear()
 		_stitched_campfire_swap_gear.clear()
+		_stitched_postevent_roster.clear()
 		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 	_stitched_picker_sync()
@@ -1897,7 +1919,8 @@ func _open_stitched_fight() -> bool:
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null or is_instance_valid(stitched_campfire_panel) \
-			or stitched_campfire_visit != null or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
+			or stitched_campfire_visit != null or stitched_postevent_visit != null \
+			or is_instance_valid(stitched_postevent_panel) or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
 			or is_instance_valid(battle_view) or _route_from_base \
@@ -2187,7 +2210,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		_stitched_campfire_swap_roster.clear()
 		_stitched_campfire_swap_satchel.clear()
 		_stitched_campfire_swap_gear.clear()
+		_stitched_postevent_roster.clear()
 		_stitched_postvictory_stop_available = false
+		_stitched_postevent_roster.clear()
 		_refresh_stitched_peddler_button()
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
@@ -2959,7 +2984,8 @@ func _stitched_peddler_living_roster() -> Array:
 ## Shows the title Peddler button only while a lawful earned roster waits, and
 ## keeps it inside the title's keyboard ring only at that moment.
 func _refresh_stitched_peddler_button() -> void:
-	if not is_instance_valid(stitched_peddler_button) or not is_instance_valid(stitched_campfire_button):
+	if not is_instance_valid(stitched_peddler_button) or not is_instance_valid(stitched_campfire_button) \
+			or not is_instance_valid(stitched_postevent_button):
 		return
 	var peddler_ready: bool = _stitched_postvictory_stop_available \
 		and not _stitched_peddler_roster.is_empty() \
@@ -2980,10 +3006,18 @@ func _refresh_stitched_peddler_button() -> void:
 	if not is_instance_valid(title_view) or not title_view.is_inside_tree() \
 			or not is_instance_valid(stitched_fight_button) or not is_instance_valid(start_button):
 		return
+	var event_ready: bool = _stitched_postvictory_stop_available \
+		and not _stitched_campfire_roster.is_empty() \
+		and stitched_postevent_visit == null and not is_instance_valid(stitched_postevent_panel) \
+		and stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel) \
+		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel)
+	stitched_postevent_button.visible = event_ready
+	stitched_postevent_button.disabled = not event_ready
+	stitched_postevent_button.focus_mode = Control.FOCUS_ALL if event_ready else Control.FOCUS_NONE
 	var first: Control = stitched_peddler_button if peddler_ready else stitched_campfire_button \
-		if campfire_ready else start_button
-	var last: Control = stitched_campfire_button if campfire_ready else stitched_peddler_button \
-		if peddler_ready else stitched_fight_button
+		if campfire_ready else stitched_postevent_button if event_ready else start_button
+	var last: Control = stitched_postevent_button if event_ready else stitched_campfire_button \
+		if campfire_ready else stitched_peddler_button if peddler_ready else stitched_fight_button
 	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(first)
 	start_button.focus_previous = start_button.get_path_to(last)
 	if peddler_ready:
@@ -2993,7 +3027,13 @@ func _refresh_stitched_peddler_button() -> void:
 	if campfire_ready:
 		stitched_campfire_button.focus_previous = stitched_campfire_button.get_path_to(
 			stitched_peddler_button if peddler_ready else stitched_fight_button)
-		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(start_button)
+		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(
+			stitched_postevent_button if event_ready else start_button)
+	if event_ready:
+		stitched_postevent_button.focus_previous = stitched_postevent_button.get_path_to(
+			stitched_campfire_button if campfire_ready else stitched_peddler_button
+			if peddler_ready else stitched_fight_button)
+		stitched_postevent_button.focus_next = stitched_postevent_button.get_path_to(start_button)
 
 
 ## The title-accessible Peddler: one quoted bandage, candle stub or canonical
@@ -3003,6 +3043,7 @@ func _open_stitched_peddler() -> bool:
 			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null or stitched_peddler_part_visit != null \
+			or stitched_postevent_visit != null or is_instance_valid(stitched_postevent_panel) \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -3570,6 +3611,7 @@ func _open_stitched_campfire() -> bool:
 			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null \
+			or stitched_postevent_visit != null or is_instance_valid(stitched_postevent_panel) \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -4042,6 +4084,334 @@ func _close_stitched_campfire() -> void:
 	_refresh_stitched_peddler_button()
 	if is_instance_valid(stitched_fight_button):
 		stitched_fight_button.grab_focus.call_deferred()
+
+
+
+## S6's third, mutually-exclusive post-Circle stop. Only a real four-survivor
+## Circle Leave can offer it; every action is quote-checked against live carry.
+func _stitched_postevent_build_snapshot(roster: Array) -> Dictionary:
+	if roster.size() != 4 or _stitched_party_picks.size() != 4 \
+			or StitchedPartyAdmission.admit(_stitched_party_picks) != _stitched_party_receipt \
+			or _stitched_rank_carry.size() != 4 or _stitched_hp_carry.size() != 4 \
+			or _stitched_fray_carry.size() != 4 \
+			or typeof(stitched_roadblock_candle) != TYPE_INT \
+			or stitched_roadblock_candle < 0 or stitched_roadblock_candle > 100 \
+			or typeof(stitched_preview_scraps) != TYPE_INT or stitched_preview_scraps < 0 \
+			or typeof(stitched_preview_gold) != TYPE_INT or stitched_preview_gold < 0 \
+			or not _stitched_campfire_held_fray_valid(roster):
+		return {}
+	var ids := {}
+	var ranks := {}
+	var party: Array = []
+	for raw in roster:
+		if not raw is Dictionary:
+			return {}
+		var hero: Dictionary = raw
+		var id: String = str(hero.get("id", ""))
+		var rank: Variant = hero.get("position")
+		var hp: Variant = hero.get("hp")
+		var fray: Variant = hero.get("fray")
+		if id.is_empty() or not id in _stitched_party_picks or ids.has(id) \
+				or typeof(rank) != TYPE_INT or int(rank) < 1 or int(rank) > 4 \
+				or ranks.has(rank) or _stitched_rank_carry.get(id) != rank \
+				or typeof(hp) != TYPE_INT or int(hp) < 0 \
+				or _stitched_hp_carry.get(id) != hp \
+				or typeof(fray) != TYPE_INT or int(fray) < 0 or int(fray) >= 200 \
+				or not _stitched_fray_carry.has(id) \
+				or _stitched_fray_carry[id].get("fray") != fray:
+			return {}
+		ids[id] = true
+		ranks[rank] = true
+		party.append({"id": id, "fray": int(fray)})
+	if ids.size() != 4 or ranks.size() != 4:
+		return {}
+	return {"candle": stitched_roadblock_candle, "party": party,
+		"gold": stitched_preview_gold, "scraps": stitched_preview_scraps}
+
+
+func _stitched_postevent_live_snapshot() -> Dictionary:
+	if _stitched_postevent_roster.size() != 4 \
+			or _stitched_postevent_roster != _stitched_campfire_authorized_roster:
+		return {}
+	return _stitched_postevent_build_snapshot(_stitched_postevent_roster)
+
+
+## The consequence service includes all valid authored rows. The one paid
+## repair that would waste a scrap at 100 CANDLE is deliberately not actionable.
+func _stitched_postevent_row_available(row: Dictionary, snapshot: Dictionary) -> bool:
+	if row.get("available") != true:
+		return false
+	if row.get("choice_id") == "mend_wick" \
+			and int(row.get("candle", -1)) <= int(snapshot.get("candle", 100)):
+		return false
+	return true
+
+
+func _open_stitched_postevent() -> bool:
+	if not _stitched_postvictory_stop_available \
+			or is_instance_valid(stitched_postevent_panel) or stitched_postevent_visit != null \
+			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or stitched_peddler_candle_visit != null or stitched_peddler_part_visit != null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
+			or deck != null or run_map != null or run_rng != null \
+			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
+			or is_instance_valid(battle_view) \
+			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+
+		return false
+	var roster: Array = _stitched_campfire_living_roster()
+	var snapshot := _stitched_postevent_build_snapshot(roster)
+	if snapshot.is_empty():
+
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(STITCHED_EVENT_PATH))
+	if not parsed is Dictionary:
+
+		return false
+	var record: Dictionary = parsed
+	if record.get("id") != STITCHED_EVENT_ID or not record.get("choices") is Array:
+
+		return false
+	var authored: Array = record["choices"]
+	if authored.size() != STITCHED_EVENT_CHOICES.size():
+
+		return false
+	# JSON.parse_string represents authored numeric tokens as floats; compare
+	# the exact integral JSON values, then let the consequence service validate.
+	var expected_effects := [
+		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": -10.0, "scraps": 2.0},
+		{"target": "party", "fray": 0.0, "candle": 8.0, "gold": 0.0, "scraps": -1.0},
+		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": 0.0, "scraps": 0.0},
+	]
+	for i in range(authored.size()):
+		if not authored[i] is Dictionary \
+				or authored[i].get("id") != STITCHED_EVENT_CHOICES[i] \
+				or str(authored[i].get("text", "")).strip_edges().is_empty() \
+				or authored[i].get("stitched_effect") != expected_effects[i]:
+
+			return false
+	var visit := RunStitchedEventConsequence.new(record)
+	if not visit.is_valid():
+
+		return false
+	var quote: Dictionary = visit.preview(snapshot.duplicate(true))
+	if quote.get("ok") != true or quote.get("event_id") != STITCHED_EVENT_ID \
+			or quote.get("candle") != snapshot["candle"] \
+			or not quote.get("choices") is Array \
+			or quote["choices"].size() != STITCHED_EVENT_CHOICES.size():
+
+		return false
+	var offered := {}
+	for i in range(STITCHED_EVENT_CHOICES.size()):
+		var row: Variant = quote["choices"][i]
+		if not row is Dictionary or row.get("choice_id") != STITCHED_EVENT_CHOICES[i] \
+				or row.get("target") != "party" or row.get("hero_id") != "" \
+				or row.get("fray_delta") != 0 or row.get("fray") != {} \
+				or row.get("gold_delta") != expected_effects[i]["gold"] \
+				or row.get("scraps_delta") != expected_effects[i]["scraps"] \
+				or row.get("candle_delta") != expected_effects[i]["candle"]:
+
+			return false
+		offered[str(row["choice_id"])] = _stitched_postevent_row_available(row, snapshot)
+	if offered.get("leave") != true:
+
+		return false
+	var generation := _stitched_postevent_generation + 1
+	var mounted: Dictionary = _mount_stitched_postevent(
+		record, snapshot, quote, offered, generation)
+	var panel: Control = mounted.get("panel")
+	if panel == null:
+
+		return false
+	# Publish authority only after the complete preview and panel are verified.
+	stitched_postevent_visit = visit
+	stitched_postevent_panel = panel
+	_stitched_postevent_roster = roster.duplicate(true)
+	_stitched_postevent_snapshot = snapshot.duplicate(true)
+	_stitched_postevent_quote = quote.duplicate(true)
+	_stitched_postevent_offered = offered.duplicate(true)
+	_stitched_postevent_generation = generation
+	_stitched_postvictory_stop_available = false
+	_stitched_peddler_roster.clear()
+	_stitched_campfire_roster.clear()
+	_stitched_campfire_swap_roster.clear()
+	_stitched_campfire_swap_satchel.clear()
+	_stitched_campfire_swap_gear.clear()
+	_refresh_stitched_peddler_button()
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_view.hide()
+	var first: Button = mounted.get("first")
+	if is_instance_valid(first):
+		first.grab_focus()
+	return true
+
+
+
+
+
+func _mount_stitched_postevent(record: Dictionary, snapshot: Dictionary,
+		quote: Dictionary, offered: Dictionary, generation: int) -> Dictionary:
+	var panel := Control.new()
+	panel.name = "StitchedFerryEvent"
+	panel.theme = load("res://themes/gothic_theme.tres")
+	panel.focus_mode = Control.FOCUS_ALL
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.set_meta("stitched_event_generation", generation)
+	var frame := NinePatchRect.new()
+	frame.name = "FerryEventFrame"
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+		frame.patch_margin_left = 24
+		frame.patch_margin_right = 24
+		frame.patch_margin_top = 24
+		frame.patch_margin_bottom = 24
+	frame.position = Vector2(180, 55)
+	frame.size = Vector2(920, 600)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.name = "FerryEventHeading"
+	heading.text = str(record["title"]).to_upper()
+	heading.position = Vector2(235, 95)
+	heading.size = Vector2(810, 50)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 30)
+	panel.add_child(heading)
+	var description := Label.new()
+	description.name = "FerryEventDescription"
+	description.text = str(record["description"])
+	description.position = Vector2(250, 164)
+	description.size = Vector2(780, 95)
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(description)
+	var wallet := Label.new()
+	wallet.name = "FerryEventWallet"
+	wallet.text = "GOLD %d   ·   SCRAPS %d   ·   CANDLE %d/100" % [
+		snapshot["gold"], snapshot["scraps"], snapshot["candle"]]
+	wallet.position = Vector2(240, 268)
+	wallet.size = Vector2(800, 42)
+	wallet.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(wallet)
+	var first: Button = null
+	var buttons: Array[Button] = []
+	for i in range(STITCHED_EVENT_CHOICES.size()):
+		var id: String = STITCHED_EVENT_CHOICES[i]
+		var row: Dictionary = quote["choices"][i]
+		var button := Button.new()
+		match id:
+			"pay_gold":
+				button.name = "FerryPayGold"
+			"mend_wick":
+				button.name = "FerryMendWick"
+			"leave":
+				button.name = "FerryLeave"
+		button.text = str(record["choices"][i]["text"])
+		if id == "mend_wick":
+			button.text += "  (to %d/100)" % int(row["candle"])
+		button.position = Vector2(300, 325 + i * 78)
+		button.size = Vector2(680, 58)
+		button.disabled = not bool(offered.get(id, false))
+		button.focus_mode = Control.FOCUS_NONE if button.disabled else Control.FOCUS_ALL
+		button.pressed.connect(_stitched_postevent_choose.bind(
+			id, snapshot.duplicate(true), quote.duplicate(true),
+			weakref(panel), generation))
+		panel.add_child(button)
+		buttons.append(button)
+		if first == null and not button.disabled:
+			first = button
+	for i in range(buttons.size()):
+		if buttons[i].disabled:
+			continue
+		var prev: Button = buttons[2]
+		var next: Button = buttons[2]
+		for back in range(1, 4):
+			var candidate: Button = buttons[(i + buttons.size() - back) % buttons.size()]
+			if not candidate.disabled:
+				prev = candidate
+				break
+		for forward in range(1, 4):
+			var candidate: Button = buttons[(i + forward) % buttons.size()]
+			if not candidate.disabled:
+				next = candidate
+				break
+		buttons[i].focus_previous = buttons[i].get_path_to(prev)
+		buttons[i].focus_next = buttons[i].get_path_to(next)
+	if first == null:
+		panel.free()
+		return {}
+	return {"panel": panel, "first": first}
+
+
+func _stitched_postevent_choose(choice_id: String, expected_snapshot: Dictionary,
+		expected_quote: Dictionary, source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or not is_instance_valid(panel) \
+			or panel != stitched_postevent_panel or not panel.is_visible_in_tree() \
+			or panel.get_meta("stitched_event_generation", -1) != generation \
+			or generation != _stitched_postevent_generation \
+			or stitched_postevent_visit == null or not stitched_postevent_visit.is_valid() \
+			or stitched_postevent_visit.is_claimed() \
+			or is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_sewing_panel) \
+			or is_instance_valid(stitched_peddler_panel) or is_instance_valid(stitched_campfire_panel) \
+			or _stitched_postvictory_stop_available \
+			or deck != null or run_map != null or run_rng != null \
+			or _stitched_postevent_snapshot != expected_snapshot \
+			or _stitched_postevent_quote != expected_quote \
+			or not choice_id in STITCHED_EVENT_CHOICES \
+			or _stitched_postevent_offered.get(choice_id) != true:
+		return {"ok": false, "error": "stale or unoffered Stitched Event"}
+	var live := _stitched_postevent_live_snapshot()
+	if live.is_empty() or live != expected_snapshot \
+			or stitched_postevent_visit.preview(live.duplicate(true)) != expected_quote:
+		return {"ok": false, "error": "changed Stitched Event resources or party"}
+	var index: int = STITCHED_EVENT_CHOICES.find(choice_id)
+	if index < 0 or index >= expected_quote.get("choices", []).size():
+		return {"ok": false, "error": "missing quoted Event choice"}
+	var row: Dictionary = expected_quote["choices"][index]
+	if row.get("choice_id") != choice_id or not _stitched_postevent_row_available(row, live) \
+			or row.get("fray") != {} or row.get("target") != "party" \
+			or row.get("hero_id") != "":
+		return {"ok": false, "error": "unavailable quoted Event choice"}
+	var expected_receipt := {"ok": true, "event_id": STITCHED_EVENT_ID,
+		"choice_id": choice_id, "target": "party", "hero_id": "",
+		"candle": row["candle"], "fray": {},
+		"gold_delta": row["gold_delta"], "gold": row["gold"],
+		"scraps_delta": row["scraps_delta"], "scraps": row["scraps"]}
+	# No service claim occurs before all live-state and exact-choice checks.
+	var receipt: Dictionary = stitched_postevent_visit.choose(choice_id, live.duplicate(true))
+	if receipt != expected_receipt:
+		return {"ok": false, "error": "Stitched Event receipt mismatch"}
+	stitched_preview_gold = int(receipt["gold"])
+	stitched_preview_scraps = int(receipt["scraps"])
+	stitched_roadblock_candle = int(receipt["candle"])
+	_close_stitched_postevent()
+	return receipt
+
+
+func _close_stitched_postevent() -> void:
+	var panel := stitched_postevent_panel
+	stitched_postevent_panel = null
+	stitched_postevent_visit = null
+	_stitched_postevent_roster.clear()
+	_stitched_postevent_snapshot.clear()
+	_stitched_postevent_quote.clear()
+	_stitched_postevent_offered.clear()
+	_stitched_campfire_authorized_roster.clear()
+	_stitched_postevent_generation += 1
+	if is_instance_valid(panel):
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+	_restore_stitched_title()
+	_refresh_stitched_peddler_button()
 
 
 ## Full-screen Quilt village with no run, RNG, deck or currency allocation.
