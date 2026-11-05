@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_quote_and_admission()
 	_test_purchase_and_leave()
 	_test_refusals()
+	_test_lost_and_hanging()
 	_check(randi() == next_draw,
 		"bandage open, quote, buys, Leaves and every refusal draw no global RNG")
 	if failures.is_empty():
@@ -373,3 +374,93 @@ func _test_refusals() -> void:
 	_check(paid.get("ok") == true and paid.get("gold") == 260
 		and paid["heroes"][0]["statuses"] == {"weak": 1},
 		"after every refusal the fresh exact choice still buys legally")
+
+
+## AC1-AC4: a LOST (unpicked) doll is never a bandage target, while a HANGING
+## doll (0 HP, lost=false) still is; lost=false/missing stays eligible.
+func _test_lost_and_hanging() -> void:
+	# AC1/AC2: one LOST bleeder is excluded, the living one is still sold to.
+	var one_lost := _party()
+	one_lost[0]["lost"] = true
+	one_lost[1]["lost"] = false
+	var visit := _open_party(120, PRICE, one_lost)
+	_check(visit.is_open() and visit.read_state().get("eligible") == ["warden"],
+		"a LOST bleeding hero is excluded from read_state eligible IDs")
+	_assert_quote(visit, 120, ["buy_bandage", "leave"], true, "", ["warden"],
+		"one LOST bleeder, one living bleeder")
+	var snap := visit.read_state()
+	_reject(visit, "rag_duelist", NODE, snap, "LOST bleeder buy with ample gold")
+	_check(visit.read_state()["gold"] == 120
+		and visit.read_state()["heroes"][0]["statuses"] == {"bleed": 3, "weak": 1},
+		"the refused LOST buy spent no gold and cured nothing")
+	var paid := visit.choose_bandage("warden", NODE, visit.read_state())
+	var heroes: Array = paid.get("heroes", [])
+	_check(paid.get("ok") == true and paid.get("decision") == "buy_bandage"
+		and paid.get("hero_id") == "warden" and paid.get("charged_gold") == PRICE
+		and paid.get("gold") == 120 - PRICE and visit.is_consumed()
+		and heroes.size() == 4,
+		"the living bleeder buys once at exactly the quoted price")
+	if heroes.size() == 4:
+		var expected_warden: Dictionary = one_lost[1].duplicate(true)
+		expected_warden["statuses"] = {}
+		_check(heroes[0] == one_lost[0] and heroes[1] == expected_warden
+			and heroes[2] == one_lost[2] and heroes[3] == one_lost[3],
+			"only the living target's bleed is stripped; peers incl. LOST are unchanged")
+	_check(visit.choose_bandage("warden", NODE, visit.read_state()).get("ok", true) == false
+		and visit.read_state()["gold"] == 120 - PRICE,
+		"replaying the purchase is refused without a second charge")
+	# A missing lost field counts as not lost.
+	var missing := _party()
+	missing[1]["lost"] = true
+	_check(_open_party(120, PRICE, missing).read_state().get("eligible") == ["rag_duelist"],
+		"a missing lost field is not lost; the other bleeder is LOST and excluded")
+	# AC4: every bleeder LOST -> Leave only, no spend, free Leave still works.
+	var all_lost := _party()
+	all_lost[0]["lost"] = true
+	all_lost[1]["lost"] = true
+	var lost_visit := _open_party(120, PRICE, all_lost)
+	var lost_snap := lost_visit.read_state()
+	_check(lost_snap.get("eligible") == [], "all-LOST bleeders leave no eligible IDs")
+	_assert_quote(lost_visit, 120, ["leave"], false, "no bleeding heroes", [],
+		"all bleeders LOST")
+	_reject(lost_visit, "rag_duelist", NODE, lost_snap, "all-LOST buy: rag_duelist")
+	_reject(lost_visit, "warden", NODE, lost_snap, "all-LOST buy: warden")
+	var lost_forged := lost_visit.quote().duplicate(true)
+	lost_forged["choices"] = ["buy_bandage", "leave"]
+	lost_forged["can_buy"] = true
+	lost_forged["blocked"] = ""
+	lost_forged["eligible"] = ["rag_duelist", "warden"]
+	_reject(lost_visit, "rag_duelist", NODE, lost_forged, "all-LOST falsified quote")
+	var lost_left := lost_visit.leave(NODE, lost_snap)
+	_check(lost_left.get("ok") == true and lost_left.get("charged_gold") == 0
+		and lost_left.get("gold") == 120 and lost_left["heroes"] == all_lost
+		and lost_visit.is_consumed(),
+		"the all-LOST visit still permits the free Leave, charging nothing")
+	# Wrong node, stale snapshot and insufficient wallet stay refused with a LOST peer.
+	var guarded := _open_party(PRICE - 1, PRICE, one_lost)
+	_reject(guarded, "warden", NODE, guarded.read_state(), "LOST roster, short wallet")
+	var guarded_ok := _open_party(PRICE, PRICE, one_lost)
+	_reject(guarded_ok, "warden", "other-node", guarded_ok.read_state(),
+		"LOST roster, wrong node")
+	_reject(guarded_ok, "warden", NODE, visit.read_state(), "LOST roster, stale snapshot")
+	# AC3: a HANGING hero (hp 0, lost=false) with Bleed is still bandaged.
+	var hanging := _party()
+	hanging[1]["hp"] = 0
+	hanging[1]["lost"] = false
+	var hang_visit := _open_party(PRICE, PRICE, hanging)
+	_check(hang_visit.read_state().get("eligible") == ["rag_duelist", "warden"],
+		"a HANGING (0 HP, not lost) bleeder stays eligible")
+	var hang_before: Array = hang_visit.read_state()["heroes"]
+	var hang_paid := hang_visit.choose_bandage("warden", NODE, hang_visit.read_state())
+	var hang_after: Array = hang_paid.get("heroes", [])
+	_check(hang_paid.get("ok") == true and hang_paid.get("charged_gold") == PRICE
+		and hang_paid.get("gold") == 0 and hang_after.size() == 4,
+		"the HANGING hero's bandage buys at the exact quote")
+	if hang_after.size() == 4:
+		var expected_hang: Dictionary = hang_before[1].duplicate(true)
+		expected_hang["statuses"] = {}
+		_check(hang_after[1] == expected_hang and hang_after[1]["hp"] == 0
+			and hang_after[1]["lost"] == false
+			and hang_after[0] == hang_before[0] and hang_after[2] == hang_before[2]
+			and hang_after[3] == hang_before[3],
+			"the HANGING hero keeps HP, fray, rank, lost flag and parts; peers unchanged")
