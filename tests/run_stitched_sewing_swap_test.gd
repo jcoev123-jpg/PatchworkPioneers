@@ -26,7 +26,7 @@ func _init() -> void:
 		_test_roster_sizes_and_satchel_cap()
 		_test_constructor_rejects()
 		_test_lost_hero_cannot_swap()
-		_test_lost_hero_cannot_swap()
+		_test_lost_hero_receipts_and_variants()
 	_check(rng.state == rng_state_before, "seeded RNG state must be unchanged")
 	if failures.is_empty():
 		print("run_stitched_sewing_swap_test: PASS")
@@ -377,7 +377,7 @@ func _test_constructor_rejects() -> void:
 	_expect_reject(empty, "swap from an empty satchel", empty.swap("warden", "arms", 0, NODE, empty.read_state()))
 
 
-func _test_lost_hero_cannot_swap() -> void:
+func _test_lost_hero_receipts_and_variants() -> void:
 	var heroes := _party()
 	heroes[0]["lost"] = true
 	heroes[1]["lost"] = false
