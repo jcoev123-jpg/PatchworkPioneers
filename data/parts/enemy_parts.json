@@ -1681,7 +1681,9 @@
         "acc": 85,
         "dmg": [5, 8],
         "crit": 0,
-        "effects": {},
+        "effects": {
+          "bleed": 1
+        },
         "self_move": 0,
         "move": "attack2"
       },
@@ -1691,7 +1693,10 @@
             "dmg": 4
           },
           "ability": {
-            "dmg": [6, 9]
+            "dmg": [6, 9],
+            "effects": {
+              "bleed": 2
+            }
           }
         },
         "3": {
@@ -1699,11 +1704,14 @@
             "dmg": 5
           },
           "ability": {
-            "dmg": [7, 10]
+            "dmg": [7, 10],
+            "effects": {
+              "bleed": 3
+            }
           }
         }
       },
-      "text": "Fire a sewing-machine needle across the ranks."
+      "text": "Fire a sewing-machine needle into a foe and leave Bleed 1; higher stitch tiers deepen the seam."
     },
     {
       "id": "moth_queen_wing_crown",
