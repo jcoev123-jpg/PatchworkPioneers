@@ -215,6 +215,15 @@ func read_state() -> Dictionary:
     }
 
 
+## Paid calm eligibility shared by quote() and calm_hero(): a present hero with
+## positive FRAY that is not LOST. Only a native boolean lost == true is LOST (same
+## rule as the sewing services); HP 0 (Hanging by a Thread) is still eligible.
+func _calm_eligible(hero: Dictionary) -> bool:
+    if typeof(hero.get("lost")) == TYPE_BOOL and bool(hero["lost"]):
+        return false
+    return int(hero["fray"]) > 0
+
+
 ## Exactly two available decisions; selecting the card is part of remove_card.
 func quote() -> Dictionary:
     if _stitched:
@@ -224,7 +233,7 @@ func quote() -> Dictionary:
         var hero_ids: Array = []
         if open and _gold >= _quoted_price:
             for hero in _heroes:
-                if int(hero["fray"]) > 0:
+                if _calm_eligible(hero):
                     hero_ids.append(hero["id"])
         var choices: Array = []
         if open:
@@ -332,7 +341,7 @@ func calm_hero(hero_id: Variant, expected_visit_id: Variant,
     for i in _heroes.size():
         if _heroes[i]["id"] == hero_id:
             index = i
-    if index < 0 or int(_heroes[index]["fray"]) <= 0:
+    if index < 0 or not _calm_eligible(_heroes[index]):
         return _receipt(false)
     var before: int = _heroes[index]["fray"]
     var after: int = maxi(0, before - CALM_AMOUNT)

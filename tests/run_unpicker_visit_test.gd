@@ -28,6 +28,7 @@ func _initialize() -> void:
     _test_stitched_invalid_open_and_detachment()
     _test_stitched_quote_actionability()
     _test_stitched_unpick_spare()
+    _test_stitched_lost_calm_eligibility()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -892,6 +893,141 @@ func _e_reject(visit: RunUnpickerVisit, action: String, arg: Variant, visit_id: 
         _check(result.get(key) == before.get(key), label + ": unchanged returned " + key)
     _check(result.get("action") == "" and result.get("charged_gold") == 0
             and result.get("credited_scraps", 0) == 0, label + ": no phantom action or credit")
+
+
+## Hero array from _s_heroes with a native boolean lost=true on the given indices.
+func _l_heroes(frays: Array, lost_indices: Array) -> Array:
+    var heroes := _s_heroes(frays)
+    for i in lost_indices:
+        heroes[i]["lost"] = true
+    return heroes
+
+
+func _l_open(expanded: bool, heroes: Array, gold: int = 100) -> RunUnpickerVisit:
+    if expanded:
+        return RunUnpickerVisit.open_stitched(NODE, heroes, gold, 75, _e_spares(), 1, 2)
+    return RunUnpickerVisit.open_stitched(NODE, heroes, gold, 75)
+
+
+## LOST dolls (native boolean lost == true) are never paid-calm eligible, while Hanging
+## (HP 0) heroes and non-boolean "lost" values still are. LOST heroes stay in the ledger.
+func _test_stitched_lost_calm_eligibility() -> void:
+    for expanded in [false, true]:
+        var tag := "expanded " if expanded else "base "
+        # (1) Mixed LOST and alive frayed heroes: only non-LOST named, nothing changes.
+        var heroes := _l_heroes([70, 20, 200, 0], [0, 2])
+        var original := heroes.duplicate(true)
+        var visit := _l_open(expanded, heroes)
+        _check(visit.is_valid(), tag + "mixed LOST roster opens")
+        var source := visit.read_state()
+        var quote := visit.quote()
+        _check(quote["ok"] and quote["hero_ids"] == [HERO_IDS[1]]
+                and quote["choices"] == (["calm_hero", "unpick_spare", "leave"] if expanded
+                        else ["calm_hero", "leave"]),
+                tag + "quote names only the non-LOST frayed hero")
+        _check(source["heroes"] == original and visit.read_state() == source
+                and not visit.is_consumed(), tag + "LOST heroes stay held and quote is read-only")
+        # (2) LOST / forged targets fail with no charge, no change and no RNG.
+        seed(7731)
+        var next_draw := randi()
+        seed(7731)
+        for target in [HERO_IDS[0], HERO_IDS[2], "ghost_hero"]:
+            if expanded:
+                _e_reject(visit, "calm", target, source["visit_id"], NODE, source,
+                        tag + "LOST/forged calm " + str(target))
+            else:
+                _s_reject(visit, target, source["visit_id"], NODE, source,
+                        tag + "LOST/forged calm " + str(target))
+        _check(randi() == next_draw, tag + "refused LOST calms consume no RNG")
+        # Eligible purchase succeeds once at the supplied price.
+        var paid := _s_calm(visit, HERO_IDS[1], source)
+        var expected := original.duplicate(true)
+        expected[1]["fray"] = 0
+        _check(paid["ok"] == true and paid["charged_gold"] == 75 and paid["gold"] == 25
+                and paid["fray_before"] == 20 and paid["fray_after"] == 0
+                and paid["heroes"] == expected and visit.is_consumed(),
+                tag + "eligible hero calmed once for the quoted price, LOST dolls untouched")
+        if expanded:
+            _check(paid["satchel"] == _e_spares() and paid["scraps"] == 1,
+                    tag + "paid calm leaves satchel and scraps alone")
+            _e_reject(visit, "calm", HERO_IDS[1], source["visit_id"], NODE, source,
+                    tag + "one-use replay")
+        else:
+            _s_reject(visit, HERO_IDS[1], source["visit_id"], NODE, source, tag + "one-use replay")
+        _check(visit.quote()["choices"].is_empty(), tag + "consumed visit offers nothing")
+
+        # (3) Every frayed hero LOST: Leave (and, expanded, unpick_spare) remain.
+        var all_lost := _l_heroes([70, 20, 0, 0], [0, 1])
+        var all_original := all_lost.duplicate(true)
+        var stuck := _l_open(expanded, all_lost)
+        var stuck_source := stuck.read_state()
+        var stuck_quote := stuck.quote()
+        _check(stuck_quote["ok"] and stuck_quote["hero_ids"].is_empty()
+                and stuck_quote["choices"] == (["unpick_spare", "leave"] if expanded else ["leave"]),
+                tag + "all-frayed-LOST offers no calm")
+        for target in [HERO_IDS[0], HERO_IDS[1]]:
+            if expanded:
+                _e_reject(stuck, "calm", target, stuck_source["visit_id"], NODE, stuck_source,
+                        tag + "all-LOST calm " + str(target))
+            else:
+                _s_reject(stuck, target, stuck_source["visit_id"], NODE, stuck_source,
+                        tag + "all-LOST calm " + str(target))
+        if expanded:
+            var unpicked := _e_unpick(stuck, 1, stuck_source)
+            _check(unpicked["ok"] and unpicked["credited_scraps"] == 2
+                    and unpicked["scraps_before"] == 1 and unpicked["scraps_after"] == 3
+                    and unpicked["charged_gold"] == 0 and unpicked["gold"] == 100
+                    and unpicked["removed_part"] == _e_spares()[1]
+                    and unpicked["satchel"] == [_e_spares()[0]]
+                    and unpicked["heroes"] == all_original and stuck.is_consumed(),
+                    "expanded spare unpick credits scraps independent of FRAY eligibility")
+            var leave_visit := _l_open(true, _l_heroes([70, 20, 0, 0], [0, 1]))
+            var leave_source := leave_visit.read_state()
+            var left_exp := leave_visit.leave(leave_source["visit_id"], NODE, leave_source)
+            _check(left_exp["ok"] and left_exp["charged_gold"] == 0 and left_exp["gold"] == 100
+                    and left_exp["satchel"] == _e_spares() and left_exp["scraps"] == 1,
+                    "expanded all-LOST visit still Leaves free")
+        else:
+            var left := stuck.leave(stuck_source["visit_id"], NODE, stuck_source)
+            _check(left["ok"] and left["action"] == "leave" and left["charged_gold"] == 0
+                    and left["heroes"] == all_original and left["gold"] == 100
+                    and stuck.is_consumed(), "base all-LOST visit still Leaves once, free")
+            _s_reject(stuck, null, stuck_source["visit_id"], NODE, stuck_source,
+                    "base all-LOST replayed Leave", "leave")
+
+    # (4) HP 0 Hanging hero at FRAY 75 with Unravelled resolve is still calmable;
+    # a non-boolean lost value is not LOST; only that hero's resolve changes.
+    for lost_value in [null, false, "true", 1]:
+        var hanging := _s_heroes([75, 0, 0, 0])
+        hanging[0]["hp"] = 0
+        hanging[0]["resolve"] = "frantic"
+        if lost_value != null:
+            hanging[0]["lost"] = lost_value
+        var hanging_original := hanging.duplicate(true)
+        var hang_visit := _s_open(hanging)
+        var hang_source := hang_visit.read_state()
+        _check(hang_visit.quote()["hero_ids"] == [HERO_IDS[0]],
+                "Hanging hero with lost=" + str(lost_value) + " is quoted")
+        var calmed := _s_calm(hang_visit, HERO_IDS[0], hang_source)
+        var hang_expected := hanging_original.duplicate(true)
+        hang_expected[0]["fray"] = 25
+        hang_expected[0]["resolve"] = ""
+        _check(calmed["ok"] == true and calmed["fray_before"] == 75 and calmed["fray_after"] == 25
+                and calmed["charged_gold"] == 75 and calmed["gold"] == 25
+                and calmed["heroes"] == hang_expected and calmed["heroes"][0]["hp"] == 0
+                and calmed["heroes"][0]["position"] == 1,
+                "Hanging 75-FRAY Unravelled hero calms to 25 and loses the trait, lost="
+                + str(lost_value))
+    # A LOST hero at HP 0 with Unravelled resolve is still refused and unchanged.
+    var lost_hanging := _l_heroes([75, 0, 0, 0], [0])
+    lost_hanging[0]["hp"] = 0
+    lost_hanging[0]["resolve"] = "frantic"
+    var lost_visit := _s_open(lost_hanging)
+    var lost_source := lost_visit.read_state()
+    _check(lost_visit.quote()["hero_ids"].is_empty() and lost_visit.quote()["choices"] == ["leave"],
+            "LOST 0-HP hero is not quoted")
+    _s_reject(lost_visit, HERO_IDS[0], lost_source["visit_id"], NODE, lost_source,
+            "LOST 0-HP Unravelled hero")
 
 
 func _test_stitched_unpick_spare() -> void:
