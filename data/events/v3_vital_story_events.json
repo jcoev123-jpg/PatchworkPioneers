@@ -1287,6 +1287,94 @@
         { "id": "haul_scope_mirror", "text": "Haul the sharp mirror free (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
         { "id": "leave", "text": "Leave the periscope watching the empty road", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_velvet_pulse_metronome",
+      "title": "The Velvet Pulse Metronome",
+      "description": "A squat button-eyed clockmaker tends a towering copper metronome; its pendulum is a stuffed crimson heart beating in a pool of candlelight.",
+      "choices": [
+        {
+          "id": "retune_heart_tick",
+          "text": "Pay 12 gold to steady the heart pendulum (heal 7 HP)",
+          "outcome": { "gold": -12, "scraps": 0, "hp": 7, "max_hp": 0 }
+        },
+        {
+          "id": "wind_blood_spring",
+          "text": "Wind the heavy pulse spring (lose 4 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the heart metronome ticking",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_ashglass_doll_fountain",
+      "title": "The Ashglass Doll Fountain",
+      "description": "A plump midnight-teal fountain doll pours pale threadwater from a cracked glass hand, while an amber wick lights the basin's dark stitches.",
+      "choices": [
+        {
+          "id": "line_fountain_spout",
+          "text": "Spend 2 scraps on a warm lining (heal 6 HP; gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 6, "max_hp": 1 }
+        },
+        {
+          "id": "break_mirror_lip",
+          "text": "Trade a lasting heart seam for 23 gold (lose 1 max HP)",
+          "outcome": { "gold": 23, "scraps": 0, "hp": 0, "max_hp": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the fountain keep its threadwater",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_mossbell_luggage_scale",
+      "title": "The Mossbell Luggage Scale",
+      "description": "A moss-green porter balances a giant button-stuffed suitcase on one side of a brass luggage scale, with a small candle tied to its needle.",
+      "choices": [
+        {
+          "id": "purchase_heart_weight",
+          "text": "Pay 17 gold for a lasting counterweight seam (+2 max HP)",
+          "outcome": { "gold": -17, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "carry_iron_case",
+          "text": "Carry the weighted case (lose 5 HP; earn 19 gold)",
+          "outcome": { "gold": 19, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the balance undisturbed",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_plum_pinwheel_sanctuary",
+      "title": "The Plum Pinwheel Sanctuary",
+      "description": "A stout velvet keeper holds a huge four-sailed plum pinwheel above a quilted roadside shrine; bone-cream ribbons tug at its brass spindle.",
+      "choices": [
+        {
+          "id": "stitch_sail_bandage",
+          "text": "Spend 1 scrap on a sailcloth bandage (heal 8 HP)",
+          "outcome": { "gold": 0, "scraps": -1, "hp": 8, "max_hp": 0 }
+        },
+        {
+          "id": "rescue_fallen_sail",
+          "text": "Catch a fallen brass sail (lose 3 HP; gain 15 gold and 1 scrap)",
+          "outcome": { "gold": 15, "scraps": 1, "hp": -3, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the pinwheel turn over the quiet road",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
