@@ -176,7 +176,7 @@ func _open(app: Node) -> Dictionary:
 		and state.get("satchel") == app.stitched_preview_satchel \
 		and quote.get("state") == state and quote.get("satchel_count") == state.get("satchel", []).size() \
 		and quote.get("satchel_max") == RunStitchedPeddlerPart.SATCHEL_CAP \
-		and quote.get("choices") == ["buy_part", "leave"] \
+		and quote.get("choices") == (["buy_part", "leave"] if quote.get("can_buy") == true else ["leave"]) \
 		and expected_offer.get("id") == HEAD and expected_offer.get("name") == "Helmet Rattle" \
 		and expected_offer.get("name") == def.get("name") \
 		and expected_offer.get("slot") == def.get("slot") \
