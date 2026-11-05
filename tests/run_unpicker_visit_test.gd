@@ -23,6 +23,7 @@ func _initialize() -> void:
     _test_stale_and_forged_inputs()
     _test_invalid_open()
     _test_stitched_calm()
+    _test_stitched_resolve_recovery()
     _test_stitched_leave_and_refusals()
     _test_stitched_invalid_open_and_detachment()
     _test_stitched_quote_actionability()
@@ -511,6 +512,102 @@ func _test_stitched_calm() -> void:
     _check(_s_calm(zero, "warden", zero_source)["ok"] == true,
             "visit stays open after zero-FRAY refusal")
     _check(heroes == original, "caller hero input unchanged")
+
+
+## Hero array from the unchanged _s_heroes helper with the Warden's native resolve set.
+## A null resolve leaves the key absent, as older callers' hero dictionaries do.
+func _s_resolve_heroes(fray: int, resolve: Variant) -> Array:
+    var heroes := _s_heroes([fray, 0, 0, 0])
+    if resolve != null:
+        heroes[0]["resolve"] = resolve
+    return heroes
+
+
+func _test_stitched_resolve_recovery() -> void:
+    # Main case (AC1): FRAY 70 + frantic, paid 75 of 100 -> FRAY 20, resolve cleared.
+    var main_heroes := _s_resolve_heroes(70, "frantic")
+    var main_original := main_heroes.duplicate(true)
+    var main_visit := _s_open(main_heroes)
+    var main_source := main_visit.read_state()
+    seed(6137)
+    var next_draw := randi()
+    seed(6137)
+    var main_paid := _s_calm(main_visit, "warden", main_source)
+    var main_expected := _s_resolve_heroes(70, "frantic")
+    main_expected[0]["fray"] = 20
+    main_expected[0]["resolve"] = ""
+    _check(main_paid["ok"] == true and main_paid["fray_before"] == 70 and main_paid["fray_after"] == 20
+            and main_paid["calmed_hero_id"] == "warden", "AC1 frantic Warden calmed 70 -> 20")
+    _check(main_paid["heroes"] == main_expected and main_paid["heroes"][0]["resolve"] == "",
+            "AC1 only the paid hero's resolve cleared; roster otherwise exactly unchanged")
+    _check(main_visit.read_state()["heroes"] == main_expected,
+            "AC1 read_state exposes the cleared resolve")
+    _check(main_paid["charged_gold"] == 75 and main_paid["gold"] == 25 and main_visit.is_consumed()
+            and main_paid["consumed"] == true and main_visit.read_state()["gold"] == 25,
+            "AC1 exactly one 75 debit (100 -> 25) and visit consumed")
+    _check(main_paid["source_snapshot"] == main_source and main_paid["source_receipt"] == main_source["receipt"]
+            and main_paid["receipt"] != main_paid["source_receipt"]
+            and main_paid["visit_id"] == main_source["visit_id"] and main_paid["node_id"] == NODE
+            and main_source["heroes"] == main_original and main_heroes == main_original,
+            "AC1 receipt/source-snapshot provenance and caller detachment")
+    _s_reject(main_visit, "warden", main_source["visit_id"], NODE, main_source, "replayed resolve calm")
+    _check(randi() == next_draw, "resolve recovery and replay draw no global RNG")
+
+    # AC2 table: every Unravelled trait clears strictly below 50, keeps at 50 and above.
+    for unravel in StitchedS1BEffects.RESOLVE_TRAITS:
+        for row in [[99, 49, ""], [100, 50, unravel], [130, 80, unravel]]:
+            var heroes := _s_resolve_heroes(row[0], unravel)
+            var visit := _s_open(heroes)
+            var paid := _s_calm(visit, "warden", visit.read_state())
+            var label: String = "%s %d -> %d" % [unravel, row[0], row[1]]
+            var expected := _s_resolve_heroes(row[0], unravel)
+            expected[0]["fray"] = row[1]
+            expected[0]["resolve"] = row[2]
+            _check(paid["ok"] == true and paid["fray_after"] == row[1] and paid["heroes"] == expected
+                    and paid["heroes"][0]["resolve"] == row[2] and paid["charged_gold"] == 75
+                    and paid["gold"] == 25, "resolve table " + label)
+
+    # Contrasting resolve fixtures at 99 -> 49 stay untouched.
+    for keep in ["steadfast", ""]:
+        var kept := _s_resolve_heroes(99, keep)
+        var kept_visit := _s_open(kept)
+        var kept_paid := _s_calm(kept_visit, "warden", kept_visit.read_state())
+        var kept_expected := _s_resolve_heroes(99, keep)
+        kept_expected[0]["fray"] = 49
+        _check(kept_paid["ok"] == true and kept_paid["heroes"] == kept_expected
+                and kept_paid["heroes"][0]["resolve"] == keep,
+                "resolve '" + keep + "' untouched after calm to 49")
+    var bare := _s_resolve_heroes(99, null)
+    var bare_visit := _s_open(bare)
+    var bare_paid := _s_calm(bare_visit, "warden", bare_visit.read_state())
+    var bare_expected := _s_resolve_heroes(99, null)
+    bare_expected[0]["fray"] = 49
+    _check(bare_paid["ok"] == true and not bare_paid["heroes"][0].has("resolve")
+            and bare_paid["heroes"] == bare_expected, "missing resolve key is not invented")
+
+    # Refusals never clear resolve or charge, and Leave stays free afterwards.
+    var guard_heroes := _s_resolve_heroes(99, "hollow")
+    var guard_visit := _s_open(guard_heroes)
+    var guard := guard_visit.read_state()
+    var stale := guard.duplicate(true)
+    stale["gold"] += 1
+    _s_reject(guard_visit, "warden", guard["visit_id"], NODE, stale, "stale snapshot keeps resolve")
+    _s_reject(guard_visit, "warden", guard["visit_id"], "other-node", guard, "wrong node keeps resolve")
+    _check(guard_visit.read_state()["heroes"][0]["resolve"] == "hollow"
+            and guard_visit.read_state()["gold"] == 100, "refused calls leave hollow and gold intact")
+    var poor := _s_open(_s_resolve_heroes(99, "hollow"), 74)
+    var poor_source := poor.read_state()
+    _check(poor.quote()["choices"] == ["leave"], "unaffordable quote offers only Leave")
+    _s_reject(poor, "warden", poor_source["visit_id"], NODE, poor_source, "unfunded calm keeps resolve")
+    var left := poor.leave(poor_source["visit_id"], NODE, poor_source)
+    _check(left["ok"] == true and left["action"] == "leave" and left["charged_gold"] == 0
+            and left["gold"] == 74 and left["heroes"][0]["resolve"] == "hollow"
+            and left["heroes"][0]["fray"] == 99 and poor.is_consumed(),
+            "Leave after refusal is free and keeps resolve")
+    var zero_heroes := _s_resolve_heroes(0, "bitter")
+    var zero := _s_open(zero_heroes)
+    var zero_source := zero.read_state()
+    _s_reject(zero, "warden", zero_source["visit_id"], NODE, zero_source, "zero-FRAY calm keeps resolve")
 
 
 func _test_stitched_leave_and_refusals() -> void:

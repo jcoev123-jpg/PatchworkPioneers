@@ -33,6 +33,7 @@ const SPARE_SLOTS := ["head", "arms", "torso", "legs"]
 const STITCHED_PARTY_SIZE := 4
 const FRAY_MAX := 200
 const CALM_AMOUNT := 50
+const RESOLVE_CLEAR_BELOW := 50
 
 
 func _init(node_id: Variant = null, deck_ids: Variant = null, gold: Variant = null,
@@ -336,6 +337,12 @@ func calm_hero(hero_id: Variant, expected_visit_id: Variant,
     var before: int = _heroes[index]["fray"]
     var after: int = maxi(0, before - CALM_AMOUNT)
     _heroes[index]["fray"] = after
+    # An Unravelled trait lasts until FRAY drops strictly below 50 (same threshold as
+    # StitchedRules._change_fray). Only a present, known trait on this hero is cleared;
+    # steadfast, empty and absent resolve are left exactly as they were. No resolve roll.
+    if after < RESOLVE_CLEAR_BELOW and _heroes[index].has("resolve") \
+            and str(_heroes[index]["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS:
+        _heroes[index]["resolve"] = ""
     _gold -= _quoted_price
     _consumed = true
     var result := _receipt(true, "calm_hero", "", _quoted_price)
