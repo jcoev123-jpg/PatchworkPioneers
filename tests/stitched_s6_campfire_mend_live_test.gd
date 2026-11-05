@@ -249,7 +249,7 @@ func _campfire_mend() -> Dictionary:
 		app._stitched_campfire_choose(RunCampfireVisit.MEND, wrong_candle, weakref(panel), generation),
 		app._stitched_campfire_choose(RunCampfireVisit.MEND, quoted, null, generation),
 		app._stitched_campfire_choose(RunCampfireVisit.MEND, quoted, weakref(panel), generation - 1),
-		app._stitched_campfire_choose(RunCampfireVisit.TELL_TALES, quoted, weakref(panel), generation),
+		app._stitched_campfire_choose(RunCampfireVisit.TELL_TALES, wrong_quote, weakref(panel), generation),
 		visit.select(RunCampfireVisit.MEND, "forged", roster, before["candle"]),
 		visit.select(RunCampfireVisit.MEND, NODE, wrong_heroes["heroes"], before["candle"]),
 	]

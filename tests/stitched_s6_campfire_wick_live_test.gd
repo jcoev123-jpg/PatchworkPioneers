@@ -197,21 +197,39 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and before["hp"] == setup["wounds"],
 		"non-vacuous real four-hero victory snapshot precedes Wick")
 	if int(before["candle"]) >= 100:
-		# At CANDLE 100 the service no longer advertises Trim the Wick, so the
-		# mounted panel (which still requires it) does not open: nothing is spent
-		# and the earned stop is kept. The live panel follow-up is a later S6 task.
+		# CANDLE 100 removes only Wick. The genuine earned Campfire still
+		# mounts every other quoted action, and Leave retires it for free.
 		var full_visit := RunCampfireVisit.new(NODE, roster, RunCampfireVisit.STITCHED, 100)
 		var full_state: Dictionary = full_visit.read_state()
 		_check(full_state.get("quote", {}).get("choices", []).has(RunCampfireVisit.TRIM_THE_WICK) == false
 			and full_state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE)
 			and full_visit.select(RunCampfireVisit.TRIM_THE_WICK, NODE, roster, 100).get("ok") == false
 			and full_visit.read_state() == full_state,
-			"service at CANDLE 100 does not offer Wick and refuses it without consuming the visit")
+			"full CANDLE service refuses unoffered Wick without closing")
 		app.stitched_campfire_button.pressed.emit()
 		await process_frame
-		_check(app.stitched_campfire_panel == null and app.stitched_campfire_visit == null
-			and app._stitched_postvictory_stop_available and _resources(app) == before,
-			"CANDLE 100 Campfire does not mount, spends nothing and keeps the earned stop")
+		var panel: Control = app.stitched_campfire_panel
+		var visit: RunCampfireVisit = app.stitched_campfire_visit
+		_check(panel != null and visit != null
+			and panel.find_child("CampfireWick", true, false) == null
+			and panel.find_child("CampfireLeave", true, false) != null
+			and visit.read_state().get("quote") == full_state.get("quote")
+			and not app._stitched_postvictory_stop_available,
+			"CANDLE 100 Campfire mounts offered actions without any Wick control")
+		if panel != null and visit != null:
+			var expected: Dictionary = app._stitched_campfire_state.duplicate(true)
+			var generation: int = app._stitched_campfire_generation
+			_check(not app._stitched_campfire_choose(
+				RunCampfireVisit.TRIM_THE_WICK, expected, weakref(panel), generation).get("ok")
+				and _resources(app) == before and visit.read_state() == expected,
+				"manually forged unoffered Wick cannot spend or alter state")
+			var leave: Button = panel.find_child("CampfireLeave", true, false)
+			leave.pressed.emit()
+			_check(_resources(app) == before
+				and visit.read_state().get("status") == RunCampfireVisit.STITCHED_DECIDED
+				and app.stitched_campfire_panel == null
+				and not app._open_stitched_campfire(),
+				"full CANDLE Leave changes no ledger and retires earned stop")
 		app.free()
 		await process_frame
 		return {"before": 100, "restored": 100, "gain": 0}
@@ -228,6 +246,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 	var generation: int = app._stitched_campfire_generation
 	var mend: Button = panel.find_child("CampfireMend", true, false)
 	var wick: Button = panel.find_child("CampfireWick", true, false)
+	var tales: Button = panel.find_child("CampfireTales", true, false)
 	var leave: Button = panel.find_child("CampfireLeave", true, false)
 	var label: Label = panel.find_child("CampfireCandle", true, false)
 	var frame: NinePatchRect = panel.find_child("CampfireFrame", true, false)
@@ -239,8 +258,10 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and mend.focus_mode == Control.FOCUS_ALL
 		and wick.focus_mode == Control.FOCUS_ALL and leave.focus_mode == Control.FOCUS_ALL
 		and not mend.disabled and not wick.disabled and not leave.disabled
-		and mend.focus_next == mend.get_path_to(wick)
-		and wick.focus_previous == wick.get_path_to(mend)
+		and mend.focus_next == mend.get_path_to(tales if tales != null else wick)
+		and (tales == null or (tales.focus_previous == tales.get_path_to(mend)
+			and tales.focus_next == tales.get_path_to(wick)))
+		and wick.focus_previous == wick.get_path_to(tales if tales != null else mend)
 		and wick.focus_next == wick.get_path_to(leave)
 		and leave.focus_previous == leave.get_path_to(wick)
 		and leave.focus_next == leave.get_path_to(mend)
@@ -275,7 +296,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		app._stitched_campfire_choose(RunCampfireVisit.TRIM_THE_WICK, wrong_quote, weakref(panel), generation),
 		app._stitched_campfire_choose(RunCampfireVisit.TRIM_THE_WICK, expected, null, generation),
 		app._stitched_campfire_choose(RunCampfireVisit.TRIM_THE_WICK, expected, weakref(panel), generation - 1),
-		app._stitched_campfire_choose(RunCampfireVisit.TELL_TALES, expected, weakref(panel), generation),
+		app._stitched_campfire_choose(RunCampfireVisit.TELL_TALES, wrong_quote, weakref(panel), generation),
 		visit.select(RunCampfireVisit.TRIM_THE_WICK, "forged", roster, before["candle"]),
 		visit.select(RunCampfireVisit.TRIM_THE_WICK, NODE, wrong_roster["heroes"], before["candle"]),
 		visit.select(RunCampfireVisit.TRIM_THE_WICK, NODE, roster, -1),

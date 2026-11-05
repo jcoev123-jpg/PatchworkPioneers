@@ -1432,7 +1432,7 @@ func _build_title() -> void:
 	stitched_campfire_button = Button.new()
 	stitched_campfire_button.name = "StitchedCampfireButton"
 	stitched_campfire_button.text = "Stitched Campfire"
-	stitched_campfire_button.tooltip_text = "Mend heroes or trim up to 50 CANDLE after the Roadblock"
+	stitched_campfire_button.tooltip_text = "Mend, Tell Tales, trim the Wick or Leave after the earned Roadblock"
 	stitched_campfire_button.custom_minimum_size = Vector2(240, 56)
 	stitched_campfire_button.visible = false
 	stitched_campfire_button.disabled = true
@@ -2789,13 +2789,51 @@ func _offer_stitched_peddler(survivors: Array) -> void:
 ## Only the actual Circle Leave's four non-lost battle heroes can earn
 ## Campfire. Record their CURRENT battle rank, worn max HP, HP, and fray.
 ## Unlike Peddler, a zero-HP Hanging (not lost) hero is valid for Mend.
+## The Campfire's HP-only recovery quote must remain tied to the complete,
+## genuine battle-settled FRAY/resolve pairs for these exact selected IDs.
+func _stitched_campfire_held_fray_valid(roster: Array) -> bool:
+	if roster.size() != 4 or _stitched_fray_carry.size() != 4 \
+			or _stitched_party_picks.size() != 4:
+		return false
+	var seen := {}
+	for hero_value in roster:
+		if not hero_value is Dictionary:
+			return false
+		var hero: Dictionary = hero_value
+		var id: Variant = hero.get("id")
+		if typeof(id) != TYPE_STRING or not id in _stitched_party_picks \
+				or seen.has(id) or typeof(hero.get("fray")) != TYPE_INT \
+				or not _stitched_fray_carry.has(id):
+			return false
+		var record: Variant = _stitched_fray_carry[id]
+		if not record is Dictionary or record.size() != 2 \
+				or typeof(record.get("fray")) != TYPE_INT \
+				or typeof(record.get("resolve")) != TYPE_STRING \
+				or record["fray"] != hero["fray"]:
+			return false
+		var fray: int = int(record["fray"])
+		var mood: String = str(record["resolve"])
+		if fray < 0 or fray >= StitchedRules.FRAY_MAX \
+				or not mood in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+				or (mood in StitchedS1BEffects.RESOLVE_TRAITS \
+				and fray < StitchedRules.FRAY_RECOVER) \
+				or (mood.is_empty() and fray >= StitchedRules.FRAY_RESOLVE):
+			return false
+		seen[id] = true
+	for carried_id in _stitched_fray_carry:
+		if not seen.has(carried_id):
+			return false
+	return true
+
+
 func _offer_stitched_campfire(survivors: Array) -> void:
 	_stitched_campfire_roster.clear()
 	_stitched_campfire_authorized_roster.clear()
 	_stitched_campfire_swap_roster.clear()
 	_stitched_campfire_swap_satchel.clear()
 	_stitched_campfire_swap_gear.clear()
-	if survivors.size() == 4 and _stitched_party_picks.size() == 4:
+	if survivors.size() == 4 and _stitched_party_picks.size() == 4 \
+			and _stitched_fray_carry.size() == 4:
 		var roster: Array = []
 		for value in survivors:
 			if not value is Dictionary:
@@ -2810,6 +2848,11 @@ func _offer_stitched_campfire(survivors: Array) -> void:
 					or typeof(hero.get("hp")) != TYPE_INT \
 					or typeof(hero.get("max_hp")) != TYPE_INT \
 					or typeof(hero.get("fray")) != TYPE_INT \
+					or not _stitched_fray_carry.has(id) \
+					or typeof(hero.get("resolve")) != TYPE_STRING \
+					or not _stitched_fray_carry[id] is Dictionary \
+					or _stitched_fray_carry[id].get("fray") != hero["fray"] \
+					or _stitched_fray_carry[id].get("resolve") != hero["resolve"] \
 					or int(hero["hp"]) != int(_stitched_hp_carry[id]):
 				roster.clear()
 				break
@@ -2823,7 +2866,8 @@ func _offer_stitched_campfire(survivors: Array) -> void:
 				stitched_roadblock_candle)
 			var state: Dictionary = authority.read_state()
 			if state.get("ok") == true and state.get("heroes") == roster \
-					and state.get("status") == RunCampfireVisit.STITCHED_OPEN:
+					and state.get("status") == RunCampfireVisit.STITCHED_OPEN \
+					and _stitched_campfire_held_fray_valid(roster):
 				_stitched_campfire_roster = roster.duplicate(true)
 				_stitched_campfire_authorized_roster = roster.duplicate(true)
 				# Retain the FULL worn parts from the authenticated Circle Leave,
@@ -2860,7 +2904,7 @@ func _stitched_campfire_living_roster() -> Array:
 			return []
 		ids[id] = true
 		roster.append(hero.duplicate(true))
-	if ids.size() != 4:
+	if ids.size() != 4 or not _stitched_campfire_held_fray_valid(roster):
 		return []
 	var visit := RunCampfireVisit.new(
 		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
@@ -3549,9 +3593,8 @@ func _open_stitched_campfire() -> bool:
 			or state.get("heroes") != roster \
 			or state.get("candle") != stitched_roadblock_candle \
 			or state.get("quote") != visit.read_state().get("quote") \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.MEND) == -1 \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.TRIM_THE_WICK) == -1 \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.STITCHED_LEAVE) == -1:
+			or not state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE) \
+			or not _stitched_campfire_held_fray_valid(roster):
 		return false
 	# Build a distinct swap service from the FINAL Circle Leave parts and six-slot
 	# satchel. Recovery remains the ordinary RunCampfireVisit with its own quote.
@@ -3647,7 +3690,18 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 	panel.add_child(heading)
 	var quote := Label.new()
 	quote.name = "CampfireQuote"
-	quote.text = "One earned stop: Mend each hero for 30% max HP, Trim the Wick for up to 50 CANDLE (cap 100), or Leave. All choices free."
+	var choice_labels: Array[String] = []
+	for action in state["quote"]["choices"]:
+		match str(action):
+			RunCampfireVisit.MEND:
+				choice_labels.append("Mend HP")
+			RunCampfireVisit.TELL_TALES:
+				choice_labels.append("Tell Tales (-25 FRAY)")
+			RunCampfireVisit.TRIM_THE_WICK:
+				choice_labels.append("Trim Wick (+%d CANDLE)" % mini(50, 100 - int(state["candle"])))
+			RunCampfireVisit.STITCHED_LEAVE:
+				choice_labels.append("Leave")
+	quote.text = "One earned free choice: " + "  ·  ".join(choice_labels)
 	quote.position = Vector2(185, 135)
 	quote.size = Vector2(910, 75)
 	quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3727,52 +3781,52 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 		empty.text = "No lawful untorn, same-slot spare available."
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		offers_box.add_child(empty)
-	var mend := Button.new()
-	mend.name = "CampfireMend"
-	mend.text = "Mend · 30% max HP for each · free"
-	mend.position = Vector2(185, 550)
-	mend.size = Vector2(385, 58)
-	mend.focus_mode = Control.FOCUS_ALL
-	mend.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.MEND, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(mend)
-	var wick := Button.new()
-	wick.name = "CampfireWick"
-	wick.text = "Trim the Wick · +%d CANDLE · free" % wick_gain
-	wick.position = Vector2(585, 550)
-	wick.size = Vector2(315, 58)
-	wick.focus_mode = Control.FOCUS_ALL
-	wick.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.TRIM_THE_WICK, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(wick)
-	var leave := Button.new()
-	leave.name = "CampfireLeave"
-	leave.text = "Leave Campfire · free"
-	leave.position = Vector2(915, 550)
-	leave.size = Vector2(200, 58)
-	leave.focus_mode = Control.FOCUS_ALL
-	leave.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.STITCHED_LEAVE, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(leave)
-	mend.focus_next = mend.get_path_to(wick)
-	wick.focus_previous = wick.get_path_to(mend)
-	wick.focus_next = wick.get_path_to(leave)
-	leave.focus_previous = leave.get_path_to(wick)
-	leave.focus_next = leave.get_path_to(mend)
-	mend.focus_previous = mend.get_path_to(leave)
+	# Only service-offered decisions are mounted; Tab and Up reach all.
+	var recovery_buttons: Array[Button] = []
+	for choice in state["quote"]["choices"]:
+		var decision: String = str(choice)
+		var button := Button.new()
+		match decision:
+			RunCampfireVisit.MEND:
+				button.name = "CampfireMend"
+				button.text = "Mend · +30% HP · free"
+			RunCampfireVisit.TELL_TALES:
+				button.name = "CampfireTales"
+				button.text = "Tell Tales · -25 FRAY · free"
+			RunCampfireVisit.TRIM_THE_WICK:
+				button.name = "CampfireWick"
+				button.text = "Trim Wick · +%d CANDLE · free" % wick_gain
+			RunCampfireVisit.STITCHED_LEAVE:
+				button.name = "CampfireLeave"
+				button.text = "Leave Campfire · free"
+			_:
+				continue
+		button.position = Vector2(165 + recovery_buttons.size() * 237, 550)
+		button.size = Vector2(225, 58)
+		button.focus_mode = Control.FOCUS_ALL
+		button.pressed.connect(_stitched_campfire_choose.bind(
+			decision, state.duplicate(true), weakref(panel), generation))
+		panel.add_child(button)
+		recovery_buttons.append(button)
+	if recovery_buttons.is_empty():
+		panel.free()
+		return {}
+	for index in range(recovery_buttons.size()):
+		var button: Button = recovery_buttons[index]
+		var previous: Button = recovery_buttons[(index + recovery_buttons.size() - 1) % recovery_buttons.size()]
+		var following: Button = recovery_buttons[(index + 1) % recovery_buttons.size()]
+		button.focus_previous = button.get_path_to(previous)
+		button.focus_next = button.get_path_to(following)
 	if not swap_buttons.is_empty():
-		# Preserve the existing Mend → Wick → Leave Tab ring (Wick regression).
-		# Up from the recovery row enters the scrollable swap list; each offer
-		# can then be traversed by keyboard, while recovery Tab remains stable.
-		mend.focus_neighbor_top = mend.get_path_to(swap_buttons[0])
-		wick.focus_neighbor_top = wick.get_path_to(swap_buttons[0])
-		leave.focus_neighbor_top = leave.get_path_to(swap_buttons[0])
+		# Tab stays in the quoted recovery ring; Up reaches the swaps.
+		for button in recovery_buttons:
+			button.focus_neighbor_top = button.get_path_to(swap_buttons[0])
 		for index in range(swap_buttons.size()):
-			var previous: Button = leave if index == 0 else swap_buttons[index - 1]
-			var following: Button = mend if index == swap_buttons.size() - 1 else swap_buttons[index + 1]
+			var previous: Button = recovery_buttons[-1] if index == 0 else swap_buttons[index - 1]
+			var following: Button = recovery_buttons[0] if index == swap_buttons.size() - 1 else swap_buttons[index + 1]
 			swap_buttons[index].focus_previous = swap_buttons[index].get_path_to(previous)
 			swap_buttons[index].focus_next = swap_buttons[index].get_path_to(following)
-	return {"panel": panel, "first": mend}
+	return {"panel": panel, "first": recovery_buttons[0]}
 
 
 ## Commit ONE quoted exchange on this specific mounted Campfire panel. The
@@ -3800,6 +3854,7 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 			or _stitched_campfire_state.get("heroes") != _stitched_campfire_authorized_roster \
 			or _stitched_campfire_state.get("candle") != stitched_roadblock_candle \
 			or _stitched_hp_carry.size() != 4 \
+			or not _stitched_campfire_held_fray_valid(_stitched_campfire_authorized_roster) \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null:
@@ -3874,9 +3929,11 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 	var heading: Label = panel.find_child("CampfireSwapHeading", true, false)
 	if heading != null:
 		heading.text = "SPARE EXCHANGED  ·  RECOVERY STILL AVAILABLE"
-	var mend: Button = panel.find_child("CampfireMend", true, false)
-	if mend != null:
-		mend.grab_focus()
+	for name in ["CampfireMend", "CampfireTales", "CampfireWick", "CampfireLeave"]:
+		var recovery: Button = panel.find_child(name, true, false)
+		if recovery != null:
+			recovery.grab_focus()
+			break
 	return receipt
 
 
@@ -3885,8 +3942,7 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 func _stitched_campfire_choose(decision: String, expected: Dictionary,
 		source: WeakRef, generation: int) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
-	if not decision in [RunCampfireVisit.MEND, RunCampfireVisit.TRIM_THE_WICK, RunCampfireVisit.STITCHED_LEAVE] \
-			or panel == null or not is_instance_valid(panel) \
+	if panel == null or not is_instance_valid(panel) \
 			or panel != stitched_campfire_panel or not panel.is_visible_in_tree() \
 			or panel.get_meta("campfire_generation", -1) != generation \
 			or generation != _stitched_campfire_generation \
@@ -3900,20 +3956,37 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 			or expected.get("status") != RunCampfireVisit.STITCHED_OPEN \
 			or expected.get("mode") != RunCampfireVisit.STITCHED \
 			or expected.get("heroes", []) != _stitched_campfire_authorized_roster \
-			or expected.get("candle") != stitched_roadblock_candle:
-		return {"ok": false, "error": "stale or forged Campfire"}
+			or expected.get("candle") != stitched_roadblock_candle \
+			or not expected.get("quote", {}).get("choices", []).has(decision):
+		return {"ok": false, "error": "stale, forged or unoffered Campfire"}
 	var before: Array = expected["heroes"].duplicate(true)
-	if before.size() != 4 or _stitched_hp_carry.size() != 4:
-		return {"ok": false, "error": "missing survivor authority"}
+	if before.size() != 4 or _stitched_hp_carry.size() != 4 \
+			or not _stitched_campfire_held_fray_valid(before):
+		return {"ok": false, "error": "missing survivor FRAY/HP authority"}
 	var after: Array = before.duplicate(true)
+	var next_fray: Dictionary = _stitched_fray_carry.duplicate(true)
 	for hero in after:
 		var id := str(hero["id"])
 		if not _stitched_hp_carry.has(id) or _stitched_hp_carry[id] != hero["hp"]:
 			return {"ok": false, "error": "changed survivor HP"}
-		if decision == RunCampfireVisit.MEND:
-			@warning_ignore("integer_division")
-			var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
-			hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+		match decision:
+			RunCampfireVisit.MEND:
+				@warning_ignore("integer_division")
+				var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
+				hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+			RunCampfireVisit.TELL_TALES:
+				var reduced := maxi(0, int(hero["fray"]) - RunCampfireVisit.TALES_FRAY_REDUCTION)
+				hero["fray"] = reduced
+				var mood: String = str(next_fray[id]["resolve"])
+				# Unravelled recovers only below 50; Steadfast persists.
+				if mood in StitchedS1BEffects.RESOLVE_TRAITS \
+						and reduced < StitchedRules.FRAY_RECOVER:
+					mood = ""
+				if (mood.is_empty() and reduced >= StitchedRules.FRAY_RESOLVE) \
+						or (mood in StitchedS1BEffects.RESOLVE_TRAITS \
+						and reduced < StitchedRules.FRAY_RECOVER):
+					return {"ok": false, "error": "illegal resolve transition"}
+				next_fray[id] = {"fray": reduced, "resolve": mood}
 	var after_candle: int = int(expected["candle"])
 	if decision == RunCampfireVisit.TRIM_THE_WICK:
 		after_candle = mini(RunCampfireVisit.STITCHED_CANDLE_MAX,
@@ -3927,15 +4000,16 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 			or committed.get("status") != RunCampfireVisit.STITCHED_DECIDED \
 			or committed.get("heroes") != after or committed.get("candle") != after_candle:
 		return {"ok": false, "error": "Campfire receipt rejected"}
-	# Publish only the chosen ledger after the complete receipt is verified.
+	# Only after verifying the exact service receipt publish the chosen ledger.
 	if decision == RunCampfireVisit.MEND:
 		for hero in after:
 			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
+	elif decision == RunCampfireVisit.TELL_TALES:
+		_stitched_fray_carry = next_fray
 	elif decision == RunCampfireVisit.TRIM_THE_WICK:
 		stitched_roadblock_candle = after_candle
 	_close_stitched_campfire()
 	return receipt
-
 
 func _close_stitched_campfire() -> void:
 	var panel := stitched_campfire_panel
