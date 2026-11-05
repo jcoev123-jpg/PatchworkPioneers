@@ -20,6 +20,7 @@ const RESOLVE_EFFECTS := {
 	"reckless": "Unravelled: ignore Guard and step forward when possible; clears under 50 fray.",
 	"cowering": "Unravelled: step backward when possible and refuse melee abilities on 30% of turns; clears under 50 fray.",
 }
+const MARK_EXPLANATION := "Marked: mark-hunting abilities gain their authored bonus damage."
 
 
 static func _number(value: Variant) -> bool:
@@ -76,6 +77,8 @@ static func cue(unit: Dictionary) -> String:
 		return "FRAY"
 	if statuses is Dictionary and _positive_count(statuses.get("bleed")):
 		return "BLD"
+	if statuses is Dictionary and _positive_count(statuses.get("mark")):
+		return "MARK"
 	if side == "hero":
 		return "HERO"
 	if side == "foe":
@@ -132,6 +135,8 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			for key in keys:
 				active.append("%s %d" % [key, int(raw[key])])
 			lines.append("Statuses: " + ", ".join(active))
+		if _positive_count(raw.get("mark")):
+			lines.append(MARK_EXPLANATION)
 	return lines
 
 
