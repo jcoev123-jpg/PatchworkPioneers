@@ -9,6 +9,7 @@ const ARMS := "warden_arms_shield_catch"
 const TORSO := "warden_torso_iron_challenge"
 const LEGS := "warden_legs_rim_toss"
 const PRICE := 70  # test fixture only, not an approved game-wide price
+const TIER_PRICE := 95  # test fixture only for the tier-II/III offers, not a new global price
 
 var failures: Array[String] = []
 var checks := 0
@@ -29,6 +30,7 @@ func _initialize() -> void:
 		_test_purchase_and_leave()
 		_test_capacity_and_funds()
 		_test_refusals_and_replay()
+		_test_offer_tiers()
 	_check(randi() == next_draw, "open, quote, buy, leave and refusals draw no global RNG")
 	if failures.is_empty():
 		print("run_stitched_peddler_part_test: PASS (", checks, " checks)")
@@ -310,3 +312,123 @@ func _test_refusals_and_replay() -> void:
 	_reject(leaving, false, NODE, leave_snap, "repeated leave")
 	_reject(leaving, false, NODE, leaving.read_state(), "repeated leave with fresh state")
 	_reject(leaving, true, NODE, leave_snap, "buy after leave with the old state")
+
+
+func _open_tier(tier: Variant, gold: Variant = 200, satchel: Variant = [], price: Variant = TIER_PRICE,
+		node: Variant = NODE, offer: Variant = HEAD) -> RunStitchedPeddlerPart:
+	return RunStitchedPeddlerPart.open_stitched(node, gold, satchel, catalog, offer, price, tier)
+
+
+## Tier-aware offers: legacy 6-arg calls stay tier I; explicit integer tiers 1..3 agree across
+## read_state, quote, projection and the purchased record; malformed tiers never open.
+func _test_offer_tiers() -> void:
+	var before_catalog: Dictionary = catalog.duplicate(true)
+	# Legacy six-argument call is tier I, equal to an explicit tier 1.
+	var legacy := _open(120, _spares(2))
+	var explicit_one := _open_tier(1, 120, _spares(2), PRICE)
+	var legacy_offer: Dictionary = legacy.read_state().get("offer", {})
+	_check(legacy.is_open() and legacy_offer.get("tier") == 1
+		and legacy_offer.get("ability", {}).get("dmg") == [3, 5]
+		and legacy.read_state() == explicit_one.read_state(),
+		"a six-argument call is the tier-I offer, identical to an explicit tier 1")
+	var legacy_paid := legacy.buy(NODE, legacy.read_state())
+	_check(legacy_paid.get("ok") == true and legacy_paid.get("gold") == 50
+		and legacy_paid.get("part") == {"id": HEAD, "slot": "head", "tier": 1, "torn": false},
+		"the six-argument call still buys the untorn tier-I part for the quote")
+	# Tier II open, quote, projection and buy.
+	var existing := _spares(3)
+	var visit := _open_tier(2, 200, existing)
+	_check(visit.is_valid() and visit.is_open(), "an explicit tier 2 opens the visit")
+	var state := visit.read_state()
+	var offer: Dictionary = state.get("offer", {})
+	_check(offer.get("id") == HEAD and offer.get("name") == "Helmet Rattle" and offer.get("slot") == "head"
+		and offer.get("owner") == "warden" and offer.get("tier") == 2 and offer.get("torn") == false
+		and offer.get("price") == TIER_PRICE, "read_state offers the tier-II warden head part at the quote")
+	_check(offer.get("ability", {}).get("dmg") == [5, 7] and offer.get("ability", {}).get("crit") == 0
+		and offer.get("stat") == {"crit": 4}, "tier II projects damage [5,7] and crit +4")
+	var tier_one_dmg: Array = StitchedParts.ability_at_tier(catalog[HEAD], 1)["dmg"]
+	_check(tier_one_dmg == [3, 5] and offer["ability"]["dmg"] != tier_one_dmg,
+		"the tier-II damage differs from the tier-I damage")
+	var quote := visit.quote()
+	_check(quote.get("ok") == true and quote.get("offer") == offer and quote.get("price") == TIER_PRICE
+		and quote.get("can_buy") == true and quote.get("choices") == ["buy_part", "leave"]
+		and quote.get("state") == state, "quote agrees with read_state on the selected tier and price")
+	var paid := visit.buy(NODE, state)
+	var record := {"id": HEAD, "slot": "head", "tier": 2, "torn": false}
+	_check(paid.get("ok") == true and paid.get("decision") == "buy_part" and paid.get("part") == record
+		and paid.get("price") == TIER_PRICE and paid.get("charged_gold") == TIER_PRICE
+		and paid.get("gold_before") == 200 and paid.get("gold") == 200 - TIER_PRICE
+		and paid.get("satchel_index") == 3, "Buy debits exactly the quote and returns the tier-II record")
+	var after: Array = paid.get("satchel", [])
+	_check(after.size() == 4 and after.slice(0, 3) == existing and after[3] == record
+		and visit.is_consumed() and paid.get("state", {}).get("offer", {}).get("tier") == 2,
+		"the tier-II record is appended after untouched existing spares and the visit closes")
+	# Replay and refusals against the tier-II state.
+	var used := visit.read_state()
+	_reject(visit, true, NODE, state, "tier-II stale pre-buy replay")
+	_reject(visit, true, NODE, used, "tier-II duplicate purchase")
+	_reject(visit, false, NODE, used, "tier-II leave after the buy")
+	_check(visit.read_state() == used and used["gold"] == 200 - TIER_PRICE and used["satchel"].size() == 4,
+		"tier-II replays leave one charge and one part")
+	var guarded := _open_tier(2, 200, _spares(2))
+	var guarded_snap := guarded.read_state()
+	var tier_one_state := _open_tier(1, 200, _spares(2)).read_state()
+	_reject(guarded, true, NODE, tier_one_state, "tier-I snapshot against a tier-II visit")
+	var forged: Dictionary = guarded_snap.duplicate(true)
+	forged["offer"]["tier"] = 3
+	_reject(guarded, true, NODE, forged, "forged higher tier snapshot")
+	var forged_dmg: Dictionary = guarded_snap.duplicate(true)
+	forged_dmg["offer"]["ability"]["dmg"] = [3, 5]
+	_reject(guarded, true, NODE, forged_dmg, "forged tier-II damage projection")
+	_reject(guarded, true, "other-node", guarded_snap, "tier-II wrong node")
+	var guarded_paid := guarded.buy(NODE, guarded.read_state())
+	_check(guarded_paid.get("ok") == true and guarded_paid.get("part", {}).get("tier") == 2,
+		"after refusals the exact tier-II snapshot still buys")
+	var poor := _open_tier(2, TIER_PRICE - 1, _spares(1))
+	_check(poor.quote().get("can_buy") == false and poor.quote().get("blocked") == "not enough gold"
+		and poor.quote().get("offer", {}).get("tier") == 2, "an unaffordable tier-II offer is disclosed")
+	_reject(poor, true, NODE, poor.read_state(), "unaffordable tier-II buy")
+	var poor_left := poor.leave(NODE, poor.read_state())
+	_check(poor_left.get("ok") == true and poor_left.get("charged_gold") == 0
+		and poor_left.get("gold") == TIER_PRICE - 1 and poor_left.get("satchel") == _spares(1),
+		"tier-II Leave is free after a refused Buy")
+	var full := _open_tier(2, 500, _spares(6))
+	_check(full.quote().get("blocked") == "satchel is full" and full.quote().get("can_buy") == false,
+		"a full satchel blocks the tier-II Buy")
+	_reject(full, true, NODE, full.read_state(), "tier-II buy into a full satchel")
+	_check(full.leave(NODE, full.read_state()).get("ok") == true, "a full-satchel tier-II visit Leaves freely")
+	var exact := _open_tier(2, TIER_PRICE, [])
+	var exact_paid := exact.buy(NODE, exact.read_state())
+	_check(exact_paid.get("ok") == true and exact_paid.get("gold") == 0
+		and exact_paid.get("satchel", []) == [record], "an exactly affordable tier-II quote spends to zero")
+	# Tier III projection.
+	var third := _open_tier(3)
+	var third_offer: Dictionary = third.read_state().get("offer", {})
+	_check(third_offer.get("tier") == 3 and third_offer.get("ability", {}).get("dmg") == [6, 9]
+		and third_offer.get("ability", {}).get("crit") == 8 and third_offer.get("stat") == {"crit": 4},
+		"tier III projects damage [6,9] and ability crit +8")
+	var third_paid := third.buy(NODE, third.read_state())
+	_check(third_paid.get("ok") == true and third_paid.get("part", {}).get("tier") == 3,
+		"a tier-III offer buys a tier-III record")
+	# Another catalogued part keeps catalog-derived identity at a higher tier.
+	var arms := _open_tier(3, 100, [], 40, NODE, ARMS)
+	var arms_offer: Dictionary = arms.read_state().get("offer", {})
+	_check(arms_offer.get("tier") == 3 and arms_offer.get("slot") == "arms" and arms_offer.get("name") == "Shield Catch"
+		and arms.buy(NODE, arms.read_state()).get("part") == {"id": ARMS, "slot": "arms", "tier": 3, "torn": false},
+		"another part at tier III derives its slot and name from the catalog")
+	# Malformed explicit tiers never open and can neither buy nor leave.
+	var bad_tiers: Array = [0, 4, -1, 1.0, 2.0, 1.5, "2", "", null, true, [2], {}]
+	for bad in bad_tiers:
+		var bad_visit := _open_tier(bad)
+		var bad_state := bad_visit.read_state()
+		var label := "malformed tier " + str(bad) + " (type " + str(typeof(bad)) + ")"
+		_check(not bad_visit.is_valid() and not bad_visit.is_open() and not bad_visit.is_consumed()
+			and bad_state.get("ok") == false and bad_visit.quote().get("ok", true) == false
+			and bad_visit.quote().get("choices", ["x"]).is_empty(), label + " does not open")
+		_check(bad_visit.buy(NODE, bad_state).get("ok", true) == false
+			and bad_visit.leave(NODE, bad_state).get("ok", true) == false,
+			label + " can neither buy nor leave")
+	# Inputs and returned snapshots stay detached from the service and the catalog.
+	state["offer"]["ability"]["dmg"][0] = 99
+	_check(_open_tier(2).read_state()["offer"]["ability"]["dmg"] == [5, 7] and catalog == before_catalog,
+		"tier projections never mutate the catalog or share state")

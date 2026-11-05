@@ -1,7 +1,8 @@
 class_name RunStitchedPeddlerPart
 extends RefCounted
 ## Scene-free Design v4 (Stitched) Peddler body-part purchase: ONE visit, ONE pre-approved
-## tier-I part at a caller-quoted gold price, then buy-or-Leave.
+## catalogued part at a caller-approved tier (default tier I) and a caller-quoted gold price,
+## then buy-or-Leave.
 ##
 ## The caller (a later S6 wiring step) must authenticate the real map node, choose the stock and
 ## the price (the price is NOT decided here: any strictly positive integer is accepted), pass the
@@ -12,11 +13,11 @@ extends RefCounted
 ##   {"id": part_id, "slot": "head|arms|torso|legs", "tier": 1|2|3, "torn": bool}
 ## The offered part is validated against the catalog; its name, slot and owner are derived from
 ## the catalog entry, never from the caller. A purchase appends exactly
-##   {"id": offered_part_id, "slot": catalog_slot, "tier": 1, "torn": false}
+##   {"id": offered_part_id, "slot": catalog_slot, "tier": offered_tier, "torn": false}
 ## after the existing records, which are preserved in order and untouched.
 ##
-## API: open_stitched(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price),
-## read_state(), quote(), buy(expected_node_id, expected_state), leave(expected_node_id,
+## API: open_stitched(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price,
+## offered_tier = 1), read_state(), quote(), buy(expected_node_id, expected_state), leave(expected_node_id,
 ## expected_state). A decision must name the genuine node and present the exact state last
 ## published (read_state() or a previous receipt's "state"). A stale or forged state, a wrong node,
 ## a closed (already decided) visit, too little gold or a full satchel fails with
@@ -24,7 +25,7 @@ extends RefCounted
 ## unaffordable or full-satchel Buy leaves the visit open for a later free Leave.
 
 const SATCHEL_CAP := 6
-const OFFER_TIER := 1
+const DEFAULT_OFFER_TIER := 1
 const DECISION_BUY := "buy_part"
 const DECISION_LEAVE := "leave"
 const STATUS_OPEN := "stitched_open"
@@ -38,19 +39,22 @@ var _price := 0
 var _satchel: Array = []
 var _catalog: Dictionary = {}
 var _offer_id := ""
+var _offer_tier := DEFAULT_OFFER_TIER
 var _status := STATUS_OPEN
 var _error := ""
 
 
 ## Opens a visit; invalid input yields a closed, unusable visit that reports its error.
+## offered_tier is optional (default tier I); only an explicit TYPE_INT 1..3 is legal.
 static func open_stitched(node_id: Variant, gold: Variant, satchel: Variant, catalog_by_id: Variant,
-		offered_part_id: Variant, quoted_price: Variant) -> RunStitchedPeddlerPart:
-	return RunStitchedPeddlerPart.new(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price)
+		offered_part_id: Variant, quoted_price: Variant, offered_tier: Variant = DEFAULT_OFFER_TIER) -> RunStitchedPeddlerPart:
+	return RunStitchedPeddlerPart.new(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price,
+		offered_tier)
 
 
 func _init(node_id: Variant = "", gold: Variant = 0, satchel: Variant = [], catalog_by_id: Variant = {},
-		offered_part_id: Variant = "", quoted_price: Variant = 0) -> void:
-	_error = _setup(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price)
+		offered_part_id: Variant = "", quoted_price: Variant = 0, offered_tier: Variant = DEFAULT_OFFER_TIER) -> void:
+	_error = _setup(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price, offered_tier)
 
 
 func is_valid() -> bool:
@@ -113,7 +117,7 @@ func buy(expected_node_id: Variant, expected_state: Variant) -> Dictionary:
 		return _fail(blocked)
 	var before := read_state()
 	var catalog_slot := str(_catalog[_offer_id]["slot"])
-	var record := {"id": _offer_id, "slot": catalog_slot, "tier": OFFER_TIER, "torn": false}
+	var record := {"id": _offer_id, "slot": catalog_slot, "tier": _offer_tier, "torn": false}
 	_satchel.append(record)
 	_gold -= _price
 	_status = STATUS_BOUGHT
@@ -188,29 +192,33 @@ func _fail(message: String) -> Dictionary:
 
 func _offer_summary() -> Dictionary:
 	var entry: Dictionary = _catalog[_offer_id]
-	var ability: Dictionary = StitchedParts.ability_at_tier(entry, OFFER_TIER)
+	var ability: Dictionary = StitchedParts.ability_at_tier(entry, _offer_tier)
 	return {
 		"id": _offer_id,
 		"name": str(entry["name"]),
 		"slot": str(entry["slot"]),
 		"owner": str(entry["owner"]),
-		"tier": OFFER_TIER,
+		"tier": _offer_tier,
 		"torn": false,
 		"price": _price,
-		"ability": {"id": str(ability["id"]), "name": str(ability["name"]), "kind": str(ability["kind"])},
-		"stat": StitchedParts.stat_at_tier(entry, OFFER_TIER),
+		"ability": {"id": str(ability["id"]), "name": str(ability["name"]), "kind": str(ability["kind"]),
+			"dmg": ability.get("dmg", [0, 0]).duplicate(), "crit": int(ability.get("crit", 0))},
+		"stat": StitchedParts.stat_at_tier(entry, _offer_tier),
 		"text": str(entry["text"]),
 	}
 
 
 func _setup(node_id: Variant, gold: Variant, satchel: Variant, catalog_by_id: Variant,
-		offered_part_id: Variant, quoted_price: Variant) -> String:
+		offered_part_id: Variant, quoted_price: Variant, offered_tier: Variant = DEFAULT_OFFER_TIER) -> String:
 	if typeof(node_id) != TYPE_STRING or str(node_id).is_empty() or str(node_id) != str(node_id).strip_edges():
 		return "node id must be a nonempty trimmed string"
 	if typeof(gold) != TYPE_INT or int(gold) < 0:
 		return "gold must be a nonnegative integer"
 	if typeof(quoted_price) != TYPE_INT or int(quoted_price) <= 0:
 		return "quoted price must be a positive integer"
+	if typeof(offered_tier) != TYPE_INT or int(offered_tier) < StitchedParts.MIN_TIER \
+			or int(offered_tier) > StitchedParts.MAX_TIER:
+		return "offered tier must be an integer 1-3"
 	if not catalog_by_id is Dictionary or catalog_by_id.is_empty():
 		return "catalog is missing"
 	for key in catalog_by_id:
@@ -240,6 +248,7 @@ func _setup(node_id: Variant, gold: Variant, satchel: Variant, catalog_by_id: Va
 	_gold = int(gold)
 	_price = int(quoted_price)
 	_offer_id = str(offered_part_id)
+	_offer_tier = int(offered_tier)
 	_status = STATUS_OPEN
 	return ""
 
