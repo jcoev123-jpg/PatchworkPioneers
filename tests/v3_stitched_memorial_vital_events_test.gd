@@ -492,8 +492,8 @@ func _test_starved_refusals_then_leave() -> void:
 			"same starved visit still settles free Leave: " + event_id)
 
 
-# AC3: positive healing at a full 30/30 hero clamps to the resulting maximum
-# (never overheals); every direct healing trade is checked on a fresh visit.
+# AC3: positive healing clamps to the resulting maximum without overheal;
+# pure paid HP heals at full 30/30 HP are refused without spending or latching (S6).
 func _test_full_hp_healing_clamp() -> void:
 	for event_id: String in FULL_HP_EXPECTED:
 		var clamp: Dictionary = FULL_HP_EXPECTED[event_id]
@@ -509,16 +509,37 @@ func _test_full_hp_healing_clamp() -> void:
 		if visit == null:
 			continue
 		var receipt := visit.choose_with_vitals(choice_id, base)
-		_check(receipt.get("ok") == true
-			and receipt.get("state") == {
-				"gold": expected_row[0],
-				"scraps": expected_row[1],
-				"hero": {"id": hero_id, "hp": expected_row[2], "max_hp": expected_row[3]},
-			}
-			and base == base_copy,
-			"healing clamps at full HP without overheal: " + event_id)
-		_check(visit.is_claimed() and not visit.is_valid(),
-			"full-HP clamp claim latches once: " + event_id)
+		if event_id == "v3_button_golem_gravestone_press":
+			# reset_press_stitches grants +1 max HP, so it is not a pure HP heal and settles to 31/31 HP.
+			_check(receipt.get("ok") == true
+				and receipt.get("state") == {
+					"gold": expected_row[0],
+					"scraps": expected_row[1],
+					"hero": {"id": hero_id, "hp": expected_row[2], "max_hp": expected_row[3]},
+				}
+				and base == base_copy,
+				"healing clamps at full HP without overheal: " + event_id)
+			_check(visit.is_claimed() and not visit.is_valid(),
+				"full-HP clamp claim latches once: " + event_id)
+		else:
+			# Pure paid HP heals (brace_shieldbell, retie_organ_cape) are refused at full 30/30 HP under S6.
+			_check(receipt.get("ok") == false and base == base_copy,
+				"pure paid heal refused at full HP: " + event_id)
+			_check(visit.is_valid() and not visit.is_claimed(),
+				"full-HP pure paid heal refusal leaves visit available: " + event_id)
+			# Clamping to max HP without overheal is verified with a wounded 25/30 hero.
+			var wounded := _snap(hero_id, BASE_GOLD, BASE_SCRAPS, 25, BASE_MAX_HP)
+			var wounded_visit := gate.enter(event_id, wounded)
+			var wounded_receipt := wounded_visit.choose_with_vitals(choice_id, wounded)
+			_check(wounded_receipt.get("ok") == true
+				and wounded_receipt.get("state") == {
+					"gold": expected_row[0],
+					"scraps": expected_row[1],
+					"hero": {"id": hero_id, "hp": expected_row[2], "max_hp": expected_row[3]},
+				},
+				"healing clamps at full HP without overheal: " + event_id)
+			_check(wounded_visit.is_claimed() and not wounded_visit.is_valid(),
+				"full-HP clamp claim latches once: " + event_id)
 
 
 # AC4: single-eligible seeded actionable selection with dynamic exclusions,
