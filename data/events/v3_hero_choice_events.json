@@ -599,6 +599,78 @@
         {"id": "buy_clock_spring_thread", "text": "Buy spare clock spring thread (spend 19 gold; gain 3 scraps)", "outcome": {"gold": -19, "scraps": 3}},
         {"id": "leave", "text": "Let midnight wait another hour", "outcome": {"gold": 0, "scraps": 0}}
       ]
+    },
+    {
+      "id": "v3_scarecrow_sable_grain_clock",
+      "title": "The Sable Grain Clock",
+      "description": "A stuffed black crow rocks on a towering burlap grain-clock while a huge pitchfork serves as its rusted hand; pale straw falls through stitched hourglass panes.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["guide_crow_clockwork", "sell_sable_bell_strap"],
+      "choices": [
+        {
+          "id": "guide_crow_clockwork",
+          "text": "Guide the crow to two loose bundles of clock straw (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "sell_sable_bell_strap",
+          "text": "Trade one scrap of worn bell strap for 21 gold",
+          "outcome": {"gold": 21, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the crooked grain-clock mark another hour",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_needlebow_orrery",
+      "title": "The Needlebow Orrery",
+      "description": "Two giant knitting-needle arms turn a brass moon-model above a velvet field; teal wool bolas have caught a tiny glowing button-star between its rings.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["reel_orrery_moons", "buy_moon_wool"],
+      "choices": [
+        {
+          "id": "reel_orrery_moons",
+          "text": "Reel in the fallen brass moon for 15 gold",
+          "outcome": {"gold": 15, "scraps": 0}
+        },
+        {
+          "id": "buy_moon_wool",
+          "text": "Pay 14 gold for two coils of moon-wool (+2 scraps)",
+          "outcome": {"gold": -14, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the button-star turning in its rings",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_staircase_carillon",
+      "title": "The Staircase Carillon",
+      "description": "Four enormous brass-button chimes hang over a broken stairwell; a round doll keeper asks for the Golem's heavy fists to lift the fallen velvet crank.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["raise_copper_carillon", "gather_fallen_shanks"],
+      "choices": [
+        {
+          "id": "raise_copper_carillon",
+          "text": "Use two scrap bundles to lift the crank (earn 28 gold)",
+          "outcome": {"gold": 28, "scraps": -2}
+        },
+        {
+          "id": "gather_fallen_shanks",
+          "text": "Gather one bundle of dropped button shanks (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the silent brass buttons hang over the stairs",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
