@@ -44,9 +44,10 @@ extends RefCounted
 ## choice's preview entry and successful receipt.
 ##
 ## The caller supplies a detached snapshot
-##     {"candle": int, "party": [{"id": String, "fray": int}, ...],
+##     {"candle": int, "party": [{"id": String, "fray": int[, "lost": bool]}, ...],
 ##      "scraps": int, "gold": int, "satchel_count": int}
-## with candle 0..100, one to four distinct canonical heroes at fray 0..200,
+## with candle 0..100, one to four distinct canonical heroes at fray 0..200
+## (with optional native bool lost; absence means false),
 ## an optional native int `scraps >= 0`, an optional native int `gold >= 0`,
 ## and an optional native int `satchel_count` in 0..6. Scrap-bearing and
 ## gold-bearing choices require valid snapshot `scraps` / `gold` balances that
@@ -215,7 +216,7 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if parsed_effect.get("has_required_hero", false) and not _party_has_hero(base_state, String(parsed_effect["required_hero"])):
 		return _rejection(base_candle)
 	# An absent named hero is unavailable, so it cannot latch the visit.
-	if _target_ids(base_state, parsed_effect).is_empty():
+	if not _has_eligible_recipients(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _meets_candle_band(base_candle, parsed_effect):
 		return _rejection(base_candle)
@@ -321,17 +322,17 @@ func _meets_min_fray(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
 	if parsed_effect["target"] == TARGET_HERO:
 		var hero_id: String = String(parsed_effect["hero_id"])
 		for hero in party:
-			if hero["id"] == hero_id:
+			if hero["id"] == hero_id and not bool(hero.get("lost", false)):
 				return int(hero["fray"]) >= threshold
 		return false
 	if parsed_effect.get("has_required_hero", false):
 		var required_hero: String = String(parsed_effect["required_hero"])
 		for hero in party:
-			if hero["id"] == required_hero:
+			if hero["id"] == required_hero and not bool(hero.get("lost", false)):
 				return int(hero["fray"]) >= threshold
 		return false
 	for hero in party:
-		if int(hero["fray"]) >= threshold:
+		if not bool(hero.get("lost", false)) and int(hero["fray"]) >= threshold:
 			return true
 	return false
 
@@ -414,7 +415,7 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if has_hp:
 		entry["hp_delta"] = parsed_effect["hp"]
 		entry["hp"] = {}
-	if _target_ids(base_state, parsed_effect).is_empty():
+	if not _has_eligible_recipients(base_state, parsed_effect):
 		# The named hero is not in this party: readable deltas, no projection.
 		return entry
 	if not _meets_candle_band(int(base_state["candle"]), parsed_effect):
@@ -484,11 +485,13 @@ func _target_ids(base_state: Dictionary, parsed_effect: Dictionary) -> Array:
 	var party: Array = base_state["party"]
 	if parsed_effect["target"] == TARGET_PARTY:
 		for hero in party:
-			ids.append(hero["id"])
+			if not bool(hero.get("lost", false)):
+				ids.append(hero["id"])
 		return ids
 	for hero in party:
 		if hero["id"] == parsed_effect["hero_id"]:
-			ids.append(hero["id"])
+			if not bool(hero.get("lost", false)):
+				ids.append(hero["id"])
 			break
 	return ids
 
@@ -496,9 +499,21 @@ func _target_ids(base_state: Dictionary, parsed_effect: Dictionary) -> Array:
 func _party_has_hero(base_state: Dictionary, hero_id: String) -> bool:
 	var party: Array = base_state["party"]
 	for hero in party:
-		if hero["id"] == hero_id:
+		if hero["id"] == hero_id and not bool(hero.get("lost", false)):
 			return true
 	return false
+
+
+func _has_eligible_recipients(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
+	if parsed_effect["target"] == TARGET_HERO:
+		return not _target_ids(base_state, parsed_effect).is_empty()
+	var has_targeted_benefits: bool = (
+		int(parsed_effect["fray"]) != 0
+		or (parsed_effect.get("has_hp", false) and int(parsed_effect["hp"]) != 0)
+	)
+	if has_targeted_benefits:
+		return not _target_ids(base_state, parsed_effect).is_empty()
+	return true
 
 
 func _is_hidden_by_required_hero(choice: Variant, base_state: Dictionary, catalog_state: Dictionary) -> bool:
@@ -513,8 +528,9 @@ func _is_hidden_by_required_hero(choice: Variant, base_state: Dictionary, catalo
 ## Strict snapshot parse: {"candle", "party"} plus optional "scraps", "gold"
 ## and/or "satchel_count"; candle 0..100; optional native int scraps >= 0;
 ## optional native int gold >= 0; optional native int satchel_count 0..6;
-## one to four distinct canonical heroes, each exactly {"id", "fray"} with
-## fray 0..200. Returns a rebuilt detached copy, never the caller's dictionaries.
+## one to four distinct canonical heroes, each either exactly {"id", "fray"}
+## or exactly {"id", "fray", "lost": bool} with fray 0..200. Absence of lost
+## means false. Returns a rebuilt detached copy, never the caller's dictionaries.
 func _parse_snapshot(snapshot: Variant) -> Dictionary:
 	if typeof(snapshot) != TYPE_DICTIONARY:
 		return {"ok": false}
@@ -573,7 +589,9 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 		if typeof(entry) != TYPE_DICTIONARY:
 			return {"ok": false}
 		var hero: Dictionary = entry
-		if hero.size() != 2 or not hero.has("id") or not hero.has("fray"):
+		var has_lost: bool = hero.has("lost")
+		var expected_hero_size: int = 3 if has_lost else 2
+		if hero.size() != expected_hero_size or not hero.has("id") or not hero.has("fray"):
 			return {"ok": false}
 		var raw_id: Variant = hero.get("id")
 		if not _is_nonblank_string(raw_id) or not CANONICAL_HERO_IDS.has(raw_id):
@@ -588,7 +606,13 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 		var fray: int = int(fray_read["value"])
 		if fray < FRAY_MIN or fray > FRAY_MAX:
 			return {"ok": false}
-		party.append({"id": hero_id, "fray": fray})
+		var is_lost: bool = false
+		if has_lost:
+			var raw_lost: Variant = hero.get("lost")
+			if typeof(raw_lost) != TYPE_BOOL:
+				return {"ok": false}
+			is_lost = bool(raw_lost)
+		party.append({"id": hero_id, "fray": fray, "lost": is_lost})
 	var parsed_snapshot := {"candle": candle, "party": party}
 	if has_scraps:
 		parsed_snapshot["scraps"] = scraps_int
