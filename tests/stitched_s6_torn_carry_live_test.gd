@@ -34,15 +34,91 @@ func _admit(app: Node) -> StitchedBattleScreen:
 	return app.stitched_fight_view
 
 
+## Identity-sensitive positions are checked independently of display or array order.
+func _rank_map(heroes: Array) -> Dictionary:
+	var ranks: Dictionary = {}
+	for raw in heroes:
+		if not raw is Dictionary or typeof(raw.get("id")) != TYPE_STRING \
+				or typeof(raw.get("rank")) != TYPE_INT or ranks.has(raw["id"]):
+			return {}
+		ranks[raw["id"]] = raw["rank"]
+	return ranks
+
+
+func _rank_permutation(ranks: Dictionary, picks: Array) -> bool:
+	if ranks.size() != 4 or picks.size() != 4:
+		return false
+	var seen: Dictionary = {}
+	for id in picks:
+		if not ranks.has(id) or typeof(ranks[id]) != TYPE_INT \
+				or int(ranks[id]) < 1 or int(ranks[id]) > 4 or seen.has(ranks[id]):
+			return false
+		seen[ranks[id]] = true
+	return seen.size() == 4
+
+
+## Malformed app-owned rank state must not even mount a Fight or charge a candle.
+func _rank_refusals(app: Node) -> void:
+	var picks: Array = app._stitched_party_picks.duplicate()
+	var valid: Dictionary = {}
+	for index in range(4):
+		valid[picks[index]] = index + 1
+	var bad_ledgers: Array = []
+	var duplicate: Dictionary = valid.duplicate()
+	duplicate[picks[1]] = 1
+	bad_ledgers.append(duplicate)
+	var outside: Dictionary = valid.duplicate()
+	outside[picks[0]] = 5
+	bad_ledgers.append(outside)
+	var zero: Dictionary = valid.duplicate()
+	zero[picks[0]] = 0
+	bad_ledgers.append(zero)
+	var nonint: Dictionary = valid.duplicate()
+	nonint[picks[0]] = 1.0
+	bad_ledgers.append(nonint)
+	var foreign: Dictionary = valid.duplicate()
+	foreign.erase(picks[0])
+	foreign["foreign_doll"] = 1
+	bad_ledgers.append(foreign)
+	var partial: Dictionary = valid.duplicate()
+	partial.erase(picks[3])
+	bad_ledgers.append(partial)
+	for ledger in bad_ledgers:
+		app._stitched_rank_carry = ledger.duplicate(true)
+		_check(app._stitched_floor_config().is_empty(),
+			"invalid rank ledger denied before full canonical floor input")
+	var before_candle: int = app.stitched_roadblock_candle
+	var refused: StitchedBattleScreen = await _admit(app)
+	_check(refused == null and app.stitched_fight_view == null \
+		and app.stitched_roadblock_candle == before_candle and _no_wallet(app) \
+		and app._stitched_hp_carry.is_empty() and app.stitched_preview_scraps == 0,
+		"malformed ledger blocks genuine title Fight admission without candle/resources")
+	app._stitched_rank_carry.clear()
+	_check(not app._stitched_floor_config().is_empty(),
+		"clearing rejected rank ledger restores canonical floor admission")
+
+
 func _victory(stage: StitchedBattleScreen) -> Dictionary:
 	if stage == null or stage.battle == null or not stage.battle.is_valid():
 		return {}
 	var steps := 0
 	var abilities := 0
+	var legal_swap: Dictionary = {}
 	for iteration in range(90):
 		if stage.battle.is_over() or stage.battle.current_side() != "hero":
 			break
 		var actor: Dictionary = stage.battle.get_unit(stage.battle.current_actor_id())
+		# A genuine action receipt, not an edited rank or a fabricated carry.
+		if legal_swap.is_empty():
+			for direction in [1, -1]:
+				var move_receipt: Dictionary = stage.submit_move(direction)
+				if move_receipt.get("ok") == true and move_receipt.get("action") == "move" \
+						and not str(move_receipt.get("swapped", "")).is_empty():
+					legal_swap = move_receipt.duplicate(true)
+					steps += 1
+					break
+			if not legal_swap.is_empty():
+				continue
 		var best_score := -10000
 		var best_id := ""
 		var best_rank := 0
@@ -83,7 +159,8 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		if receipt.get("ok") != true:
 			break
 		steps += 1
-	return {"steps": steps, "abilities": abilities, "outcome": stage.battle.outcome(),
+	return {"steps": steps, "abilities": abilities, "move": legal_swap,
+		"outcome": stage.battle.outcome(),
 		"foes": stage.battle.get_foes().duplicate(true)}
 
 
@@ -136,9 +213,10 @@ func _trace() -> Dictionary:
 	root.add_child(app)
 	await process_frame
 	_check(app._stitched_gear_overrides.is_empty() and app._stitched_hp_carry.is_empty()
-		and app.stitched_preview_scraps == 0 and _no_wallet(app),
+		and app._stitched_rank_carry.is_empty() and app.stitched_preview_scraps == 0 and _no_wallet(app),
 		"fresh title has no carried health, parts, scraps or legacy resources")
 	_starting_hp_contract(app)
+	await _rank_refusals(app)
 	# No non-victory route may open the Circle or invent a torn-gear carry.
 	var aborted: StitchedBattleScreen = await _admit(app)
 	_check(aborted != null and aborted.battle != null and aborted.battle.is_valid(),
@@ -150,7 +228,8 @@ func _trace() -> Dictionary:
 	aborted._action_buttons["exit"].pressed.emit()
 	await process_frame
 	_check(app.stitched_sewing_panel == null and app._stitched_gear_overrides.is_empty()
-		and app._stitched_hp_carry.is_empty() and app.stitched_preview_scraps == 0,
+		and app._stitched_hp_carry.is_empty() and app._stitched_rank_carry.is_empty() \
+		and app.stitched_preview_scraps == 0,
 		"unwon exit grants neither Circle nor HP/gear override")
 	var first: StitchedBattleScreen = await _admit(app)
 	if first == null:
@@ -159,8 +238,17 @@ func _trace() -> Dictionary:
 		await process_frame
 		return {}
 	var won := _victory(first)
+	var move: Dictionary = won.get("move", {})
+	var victory_ranks: Dictionary = _rank_map(first.battle.get_heroes())
+	var starting_ranks: Dictionary = _rank_map(app._stitched_party_receipt.get("heroes", []))
+	_check(move.get("ok") == true and move.get("action") == "move" \
+		and move.get("from") != move.get("to") and str(move.get("swapped", "")) in app._stitched_party_picks \
+		and _rank_permutation(victory_ranks, app._stitched_party_picks) \
+		and victory_ranks != starting_ranks,
+		"genuine submit_move swaps selected allies and produces distinct surviving ending ranks")
 	_check(won.get("outcome") == "victory" and int(won.get("steps", 0)) > 0
-		and int(won.get("abilities", 0)) > 0 and won.get("foes", []).size() == 3,
+		and int(won.get("abilities", 0)) > 0 and won.get("foes", []).size() == 3 \
+		and victory_ranks.size() == 4,
 		"all three foes defeated via mounted legal combat actions")
 	if won.get("outcome") != "victory":
 		first._action_buttons["exit"].pressed.emit()
@@ -183,6 +271,11 @@ func _trace() -> Dictionary:
 			if str(impact.get("target", "")) in battle_hero_ids \
 					and int(impact.get("damage", 0)) > 0:
 				live_hits += 1
+	var victory_bleed: Dictionary = {}
+	for hero in first.battle.get_heroes():
+		var bleed: Variant = hero.get("statuses", {}).get("bleed", 0)
+		if typeof(bleed) == TYPE_INT and int(bleed) > 0:
+			victory_bleed[str(hero["id"])] = bleed
 	var victory_hp: Dictionary = {}
 	var wounded_survivors := 0
 	for hero in first.battle.get_heroes():
@@ -215,7 +308,9 @@ func _trace() -> Dictionary:
 	first._action_buttons["exit"].pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_sewing_panel
-	_check(app._stitched_hp_carry == victory_hp and not victory_hp.is_empty(),
+	_check(app._stitched_rank_carry == victory_ranks \
+		and app._stitched_bleed_carry == victory_bleed \
+		and app._stitched_hp_carry == victory_hp and not victory_hp.is_empty(),
 		"only authentic terminal-victory survivor HP enters app-owned ID carry")
 	var swap: RunStitchedSewingSwap = app.stitched_sewing_visit
 	var mend: RunStitchedSewingMend = app.stitched_sewing_mend_visit
@@ -239,6 +334,8 @@ func _trace() -> Dictionary:
 	var disabled: Button = panel.find_child("Mend_%s_arms" % hero_id, true, false) as Button
 	_check(disabled != null and disabled.disabled and disabled.text.contains("insufficient scraps"),
 		"one genuine scrap cannot silently repair torn arms")
+	var before_ranks: Dictionary = app._stitched_rank_carry.duplicate(true)
+	var before_bleed: Dictionary = app._stitched_bleed_carry.duplicate(true)
 	var before_hp: Dictionary = app._stitched_hp_carry.duplicate(true)
 	var before_overrides: Dictionary = app._stitched_gear_overrides.duplicate(true)
 	var before_satchel: Array = app.stitched_preview_satchel.duplicate(true)
@@ -252,7 +349,8 @@ func _trace() -> Dictionary:
 		and not swap.leave("wrong-node", displayed).get("ok")
 		and not mend.leave("wrong-node", mend_displayed).get("ok")
 		and app._stitched_gear_overrides == before_overrides
-		and app._stitched_hp_carry == before_hp
+		and app._stitched_hp_carry == before_hp and app._stitched_rank_carry == before_ranks \
+		and app._stitched_bleed_carry == before_bleed
 		and swap.read_state() == displayed and mend.read_state() == mend_displayed
 		and app.stitched_preview_scraps == 1 and app.stitched_preview_satchel == before_satchel
 		and randi() == expected_rng and _no_wallet(app),
@@ -276,7 +374,8 @@ func _trace() -> Dictionary:
 		and not swap.leave(NODE, displayed).get("ok")
 		and not mend.leave(NODE, mend_displayed).get("ok")
 		and app._stitched_gear_overrides == closed
-		and app._stitched_hp_carry == before_hp and app.stitched_preview_scraps == 1,
+		and app._stitched_hp_carry == before_hp and app._stitched_rank_carry == before_ranks \
+		and app._stitched_bleed_carry == before_bleed and app.stitched_preview_scraps == 1,
 		"old displayed callbacks and closed receipts cannot replay a carry or spend")
 	await process_frame
 	var config: Dictionary = app._stitched_floor_config()
@@ -288,7 +387,8 @@ func _trace() -> Dictionary:
 	for hero in config.get("heroes", []):
 		if victory_hp.has(str(hero["id"])):
 			config_hp[str(hero["id"])] = int(hero.get("hp", -1))
-	_check(config_hp == victory_hp and not config_hp.is_empty(),
+	_check(_rank_map(config.get("heroes", [])) == victory_ranks \
+		and config_hp == victory_hp and not config_hp.is_empty(),
 		"after worn gear projection, all same-loadout survivors keep exact witnessed HP")
 	var same_parts := expected_parts.size() == StitchedParts.SLOTS.size()
 	for slot in StitchedParts.SLOTS:
@@ -300,6 +400,15 @@ func _trace() -> Dictionary:
 		"real second Fight is mounted by title Roadblock button, not a fixture")
 	var trace: Dictionary = {}
 	if second != null and second.battle != null:
+		var mounted_ranks: Dictionary = _rank_map(second.battle.get_heroes())
+		var mounted_bleed: Dictionary = {}
+		for hero in second.battle.get_heroes():
+			var bleed: Variant = hero.get("statuses", {}).get("bleed", 0)
+			if typeof(bleed) == TYPE_INT and int(bleed) > 0:
+				mounted_bleed[str(hero["id"])] = bleed
+		_check(mounted_ranks == victory_ranks and mounted_ranks.size() == 4 \
+			and mounted_bleed == victory_bleed,
+			"new mounted battle preserves every victory ID/rank and carried Bleed")
 		var mounted_hp: Dictionary = {}
 		var mounted_wounds := 0
 		for hero in second.battle.get_heroes():
@@ -339,6 +448,8 @@ func _trace() -> Dictionary:
 		_check(witness_turn and illegal_no_spend and legal_intact,
 			"actual next hero turn refuses torn ability without action/RNG spend; intact ability remains legal")
 		trace = {"parts": unit["parts"].duplicate(true), "config": expected_parts.duplicate(true),
+			"ranks": mounted_ranks.duplicate(true), "bleed": mounted_bleed.duplicate(true),
+			"move": move.duplicate(true),
 			"opening": second.battle.opening_strike(), "hp": mounted_hp.duplicate(true),
 			"scraps": app.stitched_preview_scraps,
 			"satchel": app.stitched_preview_satchel.duplicate(true),
@@ -346,13 +457,15 @@ func _trace() -> Dictionary:
 		second._action_buttons["exit"].pressed.emit()
 		await process_frame
 		_check(app.stitched_sewing_panel == null and app._stitched_gear_overrides == closed
-			and app._stitched_hp_carry == before_hp \
+			and app._stitched_hp_carry == before_hp and app._stitched_rank_carry == before_ranks \
+			and app._stitched_bleed_carry == before_bleed \
 			and app.stitched_preview_scraps == 1 and _no_wallet(app),
 			"unfinished second Fight cannot heal/corrupt carry, repair gear or mint reward")
 	# Replayed/forged exits from a retired stage cannot change the authenticated HP.
 	app._stitched_fight_exit(weakref(second))
 	app._stitched_fight_exit(null)
-	_check(app._stitched_hp_carry == before_hp and _no_wallet(app),
+	_check(app._stitched_hp_carry == before_hp and app._stitched_rank_carry == before_ranks \
+		and app._stitched_bleed_carry == before_bleed and _no_wallet(app),
 		"stale and null battle exit callbacks cannot replace survivor HP")
 	# A draft or cancelled party edit retains HP. Only a genuine Confirm drops
 	# the deselected survivor, without touching the other three IDs.
@@ -370,10 +483,12 @@ func _trace() -> Dictionary:
 		_check(not spare_id.is_empty(), "legal alternative hero exists for reselection")
 		var original: Dictionary = app._stitched_hp_carry.duplicate(true)
 		app._stitched_party_checkboxes[hero_id].button_pressed = false
-		_check(app._stitched_hp_carry == original and app._stitched_party_picks.has(hero_id),
+		_check(app._stitched_hp_carry == original and app._stitched_rank_carry == before_ranks \
+			and app._stitched_party_picks.has(hero_id),
 			"unfinished three-hero draft cannot clear stored HP")
 		app._stitched_party_cancel_button.pressed.emit()
-		_check(app._stitched_hp_carry == original and app._stitched_party_picks.has(hero_id),
+		_check(app._stitched_hp_carry == original and app._stitched_rank_carry == before_ranks \
+			and app._stitched_party_picks.has(hero_id),
 			"Cancel restores confirmed party without modifying any HP")
 		if not spare_id.is_empty():
 			app._stitched_party_checkboxes[hero_id].button_pressed = false
@@ -383,8 +498,11 @@ func _trace() -> Dictionary:
 			for id in original:
 				if str(id) != hero_id:
 					remaining = remaining and app._stitched_hp_carry.get(id) == original[id]
+			var canonical_ranks: Dictionary = _rank_map(app._stitched_party_receipt.get("heroes", []))
 			_check(not app._stitched_hp_carry.has(hero_id) and remaining \
-				and app._stitched_party_picks.has(spare_id) \
+				and app._stitched_rank_carry.is_empty() \
+				and _rank_map(app._stitched_floor_config().get("heroes", [])) == canonical_ranks \
+				and canonical_ranks.size() == 4 and app._stitched_party_picks.has(spare_id) \
 				and not app._stitched_party_picks.has(hero_id),
 				"confirmed reselection clears only deselected ID's wounded HP")
 		picker.get_choice_buttons()[2].pressed.emit()

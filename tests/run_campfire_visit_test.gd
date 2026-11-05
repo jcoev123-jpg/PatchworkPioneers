@@ -42,6 +42,8 @@ func _initialize() -> void:
 	_test_stitched_invalid_construction()
 	_test_stitched_decisions()
 	_test_stitched_rejections_and_replay()
+	_test_stitched_actionable_quotes()
+	_test_stitched_noop_refusals()
 	_test_swap_admission_and_quote()
 	_test_swap_exchanges_and_decisions()
 	_test_swap_refusals_and_isolation()
@@ -373,7 +375,7 @@ func _test_stitched_open_quote_and_leave() -> void:
 	var decided := visit.read_state()
 	_check(decided.get("status") == "stitched_decided" and decided.get("heroes") == original
 		and decided.get("candle") == 40
-		and decided.get("quote", {}).get("choices") == ["mend", "tell_tales", "trim_the_wick", "leave"],
+		and decided.get("quote", {}).get("choices") == [],
 		"the single selection consumes the visit without changing any field")
 	_assert_stitched_refused(visit, "mend", "camp_st", original, 40, "decision after Leave")
 	_assert_stitched_refused(visit, "leave", "camp_st", receipt.get("heroes"), 40, "duplicate Leave")
@@ -587,6 +589,127 @@ func _test_stitched_rejections_and_replay() -> void:
 		"rng fixture commits a capped Trim the Wick")
 	_check(randi() == expected_next,
 		"stitched construction, quote, rejections and actions draw no global RNG")
+
+
+const FULL_HPS: Array = [40, 30, 26, 48]
+const NO_FRAY: Array = [0, 0, 0, 0]
+
+
+func _quote_for(hps: Array, frays: Array, candle: int) -> Dictionary:
+	var visit := RunCampfireVisit.new("camp_q", _stitched_party(hps, frays), "stitched", candle)
+	return visit.read_state().get("quote", {})
+
+
+func _assert_quote(hps: Array, frays: Array, candle: int, expected: Array, label: String) -> void:
+	var quote := _quote_for(hps, frays, candle)
+	_check(quote.get("choices") == expected, label + ": quote choices " + str(expected))
+	var text: String = quote.get("text", "")
+	_check(not text.is_empty(), label + ": quote text present")
+	_check((text.find("Mend") != -1) == expected.has("mend")
+		and (text.find("30%") != -1) == expected.has("mend"),
+		label + ": text names Mend and 30% only when advertised")
+	_check((text.find("Tell Tales") != -1) == expected.has("tell_tales")
+		and (text.find("25 FRAY") != -1) == expected.has("tell_tales"),
+		label + ": text names Tell Tales and 25 only when advertised")
+	_check((text.find("Trim the Wick") != -1) == expected.has("trim_the_wick")
+		and (text.find("50 CANDLE") != -1) == expected.has("trim_the_wick"),
+		label + ": text names the Wick and 50 only when advertised")
+	_check(text.find("Leave") != -1, label + ": text always names Leave")
+
+
+func _test_stitched_actionable_quotes() -> void:
+	_assert_quote([35, 18, 0, 48], [30, 25, 10, 200], 40,
+		["mend", "tell_tales", "trim_the_wick", "leave"], "all effective")
+	_assert_quote(FULL_HPS, NO_FRAY, 100, ["leave"], "no benefit")
+	_assert_quote([40, 30, 26, 47], NO_FRAY, 100, ["mend", "leave"], "one hero short of max HP")
+	_assert_quote([40, 30, 0, 48], NO_FRAY, 100, ["mend", "leave"], "Hanging hero at 0 HP")
+	_assert_quote(FULL_HPS, [0, 0, 0, 1], 100, ["tell_tales", "leave"], "FRAY 1")
+	_assert_quote(FULL_HPS, NO_FRAY, 99, ["trim_the_wick", "leave"], "CANDLE 99")
+	_assert_quote(FULL_HPS, NO_FRAY, 100, ["leave"], "CANDLE 100")
+	_assert_quote(FULL_HPS, NO_FRAY, 0, ["trim_the_wick", "leave"], "CANDLE 0")
+	_assert_quote([40, 29, 26, 48], [0, 200, 0, 0], 70,
+		["mend", "tell_tales", "trim_the_wick", "leave"], "mixed, all three")
+	_assert_quote([40, 29, 26, 48], NO_FRAY, 70, ["mend", "trim_the_wick", "leave"],
+		"mixed, HP and candle")
+	_assert_quote(FULL_HPS, [25, 0, 0, 0], 100, ["tell_tales", "leave"], "mixed, FRAY only")
+	# The quote is detached from held state.
+	var visit := RunCampfireVisit.new("camp_q", _stitched_party(FULL_HPS, [0, 0, 5, 0]), "stitched", 100)
+	var state := visit.read_state()
+	state["quote"]["choices"].append("mend")
+	state["quote"]["text"] = "forged"
+	var reread := visit.read_state()
+	_check(reread["quote"]["choices"] == ["tell_tales", "leave"] and reread["quote"]["text"] != "forged",
+		"returned quote is detached from the held visit")
+	# A decided visit advertises nothing.
+	var heroes: Array = reread["heroes"]
+	_check(visit.select("leave", "camp_q", heroes, 100).get("ok") == true, "decided fixture commits Leave")
+	var decided := visit.read_state()
+	_check(decided["status"] == "stitched_decided" and decided["quote"]["choices"] == [],
+		"completed visit has no selectable choices")
+	_assert_stitched_refused(visit, "leave", "camp_q", heroes, 100, "Leave on a decided visit")
+	_assert_stitched_refused(visit, "tell_tales", "camp_q", heroes, 100, "Tell Tales on a decided visit")
+
+
+func _test_stitched_noop_refusals() -> void:
+	seed(404404)
+	var expected_next := randi()
+	seed(404404)
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 77
+	var local_state := local_rng.state
+	var source := _stitched_party(FULL_HPS, NO_FRAY)
+	var original := source.duplicate(true)
+	var visit := RunCampfireVisit.new("camp_noop", source, "stitched", 100)
+	for decision in ["mend", "tell_tales", "trim_the_wick"]:
+		_assert_stitched_refused(visit, decision, "camp_noop", original, 100,
+			"no-op " + decision + " with valid snapshot")
+	_check(visit.read_state()["status"] == "stitched_open"
+		and visit.read_state()["quote"]["choices"] == ["leave"],
+		"no-op attempts keep the visit open with only Leave")
+	var leave := visit.select("leave", "camp_noop", original, 100)
+	_check(leave == {"ok": true, "decision": "leave", "node_id": "camp_noop",
+		"heroes": original, "candle": 100}, "Leave still works after refused no-ops")
+	_assert_stitched_refused(visit, "leave", "camp_noop", original, 100, "replay after Leave")
+	# Mixed fixture: only the wick is effective; a later valid action still works.
+	var wick_visit := RunCampfireVisit.new("camp_noop2", _stitched_party(FULL_HPS, NO_FRAY),
+		"stitched", 99)
+	_assert_stitched_refused(wick_visit, "mend", "camp_noop2", _stitched_party(FULL_HPS, NO_FRAY), 99,
+		"no-op Mend beside effective Wick")
+	_assert_stitched_refused(wick_visit, "tell_tales", "camp_noop2",
+		_stitched_party(FULL_HPS, NO_FRAY), 99, "no-op Tell Tales beside effective Wick")
+	var wick := wick_visit.select("trim_the_wick", "camp_noop2", _stitched_party(FULL_HPS, NO_FRAY), 99)
+	_check(wick.get("ok") == true and wick.get("candle") == 100
+		and wick.get("heroes") == _stitched_party(FULL_HPS, NO_FRAY),
+		"effective Wick at CANDLE 99 still caps at 100 after refusals")
+	# Satchel visit: refused no-ops leave swap authority and satchel untouched.
+	var party := _swap_party()
+	for hero in party:
+		hero["hp"] = hero["max_hp"]
+		hero["fray"] = 0
+	var swap_visit := RunCampfireVisit.open_stitched_with_satchel("camp_noop3", party, 100,
+		_swap_satchel(), _swap_catalog())
+	var swap_before := swap_visit.read_state()
+	_check(swap_before["status"] == "stitched_open" and swap_before["quote"]["choices"] == ["leave"],
+		"satchel visit with no benefit quotes only Leave")
+	for decision in ["mend", "tell_tales", "trim_the_wick"]:
+		_assert_stitched_refused(swap_visit, decision, "camp_noop3", party, 100,
+			"satchel no-op " + decision)
+	_check(swap_visit.read_state() == swap_before
+		and swap_visit.read_state()["swap_quote"]["open"] == true,
+		"refused no-ops leave the swap opportunity and satchel unchanged")
+	var swapped := swap_visit.swap_part("warden", "arms", 0, "camp_noop3", swap_before["swap_state"])
+	_check(swapped.get("ok") == true, "swap still works after refused no-ops")
+	var latest := swap_visit.read_state()
+	_check(latest["quote"]["choices"] == ["leave"], "quote after a swap uses the latest held heroes")
+	_assert_stitched_refused(swap_visit, "mend", "camp_noop3", latest["heroes"], 100,
+		"no-op Mend after a swap")
+	_check(swap_visit.select("leave", "camp_noop3", latest["heroes"], 100).get("ok") == true,
+		"Leave closes the satchel visit after a swap")
+	_check(swap_visit.read_state()["swap_quote"]["open"] == false
+		and swap_visit.read_state()["quote"]["choices"] == [],
+		"decided satchel visit closes swaps and advertises nothing")
+	_check(randi() == expected_next and local_rng.state == local_state,
+		"quotes and refused no-ops draw no RNG")
 
 
 const ARMS_SHIELD := "warden_arms_shield_catch"

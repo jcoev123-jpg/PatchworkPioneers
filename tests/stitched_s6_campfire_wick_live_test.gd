@@ -196,6 +196,25 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and before["candle"] >= 0 and before["candle"] <= 100
 		and before["hp"] == setup["wounds"],
 		"non-vacuous real four-hero victory snapshot precedes Wick")
+	if int(before["candle"]) >= 100:
+		# At CANDLE 100 the service no longer advertises Trim the Wick, so the
+		# mounted panel (which still requires it) does not open: nothing is spent
+		# and the earned stop is kept. The live panel follow-up is a later S6 task.
+		var full_visit := RunCampfireVisit.new(NODE, roster, RunCampfireVisit.STITCHED, 100)
+		var full_state: Dictionary = full_visit.read_state()
+		_check(full_state.get("quote", {}).get("choices", []).has(RunCampfireVisit.TRIM_THE_WICK) == false
+			and full_state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE)
+			and full_visit.select(RunCampfireVisit.TRIM_THE_WICK, NODE, roster, 100).get("ok") == false
+			and full_visit.read_state() == full_state,
+			"service at CANDLE 100 does not offer Wick and refuses it without consuming the visit")
+		app.stitched_campfire_button.pressed.emit()
+		await process_frame
+		_check(app.stitched_campfire_panel == null and app.stitched_campfire_visit == null
+			and app._stitched_postvictory_stop_available and _resources(app) == before,
+			"CANDLE 100 Campfire does not mount, spends nothing and keeps the earned stop")
+		app.free()
+		await process_frame
+		return {"before": 100, "restored": 100, "gain": 0}
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
 	var panel: Control = app.stitched_campfire_panel
@@ -233,7 +252,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and expected.get("heroes") == roster
 		and expected.get("candle") == before["candle"]
 		and expected.get("quote", {}).get("choices", []).has(RunCampfireVisit.TRIM_THE_WICK)
-		and panel.is_visible_in_tree() and not app.title_view.is_visible_in_tree()
+		and panel.is_visible_in_tree()and not app.title_view.is_visible_in_tree()
 		and not app._stitched_postvictory_stop_available
 		and not app.stitched_campfire_button.visible
 		and not app.stitched_peddler_button.visible,

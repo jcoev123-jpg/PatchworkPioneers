@@ -74,6 +74,8 @@ static func cue(unit: Dictionary) -> String:
 		return trait_cue
 	if side == "hero" and _number(unit.get("fray")) and float(unit["fray"]) >= 100:
 		return "FRAY"
+	if statuses is Dictionary and _positive_count(statuses.get("bleed")):
+		return "BLD"
 	if side == "hero":
 		return "HERO"
 	if side == "foe":

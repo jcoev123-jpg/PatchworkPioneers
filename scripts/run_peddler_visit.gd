@@ -255,17 +255,32 @@ func quote() -> Dictionary:
 	if not _stitched:
 		return {"ok": false, "choices": []}
 	var open := _status == STITCHED_OPEN
+	# The quote reports the light the stub can recover RIGHT NOW; the item's
+	# intrinsic strength in read_state() stays 25. Buy is offered only when
+	# that gain is positive and the wallet covers the quoted price.
+	var gain := _effective_restore()
+	var choices: Array = []
+	if open:
+		if gain > 0 and _gold >= _quoted_price:
+			choices = [BUY_CANDLE_STUB, STITCHED_LEAVE]
+		else:
+			choices = [STITCHED_LEAVE]
 	return {
 		"ok": open,
 		"mode": STITCHED,
 		"node_id": _node_id,
 		"item": CANDLE_STUB,
-		"restore": CANDLE_STUB_RESTORE,
+		"restore": gain,
 		"price": _quoted_price,
 		"candle": _candle,
 		"gold": _gold,
-		"choices": [BUY_CANDLE_STUB, STITCHED_LEAVE] if open else [],
+		"choices": choices,
 	}
+
+
+## CANDLE the stub would recover now: min(25, 100 - candle).
+func _effective_restore() -> int:
+	return mini(CANDLE_STUB_RESTORE, CANDLE_MAX - _candle)
 
 
 ## The single Stitched decision: buy_candle_stub or leave, against the exact
