@@ -1,0 +1,479 @@
+extends SceneTree
+## Deterministic regression suite for RunStitchedEmberglassCampfireEvent.
+## Covers AC1 (quote actionability, recovery conditions, 0/1 scraps, lost-only wounds),
+## AC2 (paid claim, exact -1 scrap, Campfire service_request, isolation of heroes/candle/inputs/RNG),
+## AC3 (fail-closed rejections, stale/forged state, sell_cinders +12 gold, leave, single-claim latch),
+## and AC4 (catalog integrity, preservation of existing records).
+
+const EMBER_ID := "v3_emberglass_campfire"
+const NODE := "test_emberglass_node_1"
+
+var failures: Array[String] = []
+var checks: int = 0
+var rng := RandomNumberGenerator.new()
+
+
+func _init() -> void:
+	rng.seed = 7052026
+	var rng_state_before := rng.state
+
+	_test_ac1_catalog_authentication_and_pricing()
+	_test_ac1_quote_actionability_remedies_and_scraps()
+	_test_ac2_paid_claim_isolation_and_wallet_settlement()
+	_test_ac3_trade_and_leave_claims()
+	_test_ac3_rejections_and_fail_closed()
+	_test_ac3_admission_validation_failures()
+
+	_check(rng.state == rng_state_before, "Overall: Seeded RNG state must remain completely untouched")
+	_finish()
+
+
+func _finish() -> void:
+	for failure in failures:
+		printerr("FAIL: ", failure)
+	print("run_stitched_emberglass_campfire_event_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _check(condition: bool, message: String) -> void:
+	checks += 1
+	if not condition:
+		failures.append(message)
+
+
+func _hero(id: String, rank: int, hp: int, max_hp: int, fray: int = 0, lost: bool = false, use_position: bool = false) -> Dictionary:
+	var h := {
+		"id": id,
+		"hp": hp,
+		"max_hp": max_hp,
+		"fray": fray,
+	}
+	if use_position:
+		h["position"] = rank
+	else:
+		h["rank"] = rank
+	if lost:
+		h["lost"] = true
+	return h
+
+
+func _standard_party(hp_offset: int = 0, fray_offset: int = 0, lost_first: bool = false, use_position: bool = false) -> Array:
+	return [
+		_hero("warden", 1, 30 + hp_offset, 30, 0 + fray_offset, lost_first, use_position),
+		_hero("seamstress", 2, 25, 25, 0, false, use_position),
+		_hero("tinker", 3, 24, 24, 0, false, use_position),
+		_hero("lantern_monk", 4, 28, 28, 0, false, use_position),
+	]
+
+
+func _find_choice(choices: Array, choice_id: String) -> Dictionary:
+	for ch_raw: Variant in choices:
+		if ch_raw is Dictionary and String((ch_raw as Dictionary).get("choice_id", "")) == choice_id:
+			return (ch_raw as Dictionary).duplicate(true)
+	return {}
+
+
+# AC1: Catalog authentication, pricing and authored alternatives.
+func _test_ac1_catalog_authentication_and_pricing() -> void:
+	var gate := RunV3ServiceWaystationEventGate.new()
+	_check(gate.is_catalog_valid(), "AC1: Shipped waystation catalog loads and validates")
+
+	var record := gate.get_event_record(EMBER_ID)
+	_check(not record.is_empty(), "AC1: Authentic Emberglass record exists in catalog")
+	_check(record.get("id") == EMBER_ID, "AC1: Record id is " + EMBER_ID)
+	_check(record.get("title") == "The Emberglass Hearth", "AC1: Record title is The Emberglass Hearth")
+	_check(record.get("service_choice_id") == "light_the_embers", "AC1: service_choice_id is light_the_embers")
+	_check(record.get("service_kind") == "Campfire", "AC1: service_kind is Campfire")
+
+	var choices: Array = record.get("choices", [])
+	_check(choices.size() == 3, "AC1: Authored Emberglass has exactly 3 choices")
+
+	var paid_ch: Dictionary = choices[0]
+	_check(paid_ch.get("id") == "light_the_embers", "AC1: First choice is light_the_embers")
+	_check(paid_ch.get("outcome") == {"gold": 0, "scraps": -1}, "AC1: light_the_embers costs {gold: 0, scraps: -1}")
+
+	var trade_ch: Dictionary = choices[1]
+	_check(trade_ch.get("id") == "sell_cinders", "AC1: Second choice is sell_cinders")
+	_check(trade_ch.get("outcome") == {"gold": 12, "scraps": 0}, "AC1: sell_cinders gives {gold: 12, scraps: 0}")
+
+	var leave_ch: Dictionary = choices[2]
+	_check(leave_ch.get("id") == "leave", "AC1: Third choice is leave")
+	_check(leave_ch.get("outcome") == {"gold": 0, "scraps": 0}, "AC1: leave is zero cost {gold: 0, scraps: 0}")
+
+
+# AC1: Quote actionability across scraps (0/1), HP (full/missing/hanging), FRAY (0/positive),
+# candle (100/99), and lost-only wounds.
+func _test_ac1_quote_actionability_remedies_and_scraps() -> void:
+	# 1. Scraps threshold: 0 scraps on a wounded party -> unaffordable & not actionable
+	var wounded_party := _standard_party(-10, 0) # Warden 20/30 HP
+	var ev_broke := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, wounded_party, 100, {"gold": 0, "scraps": 0})
+	_check(ev_broke.is_valid(), "AC1: Event is valid with 0 scraps")
+	var preview_broke := ev_broke.preview_choices()
+	_check(bool(preview_broke.get("ok", false)), "AC1: Preview succeeds with 0 scraps")
+	var paid_broke := _find_choice(preview_broke.get("choices", []), "light_the_embers")
+	_check(not bool(paid_broke.get("affordable", false)), "AC1: light_the_embers is not affordable at 0 scraps")
+	_check(not bool(paid_broke.get("available", false)), "AC1: light_the_embers is not available at 0 scraps")
+	_check(not bool(paid_broke.get("actionable", false)), "AC1: light_the_embers is not actionable when unaffordable at 0 scraps")
+	_check(paid_broke.get("service_request", {}) == {}, "AC1: No service request offered when unaffordable at 0 scraps")
+	var trade_broke := _find_choice(preview_broke.get("choices", []), "sell_cinders")
+	_check(bool(trade_broke.get("available", false)), "AC1: sell_cinders remains available when scraps=0")
+	var leave_broke := _find_choice(preview_broke.get("choices", []), "leave")
+	_check(bool(leave_broke.get("available", false)), "AC1: leave remains available when scraps=0")
+
+	# 2. Fully restored party at candle 100 with 1 scrap: all 3 remedies useless -> paid unavailable!
+	var full_party := _standard_party(0, 0)
+	var ev_full := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 100, {"gold": 0, "scraps": 1})
+	_check(ev_full.is_valid(), "AC1: Event valid for full party")
+	_check(not ev_full.can_mend(), "AC1: Mend cannot help full party")
+	_check(not ev_full.can_tell_tales(), "AC1: Tell Tales cannot help full party")
+	_check(not ev_full.can_trim_wick(), "AC1: Trim Wick cannot help at candle 100")
+	_check(not ev_full.has_useful_recovery(), "AC1: No useful recovery for fully restored party at candle 100")
+	_check(not ev_full.has_useful_remedy(), "AC1: has_useful_remedy alias matches has_useful_recovery")
+	var preview_full := ev_full.preview_choices()
+	var paid_full := _find_choice(preview_full.get("choices", []), "light_the_embers")
+	_check(bool(paid_full.get("affordable", false)), "AC1: Paid choice is affordable with 1 scrap")
+	_check(not bool(paid_full.get("available", false)), "AC1: Paid choice is unavailable when no recovery helps")
+	_check(not bool(paid_full.get("actionable", false)), "AC1: Paid choice is not actionable when no recovery helps")
+	_check(paid_full.get("service_request", {}) == {}, "AC1: No service request when no recovery helps")
+	_check(bool(_find_choice(preview_full.get("choices", []), "sell_cinders").get("available", false)), "AC1: Trade available on fully rested party")
+	_check(bool(_find_choice(preview_full.get("choices", []), "leave").get("available", false)), "AC1: Leave available on fully rested party")
+
+	# Abundant scraps still blocked if fully restored
+	var ev_abundant := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 100, {"gold": 50, "scraps": 99})
+	var paid_abundant := _find_choice(ev_abundant.preview_choices().get("choices", []), "light_the_embers")
+	_check(not bool(paid_abundant.get("available", false)), "AC1: Abundant scraps cannot activate actionless paid choice")
+
+	# 3. Missing HP recovery: Warden 20/30 HP, candle 100, fray 0 -> paid available!
+	var ev_hp := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, wounded_party, 100, {"gold": 0, "scraps": 1})
+	_check(ev_hp.can_mend(), "AC1: Mend helps wounded party")
+	_check(ev_hp.has_useful_recovery(), "AC1: Has useful recovery (Mend)")
+	var preview_hp := ev_hp.preview_choices()
+	var paid_hp := _find_choice(preview_hp.get("choices", []), "light_the_embers")
+	_check(bool(paid_hp.get("available", false)), "AC1: Paid choice is available when hero has missing HP")
+	_check(bool(paid_hp.get("actionable", false)), "AC1: Paid choice is actionable when hero has missing HP")
+	_check(paid_hp.get("service_request", {}).get("stop_type") == "Campfire", "AC1: Offers Campfire service request when Mend helps")
+
+	# 4. Hanging hero (0 HP): 0 HP is Hanging and may be healed -> paid available!
+	var hanging_party := [
+		_hero("warden", 1, 0, 30, 0), # Hanging at 0 HP
+		_hero("seamstress", 2, 25, 25, 0),
+		_hero("tinker", 3, 24, 24, 0),
+		_hero("lantern_monk", 4, 28, 28, 0),
+	]
+	var ev_hanging := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, hanging_party, 100, {"gold": 0, "scraps": 1})
+	_check(ev_hanging.can_mend(), "AC1: Mend helps Hanging (0 HP) hero")
+	var paid_hanging := _find_choice(ev_hanging.preview_choices().get("choices", []), "light_the_embers")
+	_check(bool(paid_hanging.get("available", false)), "AC1: Paid choice is available for Hanging hero")
+
+	# 5. Positive FRAY recovery: All full HP, Seamstress has 20 FRAY, candle 100 -> paid available!
+	var frayed_party := [
+		_hero("warden", 1, 30, 30, 0),
+		_hero("seamstress", 2, 25, 25, 20), # Positive FRAY
+		_hero("tinker", 3, 24, 24, 0),
+		_hero("lantern_monk", 4, 28, 28, 0),
+	]
+	var ev_fray := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, frayed_party, 100, {"gold": 0, "scraps": 1})
+	_check(not ev_fray.can_mend(), "AC1: Mend does not help frayed party")
+	_check(ev_fray.can_tell_tales(), "AC1: Tell Tales helps frayed party")
+	_check(ev_fray.has_useful_recovery(), "AC1: Has useful recovery (Tell Tales)")
+	var paid_fray := _find_choice(ev_fray.preview_choices().get("choices", []), "light_the_embers")
+	_check(bool(paid_fray.get("available", false)), "AC1: Paid choice available when hero has positive FRAY")
+	_check(paid_fray.get("service_request", {}).get("stop_type") == "Campfire", "AC1: Offers Campfire request when Tell Tales helps")
+
+	# 6. Trim Wick recovery: Full HP, 0 FRAY, candle 99 (< 100) -> paid available!
+	var ev_candle99 := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 99, {"gold": 0, "scraps": 1})
+	_check(not ev_candle99.can_mend(), "AC1: Mend does not help candle 99 full party")
+	_check(not ev_candle99.can_tell_tales(), "AC1: Tell Tales does not help candle 99 full party")
+	_check(ev_candle99.can_trim_wick(), "AC1: Trim Wick helps at candle 99")
+	_check(ev_candle99.has_useful_recovery(), "AC1: Has useful recovery (Trim Wick)")
+	var paid_c99 := _find_choice(ev_candle99.preview_choices().get("choices", []), "light_the_embers")
+	_check(bool(paid_c99.get("available", false)), "AC1: Paid choice available when candle < 100")
+	_check(paid_c99.get("service_request", {}).get("stop_type") == "Campfire", "AC1: Offers Campfire request when Trim Wick helps")
+
+	# 7. Lost-only wounds: Warden is lost with 10/30 HP and 50 FRAY. Others are non-lost with full HP and 0 FRAY.
+	# At candle 100: all remedies useless for non-lost heroes -> paid unavailable!
+	var lost_only_party := [
+		_hero("warden", 1, 10, 30, 50, true), # Lost hero with wounds and fray
+		_hero("seamstress", 2, 25, 25, 0, false),
+		_hero("tinker", 3, 24, 24, 0, false),
+		_hero("lantern_monk", 4, 28, 28, 0, false),
+	]
+	var ev_lost100 := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, lost_only_party, 100, {"gold": 0, "scraps": 1})
+	_check(not ev_lost100.can_mend(), "AC1: Mend ignores lost hero wounds")
+	_check(not ev_lost100.can_tell_tales(), "AC1: Tell Tales ignores lost hero fray")
+	_check(not ev_lost100.can_trim_wick(), "AC1: Trim Wick useless at candle 100")
+	_check(not ev_lost100.has_useful_recovery(), "AC1: No useful recovery with lost-only wounds at candle 100")
+	var paid_lost100 := _find_choice(ev_lost100.preview_choices().get("choices", []), "light_the_embers")
+	_check(not bool(paid_lost100.get("available", false)), "AC1: Paid choice unavailable for lost-only wounds at candle 100")
+
+	# Lost-only wounds at candle 99: Trim Wick would help candle -> paid available!
+	var ev_lost99 := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, lost_only_party, 99, {"gold": 0, "scraps": 1})
+	_check(ev_lost99.can_trim_wick(), "AC1: Trim Wick helps at candle 99 even with lost-only wounds")
+	var paid_lost99 := _find_choice(ev_lost99.preview_choices().get("choices", []), "light_the_embers")
+	_check(bool(paid_lost99.get("available", false)), "AC1: Paid choice available when candle 99 despite lost-only wounds")
+
+
+# AC2: With actionable open quote + matching node/state, one paid light_the_embers claim
+# charges exactly 1 scrap once, returns only Campfire service_request, preserving wallet gold,
+# hero HP/FRAY, candle, inputs and RNG until downstream service action.
+func _test_ac2_paid_claim_isolation_and_wallet_settlement() -> void:
+	var initial_party := [
+		_hero("warden", 1, 15, 30, 10),
+		_hero("seamstress", 2, 25, 25, 0),
+		_hero("tinker", 3, 24, 24, 0),
+		_hero("lantern_monk", 4, 28, 28, 0),
+	]
+	var caller_party := initial_party.duplicate(true)
+	var caller_wallet := {"gold": 42, "scraps": 5}
+	var caller_candle := 75
+
+	var rng_before := rng.state
+
+	var ev := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, caller_party, caller_candle, caller_wallet)
+	_check(ev.is_valid(), "AC2: Event is valid")
+	_check(ev.is_open(), "AC2: Event is open initially")
+	_check(not ev.is_claimed(), "AC2: Event is unclaimed initially")
+	_check(ev.get_version() == 0, "AC2: Version starts at 0")
+
+	# Snapshot state before claim
+	var open_state := ev.read_state()
+	_check(bool(open_state.get("ok", false)), "AC2: Read state is ok")
+	_check(open_state.get("version") == 0, "AC2: Read state version is 0")
+	_check(open_state.get("candle") == 75, "AC2: Read state candle is 75")
+	_check(open_state.get("wallet") == {"gold": 42, "scraps": 5}, "AC2: Read state wallet matches")
+
+	# Claim paid choice
+	var receipt := ev.choose("light_the_embers", NODE, open_state)
+	_check(bool(receipt.get("ok", false)), "AC2: Paid claim succeeds")
+	_check(receipt.get("choice_id") == "light_the_embers", "AC2: Receipt choice_id is light_the_embers")
+	_check(receipt.get("event_id") == EMBER_ID, "AC2: Receipt event_id is Emberglass")
+	_check(receipt.get("wallet") == {"gold": 42, "scraps": 4}, "AC2: Wallet charged exactly 1 scrap (gold 42, scraps 4)")
+	_check(receipt.get("service_request") == {"stop_type": "Campfire"}, "AC2: Receipt returns Campfire service_request")
+
+	# Post-claim state invariants
+	_check(not ev.is_open(), "AC2: Event is closed after claim")
+	_check(ev.is_claimed(), "AC2: Event is claimed after claim")
+	_check(not ev.is_valid(), "AC2: Claimed event is no longer valid for new claims")
+	_check(ev.get_version() == 1, "AC2: Version incremented to 1")
+
+	var after_state: Dictionary = receipt.get("state", {})
+	_check(after_state.get("claimed") == true, "AC2: After-state is claimed")
+	_check(after_state.get("open") == false, "AC2: After-state is closed")
+	_check(after_state.get("version") == 1, "AC2: After-state version is 1")
+	_check(after_state.get("wallet") == {"gold": 42, "scraps": 4}, "AC2: After-state wallet updated")
+	_check(after_state.get("candle") == caller_candle, "AC2: Candle untouched by adapter (remains 75)")
+	_check(after_state.get("heroes") == initial_party, "AC2: Heroes HP and FRAY untouched by adapter")
+
+	# Verify caller's input variables were not mutated
+	_check(caller_party == initial_party, "AC2: Caller party array untouched by admission or claim")
+	_check(caller_wallet == {"gold": 42, "scraps": 5}, "AC2: Caller wallet dictionary untouched")
+
+	# Verify RNG was completely untouched
+	_check(rng.state == rng_before, "AC2: RNG state completely untouched across claim")
+
+	# Modifying receipt or state cannot leak into held event
+	after_state["wallet"]["gold"] = 999
+	after_state["heroes"][0]["hp"] = 999
+	_check(ev.get_wallet() == {"gold": 42, "scraps": 4}, "AC2: Mutating receipt state does not affect held wallet")
+	_check(ev.get_heroes() == initial_party, "AC2: Mutating receipt state does not affect held heroes")
+
+
+# AC3: Alternate trade (sell_cinders) gives 12 gold with no request; Leave gives zero with no request.
+# Both close their visit once and latch.
+func _test_ac3_trade_and_leave_claims() -> void:
+	var party := _standard_party(0, 0) # Full party
+
+	# 1. sell_cinders (+12 gold, 0 scraps)
+	var ev_trade := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, party, 100, {"gold": 10, "scraps": 1})
+	var trade_open := ev_trade.read_state()
+	var trade_receipt := ev_trade.choose("sell_cinders", NODE, trade_open)
+	_check(bool(trade_receipt.get("ok", false)), "AC3: sell_cinders succeeds")
+	_check(trade_receipt.get("choice_id") == "sell_cinders", "AC3: Receipt choice_id is sell_cinders")
+	_check(trade_receipt.get("wallet") == {"gold": 22, "scraps": 1}, "AC3: sell_cinders gives exactly +12 gold (gold: 22, scraps: 1)")
+	_check(trade_receipt.get("service_request") == {}, "AC3: sell_cinders produces empty service_request")
+	_check(ev_trade.is_claimed(), "AC3: Event latches claimed after sell_cinders")
+
+	# Replay / second claim fails
+	var second_trade := ev_trade.choose("sell_cinders", NODE, trade_receipt.get("state", {}))
+	_check(not bool(second_trade.get("ok", false)), "AC3: Replay of sell_cinders refused")
+	_check(ev_trade.get_wallet() == {"gold": 22, "scraps": 1}, "AC3: Second claim attempt does not change wallet")
+
+	# 2. leave (0 gold, 0 scraps)
+	var ev_leave := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, party, 100, {"gold": 15, "scraps": 4})
+	var leave_open := ev_leave.read_state()
+	var leave_receipt := ev_leave.leave(NODE, leave_open)
+	_check(bool(leave_receipt.get("ok", false)), "AC3: leave succeeds")
+	_check(leave_receipt.get("choice_id") == "leave", "AC3: Receipt choice_id is leave")
+	_check(leave_receipt.get("wallet") == {"gold": 15, "scraps": 4}, "AC3: leave preserves wallet exactly")
+	_check(leave_receipt.get("service_request") == {}, "AC3: leave produces empty service_request")
+	_check(ev_leave.is_claimed(), "AC3: Event latches claimed after leave")
+
+	# Replay of leave fails
+	var second_leave := ev_leave.leave(NODE, leave_receipt.get("state", {}))
+	_check(not bool(second_leave.get("ok", false)), "AC3: Replay of leave refused")
+
+
+# AC3: Wrong/stale/forged node/state, no affordability/recovery, failure preservation.
+func _test_ac3_rejections_and_fail_closed() -> void:
+	var wounded_party := _standard_party(-5, 0)
+	var ev := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, wounded_party, 100, {"gold": 10, "scraps": 1})
+	var state := ev.read_state()
+
+	# 1. Wrong node ID
+	var res_wrong_node := ev.choose("light_the_embers", "wrong_node_id", state)
+	_check(not bool(res_wrong_node.get("ok", false)), "AC3: Claim with wrong node ID fails")
+	_check(res_wrong_node.get("error") == "wrong node", "AC3: Error message is 'wrong node'")
+	_check(ev.is_open() and not ev.is_claimed(), "AC3: Failure on wrong node does not consume visit")
+	_check(ev.get_wallet() == {"gold": 10, "scraps": 1}, "AC3: Wallet unspent after failure")
+
+	# 2. Null node ID
+	var res_null_node := ev.choose("light_the_embers", null, state)
+	_check(not bool(res_null_node.get("ok", false)), "AC3: Claim with null node ID fails")
+
+	# 3. Forged state (e.g. modified wallet in expected state)
+	var forged_state := state.duplicate(true)
+	forged_state["wallet"]["scraps"] = 999
+	var res_forged := ev.choose("light_the_embers", NODE, forged_state)
+	_check(not bool(res_forged.get("ok", false)), "AC3: Claim with forged state fails")
+	_check(res_forged.get("error") == "stale or forged state", "AC3: Error message is 'stale or forged state'")
+	_check(ev.is_open(), "AC3: Visit remains open after forged state rejection")
+
+	# 4. Unknown choice ID
+	var res_unknown_choice := ev.choose("steal_fire", NODE, state)
+	_check(not bool(res_unknown_choice.get("ok", false)), "AC3: Unknown choice ID fails")
+
+	# 5. Claiming paid choice when recovery is useless (full HP, 0 fray, candle 100)
+	var full_party := _standard_party(0, 0)
+	var ev_useless := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 100, {"gold": 10, "scraps": 1})
+	var useless_state := ev_useless.read_state()
+	var res_useless := ev_useless.choose("light_the_embers", NODE, useless_state)
+	_check(not bool(res_useless.get("ok", false)), "AC3: Claiming paid choice with useless recovery fails")
+	_check(ev_useless.is_open(), "AC3: Visit remains open after useless recovery refusal")
+	_check(ev_useless.get_wallet() == {"gold": 10, "scraps": 1}, "AC3: Scraps unspent after refusal")
+
+	# Alternative options remain actionable after the refusal!
+	var trade_after_refusal := ev_useless.choose("sell_cinders", NODE, useless_state)
+	_check(bool(trade_after_refusal.get("ok", false)), "AC3: Alternative trade choice succeeds after paid choice was blocked")
+	_check(trade_after_refusal.get("wallet") == {"gold": 22, "scraps": 1}, "AC3: Wallet properly updated on alternative choice")
+
+	# 6. Claiming paid choice when scraps < 1
+	var ev_broke := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, wounded_party, 100, {"gold": 10, "scraps": 0})
+	var broke_state := ev_broke.read_state()
+	var res_broke := ev_broke.choose("light_the_embers", NODE, broke_state)
+	_check(not bool(res_broke.get("ok", false)), "AC3: Claiming paid choice with 0 scraps fails")
+	_check(ev_broke.is_open(), "AC3: Visit remains open when broke")
+	var leave_after_broke := ev_broke.leave(NODE, broke_state)
+	_check(bool(leave_after_broke.get("ok", false)), "AC3: Leave succeeds when paid choice is unaffordable")
+
+
+# AC3: Malformed admission rejects without substituting default or inferred roster values.
+func _test_ac3_admission_validation_failures() -> void:
+	var valid_heroes := _standard_party(-5, 0)
+	var valid_wallet := {"gold": 10, "scraps": 1}
+	var valid_candle := 80
+
+	# 1. Invalid Node IDs
+	for bad_node in ["", "  ", " node_id", "node_id ", null, 123]:
+		var ev := RunStitchedEmberglassCampfireEvent.new(bad_node, EMBER_ID, valid_heroes, valid_candle, valid_wallet)
+		_check(not ev.is_valid(), "AC3: Rejected invalid node: " + str(bad_node))
+		_check(not ev.is_open(), "AC3: Closed for invalid node: " + str(bad_node))
+
+	# 2. Invalid Event Targets (not authentic Emberglass)
+	for bad_target in ["v3_briar_button_mending_bench", "v3_threadmill_sewing_circle", "unknown", null, 42]:
+		var ev := RunStitchedEmberglassCampfireEvent.new(NODE, bad_target, valid_heroes, valid_candle, valid_wallet)
+		_check(not ev.is_valid(), "AC3: Rejected invalid event target: " + str(bad_target))
+
+	# 3. Party size != 4
+	var three_heroes: Array = valid_heroes.slice(0, 3)
+	var ev_three := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, three_heroes, valid_candle, valid_wallet)
+	_check(not ev_three.is_valid(), "AC3: Party of 3 heroes rejected")
+
+	var five_heroes: Array = valid_heroes.duplicate(true)
+	five_heroes.append(_hero("rag_duelist", 4, 20, 20, 0))
+	var ev_five := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, five_heroes, valid_candle, valid_wallet)
+	_check(not ev_five.is_valid(), "AC3: Party of 5 heroes rejected")
+
+	# 4. Non-canonical hero ID
+	var non_canonical: Array = valid_heroes.duplicate(true)
+	non_canonical[0]["id"] = "dragon_knight"
+	var ev_non_canon := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, non_canonical, valid_candle, valid_wallet)
+	_check(not ev_non_canon.is_valid(), "AC3: Non-canonical hero ID rejected")
+
+	# 5. Duplicate hero ID
+	var duplicate_id: Array = valid_heroes.duplicate(true)
+	duplicate_id[1]["id"] = duplicate_id[0]["id"]
+	var ev_dupe_id := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, duplicate_id, valid_candle, valid_wallet)
+	_check(not ev_dupe_id.is_valid(), "AC3: Duplicate hero ID rejected")
+
+	# 6. Missing rank (must not infer default rank)
+	var missing_rank: Array = valid_heroes.duplicate(true)
+	missing_rank[1].erase("rank")
+	missing_rank[1].erase("position")
+	var ev_no_rank := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, missing_rank, valid_candle, valid_wallet)
+	_check(not ev_no_rank.is_valid(), "AC3: Hero missing rank rejected (no inferred values)")
+
+	# 7. Duplicate rank
+	var dupe_rank: Array = valid_heroes.duplicate(true)
+	dupe_rank[1]["rank"] = 1 # Two heroes at rank 1
+	var ev_dupe_rank := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, dupe_rank, valid_candle, valid_wallet)
+	_check(not ev_dupe_rank.is_valid(), "AC3: Duplicate rank rejected")
+
+	# 8. Rank out of range (0 or 5)
+	var rank_zero: Array = valid_heroes.duplicate(true)
+	rank_zero[0]["rank"] = 0
+	var ev_rank0 := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, rank_zero, valid_candle, valid_wallet)
+	_check(not ev_rank0.is_valid(), "AC3: Rank 0 rejected")
+
+	var rank_five: Array = valid_heroes.duplicate(true)
+	rank_five[3]["rank"] = 5
+	var ev_rank5 := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, rank_five, valid_candle, valid_wallet)
+	_check(not ev_rank5.is_valid(), "AC3: Rank 5 rejected")
+
+	# Accept position representation
+	var pos_party := _standard_party(-5, 0, false, true)
+	var ev_pos := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, pos_party, valid_candle, valid_wallet)
+	_check(ev_pos.is_valid(), "AC3: Accepts position snapshot representation")
+
+	# 9. HP boundary violations: max_hp <= 0, hp < 0, hp > max_hp
+	var zero_max_hp: Array = valid_heroes.duplicate(true)
+	zero_max_hp[0]["max_hp"] = 0
+	var ev_zero_mhp := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, zero_max_hp, valid_candle, valid_wallet)
+	_check(not ev_zero_mhp.is_valid(), "AC3: max_hp == 0 rejected")
+
+	var neg_hp: Array = valid_heroes.duplicate(true)
+	neg_hp[0]["hp"] = -1
+	var ev_neg_hp := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, neg_hp, valid_candle, valid_wallet)
+	_check(not ev_neg_hp.is_valid(), "AC3: negative hp rejected")
+
+	var over_hp: Array = valid_heroes.duplicate(true)
+	over_hp[0]["hp"] = 35
+	over_hp[0]["max_hp"] = 30
+	var ev_over_hp := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, over_hp, valid_candle, valid_wallet)
+	_check(not ev_over_hp.is_valid(), "AC3: hp > max_hp rejected")
+
+	# 10. FRAY boundary violations: fray < 0, fray > 200
+	var neg_fray: Array = valid_heroes.duplicate(true)
+	neg_fray[0]["fray"] = -1
+	var ev_neg_fray := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, neg_fray, valid_candle, valid_wallet)
+	_check(not ev_neg_fray.is_valid(), "AC3: negative fray rejected")
+
+	var over_fray: Array = valid_heroes.duplicate(true)
+	over_fray[0]["fray"] = 201
+	var ev_over_fray := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, over_fray, valid_candle, valid_wallet)
+	_check(not ev_over_fray.is_valid(), "AC3: fray > 200 rejected")
+
+	# 11. Malformed lost field (non-boolean)
+	var bad_lost: Array = valid_heroes.duplicate(true)
+	bad_lost[0]["lost"] = "yes"
+	var ev_bad_lost := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, bad_lost, valid_candle, valid_wallet)
+	_check(not ev_bad_lost.is_valid(), "AC3: non-boolean lost rejected")
+
+	# 12. Candle boundaries: candle < 0, candle > 100, candle null, candle string
+	for bad_candle in [-1, 101, null, "100", 50.5]:
+		var ev_bad_c := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, valid_heroes, bad_candle, valid_wallet)
+		_check(not ev_bad_c.is_valid(), "AC3: Rejected invalid candle: " + str(bad_candle))
+
+	# 13. Malformed wallet: negative gold, negative scraps, missing keys, extra keys, non-dict
+	for bad_w in [{"gold": -1, "scraps": 0}, {"gold": 0, "scraps": -1}, {"gold": 0}, {"gold": 0, "scraps": 0, "gems": 5}, null, 12]:
+		var ev_bad_w := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, valid_heroes, valid_candle, bad_w)
+		_check(not ev_bad_w.is_valid(), "AC3: Rejected invalid wallet: " + str(bad_w))
