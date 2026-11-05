@@ -51,6 +51,7 @@ func _initialize() -> void:
 	_test_paid_wick_underfunded_and_bounds()
 	_test_paid_wick_opt_in_and_rejections()
 	_test_min_fray_gates()
+	_test_candle_band_gates()
 	_finish()
 
 
@@ -579,7 +580,7 @@ func _test_fray_thresholds() -> void:
 		"a fray 200 hero is admitted and relieved by intent only")
 	var source := FileAccess.get_file_as_string("res://scripts/run_stitched_event_consequence.gd")
 	_check(not source.is_empty(), "reads its own authored service source")
-	for forbidden in ["stitched_rules.gd", "StitchedRules", "StitchedS1BEffects",
+	for forbidden in ["stitched_rules.gd", "StitchedRules",
 			"RandomNumberGenerator", "randi(", "randf("]:
 		_check(source.find(forbidden) == -1,
 			"service never references reserved rules or RNG: " + forbidden)
@@ -4661,6 +4662,474 @@ func _test_min_fray_gates() -> void:
 		"AC1/AC2/AC3/AC4: min_fray previews, claims and rejections never mutate caller snapshots or events")
 	_check(randi() == expected_rng,
 		"AC1/AC2/AC3: min_fray checks never draw from the seeded global RNG")
+
+
+func _test_candle_band_gates() -> void:
+	var warden_catalog := StitchedParts.load_catalog("res://data/parts/warden_parts.json")
+	var catalog_original := warden_catalog.duplicate(true)
+	_check(bool(warden_catalog.get("ok", false)), "AC1: loads valid warden catalog for band tests")
+
+	var all_bands := ["snuffed", "dark", "gloom", "dim", "bright"]
+	var boundary_candles := [0, 1, 25, 26, 50, 51, 75, 76, 100]
+
+	# AC1/AC2: Matrix test of all 9 boundaries x 5 band names for party target and hero target
+	for c in boundary_candles:
+		var expected_band := ""
+		if c == 0:
+			expected_band = "snuffed"
+		elif c <= 25:
+			expected_band = "dark"
+		elif c <= 50:
+			expected_band = "gloom"
+		elif c <= 75:
+			expected_band = "dim"
+		else:
+			expected_band = "bright"
+
+		var snap_party := _four(c, [10, 20, 30, 40])
+		var snap_hero := _four(c, [10, 20, 30, 40])
+
+		for target_mode in ["party", "hero"]:
+			for band_name in all_bands:
+				var is_match: bool = (band_name == expected_band)
+				var eff := {
+					"candle": 10,
+					"fray": -10,
+					"target": target_mode,
+					"required_candle_band": band_name,
+				}
+				if target_mode == "hero":
+					eff["hero_id"] = "warden"
+
+				var ev := _event([
+					_choice("band_trade", "Band trade.", eff),
+					_choice("leave", "Leave.", _effect(0, 0, "party")),
+				], "ev_band_%s_%d_%s" % [target_mode, c, band_name])
+
+				var svc := RunStitchedEventConsequence.new(ev)
+				var snap := snap_party if target_mode == "party" else snap_hero
+				var snap_copy := snap.duplicate(true)
+				var prev := svc.preview(snap)
+				var entry := _entry(prev, "band_trade")
+
+				_check(prev.get("ok") == true,
+					"AC1: preview ok for candle %d, band %s, target %s" % [c, band_name, target_mode])
+				_check(entry.get("choice_id") == "band_trade",
+					"AC1: choice slot kept for candle %d, band %s, target %s" % [c, band_name, target_mode])
+				_check(entry.get("candle_delta") == 10 and entry.get("fray_delta") == -10,
+					"AC1: parsed deltas preserved for candle %d, band %s, target %s" % [c, band_name, target_mode])
+
+				var expected_candle: int = 100 if c + 10 > 100 else c + 10
+				if not is_match:
+					expected_candle = c
+				var expected_fray: Dictionary = {}
+				if is_match:
+					if target_mode == "party":
+						expected_fray = {"warden": -10, "seamstress": -10, "tinker": -10, "button_golem": -10}
+					else:
+						expected_fray = {"warden": -10}
+
+				_check(entry.get("available") == is_match,
+					"AC1: available == %s for candle %d, band %s (expected %s), target %s" % [
+						str(is_match), c, band_name, expected_band, target_mode
+					])
+				_check(entry.get("candle") == expected_candle,
+					"AC1: projected candle == %d for candle %d, band %s, target %s" % [
+						expected_candle, c, band_name, target_mode
+					])
+				_check(entry.get("fray") == expected_fray,
+					"AC1: projected fray matches for candle %d, band %s, target %s" % [
+						c, band_name, target_mode
+					])
+
+				# AC2: choose() behavior
+				if is_match:
+					var rec := svc.choose("band_trade", snap)
+					_check(rec.get("ok") == true
+						and rec.get("candle") == expected_candle
+						and rec.get("fray") == expected_fray
+						and rec.get("target") == target_mode
+						and (target_mode == "party" or rec.get("hero_id") == "warden"),
+						"AC2: choose succeeds with matching receipt for candle %d, band %s, target %s" % [
+							c, band_name, target_mode
+						])
+					_check(svc.is_claimed() == true and svc.is_valid() == false,
+						"AC2: claim consumed once on matching choice")
+					# Replay rejected
+					_assert_rejected(svc, "band_trade", snap, c,
+						"AC2: replay on consumed visit rejected")
+				else:
+					_assert_rejected(svc, "band_trade", snap, c,
+						"AC2: choose rejected without latching for wrong band %s at candle %d" % [
+							band_name, c
+						])
+					_check(svc.is_claimed() == false and svc.is_valid() == true,
+						"AC2: unconsumed after rejection for wrong band %s" % band_name)
+					_check(snap == snap_copy,
+						"AC2: snapshot untouched after rejection for wrong band %s" % band_name)
+					# Leave still possible after wrong band rejection
+					var leave_rec := svc.choose("leave", snap)
+					_check(leave_rec.get("ok") == true and leave_rec.get("candle") == c,
+						"AC2: Leave succeeds on same visit after wrong-band refusal")
+					_check(svc.is_claimed() == true, "AC2: Leave consumed visit latch")
+
+	# AC1/AC2: Opening candle semantics for +25 gain at candle 25 (dark)
+	# Opening candle 25 is dark. Even though 25 + 25 = 50 (gloom), dark qualifies and gloom fails.
+	var gain_event := _event([
+		_choice("gain_dark", "Gain light in dark.", {
+			"candle": 25, "fray": -15, "target": "party", "required_candle_band": "dark",
+		}),
+		_choice("gain_gloom", "Gain light in gloom.", {
+			"candle": 25, "fray": -15, "target": "party", "required_candle_band": "gloom",
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_gain_candle_25")
+
+	var snap_25 := _four(25, [20, 20, 20, 20])
+	var snap_25_orig := snap_25.duplicate(true)
+	var gain_event_orig := gain_event.duplicate(true)
+
+	var svc_gain := RunStitchedEventConsequence.new(gain_event)
+	var prev_gain := svc_gain.preview(snap_25)
+	var entry_gain_dark := _entry(prev_gain, "gain_dark")
+	var entry_gain_gloom := _entry(prev_gain, "gain_gloom")
+
+	_check(entry_gain_dark.get("available") == true
+		and entry_gain_dark.get("candle") == 50
+		and entry_gain_dark.get("candle_delta") == 25,
+		"AC1: at opening candle 25, dark qualifies for +25 gain reaching gloom 50")
+	_check(entry_gain_gloom.get("available") == false
+		and entry_gain_gloom.get("candle") == 25
+		and entry_gain_gloom.get("candle_delta") == 25
+		and entry_gain_gloom.get("fray") == {},
+		"AC1: at opening candle 25, gloom does NOT qualify even though end candle is 50")
+
+	# Choose wrong band (gloom) then matching band (dark) on same visit with RNG check
+	seed(1337)
+	var rng_before := randi()
+	seed(1337)
+
+	_assert_rejected(svc_gain, "gain_gloom", snap_25, 25,
+		"AC2: choosing gloom at candle 25 is refused without latching")
+	_check(randi() == rng_before, "AC2: rejection never advances global RNG")
+	seed(1337)
+
+	var rec_gain_dark := svc_gain.choose("gain_dark", snap_25)
+	_check(rec_gain_dark.get("ok") == true
+		and rec_gain_dark.get("candle") == 50
+		and rec_gain_dark.get("candle") == entry_gain_dark.get("candle")
+		and rec_gain_dark.get("fray") == entry_gain_dark.get("fray"),
+		"AC2: choose(gain_dark) succeeds on same visit with preview/receipt parity")
+	_check(randi() == rng_before, "AC2: matching claim never advances global RNG")
+	_check(snap_25 == snap_25_orig and gain_event == gain_event_orig,
+		"AC2: deep input immutability preserved across preview, rejection and claim")
+
+	# AC1/AC2: Negative paid-wick cost crossing a boundary (candle 51 dim -> 41 gloom)
+	# Opening candle 51 is dim. Subtracting 10 reaches 41 (gloom). Dim qualifies; gloom fails.
+	var wick_event := _event([
+		_choice("burn_dim", "Spend wick in dim.", {
+			"candle": -10, "fray": -20, "target": "party", "require_full_candle": true, "required_candle_band": "dim",
+		}),
+		_choice("burn_gloom", "Spend wick in gloom.", {
+			"candle": -10, "fray": -20, "target": "party", "require_full_candle": true, "required_candle_band": "gloom",
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_wick_cross_51")
+
+	var snap_51 := _four(51, [40, 40, 40, 40])
+	var svc_wick := RunStitchedEventConsequence.new(wick_event)
+	var prev_wick := svc_wick.preview(snap_51)
+	var entry_burn_dim := _entry(prev_wick, "burn_dim")
+	var entry_burn_gloom := _entry(prev_wick, "burn_gloom")
+
+	_check(entry_burn_dim.get("available") == true
+		and entry_burn_dim.get("candle") == 41
+		and entry_burn_dim.get("candle_delta") == -10,
+		"AC1: at opening candle 51, dim qualifies for -10 paid wick ending in gloom 41")
+	_check(entry_burn_gloom.get("available") == false
+		and entry_burn_gloom.get("candle") == 51
+		and entry_burn_gloom.get("fray") == {},
+		"AC1: at opening candle 51, gloom does NOT qualify even though end candle is 41")
+
+	_assert_rejected(svc_wick, "burn_gloom", snap_51, 51,
+		"AC2: choose(burn_gloom) refused at opening candle 51")
+	var rec_burn_dim := svc_wick.choose("burn_dim", snap_51)
+	_check(rec_burn_dim.get("ok") == true and rec_burn_dim.get("candle") == 41,
+		"AC2: choose(burn_dim) succeeds after burn_gloom refusal on same visit")
+
+	# Paid wick at candle 26 (gloom) with -10 cost ending in 16 (dark)
+	var snap_26 := _four(26, [30, 30, 30, 30])
+	var svc_wick_26 := RunStitchedEventConsequence.new(_event([
+		_choice("burn_gloom", "Burn in gloom.", {
+			"candle": -10, "fray": -10, "target": "party", "require_full_candle": true, "required_candle_band": "gloom",
+		}),
+		_choice("burn_dark", "Burn in dark.", {
+			"candle": -10, "fray": -10, "target": "party", "require_full_candle": true, "required_candle_band": "dark",
+		}),
+	]))
+	var prev_wick_26 := svc_wick_26.preview(snap_26)
+	_check(_entry(prev_wick_26, "burn_gloom").get("available") == true
+		and _entry(prev_wick_26, "burn_gloom").get("candle") == 16,
+		"AC1: at opening candle 26, gloom qualifies and projects candle 16")
+	_check(_entry(prev_wick_26, "burn_dark").get("available") == false
+		and _entry(prev_wick_26, "burn_dark").get("candle") == 26,
+		"AC1: at opening candle 26, dark does not qualify")
+
+	# AC1/AC2: Independent gates interaction (required_candle_band + min_fray + require_full_candle + required_hero)
+	# All gates must pass!
+	var multi_gate_event := _event([
+		_choice("multi_gate", "Strict multi gate.", {
+			"candle": -20,
+			"fray": -30,
+			"target": "party",
+			"required_candle_band": "bright",
+			"require_full_candle": true,
+			"min_fray": 100,
+			"required_hero": "warden",
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_multi_gate")
+
+	# Case A: candle 100 (bright), fray 100 on warden -> passes all!
+	var snap_multi_pass := _four(100, [100, 10, 10, 10])
+	var svc_multi_pass := RunStitchedEventConsequence.new(multi_gate_event)
+	var prev_multi_pass := svc_multi_pass.preview(snap_multi_pass)
+	_check(_entry(prev_multi_pass, "multi_gate").get("available") == true
+		and _entry(prev_multi_pass, "multi_gate").get("candle") == 80,
+		"AC1: multi_gate available when bright, paid wick, min_fray and required_hero all pass")
+	var rec_multi_pass := svc_multi_pass.choose("multi_gate", snap_multi_pass)
+	_check(rec_multi_pass.get("ok") == true and rec_multi_pass.get("candle") == 80,
+		"AC2: choose(multi_gate) succeeds when all gates pass")
+
+	# Case B: candle 50 (gloom), fray 100 on warden -> candle band fails
+	var snap_multi_bad_band := _four(50, [100, 10, 10, 10])
+	var svc_multi_bad_band := RunStitchedEventConsequence.new(multi_gate_event)
+	var prev_multi_bad_band := svc_multi_bad_band.preview(snap_multi_bad_band)
+	_check(_entry(prev_multi_bad_band, "multi_gate").get("available") == false
+		and _entry(prev_multi_bad_band, "multi_gate").get("candle") == 50,
+		"AC1: multi_gate unavailable when candle band fails")
+	_assert_rejected(svc_multi_bad_band, "multi_gate", snap_multi_bad_band, 50,
+		"AC2: choose(multi_gate) rejected when band fails")
+
+	# Case C: candle 100 (bright), fray 99 on warden -> min_fray fails
+	var snap_multi_bad_fray := _four(100, [99, 10, 10, 10])
+	var svc_multi_bad_fray := RunStitchedEventConsequence.new(multi_gate_event)
+	var prev_multi_bad_fray := svc_multi_bad_fray.preview(snap_multi_bad_fray)
+	_check(_entry(prev_multi_bad_fray, "multi_gate").get("available") == false
+		and _entry(prev_multi_bad_fray, "multi_gate").get("candle") == 100,
+		"AC1: multi_gate unavailable when min_fray fails")
+	_assert_rejected(svc_multi_bad_fray, "multi_gate", snap_multi_bad_fray, 100,
+		"AC2: choose(multi_gate) rejected when min_fray fails")
+
+	# Case D: candle 100 (bright), fray 100, warden absent -> hidden from preview, rejected on choose
+	var snap_multi_absent := _snapshot(100, [["seamstress", 100], ["tinker", 100]])
+	var svc_multi_absent := RunStitchedEventConsequence.new(multi_gate_event)
+	var prev_multi_absent := svc_multi_absent.preview(snap_multi_absent)
+	_check(_entry(prev_multi_absent, "multi_gate").is_empty(),
+		"AC1: multi_gate omitted from preview when required_hero is absent")
+	_assert_rejected(svc_multi_absent, "multi_gate", snap_multi_absent, 100,
+		"AC2: choose(multi_gate) rejected when required_hero is absent")
+
+	# Case E: hero target with min_fray and band gate
+	var hero_multi_event := _event([
+		_choice("hero_gate", "Hero strict gate.", {
+			"candle": 5, "fray": -20, "target": "hero", "hero_id": "seamstress",
+			"required_candle_band": "dark", "min_fray": 50,
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	])
+	var snap_hero_dark_pass := _four(20, [0, 50, 0, 0])
+	var svc_hero_pass := RunStitchedEventConsequence.new(hero_multi_event)
+	_check(_entry(svc_hero_pass.preview(snap_hero_dark_pass), "hero_gate").get("available") == true,
+		"AC1: hero target available when both dark and seamstress fray >= 50")
+	var snap_hero_dark_bad_fray := _four(20, [0, 49, 0, 0])
+	_check(_entry(svc_hero_pass.preview(snap_hero_dark_bad_fray), "hero_gate").get("available") == false,
+		"AC1: hero target unavailable when dark matches but seamstress fray < 50")
+	var snap_hero_bright_good_fray := _four(80, [0, 50, 0, 0])
+	_check(_entry(svc_hero_pass.preview(snap_hero_bright_good_fray), "hero_gate").get("available") == false,
+		"AC1: hero target unavailable when fray passes but band fails")
+
+	# AC1/AC2: Optional rewards combination (scraps, gold, part, hp) with required_candle_band
+	var rewards_band_event := _event([
+		_choice("dim_bounty", "Bounty in the dim.", {
+			"candle": 10,
+			"fray": -15,
+			"target": "party",
+			"required_candle_band": "dim",
+			"scraps": 4,
+			"gold": 6,
+			"hp": 5,
+			"part": {"id": "warden_head_pot_helm_bonk", "tier": 1},
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_dim_bounty")
+
+	var snap_dim_qual := _gold_scraps_satchel_four(60, 3, 10, 2, [10, 10, 10, 10])
+	var snap_dark_inelig := _gold_scraps_satchel_four(20, 3, 10, 2, [10, 10, 10, 10])
+
+	var svc_rewards_pass := RunStitchedEventConsequence.new(rewards_band_event, warden_catalog)
+	var prev_rewards_pass := svc_rewards_pass.preview(snap_dim_qual)
+	var entry_dim_bounty := _entry(prev_rewards_pass, "dim_bounty")
+
+	_check(entry_dim_bounty.get("available") == true
+		and entry_dim_bounty.get("candle") == 70
+		and entry_dim_bounty.get("scraps") == 7
+		and entry_dim_bounty.get("gold") == 16
+		and entry_dim_bounty.get("satchel_count") == 3
+		and entry_dim_bounty.get("hp") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC1: matching band projects optional scraps, gold, satchel_count and hp intents")
+
+	var rec_rewards_pass := svc_rewards_pass.choose("dim_bounty", snap_dim_qual)
+	_check(rec_rewards_pass.get("ok") == true
+		and rec_rewards_pass.get("candle") == 70
+		and rec_rewards_pass.get("scraps") == 7
+		and rec_rewards_pass.get("gold") == 16
+		and rec_rewards_pass.get("satchel_count") == 3
+		and rec_rewards_pass.get("part") == {"id": "warden_head_pot_helm_bonk", "tier": 1}
+		and rec_rewards_pass.get("hp") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: choose(dim_bounty) returns exact projected optional receipts")
+
+	var svc_rewards_fail := RunStitchedEventConsequence.new(rewards_band_event, warden_catalog)
+	var prev_rewards_fail := svc_rewards_fail.preview(snap_dark_inelig)
+	var entry_fail_bounty := _entry(prev_rewards_fail, "dim_bounty")
+	_check(entry_fail_bounty.get("available") == false
+		and entry_fail_bounty.get("candle") == 20
+		and entry_fail_bounty.get("scraps") == 3
+		and entry_fail_bounty.get("gold") == 10
+		and entry_fail_bounty.get("satchel_count") == 2
+		and entry_fail_bounty.get("hp") == {}
+		and entry_fail_bounty.get("fray") == {},
+		"AC1: non-matching band leaves balances unchanged, hp/fray empty, available false")
+	_assert_rejected(svc_rewards_fail, "dim_bounty", snap_dark_inelig, 20,
+		"AC2: choose(dim_bounty) rejected when band fails")
+
+	# AC3: Backward compatibility for absent required_candle_band field
+	var legacy_event := _event([
+		_choice("legacy_party", "Legacy party.", _effect(15, -15, "party")),
+		_choice("legacy_hero", "Legacy hero.", _effect(0, -10, "hero", "warden")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_legacy_absent_band")
+
+	var snap_legacy := _four(50, [20, 20, 20, 20])
+	var svc_legacy := RunStitchedEventConsequence.new(legacy_event)
+	var prev_legacy := svc_legacy.preview(snap_legacy)
+	var entry_legacy_party := _entry(prev_legacy, "legacy_party")
+	var entry_legacy_hero := _entry(prev_legacy, "legacy_hero")
+
+	var expected_legacy_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id", "fray", "fray_delta", "hero_id", "target"
+	]
+	var expected_legacy_receipt_keys := [
+		"candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target"
+	]
+
+	_check(_receipt_keys(entry_legacy_party) == expected_legacy_preview_keys,
+		"AC3: absent band field preserves exact 8-key preview entry shape for party")
+	_check(_receipt_keys(entry_legacy_hero) == expected_legacy_preview_keys,
+		"AC3: absent band field preserves exact 8-key preview entry shape for hero")
+	_check(entry_legacy_party.get("available") == true and entry_legacy_hero.get("available") == true,
+		"AC3: absent band field remains available regardless of candle band")
+
+	var rec_legacy_party := svc_legacy.choose("legacy_party", snap_legacy)
+	_check(_receipt_keys(rec_legacy_party) == expected_legacy_receipt_keys,
+		"AC3: absent band field preserves exact 7-key receipt shape")
+	_check(rec_legacy_party.get("ok") == true and rec_legacy_party.get("candle") == 65,
+		"AC3: absent band field settles normally")
+
+	# AC3: Malformed, unknown, case-variant, whitespace, null, integer, bool band values fail closed
+	var malformed_bands: Array = [
+		# Unknown names
+		"twilight", "midnight", "dusk", "shadow", "brightest", "snuff", "dimmer", "noon",
+		# Uppercase
+		"BRIGHT", "DIM", "GLOOM", "DARK", "SNUFFED",
+		# Mixed case
+		"Bright", "Dark", "Dim", "Gloom", "Snuffed", "brighT", "dArk",
+		# Whitespace
+		"", " ", "  ", " bright", "bright ", " bright ", "dim\n", "\tdark",
+		# Non-string types
+		null, 0, 1, 25, 50, 76, 100, -1, 1.0, 0.0, true, false,
+		["bright"], {"band": "bright"},
+	]
+
+	var snap_test_malformed := _four(50, [20, 20, 20, 20])
+	for idx in range(malformed_bands.size()):
+		var bad_band: Variant = malformed_bands[idx]
+		for target_mode in ["party", "hero"]:
+			var bad_effect := {
+				"candle": 10,
+				"fray": -10,
+				"target": target_mode,
+				"required_candle_band": bad_band,
+			}
+			if target_mode == "hero":
+				bad_effect["hero_id"] = "warden"
+
+			var bad_ev := _event([
+				_choice("bad_band", "Malformed band.", bad_effect),
+				_choice("valid_alt", "Valid sibling.", _effect(5, -5, "party")),
+				_choice("leave", "Leave.", _effect(0, 0, "party")),
+			], "ev_bad_band_%d_%s" % [idx, target_mode])
+
+			var bad_svc := RunStitchedEventConsequence.new(bad_ev)
+			var bad_prev := bad_svc.preview(snap_test_malformed)
+			var bad_entry := _entry(bad_prev, "bad_band")
+
+			_check(bad_prev.get("ok") == true
+				and _choice_ids(bad_prev) == ["bad_band", "valid_alt", "leave"]
+				and bad_entry.get("available") == false
+				and bad_entry.get("candle_delta") == null
+				and bad_entry.get("fray_delta") == null
+				and bad_entry.get("candle") == 50
+				and bad_entry.get("fray") == {}
+				and _entry(bad_prev, "valid_alt").get("available") == true
+				and _entry(bad_prev, "leave").get("available") == true,
+				"AC3: malformed band %d (%s) is unavailable with null deltas while siblings remain available" % [
+					idx, target_mode
+				])
+
+			_assert_rejected(bad_svc, "bad_band", snap_test_malformed, 50,
+				"AC3: choose(bad_band) rejected for malformed band %d (%s)" % [idx, target_mode])
+
+			# Alternating sibling choice claim
+			var fallback := "leave" if (idx % 2 == 0) else "valid_alt"
+			_check(bad_svc.choose(fallback, snap_test_malformed).get("ok") == true,
+				"AC3: %s succeeds after malformed band %d (%s) refusal" % [fallback, idx, target_mode])
+
+	# AC3: Structural malformations (extra keys, wrong key combination) fail closed
+	var structural_bad_effects: Array = [
+		{"candle": 0, "fray": -10, "target": "party", "required_candle_band": "bright", "extra": 1},
+		{"candle": 0, "fray": -10, "target": "party", "required_candle_band": "bright", "hero_id": "warden"},
+		{"candle": 0, "fray": -10, "target": "hero", "required_candle_band": "bright"}, # missing hero_id
+		{"candle": 0, "fray": -10, "target": "hero", "hero_id": "warden", "required_candle_band": "bright", "bogus": true},
+		{"candle": -25, "fray": -10, "target": "party", "required_candle_band": "bright", "require_full_candle": true, "extra": 1},
+	]
+
+	for idx in range(structural_bad_effects.size()):
+		var bad_struct_ev := _event([
+			_choice("bad_struct", "Malformed struct.", structural_bad_effects[idx]),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		])
+		var bad_struct_svc := RunStitchedEventConsequence.new(bad_struct_ev)
+		var bad_struct_prev := bad_struct_svc.preview(snap_test_malformed)
+		var bad_struct_entry := _entry(bad_struct_prev, "bad_struct")
+
+		_check(_choice_ids(bad_struct_prev) == ["bad_struct", "leave"]
+			and bad_struct_entry.get("available") == false
+			and bad_struct_entry.get("candle_delta") == null
+			and bad_struct_entry.get("fray_delta") == null
+			and bad_struct_entry.get("candle") == 50
+			and bad_struct_entry.get("fray") == {}
+			and _entry(bad_struct_prev, "leave").get("available") == true,
+			"AC3: structural bad band effect %d fails closed with null deltas" % idx)
+
+		_assert_rejected(bad_struct_svc, "bad_struct", snap_test_malformed, 50,
+			"AC3: choose(bad_struct) rejected for structural bad effect %d" % idx)
+		_check(bad_struct_svc.choose("leave", snap_test_malformed).get("ok") == true,
+			"AC3: Leave succeeds after structural bad effect %d refusal" % idx)
+
+	# Verify warden_catalog was never mutated
+	_check(warden_catalog == catalog_original, "AC3: warden_catalog was never mutated during band tests")
+
 
 
 
