@@ -685,6 +685,8 @@ var stitched_roadblock_candle := 100
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_hp_carry: Dictionary = {}
+## Settled victory FRAY/resolve by canonical hero ID, never by seated rank.
+var _stitched_fray_carry: Dictionary = {}
 ## Victory-only ID -> ending rank; not a draft or user-authored rank request.
 var _stitched_rank_carry: Dictionary = {}
 var _stitched_sewing_quote: Dictionary = {}
@@ -1627,6 +1629,28 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 		var hero_id := str(hero["id"])
 		if _stitched_bleed_carry.has(hero_id):
 			hero["statuses"] = {"bleed": int(_stitched_bleed_carry[hero_id])}
+	# A FRAY receipt is a complete pair, validated before rules setup can roll.
+	for carried_id in _stitched_fray_carry:
+		if typeof(carried_id) != TYPE_STRING or not carried_id in _stitched_party_picks:
+			return {}
+		var value: Variant = _stitched_fray_carry[carried_id]
+		if not value is Dictionary or value.size() != 2 \
+				or not value.has("fray") or not value.has("resolve"):
+			return {}
+		var fray: Variant = value["fray"]
+		var mood: Variant = value["resolve"]
+		if typeof(fray) != TYPE_INT or int(fray) < 0 or int(fray) >= StitchedRules.FRAY_MAX \
+				or typeof(mood) != TYPE_STRING \
+				or not str(mood) in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+				or (str(mood) in StitchedS1BEffects.RESOLVE_TRAITS \
+				and int(fray) < StitchedRules.FRAY_RECOVER) \
+				or (str(mood).is_empty() and int(fray) >= StitchedRules.FRAY_RESOLVE):
+			return {}
+	for hero in selected_heroes:
+		var id := str(hero["id"])
+		if _stitched_fray_carry.has(id):
+			hero["fray"] = _stitched_fray_carry[id]["fray"]
+			hero["resolve"] = _stitched_fray_carry[id]["resolve"]
 	# Rules assign ranks by hero-array position, not by the rank field. Apply
 	# authenticated formation only AFTER equipment, wounded HP and Bleed are
 	# projected by canonical ID; any foreign/partial/duplicate rank fails closed.
@@ -1762,6 +1786,9 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 	for id in _stitched_bleed_carry.keys():
 		if not id in _stitched_party_picks:
 			_stitched_bleed_carry.erase(id)
+	for id in _stitched_fray_carry.keys():
+		if not id in _stitched_party_picks:
+			_stitched_fray_carry.erase(id)
 	# A changed party cannot inherit an earlier victory's Peddler offer; an
 	# unchanged one must not lose it without a purchase or a free Leave.
 	if party_changed:
@@ -2093,6 +2120,24 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		for hero in battle.get_heroes():
 			if not bool(hero.get("lost", false)):
 				heroes.append(hero.duplicate(true))
+	# Validate all four settled hero receipts before any victory authority moves.
+	var settled_fray: Dictionary = {}
+	if won and heroes.size() == 4:
+		for hero in heroes:
+			var id: Variant = hero.get("id")
+			var amount: Variant = hero.get("fray")
+			var mood: Variant = hero.get("resolve")
+			if typeof(id) != TYPE_STRING or not id in _stitched_party_picks \
+					or settled_fray.has(id) or typeof(amount) != TYPE_INT \
+					or int(amount) < 0 or int(amount) >= StitchedRules.FRAY_MAX \
+					or typeof(mood) != TYPE_STRING \
+					or not str(mood) in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+					or (str(mood) in StitchedS1BEffects.RESOLVE_TRAITS \
+					and int(amount) < StitchedRules.FRAY_RECOVER) \
+					or (str(mood).is_empty() and int(amount) >= StitchedRules.FRAY_RESOLVE):
+				won = false
+				break
+			settled_fray[id] = {"fray": amount, "resolve": mood}
 	_close_stitched_fight()
 	# Retire combat authority before giving the player another interactive node.
 	if won and not heroes.is_empty():
@@ -2113,6 +2158,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 				used_ranks[rank] = true
 			if ending_ranks.size() == 4:
 				_stitched_rank_carry = ending_ranks
+				# Rank carry and FRAY share the same genuine four-survivor proof.
+				if settled_fray.size() == 4:
+					_stitched_fray_carry = settled_fray
 		# This exact, once-only stage is the sole HP source. A lost hero is not
 		# carried; failed, retreated and replayed exits leave the ledger untouched.
 		for id in _stitched_party_picks:

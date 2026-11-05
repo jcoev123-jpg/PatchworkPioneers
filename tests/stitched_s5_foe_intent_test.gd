@@ -81,28 +81,55 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
 
 
+func _caption_fits(label: Label) -> bool:
+	var font: Font = label.get_theme_font("font")
+	return font != null and "\n" not in label.text and label.clip_text and (
+		font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
+			label.get_theme_font_size("font_size")).x <= label.size.x + 0.5)
+
+
 func _check_geometry(stage: StitchedBattleScreen) -> void:
-	var authored: Texture2D = load("res://assets/paper/ui/hud_name_plate.png")
-	_check(authored != null and stage._foe_tickets.size() == 4 and stage._foe_ticket_labels.size() == 4,
-		"four rank tickets reuse an actual imported sewn HUD plate")
+	var sewn: Texture2D = load("res://assets/paper/ui/panel_felt.png")
+	_check(sewn != null and stage._foe_tickets.size() == 4
+		and stage._foe_ticket_labels.size() == 4 and stage._foe_ticket_target_labels.size() == 4,
+		"all four mounted foe ranks reuse the authored dark felt art with two caption rows")
+	var previous := Rect2()
+	var header := Rect2(705, 113, 535, 32)
 	for rank in range(1, 5):
 		var ticket: NinePatchRect = stage._foe_tickets[rank]
 		var rectangle := ticket.get_global_rect()
 		var puppet: Rect2 = stage._puppets["foe_" + str(rank)].get_global_rect()
-		_check(ticket.texture == authored and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(646 + (rank - 1) * 126, 150)
-			and rectangle.size == Vector2(116, 38) and rectangle.end.y <= puppet.position.y
-			and rectangle.position.y > 145 and rectangle.end.y < 447
-			and rectangle.end.x <= 1280 and stage._foe_ticket_labels[rank].get_parent() == ticket,
-			"authored plate rank %d remains focusable above puppet and below rank header" % rank)
+		var ability: Label = stage._foe_ticket_labels[rank]
+		var target: Label = stage._foe_ticket_target_labels[rank]
+		_check(ticket.texture == sewn and stage._intent_disclosure.texture == sewn
+			and ticket.modulate == Color("ac7777")
+			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
+			and ticket.focus_mode == Control.FOCUS_ALL
+			and rectangle.position == Vector2(646 + (rank - 1) * 126, 148)
+			and rectangle.size == Vector2(116, 44)
+			and not rectangle.intersects(header) and rectangle.end.y <= puppet.position.y
+			and (rank == 1 or not rectangle.intersects(previous))
+			and rectangle.end.x <= 1280 and rectangle.end.y < 194,
+			"dark sewn focusable ticket rank %d clears header, neighbour and puppet face" % rank)
+		_check(ability.get_parent() == ticket and target.get_parent() == ticket
+			and ability.position.y + ability.size.y <= target.position.y
+			and target.position.y + target.size.y <= ticket.size.y
+			and ability.get_theme_color("font_color") == StitchedBattleScreen.PAPER
+			and target.get_theme_color("font_color") == StitchedBattleScreen.ACCENT
+			and _caption_fits(ability) and _caption_fits(target),
+			"bone/amber two-row caption rank %d fits without wrapping or overlap" % rank)
+		previous = rectangle
 	var detail := stage._intent_disclosure.get_global_rect()
-	_check(detail.position == Vector2(22, 148) and detail.end.y < 194 and detail.end.x <= 640,
-		"two-line focus disclosure stays to the left of foes and clear of puppet faces")
-	# Godot's headless dummy renderer cannot retrieve pixels (null texture),
-	# so verify the exact screenshot viewport and every authored plate rectangle.
-	# Do not generate or write PNG files in this lane.
+	_check(stage._intent_disclosure.modulate == Color("ac7777")
+		and detail.position == Vector2(22, 148) and detail.end.y <= 194
+		and detail.end.x <= 640
+		and stage._intent_disclosure_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
+		and stage._intent_disclosure_label.get_theme_color("font_color") == StitchedBattleScreen.PAPER,
+		"full dark disclosure wraps in the open hero-side band, not over any face")
+	# Dummy headless raster cannot capture pixels, so assert mounted viewport and
+	# actual authored texture, child geometry, colours and all occupied bounds.
 	_check(root.get_viewport().get_visible_rect().size == Vector2(1280, 720),
-		"headless 1280x720 Gothic viewport has the intended visual capture bounds")
+		"headless 1280x720 Gothic viewport has the intended visual bounds")
 
 
 # Commit only an actual hero Pass through the live screen. The automatic foe
@@ -167,12 +194,75 @@ func _run() -> void:
 	_check_geometry(stage)
 	_verify_tickets(stage)
 	_check(not stage._foe_tickets[4].visible, "initial fourth foe rank is empty, not a ghost ability")
+	# Model the public post-summon board state without advancing combat: all
+	# three original foes stay occupied while a distinct live fourth enters.
+	var fourth: Dictionary = battle._units[str(battle.get_foes()[2]["id"])].duplicate(true)
+	fourth["id"] = "foe:admitted_fourth"
+	fourth["rank"] = 4
+	battle._units[fourth["id"]] = fourth
+	stage._refresh()
+	_check(battle.get_foes().size() == 4 and stage._foe_tickets[3].visible
+		and stage._foe_tickets[4].visible
+		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(fourth["id"])))
+		and _caption_fits(stage._foe_ticket_labels[4]),
+		"post-admission four occupied foe ranks all retain authoritative intent tickets")
+	battle._units.erase(fourth["id"])
+	stage._refresh()
+	_check(battle.get_foes().size() == 3 and not stage._foe_tickets[4].visible
+		and not stage._foe_intents.has(4),
+		"admitted foe removal clears rank-four intent and disclosure authority")
+	# Admission/reposition into the fourth rank is projected and then re-hidden.
+	var arriving: Dictionary = battle._units[str(battle.get_foes()[2]["id"])]
+	var original_rank := int(arriving["rank"])
+	arriving["rank"] = 4
+	stage._refresh()
+	_check(stage._foe_tickets[4].visible and not stage._foe_tickets[original_rank].visible
+		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(arriving["id"])))
+		and _caption_fits(stage._foe_ticket_labels[4]),
+		"fourth-rank arrival reprojects live ability and hides the vacated rank")
+	arriving["rank"] = original_rank
+	stage._refresh()
+	_check(not stage._foe_tickets[4].visible and stage._foe_tickets[original_rank].visible,
+		"fourth-rank vacancy never retains a stale displayed intent")
 	var sample: Dictionary = battle.get_foes()[0]
 	var sample_id := str(sample["id"])
 	var sample_rank := int(sample["rank"])
 	var actor: Dictionary = battle._units[sample_id]
 	var original_units := battle._units.duplicate(true)
 	var original_heaps := battle._heaps.duplicate(true)
+	# A genuinely authored long name is kept in the complete disclosure but
+	# safely ellipsized in the narrow visual caption; neither view spends a turn.
+	var long_name := "A Long Tangle of Moonlit Needles and Unravelling Threads"
+	var name_before := str(actor["abilities"][0]["name"])
+	var quiet_state := battle.state_snapshot()
+	var quiet_rng := battle.rng_state()
+	var quiet_receipts := stage.receipts.duplicate(true)
+	actor["abilities"][0]["name"] = long_name
+	stage._refresh()
+	var long_ticket: NinePatchRect = stage._foe_tickets[sample_rank]
+	_check(long_ticket.tooltip_text.contains(long_name)
+		and stage._foe_ticket_labels[sample_rank].text.ends_with("…")
+		and _caption_fits(stage._foe_ticket_labels[sample_rank])
+		and _caption_fits(stage._foe_ticket_target_labels[sample_rank]),
+		"long authored move is completely disclosed and pixel-fit in its first row")
+	long_ticket.mouse_entered.emit()
+	_check(stage._intent_disclosure.visible
+		and stage._intent_disclosure_label.text.contains(long_name)
+		and stage._intent_disclosure_label.text == long_ticket.tooltip_text
+		and stage._intent_disclosure_label.get_line_count()
+			<= stage._intent_disclosure_label.get_visible_line_count(),
+		"wrapped dark hover panel reveals entire long name without clipped lines")
+	long_ticket.mouse_exited.emit()
+	long_ticket.grab_focus()
+	_check(long_ticket.has_focus() and stage._intent_disclosure.visible
+		and stage._intent_disclosure_label.text.contains(long_name),
+		"keyboard focus retains the complete long authored move and target detail")
+	stage._action_buttons["pass"].grab_focus()
+	actor["abilities"][0]["name"] = name_before
+	stage._refresh()
+	_check(quiet_state == battle.state_snapshot() and quiet_rng == battle.rng_state()
+		and stage.receipts == quiet_receipts and not stage._intent_disclosure.visible,
+		"long-name refresh and disclosure dismissal are read-only")
 	var next_ability := StitchedFoeIntent.choose(battle, sample)
 	if not bool(next_ability.get("pass", true)):
 		next_ability["affected_ranks"].append(99)
@@ -304,7 +394,8 @@ func _run() -> void:
 			multi_witness += 1
 			_check(intent["affected_ranks"].size() >= 2
 				and multi_stage._foe_tickets[int(foe["rank"])].tooltip_text.contains("ALL legal HERO ranks")
-				and multi_stage._foe_ticket_labels[int(foe["rank"])].text.contains("ALL H"),
+				and multi_stage._foe_ticket_target_labels[int(foe["rank"])].text.contains("ALL H")
+				and _caption_fits(multi_stage._foe_ticket_target_labels[int(foe["rank"])]),
 				"authored multi ability displays all living legal HERO ranks")
 	_check(multi_witness >= 2, "non-vacuous: two or more seeded foes have real multi-target abilities")
 	_verify_receipt(multi_stage)
