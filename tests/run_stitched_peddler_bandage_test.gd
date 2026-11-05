@@ -107,8 +107,10 @@ func _test_quote_and_admission() -> void:
 		and quote.get("node_id") == NODE and quote.get("item") == "bandage"
 		and quote.get("price") == PRICE and quote.get("gold") == 120
 		and quote.get("eligible") == ["rag_duelist", "warden"]
-		and quote.get("choices") == ["buy_bandage", "leave"],
+		and quote.get("choices") == ["buy_bandage", "leave"]
+		and quote.get("can_buy") == true and quote.get("blocked") == "",
 		"the open quote offers exactly buy_bandage and leave at the quoted price")
+	_test_actionable_quotes()
 	# Mutating returned state/quote cannot forge a cheaper price or roster.
 	state["gold"] = 99999
 	state["heroes"][0]["statuses"].erase("bleed")
@@ -165,6 +167,67 @@ func _test_quote_and_admission() -> void:
 			"invalid quote fails admission: " + str(price))
 	_check(_open(0, 1).is_valid() and _open(0, PRICE).is_valid(),
 		"a zero wallet with a positive quote is a legal opening")
+
+
+## Asserts one open quote's choices, can_buy, blocked, exact price and honest
+## eligible IDs, and that quoting mutated nothing.
+func _assert_quote(visit: RunStitchedPeddlerBandage, gold: int, choices: Array,
+		can_buy: bool, blocked: String, eligible: Array, label: String) -> void:
+	var before := visit.read_state()
+	var quote := visit.quote()
+	_check(quote.get("ok") == true and quote.get("choices") == choices
+		and quote.get("can_buy") == can_buy and quote.get("blocked") == blocked
+		and quote.get("price") == PRICE and quote.get("gold") == gold
+		and quote.get("eligible") == eligible and quote.get("item") == "bandage"
+		and quote.get("node_id") == NODE and quote.get("mode") == MODE,
+		label + ": choices, can_buy, blocked, price and eligible IDs are honest")
+	_check(quote.get("choices").has("leave"), label + ": free Leave is always offered")
+	_check(visit.read_state() == before and visit.is_open(),
+		label + ": quoting changes nothing")
+
+
+## AC1/AC2/AC4: Buy is quoted only when payable and curable; Leave always.
+func _test_actionable_quotes() -> void:
+	var both := ["rag_duelist", "warden"]
+	_assert_quote(_open(PRICE, PRICE), PRICE, ["buy_bandage", "leave"], true, "",
+		both, "exact-price gold")
+	_assert_quote(_open(120, PRICE), 120, ["buy_bandage", "leave"], true, "",
+		both, "ample gold")
+	_assert_quote(_open(PRICE - 1, PRICE), PRICE - 1, ["leave"], false,
+		"not enough gold", both, "one gold short")
+	_assert_quote(_open(0, PRICE), 0, ["leave"], false, "not enough gold", both,
+		"empty wallet")
+	var unbled := _party()
+	unbled[0]["statuses"] = {"weak": 1}
+	unbled[1]["statuses"] = {}
+	_assert_quote(_open_party(120, PRICE, unbled), 120, ["leave"], false,
+		"no bleeding heroes", [], "wholly unbled roster at 120 gold")
+	# Zero, negative, float and string Bleed are never positive cure targets.
+	var invalid_bleed := _party()
+	invalid_bleed[0]["statuses"] = {"bleed": 0}
+	invalid_bleed[1]["statuses"] = {"bleed": -2}
+	invalid_bleed[2]["statuses"] = {"bleed": 1.5}
+	invalid_bleed[3]["statuses"] = {"bleed": "3"}
+	_assert_quote(_open_party(120, PRICE, invalid_bleed), 120, ["leave"], false,
+		"no bleeding heroes", [], "invalid Bleed values")
+	# A mixed roster lists only the truly bleeding hero, even when unaffordable.
+	var mixed := invalid_bleed.duplicate(true)
+	mixed[2]["statuses"] = {"bleed": 2}
+	_assert_quote(_open_party(120, PRICE, mixed), 120, ["buy_bandage", "leave"],
+		true, "", ["seamstress"], "mixed roster affordable")
+	_assert_quote(_open_party(PRICE - 1, PRICE, mixed), PRICE - 1, ["leave"], false,
+		"not enough gold", ["seamstress"], "mixed roster unaffordable")
+	# With nothing to cure and no gold, the missing target is reported first.
+	_assert_quote(_open_party(0, PRICE, unbled), 0, ["leave"], false,
+		"no bleeding heroes", [], "unbled and broke")
+	# Closed visits quote nothing and report no purchase.
+	var closed := _open(120, PRICE)
+	closed.leave(NODE, closed.read_state())
+	var closed_quote := closed.quote()
+	_check(closed_quote.get("ok", true) == false
+		and closed_quote.get("choices", ["x"]).is_empty()
+		and not closed_quote.has("can_buy"),
+		"a closed visit quotes no choices and no purchase")
 
 
 ## AC2: an affordable exact-snapshot buy cures only the target's integer Bleed
@@ -235,13 +298,46 @@ func _test_refusals() -> void:
 	# Insufficient gold: refused, then a valid free Leave still works once.
 	var poor := _open(PRICE - 1, PRICE)
 	var poor_snap := poor.read_state()
-	_check(poor.quote().get("ok") == true and poor.quote().get("price") == PRICE,
-		"an unaffordable quote is still honestly disclosed")
+	_check(poor.quote().get("ok") == true and poor.quote().get("price") == PRICE
+		and poor.quote().get("choices") == ["leave"]
+		and poor.quote().get("can_buy") == false
+		and poor.quote().get("blocked") == "not enough gold",
+		"an unaffordable quote is still honestly disclosed, with Leave only")
 	_reject(poor, "rag_duelist", NODE, poor_snap, "insufficient gold")
+	# A replayed or falsified quote cannot authorize a buy it does not permit.
+	var forged_quote := poor.quote().duplicate(true)
+	forged_quote["choices"] = ["buy_bandage", "leave"]
+	forged_quote["can_buy"] = true
+	forged_quote["blocked"] = ""
+	_reject(poor, "rag_duelist", NODE, forged_quote, "falsified unaffordable quote")
+	var replayed := _open(120, PRICE).quote()
+	_reject(poor, "rag_duelist", NODE, replayed, "replayed affordable quote")
 	var poor_left := poor.leave(NODE, poor_snap)
 	_check(poor_left.get("ok") == true and poor_left.get("charged_gold") == 0
-		and poor.is_consumed(),
-		"a refused buy preserves the later legal Leave")
+		and poor_left.get("gold") == PRICE - 1 and poor.is_consumed(),
+		"a refused buy preserves the later legal no-charge Leave")
+	# A wholly unbled roster quotes only Leave, refuses every Buy, then leaves free.
+	var clean := _party()
+	clean[0]["statuses"] = {"weak": 1}
+	clean[1]["statuses"] = {}
+	var clean_visit := _open_party(120, PRICE, clean)
+	var clean_snap := clean_visit.read_state()
+	_check(clean_visit.quote().get("choices") == ["leave"]
+		and clean_visit.quote().get("can_buy") == false
+		and clean_visit.quote().get("blocked") == "no bleeding heroes"
+		and clean_visit.quote().get("eligible") == [],
+		"an unbled roster quotes only free Leave even with ample gold")
+	for target in ["rag_duelist", "warden", "seamstress", "tinker"]:
+		_reject(clean_visit, target, NODE, clean_snap, "unbled roster buy: " + target)
+	var clean_forged := clean_visit.quote().duplicate(true)
+	clean_forged["choices"] = ["buy_bandage", "leave"]
+	clean_forged["can_buy"] = true
+	_reject(clean_visit, "rag_duelist", NODE, clean_forged, "falsified unbled quote")
+	var clean_left := clean_visit.leave(NODE, clean_snap)
+	_check(clean_left.get("ok") == true and clean_left.get("charged_gold") == 0
+		and clean_left.get("gold") == 120 and clean_left["heroes"] == clean
+		and clean_visit.is_consumed(),
+		"an unbled visit still permits a no-charge, no-change Leave")
 	# Unbled, unknown and malformed targets refuse.
 	var visit := _open(300, PRICE)
 	var snap := visit.read_state()
