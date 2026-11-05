@@ -276,6 +276,184 @@ func _run() -> void:
 		not StitchedTurnStatusCues.tooltip(foe).contains("+4 fray"),
 		"zero stun and foe spoofing bitter yield FOE with no resolve trait or bonus")
 
+	# Genuine public hero/foe Bleed cue, tooltip fidelity, and priority over side fallbacks.
+	var bld_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var bld_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	var unrelated: Dictionary = battle.get_heroes()[1].duplicate(true)
+
+	bld_hero["statuses"] = {"bleed": 3}
+	bld_foe["statuses"] = {"bleed": 3}
+
+	var hero_tip := StitchedTurnStatusCues.tooltip(bld_hero)
+	var foe_tip := StitchedTurnStatusCues.tooltip(bld_foe)
+	_check(StitchedTurnStatusCues.cue(bld_hero) == "BLD", "bleeding hero returns BLD cue")
+	_check(StitchedTurnStatusCues.cue(bld_foe) == "BLD", "bleeding foe returns BLD cue")
+	_check(hero_tip.contains("Statuses: bleed 3") and
+		hero_tip.contains(str(bld_hero["name"])) and hero_tip.contains("HP: %s / %s" % [str(bld_hero["hp"]), str(bld_hero["max_hp"])]) and
+		hero_tip.contains("SPEED:") and hero_tip.contains("DODGE:") and hero_tip.contains("PROT:"),
+		"bleeding hero tooltip contains bleed 3 and all normal metadata")
+	_check(foe_tip.contains("Statuses: bleed 3") and
+		foe_tip.contains(str(bld_foe["name"])) and foe_tip.contains("HP: %s / %s" % [str(bld_foe["hp"]), str(bld_foe["max_hp"])]) and
+		foe_tip.contains("SPEED:") and foe_tip.contains("DODGE:") and foe_tip.contains("PROT:"),
+		"bleeding foe tooltip contains bleed 3 and all normal metadata")
+
+	# Check 1 and 3 as positive; 0, -1, "3", 1.5, missing and non-Dictionary statuses must not trigger BLD.
+	for pos in [1, 3]:
+		bld_hero["statuses"] = {"bleed": pos}
+		bld_foe["statuses"] = {"bleed": pos}
+		_check(StitchedTurnStatusCues.cue(bld_hero) == "BLD", "hero bleed %d triggers BLD" % pos)
+		_check(StitchedTurnStatusCues.cue(bld_foe) == "BLD", "foe bleed %d triggers BLD" % pos)
+
+	for non_pos in [0, -1, "3", 1.5]:
+		var h_test: Dictionary = bld_hero.duplicate(true)
+		var f_test: Dictionary = bld_foe.duplicate(true)
+		h_test["statuses"] = {"bleed": non_pos}
+		f_test["statuses"] = {"bleed": non_pos}
+		_check(StitchedTurnStatusCues.cue(h_test) == "HERO", "hero non-positive bleed %s yields HERO" % str(non_pos))
+		_check(StitchedTurnStatusCues.cue(f_test) == "FOE", "foe non-positive bleed %s yields FOE" % str(non_pos))
+
+	var h_missing: Dictionary = bld_hero.duplicate(true)
+	var f_missing: Dictionary = bld_foe.duplicate(true)
+	h_missing["statuses"] = {}
+	f_missing["statuses"] = {}
+	_check(StitchedTurnStatusCues.cue(h_missing) == "HERO", "hero missing bleed yields HERO")
+	_check(StitchedTurnStatusCues.cue(f_missing) == "FOE", "foe missing bleed yields FOE")
+
+	for bad_statuses in [null, "bleed 3", 3, [3]]:
+		var h_bad: Dictionary = bld_hero.duplicate(true)
+		var f_bad: Dictionary = bld_foe.duplicate(true)
+		h_bad["statuses"] = bad_statuses
+		f_bad["statuses"] = bad_statuses
+		_check(StitchedTurnStatusCues.cue(h_bad) == "HERO", "hero non-Dictionary statuses %s yields HERO" % str(bad_statuses))
+		_check(StitchedTurnStatusCues.cue(f_bad) == "FOE", "foe non-Dictionary statuses %s yields FOE" % str(bad_statuses))
+
+	# Hero and foe overlaps: hanging gives SEAM, stun gives STUN, torn gives TORN, resolved hero gives resolve cue, high-FRAY hero gives FRAY.
+	var h_overlap: Dictionary = bld_hero.duplicate(true)
+	h_overlap["statuses"] = {"bleed": 3}
+	h_overlap["hanging"] = true
+	_check(StitchedTurnStatusCues.cue(h_overlap) == "SEAM", "hanging hero with bleed yields SEAM")
+	h_overlap["hanging"] = false
+	h_overlap["statuses"] = {"bleed": 3, "stun": 1}
+	_check(StitchedTurnStatusCues.cue(h_overlap) == "STUN", "stunned hero with bleed yields STUN")
+	h_overlap["statuses"] = {"bleed": 3}
+	h_overlap["parts"]["head"]["torn"] = true
+	_check(StitchedTurnStatusCues.cue(h_overlap) == "TORN", "torn hero with bleed yields TORN")
+	h_overlap["parts"]["head"]["torn"] = false
+	h_overlap["resolve"] = "steadfast"
+	_check(StitchedTurnStatusCues.cue(h_overlap) == "STFD", "resolved hero with bleed yields resolve cue")
+	h_overlap["resolve"] = ""
+	h_overlap["fray"] = 120
+	_check(StitchedTurnStatusCues.cue(h_overlap) == "FRAY", "high-FRAY hero with bleed yields FRAY")
+
+	var f_overlap: Dictionary = bld_foe.duplicate(true)
+	f_overlap["statuses"] = {"bleed": 3}
+	f_overlap["hanging"] = true
+	_check(StitchedTurnStatusCues.cue(f_overlap) == "SEAM", "hanging foe with bleed yields SEAM")
+	f_overlap["hanging"] = false
+	f_overlap["statuses"] = {"bleed": 3, "stun": 2}
+	_check(StitchedTurnStatusCues.cue(f_overlap) == "STUN", "stunned foe with bleed yields STUN")
+	f_overlap["statuses"] = {"bleed": 3}
+	f_overlap["parts"] = {"head": {"torn": true}}
+	_check(StitchedTurnStatusCues.cue(f_overlap) == "TORN", "torn foe with bleed yields TORN")
+
+	# A foe with spoofed hero resolve or fray still gets BLD if genuinely bleeding, never a hero-only marker.
+	var f_spoofed: Dictionary = bld_foe.duplicate(true)
+	f_spoofed["statuses"] = {"bleed": 3}
+	f_spoofed["resolve"] = "bitter"
+	f_spoofed["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoofed) == "BLD",
+		"foe with spoofed hero resolve and fray gets BLD when genuinely bleeding")
+	f_spoofed["statuses"] = {"bleed": 0}
+	_check(StitchedTurnStatusCues.cue(f_spoofed) == "FOE" and
+		StitchedTurnStatusCues.cue(f_spoofed) != "BITR" and
+		StitchedTurnStatusCues.cue(f_spoofed) != "FRAY" and
+		StitchedTurnStatusCues.cue(f_spoofed) != "HERO",
+		"foe with spoofed hero resolve and fray gets FOE when not bleeding, never hero-only marker")
+
+	# Mounted ribbon display with two bleeding public copies and an unrelated actor:
+	bld_hero["statuses"] = {"bleed": 3}
+	bld_foe["statuses"] = {"bleed": 3}
+	unrelated["statuses"] = {}
+	var hero_id := str(bld_hero["id"])
+	var foe_id := str(bld_foe["id"])
+	var unrel_id := str(unrelated["id"])
+	var bld_entries := [bld_hero, bld_foe, unrelated]
+
+	# Hero acting: hero NOW, foe BLD, unrelated HERO
+	ribbon.show_order(bld_entries, hero_id, false)
+	_check(ribbon.displayed_entries.size() == 3, "ribbon shows three units")
+	_check(ribbon.marker_at(0).text == "NOW" and ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"acting bleeding hero shows amber NOW")
+	_check(ribbon.marker_at(1).text == "BLD" and ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"nonacting bleeding foe shows muted BLD")
+	_check(ribbon.marker_at(2).text == "HERO", "nonacting unrelated hero shows HERO")
+
+	# Hover and keyboard focus must still show the exact same tooltip, including the Bleed counter.
+	var tag_hero := ribbon.tag_at(0)
+	var expected_hero_tip := StitchedTurnStatusCues.tooltip(bld_hero)
+	_check(tag_hero.tooltip_text == expected_hero_tip and tag_hero.tooltip_text.contains("bleed 3"),
+		"acting bleeding hero tag tooltip preserves bleed 3 and metadata")
+	tag_hero.grab_focus()
+	await process_frame
+	_check(tag_hero.has_focus() and tag_hero.get_node("FocusTooltip").visible and
+		tag_hero.get_node("FocusTooltip/TooltipText").text == expected_hero_tip,
+		"acting bleeding hero keyboard focus exposes tooltip with bleed 3")
+	tag_hero.release_focus()
+	tag_hero.mouse_entered.emit()
+	_check(tag_hero.get_node("FocusTooltip").visible and
+		tag_hero.get_node("FocusTooltip/TooltipText").text == expected_hero_tip,
+		"acting bleeding hero mouse hover exposes tooltip with bleed 3")
+	tag_hero.mouse_exited.emit()
+	_check(not tag_hero.get_node("FocusTooltip").visible, "hero hover exit hides tooltip")
+
+	var tag_foe := ribbon.tag_at(1)
+	var expected_foe_tip := StitchedTurnStatusCues.tooltip(bld_foe)
+	_check(tag_foe.tooltip_text == expected_foe_tip and tag_foe.tooltip_text.contains("bleed 3"),
+		"nonacting bleeding foe tag tooltip preserves bleed 3 and metadata")
+	tag_foe.grab_focus()
+	await process_frame
+	_check(tag_foe.has_focus() and tag_foe.get_node("FocusTooltip").visible and
+		tag_foe.get_node("FocusTooltip/TooltipText").text == expected_foe_tip,
+		"nonacting bleeding foe keyboard focus exposes tooltip with bleed 3")
+	tag_foe.release_focus()
+	tag_foe.mouse_entered.emit()
+	_check(tag_foe.get_node("FocusTooltip").visible and
+		tag_foe.get_node("FocusTooltip/TooltipText").text == expected_foe_tip,
+		"nonacting bleeding foe mouse hover exposes tooltip with bleed 3")
+	tag_foe.mouse_exited.emit()
+	_check(not tag_foe.get_node("FocusTooltip").visible, "foe hover exit hides tooltip")
+
+	# Acting ID changes to foe: hero Bleed warning returns as BLD, foe shows NOW
+	ribbon.show_order(bld_entries, foe_id, false)
+	_check(ribbon.marker_at(0).text == "BLD" and ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"previously acting hero returns to BLD marker when turn passes")
+	_check(ribbon.marker_at(1).text == "NOW" and ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"foe now acting shows NOW marker")
+	_check(ribbon.marker_at(2).text == "HERO", "unrelated hero remains HERO")
+
+	# Acting ID changes to unrelated actor: both bleeding actors show BLD
+	ribbon.show_order(bld_entries, unrel_id, false)
+	_check(ribbon.marker_at(0).text == "BLD", "bleeding hero shows BLD when third party acts")
+	_check(ribbon.marker_at(1).text == "BLD", "bleeding foe shows BLD when third party acts")
+	_check(ribbon.marker_at(2).text == "NOW", "acting third party shows NOW")
+
+	# Remove Bleed and show_order again: generic HERO/FOE returns and no stale text remains.
+	var clean_hero: Dictionary = bld_hero.duplicate(true)
+	var clean_foe: Dictionary = bld_foe.duplicate(true)
+	clean_hero["statuses"] = {}
+	clean_foe["statuses"] = {}
+	ribbon.show_order([clean_hero, clean_foe, unrelated], "", false)
+	_check(ribbon.marker_at(0).text == "HERO", "cleared hero returns to generic HERO")
+	_check(ribbon.marker_at(1).text == "FOE", "cleared foe returns to generic FOE")
+	_check(ribbon.marker_at(2).text == "HERO", "unrelated hero returns to generic HERO")
+	_check(not ribbon.tag_at(0).tooltip_text.contains("bleed"), "cleared hero tooltip has no stale bleed text")
+	_check(not ribbon.tag_at(1).tooltip_text.contains("bleed"), "cleared foe tooltip has no stale bleed text")
+	_check(not ribbon.tag_at(0).get_node("FocusTooltip/TooltipText").text.contains("bleed"),
+		"cleared hero focus tooltip has no stale bleed text")
+	_check(not ribbon.tag_at(1).get_node("FocusTooltip/TooltipText").text.contains("bleed"),
+		"cleared foe focus tooltip has no stale bleed text")
+	_check(ribbon.get_child_count() == 9, "retains exact nine reusable tags")
+
 	for invalid_resolve in ["unknown", "STEADFAST", "Bitter", "panic", 99, null, ["steadfast"]]:
 		var invalid_hero: Dictionary = battle.get_heroes()[1].duplicate(true)
 		invalid_hero["fray"] = 45

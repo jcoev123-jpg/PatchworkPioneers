@@ -35,6 +35,7 @@ var _action_buttons: Dictionary = {}
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
 var _turn_ribbon: StitchedTurnOrderRibbon
+var _candle_meter: StitchedCandleMeter
 var _foe_tickets: Dictionary = {}
 var _foe_ticket_labels: Dictionary = {}
 var _foe_intents: Dictionary = {}
@@ -164,6 +165,11 @@ func _build_screen() -> void:
 	_turn_ribbon.position = Vector2(557, 46)
 	_turn_ribbon.size = Vector2(690, 42)
 	add_child(_turn_ribbon)
+	_candle_meter = StitchedCandleMeter.new()
+	_candle_meter.name = "StitchedCandleMeter"
+	_candle_meter.position = Vector2(651, 10)
+	_candle_meter.size = Vector2(340, 33)
+	add_child(_candle_meter)
 	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_label("4 HERO RANKS  •  rear to front", Rect2(40, 113, 520, 32), 20, ACCENT)
 	_label("4 FOE RANKS  •  front to rear", Rect2(705, 113, 535, 32), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
@@ -496,7 +502,9 @@ func _sync_puppet(key: String, unit: Dictionary) -> void:
 
 
 func _refresh() -> void:
-	if battle == null:
+	if battle == null or not battle.is_valid():
+		if _candle_meter != null:
+			_candle_meter.clear_readout()
 		return
 	var acting := battle.get_unit(battle.current_actor_id())
 	var hero_turn := battle.current_side() == "hero" and not battle.is_over()
@@ -507,6 +515,7 @@ func _refresh() -> void:
 		entries.append(battle.get_unit(str(id)))
 	_turn_ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
 	var band: Dictionary = battle.candle_band()
+	_candle_meter.set_readout(battle.candle(), band)
 	_labels["candle"].text = "CANDLE  %d / 100  ·  %s" % [battle.candle(), str(band.get("name", "glowing")).capitalize()]
 	_labels["hero"].text = str(acting.get("name", "Battle ended"))
 	if acting.is_empty():

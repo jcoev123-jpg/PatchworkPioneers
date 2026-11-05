@@ -20,7 +20,8 @@ const IDS := [
 	"lantern_monk_head_moth_cloud", "lantern_monk_arms_snuff_flame",
 	"lantern_monk_torso_vigil_ring", "lantern_monk_legs_moth_shroud",
 ]
-## The seven parts this task must leave frozen: base ability shape, slot stat and label.
+## The parts this task must leave frozen: base ability shape, slot stat and label.
+## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
 	"lantern_monk_head_moth_wink": {
 		"name": "Moth Wink", "launch": [1, 2, 3], "target": [1, 2, 3], "side": "enemy",
@@ -36,11 +37,6 @@ const FROZEN_PARTS := {
 		"name": "Pole Shelter", "launch": [1, 2, 3], "target": [1, 2, 3, 4], "side": "ally",
 		"multi": false, "acc": 100, "dmg": [0, 0], "effects": {"guard": 2}, "move": "guard",
 		"stat": {"speed": 1, "dodge": 3},
-	},
-	"lantern_monk_head_moth_cloud": {
-		"name": "Moth Cloud", "launch": [2, 3], "target": [1, 2, 3, 4], "side": "enemy",
-		"multi": true, "acc": 90, "dmg": [0, 0], "effects": {"blind": 1}, "move": "skill",
-		"stat": {"crit": 3},
 	},
 	"lantern_monk_arms_snuff_flame": {
 		"name": "Snuff Flame", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
@@ -59,7 +55,7 @@ const FROZEN_PARTS := {
 		"move": "guard", "stat": {"speed": 1, "dodge": 4},
 	},
 }
-## Authored tier-II/III override fields for those seven unchanged parts.
+## Authored tier-II/III override fields for those unchanged parts.
 const FROZEN_TIERS := {
 	"lantern_monk_head_moth_wink": {
 		"2": {"acc": 94},
@@ -72,10 +68,6 @@ const FROZEN_TIERS := {
 	"lantern_monk_legs_pole_shelter": {
 		"2": {"effects": {"guard": 3}},
 		"3": {"effects": {"guard": 4}},
-	},
-	"lantern_monk_head_moth_cloud": {
-		"2": {"acc": 95},
-		"3": {"acc": 100, "effects": {"blind": 1, "exposed": 1}},
 	},
 	"lantern_monk_arms_snuff_flame": {
 		"2": {"dmg": [4, 6], "effects": {"blind": 1, "exposed": 2}},
@@ -104,6 +96,10 @@ func _initialize() -> void:
 	_test_real_healing()
 	_test_rank4_lamplight_heal(2, 500600, 60, 3, "tier II")
 	_test_rank4_lamplight_heal(3, 500700, 60, 5, "tier III")
+	_test_rank4_moth_cloud(1, 500950, 30, "tier I")
+	_test_rank4_moth_cloud(2, 500990, 30, "tier II")
+	_test_rank4_moth_cloud(3, 501030, 30, "tier III")
+	_test_rank2_moth_cloud_replay()
 	_test_guard_and_shroud()
 	_test_rejection_no_spend()
 	_test_rank4_launch_rejections()
@@ -315,8 +311,8 @@ func _test_lamplight_wash_launch() -> void:
 	_check(ability["launch"] == [2, 3, 4] and ability["target"] == [1, 2, 3, 4]
 		and int(ability["effects"]["heal"]) == 2,
 		"AC3: tier reads never replace Lamplight Wash's base ability in memory")
-	# The seven other parts stay byte-for-byte equivalent in rules terms, including their
-	# base and tier II/III launch masks: none may gain rank-4 launch as a side effect.
+	# The six other untouched parts stay byte-for-byte equivalent in rules terms, including
+	# their base and tier II/III launch masks: none may gain rank-4 launch as a side effect.
 	for id in FROZEN_PARTS:
 		var frozen: Dictionary = FROZEN_PARTS[id]
 		var other: Dictionary = cat["by_id"][id]
@@ -365,27 +361,44 @@ func _test_lamplight_wash_launch() -> void:
 				"AC1: frozen %s tier %d keeps its slot stat" % [id, tier])
 
 
-## S4 completion: Moth Cloud's base target list reaches enemy rank 4, which Design v4 only
-## creates by summon or split. The shipped S2 4v3 fixture keeps its three real starting foes,
-## so the extra rank is proven through data rules, never by inventing a fourth opening enemy.
+## S4 completion: Moth Cloud's base launch list gains hero rank 4, so the Monk's alternate
+## head can Blind the enemy line from the rear; its target list still reaches enemy rank 4,
+## which Design v4 only creates by summon or split. The shipped S2 4v3 fixture keeps its
+## three real starting foes, so the extra target rank is proven through data rules, never by
+## inventing a fourth opening enemy.
 func _test_moth_cloud_fourth_rank() -> void:
 	var cat := _catalog()
-	_check(bool(cat.get("ok", false)), "AC1: catalog with Moth Cloud's fourth target rank validates")
+	_check(bool(cat.get("ok", false)), "AC1: catalog with Moth Cloud's rank-4 launch and target validates")
 	if not bool(cat.get("ok", false)):
 		return
 	var part: Dictionary = cat["by_id"][ALTERNATES["head"]]
+	var rear_launch := [2, 3, 4]
+	var launch_mask := StitchedParts.rank_mask(rear_launch)
 	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
 	_check(full_mask == StitchedParts.ALL_RANKS_MASK and full_mask != 0,
 		"AC1: ranks 1-4 derive the complete four-rank mask")
-	_check(str(part["id"]) == "lantern_monk_head_moth_cloud" and str(part["slot"]) == "head"
+	_check(launch_mask != 0 and launch_mask != full_mask and launch_mask == StitchedParts.rank_mask([2, 3, 4])
+		and not StitchedParts.ranks_allowed(launch_mask, 1),
+		"AC1: hero ranks 2-4 derive a launch mask that still excludes rank 1")
+	_check(str(part["id"]) == "lantern_monk_head_moth_cloud" and str(part["name"]) == "Moth Cloud"
+		and str(part["slot"]) == "head"
 		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"crit": 3},
 		"AC1: named Moth Cloud keeps its owner, head slot and crit stat")
-	_check(part["ability"]["launch"] == [2, 3] and part["ability"]["target"] == [1, 2, 3, 4]
+	_check(str(part["ability"]["id"]) == "lantern_monk_head_moth_cloud_move"
+		and str(part["ability"]["name"]) == "Moth Cloud"
+		and str(part["ability"]["kind"]) == "debuff"
+		and part["ability"]["launch"] == rear_launch
+		and int(part["ability"]["launch_mask"]) == launch_mask
+		and part["ability"]["target"] == [1, 2, 3, 4]
 		and int(part["ability"]["target_mask"]) == full_mask
 		and str(part["ability"]["target_side"]) == "enemy" and bool(part["ability"]["multi"])
 		and int(part["ability"]["acc"]) == 90 and part["ability"]["dmg"] == [0, 0]
-		and part["ability"]["effects"] == {"blind": 1} and str(part["ability"]["move"]) == "skill",
-		"AC1: Moth Cloud keeps launch [2,3], enemy multi Blind, ACC 90 and its skill pose")
+		and int(part["ability"]["crit"]) == 0 and int(part["ability"]["mark_damage"]) == 0
+		and part["ability"]["effects"] == {"blind": 1} and int(part["ability"]["self_move"]) == 0
+		and str(part["ability"]["move"]) == "skill",
+		"AC1: Moth Cloud launches from [2,3,4] with enemy multi Blind, ACC 90 and its skill pose")
+	_check(str(part["text"]).to_lower().contains("rear rank"),
+		"AC1: Moth Cloud's short rules text mentions the rear rank")
 	var expected_acc := {1: 90, 2: 95, 3: 100}
 	var expected_effects := {1: {"blind": 1}, 2: {"blind": 1}, 3: {"blind": 1, "exposed": 1}}
 	for tier in [1, 2, 3]:
@@ -399,9 +412,18 @@ func _test_moth_cloud_fourth_rank() -> void:
 			and checked["effects"] == expected_effects[tier],
 			"AC2: Moth Cloud tier %d keeps its authored ACC and Blind/Exposed values" % tier)
 		_check(bool(checked["multi"]) and str(checked["target_side"]) == "enemy"
-			and checked["launch"] == [2, 3]
-			and int(checked["launch_mask"]) == StitchedParts.rank_mask([2, 3]),
-			"AC2: Moth Cloud tier %d stays a multi enemy ability launched from ranks 2-3" % tier)
+			and str(checked["move"]) == "skill" and checked["dmg"] == [0, 0]
+			and checked["launch"] == rear_launch
+			and int(checked["launch_mask"]) == launch_mask,
+			"AC2: Moth Cloud tier %d stays a multi enemy ability launched from ranks 2-4" % tier)
+		for rank in [2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC2: Moth Cloud tier %d may launch from hero rank %d" % [tier, rank])
+		_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), 1),
+			"AC2: Moth Cloud tier %d is still forbidden from hero rank 1" % tier)
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC2: Moth Cloud tier %d never allows hero rank %d" % [tier, rank])
 		_check(int(checked["target_mask"]) == full_mask,
 			"AC2: Moth Cloud tier %d target mask is exactly ranks 1-4" % tier)
 		for rank in [1, 2, 3, 4]:
@@ -409,9 +431,11 @@ func _test_moth_cloud_fourth_rank() -> void:
 				"AC2: Moth Cloud tier %d includes enemy rank %d" % [tier, rank])
 		for rank in [0, 5]:
 			_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
-				"AC2: Moth Cloud tier %d excludes rank %d" % [tier, rank])
-	_check(part["ability"]["target"] == [1, 2, 3, 4] and int(part["ability"]["acc"]) == 90
-		and part["ability"]["effects"] == {"blind": 1},
+				"AC2: Moth Cloud tier %d excludes enemy rank %d" % [tier, rank])
+		_check(StitchedParts.stat_at_tier(part, tier) == {"crit": 3},
+			"AC2: Moth Cloud tier %d keeps its authored crit stat" % tier)
+	_check(part["ability"]["launch"] == rear_launch and part["ability"]["target"] == [1, 2, 3, 4]
+		and int(part["ability"]["acc"]) == 90 and part["ability"]["effects"] == {"blind": 1},
 		"AC2: tier reads never replace Moth Cloud's base fields in memory")
 	var off_rank: Dictionary = part.duplicate(true)
 	off_rank["ability"]["target"] = [1, 2, 3, 4, 5]
@@ -421,6 +445,11 @@ func _test_moth_cloud_fourth_rank() -> void:
 	repeated["ability"]["target"] = [1, 2, 3, 4, 4]
 	_check(not bool(StitchedParts.validate_part(repeated).get("ok", false)),
 		"AC3: Moth Cloud with a duplicated rank 4 fails closed")
+	for bad_launch in [[2, 3, 4, 4], [2, 3, 4, 5], [0, 2, 3, 4]]:
+		var copy: Dictionary = part.duplicate(true)
+		copy["ability"]["launch"] = bad_launch
+		_check(not bool(StitchedParts.validate_part(copy).get("ok", false)),
+			"AC3: copied Moth Cloud launch %s still fails validation" % str(bad_launch))
 
 
 func _test_each_tier() -> void:
@@ -648,6 +677,116 @@ func _test_rank4_lamplight_heal(
 	_check(witnessed, "%s: a real seeded rank-4 Lamplight Wash heals the wounded four-hero party" % label)
 
 
+## A real seeded 4v3 battle in the shipped preview order (Lantern Monk in hero rank 4) with
+## Moth Cloud genuinely equipped in his head. On his scheduled turn the authored multi-target
+## ability actually launches from the rear rank and resolves every living foe separately, with
+## Blind carried in both the receipt and battle state on hits. The same seed and the same
+## action replay to an identical receipt, snapshot and RNG position.
+func _test_rank4_moth_cloud(tier: int, seed_start: int, seed_count: int, label: String) -> void:
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle(ALTERNATES["head"], tier, seed_value, true)
+		if b == null:
+			continue
+		if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var living: Dictionary = {}
+		for foe in b.get_foes():
+			if not bool(foe["lost"]):
+				living[str(foe["id"])] = int(foe["hp"])
+		if living.size() != 3:
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(ALTERNATES["head"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 3:
+			continue
+		var targets: Dictionary = {}
+		var hits := 0
+		var blinding_hits := 0
+		for receipt in receipts:
+			var target := str(receipt["target"])
+			targets[target] = true
+			if not bool(receipt.get("hit", false)):
+				continue
+			hits += 1
+			var receipt_blind: bool = receipt.get("statuses", []).any(
+				func(status): return str(status.get("status", "")) == "blind"
+			)
+			if receipt_blind and int(b.get_unit(target)["statuses"].get("blind", 0)) > 0:
+				blinding_hits += 1
+		if hits < 1 or blinding_hits != hits:
+			continue
+		if targets.size() != 3 or not targets.keys().all(func(id): return living.has(str(id))):
+			continue
+		witnessed = true
+		_check(str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "lantern_monk"
+			and str(cast.get("part", "")) == ALTERNATES["head"]
+			and str(cast.get("ability", "")) == "lantern_monk_head_moth_cloud_move",
+			"%s: hero rank 4 Moth Cloud runs as the equipped Monk head part (seed %d)"
+				% [label, seed_value])
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"%s: the acting Monk really looses the cloud from hero rank 4 (seed %d)"
+				% [label, seed_value])
+		_check(receipts.size() == 3 and targets.size() == 3,
+			"%s: one distinct foe result per living enemy rank 1-3 (seed %d)"
+				% [label, seed_value])
+		_check(hits > 0 and blinding_hits == hits,
+			"%s: every landed moth cloud hit carries a real Blind status (seed %d)"
+				% [label, seed_value])
+		var after := b.state_snapshot()
+		var advanced := int(after["round"]) > int(before["round"]) \
+			or (int(after["round"]) == int(before["round"]) and int(after["turn_index"]) > int(before["turn_index"]))
+		_check(advanced and after != before,
+			"%s: the cast spends the Monk's genuine turn and changes real battle state (seed %d)"
+				% [label, seed_value])
+		var replay := _battle(ALTERNATES["head"], tier, seed_value, true)
+		if replay == null or not _to(replay, "lantern_monk"):
+			_check(false, "%s: same-seed replay reached the Monk's turn (seed %d)" % [label, seed_value])
+		else:
+			var replayed := replay.use_part(ALTERNATES["head"], 1)
+			_check(replayed == cast and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"%s: same-seed rank-4 Moth Cloud replays receipt, snapshot and RNG (seed %d)"
+					% [label, seed_value])
+		break
+	_check(witnessed, "%s: a real seeded rank-4 Moth Cloud Blinds the living enemy line" % label)
+
+
+## Rank 2 stays a legal launch rank after the data change, and the identical seed and action
+## reproduce the same receipt, snapshot and RNG position.
+func _test_rank2_moth_cloud_replay() -> void:
+	var witnessed := false
+	for seed_value in range(500132, 500160):
+		var b := _battle(ALTERNATES["head"], 1, seed_value)
+		if b == null or int(b.get_unit("lantern_monk").get("rank", -1)) != 2:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(ALTERNATES["head"], 1)
+		if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 3:
+			continue
+		var replay := _battle(ALTERNATES["head"], 1, seed_value)
+		if replay == null or not _to(replay, "lantern_monk"):
+			continue
+		var replayed := replay.use_part(ALTERNATES["head"], 1)
+		witnessed = replayed == cast and replay.state_snapshot() == b.state_snapshot() \
+			and replay.rng_state() == b.rng_state() and b.state_snapshot() != before
+		if not witnessed:
+			continue
+		_check(str(cast.get("ability", "")) == "lantern_monk_head_moth_cloud_move"
+			and cast.get("results", []).size() == 3,
+			"AC2: hero rank 2 Moth Cloud still resolves all three living foes (seed %d)" % seed_value)
+		break
+	_check(witnessed, "AC2: rank-2 Moth Cloud use and same-seed replay stay deterministic")
+
+
 func _test_guard_and_shroud() -> void:
 	var guard_witness := false
 	for seed_value in range(500301, 500336):
@@ -722,9 +861,10 @@ func _test_rejection_no_spend() -> void:
 			_check(false, "AC3: rank-4 witness has a scheduled turn")
 
 
-## AC3 at rank 4: only the torso's own launch array gained rank 4. Wick Spark and Moth Cloud
-## stay illegal from rank 4, Lamplight Wash stays illegal from rank 1, and copied malformed
-## launch/target arrays still fail the existing validator with no turn, state or RNG spend.
+## AC3 at rank 4: only the torso and the alternate head have rank 4 in their launch arrays;
+## Wick Spark stays illegal from rank 4, both rear-rank parts stay illegal from rank 1, and
+## copied malformed launch/target arrays still fail the existing validator with no turn,
+## state or RNG spend. The rank-4 Moth Cloud success lives in _test_rank4_moth_cloud.
 func _test_rank4_launch_rejections() -> void:
 	var b := _battle("", 1, 500820, true)
 	if b == null or not _to(b, "lantern_monk"):
@@ -740,30 +880,22 @@ func _test_rank4_launch_rejections() -> void:
 		_check(bool(healed.get("ok", false)) and healed.get("results", []).size() == 4,
 			"AC3: the same rank-4 Monk spends the turn on the legal torso heal")
 
-	var cloud := _battle(ALTERNATES["head"], 1, 500821, true)
-	if cloud == null or not _to(cloud, "lantern_monk"):
-		_check(false, "AC3: rank-4 Moth Cloud witness receives a real scheduled turn")
-	else:
-		var cloud_part: Dictionary = _catalog()["by_id"][ALTERNATES["head"]]
-		_check(str(cloud_part["ability"]["target_side"]) == "enemy"
-			and cloud_part["ability"]["target"] == [1, 2, 3, 4]
-			and not StitchedParts.ranks_allowed(int(cloud_part["ability"]["launch_mask"]), 4),
-			"AC3: Moth Cloud keeps four-rank ENEMY targeting while hero rank 4 stays unlaunchable")
-		_reject_without_spend(cloud, ALTERNATES["head"], 1, "Moth Cloud forbidden from hero rank 4")
-
-	var config := _config("", 1, 500822, true)
+	var config := _config(ALTERNATES["head"], 1, 500822, true)
 	var monk: Dictionary = config["heroes"].pop_back()
 	config["heroes"].insert(0, monk)
 	var created := StitchedRules.create(config)
-	_check(bool(created.get("ok", false)), "AC3: a real rank-1 Lantern Monk loadout enters battle")
+	_check(bool(created.get("ok", false)), "AC3: a real rank-1 Moth Cloud loadout enters battle")
 	if bool(created.get("ok", false)):
 		var front: StitchedRules = created["battle"]
 		_check(int(front.get_unit("lantern_monk")["rank"]) == 1,
 			"AC3: rank-1 witness really stands in hero rank 1")
 		if _to(front, "lantern_monk"):
+			_check(str(front.get_unit("lantern_monk")["parts"]["head"]["id"]) == ALTERNATES["head"],
+				"AC3: the rank-1 witness really has Moth Cloud equipped")
+			_reject_without_spend(front, ALTERNATES["head"], 1, "Moth Cloud forbidden from hero rank 1")
 			_reject_without_spend(front, STARTERS["torso"], 1, "Lamplight Wash forbidden from hero rank 1")
 		else:
-			_check(false, "AC3: rank-1 Lamplight Wash witness receives a real turn")
+			_check(false, "AC3: rank-1 Moth Cloud witness receives a real turn")
 
 	config = _config("", 1, 500823, true)
 	config["heroes"][3]["parts"]["torso"] = {"id": STARTERS["torso"], "tier": 1, "torn": true}
