@@ -8,9 +8,15 @@ const HEADING_FONT := preload("res://assets/fonts/LondrinaSolid-Regular.ttf")
 const BONE := Color("f5e5cd")
 const BRASS := Color("e5b86d")
 const PLATE_SIZE := Vector2(144, 62)
+const ATTACK_TEXTURE := preload("res://assets/paper/ui/intent_attack.png")
+const DEFEND_TEXTURE := preload("res://assets/paper/ui/intent_defend.png")
+const BUFF_TEXTURE := preload("res://assets/paper/ui/intent_buff.png")
+const DEBUFF_TEXTURE := preload("res://assets/paper/ui/intent_debuff.png")
 
 var foe_id := ""
 var foe_rank := 0
+var ability_kind := ""
+var glyph: TextureRect
 var primary: Label
 var secondary: Label
 
@@ -29,6 +35,15 @@ func _init() -> void:
 
 
 func _ready() -> void:
+	glyph = TextureRect.new()
+	glyph.name = "IntentGlyph"
+	glyph.position = Vector2(10, 9)
+	glyph.size = Vector2(24, 24)
+	glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	glyph.visible = false
+	add_child(glyph)
 	primary = Label.new()
 	primary.name = "IntentText"
 	primary.position = Vector2(9, 6)
@@ -60,9 +75,15 @@ func _ready() -> void:
 func clear_intent() -> void:
 	foe_id = ""
 	foe_rank = 0
+	ability_kind = ""
 	visible = false
 	tooltip_text = ""
+	if glyph != null:
+		glyph.texture = null
+		glyph.visible = false
 	if primary != null:
+		primary.position.x = 9
+		primary.size.x = 126
 		primary.text = ""
 	if secondary != null:
 		secondary.text = ""
@@ -74,7 +95,9 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 		return
 	foe_id = str(intent.get("foe_id", ""))
 	foe_rank = rank
-	var heading := str(intent.get("ability_name", ""))
+	var actual_name := str(intent.get("ability_name", ""))
+	var heading := actual_name
+	ability_kind = ""
 	var target := ""
 	var detail := ""
 	if bool(intent.get("stun", false)):
@@ -86,6 +109,9 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 		target = "NO ACTION"
 		detail = "PASS: no currently legal ability or target"
 	else:
+		ability_kind = str(intent.get("ability_kind", ""))
+		if ability_kind == "move":
+			heading = "MOVE " + actual_name
 		var side := str(intent.get("target_side", ""))
 		var ranks: Array[String] = []
 		for affected in intent.get("affected_ranks", []):
@@ -101,11 +127,32 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 				side_name, ", ".join(ranks), int(intent.get("target_rank", 0))]
 		else:
 			detail = "Target: %s rank %d" % [side_name, int(intent.get("target_rank", 0))]
+	if glyph != null:
+		glyph.texture = _texture_for_kind(ability_kind)
+		glyph.visible = glyph.texture != null and not foe_id.is_empty()
+	primary.position.x = 36 if glyph != null and glyph.visible else 9
+	primary.size.x = 99 if glyph != null and glyph.visible else 126
 	primary.text = _fit_caption(heading, primary)
 	secondary.text = _fit_caption(target, secondary)
-	tooltip_text = "%s · %s · %s\nCurrent intent; may change if ranks or statuses change" % [
-		str(intent.get("foe_name", "")), heading, detail]
+	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
+	var disclosed_name := heading if bool(intent.get("pass", false)) or bool(intent.get("stun", false)) else actual_name
+	tooltip_text = "%s · %s · %s%s\nCurrent intent; may change if ranks or statuses change" % [
+		str(intent.get("foe_name", "")), disclosed_name,
+		kind_detail, detail]
 	visible = not foe_id.is_empty()
+
+
+func _texture_for_kind(kind: String) -> Texture2D:
+	match kind:
+		"melee", "ranged":
+			return ATTACK_TEXTURE
+		"guard":
+			return DEFEND_TEXTURE
+		"buff", "heal":
+			return BUFF_TEXTURE
+		"debuff":
+			return DEBUFF_TEXTURE
+	return null
 
 
 func set_inspected(value: bool) -> void:

@@ -17,6 +17,7 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		"foe_name": str(actor.get("name", "")),
 		"ability_id": "",
 		"ability_name": "",
+		"ability_kind": "",
 		"target_rank": 0,
 		"target_side": "",
 		"affected_ranks": [],
@@ -48,6 +49,7 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			ranks.sort()
 			result["ability_id"] = str(ability["id"])
 			result["ability_name"] = str(ability["name"])
+			result["ability_kind"] = str(ability.get("kind", ""))
 			result["target_rank"] = rank
 			result["target_side"] = str(targets[0]["side"])
 			result["affected_ranks"] = ranks

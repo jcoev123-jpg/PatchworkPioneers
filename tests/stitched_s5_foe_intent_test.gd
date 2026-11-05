@@ -46,8 +46,21 @@ func _old_priority(battle: StitchedRules, actor: Dictionary) -> Dictionary:
 				affected.sort()
 				return {"ability_id": str(ability["id"]), "target_rank": rank,
 					"target_side": str(targets[0]["side"]), "affected_ranks": affected,
-					"multi": bool(ability["multi"])}
+					"multi": bool(ability["multi"]), "ability_kind": str(ability.get("kind", ""))}
 	return {"pass": true}
+
+
+func _kind_texture(kind: String) -> Texture2D:
+	match kind:
+		"melee", "ranged":
+			return load("res://assets/paper/ui/intent_attack.png") as Texture2D
+		"guard":
+			return load("res://assets/paper/ui/intent_defend.png") as Texture2D
+		"buff", "heal":
+			return load("res://assets/paper/ui/intent_buff.png") as Texture2D
+		"debuff":
+			return load("res://assets/paper/ui/intent_debuff.png") as Texture2D
+	return null
 
 
 func _verify_tickets(stage: StitchedBattleScreen) -> void:
@@ -55,32 +68,117 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 	var found := 0
 	for rank in range(1, 5):
 		var foe := stage._unit_at("foe", rank)
-		var ticket: NinePatchRect = stage._foe_tickets[rank]
+		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[rank]
+		var icon: TextureRect = ticket.get_node("IntentGlyph")
 		if foe.is_empty():
 			_check(not ticket.visible and not stage._foe_intents.has(rank)
-				and ticket.foe_id.is_empty() and ticket.foe_rank == 0,
-				"empty, fallen or heap rank %d has no misleading ticket" % rank)
+				and ticket.foe_id.is_empty() and ticket.foe_rank == 0
+				and ticket.ability_kind.is_empty() and icon.texture == null and not icon.visible
+				and ticket.tooltip_text.is_empty(),
+				"empty, fallen or heap rank %d has no misleading ticket or glyph" % rank)
 			continue
 		found += 1
 		var expected := _old_priority(battle, foe)
 		var intent := StitchedFoeIntent.choose(battle, foe)
 		_check(ticket.visible and not intent.is_empty() and stage._foe_intents[rank] == intent,
 			"live rank %d displays the authoritative, detached chooser" % rank)
-		if expected.has("pass"):
+		if expected.has("pass") or bool(intent.get("stun", false)):
 			_check(bool(intent.get("pass", false)) or bool(intent.get("stun", false)),
 				"unlaunchable foe rank %d shows PASS or STUN" % rank)
+			_check(str(intent.get("ability_kind", "")) == "" and icon.texture == null
+				and not icon.visible and ticket.ability_kind.is_empty()
+				and int(intent.get("target_rank", -1)) == 0
+				and intent.get("affected_ranks", [1]).is_empty(),
+				"skipped rank %d has no kind, combat glyph or fake targets" % rank)
 		else:
 			_check(not bool(intent.get("pass", true)) and str(intent["ability_id"]) == str(expected["ability_id"])
 				and int(intent["target_rank"]) == int(expected["target_rank"])
 				and str(intent["target_side"]) == str(expected["target_side"])
 				and intent["affected_ranks"] == expected["affected_ranks"]
-				and bool(intent["multi"]) == bool(expected["multi"]),
-				"rank %d matches independent round-rotated legal choice, target and all targets" % rank)
+				and bool(intent["multi"]) == bool(expected["multi"])
+				and str(intent["ability_kind"]) == str(expected["ability_kind"]),
+				"rank %d matches independent round-rotated legal choice, kind, target and all targets" % rank)
+			var selected: Dictionary = {}
+			var matches := 0
+			for ability in foe.get("abilities", []):
+				if str(ability["id"]) == str(intent["ability_id"]):
+					selected = ability
+					matches += 1
+			_check(matches == 1 and not selected.is_empty()
+				and str(intent["ability_kind"]) == str(selected.get("kind", ""))
+				and ticket.ability_kind == str(selected.get("kind", ""))
+				and icon.texture == _kind_texture(str(selected.get("kind", "")))
+				and icon.visible == (_kind_texture(str(selected.get("kind", ""))) != null)
+				and ticket.tooltip_text.contains(str(intent["ability_name"]))
+				and ticket.tooltip_text.contains("Kind: " + str(intent["ability_kind"]).to_upper()),
+				"rank %d icon and kind match exactly the selected legal authored ID" % rank)
 		_check(ticket.foe_id == str(foe["id"]) and ticket.foe_rank == rank and
 			ticket.tooltip_text.contains(str(foe["name"])) and
 			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change"),
 			"foe rank %d names actual actor and provisionality" % rank)
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
+
+
+func _verify_kind_fixtures(host: Control) -> void:
+	# The genuine opening three foes do not exercise every authored kind. Mount
+	# one additional REAL ticket, transition it through every icon category,
+	# then through legal MOVE/unknown and no-action states.
+	var ticket := StitchedFoeIntentPlate.new()
+	ticket.position = Vector2(450, 245)
+	host.add_child(ticket)
+	var intent := {
+		"foe_id": "fixture_foe", "foe_name": "Fixture foe", "ability_id": "fixture",
+		"ability_name": "Fixture maneuver", "ability_kind": "", "target_side": "hero",
+		"target_rank": 2, "affected_ranks": [2], "multi": false,
+		"pass": false, "stun": false
+	}
+	_check(ticket.get_node("IntentGlyph") == ticket.glyph
+		and ticket.glyph.mouse_filter == Control.MOUSE_FILTER_IGNORE
+		and ticket.glyph.size.x >= 24 and ticket.glyph.size.y >= 24,
+		"direct mounted ticket has a readable mouse-transparent IntentGlyph")
+	var mapped := 0
+	for kind in ["melee", "ranged", "guard", "buff", "heal", "debuff", "move", "unknown", ""]:
+		intent["ability_kind"] = kind
+		intent["ability_name"] = "Flutter Back" if kind == "move" else "Fixture maneuver"
+		ticket.present_intent(intent, 1)
+		var expected: Texture2D = _kind_texture(kind)
+		_check(ticket.visible and ticket.foe_id == "fixture_foe"
+			and ticket.ability_kind == kind and ticket.glyph.texture == expected
+			and ticket.glyph.visible == (expected != null)
+			and ticket.tooltip_text.contains(str(intent["ability_name"]))
+			and (kind.is_empty() or ticket.tooltip_text.contains("Kind: " + kind.to_upper()))
+			and ticket.secondary.text.contains("H2")
+			and _caption_fits(ticket.primary) and _caption_fits(ticket.secondary),
+			"mounted fixture kind '%s' has truthful icon and full legal ability/target disclosure" % kind)
+		if expected != null:
+			mapped += 1
+		if kind == "move":
+			_check(ticket.primary.text.begins_with("MOVE")
+				and ticket.tooltip_text.contains("Flutter Back") and not ticket.glyph.visible,
+				"MOVE is explicitly labelled without pretending to be an attack or buff")
+	_check(mapped == 6, "six mapped authored ability kinds tested with exact shipped PNGs")
+	for state in ["pass", "stun"]:
+		intent["ability_kind"] = "melee" # malformed stale data must not paint a strike
+		intent["pass"] = state == "pass"
+		intent["stun"] = state == "stun"
+		intent["target_rank"] = 0
+		intent["target_side"] = ""
+		intent["affected_ranks"] = []
+		ticket.present_intent(intent, 1)
+		_check(ticket.visible and ticket.ability_kind.is_empty()
+			and ticket.glyph.texture == null and not ticket.glyph.visible
+			and ticket.primary.text == state.to_upper() and ticket.secondary.text == "NO ACTION"
+			and not ticket.tooltip_text.contains("Target:")
+			and not ticket.tooltip_text.contains("Kind:")
+			and ticket.tooltip_text.contains("Current intent; may change"),
+			"%s clears previous threat and any fake legal action" % state.to_upper())
+	ticket.clear_intent()
+	_check(not ticket.visible and ticket.foe_id.is_empty() and ticket.foe_rank == 0
+		and ticket.ability_kind.is_empty() and ticket.glyph.texture == null
+		and not ticket.glyph.visible and ticket.primary.text.is_empty()
+		and ticket.secondary.text.is_empty() and ticket.tooltip_text.is_empty(),
+		"clear_intent wipes the mounted glyph, kind, label, target and disclosure")
+	ticket.free()
 
 
 func _caption_fits(label: Label) -> bool:
@@ -106,6 +204,7 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 		var painted := Rect2(puppet.global_position + art.position, art.size)
 		var ability: Label = stage._foe_ticket_labels[rank]
 		var target: Label = stage._foe_ticket_target_labels[rank]
+		var glyph: TextureRect = ticket.get_node("IntentGlyph")
 		_check(ticket.texture == sewn and stage._intent_disclosure.texture == sewn
 			and ticket.self_modulate == Color("62464a")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
@@ -128,13 +227,21 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket
 			and ability.get_theme_font_size("font_size") >= 20
 			and target.get_theme_font_size("font_size") >= 15
-			and ability.size.x >= 124 and target.size.x >= 124
+			and ability.size.x >= 96 and target.size.x >= 124
+			and glyph.get_parent() == ticket and glyph.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and glyph.position.x >= 0 and glyph.position.y >= 0
+			and glyph.position.x + glyph.size.x <= ticket.size.x
+			and glyph.position.y + glyph.size.y <= target.position.y
+			and (not glyph.visible or not Rect2(glyph.position, glyph.size).intersects(
+				Rect2(ability.position, ability.size)))
+			and ability.position.x + ability.size.x <= ticket.size.x
 			and ability.position.y + ability.size.y <= target.position.y
 			and target.position.y + target.size.y <= ticket.size.y
 			and ability.get_theme_color("font_color") == StitchedFoeIntentPlate.BONE
 			and target.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
-			and _caption_fits(ability) and _caption_fits(target),
-			"bone/amber two-row caption rank %d fits without wrapping or overlap" % rank)
+			and _caption_fits(ability) and _caption_fits(target)
+			and (not glyph.visible or ability.get_theme_font_size("font_size") >= 20),
+			"icon-aware bone/amber two-row caption rank %d fits inside plate without obstruction" % rank)
 		previous = rectangle
 	_check(painted_count == expected_count,
 		"intent geometry inspects every actually painted foe, including newly occupied fourth rank")
@@ -215,6 +322,7 @@ func _run() -> void:
 		and battle.current_side() == "hero", "seeded 4v3 screen mounted in Gothic theme with a hero turn")
 	_check_geometry(stage)
 	_verify_tickets(stage)
+	_verify_kind_fixtures(host)
 	_check(not stage._foe_tickets[4].visible, "initial fourth foe rank is empty, not a ghost ability")
 	# Model the public post-summon board state without advancing combat: all
 	# three original foes stay occupied while a distinct live fourth enters.
@@ -229,8 +337,10 @@ func _run() -> void:
 		and stage._foe_tickets[4].visible
 		and stage._foe_tickets[4].foe_id == str(fourth["id"])
 		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(fourth["id"])))
-		and _caption_fits(stage._foe_ticket_labels[4]),
-		"post-admission four occupied foe ranks all retain authoritative intent tickets")
+		and _caption_fits(stage._foe_ticket_labels[4])
+		and stage._foe_tickets[4].glyph.texture == _kind_texture(
+			str(stage._foe_intents[4].get("ability_kind", ""))),
+		"post-admission fourth rank receives its own freshly chosen category icon")
 	battle._units.erase(fourth["id"])
 	stage._refresh()
 	_check(battle.get_foes().size() == 3 and not stage._foe_tickets[4].visible
@@ -244,18 +354,40 @@ func _run() -> void:
 	_check_geometry(stage, 3)
 	_check(stage._foe_tickets[4].visible and not stage._foe_tickets[original_rank].visible
 		and stage._foe_intents[4] == StitchedFoeIntent.choose(battle, battle.get_unit(str(arriving["id"])))
-		and _caption_fits(stage._foe_ticket_labels[4]),
-		"fourth-rank arrival reprojects live ability and hides the vacated rank")
+		and _caption_fits(stage._foe_ticket_labels[4])
+		and stage._foe_tickets[4].glyph.texture == _kind_texture(
+			str(stage._foe_intents[4].get("ability_kind", "")))
+		and stage._foe_tickets[original_rank].glyph.texture == null,
+		"fourth-rank arrival reprojects glyph and hides vacated rank's old category")
 	arriving["rank"] = original_rank
 	stage._refresh()
-	_check(not stage._foe_tickets[4].visible and stage._foe_tickets[original_rank].visible,
-		"fourth-rank vacancy never retains a stale displayed intent")
+	_check(not stage._foe_tickets[4].visible and stage._foe_tickets[original_rank].visible
+		and stage._foe_tickets[4].glyph.texture == null
+		and stage._foe_tickets[4].ability_kind.is_empty(),
+		"fourth-rank vacancy never retains a stale image or selected kind")
 	var sample: Dictionary = battle.get_foes()[0]
 	var sample_id := str(sample["id"])
 	var sample_rank := int(sample["rank"])
 	var actor: Dictionary = battle._units[sample_id]
 	var original_units := battle._units.duplicate(true)
 	var original_heaps := battle._heaps.duplicate(true)
+	# A genuine live round advance changes the selected kind (melee -> buff)
+	# and its image, then restores the round without spending combat turns.
+	var opening := StitchedFoeIntent.choose(battle, actor)
+	var opening_texture: Texture2D = stage._foe_tickets[sample_rank].glyph.texture
+	battle._round += 1
+	stage._refresh()
+	var rotated := StitchedFoeIntent.choose(battle, actor)
+	_check(str(opening.get("ability_id", "")) == str(actor["abilities"][0]["id"])
+		and str(rotated.get("ability_id", "")) == str(actor["abilities"][1]["id"])
+		and str(rotated.get("ability_kind", "")) == str(actor["abilities"][1]["kind"])
+		and stage._foe_tickets[sample_rank].glyph.texture == _kind_texture(str(rotated["ability_kind"]))
+		and opening_texture != stage._foe_tickets[sample_rank].glyph.texture,
+		"round-rotated live ability changes from melee attack to buff glyph")
+	battle._round -= 1
+	stage._refresh()
+	_check(stage._foe_tickets[sample_rank].glyph.texture == opening_texture,
+		"return to earlier legal rotation restores attack glyph without cached category")
 	# A genuinely authored long name is kept in the complete disclosure but
 	# safely ellipsized in the narrow visual caption; neither view spends a turn.
 	var long_name := "A Long Tangle of Moonlit Needles and Unravelling Threads"
@@ -358,21 +490,33 @@ func _run() -> void:
 	actor["abilities"][0]["launch_mask"] = 1 << 4
 	stage._refresh()
 	_check(str(stage._foe_intents[sample_rank]["ability_id"]) == str(actor["abilities"][1]["id"])
-		and not bool(stage._foe_intents[sample_rank]["pass"]),
-		"first disabled ability falls back to next usable authored kit entry")
+		and not bool(stage._foe_intents[sample_rank]["pass"])
+		and str(stage._foe_intents[sample_rank]["ability_kind"]) == str(actor["abilities"][1]["kind"])
+		and stage._foe_tickets[sample_rank].glyph.texture == _kind_texture(
+			str(actor["abilities"][1]["kind"]))
+		and stage._foe_tickets[sample_rank].glyph.texture != opening_texture,
+		"blocked first ability falls back to next legal ID, buff kind and updated image")
 	actor["abilities"][1]["launch_mask"] = 1 << 4
 	stage._refresh()
 	_check(bool(stage._foe_intents[sample_rank]["pass"])
 		and stage._foe_tickets[sample_rank].get_node("IntentText").text.contains("PASS")
-		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:"),
-		"all abilities blocked produces PASS without an illegal target")
+		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:")
+		and str(stage._foe_intents[sample_rank]["ability_kind"]) == ""
+		and stage._foe_tickets[sample_rank].glyph.texture == null
+		and not stage._foe_tickets[sample_rank].glyph.visible
+		and int(stage._foe_intents[sample_rank]["target_rank"]) == 0,
+		"all abilities blocked produces PASS without glyph, kind or illegal target")
 	actor["abilities"] = original_units[sample_id]["abilities"].duplicate(true)
 	actor["statuses"]["stun"] = 1
 	stage._refresh()
 	_check(bool(stage._foe_intents[sample_rank]["stun"])
 		and stage._foe_tickets[sample_rank].get_node("IntentText").text.contains("STUN")
-		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:"),
-		"next-turn stun skip is not promised as an attack")
+		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:")
+		and str(stage._foe_intents[sample_rank]["ability_kind"]) == ""
+		and stage._foe_tickets[sample_rank].glyph.texture == null
+		and not stage._foe_tickets[sample_rank].glyph.visible
+		and int(stage._foe_intents[sample_rank]["target_rank"]) == 0,
+		"next-turn stun skip has no advertised strike, kind or legal target")
 	actor["statuses"].erase("stun")
 	# Reposition an existing foe and change its identity display name.
 	var swap: Dictionary = battle._units[str(battle.get_foes()[2]["id"])]
@@ -409,8 +553,10 @@ func _run() -> void:
 	battle._units[sample_id]["lost"] = true
 	stage._refresh()
 	_check(not stage._foe_tickets[sample_rank].visible and not stage._foe_intents.has(sample_rank)
-		and stage._foe_tickets[sample_rank].foe_id.is_empty(),
-		"LOST foe leaves neither visible ticket nor stale identity")
+		and stage._foe_tickets[sample_rank].foe_id.is_empty()
+		and stage._foe_tickets[sample_rank].glyph.texture == null
+		and stage._foe_tickets[sample_rank].ability_kind.is_empty(),
+		"LOST foe leaves neither visible ticket, image nor stale identity")
 	battle._units = original_units.duplicate(true)
 	stage._refresh()
 	_verify_receipt(stage)
