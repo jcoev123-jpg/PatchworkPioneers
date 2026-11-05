@@ -34,6 +34,11 @@ const RETIRED_CARD_KEYS := [
 ## The shipped S2 rank-1 foe and the accuracy of its Sack Swing attack.
 const FRAY_SCAVENGER := "fray_scavenger"
 const SACK_SWING_ACC := 88
+## The shipped rank-3 preview foe whose Ink Flick can reach a rank-4 hero, and the three real
+## companions left in the fixture once the Warden is replaced by the Rag Duelist.
+const MOTH_SCRIBE := "moth_scribe"
+const INK_FLICK_ACC := 88
+const RANK_FOUR_COMPANIONS := ["seamstress", "tinker", "lantern_monk"]
 
 ## The four starter wearables: one per slot, the initial equipped kit in the fixture.
 const STARTER_PARTS := {
@@ -120,7 +125,7 @@ const EXPECTED := {
 	"rag_duelist_legs_cape_slip": {
 		"name": "Cape Slip", "slot": "legs", "stat": {"dodge": 6},
 		"ability_id": "rag_duelist_legs_cape_slip_move", "kind": "buff",
-		"launch": [1, 2, 3], "target": [1, 2, 3], "target_side": "self", "pose": "skill",
+		"launch": [1, 2, 3, 4], "target": [1, 2, 3, 4], "target_side": "self", "pose": "skill",
 		"acc": 100,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
@@ -183,6 +188,7 @@ func _initialize() -> void:
 	_test_lunge_blocked()
 	_test_riposte()
 	_test_dodge()
+	_test_cape_slip_rank_four()
 	_test_status_ticks()
 	_test_live_rejections()
 	_test_determinism()
@@ -434,15 +440,38 @@ func _test_flourish_catalog() -> void:
 			"AC1: " + tag + " inherits the base one-rank backward step")
 		_check(_int_dict(ability["effects"]) == {"dodge": flourish_dodge[tier - 1], "duration": 1},
 			"AC1: " + tag + " keeps its one-turn temporary Dodge %d" % flourish_dodge[tier - 1])
-	# Cape Slip is the stationary starter with its own weaker Dodge ladder.
+	# Cape Slip is the stationary starter with its own weaker Dodge ladder. Its widened base ranks
+	# let a displaced Duelist cast it from rank 4, with both derived masks covering exactly 1-4.
 	var slip_dodge := [25, 30, 35]
+	var slip_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	_check(slip_mask == StitchedParts.ALL_RANKS_MASK,
+		"AC1: the Cape Slip rank list derives one mask for all four hero ranks")
 	for tier in [1, 2, 3]:
 		var ability := StitchedParts.ability_at_tier(slip, tier)
 		var tag := "Cape Slip tier %d" % tier
+		_check(not ability.is_empty(), "AC1: " + tag + " resolves through ability_at_tier")
+		if ability.is_empty():
+			continue
 		_check(int(ability.get("self_move", -99)) == 0,
 			"AC1: " + tag + " still never moves its wearer")
-		_check(_int_list(ability["launch"]) == [1, 2, 3],
-			"AC1: " + tag + " still launches from ranks 1-3")
+		_check(_int_list(ability["launch"]) == [1, 2, 3, 4],
+			"AC1: " + tag + " really launches from ranks 1-4")
+		_check(_int_list(ability["target"]) == [1, 2, 3, 4],
+			"AC1: " + tag + " really self-targets in ranks 1-4")
+		var launch_mask := int(ability["launch_mask"])
+		var target_mask := int(ability["target_mask"])
+		_check(launch_mask == slip_mask and target_mask == slip_mask,
+			"AC1: " + tag + " derives both rank masks from the authored 1-4 lists")
+		for rank in range(MIN_RANK, MAX_RANK + 1):
+			_check(StitchedParts.ranks_allowed(launch_mask, rank),
+				"AC1: %s launches from rank %d" % [tag, rank])
+			_check(StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: %s targets rank %d" % [tag, rank])
+		for rank in [0, MAX_RANK + 1]:
+			_check(not StitchedParts.ranks_allowed(launch_mask, rank),
+				"AC1: %s cannot launch from rank %d" % [tag, rank])
+			_check(not StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: %s cannot target rank %d" % [tag, rank])
 		_check(_int_dict(ability["effects"]) == {"dodge": slip_dodge[tier - 1], "duration": 1},
 			"AC1: " + tag + " keeps its authored one-turn Dodge %d" % slip_dodge[tier - 1])
 	# No other wearable in this hero kit gained a backward step from this change.
@@ -988,6 +1017,131 @@ func _test_dodge() -> void:
 		"AC2: the one-turn Dodge expires after that turn")
 	_check(int(battle.get_unit("rag_duelist")["dodge"]) == permanent,
 		"AC2: the expiry leaves permanent Dodge exactly as it was")
+
+
+# ---------------------------------------------------------------- AC2/AC3: Cape Slip from rank 4
+
+## A worn Cape Slip is cast on the Duelist's genuine scheduled rank-4 turn at each stitch tier.
+## The shipped fixture keeps its four heroes and three foes; a real Moth Scribe then aims at rank 4,
+## and the temporary Dodge expires only after the Duelist's own following completed turn.
+func _test_cape_slip_rank_four() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC2: the shipped catalog loads for the rank-4 Cape Slip witness")
+		return
+	var slip_id := str(STARTER_PARTS["legs"])
+	var slip_dodge := [25, 30, 35]
+	for tier in [1, 2, 3]:
+		var seed_value: int = 41 + int(tier)
+		var tag := "Cape Slip tier %d rank %d" % [tier, MAX_RANK]
+		var battle := _build_battle(seed_value, tier, STARTER_PARTS, MAX_RANK - 1, false)
+		if battle == null:
+			_check(false, "AC2: the four-hero/three-foe fixture builds for " + tag)
+			continue
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3,
+			"AC2: " + tag + " keeps four heroes and three foes")
+		_check(str(battle.get_unit(OWNER)["parts"]["legs"]["id"]) == slip_id,
+			"AC2: the rank-4 Duelist really wears the starter Cape Slip")
+		if not _to(battle, OWNER):
+			_check(false, "AC2: " + tag + " reaches a genuine scheduled Duelist turn")
+			continue
+		_check(int(battle.get_unit(OWNER)["rank"]) == MAX_RANK,
+			"AC2: " + tag + " really starts with the living Duelist at rank 4")
+		var ability := StitchedParts.ability_at_tier(catalog["by_id"][slip_id], tier)
+		_check(StitchedParts.ranks_allowed(int(ability["launch_mask"]), MAX_RANK)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), MAX_RANK),
+			"AC2: " + tag + " derives launch AND target legality from rank 4")
+		_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 0)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 0)
+			and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), MAX_RANK + 1)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), MAX_RANK + 1),
+			"AC2: " + tag + " refuses ranks outside 1-4")
+		var permanent := int(battle.get_unit(OWNER)["dodge"])
+		var heroes_before := {}
+		for hero_id in RANK_FOUR_COMPANIONS:
+			heroes_before[hero_id] = battle.get_unit(hero_id)
+		# A self-only buff refuses every rank but the caster's own, before any mutation.
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		for bad_rank in [MIN_RANK, MAX_RANK - 1, 0, MAX_RANK + 1]:
+			var refused := battle.use_part(slip_id, bad_rank)
+			_check(not bool(refused.get("ok", false))
+				and str(refused.get("error", "")).contains("no legal target in rank %d" % bad_rank),
+				"AC2: %s refuses self-target rank %d" % [tag, bad_rank])
+		_check(before == battle.state_snapshot() and rng == battle.rng_state(),
+			"AC2: " + tag + " refusals preserved state, turn pointer and RNG")
+		_check(battle.current_actor_id() == OWNER,
+			"AC2: " + tag + " refusals never spend the Duelist's action")
+		var receipt := battle.use_part(slip_id, MAX_RANK)
+		_check(bool(receipt.get("ok", false)),
+			"AC2: " + tag + " really casts from rank 4: " + str(receipt.get("error", "")))
+		if not bool(receipt.get("ok", false)):
+			continue
+		var snapshot_after_cast := battle.state_snapshot()
+		_check(str(receipt.get("part", "")) == slip_id, "AC2: " + tag + " reports the equipped part")
+		_check(str(receipt.get("ability", "")) == "rag_duelist_legs_cape_slip_move",
+			"AC2: " + tag + " resolves the authored ability id")
+		_check(str(receipt.get("actor", "")) == OWNER, "AC2: " + tag + " is used by the Rag Duelist")
+		var results: Array = receipt.get("results", [])
+		_check(results.size() == 1, "AC2: " + tag + " produces one self-ally receipt")
+		if results.size() == 1:
+			var result: Dictionary = results[0]
+			_check(str(result.get("target", "")) == OWNER and str(result.get("target_side", "")) == "hero"
+				and int(result.get("target_rank", 0)) == MAX_RANK,
+				"AC2: " + tag + " targets the Duelist in his own rank 4")
+			_check(bool(result.get("hit", false)) and int(result.get("damage", -1)) == 0,
+				"AC2: " + tag + " is a confirmed non-damaging self buff")
+			_check(_status_value(result.get("statuses", []), "dodge") == slip_dodge[tier - 1],
+				"AC2: " + tag + " reports its temporary Dodge")
+			_check(int(result.get("target_hp", -1)) == int(battle.get_unit(OWNER)["hp"]),
+				"AC2: " + tag + " leaves the Duelist's HP untouched")
+		var duelist := battle.get_unit(OWNER)
+		_check(int(duelist["rank"]) == MAX_RANK, "AC2: " + tag + " leaves the Duelist in rank 4")
+		_check(int(duelist["dodge"]) == permanent, "AC2: " + tag + " never raises permanent Dodge")
+		_check(not duelist["statuses"].has("dodge"), "AC2: " + tag + " invents no fake dodge status")
+		var buff: Dictionary = duelist.get("dodge_buff", {})
+		_check(int(buff.get("amount", 0)) == slip_dodge[tier - 1],
+			"AC2: " + tag + " stores temporary Dodge %d" % slip_dodge[tier - 1])
+		_check(int(buff.get("turns", 0)) == 1, "AC2: " + tag + " stores a one-turn duration")
+		_check(battle.current_actor_id() != OWNER, "AC2: " + tag + " consumes the Duelist's one action")
+		for hero_id in RANK_FOUR_COMPANIONS:
+			_check(battle.get_unit(hero_id) == heroes_before[hero_id],
+				"AC2: " + tag + " leaves " + hero_id + " unchanged")
+		# A real preview foe (Moth Scribe) can aim at rank 4; its chance must include the buff.
+		_check(_to(battle, MOTH_SCRIBE), "AC3: " + tag + " reaches a genuine Moth Scribe turn")
+		var foe := battle.get_unit(MOTH_SCRIBE)
+		var foe_acc := int(foe["acc"]) + int(battle.candle_band()["enemy_acc"])
+		var miss_streak := int(foe["miss_streak"])
+		var attack := battle.use_foe_ability("ink_flick", MAX_RANK)
+		_check(bool(attack.get("ok", false)),
+			"AC3: " + tag + " lets the foe attack the rank-4 Duelist: " + str(attack.get("error", "")))
+		if bool(attack.get("ok", false)) and not attack.get("results", []).is_empty():
+			var attack_result: Dictionary = attack["results"][0]
+			var expected := StitchedRules.hit_chance(
+				INK_FLICK_ACC + foe_acc, permanent + slip_dodge[tier - 1], miss_streak)
+			_check(str(attack_result.get("target", "")) == OWNER,
+				"AC3: " + tag + " foe attack really aims at the Duelist")
+			_check(int(attack_result.get("hit_chance", -1)) == expected,
+				"AC3: " + tag + " foe hit chance includes exactly the temporary Dodge")
+			_check(expected < StitchedRules.hit_chance(INK_FLICK_ACC + foe_acc, permanent, miss_streak),
+				"AC3: " + tag + " temporary Dodge lowers the chance without guaranteeing a miss")
+			_check(int(battle.get_unit(OWNER)["dodge"]) == permanent,
+				"AC3: " + tag + " foe attack leaves permanent Dodge unchanged")
+		# The buff survives that foe turn and expires after the Duelist's own next turn.
+		_check(_to(battle, OWNER), "AC3: " + tag + " reaches the Duelist's following real turn")
+		_check(int(StitchedRules.effective_dodge(battle.get_unit(OWNER))) == permanent + slip_dodge[tier - 1],
+			"AC3: " + tag + " keeps its temporary Dodge through the foe turn")
+		_check(bool(battle.pass_turn().get("ok", false)), "AC3: " + tag + " Duelist spends that next turn")
+		_check(int(StitchedRules.effective_dodge(battle.get_unit(OWNER))) == permanent,
+			"AC3: " + tag + " temporary Dodge expires after the Duelist's own turn")
+		# An equal-seed replay casts identically, so the widened ranks add no hidden randomness.
+		var replay := _build_battle(seed_value, tier, STARTER_PARTS, MAX_RANK - 1, false)
+		if replay == null or not _to(replay, OWNER):
+			_check(false, "AC4: " + tag + " replays on a second equal-seed fixture")
+			continue
+		var replay_receipt := replay.use_part(slip_id, MAX_RANK)
+		_check(replay_receipt == receipt and replay.state_snapshot() == snapshot_after_cast,
+			"AC4: " + tag + " replays its receipt, state and RNG exactly")
 
 
 # ---------------------------------------------------------------- AC2: statuses tick in play
