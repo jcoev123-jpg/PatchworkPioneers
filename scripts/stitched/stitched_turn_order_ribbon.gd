@@ -1,9 +1,10 @@
 class_name StitchedTurnOrderRibbon
 extends Control
 ## Read-only S5 turn tags: this display never asks the battle to roll or advance.
-## Nine fixed-sized places accommodate four heroes, four foes and a boss's extra turn.
+## Up to nine adaptive places accommodate four heroes, four foes and a boss's extra turn.
 
-const TAG_WIDTH := 73.0
+const RIBBON_WIDTH := 690.0
+const MAX_TAG_WIDTH := 110.0
 const TAG_HEIGHT := 42.0
 const TAG_GAP := 4.0
 const MAX_TAGS := 9
@@ -24,8 +25,7 @@ func _ready() -> void:
 	for index in range(MAX_TAGS):
 		var tag := Control.new()
 		tag.name = "TurnTag%d" % (index + 1)
-		tag.position = Vector2(index * (TAG_WIDTH + TAG_GAP), 0)
-		tag.size = Vector2(TAG_WIDTH, TAG_HEIGHT)
+		tag.size = Vector2(MAX_TAG_WIDTH, TAG_HEIGHT)
 		tag.mouse_filter = Control.MOUSE_FILTER_STOP
 		tag.focus_mode = Control.FOCUS_ALL
 		add_child(tag)
@@ -91,7 +91,6 @@ func _ready() -> void:
 		var help := NinePatchRect.new()
 		help.name = "FocusTooltip"
 		help.texture = plate
-		help.position = Vector2(-236 if index >= 5 else 0, TAG_HEIGHT + 3)
 		help.size = Vector2(304, 218)
 		help.patch_margin_left = 10
 		help.patch_margin_right = 10
@@ -155,8 +154,33 @@ func _on_blur(index: int) -> void:
 func _sync_tip(index: int) -> void:
 	var tag: Dictionary = _tags[index]
 	var control: Control = tag["root"]
+	var help: Control = tag["help"]
+	var viewport := get_viewport_rect()
+	var origin := control.global_position + Vector2(0, TAG_HEIGHT + 3)
+	help.global_position = Vector2(
+		clampf(origin.x, viewport.position.x, viewport.end.x - help.size.x),
+		clampf(origin.y, viewport.position.y, viewport.end.y - help.size.y))
 	tag["help"].visible = control.visible and not control.tooltip_text.is_empty() and (
 		bool(tag["hovered"]) or control.has_focus())
+
+
+func _layout_tag(tag: Dictionary, index: int, width: float) -> void:
+	var control: Control = tag["root"]
+	control.position = Vector2(index * (width + TAG_GAP), 0)
+	control.size = Vector2(width, TAG_HEIGHT)
+	tag["frame"].size = control.size
+	var portrait_width := 28.0 + floorf((width - 73.0) * 0.5)
+	var face_size := Vector2(portrait_width, 32)
+	tag["portrait"].position = Vector2(3, 5)
+	tag["portrait"].size = face_size
+	tag["fallback"].position = Vector2(3, 5)
+	tag["fallback"].size = face_size
+	var text_left := portrait_width + 7.0
+	var text_width := width - text_left - 4.0
+	tag["rank"].position = Vector2(text_left, 2)
+	tag["rank"].size = Vector2(text_width, 19)
+	tag["marker"].position = Vector2(text_left, 23)
+	tag["marker"].size = Vector2(text_width, 17)
 
 
 ## Entries are supplied from public StitchedRules.turn_order() and get_unit().
@@ -177,6 +201,8 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 		displayed_entries.append(unit.duplicate(true))
 		if displayed_entries.size() == MAX_TAGS:
 			break
+	var count := displayed_entries.size()
+	var width := minf(MAX_TAG_WIDTH, floorf((RIBBON_WIDTH - TAG_GAP * (count - 1)) / maxi(1, count)))
 	for index in range(_tags.size()):
 		var tag: Dictionary = _tags[index]
 		var control: Control = tag["root"]
@@ -192,6 +218,7 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 			tag["rank"].text = ""
 			tag["marker"].text = ""
 			continue
+		_layout_tag(tag, index, width)
 		var unit: Dictionary = displayed_entries[index]
 		var id := str(unit.get("id", ""))
 		var full_name := str(unit.get("name", id))
@@ -204,9 +231,9 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 			code += str(int(rank))
 		control.tooltip_text = StitchedTurnStatusCues.tooltip(unit)
 		tag["help_label"].text = control.tooltip_text
-		_fit_chip_text(tag["rank"], code, 16, 10, Vector2(34, 19))
+		_fit_chip_text(tag["rank"], code, 16, 10, Vector2(tag["rank"].size.x, 19))
 		var active := not is_over and not acting_id.is_empty() and id == acting_id
-		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 12, 9, Vector2(34, 17))
+		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 12, 9, Vector2(tag["marker"].size.x, 17))
 		tag["marker"].add_theme_color_override("font_color", AMBER if active else MUTED)
 		tag["frame"].modulate = Color(1, 0.87, 0.67) if active else Color(0.85, 0.82, 0.78)
 		# Never substitute a rank-mate's art or a generic enemy for an unknown ID.
@@ -215,7 +242,7 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 		tag["portrait"].texture = texture
 		tag["portrait"].visible = texture != null
 		tag["fallback"].visible = texture == null
-		_fit_chip_text(tag["fallback"], full_name.substr(0, 4), 11, 9, Vector2(28, 32))
+		_fit_chip_text(tag["fallback"], full_name.substr(0, 4), 11, 9, tag["fallback"].size)
 		control.show()
 		_sync_tip(index)
 

@@ -77,12 +77,14 @@ func _expect_slot(ribbon: StitchedTurnOrderRibbon, i: int, unit: Dictionary) -> 
 
 func _check_fit(ribbon: StitchedTurnOrderRibbon, count: int) -> void:
 	var prior_right := -1.0
+	var width := minf(110.0, floorf((690.0 - 4.0 * (count - 1)) / count))
 	for i in range(count):
 		var tag := ribbon.tag_at(i)
 		var bounds := tag.get_global_rect()
-		_check(tag.visible and bounds.size == Vector2(73, 42) and bounds.position.x >= prior_right and
+		_check(tag.visible and bounds.size == Vector2(width, 42) and bounds.position.x >= prior_right and
+			bounds.end.x <= ribbon.global_position.x + 690 and
 			bounds.position.x >= 0 and bounds.end.x <= 1280 and bounds.position.y >= 0 and bounds.end.y <= 720,
-			"%d-slot turn tag %d is 73x42, ordered and fits 1280x720" % [count, i])
+			"%d-slot turn tag %d has adaptive width, height 42, is ordered and fits 1280x720" % [count, i])
 		prior_right = bounds.end.x
 
 
@@ -199,9 +201,11 @@ func _run() -> void:
 		var tag := ribbon.tag_at(i)
 		var marker := ribbon.marker_at(i)
 		_check(marker.text == expected_cue and marker.text.length() <= 4 and
-			marker.size.x == 34.0 and
+			marker.size.x == tag.get_node("SideRank").size.x and marker.size.x >= 34.0 and
+			marker.get_theme_font("font").get_string_size(expected_cue, HORIZONTAL_ALIGNMENT_LEFT, -1,
+				marker.get_theme_font_size("font_size")).x <= marker.size.x - 2.0 and
 			marker.get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
-			"mounted slot %d displays <=4-char resolve cue %s inside 34px marker" % [i, expected_cue])
+			"mounted slot %d displays complete <=4-char resolve cue %s inside its measured marker" % [i, expected_cue])
 		tag.grab_focus()
 		await process_frame
 		var focus_tip := str(tag.get_node("FocusTooltip/TooltipText").text)

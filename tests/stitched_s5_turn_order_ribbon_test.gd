@@ -94,12 +94,16 @@ func _check_disclosure(ribbon: StitchedTurnOrderRibbon, index: int, full_name: S
 		"slot %d retains full public actor/status text in both disclosure channels" % index)
 	tag.mouse_entered.emit()
 	_check(tip.visible and screen.encloses(tip.get_global_rect()) and
+		tip.get_global_rect().encloses(detail_label.get_global_rect()) and
+		detail_label.get_minimum_size().y <= detail_label.size.y and
 		detail_label.get_visible_line_count() == detail_label.get_line_count(),
 		"slot %d mouse hover shows the complete on-screen Gothic sewn tooltip" % index)
 	tag.mouse_exited.emit()
 	_check(not tip.visible, "slot %d mouse leave closes the hover tooltip" % index)
 	tag.grab_focus()
 	_check(tag.has_focus() and tip.visible and screen.encloses(tip.get_global_rect()) and
+		tip.get_global_rect().encloses(detail_label.get_global_rect()) and
+		detail_label.get_minimum_size().y <= detail_label.size.y and
 		detail_label.get_visible_line_count() == detail_label.get_line_count(),
 		"slot %d keyboard focus discloses the same complete on-screen tooltip" % index)
 	tag.release_focus()
@@ -113,10 +117,17 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 	var candle_rect := Rect2(stage._labels["candle"].global_position, stage._labels["candle"].size)
 	var order_rect := Rect2(stage._labels["order"].global_position, stage._labels["order"].size)
 	var previous_right := -1.0
+	var expected_width := minf(110.0, floorf((690.0 - 4.0 * (count - 1)) / count))
+	_check(ribbon.displayed_entries.size() == count and count > 0 and
+		(count != 7 or expected_width >= 90) and (count != 8 or expected_width >= 80),
+		"populated %d-slot layout meets adaptive width minima" % count)
 	for i in range(count):
 		var tag := ribbon.tag_at(i)
 		var rect := tag.get_global_rect()
-		_check(tag.visible and rect.size == Vector2(73, 42) and top_band.encloses(rect) and
+		_check(tag.visible and rect.size == Vector2(expected_width, 42) and top_band.encloses(rect) and
+			Rect2(ribbon.global_position, Vector2(690, 42)).encloses(rect) and
+			tag.position.x == i * (expected_width + 4.0) and
+			tag.get_node("SewnPlate").get_global_rect() == rect and
 			not rect.intersects(stage_area) and not rect.intersects(round_rect) and
 			not rect.intersects(candle_rect) and not rect.intersects(order_rect) and
 			rect.position.x >= previous_right,
@@ -128,6 +139,10 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 		var face_rect := portrait.get_global_rect() if portrait.visible else fallback.get_global_rect()
 		var rank_rect := rank.get_global_rect()
 		var cue_rect := marker.get_global_rect()
+		_check(portrait.get_global_rect() == fallback.get_global_rect() and
+			face_rect.size.x >= (39.0 if count == 7 else (32.0 if count == 8 else 28.0)) and
+			rank_rect.size.x >= (45.0 if count == 7 else (38.0 if count == 8 else 34.0)),
+			"tag %d portrait and text cells grow with available width" % i)
 		_check(portrait.visible != fallback.visible and rect.encloses(face_rect) and
 			rect.encloses(rank_rect) and rect.encloses(cue_rect) and
 			not face_rect.intersects(rank_rect) and not face_rect.intersects(cue_rect) and
@@ -136,10 +151,12 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 			rank_rect.end.y + 2.0 <= cue_rect.position.y,
 			"tag %d portrait/fallback, rank and status occupy disjoint measured sewn-chip cells" % i)
 		_check(rank.clip_text and marker.clip_text and _text_fits(rank) and _text_fits(marker) and
+			(marker.text == "NOW" or marker.text == StitchedTurnStatusCues.cue(ribbon.displayed_entries[i])) and
 			(fallback.visible == false or (fallback.clip_text and _text_fits(fallback))),
 			"tag %d measured Gothic glyphs fit rank, NOW/status and name fallback labels without clipping" % i)
 		previous_right = rect.end.x
-	_check(previous_right <= 1260, "%d-slot ribbon ends before right top-band edge" % count)
+	_check(previous_right <= ribbon.global_position.x + 690 and previous_right <= 1260,
+		"%d-slot ribbon ends within its allocation and before right top-band edge" % count)
 
 
 func _run() -> void:
@@ -176,6 +193,8 @@ func _run() -> void:
 	for repetition in range(3):
 		stage._refresh()
 		for i in range(ribbon.displayed_entries.size()):
+			ribbon.tag_at(i).grab_focus()
+			ribbon.tag_at(i).release_focus()
 			ribbon.tag_at(i).mouse_entered.emit()
 			ribbon.tag_at(i).mouse_exited.emit()
 	stage.set_reduced_motion(true)
@@ -194,6 +213,13 @@ func _run() -> void:
 	last_foe["rank"] = 4
 	last_foe["statuses"] = {"bleed": 2}
 	nine.append(last_foe)
+	ribbon.show_order(nine, battle.current_actor_id(), false)
+	_check(ribbon.displayed_entries.size() == 8 and ribbon.tag_at(7).get_node("SideRank").text == "F4" and
+		ribbon.portrait_at(7).texture == null and not ribbon.tag_at(8).visible,
+		"eight-slot projection retains fourth foe fallback without a stale ninth tag")
+	_check_geometry(ribbon, 8, stage)
+	for i in range(8):
+		_check_disclosure(ribbon, i, str(ribbon.displayed_entries[i]["name"]))
 	var repeated: Dictionary = battle.get_foes().front()
 	nine.append(repeated.duplicate(true))
 	var repeated_id := str(repeated["id"])
@@ -230,6 +256,9 @@ func _run() -> void:
 		str(ribbon.displayed_entries[1]["id"]) == str(nine[3]["id"]) and
 		ribbon.marker_at(0).text != "NOW" and not ribbon.tag_at(2).visible,
 		"empty/lost/dead/zero-HP entries disappear, order holds, dead actor cannot remain active")
+	_check_geometry(ribbon, 2, stage)
+	for i in range(2):
+		_check_disclosure(ribbon, i, str(ribbon.displayed_entries[i]["name"]))
 	ribbon.show_order([{"id":"unmapped_no_art","name":"Lost Button Doll of the Unravelled Archive",
 		"side":"foe","rank":3,"hp":12,"statuses":{"bleed":3}}], "", false)
 	_check(ribbon.displayed_entries.size() == 1 and ribbon.portrait_at(0).texture == null and
