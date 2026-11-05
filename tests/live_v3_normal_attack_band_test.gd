@@ -562,7 +562,7 @@ func _wraith_phases() -> Array:
 func _trace_route(fixture: Dictionary, witness: String = "",
 		witness_only: bool = false) -> Array:
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var first_entry: Dictionary = {}
 	for id in fixture.path:
 		var node: Dictionary = app.run_map.get_node(id)
@@ -654,7 +654,7 @@ func _pin_state() -> Array:
 
 func _pin_phases(fixture: Dictionary) -> Array:
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var expected := _oracle(fixture.node)
 	await _click(_route_action(fixture.node))
 	_check(not expected.is_empty() and _mounted_state() == expected,

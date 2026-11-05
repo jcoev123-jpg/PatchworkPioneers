@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 
 const BOOT := preload("res://scripts/live_web_playtest_boot.gd")
 var failures: Array[String] = []
@@ -45,7 +46,7 @@ func _run() -> void:
 		null, 12]:
 		var parsed: String = boot.screen_from_query(query)
 		_check(parsed == "", "unsupported query rejected: " + str(query))
-		_check(not await boot.enter_preview(app, parsed), "unsupported request cannot start run")
+		_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), parsed), "unsupported request cannot start run")
 		_check(_snapshot(app) == pristine and app.run_rng == null and app.run_map == null,
 			"invalid input preserves all title resources and seed")
 	_check(randi() == expected_global, "invalid input consumes no global RNG")
@@ -62,7 +63,7 @@ func _run() -> void:
 			seed(114115)
 			expected_global = randi()
 			seed(114115)
-			_check(await boot.enter_preview(app, screen), "preview succeeds: " + screen)
+			_check(await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen), "preview succeeds: " + screen)
 			_check(boot.preview_ready and Engine.get_process_frames() >= frames + 2, "ready follows two frames: " + screen)
 			_check(boot._expected_view(app, screen), "matching mounted live view: " + screen)
 			_check(randi() == expected_global, "preview preserves global RNG: " + screen)
@@ -131,16 +132,16 @@ func _run() -> void:
 			else:
 				_check(snapshot == replay, "independent deterministic model replay: " + screen)
 			if screen == "base":
-				_check(not await boot.enter_preview(app, "base") and _snapshot(app) == snapshot,
+				_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "base") and _snapshot(app) == snapshot,
 					"already-open village preview cannot be re-entered")
 			if screen not in ["title", "base"]:
-				_check(not await boot.enter_preview(app, "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
+				_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
 				if screen == "stitched_battle":
 					boot.exit_stitched_preview(app)
 					_check(boot.stitched_view == null and app.title_view.is_visible_in_tree(), "stitched preview unmounts and restores title")
 				else:
 					app._return_to_title()
-				app.start_button.pressed.emit()
+				app.start_run_requested.emit()
 				_check(is_instance_valid(app.party_picker) and app.run_map == null, "restart first mounts picker")
 				for id in ["warden", "seamstress", "tinker"]:
 					app.party_picker._tiles[id].pressed.emit()
@@ -164,7 +165,7 @@ func _run() -> void:
 				app.party_picker.party_requested.connect(func(_ids):
 					for button in app.route_buttons:
 						button.disabled = true))
-		_check(not await boot.enter_preview(app, "battle") and not boot.preview_ready, "failed admission never ready: " + broken)
+		_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "battle") and not boot.preview_ready, "failed admission never ready: " + broken)
 		_check(app.deck == null and app.battle_result == null, "failed admission creates no combat")
 		app.free()
 	for failure in failures:

@@ -1,4 +1,5 @@
 extends "res://tests/live_atlas_opening_choice_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Real generated routes: direct, atlas pointer and physical number-key parity.
 
 var app
@@ -303,7 +304,7 @@ func _run() -> void:
 		var replay: Array = []
 		for mode in range(3):
 			app.run_seed = fixture.seed
-			await _click(app.start_button)
+			await _click(LEGACY_ENTRY.start_button(app))
 			preload("res://tests/party_choice.gd").choose(app)
 			var observations: Array = []
 			for step in range(fixture.path.size()):
@@ -357,7 +358,7 @@ func _four_keys() -> void:
 		var replay: Array = []
 		for mode in [0, 2]:
 			app.run_seed = value
-			await _click(app.start_button)
+			await _click(LEGACY_ENTRY.start_button(app))
 			preload("res://tests/party_choice.gd").choose(app)
 			await _enter_node(id, mode)
 			if mode == 0:

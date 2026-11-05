@@ -1430,7 +1430,7 @@ func _combo_route_case() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var fight: Button = null
 	for button in app.route_buttons:
 		if button.get_meta("route_id") == fixture.fight:
@@ -1517,7 +1517,7 @@ func _combo_precast_bleed() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var fight: Button = null
 	for button in app.route_buttons:
 		if button.get_meta("route_id") == fixture.fight:
@@ -1666,7 +1666,7 @@ func _combo_three_slots() -> void:
 	for id in ["tinker_spool_launcher", "tinker_spool_launcher_plus",
 			"tinker_snip_the_seam", "tinker_snip_the_seam_plus"]:
 		app.run_seed = fixture.seed
-		await _click(app.route_button)
+		await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 		var fight: Button = null
 		for button in app.route_buttons:
 			if button.get_meta("route_id") == fixture.fight:
@@ -2316,7 +2316,7 @@ func _combo_other_owner() -> void:
 
 func _fixture_start(target) -> void:
 	if target.deck != null:
-		target.start_button.pressed.emit()
+		target.start_run_requested.emit()
 		return
 	var started: bool = target._start_battle()
 	_check(started == (target.deck != null), "standalone fixture reports admission consistently")
@@ -2407,7 +2407,7 @@ func _control_attack_patches() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var treasure: Button = null
 	for button in app.route_buttons:
 		if button.get_meta("route_id") == fixture.treasure:

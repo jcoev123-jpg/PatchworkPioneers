@@ -2987,7 +2987,7 @@ func _test_live_lethal_fight() -> Dictionary:
 	var live: Variant = load(APP_SCENE).instantiate()
 	root.add_child(live)
 	live.run_seed = 8722
-	live.start_button.pressed.emit()
+	live.start_run_requested.emit()
 	preload("res://tests/party_choice.gd").choose(live)
 	await _frames()
 	_check(live.run_map != null and live.run_rng != null, "AC1: live Start admits party and seeded map")

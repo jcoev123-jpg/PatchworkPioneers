@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Deterministic checks for the sewn Shop/Rest action skin.
 ##
 ## The helper in LiveVisitCardTiles is the actual code the mounted visit calls.
@@ -459,7 +460,7 @@ func _check_mounted_rail(screen: String) -> void:
 	root.add_child(app)
 	await process_frame
 	var boot = root.get_node("LiveWebPlaytestBoot")
-	var entered: bool = await boot.enter_preview(app, screen)
+	var entered: bool = await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen)
 	_check(entered, "real mounted " + screen + " preview precondition")
 	var view: Control = app.shop_view if screen == "shop" else app.rest_view
 	var gallery = app.get_node_or_null("LiveVisitCardTiles")

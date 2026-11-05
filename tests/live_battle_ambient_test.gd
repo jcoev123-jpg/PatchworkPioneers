@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Visual-only stage profiles and mounted title/fight/return reuse. All RNG
 ## comparisons are against real authorities, never seeded cosmetic sampling.
 ## The atmosphere is texture-only: no particle emitter may exist anywhere in it.
@@ -60,7 +61,7 @@ func _snapshot() -> Array:
 func _select_fight() -> bool:
 	for candidate in range(1, 25):
 		app.run_seed = candidate
-		await _click(app.start_button)
+		await _click(LEGACY_ENTRY.start_button(app))
 		preload("res://tests/party_choice.gd").choose(app)
 		var selected: Button = null
 		if app.run_map != null:

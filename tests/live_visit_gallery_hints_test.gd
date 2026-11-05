@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Deterministic checks for the mounted Shop/Rest gallery guidance typography.
 ##
 ## The gallery's visit hint, section prompts and empty-state notes are built by
@@ -124,7 +125,7 @@ func _check_mounted_labels(screen: String) -> void:
 	root.add_child(app)
 	await process_frame
 	var boot = root.get_node("LiveWebPlaytestBoot")
-	var entered: bool = await boot.enter_preview(app, screen)
+	var entered: bool = await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen)
 	_check(entered, "real mounted " + screen + " preview precondition")
 	if screen == "shop":
 		await _check_peddler_labels(app)

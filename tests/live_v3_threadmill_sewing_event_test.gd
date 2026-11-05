@@ -8,7 +8,7 @@ var _pre_transit_scraps: int = -1
 
 func _reach(fixture: Dictionary, funded: bool = true, picked: Array = ["warden", "seamstress", "tinker"]) -> void:
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	_check(app.run_map != null and app.run_rng != null, "real title Start creates seeded run")

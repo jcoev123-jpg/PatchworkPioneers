@@ -303,7 +303,7 @@ func _formation_win(fixture: Dictionary) -> bool:
 	# A deterministic combat fixture covers carried downed/status/permuted actors;
 	# the two normal sessions below win their predecessor with actual held inputs.
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(_route_action(fixture.fight))
 	_check(app.party != null and app.enemies != null, "formation fixture starts real routed battle")
 	if app.party == null:
@@ -336,7 +336,7 @@ func _deep_area_stage() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(_route_action(fixture.fight))
 	_check(app.deck != null and app.party != null, "deep area fixture starts a real opening battle")
 	if app.deck == null or app.party == null:

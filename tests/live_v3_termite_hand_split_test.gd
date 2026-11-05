@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 
 ## Live seam: a paid held-card lethal hit on the authored Quilt Termite must
 ## split it through the app's real post-card observation boundary, and normal
@@ -277,7 +278,7 @@ func _run() -> void:
 		await _finish()
 		return
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	PartyChoice.choose(app)
 	await _frames()
 	_check(app.run_map != null and app.deck == null, "a chosen party opens the genuine route")

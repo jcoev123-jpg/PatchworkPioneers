@@ -391,7 +391,7 @@ func _entry(fixture: Dictionary, owner: String, downed: bool, keyboard: bool,
 		await _click(village.set_out_button)
 		PartyChoice.choose(app)  # Cycle 345: Set out first asks for the party.
 	else:
-		await _click(app.route_button)
+		await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(_route_action(fixture.fight))
 	_check(app.deck != null and app.deck.hand.size() == 5
 		and app.encounter_id == "starter_attacks" and app.party.is_valid(),
@@ -899,6 +899,7 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	app = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	presenter = app.get_node("LiveAttackPreview")
 	var fixture := _quick_fixture()

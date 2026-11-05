@@ -487,7 +487,7 @@ func _dye_no_base_outcomes() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _dye_transit(fixture, fixture.path[0])
 	await _click(_route_action(fixture.path[0]))

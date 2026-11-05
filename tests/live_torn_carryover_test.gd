@@ -235,7 +235,7 @@ func _mounted_warden_carryover_opening() -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	await _activate(app.route_button, false)
+	await _activate(preload("res://tests/legacy_card_app_fixture.gd").route_button(app), false)
 	await _activate(_route_action(fixture.fight), false)
 	_check(app.party != null and app.party.get_hero(1).id == "warden"
 		and app.party.get_hero(1).block == 6,
@@ -293,7 +293,7 @@ func _run() -> void:
 		for session in range(2):
 			var keyboard := session == 1
 			app.run_seed = fixture.seed
-			await _activate(app.route_button, keyboard)
+			await _activate(preload("res://tests/legacy_card_app_fixture.gd").route_button(app), keyboard)
 			await _activate(_route_action(fixture.fight), keyboard)
 			_check(app.party_carryover is RunTornCarryover, "routed battle owns tear service")
 			var swap := CombatPositionSwaps.preview_adjacent_swap(app.party, 1, 1)

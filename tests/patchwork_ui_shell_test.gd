@@ -1,4 +1,5 @@
 extends "res://tests/live_run_map_entry_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Mounted presentation/lifecycle checks; visual layout is reviewed in web screenshots.
 
 ## The master body face every sewn tile label inherits: Patrick Hand.
@@ -20,6 +21,7 @@ func _run() -> void:
 	var scene := load("res://scenes/app.tscn") as PackedScene
 	var app = scene.instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await process_frame
 	var shell = app.get_node("PatchworkUIShell")
 	var shared: Theme = app.theme
@@ -304,7 +306,7 @@ func _run() -> void:
 	await _key(KEY_TAB)
 	_check(app.base_button.has_focus(), "Tab reaches Quilt village on the sewn title")
 	app.start_button.grab_focus()
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.route_view != null and not app.route_buttons.is_empty() and not shell.visible, "physical Start reaches real map")
 	var fight: Button
@@ -326,8 +328,9 @@ func _run() -> void:
 	for screen in boot.SCREENS:
 		app = scene.instantiate()
 		root.add_child(app)
+		preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 		await process_frame
-		_check(await boot.enter_preview(app, screen), "nonempty real preview precondition: " + screen)
+		_check(await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen), "nonempty real preview precondition: " + screen)
 		# Live mounted Event and terminal views resolve the master typography through
 		# the App theme the shell installed, not only in a standalone panel mount.
 		if screen == "event":

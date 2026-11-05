@@ -1,4 +1,5 @@
 extends "res://tests/live_run_map_entry_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Shipped scene, physical title/route inputs and independent typed data oracle.
 
 ## Written out here, not read from App, so the mounted label cannot agree with a broken map.
@@ -215,7 +216,7 @@ func _invalid_starts(app) -> void:
 		seed(950095)
 		var expected := randi()
 		seed(950095)
-		await _activate(app.start_button, true)
+		await _activate(LEGACY_ENTRY.start_button(app), true)
 		_check(is_instance_valid(app.party_picker) and app.run_map == null, "invalid-data Start still requires explicit party")
 		for id in ["warden", "seamstress", "tinker"]:
 			await _activate(app.party_picker._tiles[id], true)
@@ -227,7 +228,7 @@ func _invalid_starts(app) -> void:
 	for field in ["starter_deck_path", "starter_party_path"]:
 		var previous: String = app.get(field)
 		app.set(field, path)
-		await _activate(app.start_button, false)
+		await _activate(LEGACY_ENTRY.start_button(app), false)
 		_check(is_instance_valid(app.party_picker) and app.run_map == null, "missing-data Start still requires explicit party")
 		for id in ["warden", "seamstress", "tinker"]:
 			await _activate(app.party_picker._tiles[id], false)
@@ -604,7 +605,7 @@ func _run() -> void:
 		var replay_book: Array = []
 		for mode in range(2):
 			app.run_seed = fixture[1]
-			await _activate(app.start_button, mode == 1)
+			await _activate(LEGACY_ENTRY.start_button(app), mode == 1)
 			_check(is_instance_valid(app.party_picker) and app.run_map == null, "physical Start mounts picker before allocating run")
 			for id in ["warden", "seamstress", "tinker"]:
 				await _activate(app.party_picker._tiles[id], mode == 1)
@@ -796,7 +797,7 @@ func _run() -> void:
 			await _activate(app.return_button, mode == 1)
 			_clean(app)
 			# Return directly from a no-battle visit, then replay the same seeded title.
-			await _activate(app.start_button, mode == 0)
+			await _activate(LEGACY_ENTRY.start_button(app), mode == 0)
 			_check(is_instance_valid(app.party_picker) and app.run_map == null, "replayed Start first mounts picker")
 			for id in ["warden", "seamstress", "tinker"]:
 				await _activate(app.party_picker._tiles[id], mode == 0)

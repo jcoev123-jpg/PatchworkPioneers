@@ -217,7 +217,7 @@ func _route_snapshot(app) -> Array:
 func _app_binding(app, source: Signal) -> Callable:
 	for connection in source.get_connections():
 		var callable: Callable = connection.callable
-		if callable.get_object() == app:
+		if callable.get_object() == app or callable.get_method() == "_legacy_base_set_out":
 			return callable
 	return Callable()
 
@@ -228,6 +228,7 @@ func _fresh_path_run(path_id: String, use_mouse: bool, enter_fight: bool) -> voi
 	var scene := load(APP_SCENE) as PackedScene
 	var app = scene.instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await process_frame
 	var expected := _expected_receipt(path_id)
 	var other_id := "unpicker" if path_id == "bloodline" else "bloodline"
@@ -830,6 +831,7 @@ func _run() -> void:
 	await process_frame
 	var app = scene.instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await process_frame
 
 	# --- AC1: a third focused, stitched title action and a run-free Base ------
@@ -1292,7 +1294,7 @@ func _run() -> void:
 		and app.title_view.is_visible_in_tree(), "freed Base Path callbacks stay inert")
 
 	# --- AC2: direct Choose a route is unchanged and seeded identically ------
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_check(is_instance_valid(app.route_view) and app.run_map != null,
 		"direct Choose a route still opens the chooser")
 	var direct_route := _route_snapshot(app)
@@ -1388,6 +1390,7 @@ func _check_base_picker_guards(app, view: BaseScreen, set_out_binding: Callable)
 func _chosen_party_run() -> void:
 	var app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await process_frame
 	await _click(app.base_button)
 	var view: BaseScreen = app.base_screen

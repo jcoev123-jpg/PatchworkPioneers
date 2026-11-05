@@ -190,7 +190,7 @@ func _camp_scenario(connected: bool, heal: bool, keyboard: bool, opening_rest: b
 			and app.run_heroes[0].hp < app.run_heroes[0].max_hp, "real victory produces torn, capped and wounded witnesses")
 	else:
 		app.run_seed = fixture.seed
-		await _click(app.start_button)
+		await _click(LEGACY_ENTRY.start_button(app))
 		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	await _camp_enter(keyboard)

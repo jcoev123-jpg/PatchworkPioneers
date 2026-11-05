@@ -42,7 +42,7 @@ func _stall_scenario(keyboard: bool, buy: bool, funded: bool, wearer: int, conne
 		await _frames()
 	else:
 		app.run_seed = fixture.seed
-		await _click(app.start_button)
+		await _click(LEGACY_ENTRY.start_button(app))
 		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	if funded:
@@ -514,7 +514,7 @@ func _stall_heirloom_scenario(unlocked: bool, wearer: int) -> Array:
 	_check(app.restore_profile_state(envelope) and app.heirloom_unlocked == unlocked,
 		"saved completed-run profile restores the genuine live unlock state")
 	app.run_seed = witness.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	# Same explicit funded opening wallet authority as the shipped scenarios.
@@ -639,7 +639,7 @@ func _open_title_teardown() -> void:
 	root.add_child(app)
 	await _frames()
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_button(fixture.id))
 	var panel: LivePatchStallPanel = app.patch_stall_view
@@ -660,7 +660,7 @@ func _open_title_teardown() -> void:
 		"title frees open panel and clears all bindings and witnesses")
 	handler.call()
 	_check(app.run_map == null and service.read_state() == source, "retired open intent cannot consume visit at title")
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var before: Dictionary = app._sewing_context()

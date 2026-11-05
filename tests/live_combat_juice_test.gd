@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Cycle 122 (VIS V5): one mounted, presentation-only listener for committed HP/Block.
 ## It drives the real title, route, hand, enemy targets and action row; animation
 ## timing is asserted as effect contract, never as node geometry.
@@ -134,7 +135,7 @@ func _enter_fight(seed_value: int = 0) -> bool:
 	for candidate in seeds:
 		app.run_seed = int(candidate)
 		await _reset_to_title()
-		await _mouse(app.start_button)
+		await _mouse(LEGACY_ENTRY.start_button(app))
 		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 		if app.run_map == null or not is_instance_valid(app.route_view):
@@ -1902,7 +1903,7 @@ func _screen_fades() -> void:
 	var layer_id: int = juice.fade_layer.get_instance_id()
 	# Title -> map.
 	var fades_before: int = juice.fade_history.size()
-	await _mouse(app.start_button)
+	await _mouse(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	_check(app.run_map != null and is_instance_valid(app.route_view)

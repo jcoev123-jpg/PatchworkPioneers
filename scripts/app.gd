@@ -667,6 +667,14 @@ class ActionCornerStitch extends Control:
 @export_file("*.json") var starter_enemies_path: String = STARTER_ENEMIES_PATH
 
 var title_label: Label
+var stitched_run_session: StitchedRunSession
+var _stitched_run_base: WeakRef
+var stitched_run_panel: Control
+var stitched_run_battle: StitchedBattleScreen
+var stitched_run_buttons: Array[Button] = []
+var stitched_run_draft: Array = []
+var _stitched_run_epoch := 0
+const STITCHED_SAVE_PATH := "user://stitched_run.save"
 var start_button: Button
 var route_button: Button
 var base_button: Button
@@ -765,15 +773,15 @@ var _stitched_party_confirm_button: Button
 var _stitched_party_cancel_button: Button
 const STITCHED_ROADBLOCK_ID := "v3_stitchline_roadblock"
 const STITCHED_SEWING_NODE_ID := "s5_scissor_crab_sewing_circle"
-const STITCHED_SEWING_MEND_COST := 2
-const STITCHED_SEWING_UPGRADE_COST := 2
+const STITCHED_SEWING_MEND_COST := StitchedRunSession.SEWING_COST
+const STITCHED_SEWING_UPGRADE_COST := StitchedRunSession.SEWING_COST
 const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
 const STITCHED_CAMPFIRE_NODE_ID := "s6_stitched_roadblock_campfire"
 const STITCHED_EVENT_ID := "s6_stitched_lantern_bobbin_ferry"
 const STITCHED_EVENT_PATH := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
 const STITCHED_EVENT_CHOICES := ["pay_gold", "mend_wick", "leave"]
-const STITCHED_PEDDLER_PRICE := 10
+const STITCHED_PEDDLER_PRICE := StitchedRunSession.PEDDLER_PRICE
 const STITCHED_PEDDLER_PART_ID := "warden_head_helmet_rattle"
 const STITCHED_PREVIEW_WIN_GOLD := 10
 const STITCHED_CLAW_ID := "scissor_crab_claw_arm"
@@ -1428,15 +1436,27 @@ func _build_title() -> void:
 	box.add_child(title_label)
 
 	start_button = Button.new()
-	start_button.text = "Start run"
+	start_button.text = "New Run"
 	start_button.custom_minimum_size = Vector2(240, 56)
 	start_button.add_theme_font_size_override("font_size", 28)
-	start_button.pressed.connect(func(): start_run_requested.emit())
+	start_button.pressed.connect(_open_stitched_run_picker)
 	box.add_child(start_button)
+	var resume := Button.new()
+	resume.name = "ContinueStitchedRun"
+	resume.text = "Continue run"
+	resume.custom_minimum_size = Vector2(240, 44)
+	resume.pressed.connect(func():
+		if title_view.is_visible_in_tree() and stitched_run_session == null:
+			load_stitched_run(STITCHED_SAVE_PATH))
+	box.add_child(resume)
 	route_button = Button.new()
 	route_button.text = "Choose a route"
 	route_button.custom_minimum_size = Vector2(240, 56)
 	route_button.pressed.connect(_open_route)
+	# Retain the object for isolated legacy regressions, not the live title.
+	route_button.hide()
+	route_button.disabled = true
+	route_button.focus_mode = Control.FOCUS_NONE
 	box.add_child(route_button)
 	base_button = Button.new()
 	base_button.text = "Quilt village"
@@ -1493,13 +1513,11 @@ func _build_title() -> void:
 	stitched_unpicker_button.focus_mode = Control.FOCUS_NONE
 	stitched_unpicker_button.pressed.connect(_open_stitched_unpicker)
 	box.add_child(stitched_unpicker_button)
-	start_button.focus_next = start_button.get_path_to(route_button)
-	route_button.focus_next = route_button.get_path_to(base_button)
+	start_button.focus_next = start_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
 	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
 	start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
-	route_button.focus_previous = route_button.get_path_to(start_button)
-	base_button.focus_previous = base_button.get_path_to(route_button)
+	base_button.focus_previous = base_button.get_path_to(start_button)
 	stitched_fight_button.focus_previous = stitched_fight_button.get_path_to(base_button)
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
@@ -1519,131 +1537,17 @@ func _stitched_floor_config(requested_receipt: Dictionary = {}) -> Dictionary:
 	if party.get("ok") != true or party != _stitched_party_receipt \
 			or (not requested_receipt.is_empty() and requested_receipt != party):
 		return {}
-	var preview := StitchedBattleScreen.read_preview()
-	if not preview.get("heroes") is Array or preview["heroes"].size() != 4 \
-			or not preview.get("foes") is Array or preview["foes"].size() != 3 \
-			or not preview.get("parts") is Array:
+	var config := StitchedRunSession.starter_config(_stitched_party_picks)
+	if config.is_empty():
 		return {}
-	var roster := StitchedEnemyCatalog.load_catalog()
-	if not bool(roster.get("ok", false)):
-		return {}
-	var owner_catalogs: Dictionary = {}
-	for owner_id in StitchedPartyAdmission.HERO_IDS:
-		var loaded := StitchedParts.load_catalog("res://data/parts/%s_parts.json" % owner_id)
-		if not bool(loaded.get("ok", false)):
-			return {}
-		owner_catalogs[owner_id] = loaded
-	var foes: Array = []
-	var seen_foes: Dictionary = {}
-	var foe_ids: Array = []
-	var allowed_ids: Array = STITCHED_ROADBLOCK_FOES
+	var selected_heroes: Array = config["heroes"]
+	var catalog := StitchedParts.build_catalog(config["parts"])
+	var foes: Array = config["foes"]
 	if _stitched_roadblock_win_count > 0:
-		foe_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES.duplicate()
-		allowed_ids = STITCHED_FOLLOWON_ROADBLOCK_FOES
-	if _stitched_roadblock_win_count == 0:
-		# The first real Fight retains the authored preview rank order.
-		for entry in preview["foes"]:
-			if not entry is Dictionary or typeof(entry.get("id")) != TYPE_STRING:
-				return {}
-			foe_ids.append(entry["id"])
-	if foe_ids.size() != 3:
-		return {}
-	for foe_id in foe_ids:
-		if typeof(foe_id) != TYPE_STRING or foe_id.is_empty() \
-				or seen_foes.has(foe_id) or not foe_id in allowed_ids:
-			return {}
-		seen_foes[foe_id] = true
-		var foe := StitchedEnemyCatalog.foe_for(roster, foe_id)
-		if foe.is_empty() or bool(foe.get("is_boss", true)) \
-				or foe.get("turns_per_round") != 1 \
-				or StitchedEnemyCatalog.trophy_for(roster, foe_id).is_empty():
-			return {}
-		foes.append(foe)
-	var generic: Array = []
-	for entry in preview["parts"]:
-		if not entry is Dictionary:
-			return {}
-		if str(entry.get("owner", "")) == "any":
-			generic.append(entry)
-	var definitions: Array = []
-	for owner_id in StitchedPartyAdmission.HERO_IDS:
-		for part in owner_catalogs[owner_id]["parts"]:
-			if str(part.get("owner", "")) != owner_id:
-				return {}
-			definitions.append(part)
-	definitions.append_array(generic)
-	definitions.append_array(roster["parts"])
-	# This combined validation also excludes duplicated IDs across all sources.
-	var catalog := StitchedParts.build_catalog(definitions)
-	if not bool(catalog.get("ok", false)):
-		return {}
-	# Keep the four existing explicitly authored starter loadouts unchanged.
-	var starters := {
-		"warden": {
-			"head": "warden_head_pot_helm_bonk",
-			"arms": "warden_arms_shield_catch",
-			"torso": "warden_torso_iron_challenge",
-			"legs": "warden_legs_rim_toss",
-		},
-		"seamstress": {
-			"head": "seamstress_mending_knot_hat",
-			"arms": "seamstress_thread_prick_needle",
-			"torso": "seamstress_shielding_hem_coat",
-			"legs": "seamstress_tether_loop_spools",
-		},
-		"tinker": {
-			"head": "tinker_head_cog_shot",
-			"arms": "tinker_arms_scrap_bomb",
-			"torso": "tinker_torso_casing_ward",
-			"legs": "tinker_legs_tune_up",
-		},
-		"lantern_monk": {
-			"head": "lantern_monk_head_moth_wink",
-			"arms": "lantern_monk_arms_wick_spark",
-			"torso": "lantern_monk_torso_lamplight_wash",
-			"legs": "lantern_monk_legs_pole_shelter",
-		},
-	}
-	# New heroes wear the FIRST authored part in each slot, never a generic
-	# prototype and never an inferred skill or upgrade.
-	for owner_id in StitchedPartyAdmission.HERO_IDS:
-		if starters.has(owner_id):
-			continue
-		var first: Dictionary = {}
-		for part in owner_catalogs[owner_id]["parts"]:
-			var slot := str(part.get("slot", ""))
-			if slot in StitchedParts.SLOTS and not first.has(slot):
-				first[slot] = str(part.get("id", ""))
-		if first.size() != StitchedParts.SLOTS.size():
-			return {}
-		starters[owner_id] = first
-	for owner_id in StitchedPartyAdmission.HERO_IDS:
-		for slot in StitchedParts.SLOTS:
-			var part_id: String = starters[owner_id][slot]
-			var part: Dictionary = catalog["by_id"].get(part_id, {})
-			if part.is_empty() or str(part.get("owner", "")) != owner_id \
-					or str(part.get("slot", "")) != slot \
-					or StitchedParts.ability_at_tier(part, 1).is_empty() \
-					or StitchedParts.validate_ability(StitchedParts.ability_at_tier(part, 1)).get("ok") != true:
-				return {}
-	var config := preview.duplicate(true)
-	var selected_heroes: Array = []
-	for index in range(4):
-		var identity: Dictionary = party["heroes"][index]
-		var source: Variant = preview["heroes"][index]
-		if not source is Dictionary or not source.get("parts") is Dictionary \
-				or identity.get("rank") != index + 1:
-			return {}
-		var hero: Dictionary = source.duplicate(true)
-		hero["id"] = identity["id"]
-		hero["name"] = identity["name"]
-		hero["max_hp"] = identity["max_hp"]
-		hero["rank"] = identity["rank"]
-		var worn: Dictionary = {}
-		for slot in StitchedParts.SLOTS:
-			worn[slot] = {"id": starters[identity["id"]][slot], "tier": 1, "torn": false}
-		hero["parts"] = worn
-		selected_heroes.append(hero)
+		foes = []
+		var roster := StitchedEnemyCatalog.load_catalog()
+		for foe_id in STITCHED_FOLLOWON_ROADBLOCK_FOES:
+			foes.append(StitchedEnemyCatalog.foe_for(roster, foe_id))
 	# A trophy is carried only for the currently selected hero by canonical ID.
 	# A compatible foreign trophy is legal; its owner is not the wearer.
 	for hero in selected_heroes:
@@ -5315,22 +5219,20 @@ func _close_base(view: BaseScreen = null) -> void:
 	closing.queue_free()
 
 
-## Set out first mounts the pick-three screen, bound to this village and to this one
-## opening; no run, RNG or deck exists until the picker returns a valid party.
+## Village Set out uses the same four-of-eight admission as live New Run.
+## The village stays mounted but inert, so cancelling the picker restores its browsing.
 func _base_set_out(source: WeakRef) -> void:
 	var view := _live_base(source)
 	if view == null:
 		return
-	if deck != null or run_map != null or is_instance_valid(party_picker) or not view._set_out_pending:
+	if deck != null or run_map != null or stitched_run_session != null \
+			or is_instance_valid(stitched_run_panel) or is_instance_valid(party_picker) \
+			or not view._set_out_pending:
 		view.release_set_out()
 		return
-	_party_opening += 1
-	party_picker = load("res://scenes/v3_party_picker.tscn").instantiate()
-	add_child(party_picker)
-	party_picker.party_requested.connect(_admit_base_party.bind(weakref(party_picker), _party_opening, source))
-	party_picker.cancel_requested.connect(_cancel_base_party.bind(weakref(party_picker), _party_opening, source))
-	# Hidden, the village's own actions are inert while the party is chosen.
-	view.hide()
+	_open_stitched_run_picker(true)
+	if not is_instance_valid(stitched_run_panel):
+		view.release_set_out()
 
 
 ## The village that is waiting on its picker: this app's mounted, open, hidden Base
@@ -5418,6 +5320,255 @@ func _start_run() -> void:
 	title_view.hide()
 
 
+func _clear_stitched_run_panel() -> void:
+	_stitched_run_epoch += 1
+	stitched_run_buttons.clear()
+	if is_instance_valid(stitched_run_panel):
+		remove_child(stitched_run_panel)
+		stitched_run_panel.queue_free()
+	stitched_run_panel = null
+
+
+func _stitched_run_page(heading: String) -> VBoxContainer:
+	_clear_stitched_run_panel()
+	var panel := NinePatchRect.new()
+	panel.name = "StitchedRunPage"
+	var art := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art, "Texture2D"):
+		panel.texture = load(art)
+	panel.patch_margin_left = 24
+	panel.patch_margin_right = 24
+	panel.patch_margin_top = 24
+	panel.patch_margin_bottom = 24
+	panel.position = Vector2(36, 24)
+	panel.size = Vector2(1208, 672)
+	add_child(panel)
+	stitched_run_panel = panel
+	var content := VBoxContainer.new()
+	content.position = Vector2(28, 20)
+	content.size = Vector2(1152, 628)
+	content.add_theme_constant_override("separation", 12)
+	panel.add_child(content)
+	var label := Label.new()
+	label.text = heading
+	label.add_theme_font_size_override("font_size", 30)
+	content.add_child(label)
+	return content
+
+
+func _stitched_run_action(parent: Node, text: String, callback: Callable, enabled: bool = true) -> Button:
+	var button := Button.new()
+	button.text = text
+	button.custom_minimum_size = Vector2(220, 44)
+	button.disabled = not enabled
+	parent.add_child(button)
+	var epoch := _stitched_run_epoch
+	button.pressed.connect(func():
+		if epoch == _stitched_run_epoch and button.get_parent() == parent \
+			and button.is_visible_in_tree() and not button.disabled:
+			callback.call())
+	stitched_run_buttons.append(button)
+	return button
+
+
+func _open_stitched_run_picker(from_base: bool = false) -> void:
+	var village: BaseScreen = base_screen if from_base and is_instance_valid(base_screen) else null
+	var from_live_base: bool = village != null and village.get_parent() == self \
+		and village.is_visible_in_tree() and village.has_open_village() \
+		and village._set_out_pending and not title_view.is_visible_in_tree()
+	if stitched_run_session != null or is_instance_valid(stitched_run_panel) \
+		or not is_instance_valid(title_view) \
+		or (not from_live_base and (from_base or not title_view.is_visible_in_tree())) \
+		or run_map != null or deck != null or is_instance_valid(stitched_fight_view):
+		return
+	stitched_run_draft = StitchedRunSession.DEFAULT_PICKS.duplicate()
+	_stitched_run_base = weakref(village) if from_live_base else null
+	if from_live_base:
+		village.hide()
+	else:
+		title_view.hide()
+	var content := _stitched_run_page("Choose four pioneers")
+	var grid := GridContainer.new()
+	grid.columns = 2
+	content.add_child(grid)
+	var boxes: Array[CheckButton] = []
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var check := CheckButton.new()
+		check.text = str(id).replace("_", " ").capitalize()
+		check.set_meta("hero_id", id)
+		check.button_pressed = id in stitched_run_draft
+		check.custom_minimum_size = Vector2(480, 48)
+		grid.add_child(check)
+		boxes.append(check)
+		check.toggled.connect(func(pressed: bool):
+			if pressed and not id in stitched_run_draft:
+				stitched_run_draft.append(id)
+			elif not pressed:
+				stitched_run_draft.erase(id))
+	_stitched_run_action(content, "Set out", func():
+		var selected: Array = []
+		for check in boxes:
+			if not is_instance_valid(check) or check.get_parent() != grid:
+				return
+			if check.button_pressed:
+				selected.append(check.get_meta("hero_id"))
+		if selected.size() != 4 or selected.size() != stitched_run_draft.size():
+			return
+		var selected_set := selected.duplicate()
+		var draft_set := stitched_run_draft.duplicate()
+		selected_set.sort()
+		draft_set.sort()
+		if selected_set != draft_set:
+			return
+		var session := StitchedRunSession.start(run_seed, stitched_run_draft)
+		if session == null:
+			return
+		stitched_run_session = session
+		if _stitched_run_base != null:
+			var base_to_close := _stitched_run_base.get_ref() as BaseScreen
+			_stitched_run_base = null
+			if is_instance_valid(base_to_close) and base_to_close == base_screen:
+				_close_base(base_to_close)
+		_present_stitched_run())
+	_stitched_run_action(content, "Cancel", _return_stitched_run_title)
+	stitched_run_buttons[0].grab_focus()
+
+
+func _present_stitched_run() -> void:
+	var session := stitched_run_session
+	if session == null or not session.is_consistent():
+		return
+	if session.phase == "battle":
+		_clear_stitched_run_panel()
+		var stage := StitchedBattleScreen.new()
+		stage.config = session.battle_config.duplicate(true)
+		stage.battle = session.battle
+		stage.parts = session.catalog
+		stitched_run_battle = stage
+		stage.exit_requested.connect(func():
+			if stitched_run_session != session or stitched_run_battle != stage:
+				return
+			if not session.settle_battle(stage.battle):
+				return
+			stitched_run_battle = null
+			remove_child(stage)
+			stage.queue_free()
+			_present_stitched_run())
+		if not session.changed.is_connected(_sync_stitched_run_exit):
+			session.changed.connect(_sync_stitched_run_exit)
+		add_child(stage)
+		stage._action_buttons["exit"].text = "Continue"
+		stage._action_buttons["exit"].size.x = 100
+		stage._action_buttons["exit"].disabled = not session.battle.is_over()
+		var save := Button.new()
+		save.name = "SaveStitchedBattle"
+		save.text = "Save run"
+		save.position = Vector2(1149, 676)
+		save.size = Vector2(102, 29)
+		save.pressed.connect(func():
+			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
+				StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
+		stage.add_child(save)
+		return
+	var terminal := session.phase in ["victory", "defeat"]
+	var content := _stitched_run_page("The candle endures" if session.phase == "victory" else
+		"The thread has fallen" if terminal else "The stitched road / Floor %d of 12" % session.map.get_current_floor())
+	var ledger := Label.new()
+	ledger.name = "RunLedger"
+	ledger.text = "CANDLE %d / 100     GOLD %d     SCRAPS %d     SATCHEL %d / 6" % [session.candle, session.gold, session.scraps, session.satchel.size()]
+	ledger.add_theme_font_size_override("font_size", 22)
+	content.add_child(ledger)
+	var hero_rows := HBoxContainer.new()
+	hero_rows.name = "FourHeroRecaps"
+	content.add_child(hero_rows)
+	for hero in session.heroes:
+		var recap := Label.new()
+		recap.name = "Recap_" + hero.id
+		recap.custom_minimum_size = Vector2(280, 92)
+		recap.add_theme_font_size_override("font_size", 18)
+		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else ""
+		recap.text = "R%d / %s\nHP %d / %d  %s\nFRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
+		hero_rows.add_child(recap)
+	if terminal:
+		_stitched_run_action(content, "Return to title", _return_stitched_run_title)
+		_stitched_run_action(content, "Save run", func(): StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
+		return
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(1120, 320)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(scroll)
+	var choices_box := VBoxContainer.new()
+	choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(choices_box)
+	var expected := session.snapshot()
+	if session.phase == "map":
+		for id in session.choices():
+			var node := session.map.get_node(id)
+			_stitched_run_action(choices_box, "Floor %02d / %s / Path %d" % [node.floor, node.type, node.position + 1], func():
+				if stitched_run_session == session and session.enter(id, expected):
+					_present_stitched_run())
+	else:
+		var heading := Label.new()
+		heading.text = session.pending.get("title", session.pending.service)
+		heading.add_theme_font_size_override("font_size", 24)
+		choices_box.add_child(heading)
+		for action in session.visit_actions():
+			_stitched_run_action(choices_box, action.text, func():
+				if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
+					_present_stitched_run(), action.enabled)
+	var navigation := HBoxContainer.new()
+	content.add_child(navigation)
+	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
+	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(STITCHED_SAVE_PATH))
+	if not stitched_run_buttons.is_empty():
+		stitched_run_buttons[0].grab_focus()
+
+
+func _sync_stitched_run_exit() -> void:
+	var session := stitched_run_session
+	var stage := stitched_run_battle
+	if session != null and stage != null and stage == stitched_run_battle \
+		and session.battle != null and stage._action_buttons.has("exit"):
+		stage._action_buttons["exit"].disabled = not session.battle.is_over()
+
+
+func load_stitched_run(path: String) -> bool:
+	if deck != null or run_map != null or is_instance_valid(base_screen) \
+		or is_instance_valid(stitched_fight_view) or stitched_event_gate != null:
+		return false
+	var restored := StitchedRunSave.read_file(path)
+	if restored == null:
+		return false
+	# Publish only after the entire save has replayed and matched its state.
+	if is_instance_valid(stitched_run_battle):
+		remove_child(stitched_run_battle)
+		stitched_run_battle.queue_free()
+	stitched_run_battle = null
+	stitched_run_session = restored
+	title_view.hide()
+	_present_stitched_run()
+	return true
+
+
+func _return_stitched_run_title() -> void:
+	_clear_stitched_run_panel()
+	if is_instance_valid(stitched_run_battle):
+		remove_child(stitched_run_battle)
+		stitched_run_battle.queue_free()
+	stitched_run_battle = null
+	stitched_run_session = null
+	stitched_run_draft.clear()
+	var village := _stitched_run_base.get_ref() as BaseScreen if _stitched_run_base != null else null
+	_stitched_run_base = null
+	if is_instance_valid(village) and village == base_screen and village.has_open_village():
+		village.show()
+		village.release_set_out()
+		village.set_out_button.grab_focus()
+		return
+	title_view.show()
+	start_button.grab_focus()
+
+
 func _retire_party_picker() -> void:
 	_party_opening += 1
 	if is_instance_valid(party_picker):
@@ -5456,7 +5607,8 @@ func _admit_party(ids: Array[String], source: WeakRef, opening: int) -> void:
 
 
 func _open_route(admission: Dictionary = {}) -> void:
-	if is_instance_valid(stitched_event_panel) or is_instance_valid(stitched_fight_view) \
+	if stitched_run_session != null or is_instance_valid(stitched_run_panel) \
+			or is_instance_valid(stitched_event_panel) or is_instance_valid(stitched_fight_view) \
 			or stitched_event_gate != null or deck != null or run_map != null \
 			or (is_instance_valid(party_picker) and admission.is_empty()):
 		return

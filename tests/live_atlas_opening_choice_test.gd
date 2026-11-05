@@ -427,7 +427,7 @@ func _legal_openings(app) -> void:
 		var replay: Array = []
 		for mode in range(5):
 			app.run_seed = fixture[1]
-			await _click(app.route_button)
+			await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 			_check(app.run_map != null and app.route_view != null
 				and app.run_map.get_legal_choices().has(fixture[2])
 				and app.run_map.get_node(fixture[2]).type == kind,
@@ -588,7 +588,7 @@ func _gothic_button(theme: Theme, button: Button, where: String) -> void:
 ## Actual title -> Base -> seeded opening. All Escape paths use GUI key events.
 func _gothic_escape_opening(app) -> void:
 	app.run_seed = 6
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_check(app.route_view != null and app.run_map != null
 		and app.run_map.get_legal_choices().size() >= 3
 		and app.theme == load("res://themes/gothic_theme.tres"),
@@ -697,7 +697,7 @@ func _run() -> void:
 	var stale: Array[Callable] = []
 	# Same scene, title resets, same seed: chooser, mouse atlas, Enter atlas, Space atlas.
 	for mode in range(4):
-		await _click(app.route_button)
+		await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 		_check(app.run_map != null and app.run_map.get_node(id).type == "Fight",
 			"seed has legal opening Fight")
 		for callback in stale:
@@ -817,7 +817,7 @@ func _run() -> void:
 	await _legal_openings(app)
 	app.run_seed = 6
 	# Failed admission must expose a usable chooser and roll back the transaction.
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var before := _snapshot(app)
 	await _click(app.route_map_button)
 	app.fight_selection._selected[id] = {"success": false}
@@ -830,7 +830,7 @@ func _run() -> void:
 	_check(app.deck != null and _snapshot(app) == replay, "failed atlas entry retries with identical seeded battle")
 	await _click(app.return_button)
 	# Same graph regenerated on the same object must invalidate a saved listener.
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(app.route_map_button)
 	var callback: Callable = app.route_atlas.node_requested.get_connections()[0].callable
 	var rng := RandomNumberGenerator.new()
@@ -839,13 +839,13 @@ func _run() -> void:
 	_inert(app, callback, id, "generation mismatch rejects even identical graph")
 	app._return_to_title()
 	await process_frame
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_inert(app, callback, id, "title reset invalidates old listener")
 	await _click(app.route_map_button)
 	var back_callback: Callable = app.route_atlas.node_requested.get_connections()[0].callable
 	app._cancel_route()
 	await process_frame
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_inert(app, back_callback, id, "Back invalidates old listener")
 	app.free()
 	_finish()

@@ -112,7 +112,7 @@ func _deny_parcel(callback: Callable, message: String) -> void:
 func _reach(f: Dictionary, _funded: bool = true,
 		picked: Array = ["warden", "seamstress", "tinker"]) -> void:
 	app.run_seed = f.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app, picked)
 	await _frames()
 	_check(app.run_map != null and app._party_receipt == RunV3PartyAdmission.admit(_party_ids()), "actual canonical three-of-eight admission")

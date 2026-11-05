@@ -120,7 +120,7 @@ func _run() -> void:
 		for session in range(2):
 			var keyboard := session == 1
 			app.run_seed = fixture.seed
-			await _activate(app.route_button, keyboard)
+			await _activate(preload("res://tests/legacy_card_app_fixture.gd").route_button(app), keyboard)
 			await _activate(_route_action(fixture.path[0]), keyboard)
 			_check(app.party_carryover is RunTornCarryover and app.party != null, "real routed combat admitted")
 			app.party._heroes[2].statuses = {"weak": 2, "bleed": 1}

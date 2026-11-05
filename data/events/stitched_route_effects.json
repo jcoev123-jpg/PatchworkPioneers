@@ -1,0 +1,47 @@
+{
+  "events": [
+    {
+      "id": "moth_infestation",
+      "title": "Moth Infestation",
+      "description": "Patchwork moths nibble spare seams in the satchel.",
+      "actions": {"sacrifice_part": "unpick"},
+      "choices": [
+        {"id": "sacrifice_part", "text": "Feed a spare part to the moths (+2 scraps)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 2}},
+        {"id": "fumigate", "text": "Fumigate the satchel (spend 1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": -1}},
+        {"id": "escape", "text": "Escape before the moths spread", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "dye_vat",
+      "title": "The Dye Vat",
+      "description": "Indigo thread waits to strengthen a sewn body part.",
+      "actions": {"immerse": "upgrade"},
+      "upgrade_cost": 3,
+      "choices": [
+        {"id": "immerse", "text": "Raise a worn part one tier (spend 3 scraps)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": -3}},
+        {"id": "skim_dye", "text": "Skim dyed thread (+1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 1}},
+        {"id": "leave", "text": "Leave the vat", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "frayed_debt_parcel",
+      "title": "Frayed Debt Parcel",
+      "description": "Borrowed stitches offer stronger spare parts at a cost to composure.",
+      "choices": [
+        {"id": "offer_0", "text": "Take a tier II claw (+25 fray to the party)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "scissor_crab_claw_arm", "tier": 2}}},
+        {"id": "offer_1", "text": "Take a tier II moth wing (+25 fray to the party)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "moth_swarm_wings", "tier": 2}}},
+        {"id": "safe_exit", "text": "Gather loose thread (+1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 1}}
+      ]
+    },
+    {
+      "id": "needle_toll",
+      "title": "The Needle Toll",
+      "description": "The front living pioneer may pay six HP for a rare spare. Seven HP are required to pay safely.",
+      "choice_requirements": {"pay_toll": {"minimum_hp": 7}},
+      "choices": [
+        {"id": "pay_toll", "text": "Front living pioneer pays 6 HP for a tier III claw", "stitched_effect": {"target": "hero", "hero_id": "$front", "candle": 0, "fray": 0, "hp": -6, "part": {"id": "scissor_crab_claw_arm", "tier": 3}}},
+        {"id": "safe_exit", "text": "Pocket loose thread (+1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 1}}
+      ]
+    }
+  ]
+}

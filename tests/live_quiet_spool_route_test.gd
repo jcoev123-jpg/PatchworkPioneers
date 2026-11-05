@@ -1,4 +1,5 @@
 extends "res://tests/live_event_treasure_continuation_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 
 
 ## Physical pointer hover that never presses, so the routed Event tickets can be
@@ -480,7 +481,7 @@ func _moth_outcomes() -> void:
 	global_next = randi()
 	seed(720074)
 	app.run_seed = 8
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	var opening := _route_action("f01_n1")
 	_check(app.run_map.get_node("f01_n1").get("type") == "Event" and is_instance_valid(opening),
@@ -605,7 +606,7 @@ func _run() -> void:
 					await _click(app.continue_button)
 				else:
 					app.run_seed = fixture.seed
-					await _click(app.start_button)
+					await _click(LEGACY_ENTRY.start_button(app))
 					preload("res://tests/party_choice.gd").choose(app)
 				var before_stale := _event_state()
 				for callback in stale:
@@ -766,7 +767,7 @@ func _run() -> void:
 					and not app._moth_completed, "title invalidates completed Moth binding")
 	# Abandon an unresolved visit, then prove its live callbacks cannot reach a new one.
 	app.run_seed = 6
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	var old_panel: LiveEventChoicePanel = app.quiet_spool_panel
@@ -778,7 +779,7 @@ func _run() -> void:
 	await _frames()
 	_check(app.find_children("EventBackdrop", "Control", true, false).is_empty(),
 		"title return releases the abandoned Event art bed")
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	_reject_event(abandoned.bind("quiet_spool", "watch"), "abandoned signal in fresh seeded visit")
@@ -794,7 +795,7 @@ func _run() -> void:
 	_check(_event_state() == drifted and app.route_view == null, "stale wallet cannot settle or traverse")
 	app._return_to_title()
 	await _frames()
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _click(_route_action("f01_n1"))
 	await _click(app.quiet_spool_panel.get_choice_buttons()[1])

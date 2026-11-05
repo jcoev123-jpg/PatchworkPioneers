@@ -95,7 +95,7 @@ func _duplicate(app) -> void:
 	var selector: CombatEnemyIntents = app.enemy_intents
 	var battle: MarginContainer = app.battle_view
 	var flow: CombatRoundFlow = app.round_flow
-	app.start_button.pressed.emit()
+	app.start_run_requested.emit()
 	_check(app.party == party and app.deck == deck and app.run_rng == rng
 		and app.enemy_intents == selector and app.battle_view == battle, "duplicate Start Run preserves session objects")
 	_check(_snapshot(app) == before, "duplicate Start Run cannot grant Block or mutate state")

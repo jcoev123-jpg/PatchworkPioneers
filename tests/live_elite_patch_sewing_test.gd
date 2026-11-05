@@ -1183,7 +1183,7 @@ func _torn_focus_fixture() -> Dictionary:
 ## the later Elite coordinator captures its authoritative run context.
 func _torn_warden_opening_win(fixture: Dictionary) -> bool:
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(await _ready_route_action(fixture.fight))
 	_check(app.party != null and app.party.is_valid()
 		and app.party.get_hero(1).id == "warden", "opening Fight mounts the actual Warden")

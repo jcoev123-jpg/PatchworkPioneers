@@ -194,7 +194,7 @@ func _unpicker_boot(stitched: bool, funded: bool) -> void:
 	root.add_child(app)
 	await _frames()
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	if funded:

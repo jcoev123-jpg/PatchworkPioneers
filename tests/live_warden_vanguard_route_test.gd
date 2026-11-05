@@ -1,4 +1,5 @@
 extends "res://tests/live_tinker_path_hand_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Genuine village -> Fight -> authored reward -> later Fight -> fresh Fight.
 ## Inherited helpers only provide real mouse/keyboard input and mounted lookup.
 
@@ -146,6 +147,7 @@ func _sew_attack_patches() -> void:
 func _case(id: String, path: String, patched: bool = false, lethal: bool = false) -> void:
 	app = load(APP_SCENE).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	var fixture := _warden_fixture(id, path)
 	_check(not fixture.is_empty(), "seeded three-Fight route genuinely offers " + id)
@@ -263,6 +265,7 @@ func _case(id: String, path: String, patched: bool = false, lethal: bool = false
 func _abandon() -> void:
 	app = load(APP_SCENE).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	await _click(app.base_button)
 	var old: BaseScreen = app.base_screen
@@ -271,7 +274,7 @@ func _abandon() -> void:
 	await _click(old.back_button)
 	stale.call("bulwark")
 	_check(app.run_warden_path_choice == null and app.run_warden_path_receipt.is_empty(), "Back and retained choice abandon setup")
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_warden_path_receipt.is_empty(), "title-only Start run grants no Path")
 	await _click(app.route_back_button)

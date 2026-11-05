@@ -618,8 +618,11 @@ func _setup(config: Dictionary) -> String:
 		if bool(built["unit"]["is_boss"]):
 			_boss_encounter = true
 	_valid = true
-	_rng = RandomNumberGenerator.new()
-	_rng.seed = int(seed_value)
+	if config.get("run_rng") is RandomNumberGenerator:
+		_rng = config["run_rng"]
+	else:
+		_rng = RandomNumberGenerator.new()
+		_rng.seed = int(seed_value)
 	_round = 0
 	_outcome = "ongoing"
 	_begin_round()
@@ -683,7 +686,10 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 				"unit": {},
 			}
 		starting_statuses["bleed"] = int(amount)
-	if equipped.size() != StitchedParts.SLOTS.size():
+	var carried_lost: Variant = entry.get("lost", false)
+	if not carried_lost is bool or (carried_lost and (not equipped.is_empty() or typeof(entry.get("hp")) != TYPE_INT or int(entry["hp"]) != 0)):
+		return {"ok": false, "error": "invalid carried lost state", "unit": {}}
+	if not carried_lost and equipped.size() != StitchedParts.SLOTS.size():
 		return {
 			"ok": false,
 			"error": "hero " + unit_id + " needs exactly four equipped slots",
@@ -691,6 +697,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		}
 	var parts: Dictionary = {}
 	for slot in StitchedParts.SLOTS:
+		if carried_lost:
+			break
 		if not equipped.has(slot):
 			return {
 				"ok": false,
@@ -758,6 +766,11 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		unit["hanging"] = int(starting_hp) == 0
 	else:
 		unit["hp"] = int(unit["max_hp"])
+	if entry.has("lost"):
+		if not entry["lost"] is bool or (entry["lost"] and unit["hp"] != 0):
+			return {"ok": false, "error": "invalid carried lost state", "unit": {}}
+		unit["lost"] = entry["lost"]
+		unit["hanging"] = unit["hp"] == 0 and not unit["lost"]
 	return {"ok": true, "error": "", "unit": unit}
 
 

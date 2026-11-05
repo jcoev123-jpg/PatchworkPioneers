@@ -285,6 +285,7 @@ func _enter_routed_fight(fixture: Dictionary, path_id: String, use_mouse: bool,
 		seamstress_id: String = "") -> bool:
 	app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	_check(app.deck == null and app.run_map == null and app.title_view.is_visible_in_tree()
 		and app.run_tinker_path_receipt.is_empty(),
@@ -1031,9 +1032,10 @@ func _unselected_case() -> void:
 	var twelve := _oracle(int(fixture["seed"]), String(fixture["node_id"]), [], true)
 	app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	app.run_seed = int(fixture["seed"])
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _frames()
 	_check(is_instance_valid(app.route_view) and app.run_tinker_path_receipt.is_empty(),
 		"a direct opening carries no Tinker receipt")
@@ -1063,6 +1065,7 @@ func _tampered_receipt_case() -> void:
 		return
 	app = (load(APP_SCENE) as PackedScene).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	app.run_seed = int(fixture["seed"])
 	await _click(app.base_button)

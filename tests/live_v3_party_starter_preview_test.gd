@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Real, detached starter preview + title/village admission regression.
 ## Oracles enumerate the actual owner catalogs independently of the view.
 const PICKER_SCENE := "res://scenes/v3_party_picker.tscn"
@@ -253,6 +254,7 @@ func _run() -> void:
 	# synthetic run controller and with no deck or RNG before admission.
 	var app = load(APP_SCENE).instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await _frames()
 	var idle := _app_idle(app)
 	_check(app.start_button != null and app.base_button != null and app.title_view.visible,
@@ -260,7 +262,7 @@ func _run() -> void:
 	seed(31672)
 	var expected_rng := randi()
 	seed(31672)
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	var live: LiveV3PartyPicker = app.party_picker
 	_check(is_instance_valid(live) and live.grid.get_child_count() == 8
 		and _app_idle(app) == idle, "title Start mounts inspection before any allocation")
@@ -286,7 +288,7 @@ func _run() -> void:
 		app._base_back(weakref(app.base_screen))
 		await _frames()
 	_check(randi() == expected_rng, "both live opener previews/cancels consume no RNG")
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	live = app.party_picker
 	if is_instance_valid(live):
 		for id in ["rag_duelist", "lantern_monk", "yarn_ranger"]:

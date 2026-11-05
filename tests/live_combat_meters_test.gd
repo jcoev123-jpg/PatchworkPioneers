@@ -2932,7 +2932,7 @@ func _three_enemy_stage(app, presenter) -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
-	app.start_button.pressed.emit()
+	app.start_run_requested.emit()
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	var route_button: Button = null
@@ -4558,7 +4558,7 @@ func _finish() -> void:
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
 func _fixture_start(target) -> void:
 	if target.deck != null:
-		target.start_button.pressed.emit()
+		target.start_run_requested.emit()
 		preload("res://tests/party_choice.gd").choose(target)
 		return
 	var started: bool = target._start_battle()

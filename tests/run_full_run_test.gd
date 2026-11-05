@@ -1,4 +1,5 @@
 extends "res://tests/live_run_map_entry_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Mounted twelve-floor gate. Only physical input mutates gameplay state.
 const SEED_LIMIT := 5000
 ## The genuine V3 Seamstress starters this run now carries: Thread Prick is paid
@@ -297,7 +298,7 @@ func _start(fixture: Dictionary) -> void:
 	_check(app.title_view.is_visible_in_tree() and app.deck == null and app.run_map == null,
 		"fresh title has no previous run")
 	app.run_seed = fixture.seed
-	await _activate(app.start_button, true)
+	await _activate(LEGACY_ENTRY.start_button(app), true)
 	preload("res://tests/party_choice.gd").choose(app)
 	_check(app.run_map != null and app.route_view != null, "physical title Start mounts route")
 	_check(app.run_map.get_floors() == fixture.graph and app.run_map.get_route().is_empty(),

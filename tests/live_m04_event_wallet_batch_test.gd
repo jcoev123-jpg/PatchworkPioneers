@@ -1,4 +1,5 @@
 extends "res://tests/live_event_treasure_continuation_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Genuine seeded opening routes through all three specials to each generic Event.
 
 const REQUIRED := ["button_trail", "loose_seam", "thimble_well", "frayed_signpost",
@@ -449,7 +450,7 @@ func _vital_selection_id(rng: RandomNumberGenerator) -> String:
 func _reach(fixture: Dictionary, funded: bool = true,
 		picked: Array = ["warden", "seamstress", "tinker"]) -> void:
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app, picked)
 	# Title Start mounts the real pick-three screen first (cycle 332); admit the
 	# ordinary three-hero party through its tiles and Continue before expecting a map.

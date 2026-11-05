@@ -10,7 +10,7 @@ func _initialize() -> void:
 	if app.title_label == null or app.title_label.text != "Patchwork Pioneers":
 		push_error("title missing")
 		ok = false
-	if app.start_button == null or app.start_button.text != "Start run":
+	if app.start_button == null or app.start_button.text != "New Run":
 		push_error("start button missing")
 		ok = false
 	print("smoke_test: ", "PASS" if ok else "FAIL")

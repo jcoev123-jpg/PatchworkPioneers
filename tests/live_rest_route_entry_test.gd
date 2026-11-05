@@ -246,7 +246,7 @@ func _check_rest_hp_only() -> void:
 
 func _routed_win(fixture: Dictionary, downed: bool, capped_survivor: bool = false) -> bool:
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var fight: Button
 	for button in app.route_buttons:
 		if button.get_meta("route_id") == fixture.fight:

@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Deterministic headless test for CombatWardenGuardReactions (D2-1).
 ## Validates Draw Fire, Counter-stitch, Guarding redirection, Thorns retaliation,
 ## movement following, turn lifecycle, and negative fail-closed behavior.
@@ -1273,9 +1274,9 @@ func _start_battle_in_app(app: Control, target_fight_id: String = "") -> bool:
 		return false
 	app.start_button.grab_focus()
 	await _frames()
-	await _mouse_click(app.start_button)
+	await _mouse_click(LEGACY_ENTRY.start_button(app))
 	if not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree():
-		app.start_button.pressed.emit()
+		app.start_run_requested.emit()
 		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()
 	_check(is_instance_valid(app.route_view) and app.route_view.is_visible_in_tree(),

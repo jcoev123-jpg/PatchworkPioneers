@@ -186,7 +186,7 @@ func _run() -> void:
 		_check(party.get_heroes() == before, "invalid targets and amounts cannot mutate live party")
 		var deck_before := _deck_snapshot(app.deck)
 		var rng_before: int = app.run_rng.state
-		app.start_button.pressed.emit()
+		app.start_run_requested.emit()
 		_check(app.party == party and party.get_heroes() == before and _deck_snapshot(app.deck) == deck_before
 			and app.run_rng.state == rng_before, "duplicate Start Run preserves party, deck and RNG")
 		var trace: Array = []

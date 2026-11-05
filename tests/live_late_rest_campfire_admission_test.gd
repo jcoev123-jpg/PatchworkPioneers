@@ -188,7 +188,7 @@ func _unfought_late_rest(legacy: bool = false) -> void:
 	root.add_child(app)
 	await _frames()
 	app.run_seed = found.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	var opening := _button(found.opening)
 	_check(opening != null, "unfought opening control exists")

@@ -131,7 +131,7 @@ func _run() -> void:
 		return
 	# A routed startup without a selected node must reject before shuffle/publication.
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var route_before: Array = app.run_map.get_route()
 	var rng_before: int = app.run_rng.state
 	_check(not app._start_battle(app.run_rng, app._load_enemy_schedule(),

@@ -709,7 +709,7 @@ func _mounted(wanted: String = "") -> void:
 	root.add_child(app)
 	await process_frame
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_check(app.run_map != null and app.run_map.get_route().is_empty(),
 		"physical title route opens genuine uncommitted map")
 	if app.run_map == null:

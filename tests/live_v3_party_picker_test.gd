@@ -1,4 +1,5 @@
 extends SceneTree
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Real mounted Design-v3 chooser: actions are requests, never run admission.
 const SCENE := "res://scenes/v3_party_picker.tscn"
 const ORDER: Array[String] = [
@@ -1465,7 +1466,7 @@ func _live_start_checks() -> void:
 	seed(17931)
 	var expected := randi()
 	seed(17931)
-	await _mouse(app.start_button)
+	await _mouse(LEGACY_ENTRY.start_button(app))
 	var view: LiveV3PartyPicker = app.party_picker
 	_check(is_instance_valid(view) and view.grid.get_child_count() == 8,
 		"real title Start mounts all eight selectable heroes")
@@ -1493,7 +1494,7 @@ func _live_start_checks() -> void:
 	_check(app.party_picker == null and _opening_state(app) == idle and app.title_view.visible,
 		"authentic Cancel retires picker without creating run")
 	_check(randi() == expected, "picker failures, inputs and Cancel consume no global RNG")
-	await _mouse(app.start_button)
+	await _mouse(LEGACY_ENTRY.start_button(app))
 	var legacy: Array[String] = ["warden", "seamstress", "tinker"]
 	old_request.call(legacy)
 	old_cancel.call()
@@ -1508,7 +1509,7 @@ func _live_start_checks() -> void:
 		var replay: Array = []
 		for attempt in range(3):
 			app.run_seed = fixture.seed
-			await _mouse(app.start_button)
+			await _mouse(LEGACY_ENTRY.start_button(app))
 			view = app.party_picker
 			var retired: Callable = view.party_requested.get_connections()[0].callable
 			for id in trio:

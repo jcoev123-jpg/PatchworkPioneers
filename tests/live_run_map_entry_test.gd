@@ -449,6 +449,7 @@ func _run() -> void:
 		return
 	var app = scene.instantiate()
 	root.add_child(app)
+	preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 	await process_frame
 	_check(app.start_button.has_focus(), "original Start run initially focused")
 	_check(app.route_button.is_visible_in_tree(), "second title action mounted")
@@ -535,7 +536,7 @@ func _run() -> void:
 	await process_frame
 	_check(not is_instance_id_valid(cancelled_id), "cancel frees mounted atlas")
 	# Repeat Back through actual input on the restarted chooser.
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	app.route_back_button.grab_focus()
 	await _key(KEY_ENTER)
 	await process_frame
@@ -569,7 +570,7 @@ func _run() -> void:
 	_check(typed_fixture_found, "typed non-starter two-source battle fixture exists")
 	app.run_seed = fixture_seed
 	for session in range(2):
-		await _click(app.route_button)
+		await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 		_check(app.route_view != null, "mouse opens route chooser")
 		if app.route_view == null:
 			break
@@ -770,7 +771,7 @@ func _run() -> void:
 			"Return releases selector and encounter identity")
 		_check(app.start_button.has_focus(), "Return restores original title focus")
 
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_check(app.run_map != null and app.route_view != null, "failed-data retry chooser mounted")
 	if app.run_map != null:
 		_legacy_rejections(app, fight_id)
@@ -798,7 +799,7 @@ func _run() -> void:
 				await _click(app.return_button)
 	# The formerly blocked opening now offers Fight; Back still cancels it.
 	app.run_seed = 6
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	_check(app.run_map != null and app.route_buttons.size() == 3,
 		"formerly blocked seed has its actual opening mounted")
 	if app.run_map != null and app.route_buttons.size() == 3:
@@ -818,7 +819,7 @@ func _run() -> void:
 		await _click(app.route_back_button)
 		_check(app.run_map == null and app.run_rng == null and app.deck == null,
 			"formerly blocked seed Back clears session")
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	await _click(app.route_map_button)
 	var reset_atlas: RunRouteAtlas = app.route_atlas
 	_check(is_instance_valid(reset_atlas), "title reset fixture has mounted atlas")

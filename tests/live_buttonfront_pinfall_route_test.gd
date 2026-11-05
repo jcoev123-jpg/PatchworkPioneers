@@ -115,7 +115,7 @@ func _run() -> void:
 		root.add_child(app)
 		await process_frame
 		app.run_seed = fixture.seed
-		await _activate(app.start_button, mode == 1)
+		await _activate(LEGACY_ENTRY.start_button(app), mode == 1)
 		preload("res://tests/party_choice.gd").choose(app)
 		_check(app.run_map != null and app.route_view != null and app.deck == null,
 			"real title input initializes chooser before any encounter")

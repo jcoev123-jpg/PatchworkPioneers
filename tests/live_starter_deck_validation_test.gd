@@ -83,7 +83,7 @@ func _session(app, source: Array[String]) -> Array:
 		var identities := [app.deck, app.run_rng, app.party, app.enemies, app.enemy_intents, app.battle_result, app.battle_view]
 		var heroes: Array = app.party.get_heroes()
 		var enemies: Array = app.enemies.get_enemies()
-		app.start_button.pressed.emit()
+		app.start_run_requested.emit()
 		_check(identities == [app.deck, app.run_rng, app.party, app.enemies, app.enemy_intents, app.battle_result, app.battle_view]
 			and before == _snapshot(app.deck, app.run_rng) and heroes == app.party.get_heroes()
 			and enemies == app.enemies.get_enemies(), "repeated Start preserves session identity and state")

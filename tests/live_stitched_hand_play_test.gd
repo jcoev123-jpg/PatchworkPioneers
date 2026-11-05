@@ -1,4 +1,5 @@
 extends "res://tests/live_rest_stitch_choice_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 ## Earn three scraps and stitch through real controls, then draw the owned
 ## composite from the next routed Fight's actual deck. No manufactured IDs.
 var _stale_card_input: Callable
@@ -1118,7 +1119,7 @@ func _knit_case(fixture: Dictionary) -> void:
 	var replay: Array = []
 	for keyboard in [false, true]:
 		app.run_seed = fixture.seed
-		await _click(app.start_button)
+		await _click(LEGACY_ENTRY.start_button(app))
 		preload("res://tests/party_choice.gd").choose(app, ["warden", "seamstress", "yarn_ranger"])
 		await _frames()
 		_check(app.run_map != null and app.run_rng != null and app.run_heroes[2].id == "yarn_ranger"

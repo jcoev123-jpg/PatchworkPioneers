@@ -166,3 +166,112 @@ func get_current_floor() -> int:
 
 func is_complete() -> bool:
 	return is_generated() and _route.size() == FLOOR_COUNT
+
+
+## Detached, versioned-compatible snapshot used by the run save boundary.
+## The snapshot contains no RNG state because map traversal never draws RNG.
+func export_state() -> Dictionary:
+	return {
+		"floors": _floor_ids.duplicate(true),
+		"nodes": _nodes.duplicate(true),
+		"route": _route.duplicate(),
+		"generation_revision": _generation_revision,
+	}
+
+
+## Restore an exact generated map without generating it again or touching RNG.
+## Every field is validated into local values before the live map is replaced.
+func restore_state(value: Variant) -> bool:
+	if not value is Dictionary or value.size() != 4:
+		return false
+	var raw_floors: Variant = value.get("floors")
+	var raw_nodes: Variant = value.get("nodes")
+	var raw_route: Variant = value.get("route")
+	var revision: Variant = value.get("generation_revision")
+	if not raw_floors is Array or raw_floors.size() != FLOOR_COUNT \
+			or not raw_nodes is Dictionary or not raw_route is Array \
+			or raw_route.size() > FLOOR_COUNT \
+			or typeof(revision) != TYPE_INT or int(revision) <= 0:
+		return false
+
+	var floors: Array = []
+	for floor_index in range(FLOOR_COUNT):
+		var raw_floor: Variant = raw_floors[floor_index]
+		if not raw_floor is Array or raw_floor.size() < MIN_NODES \
+				or raw_floor.size() > MAX_NODES:
+			return false
+		var floor_ids: Array[String] = []
+		for position in range(raw_floor.size()):
+			var node_id: Variant = raw_floor[position]
+			if typeof(node_id) != TYPE_STRING:
+				return false
+			var expected_id := "f%02d_n%d" % [floor_index + 1, position]
+			if node_id != expected_id:
+				return false
+			floor_ids.append(node_id)
+		floors.append(floor_ids)
+
+	var nodes: Dictionary = {}
+	for floor_index in range(FLOOR_COUNT):
+		for position in range(floors[floor_index].size()):
+			var node_id: String = floors[floor_index][position]
+			if nodes.has(node_id) or not raw_nodes.has(node_id):
+				return false
+			var raw_node: Variant = raw_nodes[node_id]
+			if not raw_node is Dictionary or raw_node.size() != 5 \
+					or typeof(raw_node.get("id")) != TYPE_STRING \
+					or raw_node.get("id") != node_id \
+					or typeof(raw_node.get("floor")) != TYPE_INT \
+					or int(raw_node["floor"]) != floor_index + 1 \
+					or typeof(raw_node.get("position")) != TYPE_INT \
+					or int(raw_node["position"]) != position \
+					or typeof(raw_node.get("type")) != TYPE_STRING \
+					or (str(raw_node["type"]) == "Boss") != (floor_index == FLOOR_COUNT - 1) \
+					or (floor_index < FLOOR_COUNT - 1 \
+						and not str(raw_node["type"]) in NORMAL_TYPES) \
+					or not raw_node.get("outgoing") is Array:
+				return false
+			var outgoing: Array = raw_node["outgoing"]
+			var edge_seen: Dictionary = {}
+			if floor_index == FLOOR_COUNT - 1 and not outgoing.is_empty():
+				return false
+			if floor_index < FLOOR_COUNT - 1 and outgoing.is_empty():
+				return false
+			for target_id in outgoing:
+				if typeof(target_id) != TYPE_STRING or edge_seen.has(target_id):
+					return false
+				edge_seen[target_id] = true
+				var target_floor: Array = floors[floor_index + 1]
+				if not target_floor.has(target_id):
+					return false
+			nodes[node_id] = raw_node.duplicate(true)
+	if nodes.size() != raw_nodes.size():
+		return false
+
+	# Every node on the next floor must be reachable from the previous floor.
+	for floor_index in range(1, FLOOR_COUNT):
+		var incoming: Dictionary = {}
+		for source_id in floors[floor_index - 1]:
+			for target_id in nodes[source_id]["outgoing"]:
+				incoming[target_id] = true
+		for target_id in floors[floor_index]:
+			if not incoming.has(target_id):
+				return false
+
+	var route: Array[String] = []
+	var visited: Dictionary = {}
+	for route_index in range(raw_route.size()):
+		var node_id: Variant = raw_route[route_index]
+		if typeof(node_id) != TYPE_STRING or visited.has(node_id) \
+				or not floors[route_index].has(node_id):
+			return false
+		if route_index > 0 and not nodes[route[route_index - 1]]["outgoing"].has(node_id):
+			return false
+		visited[node_id] = true
+		route.append(node_id)
+
+	_floor_ids = floors
+	_nodes = nodes
+	_route = route
+	_generation_revision = int(revision)
+	return true

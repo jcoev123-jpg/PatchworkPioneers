@@ -433,6 +433,9 @@ func _setup(
 		if not (raw_dict.get("parts") is Dictionary):
 			return "hero %s needs a parts dictionary" % hero_id
 		var raw_parts: Dictionary = raw_dict["parts"]
+		if raw_dict.get("lost") == true and raw_dict.get("hp") == 0 and raw_parts.is_empty():
+			clean_heroes.append(raw_dict.duplicate(true))
+			continue
 		if raw_parts.size() != StitchedParts.SLOTS.size():
 			return "hero %s has an unknown slot" % hero_id
 

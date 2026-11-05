@@ -1,4 +1,5 @@
 extends "res://tests/live_rest_route_entry_test.gd"
+const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 
 const ROUTE_HELP_TOOLTIPS := {"SewingCircle": "Upgrade one card, stitch two different-owner cards for 3 scraps, or leave unchanged"}
 var fixture: Dictionary
@@ -42,7 +43,7 @@ func _boot(wallet: bool = false, wardrobe: bool = false) -> void:
 	root.add_child(app)
 	await _frames()
 	app.run_seed = fixture.seed
-	await _click(app.start_button)
+	await _click(LEGACY_ENTRY.start_button(app))
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()
 	_check(app.run_map.get_node(fixture.id).type == "SewingCircle"

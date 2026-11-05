@@ -167,7 +167,7 @@ func _mounted(fixture: Dictionary) -> Array:
 	root.add_child(app)
 	await process_frame
 	app.run_seed = fixture.seed
-	await _click(app.route_button)
+	await _click(preload("res://tests/legacy_card_app_fixture.gd").route_button(app))
 	var route: Button
 	for candidate in app.route_buttons:
 		if candidate.get_meta("route_id") == fixture.node:
