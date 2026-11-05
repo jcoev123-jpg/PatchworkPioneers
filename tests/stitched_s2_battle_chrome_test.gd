@@ -183,6 +183,99 @@ func _test_controls(screen: StitchedBattleScreen) -> void:
 			"post-action meters refresh entirely from authoritative state without RNG or receipts")
 
 
+func _click(button: BaseButton) -> void:
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.position = button.get_global_rect().get_center()
+		event.pressed = pressed
+		root.push_input(event, true)
+	await process_frame
+
+
+func _key(code: Key) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = pressed
+		root.push_input(event, true)
+	await process_frame
+
+
+func _test_utilities(screen: StitchedBattleScreen) -> void:
+	var selected := false
+	for slot in StitchedBattleScreen.SLOTS:
+		if screen.select_part(slot) and not screen.legal_targets().is_empty():
+			selected = true
+			break
+	_check(selected and not screen.receipts.is_empty(),
+		"precondition: utilities preserve a real selected ability, legal targets and committed receipt")
+	var state := screen.battle.state_snapshot()
+	var rng := screen.battle.rng_state()
+	var receipts := screen.receipts.duplicate(true)
+	var last := screen.last_receipt.duplicate(true)
+	var targets := screen.legal_targets().duplicate(true)
+	var log_text: String = screen._labels["log"].text
+	var opener: Button = screen._action_buttons["help"]
+	var close: Button = screen._action_buttons["close_help"]
+	var motion: CheckButton = screen._action_buttons["reduce_motion"]
+	var exit_button: Button = screen._action_buttons["exit"]
+	_check(opener.is_visible_in_tree() and screen._labels["log"].is_visible_in_tree()
+		and screen._labels["log"].size.y >= 100 and not motion.is_visible_in_tree()
+		and not exit_button.is_visible_in_tree() and not close.is_visible_in_tree(),
+		"normal right tray shows readable log and one utility opener with secondary controls concealed")
+	await _click(opener)
+	_check(screen._utilities_open and close.has_focus() and not opener.is_visible_in_tree()
+		and motion.is_visible_in_tree() and exit_button.is_visible_in_tree()
+		and screen._labels["help"].is_visible_in_tree() and not screen._part_disclosure.visible,
+		"real mouse opens instructions and settings inside the sewn tray and focuses close")
+	var tray_rect := Rect2(1031, 562, 230, 144)
+	for utility in [motion, exit_button, close, screen._labels["help"]]:
+		_check(tray_rect.encloses(utility.get_global_rect()), "expanded utility remains inside right tray")
+		for group in [screen._part_buttons, screen._part_help_buttons, screen._target_buttons]:
+			for control in group.values():
+				_check(not utility.get_global_rect().intersects(control.get_global_rect()),
+					"utility never covers part, inspection or target control")
+		for key in ["move_front", "move_back", "re_tie", "pass", "retreat"]:
+			_check(not utility.get_global_rect().intersects(screen._action_buttons[key].get_global_rect()),
+				"utility never covers turn action")
+	var original_motion := screen.reduced_motion
+	await _click(motion)
+	_check(screen.reduced_motion != original_motion and motion.button_pressed == screen.reduced_motion,
+		"real mouse toggle updates motion preference and check state")
+	for puppet in screen._puppets.values():
+		_check(puppet.is_processing() == not screen.reduced_motion, "motion toggle updates real puppets")
+	motion.grab_focus()
+	await _key(KEY_SPACE)
+	_check(screen.reduced_motion == original_motion and motion.button_pressed == original_motion,
+		"keyboard toggles real motion check back to original preference")
+	await _key(KEY_ESCAPE)
+	_check(not screen._utilities_open and opener.has_focus()
+		and screen._labels["log"].visible and screen._labels["log"].text == log_text,
+		"Escape dismisses utilities, restores opener focus and retains log text")
+	await _key(KEY_ENTER)
+	_check(screen._utilities_open and close.has_focus(), "keyboard reopens utility tray")
+	await _key(KEY_ENTER)
+	_check(not screen._utilities_open and opener.has_focus(), "keyboard close restores opener focus")
+	await _click(opener)
+	await _click(close)
+	_check(not screen._utilities_open and opener.has_focus(), "mouse close restores opener focus")
+	screen._seat_buttons["hero_1"].mouse_entered.emit()
+	screen._seat_buttons["hero_1"].mouse_exited.emit()
+	_check(screen.legal_targets() == targets and not targets.is_empty()
+		and screen.receipts == receipts and screen.last_receipt == last,
+		"help, motion and inspection preserve exact legal targets and all receipt contents")
+	_no_mutation(screen, state, rng, receipts.size(), "utilities and inspection preserve snapshot and RNG")
+	_check(screen._target_buttons["foe_4"].disabled and screen._action_buttons["re_tie"].disabled,
+		"utilities retain blocked empty target and unavailable Re-tie")
+	var exits := [0]
+	screen.exit_requested.connect(func(): exits[0] += 1)
+	await _click(opener)
+	await _click(exit_button)
+	_check(exits[0] == 1, "one real Back to title click emits exactly one exit signal")
+	_no_mutation(screen, state, rng, receipts.size(), "exit signal does not commit combat")
+
+
 func _run() -> void:
 	var mounted := _mount()
 	await process_frame
@@ -192,6 +285,7 @@ func _run() -> void:
 		_verify_meters(screen)
 		_test_hanging_and_lost(screen)
 		_test_controls(screen)
+		await _test_utilities(screen)
 	mounted["host"].free()
 	await process_frame
 	for failure in failures:

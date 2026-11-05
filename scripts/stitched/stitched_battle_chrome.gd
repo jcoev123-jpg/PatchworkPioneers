@@ -74,12 +74,19 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 	meter.size = rectangle.size
 	meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	meter.show_percentage = false
+	# The value is rendered separately; suppress the invisible percentage font
+	# from imposing a 26px minimum on this 8px sewn progress strip.
+	meter.add_theme_font_size_override("font_size", 1)
 	meter.min_value = 0.0
 	meter.max_value = 1.0
 	meter.value = 0.0
 	meter.add_theme_stylebox_override("background", _box(NAME_PLATE, Color("422c32"), 4.0))
 	meter.add_theme_stylebox_override("fill", _box(BUTTON, tint, 4.0))
 	parent.add_child(meter)
+	# Godot's ProgressBar theme enforces a 26px internal minimum even with
+	# percentage text hidden. Scale only its displayed strip to the authored
+	# 8px slot; the sewn NinePatch frame stays at its intended unscaled size.
+	meter.scale.y = rectangle.size.y / maxf(rectangle.size.y, meter.size.y)
 	var frame := NinePatchRect.new()
 	frame.name = title + "SewnFrame"
 	frame.texture = BAR_FRAME
@@ -94,26 +101,58 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 	return meter
 
 
+static func _fit_readout(readout: Label, caption: String) -> void:
+	# Measure the inherited Gothic font instead of relying on Label clipping.
+	readout.text = caption
+	var face: Font = readout.get_theme_font("font")
+	var point_size := 11
+	if face != null:
+		for size_step in range(11, 7, -1):
+			point_size = size_step
+			if face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, size_step).x <= readout.size.x - 2.0:
+				break
+	readout.add_theme_font_size_override("font_size", point_size)
+	# Theme minimum sizes may have expanded the initial rect during entry.
+	readout.size = Vector2(readout.size.x, 14)
+
+
 static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Dictionary:
 	# y530..554 is the existing HP row, below the full-size rank/name button.
 	var root := Control.new()
 	root.name = "RankMeters" + side.capitalize() + str(int(foot_x))
 	root.position = Vector2(foot_x, 530)
 	root.size = Vector2(170, 24)
-	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# PASS makes the complete, accurate HP/FRAY tooltip reachable by mouse
+	# without consuming the parent's rank-button input.
+	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(root)
 	var is_hero := side == "hero"
 	var hp := _meter(root, "HPFill", Rect2(11, 14, 74 if is_hero else 148, 8),
 		Color("af655b"))
-	var output := {"root": root, "hp": hp}
+	var hp_caption := Label.new()
+	hp_caption.name = "HPReadout"
+	hp_caption.position = Vector2(10, 0)
+	hp_caption.size = Vector2(74 if is_hero else 149, 14)
+	hp_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	hp_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	hp_caption.clip_text = true
+	hp_caption.add_theme_font_size_override("font_size", 11)
+	hp_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	hp_caption.add_theme_color_override("font_color", BONE)
+	hp_caption.add_theme_color_override("font_outline_color", Color("25181d"))
+	hp_caption.add_theme_constant_override("outline_size", 2)
+	hp_caption.z_index = 2
+	root.add_child(hp_caption)
+	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
 		var fray := _meter(root, "FrayFill", Rect2(90, 14, 69, 8), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
 		caption.position = Vector2(87, 0)
-		caption.size = Vector2(74, 22)
+		caption.size = Vector2(74, 14)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		caption.clip_text = true
 		caption.add_theme_font_size_override("font_size", 11)
 		caption.add_theme_color_override("font_color", BONE)
 		caption.add_theme_color_override("font_outline_color", Color("25181d"))
@@ -127,18 +166,43 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 
 
 static func present_rank(meters: Dictionary, unit: Dictionary, side: String) -> void:
-	# The caller gives the exact current authoritative rank snapshot each refresh.
-	var occupied := not unit.is_empty()
+	# Presentation only: the caller supplies the authoritative outcome and RNG.
+	var occupied := not unit.is_empty() and not bool(unit.get("lost", false)) and not bool(unit.get("dead", false))
 	var surface: Control = meters["root"]
 	surface.visible = occupied
 	var hp: ProgressBar = meters["hp"]
-	hp.max_value = maxf(1.0, float(unit.get("max_hp", 1))) if occupied else 1.0
-	hp.value = clampf(float(unit.get("hp", 0)), 0.0, hp.max_value)
-	hp.tooltip_text = "HP %d/%d" % [int(unit.get("hp", 0)), int(unit.get("max_hp", 0))] if occupied else ""
+	var hp_caption: Label = meters["hp_text"]
+	var hp_frame: NinePatchRect = surface.get_node("HPFillSewnFrame")
+	var hp_value := int(unit.get("hp", 0)) if occupied else 0
+	var hp_max := int(unit.get("max_hp", 0)) if occupied else 0
+	var hanging := occupied and hp_value == 0 and bool(unit.get("hanging", false))
+	hp.max_value = maxf(1.0, float(hp_max))
+	hp.value = clampf(float(hp_value), 0.0, hp.max_value)
+	hp.tooltip_text = ("HP %d/%d" % [hp_value, hp_max]) if occupied else ""
+	if hanging:
+		hp.tooltip_text += " — HANGING BY A THREAD (still acts and holds rank)"
+	_fit_readout(hp_caption, ("HANGING" if hanging else "HP %d/%d" % [hp_value, hp_max]) if occupied else "")
+	hp_caption.add_theme_color_override("font_color", AMBER if hanging else BONE)
+	hp_frame.self_modulate = Color("ffd18c") if hanging else Color.WHITE
+	surface.tooltip_text = hp.tooltip_text
 	if side == "hero":
 		var fray: ProgressBar = meters["fray"]
 		var readout: Label = meters["fray_text"]
+		var fray_frame: NinePatchRect = surface.get_node("FrayFillSewnFrame")
+		var fray_value := int(unit.get("fray", 0)) if occupied else 0
+		var danger := occupied and fray_value >= 100
 		fray.max_value = 200.0
-		fray.value = clampf(float(unit.get("fray", 0)), 0.0, 200.0)
-		fray.tooltip_text = "FRAY %d/200" % int(unit.get("fray", 0)) if occupied else ""
-		readout.text = "FRAY %d/200" % int(unit.get("fray", 0)) if occupied else ""
+		fray.value = clampf(float(fray_value), 0.0, 200.0)
+		fray.add_theme_stylebox_override("fill", _box(BUTTON,
+			Color("b95450") if danger else Color("d7a560"), 4.0))
+		fray_frame.self_modulate = Color("ffd18c") if danger else Color.WHITE
+		readout.add_theme_color_override("font_color", AMBER if danger else BONE)
+		_fit_readout(readout, "FRAY %d/200" % fray_value if occupied else "")
+		fray.tooltip_text = ""
+		if occupied:
+			# Thresholds are risks, not a guessed roll result. At 200,
+			# the battle model alone decides the supplied HANGING/LOST state.
+			fray.tooltip_text = ("FRAY %d/200" % fray_value
+				+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
+				+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
+			surface.tooltip_text += " | " + fray.tooltip_text

@@ -1,0 +1,9 @@
+{
+  "horrors": [
+    {"id":"extra_thread_shadow","name":"One Doll Too Many","kind":"mimic"},
+    {"id":"hungry_machine","name":"The Machine","kind":"machine"},
+    {"id":"wandering_seams","name":"Crawling Stitches","kind":"stitches"},
+    {"id":"thread_tug","name":"A Tug From Behind","kind":"tug"},
+    {"id":"following_forms","name":"Mannequins","kind":"mannequins"}
+  ]
+}

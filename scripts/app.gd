@@ -675,6 +675,8 @@ var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
 const STITCHED_SAVE_PATH := "user://stitched_run.save"
+@export var stitched_save_path: String = STITCHED_SAVE_PATH
+var stitched_continue_button: Button
 var start_button: Button
 var route_button: Button
 var base_button: Button
@@ -1442,12 +1444,13 @@ func _build_title() -> void:
 	start_button.pressed.connect(_open_stitched_run_picker)
 	box.add_child(start_button)
 	var resume := Button.new()
+	stitched_continue_button = resume
 	resume.name = "ContinueStitchedRun"
 	resume.text = "Continue run"
-	resume.custom_minimum_size = Vector2(240, 44)
+	resume.custom_minimum_size = Vector2(240, 56)
 	resume.pressed.connect(func():
 		if title_view.is_visible_in_tree() and stitched_run_session == null:
-			load_stitched_run(STITCHED_SAVE_PATH))
+			load_stitched_run(stitched_save_path))
 	box.add_child(resume)
 	route_button = Button.new()
 	route_button.text = "Choose a route"
@@ -1513,11 +1516,13 @@ func _build_title() -> void:
 	stitched_unpicker_button.focus_mode = Control.FOCUS_NONE
 	stitched_unpicker_button.pressed.connect(_open_stitched_unpicker)
 	box.add_child(stitched_unpicker_button)
-	start_button.focus_next = start_button.get_path_to(base_button)
+	start_button.focus_next = start_button.get_path_to(stitched_continue_button)
+	stitched_continue_button.focus_previous = stitched_continue_button.get_path_to(start_button)
+	stitched_continue_button.focus_next = stitched_continue_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
 	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
 	start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
-	base_button.focus_previous = base_button.get_path_to(start_button)
+	base_button.focus_previous = base_button.get_path_to(stitched_continue_button)
 	stitched_fight_button.focus_previous = stitched_fight_button.get_path_to(base_button)
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
@@ -5468,7 +5473,7 @@ func _present_stitched_run() -> void:
 		save.size = Vector2(102, 29)
 		save.pressed.connect(func():
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
-				StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
+				StitchedRunSave.write_file(stitched_save_path, session))
 		stage.add_child(save)
 		return
 	var terminal := session.phase in ["victory", "defeat"]
@@ -5492,7 +5497,7 @@ func _present_stitched_run() -> void:
 		hero_rows.add_child(recap)
 	if terminal:
 		_stitched_run_action(content, "Return to title", _return_stitched_run_title)
-		_stitched_run_action(content, "Save run", func(): StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
+		_stitched_run_action(content, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
 		return
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size = Vector2(1120, 320)
@@ -5519,8 +5524,8 @@ func _present_stitched_run() -> void:
 					_present_stitched_run(), action.enabled)
 	var navigation := HBoxContainer.new()
 	content.add_child(navigation)
-	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(STITCHED_SAVE_PATH, session))
-	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(STITCHED_SAVE_PATH))
+	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
 	if not stitched_run_buttons.is_empty():
 		stitched_run_buttons[0].grab_focus()
 

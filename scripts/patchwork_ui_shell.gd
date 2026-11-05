@@ -176,7 +176,7 @@ func _bind_title() -> void:
 	var app = get_parent()
 	_title = app.title_view
 	_label = app.title_label
-	_actions.assign([app.start_button, app.route_button, app.base_button, app.stitched_fight_button])
+	_actions.assign([app.start_button, app.stitched_continue_button, app.base_button, app.stitched_fight_button])
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
 	_label.theme_type_variation = "PatchTitle"
@@ -186,6 +186,7 @@ func _bind_title() -> void:
 	for button in _actions:
 		# Every live title action speaks in the master Theme's Londrina heading face.
 		button.theme_type_variation = "PatchHeadingButton"
+		button.add_theme_font_size_override("font_size", 28)
 		button.add_child(ButtonStitches.new())
 		# The menu backing follows the real action rects; containers may lay them out
 		# after the first draw, so every later rect change repaints the backing.

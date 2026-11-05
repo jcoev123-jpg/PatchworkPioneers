@@ -44,6 +44,7 @@ func _initialize() -> void:
 	_test_stitched_rejections_and_replay()
 	_test_stitched_actionable_quotes()
 	_test_stitched_noop_refusals()
+	_test_stitched_lost_dolls_not_mended()
 	_test_swap_admission_and_quote()
 	_test_swap_exchanges_and_decisions()
 	_test_swap_refusals_and_isolation()
@@ -712,8 +713,130 @@ func _test_stitched_noop_refusals() -> void:
 		"quotes and refused no-ops draw no RNG")
 
 
+## A real four-rank roster where the listed ranks (0-based) are LOST dolls.
+func _lost_party(hps: Array, lost_ranks: Array, frays: Array = NO_FRAY) -> Array:
+	var party := _stitched_party(hps, frays)
+	for rank in lost_ranks:
+		party[rank]["lost"] = true
+	return party
+
+
+func _test_stitched_lost_dolls_not_mended() -> void:
+	# AC1: lost rank 1 at 0 HP, wounded survivor, Hanging (not lost) doll, full doll.
+	var source := _lost_party([0, 18, 0, 48], [0], [30, 25, 10, 200])
+	var original := source.duplicate(true)
+	_check(source[0]["lost"] == true and source[0]["hp"] == 0 and not source[2].has("lost")
+		and source[2]["hp"] == 0 and source[1]["hp"] < source[1]["max_hp"],
+		"lost-doll fixture has a lost 0-HP doll, a Hanging doll and a wounded survivor")
+	var visit := RunCampfireVisit.new("camp_lost", source, "stitched", 40)
+	_check(visit.read_state()["quote"]["choices"] == ["mend", "tell_tales", "trim_the_wick", "leave"],
+		"Mend is quoted when a non-lost doll can recover")
+	seed(556677)
+	var expected_next := randi()
+	seed(556677)
+	var receipt := visit.select("mend", "camp_lost", original, 40)
+	_check(receipt.get("ok") == true and receipt.get("decision") == "mend"
+		and receipt.get("node_id") == "camp_lost" and receipt.get("candle") == 40,
+		"Mend commits with a lost doll in the party")
+	var expected := original.duplicate(true)
+	expected[1]["hp"] = 27
+	expected[2]["hp"] = 7
+	_check(receipt.get("heroes") == expected,
+		"Mend heals only non-lost dolls: floor(30%) 9 and Hanging 7; lost doll record unchanged")
+	var healed: Array = receipt.get("heroes")
+	_check(healed[0]["hp"] == 0 and healed[0]["lost"] == true
+		and healed[0] == original[0] and healed[0]["position"] == 1
+		and healed[0]["fray"] == 30,
+		"lost doll stays at 0 HP, lost, same rank, fray and records")
+	_check(healed[2]["hp"] == 7 and not healed[2].has("lost"), "Hanging 0-HP non-lost doll is healed")
+	_check(healed[3] == original[3], "full-HP doll is untouched")
+	var held := visit.read_state()
+	_check(held["status"] == "stitched_decided" and held["heroes"] == expected and held["candle"] == 40
+		and held["quote"]["choices"] == [], "held state matches the receipt and the visit is spent")
+	_check(source == original, "caller roster untouched")
+	_check(randi() == expected_next, "lost-doll Mend draws no global RNG")
+	_assert_stitched_refused(visit, "mend", "camp_lost", expected, 40, "duplicate Mend with lost doll")
+	# A lost doll wounded above 0 HP is not healed either.
+	var partial := _lost_party([12, 30, 26, 48], [0])
+	var partial_visit := RunCampfireVisit.new("camp_lost_p", partial, "stitched", 100)
+	_check(partial_visit.read_state()["quote"]["choices"] == ["leave"],
+		"a lost doll with HP below max alone offers no Mend")
+	# Missing or false lost stays non-lost.
+	var false_party := _lost_party([0, 30, 26, 48], [])
+	false_party[0]["lost"] = false
+	var false_visit := RunCampfireVisit.new("camp_lost_f", false_party, "stitched", 100)
+	_check(false_visit.read_state()["quote"]["choices"] == ["mend", "leave"],
+		"lost == false doll at 0 HP is healable")
+	var false_receipt := false_visit.select("mend", "camp_lost_f", false_party, 100)
+	_check(false_receipt.get("ok") == true and false_receipt["heroes"][0]["hp"] == 12,
+		"lost == false doll heals floor(30% of 40) = 12")
+
+	# AC2: only lost dolls miss HP -> no Mend, forged Mend refused without mutation.
+	for lost_ranks in [[0], [1, 3], [0, 1, 2]]:
+		var hps: Array = FULL_HPS.duplicate()
+		for rank in lost_ranks:
+			hps[rank] = 0
+		var only_lost := _lost_party(hps, lost_ranks)
+		var only_before := only_lost.duplicate(true)
+		var only_visit := RunCampfireVisit.new("camp_only", only_lost, "stitched", 100)
+		_check(only_visit.read_state()["quote"]["choices"] == ["leave"]
+			and only_visit.read_state()["quote"]["text"].find("Mend") == -1,
+			"only lost deficits %s: no Mend choice" % str(lost_ranks))
+		_assert_stitched_refused(only_visit, "mend", "camp_only", only_before, 100,
+			"forged Mend with only lost deficits %s" % str(lost_ranks))
+		_check(only_visit.read_state()["status"] == "stitched_open"
+			and only_visit.read_state()["heroes"] == only_before
+			and only_visit.read_state()["candle"] == 100,
+			"refused lost-only Mend leaves visit open and unchanged")
+	seed(121314)
+	var rng_next := randi()
+	seed(121314)
+	var rng_state := RandomNumberGenerator.new()
+	rng_state.seed = 5
+	var rng_before := rng_state.state
+	var locked := RunCampfireVisit.new("camp_only2", _lost_party([0, 30, 26, 48], [0]), "stitched", 100)
+	_assert_stitched_refused(locked, "mend", "camp_only2", _lost_party([0, 30, 26, 48], [0]), 100,
+		"lost-only Mend with candle at 100")
+	_check(randi() == rng_next and rng_state.state == rng_before, "refused lost-only Mend draws no RNG")
+	# Other choices on the same roster are unchanged.
+	var wick_party := _lost_party([0, 30, 26, 48], [0])
+	var wick_visit := RunCampfireVisit.new("camp_only3", wick_party, "stitched", 60)
+	_check(wick_visit.read_state()["quote"]["choices"] == ["trim_the_wick", "leave"],
+		"lost-only deficit still offers the Wick when candle is low")
+	var wick := wick_visit.select("trim_the_wick", "camp_only3", wick_party, 60)
+	_check(wick.get("ok") == true and wick.get("candle") == 100 and wick.get("heroes") == wick_party,
+		"Wick leaves the lost roster unchanged")
+	var tales_party := _lost_party([0, 30, 26, 48], [0], [20, 0, 30, 0])
+	var tales_visit := RunCampfireVisit.new("camp_only4", tales_party, "stitched", 100)
+	var tales := tales_visit.select("tell_tales", "camp_only4", tales_party, 100)
+	_check(tales.get("ok") == true and tales["heroes"][0]["fray"] == 0 and tales["heroes"][0]["hp"] == 0
+		and tales["heroes"][0]["lost"] == true and tales["heroes"][2]["fray"] == 5,
+		"Tell Tales still unravels 25 FRAY and keeps the lost doll lost")
+	# Mend stays available when even one non-lost doll can recover, Hanging included.
+	var hanging_party := _lost_party([0, 30, 0, 48], [0])
+	var hanging_visit := RunCampfireVisit.new("camp_hang", hanging_party, "stitched", 100)
+	_check(hanging_visit.read_state()["quote"]["choices"] == ["mend", "leave"],
+		"a Hanging non-lost doll keeps Mend available beside a lost doll")
+	var hanging := hanging_visit.select("mend", "camp_hang", hanging_party, 100)
+	_check(hanging.get("ok") == true and hanging["heroes"][0]["hp"] == 0
+		and hanging["heroes"][0]["lost"] == true and hanging["heroes"][2]["hp"] == 7,
+		"Hanging doll is mended to 7 while the lost doll stays at 0")
+	# Satchel-opened visits share the same rule.
+	var swap_party := _swap_party()
+	for hero in swap_party:
+		hero["hp"] = hero["max_hp"]
+		hero["fray"] = 0
+	swap_party[0]["hp"] = 0
+	swap_party[0]["lost"] = true
+	var swap_visit := RunCampfireVisit.open_stitched_with_satchel("camp_lost_s", swap_party, 100,
+		_swap_satchel(), _swap_catalog())
+	_check(swap_visit.read_state().get("ok") == true
+		and swap_visit.read_state()["quote"]["choices"] == ["leave"],
+		"satchel visit with only a lost deficit quotes no Mend")
+
+
 const ARMS_SHIELD := "warden_arms_shield_catch"
-const ARMS_RIVET := "warden_arms_rivet_pummel"
+const ARMS_RIVET:= "warden_arms_rivet_pummel"
 const HEAD_POT := "warden_head_pot_helm_bonk"
 const HEAD_RATTLE := "warden_head_helmet_rattle"
 const TORSO_IRON := "warden_torso_iron_challenge"
