@@ -3742,15 +3742,21 @@ func _open_stitched_campfire() -> bool:
 	var roster: Array = _stitched_campfire_living_roster()
 	if roster.size() != 4:
 		return false
+	if typeof(stitched_roadblock_candle) != TYPE_INT \
+			or stitched_roadblock_candle < 0 or stitched_roadblock_candle > 100:
+		return false
+	# This earned stop is a separate node. Quote recovery after its entry toll,
+	# but retain the original ledger until panel admission succeeds.
+	var projected_candle := maxi(0, stitched_roadblock_candle - STITCHED_ROADBLOCK_CANDLE_COST)
 	var visit := RunCampfireVisit.new(
 		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
-		stitched_roadblock_candle)
+		projected_candle)
 	var state: Dictionary = visit.read_state()
 	if state.get("ok") != true or state.get("mode") != RunCampfireVisit.STITCHED \
 			or state.get("status") != RunCampfireVisit.STITCHED_OPEN \
 			or state.get("node_id") != STITCHED_CAMPFIRE_NODE_ID \
 			or state.get("heroes") != roster \
-			or state.get("candle") != stitched_roadblock_candle \
+			or state.get("candle") != projected_candle \
 			or state.get("quote") != visit.read_state().get("quote") \
 			or not state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE) \
 			or not _stitched_campfire_held_fray_valid(roster):
@@ -3809,6 +3815,7 @@ func _open_stitched_campfire() -> bool:
 	_stitched_campfire_roster.clear()
 	_stitched_peddler_roster.clear()
 	_refresh_stitched_peddler_button()
+	stitched_roadblock_candle = projected_candle
 	add_child(panel)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	title_view.hide()

@@ -251,8 +251,13 @@ func _tales_replay(seed_value: int) -> Dictionary:
 		and app._stitched_postvictory_stop_available,
 		"unexpected extra selected-ID FRAY record fails closed without spend")
 	app._stitched_fray_carry = before["fray"].duplicate(true)
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	if panel == null or visit == null:

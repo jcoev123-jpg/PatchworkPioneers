@@ -5,6 +5,21 @@ const NODE := "s6_stitched_roadblock_campfire"
 var failures: Array[String] = []
 var checks := 0
 
+const MOUNT_SCRIPT := """extends "res://scripts/app.gd"
+var fail_campfire_mount := false
+var mount_attempts := 0
+var mount_candle: Variant
+var mount_state: Dictionary
+func _mount_stitched_campfire(state: Dictionary, generation: int,
+		swap_quote: Dictionary) -> Dictionary:
+	mount_attempts += 1
+	mount_candle = stitched_roadblock_candle
+	mount_state = state.duplicate(true)
+	if fail_campfire_mount:
+		return {}
+	return super._mount_stitched_campfire(state, generation, swap_quote)
+"""
+
 
 func _initialize() -> void:
 	_run.call_deferred()
@@ -18,6 +33,9 @@ func _check(value: bool, note: String) -> void:
 
 func _resources(app: Node) -> Dictionary:
 	return {"hp": app._stitched_hp_carry.duplicate(true),
+		"fray": app._stitched_fray_carry.duplicate(true),
+		"ranks": app._stitched_rank_carry.duplicate(true),
+		"party": app._stitched_party_receipt.duplicate(true),
 		"candle": app.stitched_roadblock_candle,
 		"gold": app.stitched_preview_gold,
 		"bleed": app._stitched_bleed_carry.duplicate(true),
@@ -97,6 +115,10 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 
 func _prepare(winning_fight_candle: int = -1) -> Dictionary:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
+	var script := GDScript.new()
+	script.source_code = MOUNT_SCRIPT
+	_check(script.reload() == OK, "Campfire mount-failure subclass compiles")
+	app.set_script(script)
 	root.add_child(app)
 	await process_frame
 	_check(app.stitched_campfire_button != null \
@@ -178,6 +200,51 @@ func _prepare(winning_fight_candle: int = -1) -> Dictionary:
 		"wounded": wounded}
 
 
+func _admission_refusals(app: Node) -> void:
+	var before := _resources(app)
+	var roster: Array = app._stitched_campfire_roster.duplicate(true)
+	var swap_roster: Array = app._stitched_campfire_swap_roster.duplicate(true)
+	var generation: int = app._stitched_campfire_generation
+	seed(53301)
+	var expected_rng := randi()
+	seed(53301)
+	for invalid in [-1, 101, 8.0, "8", null, true]:
+		app.stitched_roadblock_candle = invalid
+		var invalid_before := _resources(app)
+		_check(not app._open_stitched_campfire() and _resources(app) == invalid_before
+			and app.mount_attempts == 0 and app._stitched_postvictory_stop_available,
+			"invalid original candle rejects before projection or mounting: %s" % str(invalid))
+	app.stitched_roadblock_candle = before["candle"]
+	app._stitched_postvictory_stop_available = false
+	_check(not app._open_stitched_campfire() and _resources(app) == before,
+		"unearned admission cannot debit the candle")
+	app._stitched_postvictory_stop_available = true
+	app._stitched_campfire_roster[0]["hp"] -= 1
+	_check(not app._open_stitched_campfire() and _resources(app) == before
+		and app._stitched_postvictory_stop_available, "forged earned roster cannot spend")
+	app._stitched_campfire_roster = roster.duplicate(true)
+	var occupied := Control.new()
+	app.add_child(occupied)
+	app.stitched_campfire_panel = occupied
+	_check(not app._open_stitched_campfire() and _resources(app) == before
+		and app._stitched_postvictory_stop_available, "occupied panel cannot admit or spend")
+	app.stitched_campfire_panel = null
+	occupied.free()
+	app.fail_campfire_mount = true
+	_check(not app._open_stitched_campfire() and app.mount_attempts == 1
+		and app.mount_candle == before["candle"]
+		and app.mount_state["candle"] == maxi(0, int(before["candle"]) - 8)
+		and _resources(app) == before and app.stitched_campfire_visit == null
+		and app.stitched_campfire_panel == null and app._stitched_campfire_swap_visit == null
+		and app._stitched_campfire_state.is_empty()
+		and app._stitched_campfire_generation == generation
+		and app._stitched_campfire_roster == roster
+		and app._stitched_campfire_swap_roster == swap_roster
+		and app._stitched_postvictory_stop_available and randi() == expected_rng,
+		"exercised mount failure retains original candle, RNG, ticket, roster and unpublished services")
+	app.fail_campfire_mount = false
+
+
 func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Dictionary:
 	var setup: Dictionary = await _prepare(winning_fight_candle)
 	var app: Node = setup["app"]
@@ -190,6 +257,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 	# the current authoritative run candle is projected into the service on open.
 	if campfire_candle >= 0:
 		app.stitched_roadblock_candle = campfire_candle
+	_admission_refusals(app)
 	var before: Dictionary = _resources(app)
 	var roster: Array = app._stitched_campfire_roster.duplicate(true)
 	_check(roster.size() == 4 and before["hp"].size() == 4
@@ -197,8 +265,8 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and before["hp"] == setup["wounds"],
 		"non-vacuous real four-hero victory snapshot precedes Wick")
 	if int(before["candle"]) >= 100:
-		# CANDLE 100 removes only Wick. The genuine earned Campfire still
-		# mounts every other quoted action, and Leave retires it for free.
+		# An isolated service at 100 cannot offer Wick; actual entry below pays
+		# eight first and therefore offers Wick to restore the missing eight.
 		var full_visit := RunCampfireVisit.new(NODE, roster, RunCampfireVisit.STITCHED, 100)
 		var full_state: Dictionary = full_visit.read_state()
 		_check(full_state.get("quote", {}).get("choices", []).has(RunCampfireVisit.TRIM_THE_WICK) == false
@@ -206,35 +274,13 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 			and full_visit.select(RunCampfireVisit.TRIM_THE_WICK, NODE, roster, 100).get("ok") == false
 			and full_visit.read_state() == full_state,
 			"full CANDLE service refuses unoffered Wick without closing")
-		app.stitched_campfire_button.pressed.emit()
-		await process_frame
-		var panel: Control = app.stitched_campfire_panel
-		var visit: RunCampfireVisit = app.stitched_campfire_visit
-		_check(panel != null and visit != null
-			and panel.find_child("CampfireWick", true, false) == null
-			and panel.find_child("CampfireLeave", true, false) != null
-			and visit.read_state().get("quote") == full_state.get("quote")
-			and not app._stitched_postvictory_stop_available,
-			"CANDLE 100 Campfire mounts offered actions without any Wick control")
-		if panel != null and visit != null:
-			var expected: Dictionary = app._stitched_campfire_state.duplicate(true)
-			var generation: int = app._stitched_campfire_generation
-			_check(not app._stitched_campfire_choose(
-				RunCampfireVisit.TRIM_THE_WICK, expected, weakref(panel), generation).get("ok")
-				and _resources(app) == before and visit.read_state() == expected,
-				"manually forged unoffered Wick cannot spend or alter state")
-			var leave: Button = panel.find_child("CampfireLeave", true, false)
-			leave.pressed.emit()
-			_check(_resources(app) == before
-				and visit.read_state().get("status") == RunCampfireVisit.STITCHED_DECIDED
-				and app.stitched_campfire_panel == null
-				and not app._open_stitched_campfire(),
-				"full CANDLE Leave changes no ledger and retires earned stop")
-		app.free()
-		await process_frame
-		return {"before": 100, "restored": 100, "gain": 0}
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	if panel == null or visit == null:
@@ -243,6 +289,9 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		await process_frame
 		return {}
 	var expected: Dictionary = app._stitched_campfire_state.duplicate(true)
+	_check(app.mount_candle == entrance["candle"]
+		and app.mount_state == expected and expected["candle"] == before["candle"],
+		"panel builder sees projected state while the original ledger is still unspent")
 	var generation: int = app._stitched_campfire_generation
 	var mend: Button = panel.find_child("CampfireMend", true, false)
 	var wick: Button = panel.find_child("CampfireWick", true, false)
@@ -266,6 +315,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and leave.focus_previous == leave.get_path_to(wick)
 		and leave.focus_next == leave.get_path_to(mend)
 		and wick.text.contains("+%d CANDLE" % gain)
+		and label.text.begins_with("CANDLELIGHT  %d / 100" % int(before["candle"]))
 		and label.text.contains("TRIM +%d" % gain)
 		and label.text.contains("%d / 100" % restored)
 		and expected == visit.read_state()
@@ -360,14 +410,14 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		and next.is_visible_in_tree(),
 		"actual next Fight is mounted from title through Roadblock")
 	if next != null and next.battle != null:
-		var entrance := maxi(0, restored - 8)
+		var fight_entrance := maxi(0, restored - 8)
 		var next_hp := {}
 		for hero in next.battle.get_heroes():
 			next_hp[str(hero["id"])] = int(hero["hp"])
-		_check(next.config.get("candle") == entrance
-			and next.battle.candle() == entrance
-			and next.battle.state_snapshot().get("candle") == entrance
-			and app.stitched_roadblock_candle == entrance
+		_check(next.config.get("candle") == fight_entrance
+			and next.battle.candle() == fight_entrance
+			and next.battle.state_snapshot().get("candle") == fight_entrance
+			and app.stitched_roadblock_candle == fight_entrance
 			and next_hp == before["hp"]
 			and app._stitched_bleed_carry == before["bleed"]
 			and app._stitched_gear_overrides == before["gear"]
@@ -381,7 +431,7 @@ func _wick(winning_fight_candle: int = -1, campfire_candle: int = -1) -> Diction
 		_check(not app._stitched_postvictory_stop_available
 			and not app._open_stitched_campfire() and not app.stitched_campfire_button.visible,
 			"unwon second exit does not mint a new stop")
-	var trace := {"before": before["candle"], "restored": restored, "gain": gain}
+	var trace := {"before": entrance["candle"], "charged": before["candle"], "restored": restored, "gain": gain}
 	app.free()
 	await process_frame
 	return trace
@@ -396,8 +446,13 @@ func _leave_wick() -> void:
 		await process_frame
 		return
 	var before: Dictionary = _resources(app)
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	_check(panel != null and visit != null, "Leave witness mounts the authenticated panel")
@@ -435,8 +490,13 @@ func _run() -> void:
 		"noncapped witness restores exactly 50 without reaching ceiling")
 	var already_full: Dictionary = await _wick(-1, 100)
 	_check(not already_full.is_empty() and already_full.get("before") == 100
-		and already_full.get("restored") == 100 and already_full.get("gain") == 0,
-		"100-point candle witness exposes +0 and stays capped with no other spend")
+		and already_full.get("restored") == 100 and already_full.get("charged") == 92 and already_full.get("gain") == 8,
+		"100-point entered node pays eight then offers Wick +8 back to cap")
+	for boundary in [8, 0]:
+		var low: Dictionary = await _wick(-1, boundary)
+		_check(not low.is_empty() and low.get("before") == boundary
+			and low.get("charged") == 0 and low.get("restored") == 50,
+			"low/zero entry floors at zero and Wick restores exactly fifty")
 	await _leave_wick()
 	for failure in failures:
 		printerr(failure)
