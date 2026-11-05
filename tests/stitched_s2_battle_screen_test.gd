@@ -396,7 +396,7 @@ func _run() -> void:
 		boot.screen_from_query("?screen=stitched_battle") == "stitched_battle" and
 		boot.screen_from_query("?screen=stitched_battle&screen=battle") == "",
 		"only the exact, unambiguous public query is admitted")
-	_check(StitchedRules.uses_card_combat(), "shipped cards mode remains project default")
+	_check(not ProjectSettings.has_setting("patchwork/combat_mode"), "S2 needs no retired combat setting")
 	var config := StitchedBattleScreen.read_preview()
 	_check(str(config.get("mode", "")) == "stitched" and config.get("heroes", []).size() == 4 and
 		config.get("foes", []).size() == 3, "representative seed and real 4v3 inputs exist")
@@ -576,8 +576,9 @@ func _run() -> void:
 				"mounted Retreat rolls the seeded authority once and records success/failure")
 		boot.exit_stitched_preview(app)
 		await process_frame
-		_check(app.title_view.is_visible_in_tree() and StitchedRules.uses_card_combat(),
-			"exiting S2 leaves original card route available and card mode unchanged")
+		_check(app.title_view.is_visible_in_tree() and boot.stitched_view == null and
+			not ProjectSettings.has_setting("patchwork/combat_mode"),
+			"exiting S2 restores title, unmounts preview and leaves retired setting absent")
 		app.free()
 		await process_frame
 	for failure in failures:

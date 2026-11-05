@@ -2,11 +2,8 @@ class_name StitchedRules
 extends RefCounted
 ## Headless Design v4 "Stitched" combat rules core, build stage S1a (STITCHED_DESIGN.md).
 ##
-## This file is deliberately independent of the live card battle: it owns its own four-hero
-## party, four enemy ranks, part abilities, statuses, scrap heaps, Hanging and retreat. The
-## app only builds it when the project setting "patchwork/combat_mode" is "stitched"; the
-## shipped default "cards" keeps the existing card path in charge and this core refuses to
-## build at all (see create()).
+## Owns the four-hero party, four enemy ranks, part abilities, statuses, scrap heaps,
+## Hanging and retreat. Creation is independent of project settings.
 ##
 ## Determinism: every random draw comes from one RandomNumberGenerator seeded by the caller,
 ## so a fixed seed replays exactly. Illegal actions are validated before any state or RNG
@@ -26,10 +23,6 @@ extends RefCounted
 ##
 ## S1b extends the same S1a session, validation, and seeded RNG with fray, resolve,
 ## torn seams, thread cuts and candle projections. No live run/UI wiring is needed.
-
-const COMBAT_MODE_SETTING := "patchwork/combat_mode"
-const MODE_CARDS := "cards"
-const MODE_STITCHED := "stitched"
 
 const HERO_COUNT := 4
 const MIN_FOES := 2
@@ -75,37 +68,16 @@ var _satchel: Array = []
 var _turn_events: Array = []
 
 
-## The project's authored combat mode. Only the exact "stitched" value leaves the card
-## battle; anything else (including a missing or malformed setting) means cards.
-static func combat_mode() -> String:
-	var setting: Variant = ProjectSettings.get_setting(COMBAT_MODE_SETTING, MODE_CARDS)
-	if setting is String and str(setting) == MODE_STITCHED:
-		return MODE_STITCHED
-	return MODE_CARDS
-
-
-static func uses_card_combat() -> bool:
-	return combat_mode() == MODE_CARDS
-
-
 ## Builds a stitched battle from authored data:
 ##   {"heroes": [4 hero definitions], "foes": [2-3 foe definitions],
-##    "parts": [part entries], "seed": int, "mode": optional explicit mode}
+##    "parts": [part entries], "seed": int, "mode": optional explicit "stitched"}
 ## Returns {"ok": true, "error": "", "battle": StitchedRules} or
 ## {"ok": false, "error": message, "battle": null}. Nothing is rolled or mutated on failure.
 static func create(config: Dictionary) -> Dictionary:
-	var mode := combat_mode()
 	if config.has("mode"):
 		var requested: Variant = config["mode"]
-		if not requested is String or not str(requested) in [MODE_CARDS, MODE_STITCHED]:
+		if not requested is String or requested != "stitched":
 			return {"ok": false, "error": "unknown combat mode: " + str(requested), "battle": null}
-		mode = str(requested)
-	if mode != MODE_STITCHED:
-		return {
-			"ok": false,
-			"error": "combat_mode is cards: the card battle stays in charge",
-			"battle": null,
-		}
 	var battle := StitchedRules.new()
 	var error := battle._setup(config)
 	if not error.is_empty():

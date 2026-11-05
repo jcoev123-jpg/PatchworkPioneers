@@ -4,7 +4,7 @@ extends SceneTree
 ## The rules live in scripts/stitched/stitched_rules.gd and scripts/stitched/stitched_parts.gd;
 ## the part catalog is tests/fixtures/stitched_s1a_parts.json. Every battle below is built from
 ## authored data with one seeded RandomNumberGenerator, so all outcomes replay exactly.
-## The retained private card path (CombatParty/CombatState) is checked with an explicit test setting.
+## Creation needs no mode and ignores the retired project setting.
 
 const FIXTURE := "res://tests/fixtures/stitched_s1a_parts.json"
 const SETTING := "patchwork/combat_mode"
@@ -246,7 +246,6 @@ func _boss_foes() -> Array:
 
 func _config(seed_value: Variant, overrides: Dictionary = {}) -> Dictionary:
 	var config := {
-		"mode": "stitched",
 		"seed": seed_value,
 		"parts": _fixture_parts(),
 		"heroes": _party(),
@@ -801,15 +800,41 @@ func _expected_order(battle: StitchedRules, seed_value: int) -> Array:
 
 func _test_ac1_modes() -> void:
 	_check(not ProjectSettings.has_setting(SETTING), "S7a: project.godot no longer authors combat_mode")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: the retained private core keeps its cards fallback")
-	ProjectSettings.set_setting(SETTING, "cards")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: an explicit test setting enables legacy cards mode")
-	_check(StitchedRules.uses_card_combat(), "AC1: cards mode keeps the card battle in charge")
-	var cards_config := _config(11)
-	cards_config.erase("mode")
-	var blocked := StitchedRules.create(cards_config)
-	_check(not blocked["ok"], "AC1: the stitched core refuses to build while combat_mode is cards")
-	_check(blocked["battle"] == null, "AC1: a refused build returns no battle object")
+	var setting: Variant = ProjectSettings.get_setting(SETTING)
+	for foe_count in [2, 3]:
+		var reference: Dictionary = {}
+		for old_setting in [null, "cards", "stitched", "banana", 42, {"mode": "cards"}]:
+			ProjectSettings.set_setting(SETTING, old_setting)
+			var foes := _three_foes()
+			foes.resize(foe_count)
+			var cfg := _config(11, {"foes": foes})
+			_check(not cfg.has("mode"), "AC1: core fixture genuinely omits mode")
+			var result := StitchedRules.create(cfg)
+			_check(result["ok"] and result["error"] == "", "AC1: no-mode build ignores old setting " + str(old_setting))
+			if not result["ok"]:
+				continue
+			var battle: StitchedRules = result["battle"]
+			_check(battle.is_valid() and battle.get_heroes().size() == 4 and battle.get_foes().size() == foe_count,
+				"AC1: no-mode battle has real 4v2/4v3 participants")
+			var trace: Array = [battle.state_snapshot()]
+			for step in range(20):
+				_check(battle.pass_turn()["ok"], "AC1: setting-independent replay advances real turns")
+				trace.append(battle.state_snapshot())
+			if reference.is_empty():
+				reference = {"trace": trace}
+			_check(trace == reference["trace"], "AC1: same seed replays across absent and malformed old settings")
+	var run_rng := RandomNumberGenerator.new()
+	run_rng.seed = 91
+	for forged in ["cards", "sideways", "", "Stitched", 1, true, null, [], {}]:
+		var before := run_rng.state
+		var cfg := _config(7, {"mode": forged, "run_rng": run_rng})
+		var blocked := StitchedRules.create(cfg)
+		_check(not blocked["ok"] and blocked["battle"] == null and str(blocked["error"]).begins_with("unknown combat mode:"),
+			"AC2: forged explicit mode returns failure receipt: " + str(forged))
+		_check(run_rng.state == before, "AC2: forged mode never draws shared run RNG")
+		cfg["parts"] = []
+		var preflight := StitchedRules.create(cfg)
+		_check(preflight == blocked and run_rng.state == before, "AC2: mode rejection precedes even invalid parts setup")
 	# The existing card path still works exactly as before: three heroes and the 3-energy turn.
 	var card_party := CombatParty.new([
 		{"id": "warden", "max_hp": 40},
@@ -821,11 +846,8 @@ func _test_ac1_modes() -> void:
 	var card_state := CombatState.new()
 	_check(card_state.start_player_turn() and card_state.energy == 3, "AC1: the card turn still grants three energy")
 	_check(card_state.try_spend_energy(1) and card_state.energy == 2, "AC1: the card turn still spends energy")
-	# Stitched mode comes from the real project setting.
-	ProjectSettings.set_setting(SETTING, "stitched")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_STITCHED, "AC1: the project setting switches combat to stitched")
-	var built := StitchedRules.create(_config(7))
 	ProjectSettings.set_setting(SETTING, "cards")
+	var built := StitchedRules.create(_config(7, {"mode": "stitched"}))
 	_check(built["ok"], "AC1: stitched mode builds a battle: " + str(built["error"]))
 	if built["ok"]:
 		var battle: StitchedRules = built["battle"]
@@ -845,13 +867,7 @@ func _test_ac1_modes() -> void:
 	# Four starting foes are refused before any state exists.
 	var four := StitchedRules.create(_config(7, {"foes": _three_foes() + [_synthetic_foe("extra")]}))
 	_check(not four["ok"], "AC1: a four-foe starting fight is refused")
-	# A malformed setting falls back to cards; an explicit unknown mode is refused.
-	ProjectSettings.set_setting(SETTING, "banana")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: a malformed setting falls back to cards")
-	var unknown := StitchedRules.create(_config(7, {"mode": "sideways"}))
-	ProjectSettings.set_setting(SETTING, "cards")
-	_check(not unknown["ok"], "AC1: an explicit unknown combat mode is refused")
-	_check(StitchedRules.combat_mode() == StitchedRules.MODE_CARDS, "AC1: the test restores the cards default")
+	ProjectSettings.set_setting(SETTING, setting)
 
 
 # ---------------------------------------------------------------- AC2

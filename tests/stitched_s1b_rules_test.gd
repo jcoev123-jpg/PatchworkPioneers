@@ -17,8 +17,7 @@ func _initialize() -> void:
 	_test_enemy_effects()
 	_test_enemy_modifiers()
 	_test_reckless_guard()
-	_test_cards()
-	ProjectSettings.set_setting("patchwork/combat_mode", "cards")
+	_test_mode_independence()
 	if failures.is_empty():
 		print("stitched_s1b_rules_test: PASS (", checks, " checks)")
 	else:
@@ -96,7 +95,7 @@ func _config(seed_value: int, light: int = 100, special: String = "") -> Diction
 		})
 	if special == "modifiers":
 		foes[0]["abilities"][0]["acc"] = 70
-	return {"mode": "stitched", "seed": seed_value, "parts": parts, "heroes": heroes, "foes": foes, "candle": light}
+	return {"seed": seed_value, "parts": parts, "heroes": heroes, "foes": foes, "candle": light}
 
 func _battle(seed_value: int, light: int = 100, special: String = "") -> StitchedRules:
 	var built := StitchedRules.create(_config(seed_value, light, special))
@@ -538,11 +537,26 @@ func _test_reckless_guard() -> void:
 		_check(str(target["target"]) == "warden" and not target.has("guarded_by"), "AC1: Reckless target ignores an actual allied Guard")
 
 
-func _test_cards() -> void:
+func _test_mode_independence() -> void:
 	var setting: Variant = ProjectSettings.get_setting("patchwork/combat_mode")
-	ProjectSettings.set_setting("patchwork/combat_mode", "cards")
-	_check(StitchedRules.uses_card_combat(), "AC4: cards remains the default operational combat mode")
-	var cfg := _config(20)
-	cfg.erase("mode")
-	_check(not bool(StitchedRules.create(cfg)["ok"]), "AC4: core refuses to replace the live card battle")
+	var reference: Dictionary = {}
+	for old_setting in [null, "cards", "banana", 42, {}]:
+		ProjectSettings.set_setting("patchwork/combat_mode", old_setting)
+		_check(not _config(5704).has("mode"), "AC4: S1b fixture genuinely omits mode")
+		var trace := _trace(5704)
+		_check(int(trace.get("steps", 0)) > 15, "AC4: no-mode S1b replay exercises real turns")
+		if reference.is_empty():
+			reference = trace
+		_check(trace == reference, "AC4: S1b seeded trace ignores retired setting " + str(old_setting))
+	var run_rng := RandomNumberGenerator.new()
+	run_rng.seed = 20
+	for forged in ["cards", "unknown", 42, false, null, [], {}]:
+		var cfg := _config(20)
+		cfg["mode"] = forged
+		cfg["run_rng"] = run_rng
+		var before := run_rng.state
+		var blocked := StitchedRules.create(cfg)
+		_check(not blocked["ok"] and blocked["battle"] == null and not str(blocked["error"]).is_empty(),
+			"AC4: S1b rejects forged explicit mode " + str(forged))
+		_check(run_rng.state == before, "AC4: rejected S1b mode cannot spend run RNG")
 	ProjectSettings.set_setting("patchwork/combat_mode", setting)
