@@ -4,6 +4,17 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
+const MOUNT_FAILURE_SCRIPT := """extends "res://scripts/app.gd"
+var fail_ferry_mount := false
+var mount_attempts := 0
+func _mount_stitched_postevent(record: Dictionary, snapshot: Dictionary,
+		quote: Dictionary, offered: Dictionary, generation: int) -> Dictionary:
+	mount_attempts += 1
+	if fail_ferry_mount:
+		return {}
+	return super._mount_stitched_postevent(record, snapshot, quote, offered, generation)
+"""
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -77,13 +88,22 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		actions += 1
 	return {"outcome": stage.battle.outcome(), "actions": actions, "abilities": abilities}
 
-func _earned() -> Node:
+func _earned(fail_mount: bool = false) -> Node:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
+	if fail_mount:
+		# Compile after autoload initialization, as the real app script requires it.
+		var failing_script := GDScript.new()
+		failing_script.source_code = MOUNT_FAILURE_SCRIPT
+		_check(failing_script.reload() == OK, "mount-failure subclass compiles")
+		app.set_script(failing_script)
+		app.fail_ferry_mount = true
 	root.add_child(app)
 	await process_frame
+	var fresh := _state(app)
 	_check(app.stitched_postevent_button != null and not app.stitched_postevent_button.visible \
 		and app.stitched_postevent_button.disabled and not app._open_stitched_postevent() \
-		and app.stitched_postevent_visit == null and app.stitched_postevent_panel == null,
+		and app.stitched_postevent_visit == null and app.stitched_postevent_panel == null \
+		and _state(app) == fresh,
 		"fresh title has no Event authority")
 	var unwon: StitchedBattleScreen = await _admit(app)
 	_check(unwon != null and unwon.battle != null and unwon.battle.is_valid(),
@@ -92,8 +112,10 @@ func _earned() -> Node:
 		return app
 	unwon._action_buttons["exit"].pressed.emit()
 	await process_frame
+	var before_unwon := _state(app)
 	_check(not app._open_stitched_postevent() and not app.stitched_postevent_button.visible \
-		and app.stitched_preview_gold == 0 and app.stitched_preview_scraps == 0,
+		and app.stitched_preview_gold == 0 and app.stitched_preview_scraps == 0 \
+		and _state(app) == before_unwon,
 		"unwon exit cannot mint Event or currency")
 	var stage: StitchedBattleScreen = await _admit(app)
 	var won: Dictionary = _victory(stage)
@@ -119,8 +141,9 @@ func _earned() -> Node:
 	var old: Dictionary = app._stitched_sewing_quote.get("state", {}).duplicate(true)
 	var forged := old.duplicate(true)
 	forged["version"] = -12
+	var before_forged := _state(app)
 	_check(app._stitched_sewing_leave(forged, weakref(circle)).get("ok") != true \
-		and not app._open_stitched_postevent(),
+		and not app._open_stitched_postevent() and _state(app) == before_forged,
 		"forged Circle Leave cannot create Event")
 	var leave: Button = circle.find_child("SewingLeave", true, false)
 	if leave != null:
@@ -135,9 +158,23 @@ func _earned() -> Node:
 	return app
 
 func _opened(app: Node) -> Dictionary:
-	if not app._open_stitched_postevent():
+	var before := _state(app)
+	seed(982531)
+	var expected_rng := randi()
+	seed(982531)
+	_check(app.stitched_postevent_button.is_visible_in_tree() \
+		and not app.stitched_postevent_button.disabled,
+		"earned Ferry entry is a reachable enabled title action")
+	app.stitched_postevent_button.pressed.emit()
+	if app.stitched_postevent_panel == null:
 		_check(false, "earned Event panel must open")
 		return {}
+	var expected := before.duplicate(true)
+	expected["candle"] = maxi(0, int(before["candle"]) - 8)
+	_check(_state(app) == expected and randi() == expected_rng,
+		"successful entry alone spends eight floored at zero, preserving all ledgers and RNG")
+	_check(not app._open_stitched_postevent() and _state(app) == expected,
+		"duplicate open while mounted cannot spend again")
 	await process_frame
 	var panel: Control = app.stitched_postevent_panel
 	var quote: Dictionary = app._stitched_postevent_quote.duplicate(true)
@@ -171,7 +208,7 @@ func _forgeries(app: Node, opened: Dictionary) -> void:
 	var gen: int = opened["generation"]
 	var service: RunStitchedEventConsequence = opened["service"]
 	var forged: Dictionary = snap.duplicate(true)
-	forged["candle"] = 0
+	forged["candle"] = (int(snap["candle"]) + 1) % 101
 	_check(app._stitched_postevent_choose("pay_gold", forged, q, source, gen).get("ok") != true,
 		"forged snapshot rejected")
 	var quoted := q.duplicate(true)
@@ -196,6 +233,10 @@ func _forgeries(app: Node, opened: Dictionary) -> void:
 	_check(app._stitched_postevent_choose("pay_gold", snap, q, source, gen).get("ok") != true,
 		"changed selected party rejects")
 	app._stitched_party_picks = before_party
+	app.stitched_roadblock_candle = (int(snap["candle"]) + 1) % 101
+	_check(app._stitched_postevent_choose("pay_gold", snap, q, source, gen).get("ok") != true,
+		"changed post-entry candle rejects stale choice")
+	app.stitched_roadblock_candle = snap["candle"]
 	app.stitched_preview_gold += 1
 	_check(app._stitched_postevent_choose("pay_gold", snap, q, source, gen).get("ok") != true,
 		"changed live wallet rejects")
@@ -218,6 +259,7 @@ func _scenario(choice: String, candle_override: int = -1,
 		app.stitched_preview_scraps = scraps_override
 	if gold_override >= 0:
 		app.stitched_preview_gold = gold_override
+	var before_entry := _state(app)
 	var opened: Dictionary = await _opened(app)
 	if opened.is_empty():
 		app.free()
@@ -269,6 +311,7 @@ func _scenario(choice: String, candle_override: int = -1,
 		and after["candle"] == expected_candle \
 		and after["hp"] == before["hp"] and after["fray"] == before["fray"] \
 		and after["ranks"] == before["ranks"] and after["gear"] == before["gear"] \
+		and after["bleed"] == before["bleed"] \
 		and after["satchel"] == before["satchel"] \
 		and after["legacy_gold"] == 0 and after["legacy_scraps"] == 0,
 		"exact gold/scrap/capped candle settlement, other carry and legacy state untouched")
@@ -290,23 +333,91 @@ func _scenario(choice: String, candle_override: int = -1,
 		await process_frame
 	app.free()
 	await process_frame
-	return {"before": before, "after": after}
+	return {"before_entry": before_entry, "before": before, "after": after}
+
+func _failed_entries() -> void:
+	var app: Node = await _earned(true)
+	_check(app._stitched_postvictory_stop_available and app.stitched_postevent_button.visible,
+		"failure witnesses earned an authentic four-survivor stop")
+	var before := _state(app)
+	var generation: int = app._stitched_postevent_generation
+	var roster: Array = app._stitched_campfire_authorized_roster.duplicate(true)
+	seed(53103)
+	var expected_rng := randi()
+	seed(53103)
+	for bad_candle in [-1, 101]:
+		app.stitched_roadblock_candle = bad_candle
+		var malformed := _state(app)
+		_check(not app._open_stitched_postevent() and _state(app) == malformed,
+			"malformed candle rejected without debit or clamp")
+	app.stitched_roadblock_candle = before["candle"]
+	app._stitched_campfire_authorized_roster.clear()
+	_check(not app._open_stitched_postevent() and _state(app) == before,
+		"forged roster cannot create an Event or charge")
+	app._stitched_campfire_authorized_roster = roster.duplicate(true)
+	app.stitched_preview_scraps = -1
+	var malformed_wallet := _state(app)
+	_check(not app._open_stitched_postevent() and _state(app) == malformed_wallet,
+		"malformed wallet cannot spend or mint authority")
+	app.stitched_preview_scraps = before["scraps"]
+	_check(app.mount_attempts == 0, "malformed opens fail before mounting")
+	_check(not app._open_stitched_postevent() and app.mount_attempts == 1 \
+		and _state(app) == before and app.stitched_postevent_panel == null \
+		and app.stitched_postevent_visit == null and app._stitched_postevent_snapshot.is_empty() \
+		and app._stitched_postevent_quote.is_empty() and app._stitched_postevent_offered.is_empty() \
+		and app._stitched_postevent_roster.is_empty() \
+		and app._stitched_postevent_generation == generation \
+		and app._stitched_postvictory_stop_available \
+		and app._stitched_campfire_authorized_roster == roster \
+		and app.title_view.is_visible_in_tree() and randi() == expected_rng,
+		"failed panel build rolls back resources, quotes, authority and RNG; stop remains earned")
+	app.fail_ferry_mount = false
+	var opened := await _opened(app)
+	_check(not opened.is_empty() and app.mount_attempts == 2,
+		"retry after failed mount opens the same earned stop once")
+	if not opened.is_empty():
+		opened["leave"].pressed.emit()
+		await process_frame
+		var expected := before.duplicate(true)
+		expected["candle"] = maxi(0, int(before["candle"]) - 8)
+		_check(_state(app) == expected, "retry Leave retains exactly one entry debit")
+	app.free()
+	await process_frame
 
 func _run() -> void:
+	await _failed_entries()
 	var bought: Dictionary = await _scenario("pay_gold")
+	var replayed: Dictionary = await _scenario("pay_gold")
+	_check(not bought.is_empty() and bought == replayed,
+		"fresh seeded mounted route deterministically replays entry and choice ledgers")
 	var repaired: Dictionary = await _scenario("mend_wick")
 	var left: Dictionary = await _scenario("leave")
 	var capped: Dictionary = await _scenario("mend_wick", 100)
 	var partial_cap: Dictionary = await _scenario("mend_wick", 96)
-	_check(partial_cap.get("before", {}).get("candle") == 96 \
-		and partial_cap.get("after", {}).get("candle") == 100 \
+	_check(capped.get("before_entry", {}).get("candle") == 100 \
+		and capped.get("before", {}).get("candle") == 92 \
+		and capped.get("after", {}).get("candle") == 100 \
+		and capped.get("after", {}).get("scraps") == 0,
+		"full wick pays entry 100 -> 92 before one scrap restores it to 100")
+	_check(partial_cap.get("before_entry", {}).get("candle") == 96 \
+		and partial_cap.get("before", {}).get("candle") == 88 \
+		and partial_cap.get("after", {}).get("candle") == 96 \
 		and partial_cap.get("after", {}).get("scraps") == 0,
-		"one paid scrap restores candle to precisely 100, never above the cap")
+		"96 pays entry to 88 before the unchanged eight-point Mend Wick")
+	for candle in [100, 96, 4, 0]:
+		var zero_or_left := await _scenario("leave", candle)
+		_check(zero_or_left.get("before_entry", {}).get("candle") == candle \
+			and zero_or_left.get("after", {}).get("candle") == maxi(0, candle - 8),
+			"Leave retains the floored node charge from %d" % candle)
+	var zero_mend := await _scenario("mend_wick", 0)
+	_check(zero_mend.get("before", {}).get("candle") == 0 \
+		and zero_mend.get("after", {}).get("candle") == 8,
+		"zero-candle entry still permits the authored eight-point Mend Wick")
 	var short_gold: Dictionary = await _scenario("pay_gold", -1, -1, 9)
 	var short_scraps: Dictionary = await _scenario("mend_wick", -1, 0)
 	_check(not bought.is_empty() and not repaired.is_empty() and not left.is_empty() \
 		and not capped.is_empty() and not short_gold.is_empty() and not short_scraps.is_empty(),
-		"all six real-play choice witnesses completed")
+		"all real-play choice witnesses completed")
 	if failures.is_empty():
 		print("stitched_s6_ferry_event_live_test: PASS (", checks, " checks)")
 	else:

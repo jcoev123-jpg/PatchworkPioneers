@@ -4245,10 +4245,14 @@ func _open_stitched_postevent() -> bool:
 
 		return false
 	var roster: Array = _stitched_campfire_living_roster()
-	var snapshot := _stitched_postevent_build_snapshot(roster)
-	if snapshot.is_empty():
+	var original := _stitched_postevent_build_snapshot(roster)
+	if original.is_empty():
 
 		return false
+	# This earned Event is a separate node. Quote the post-entry candle,
+	# keeping live carry untouched until the complete panel builds successfully.
+	var snapshot := original.duplicate(true)
+	snapshot["candle"] = maxi(0, int(original["candle"]) - STITCHED_ROADBLOCK_CANDLE_COST)
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(STITCHED_EVENT_PATH))
 	if not parsed is Dictionary:
 
@@ -4309,6 +4313,7 @@ func _open_stitched_postevent() -> bool:
 
 		return false
 	# Publish authority only after the complete preview and panel are verified.
+	stitched_roadblock_candle = int(snapshot["candle"])
 	stitched_postevent_visit = visit
 	stitched_postevent_panel = panel
 	_stitched_postevent_roster = roster.duplicate(true)
