@@ -205,11 +205,19 @@ func _campfire_mend() -> Dictionary:
 	var before: Dictionary = _resources(app)
 	var entrance := before.duplicate(true)
 	before["candle"] = maxi(0, int(before["candle"]) - 8)
+	before["scraps"] -= 1
 	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var event_panel: Control = app.stitched_campfire_panel
+	var paid: Button = event_panel.find_child("Emberglass_light_the_embers", true, false)
+	_check(paid != null and not paid.disabled and app.stitched_campfire_visit == null,
+		"earned Campfire first shows the affordable authored Emberglass Event")
+	if paid != null:
+		paid.pressed.emit()
 	await process_frame
 	_check(_resources(app) == before and not app._open_stitched_campfire()
 		and _resources(app) == before,
-		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
+		"Campfire Event entry debits eight and paid service one scrap from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	if panel == null or visit == null:
@@ -349,11 +357,19 @@ func _campfire_swap_then_mend() -> void:
 	var before: Dictionary = _resources(app)
 	var entrance := before.duplicate(true)
 	before["candle"] = maxi(0, int(before["candle"]) - 8)
+	before["scraps"] -= 1
 	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var event_panel: Control = app.stitched_campfire_panel
+	var paid: Button = event_panel.find_child("Emberglass_light_the_embers", true, false)
+	_check(paid != null and not paid.disabled and app.stitched_campfire_visit == null,
+		"earned Campfire first shows the affordable authored Emberglass Event")
+	if paid != null:
+		paid.pressed.emit()
 	await process_frame
 	_check(_resources(app) == before and not app._open_stitched_campfire()
 		and _resources(app) == before,
-		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
+		"Campfire Event entry debits eight and paid service one scrap from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var recovery: RunCampfireVisit = app.stitched_campfire_visit
 	var service: RunStitchedSewingSwap = app._stitched_campfire_swap_visit
@@ -558,11 +574,19 @@ func _campfire_leave() -> void:
 	var before := _resources(app)
 	var entrance := before.duplicate(true)
 	before["candle"] = maxi(0, int(before["candle"]) - 8)
+	before["scraps"] -= 1
 	app.stitched_campfire_button.pressed.emit()
+	await process_frame
+	var event_panel: Control = app.stitched_campfire_panel
+	var paid: Button = event_panel.find_child("Emberglass_light_the_embers", true, false)
+	_check(paid != null and not paid.disabled and app.stitched_campfire_visit == null,
+		"earned Campfire first shows the affordable authored Emberglass Event")
+	if paid != null:
+		paid.pressed.emit()
 	await process_frame
 	_check(_resources(app) == before and not app._open_stitched_campfire()
 		and _resources(app) == before,
-		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
+		"Campfire Event entry debits eight and paid service one scrap from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	_check(panel != null, "second complete run can select earned Campfire")
 	if panel != null:
