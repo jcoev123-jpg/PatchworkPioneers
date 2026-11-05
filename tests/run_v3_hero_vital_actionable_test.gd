@@ -217,7 +217,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 		_hero("tinker", 1, 10),
 	]
 	var max12_res := gate.select_party_actionable_event(
-		rng, [seamstress_id, tinker_greenhouse_id, tinker_blunderbuss_id], zero_wallet, warden_max12_heroes
+		rng, _exclude_all_but(gate, [warden_id]), zero_wallet, warden_max12_heroes
 	)
 	_check(max12_res.get("ok") == true and max12_res["event"].get("id") == warden_id,
 		"AC2: Warden sell_rivets becomes actionable at max HP 12 (max HP 10 floor satisfied)")
@@ -229,7 +229,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 		_hero("tinker", 1, 10),
 	]
 	var max11_res := gate.select_party_actionable_event(
-		rng, [seamstress_id, tinker_greenhouse_id, tinker_blunderbuss_id], zero_wallet, warden_max11_heroes
+		rng, _exclude_all_but(gate, [warden_id]), zero_wallet, warden_max11_heroes
 	)
 	_check(max11_res.get("ok") == false,
 		"AC2: Warden sell_rivets at max HP 11 violates max HP 10 floor and is refused")
