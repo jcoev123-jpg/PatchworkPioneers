@@ -31,6 +31,7 @@ func _initialize() -> void:
 		_test_capacity_and_funds()
 		_test_refusals_and_replay()
 		_test_offer_tiers()
+		_test_choice_availability()
 	_check(randi() == next_draw, "open, quote, buy, leave and refusals draw no global RNG")
 	if failures.is_empty():
 		print("run_stitched_peddler_part_test: PASS (", checks, " checks)")
@@ -312,6 +313,80 @@ func _test_refusals_and_replay() -> void:
 	_reject(leaving, false, NODE, leave_snap, "repeated leave")
 	_reject(leaving, false, NODE, leaving.read_state(), "repeated leave with fresh state")
 	_reject(leaving, true, NODE, leave_snap, "buy after leave with the old state")
+
+
+## Buy is offered only when it can actually succeed; Leave is always offered on an open visit.
+func _test_choice_availability() -> void:
+	var funded_cases: Array = [
+		{"label": "0 spares, rich", "gold": 200, "count": 0, "tier": 1, "price": PRICE},
+		{"label": "3 spares, rich", "gold": 200, "count": 3, "tier": 1, "price": PRICE},
+		{"label": "5 spares, exact gold", "gold": PRICE, "count": 5, "tier": 1, "price": PRICE},
+		{"label": "0 spares, exact gold", "gold": PRICE, "count": 0, "tier": 1, "price": PRICE},
+		{"label": "tier II, exact gold", "gold": TIER_PRICE, "count": 2, "tier": 2, "price": TIER_PRICE},
+		{"label": "price of one, one gold", "gold": 1, "count": 0, "tier": 1, "price": 1},
+	]
+	for funded in funded_cases:
+		var label := str(funded["label"])
+		var price := int(funded["price"])
+		var visit := _open_tier(funded["tier"], funded["gold"], _spares(int(funded["count"])), price)
+		var quote := visit.quote()
+		_check(visit.is_open() and quote.get("ok") == true and quote.get("can_buy") == true
+			and quote.get("blocked") == "" and quote.get("choices") == ["buy_part", "leave"]
+			and quote.get("price") == price and quote.get("offer", {}).get("tier") == funded["tier"],
+			"funded quote offers exactly buy and leave: " + label)
+		var paid := visit.buy(NODE, quote.get("state"))
+		var expected := {"id": HEAD, "slot": "head", "tier": funded["tier"], "torn": false}
+		_check(paid.get("ok") == true and paid.get("part") == expected and paid.get("charged_gold") == price
+			and paid.get("gold") == int(funded["gold"]) - price
+			and paid.get("satchel", []).size() == int(funded["count"]) + 1
+			and paid.get("satchel", [])[int(funded["count"])] == expected,
+			"funded buy appends the exact untorn record and charges once: " + label)
+		_check(visit.is_consumed() and visit.quote().get("ok", true) == false
+			and visit.quote().get("choices", ["x"]).is_empty(), "bought quote closes with no choices: " + label)
+	var blocked_cases: Array = [
+		{"label": "six spares, rich", "gold": 500, "count": 6, "tier": 1, "price": PRICE,
+			"reason": "satchel is full"},
+		{"label": "six spares, exact gold", "gold": PRICE, "count": 6, "tier": 1, "price": PRICE,
+			"reason": "satchel is full"},
+		{"label": "tier II six spares", "gold": 500, "count": 6, "tier": 2, "price": TIER_PRICE,
+			"reason": "satchel is full"},
+		{"label": "two spares, one gold short", "gold": PRICE - 1, "count": 2, "tier": 1, "price": PRICE,
+			"reason": "not enough gold"},
+		{"label": "tier II, one gold short", "gold": TIER_PRICE - 1, "count": 1, "tier": 2, "price": TIER_PRICE,
+			"reason": "not enough gold"},
+		{"label": "five spares, no gold", "gold": 0, "count": 5, "tier": 1, "price": PRICE,
+			"reason": "not enough gold"},
+		{"label": "tier II, no gold", "gold": 0, "count": 0, "tier": 2, "price": TIER_PRICE,
+			"reason": "not enough gold"},
+	]
+	for blocked in blocked_cases:
+		var label := str(blocked["label"])
+		var gold := int(blocked["gold"])
+		var spares := _spares(int(blocked["count"]))
+		var price := int(blocked["price"])
+		var visit := _open_tier(blocked["tier"], gold, spares, price)
+		var snap := visit.read_state()
+		var quote := visit.quote()
+		_check(visit.is_open() and quote.get("ok") == true and quote.get("can_buy") == false
+			and quote.get("blocked") == blocked["reason"] and quote.get("choices") == ["leave"],
+			"blocked quote offers only leave with its reason: " + label)
+		_check(quote.get("offer", {}).get("id") == HEAD and quote.get("offer", {}).get("tier") == blocked["tier"]
+			and quote.get("offer", {}).get("price") == price and quote.get("price") == price
+			and quote.get("gold") == gold and quote.get("satchel_count") == spares.size()
+			and quote.get("satchel_max") == 6 and quote.get("state") == snap,
+			"blocked quote keeps the genuine offer, price, wallet and satchel count: " + label)
+		_reject(visit, true, NODE, snap, "direct buy on a blocked quote: " + label)
+		_check(visit.is_open() and visit.read_state() == snap and visit.quote().get("choices") == ["leave"]
+			and visit.read_state()["gold"] == gold and visit.read_state()["satchel"] == spares,
+			"the rejected buy leaves offer, wallet, satchel and Leave rights intact: " + label)
+		var left := visit.leave(NODE, visit.read_state())
+		_check(left.get("ok") == true and left.get("decision") == "leave" and left.get("charged_gold") == 0
+			and left.get("gold") == gold and left.get("satchel") == spares and visit.is_consumed(),
+			"Leave then succeeds free: " + label)
+		_check(visit.quote().get("ok", true) == false and visit.quote().get("choices", ["x"]).is_empty(),
+			"a left visit offers no choices: " + label)
+		_reject(visit, false, NODE, visit.read_state(), "second leave: " + label)
+		_reject(visit, true, NODE, visit.read_state(), "buy after leave: " + label)
 
 
 func _open_tier(tier: Variant, gold: Variant = 200, satchel: Variant = [], price: Variant = TIER_PRICE,

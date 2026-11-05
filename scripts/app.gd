@@ -3182,9 +3182,10 @@ func _open_stitched_peddler() -> bool:
 			or part_quote.get("gold") != stitched_preview_gold \
 			or part_quote.get("satchel_count") != stitched_preview_satchel.size() \
 			or part_quote.get("satchel_max") != RunStitchedPeddlerPart.SATCHEL_CAP \
-			or part_quote.get("choices") != [
-				RunStitchedPeddlerPart.DECISION_BUY, RunStitchedPeddlerPart.DECISION_LEAVE] \
-			or part_state.get("satchel") != stitched_preview_satchel \
+			or part_quote.get("choices") != (
+				[RunStitchedPeddlerPart.DECISION_BUY, RunStitchedPeddlerPart.DECISION_LEAVE]
+				if part_quote.get("can_buy") == true else [RunStitchedPeddlerPart.DECISION_LEAVE]) \
+			or part_state.get("satchel")!= stitched_preview_satchel \
 			or part_state.get("status") != RunStitchedPeddlerPart.STATUS_OPEN \
 			or offered.get("id") != STITCHED_PEDDLER_PART_ID \
 			or offered.get("name") != "Helmet Rattle" \

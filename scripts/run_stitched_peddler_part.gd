@@ -85,7 +85,8 @@ func read_state() -> Dictionary:
 
 
 ## What the player may do right now. An unaffordable or full-satchel offer is still disclosed
-## honestly (with "can_buy": false and a reason); a closed or invalid visit offers no choices.
+## honestly (with "can_buy": false and a reason) but offers only Leave; a closed or invalid
+## visit offers no choices.
 func quote() -> Dictionary:
 	if not _error.is_empty():
 		return {"ok": false, "error": _error, "choices": []}
@@ -102,7 +103,7 @@ func quote() -> Dictionary:
 		"satchel_max": SATCHEL_CAP,
 		"can_buy": blocked.is_empty(),
 		"blocked": blocked,
-		"choices": [DECISION_BUY, DECISION_LEAVE],
+		"choices": [DECISION_BUY, DECISION_LEAVE] if blocked.is_empty() else [DECISION_LEAVE],
 		"state": read_state(),
 	}
 
