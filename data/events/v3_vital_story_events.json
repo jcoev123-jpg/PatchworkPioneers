@@ -1375,6 +1375,72 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_amber_stuffing_pump",
+      "title": "The Amber Stuffing Pump",
+      "description": "A round button-eyed pump keeper works towering copper bellows with an oxblood quilt heart at its valve; warm lanterns pulse beneath the stitched pipes.",
+      "choices": [
+        {
+          "id": "buy_warm_valve",
+          "text": "Spend 2 scraps to refill the heart valve (heal 8 HP; gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 1 }
+        },
+        {
+          "id": "squeeze_cracked_bellows",
+          "text": "Squeeze the cracked bellows (lose 5 HP; gain 21 gold)",
+          "outcome": { "gold": 21, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the heart valve beating",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_plum_needle_tide_clock",
+      "title": "The Needle-Tide Clock",
+      "description": "A sleepy plum-plaid timekeeper tends a giant crescent clock of sliding silver sewing needles; a single amber candle lights its sweeping quilt dial.",
+      "choices": [
+        {
+          "id": "buy_still_hour",
+          "text": "Pay 17 gold for one still hour (gain 2 max HP)",
+          "outcome": { "gold": -17, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "wind_moon_hand",
+          "text": "Wind the needle hand (lose 4 HP; collect 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the silver hands tick on",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_moss_copper_darners_gate",
+      "title": "The Darners' Button Gate",
+      "description": "Three plump moss-velvet dolls guide a brass button through a door-sized safety-pin gate on a woven thread belt, with a tiny candle at the hinge.",
+      "choices": [
+        {
+          "id": "rent_button_lining",
+          "text": "Pay 11 gold and 1 scrap for a padded button seam (heal 6 HP)",
+          "outcome": { "gold": -11, "scraps": -1, "hp": 6, "max_hp": 0 }
+        },
+        {
+          "id": "surrender_heart_button",
+          "text": "Give up 1 max HP at the gate (gain 18 gold)",
+          "outcome": { "gold": 18, "scraps": 0, "hp": 0, "max_hp": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the tiny gatekeepers to their work",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
