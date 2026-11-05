@@ -107,10 +107,24 @@ func quote() -> Dictionary:
 		return {}
 	if _status != "available":
 		return {"offers": [], "decisions": []}
+	var offers: Array = _purchases.get_stock().trinkets
+	var decisions: Array = ["buy_patch", "leave"]
+	# Stitched only: Buy Patch is advertised only while some quoted offer is
+	# unsold and affordable; the three priced rows are never hidden or reordered.
+	if _stitched and not _has_affordable_unsold(offers):
+		decisions = ["leave"]
 	return {
-		"offers": _purchases.get_stock().trinkets,
-		"decisions": ["buy_patch", "leave"]
+		"offers": offers,
+		"decisions": decisions
 	}
+
+
+func _has_affordable_unsold(offers: Array) -> bool:
+	for offer in offers:
+		if offer.get("sold") == false and typeof(offer.get("price")) == TYPE_INT \
+				and offer.price <= _snapshot.gold:
+			return true
+	return false
 
 
 func _validate_request(expected_visit_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> bool:
