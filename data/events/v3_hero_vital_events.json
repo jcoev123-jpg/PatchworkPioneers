@@ -274,6 +274,50 @@
         { "id": "trade_tower_straw", "text": "Unpick 2 max HP of tower straw for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Let the crow vane turn without you", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_seamstress_stitchglass_hourhouse",
+      "title": "The Stitchglass Hourhouse",
+      "description": "A cracked giant hourglass hangs from a black chapel rafter; the Seamstress guides its red-thread sand through the narrow neck with her towering needle.",
+      "required_hero": "seamstress",
+      "choices": [
+        { "id": "bind_cracked_neck", "text": "Spend 2 scraps binding the hourglass neck (heal 7 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "catch_needle_sand", "text": "Catch razor-fine threadglass sand (lose 5 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the red sand falling in silence", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_bellows_lung_reliquary",
+      "title": "The Brass-Lung Reliquary",
+      "description": "A squat brass bellows shaped like a ribbed cloth lung breathes in a locked roadside shrine; the Tinker's crooked goggles mirror its amber valve.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "pad_bellows_lung", "text": "Pay 18 gold to pad the brass lung seam (+3 max HP)", "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pry_copper_rib", "text": "Unpick 2 max HP of copper ribbing for 28 gold", "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the worn bellows breathe alone", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_crowpin_toll_curtain",
+      "title": "The Crow-Pinned Toll Curtain",
+      "description": "One black button-eyed crow pins an oxblood toll curtain to the Scarecrow's forked pitchfork; pale straw spills through the torn velvet hem.",
+      "required_hero": "scarecrow",
+      "choices": [
+        { "id": "sew_crowsilk_hem", "text": "Spend 2 scraps on the crowsilk hem (heal 9 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 9, "max_hp": 0 } },
+        { "id": "feed_watching_crow", "text": "Offer 6 HP of straw to the watching crow for 25 gold", "outcome": { "gold": 25, "scraps": 0, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Walk beneath the silent black curtain", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_moonspool_ferry",
+      "title": "The Moonspool Ferry",
+      "description": "A miniature ferry hangs from giant crossed knitting needles over a black river; the Yarn Ranger's white-wool bolas moor its dangling thread mast.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "mend_ferry_mast", "text": "Pay 16 gold to mend the wool ferry mast (heal 8 HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "unspool_mooring", "text": "Unspool 2 max HP of mooring wool to recover 3 scraps", "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the little ferry swing across the dark water", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

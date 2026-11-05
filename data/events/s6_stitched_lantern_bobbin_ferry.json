@@ -1,0 +1,40 @@
+{
+	"id": "s6_stitched_lantern_bobbin_ferry",
+	"title": "Lantern Bobbin Ferry",
+	"description": "A lantern keeper winds frayed thread across the black water. Pay for salvaged scraps, mend the fading wick, or walk away with your purse intact.",
+	"choices": [
+		{
+			"id": "pay_gold",
+			"text": "Pay 10 gold for 2 scraps",
+			"stitched_effect": {
+				"target": "party",
+				"candle": 0,
+				"fray": 0,
+				"gold": -10,
+				"scraps": 2
+			}
+		},
+		{
+			"id": "mend_wick",
+			"text": "Spend 1 scrap to restore 8 candlelight",
+			"stitched_effect": {
+				"target": "party",
+				"candle": 8,
+				"fray": 0,
+				"gold": 0,
+				"scraps": -1
+			}
+		},
+		{
+			"id": "leave",
+			"text": "Leave the ferry untouched",
+			"stitched_effect": {
+				"target": "party",
+				"candle": 0,
+				"fray": 0,
+				"gold": 0,
+				"scraps": 0
+			}
+		}
+	]
+}

@@ -25,6 +25,8 @@ func _init() -> void:
 		_test_terminal_and_closed()
 		_test_roster_sizes_and_satchel_cap()
 		_test_constructor_rejects()
+		_test_lost_hero_cannot_swap()
+		_test_lost_hero_receipts_and_variants()
 	_check(rng.state == rng_state_before, "seeded RNG state must be unchanged")
 	if failures.is_empty():
 		print("run_stitched_sewing_swap_test: PASS")
@@ -373,3 +375,175 @@ func _test_constructor_rejects() -> void:
 	var empty := RunStitchedSewingSwap.new(NODE, _party(), [], catalog)
 	_check(bool(empty.read_state()["ok"]) and empty.read_state()["satchel"].is_empty(), "empty satchel is accepted")
 	_expect_reject(empty, "swap from an empty satchel", empty.swap("warden", "arms", 0, NODE, empty.read_state()))
+
+
+func _test_lost_hero_receipts_and_variants() -> void:
+	var heroes := _party()
+	heroes[0]["lost"] = true
+	heroes[1]["lost"] = false
+	var svc := _service(heroes)
+	var state := svc.read_state()
+	var snap := _snap(state)
+	_check(bool(state["ok"]) and state["heroes"][0]["lost"] == true, "lost flag survives into the service state")
+	var quote := svc.quote()
+	var warden_slots: Array = quote["heroes"][0]["slots"]
+	_check(warden_slots.size() == 4, "lost warden still lists four slots")
+	for slot_quote in warden_slots:
+		_check(not bool(slot_quote["can_swap"]) and str(slot_quote["blocked"]) == "hero is lost" and slot_quote["offers"].is_empty(), "lost warden %s slot is blocked with no offers" % str(slot_quote["slot"]))
+	_check(quote["satchel_count"] == 4 and quote["satchel"].size() == 4, "satchel summary stays visible for a lost hero")
+	var seamstress_slots: Array = quote["heroes"][1]["slots"]
+	var swappable := 0
+	for slot_quote in seamstress_slots:
+		if bool(slot_quote["can_swap"]):
+			swappable += 1
+			_check(str(slot_quote["blocked"]).is_empty() and slot_quote["offers"].size() == 1, "active seamstress %s keeps its compatible spare" % str(slot_quote["slot"]))
+	_check(swappable == 4, "active seamstress quotes all four slots as swappable")
+
+	# A LOST hero's matching-slot swap is refused before any mutation.
+	var lost_result := svc.swap("warden", "arms", 0, NODE, state)
+	_check(not bool(lost_result["ok"]) and str(lost_result["error"]).contains("lost"), "lost warden arms swap is refused as lost")
+	_check(str(lost_result["error"]) == "hero is lost", "lost refusal message")
+	for slot_name in StitchedParts.SLOTS:
+		var index := {"head": 3, "arms": 0, "torso": 2, "legs": 1}[slot_name] as int
+		var refused := svc.swap("warden", slot_name, index, NODE, svc.read_state())
+		_check(not bool(refused["ok"]) and str(refused["error"]) == "hero is lost", "lost warden %s swap is refused" % slot_name)
+	_check(_snap(svc.read_state()) == snap, "refused lost swaps leave the complete state unchanged")
+	_check(bool(svc.read_state()["open"]), "refused lost swap does not close the visit")
+
+	# The living Seamstress can still swap torso <-> felt bulwark in the same unchanged visit.
+	var result := svc.swap("seamstress", "torso", 2, NODE, state)
+	_check(bool(result["ok"]), "active seamstress swaps in the same visit as a lost warden")
+	if bool(result["ok"]):
+		var expected := state.duplicate(true)
+		expected["version"] = int(state["version"]) + 1
+		expected["heroes"][1]["parts"]["torso"] = _worn("felt_bulwark_button_shield")
+		expected["satchel"][2] = _spare("warden_torso_buckle_rebound", "torso", 1)
+		_check(_snap(result["state"]) == _snap(expected), "exactly one worn part and its satchel slot changed")
+		_check(_snap(result["state"]["heroes"][0]) == _snap(state["heroes"][0]) and _snap(result["state"]["heroes"][2]) == _snap(state["heroes"][2]) and _snap(result["state"]["heroes"][3]) == _snap(state["heroes"][3]), "other heroes are unchanged")
+		_check(result["state"]["heroes"][0]["lost"] == true, "lost flag still set after the active swap")
+		_check(_instance_ids(result["state"]) == _instance_ids(state), "no part instance created or lost")
+		_check(result["changed_heroes"].size() == 1 and str(result["changed_heroes"][0]["id"]) == "seamstress", "only the seamstress is reported changed")
+		for forbidden in ["gold", "scrap", "fee", "cost", "rng"]:
+			_check(not result.has(forbidden), "swap receipt has no " + forbidden)
+		var again := svc.swap("warden", "arms", 0, NODE, result["state"])
+		_check(not bool(again["ok"]) and str(again["error"]) == "hero is lost", "lost warden is still refused after the active swap")
+		var left := svc.leave(NODE, svc.read_state())
+		_check(bool(left["ok"]) and not bool(left["state"]["open"]) and left["changed_heroes"].is_empty(), "free leave closes the visit")
+		_expect_reject(svc, "swap after leave", svc.swap("seamstress", "arms", 0, NODE, left["state"]))
+		_expect_reject(svc, "second leave", svc.leave(NODE, left["state"]))
+		var closed_quote := svc.quote()
+		_check(not bool(closed_quote["open"]), "closed visit quote reports closed")
+
+	# Active variants: lost=false and an absent lost field give the Warden normal access.
+	for variant in ["false", "absent", "hanging"]:
+		var party := _party()
+		if variant == "false":
+			party[0]["lost"] = false
+		elif variant == "hanging":
+			party[0]["hp"] = 0
+			party[0]["hanging"] = true
+		var vsvc := _service(party)
+		var vstate := vsvc.read_state()
+		var arms_quote: Dictionary = vsvc.quote()["heroes"][0]["slots"][1]
+		_check(bool(arms_quote["can_swap"]) and arms_quote["offers"].size() == 1 and str(arms_quote["blocked"]).is_empty(), "%s warden arms quote offers the claw" % variant)
+		var vresult := vsvc.swap("warden", "arms", 0, NODE, vstate)
+		_check(bool(vresult["ok"]) and vresult["changed_heroes"][0]["parts"]["arms"] == _worn("scissor_crab_claw_arm", 2), "%s warden can swap arms" % variant)
+	# Non-boolean lost values are not LOST (native boolean true only).
+	var odd := _party()
+	odd[0]["lost"] = "true"
+	var odd_svc := _service(odd)
+	_check(bool(odd_svc.quote()["heroes"][0]["slots"][1]["can_swap"]), "string lost value is not treated as LOST")
+
+
+func _count_offers(hero_quote: Dictionary) -> int:
+	var total := 0
+	for slot_quote in hero_quote["slots"]:
+		total += slot_quote["offers"].size()
+	return total
+
+
+func _test_lost_hero_cannot_swap() -> void:
+	# Variants: lost=true on the Warden; lost=false and an absent flag must stay fully active.
+	var lost_party := _party()
+	lost_party[0]["lost"] = true
+	lost_party[1]["lost"] = false
+	var svc := _service(lost_party)
+	var state := svc.read_state()
+	var quote := svc.quote()
+	_check(bool(quote["ok"]) and bool(quote["open"]) and quote["heroes"].size() == 4, "lost quote: open visit with four heroes")
+	var warden_quote: Dictionary = quote["heroes"][0]
+	_check(str(warden_quote["hero_id"]) == "warden" and warden_quote["slots"].size() == 4, "lost quote lists the warden with four slots")
+	for slot_quote in warden_quote["slots"]:
+		var label := "lost warden " + str(slot_quote["slot"])
+		_check(not bool(slot_quote["can_swap"]), label + " cannot swap")
+		_check(str(slot_quote["blocked"]) == "hero is lost", label + " is blocked as lost")
+		_check(slot_quote["offers"].is_empty(), label + " has no offers")
+	_check(quote["satchel_count"] == 4 and quote["satchel"].size() == 4, "satchel summary stays visible for a lost hero")
+	var seamstress_quote: Dictionary = quote["heroes"][1]
+	_check(_count_offers(seamstress_quote) == 4, "active seamstress still has four compatible offers (one per slot)")
+	var seam_torso: Dictionary = seamstress_quote["slots"][2]
+	_check(str(seam_torso["slot"]) == "torso" and bool(seam_torso["can_swap"]) and seam_torso["blocked"] == "" and seam_torso["offers"].size() == 1 and int(seam_torso["offers"][0]["satchel_index"]) == 2, "seamstress torso offers satchel index 2")
+
+	# Refused lost swap: error mentions lost, nothing changes.
+	var snap := _snap(state)
+	var refused := svc.swap("warden", "arms", 0, NODE, state)
+	_check(not bool(refused["ok"]) and str(refused["error"]) == "hero is lost", "lost warden arms swap is refused with a lost error")
+	_check(_snap(svc.read_state()) == snap, "lost refusal leaves the full state unchanged")
+	_check(_snap(refused["state"]) == snap, "lost refusal reports the unchanged state")
+	_check(int(svc.read_state()["version"]) == 0 and bool(svc.read_state()["open"]), "lost refusal keeps version and keeps the visit open")
+	for slot in StitchedParts.SLOTS:
+		var any_refused := svc.swap("warden", slot, 0, NODE, state)
+		_check(not bool(any_refused["ok"]) and str(any_refused["error"]) == "hero is lost", "lost warden %s is refused even for a mismatched index" % slot)
+	_check(_snap(svc.read_state()) == snap, "all lost refusals changed nothing")
+
+	# An active hero swaps in the same unchanged visit.
+	var swap := svc.swap("seamstress", "torso", 2, NODE, state)
+	_check(bool(swap["ok"]) and str(swap["action"]) == "swap", "active seamstress swaps in the same visit")
+	if bool(swap["ok"]):
+		var expected := state.duplicate(true)
+		expected["version"] = 1
+		expected["heroes"][1]["parts"]["torso"] = _worn("felt_bulwark_button_shield")
+		expected["satchel"][2] = _spare("warden_torso_buckle_rebound", "torso", 1)
+		_check(_snap(swap["state"]) == _snap(expected), "exactly one worn part and its reciprocal satchel slot changed")
+		_check(swap["changed_heroes"].size() == 1 and str(swap["changed_heroes"][0]["id"]) == "seamstress", "only the seamstress changed")
+		_check(_snap(swap["state"]["heroes"][0]) == _snap(state["heroes"][0]) and swap["state"]["heroes"][0]["lost"] == true, "lost warden record untouched")
+		_check(_snap(swap["state"]["heroes"][2]) == _snap(state["heroes"][2]) and _snap(swap["state"]["heroes"][3]) == _snap(state["heroes"][3]), "other heroes untouched")
+		_check(not swap.has("gold") and not swap.has("scrap") and not swap.has("fee"), "swap receipt has no fee")
+		_check(_instance_ids(swap["state"]) == _instance_ids(state), "no part instance created or lost")
+		var again := svc.swap("warden", "arms", 0, NODE, swap["state"])
+		_check(not bool(again["ok"]) and str(again["error"]) == "hero is lost", "lost warden still refused after an active swap")
+		var left := svc.leave(NODE, swap["state"])
+		_check(bool(left["ok"]) and str(left["action"]) == "leave" and not bool(left["state"]["open"]), "leave closes the visit")
+		_check(_snap(left["state"]["heroes"]) == _snap(swap["state"]["heroes"]) and _snap(left["state"]["satchel"]) == _snap(swap["state"]["satchel"]), "leave changes no equipment")
+		_expect_reject(svc, "swap after leave", svc.swap("seamstress", "arms", 0, NODE, left["state"]))
+		_expect_reject(svc, "second leave", svc.leave(NODE, left["state"]))
+		var closed_warden: Dictionary = svc.quote()["heroes"][0]["slots"][0]
+		_check(str(closed_warden["blocked"]) == "visit closed" and closed_warden["offers"].is_empty(), "closed visit still reports closed ahead of lost")
+
+	# Active variants: lost=false and an absent flag give the Warden normal access.
+	var false_party := _party()
+	false_party[0]["lost"] = false
+	for variant in ["lost false", "lost absent"]:
+		var heroes := false_party if variant == "lost false" else _party()
+		var active := _service(heroes)
+		var active_state := active.read_state()
+		var warden_arms: Dictionary = active.quote()["heroes"][0]["slots"][1]
+		_check(bool(warden_arms["can_swap"]) and warden_arms["blocked"] == "" and warden_arms["offers"].size() == 1, variant + ": warden arms quote offers the claw")
+		var active_swap := active.swap("warden", "arms", 0, NODE, active_state)
+		_check(bool(active_swap["ok"]) and active_swap["changed_heroes"][0]["parts"]["arms"] == _worn("scissor_crab_claw_arm", 2), variant + ": warden swaps arms for the tier-II claw")
+
+	# HP 0 / Hanging without lost=true is not LOST.
+	var hanging_party := _party()
+	hanging_party[0]["hp"] = 0
+	hanging_party[0]["hanging"] = true
+	var hanging := _service(hanging_party)
+	var hanging_arms: Dictionary = hanging.quote()["heroes"][0]["slots"][1]
+	_check(bool(hanging_arms["can_swap"]) and hanging_arms["blocked"] == "", "HP 0 and hanging hero is not lost and may swap")
+	_check(bool(hanging.swap("warden", "arms", 0, NODE, hanging.read_state())["ok"]), "HP 0 and hanging hero swaps")
+
+	# Only a native boolean true counts: text or numbers are not LOST.
+	for odd in ["true", 1]:
+		var odd_party := _party()
+		odd_party[0]["lost"] = odd
+		var odd_svc := _service(odd_party)
+		_check(bool(odd_svc.quote()["heroes"][0]["slots"][1]["can_swap"]), "non-boolean lost %s is not LOST" % str(odd))

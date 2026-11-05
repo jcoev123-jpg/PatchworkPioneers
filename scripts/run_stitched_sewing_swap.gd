@@ -72,6 +72,8 @@ func quote() -> Dictionary:
 			var blocked := ""
 			if not _open:
 				blocked = "visit closed"
+			elif _is_lost(hero):
+				blocked = "hero is lost"
 			elif bool(worn["torn"]):
 				blocked = "worn part is torn: mend it first"
 			var offers: Array = []
@@ -121,6 +123,8 @@ func swap(hero_id: Variant, slot: Variant, satchel_index: Variant, expected_node
 			hero_index = index
 	if hero_index < 0:
 		return _fail("unknown hero: " + str(hero_id))
+	if _is_lost(_heroes[hero_index]):
+		return _fail("hero is lost")
 	if typeof(satchel_index) != TYPE_INT or int(satchel_index) < 0 or int(satchel_index) >= _satchel.size():
 		return _fail("invalid satchel index")
 	var slot_key := str(slot)
@@ -189,6 +193,12 @@ func _gate(expected_node_id: Variant, expected_state: Variant) -> String:
 	if JSON.stringify(expected_state, "", true) != JSON.stringify(read_state(), "", true):
 		return "stale or forged state"
 	return ""
+
+
+## Only a native boolean lost == true is LOST (same rule as the mend and upgrade services);
+## HP 0 or Hanging is not LOST.
+func _is_lost(hero: Dictionary) -> bool:
+	return typeof(hero.get("lost")) == TYPE_BOOL and bool(hero["lost"])
 
 
 func _fail(message: String) -> Dictionary:

@@ -713,6 +713,14 @@ var _stitched_peddler_generation := 0
 var _stitched_peddler_roster: Array = []
 ## This separate four-hero health authority is earned by the same terminal
 ## Roadblock + Circle Leave and competes for ONE postvictory stop.
+var stitched_postevent_button: Button
+var stitched_postevent_panel: Control
+var stitched_postevent_visit: RunStitchedEventConsequence
+var _stitched_postevent_roster: Array = []
+var _stitched_postevent_snapshot: Dictionary = {}
+var _stitched_postevent_quote: Dictionary = {}
+var _stitched_postevent_offered: Dictionary = {}
+var _stitched_postevent_generation := 0
 var stitched_campfire_button: Button
 var stitched_campfire_panel: Control
 var stitched_campfire_visit: RunCampfireVisit
@@ -743,6 +751,9 @@ const STITCHED_SEWING_UPGRADE_COST := 2
 const STITCHED_ROADBLOCK_CANDLE_COST := 8
 const STITCHED_PEDDLER_NODE_ID := "s6_stitched_roadblock_peddler"
 const STITCHED_CAMPFIRE_NODE_ID := "s6_stitched_roadblock_campfire"
+const STITCHED_EVENT_ID := "s6_stitched_lantern_bobbin_ferry"
+const STITCHED_EVENT_PATH := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
+const STITCHED_EVENT_CHOICES := ["pay_gold", "mend_wick", "leave"]
 const STITCHED_PEDDLER_PRICE := 10
 const STITCHED_PEDDLER_PART_ID := "warden_head_helmet_rattle"
 const STITCHED_PREVIEW_WIN_GOLD := 10
@@ -1432,13 +1443,23 @@ func _build_title() -> void:
 	stitched_campfire_button = Button.new()
 	stitched_campfire_button.name = "StitchedCampfireButton"
 	stitched_campfire_button.text = "Stitched Campfire"
-	stitched_campfire_button.tooltip_text = "Mend heroes or trim up to 50 CANDLE after the Roadblock"
+	stitched_campfire_button.tooltip_text = "Mend, Tell Tales, trim the Wick or Leave after the earned Roadblock"
 	stitched_campfire_button.custom_minimum_size = Vector2(240, 56)
 	stitched_campfire_button.visible = false
 	stitched_campfire_button.disabled = true
 	stitched_campfire_button.focus_mode = Control.FOCUS_NONE
 	stitched_campfire_button.pressed.connect(_open_stitched_campfire)
 	box.add_child(stitched_campfire_button)
+	stitched_postevent_button = Button.new()
+	stitched_postevent_button.name = "StitchedEventButton"
+	stitched_postevent_button.text = "Stitched Event"
+	stitched_postevent_button.tooltip_text = "Visit the Lantern Bobbin Ferry after a four-survivor Roadblock"
+	stitched_postevent_button.custom_minimum_size = Vector2(240, 56)
+	stitched_postevent_button.visible = false
+	stitched_postevent_button.disabled = true
+	stitched_postevent_button.focus_mode = Control.FOCUS_NONE
+	stitched_postevent_button.pressed.connect(_open_stitched_postevent)
+	box.add_child(stitched_postevent_button)
 	start_button.focus_next = start_button.get_path_to(route_button)
 	route_button.focus_next = route_button.get_path_to(base_button)
 	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
@@ -1800,6 +1821,7 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 		_stitched_campfire_swap_roster.clear()
 		_stitched_campfire_swap_satchel.clear()
 		_stitched_campfire_swap_gear.clear()
+		_stitched_postevent_roster.clear()
 		_stitched_postvictory_stop_available = false
 		_refresh_stitched_peddler_button()
 	_stitched_picker_sync()
@@ -1897,7 +1919,8 @@ func _open_stitched_fight() -> bool:
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null or is_instance_valid(stitched_campfire_panel) \
-			or stitched_campfire_visit != null or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
+			or stitched_campfire_visit != null or stitched_postevent_visit != null \
+			or is_instance_valid(stitched_postevent_panel) or stitched_event_gate != null or deck != null or run_map != null or run_rng != null \
 			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
 			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
 			or is_instance_valid(battle_view) or _route_from_base \
@@ -2187,7 +2210,9 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 		_stitched_campfire_swap_roster.clear()
 		_stitched_campfire_swap_satchel.clear()
 		_stitched_campfire_swap_gear.clear()
+		_stitched_postevent_roster.clear()
 		_stitched_postvictory_stop_available = false
+		_stitched_postevent_roster.clear()
 		_refresh_stitched_peddler_button()
 		# One preview scrap comes from this authenticated victory exit alone.
 		# It never enters the legacy run/title wallets or uses global RNG.
@@ -2789,13 +2814,51 @@ func _offer_stitched_peddler(survivors: Array) -> void:
 ## Only the actual Circle Leave's four non-lost battle heroes can earn
 ## Campfire. Record their CURRENT battle rank, worn max HP, HP, and fray.
 ## Unlike Peddler, a zero-HP Hanging (not lost) hero is valid for Mend.
+## The Campfire's HP-only recovery quote must remain tied to the complete,
+## genuine battle-settled FRAY/resolve pairs for these exact selected IDs.
+func _stitched_campfire_held_fray_valid(roster: Array) -> bool:
+	if roster.size() != 4 or _stitched_fray_carry.size() != 4 \
+			or _stitched_party_picks.size() != 4:
+		return false
+	var seen := {}
+	for hero_value in roster:
+		if not hero_value is Dictionary:
+			return false
+		var hero: Dictionary = hero_value
+		var id: Variant = hero.get("id")
+		if typeof(id) != TYPE_STRING or not id in _stitched_party_picks \
+				or seen.has(id) or typeof(hero.get("fray")) != TYPE_INT \
+				or not _stitched_fray_carry.has(id):
+			return false
+		var record: Variant = _stitched_fray_carry[id]
+		if not record is Dictionary or record.size() != 2 \
+				or typeof(record.get("fray")) != TYPE_INT \
+				or typeof(record.get("resolve")) != TYPE_STRING \
+				or record["fray"] != hero["fray"]:
+			return false
+		var fray: int = int(record["fray"])
+		var mood: String = str(record["resolve"])
+		if fray < 0 or fray >= StitchedRules.FRAY_MAX \
+				or not mood in (["", "steadfast"] + StitchedS1BEffects.RESOLVE_TRAITS) \
+				or (mood in StitchedS1BEffects.RESOLVE_TRAITS \
+				and fray < StitchedRules.FRAY_RECOVER) \
+				or (mood.is_empty() and fray >= StitchedRules.FRAY_RESOLVE):
+			return false
+		seen[id] = true
+	for carried_id in _stitched_fray_carry:
+		if not seen.has(carried_id):
+			return false
+	return true
+
+
 func _offer_stitched_campfire(survivors: Array) -> void:
 	_stitched_campfire_roster.clear()
 	_stitched_campfire_authorized_roster.clear()
 	_stitched_campfire_swap_roster.clear()
 	_stitched_campfire_swap_satchel.clear()
 	_stitched_campfire_swap_gear.clear()
-	if survivors.size() == 4 and _stitched_party_picks.size() == 4:
+	if survivors.size() == 4 and _stitched_party_picks.size() == 4 \
+			and _stitched_fray_carry.size() == 4:
 		var roster: Array = []
 		for value in survivors:
 			if not value is Dictionary:
@@ -2810,6 +2873,11 @@ func _offer_stitched_campfire(survivors: Array) -> void:
 					or typeof(hero.get("hp")) != TYPE_INT \
 					or typeof(hero.get("max_hp")) != TYPE_INT \
 					or typeof(hero.get("fray")) != TYPE_INT \
+					or not _stitched_fray_carry.has(id) \
+					or typeof(hero.get("resolve")) != TYPE_STRING \
+					or not _stitched_fray_carry[id] is Dictionary \
+					or _stitched_fray_carry[id].get("fray") != hero["fray"] \
+					or _stitched_fray_carry[id].get("resolve") != hero["resolve"] \
 					or int(hero["hp"]) != int(_stitched_hp_carry[id]):
 				roster.clear()
 				break
@@ -2823,7 +2891,8 @@ func _offer_stitched_campfire(survivors: Array) -> void:
 				stitched_roadblock_candle)
 			var state: Dictionary = authority.read_state()
 			if state.get("ok") == true and state.get("heroes") == roster \
-					and state.get("status") == RunCampfireVisit.STITCHED_OPEN:
+					and state.get("status") == RunCampfireVisit.STITCHED_OPEN \
+					and _stitched_campfire_held_fray_valid(roster):
 				_stitched_campfire_roster = roster.duplicate(true)
 				_stitched_campfire_authorized_roster = roster.duplicate(true)
 				# Retain the FULL worn parts from the authenticated Circle Leave,
@@ -2860,7 +2929,7 @@ func _stitched_campfire_living_roster() -> Array:
 			return []
 		ids[id] = true
 		roster.append(hero.duplicate(true))
-	if ids.size() != 4:
+	if ids.size() != 4 or not _stitched_campfire_held_fray_valid(roster):
 		return []
 	var visit := RunCampfireVisit.new(
 		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
@@ -2915,7 +2984,8 @@ func _stitched_peddler_living_roster() -> Array:
 ## Shows the title Peddler button only while a lawful earned roster waits, and
 ## keeps it inside the title's keyboard ring only at that moment.
 func _refresh_stitched_peddler_button() -> void:
-	if not is_instance_valid(stitched_peddler_button) or not is_instance_valid(stitched_campfire_button):
+	if not is_instance_valid(stitched_peddler_button) or not is_instance_valid(stitched_campfire_button) \
+			or not is_instance_valid(stitched_postevent_button):
 		return
 	var peddler_ready: bool = _stitched_postvictory_stop_available \
 		and not _stitched_peddler_roster.is_empty() \
@@ -2936,10 +3006,18 @@ func _refresh_stitched_peddler_button() -> void:
 	if not is_instance_valid(title_view) or not title_view.is_inside_tree() \
 			or not is_instance_valid(stitched_fight_button) or not is_instance_valid(start_button):
 		return
+	var event_ready: bool = _stitched_postvictory_stop_available \
+		and not _stitched_campfire_roster.is_empty() \
+		and stitched_postevent_visit == null and not is_instance_valid(stitched_postevent_panel) \
+		and stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel) \
+		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel)
+	stitched_postevent_button.visible = event_ready
+	stitched_postevent_button.disabled = not event_ready
+	stitched_postevent_button.focus_mode = Control.FOCUS_ALL if event_ready else Control.FOCUS_NONE
 	var first: Control = stitched_peddler_button if peddler_ready else stitched_campfire_button \
-		if campfire_ready else start_button
-	var last: Control = stitched_campfire_button if campfire_ready else stitched_peddler_button \
-		if peddler_ready else stitched_fight_button
+		if campfire_ready else stitched_postevent_button if event_ready else start_button
+	var last: Control = stitched_postevent_button if event_ready else stitched_campfire_button \
+		if campfire_ready else stitched_peddler_button if peddler_ready else stitched_fight_button
 	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(first)
 	start_button.focus_previous = start_button.get_path_to(last)
 	if peddler_ready:
@@ -2949,7 +3027,13 @@ func _refresh_stitched_peddler_button() -> void:
 	if campfire_ready:
 		stitched_campfire_button.focus_previous = stitched_campfire_button.get_path_to(
 			stitched_peddler_button if peddler_ready else stitched_fight_button)
-		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(start_button)
+		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(
+			stitched_postevent_button if event_ready else start_button)
+	if event_ready:
+		stitched_postevent_button.focus_previous = stitched_postevent_button.get_path_to(
+			stitched_campfire_button if campfire_ready else stitched_peddler_button
+			if peddler_ready else stitched_fight_button)
+		stitched_postevent_button.focus_next = stitched_postevent_button.get_path_to(start_button)
 
 
 ## The title-accessible Peddler: one quoted bandage, candle stub or canonical
@@ -2959,6 +3043,7 @@ func _open_stitched_peddler() -> bool:
 			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null or stitched_peddler_part_visit != null \
+			or stitched_postevent_visit != null or is_instance_valid(stitched_postevent_panel) \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -3526,6 +3611,7 @@ func _open_stitched_campfire() -> bool:
 			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or stitched_peddler_candle_visit != null \
+			or stitched_postevent_visit != null or is_instance_valid(stitched_postevent_panel) \
 			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -3549,9 +3635,8 @@ func _open_stitched_campfire() -> bool:
 			or state.get("heroes") != roster \
 			or state.get("candle") != stitched_roadblock_candle \
 			or state.get("quote") != visit.read_state().get("quote") \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.MEND) == -1 \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.TRIM_THE_WICK) == -1 \
-			or state.get("quote", {}).get("choices", []).find(RunCampfireVisit.STITCHED_LEAVE) == -1:
+			or not state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE) \
+			or not _stitched_campfire_held_fray_valid(roster):
 		return false
 	# Build a distinct swap service from the FINAL Circle Leave parts and six-slot
 	# satchel. Recovery remains the ordinary RunCampfireVisit with its own quote.
@@ -3647,7 +3732,18 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 	panel.add_child(heading)
 	var quote := Label.new()
 	quote.name = "CampfireQuote"
-	quote.text = "One earned stop: Mend each hero for 30% max HP, Trim the Wick for up to 50 CANDLE (cap 100), or Leave. All choices free."
+	var choice_labels: Array[String] = []
+	for action in state["quote"]["choices"]:
+		match str(action):
+			RunCampfireVisit.MEND:
+				choice_labels.append("Mend HP")
+			RunCampfireVisit.TELL_TALES:
+				choice_labels.append("Tell Tales (-25 FRAY)")
+			RunCampfireVisit.TRIM_THE_WICK:
+				choice_labels.append("Trim Wick (+%d CANDLE)" % mini(50, 100 - int(state["candle"])))
+			RunCampfireVisit.STITCHED_LEAVE:
+				choice_labels.append("Leave")
+	quote.text = "One earned free choice: " + "  ·  ".join(choice_labels)
 	quote.position = Vector2(185, 135)
 	quote.size = Vector2(910, 75)
 	quote.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3727,52 +3823,52 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 		empty.text = "No lawful untorn, same-slot spare available."
 		empty.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		offers_box.add_child(empty)
-	var mend := Button.new()
-	mend.name = "CampfireMend"
-	mend.text = "Mend · 30% max HP for each · free"
-	mend.position = Vector2(185, 550)
-	mend.size = Vector2(385, 58)
-	mend.focus_mode = Control.FOCUS_ALL
-	mend.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.MEND, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(mend)
-	var wick := Button.new()
-	wick.name = "CampfireWick"
-	wick.text = "Trim the Wick · +%d CANDLE · free" % wick_gain
-	wick.position = Vector2(585, 550)
-	wick.size = Vector2(315, 58)
-	wick.focus_mode = Control.FOCUS_ALL
-	wick.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.TRIM_THE_WICK, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(wick)
-	var leave := Button.new()
-	leave.name = "CampfireLeave"
-	leave.text = "Leave Campfire · free"
-	leave.position = Vector2(915, 550)
-	leave.size = Vector2(200, 58)
-	leave.focus_mode = Control.FOCUS_ALL
-	leave.pressed.connect(_stitched_campfire_choose.bind(
-		RunCampfireVisit.STITCHED_LEAVE, state.duplicate(true), weakref(panel), generation))
-	panel.add_child(leave)
-	mend.focus_next = mend.get_path_to(wick)
-	wick.focus_previous = wick.get_path_to(mend)
-	wick.focus_next = wick.get_path_to(leave)
-	leave.focus_previous = leave.get_path_to(wick)
-	leave.focus_next = leave.get_path_to(mend)
-	mend.focus_previous = mend.get_path_to(leave)
+	# Only service-offered decisions are mounted; Tab and Up reach all.
+	var recovery_buttons: Array[Button] = []
+	for choice in state["quote"]["choices"]:
+		var decision: String = str(choice)
+		var button := Button.new()
+		match decision:
+			RunCampfireVisit.MEND:
+				button.name = "CampfireMend"
+				button.text = "Mend · +30% HP · free"
+			RunCampfireVisit.TELL_TALES:
+				button.name = "CampfireTales"
+				button.text = "Tell Tales · -25 FRAY · free"
+			RunCampfireVisit.TRIM_THE_WICK:
+				button.name = "CampfireWick"
+				button.text = "Trim Wick · +%d CANDLE · free" % wick_gain
+			RunCampfireVisit.STITCHED_LEAVE:
+				button.name = "CampfireLeave"
+				button.text = "Leave Campfire · free"
+			_:
+				continue
+		button.position = Vector2(165 + recovery_buttons.size() * 237, 550)
+		button.size = Vector2(225, 58)
+		button.focus_mode = Control.FOCUS_ALL
+		button.pressed.connect(_stitched_campfire_choose.bind(
+			decision, state.duplicate(true), weakref(panel), generation))
+		panel.add_child(button)
+		recovery_buttons.append(button)
+	if recovery_buttons.is_empty():
+		panel.free()
+		return {}
+	for index in range(recovery_buttons.size()):
+		var button: Button = recovery_buttons[index]
+		var previous: Button = recovery_buttons[(index + recovery_buttons.size() - 1) % recovery_buttons.size()]
+		var following: Button = recovery_buttons[(index + 1) % recovery_buttons.size()]
+		button.focus_previous = button.get_path_to(previous)
+		button.focus_next = button.get_path_to(following)
 	if not swap_buttons.is_empty():
-		# Preserve the existing Mend → Wick → Leave Tab ring (Wick regression).
-		# Up from the recovery row enters the scrollable swap list; each offer
-		# can then be traversed by keyboard, while recovery Tab remains stable.
-		mend.focus_neighbor_top = mend.get_path_to(swap_buttons[0])
-		wick.focus_neighbor_top = wick.get_path_to(swap_buttons[0])
-		leave.focus_neighbor_top = leave.get_path_to(swap_buttons[0])
+		# Tab stays in the quoted recovery ring; Up reaches the swaps.
+		for button in recovery_buttons:
+			button.focus_neighbor_top = button.get_path_to(swap_buttons[0])
 		for index in range(swap_buttons.size()):
-			var previous: Button = leave if index == 0 else swap_buttons[index - 1]
-			var following: Button = mend if index == swap_buttons.size() - 1 else swap_buttons[index + 1]
+			var previous: Button = recovery_buttons[-1] if index == 0 else swap_buttons[index - 1]
+			var following: Button = recovery_buttons[0] if index == swap_buttons.size() - 1 else swap_buttons[index + 1]
 			swap_buttons[index].focus_previous = swap_buttons[index].get_path_to(previous)
 			swap_buttons[index].focus_next = swap_buttons[index].get_path_to(following)
-	return {"panel": panel, "first": mend}
+	return {"panel": panel, "first": recovery_buttons[0]}
 
 
 ## Commit ONE quoted exchange on this specific mounted Campfire panel. The
@@ -3800,6 +3896,7 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 			or _stitched_campfire_state.get("heroes") != _stitched_campfire_authorized_roster \
 			or _stitched_campfire_state.get("candle") != stitched_roadblock_candle \
 			or _stitched_hp_carry.size() != 4 \
+			or not _stitched_campfire_held_fray_valid(_stitched_campfire_authorized_roster) \
 			or is_instance_valid(stitched_fight_view) \
 			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null:
@@ -3874,9 +3971,11 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 	var heading: Label = panel.find_child("CampfireSwapHeading", true, false)
 	if heading != null:
 		heading.text = "SPARE EXCHANGED  ·  RECOVERY STILL AVAILABLE"
-	var mend: Button = panel.find_child("CampfireMend", true, false)
-	if mend != null:
-		mend.grab_focus()
+	for name in ["CampfireMend", "CampfireTales", "CampfireWick", "CampfireLeave"]:
+		var recovery: Button = panel.find_child(name, true, false)
+		if recovery != null:
+			recovery.grab_focus()
+			break
 	return receipt
 
 
@@ -3885,8 +3984,7 @@ func _stitched_campfire_swap_part(hero_id: String, slot: String, satchel_index: 
 func _stitched_campfire_choose(decision: String, expected: Dictionary,
 		source: WeakRef, generation: int) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
-	if not decision in [RunCampfireVisit.MEND, RunCampfireVisit.TRIM_THE_WICK, RunCampfireVisit.STITCHED_LEAVE] \
-			or panel == null or not is_instance_valid(panel) \
+	if panel == null or not is_instance_valid(panel) \
 			or panel != stitched_campfire_panel or not panel.is_visible_in_tree() \
 			or panel.get_meta("campfire_generation", -1) != generation \
 			or generation != _stitched_campfire_generation \
@@ -3900,20 +3998,37 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 			or expected.get("status") != RunCampfireVisit.STITCHED_OPEN \
 			or expected.get("mode") != RunCampfireVisit.STITCHED \
 			or expected.get("heroes", []) != _stitched_campfire_authorized_roster \
-			or expected.get("candle") != stitched_roadblock_candle:
-		return {"ok": false, "error": "stale or forged Campfire"}
+			or expected.get("candle") != stitched_roadblock_candle \
+			or not expected.get("quote", {}).get("choices", []).has(decision):
+		return {"ok": false, "error": "stale, forged or unoffered Campfire"}
 	var before: Array = expected["heroes"].duplicate(true)
-	if before.size() != 4 or _stitched_hp_carry.size() != 4:
-		return {"ok": false, "error": "missing survivor authority"}
+	if before.size() != 4 or _stitched_hp_carry.size() != 4 \
+			or not _stitched_campfire_held_fray_valid(before):
+		return {"ok": false, "error": "missing survivor FRAY/HP authority"}
 	var after: Array = before.duplicate(true)
+	var next_fray: Dictionary = _stitched_fray_carry.duplicate(true)
 	for hero in after:
 		var id := str(hero["id"])
 		if not _stitched_hp_carry.has(id) or _stitched_hp_carry[id] != hero["hp"]:
 			return {"ok": false, "error": "changed survivor HP"}
-		if decision == RunCampfireVisit.MEND:
-			@warning_ignore("integer_division")
-			var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
-			hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+		match decision:
+			RunCampfireVisit.MEND:
+				@warning_ignore("integer_division")
+				var heal: int = (int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100
+				hero["hp"] = mini(int(hero["max_hp"]), int(hero["hp"]) + heal)
+			RunCampfireVisit.TELL_TALES:
+				var reduced := maxi(0, int(hero["fray"]) - RunCampfireVisit.TALES_FRAY_REDUCTION)
+				hero["fray"] = reduced
+				var mood: String = str(next_fray[id]["resolve"])
+				# Unravelled recovers only below 50; Steadfast persists.
+				if mood in StitchedS1BEffects.RESOLVE_TRAITS \
+						and reduced < StitchedRules.FRAY_RECOVER:
+					mood = ""
+				if (mood.is_empty() and reduced >= StitchedRules.FRAY_RESOLVE) \
+						or (mood in StitchedS1BEffects.RESOLVE_TRAITS \
+						and reduced < StitchedRules.FRAY_RECOVER):
+					return {"ok": false, "error": "illegal resolve transition"}
+				next_fray[id] = {"fray": reduced, "resolve": mood}
 	var after_candle: int = int(expected["candle"])
 	if decision == RunCampfireVisit.TRIM_THE_WICK:
 		after_candle = mini(RunCampfireVisit.STITCHED_CANDLE_MAX,
@@ -3927,15 +4042,16 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 			or committed.get("status") != RunCampfireVisit.STITCHED_DECIDED \
 			or committed.get("heroes") != after or committed.get("candle") != after_candle:
 		return {"ok": false, "error": "Campfire receipt rejected"}
-	# Publish only the chosen ledger after the complete receipt is verified.
+	# Only after verifying the exact service receipt publish the chosen ledger.
 	if decision == RunCampfireVisit.MEND:
 		for hero in after:
 			_stitched_hp_carry[str(hero["id"])] = int(hero["hp"])
+	elif decision == RunCampfireVisit.TELL_TALES:
+		_stitched_fray_carry = next_fray
 	elif decision == RunCampfireVisit.TRIM_THE_WICK:
 		stitched_roadblock_candle = after_candle
 	_close_stitched_campfire()
 	return receipt
-
 
 func _close_stitched_campfire() -> void:
 	var panel := stitched_campfire_panel
@@ -3968,6 +4084,334 @@ func _close_stitched_campfire() -> void:
 	_refresh_stitched_peddler_button()
 	if is_instance_valid(stitched_fight_button):
 		stitched_fight_button.grab_focus.call_deferred()
+
+
+
+## S6's third, mutually-exclusive post-Circle stop. Only a real four-survivor
+## Circle Leave can offer it; every action is quote-checked against live carry.
+func _stitched_postevent_build_snapshot(roster: Array) -> Dictionary:
+	if roster.size() != 4 or _stitched_party_picks.size() != 4 \
+			or StitchedPartyAdmission.admit(_stitched_party_picks) != _stitched_party_receipt \
+			or _stitched_rank_carry.size() != 4 or _stitched_hp_carry.size() != 4 \
+			or _stitched_fray_carry.size() != 4 \
+			or typeof(stitched_roadblock_candle) != TYPE_INT \
+			or stitched_roadblock_candle < 0 or stitched_roadblock_candle > 100 \
+			or typeof(stitched_preview_scraps) != TYPE_INT or stitched_preview_scraps < 0 \
+			or typeof(stitched_preview_gold) != TYPE_INT or stitched_preview_gold < 0 \
+			or not _stitched_campfire_held_fray_valid(roster):
+		return {}
+	var ids := {}
+	var ranks := {}
+	var party: Array = []
+	for raw in roster:
+		if not raw is Dictionary:
+			return {}
+		var hero: Dictionary = raw
+		var id: String = str(hero.get("id", ""))
+		var rank: Variant = hero.get("position")
+		var hp: Variant = hero.get("hp")
+		var fray: Variant = hero.get("fray")
+		if id.is_empty() or not id in _stitched_party_picks or ids.has(id) \
+				or typeof(rank) != TYPE_INT or int(rank) < 1 or int(rank) > 4 \
+				or ranks.has(rank) or _stitched_rank_carry.get(id) != rank \
+				or typeof(hp) != TYPE_INT or int(hp) < 0 \
+				or _stitched_hp_carry.get(id) != hp \
+				or typeof(fray) != TYPE_INT or int(fray) < 0 or int(fray) >= 200 \
+				or not _stitched_fray_carry.has(id) \
+				or _stitched_fray_carry[id].get("fray") != fray:
+			return {}
+		ids[id] = true
+		ranks[rank] = true
+		party.append({"id": id, "fray": int(fray)})
+	if ids.size() != 4 or ranks.size() != 4:
+		return {}
+	return {"candle": stitched_roadblock_candle, "party": party,
+		"gold": stitched_preview_gold, "scraps": stitched_preview_scraps}
+
+
+func _stitched_postevent_live_snapshot() -> Dictionary:
+	if _stitched_postevent_roster.size() != 4 \
+			or _stitched_postevent_roster != _stitched_campfire_authorized_roster:
+		return {}
+	return _stitched_postevent_build_snapshot(_stitched_postevent_roster)
+
+
+## The consequence service includes all valid authored rows. The one paid
+## repair that would waste a scrap at 100 CANDLE is deliberately not actionable.
+func _stitched_postevent_row_available(row: Dictionary, snapshot: Dictionary) -> bool:
+	if row.get("available") != true:
+		return false
+	if row.get("choice_id") == "mend_wick" \
+			and int(row.get("candle", -1)) <= int(snapshot.get("candle", 100)):
+		return false
+	return true
+
+
+func _open_stitched_postevent() -> bool:
+	if not _stitched_postvictory_stop_available \
+			or is_instance_valid(stitched_postevent_panel) or stitched_postevent_visit != null \
+			or is_instance_valid(stitched_campfire_panel) or stitched_campfire_visit != null \
+			or is_instance_valid(stitched_peddler_panel) or stitched_peddler_visit != null \
+			or stitched_peddler_candle_visit != null or stitched_peddler_part_visit != null \
+			or is_instance_valid(stitched_fight_view) \
+			or is_instance_valid(stitched_event_panel) or stitched_event_gate != null \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
+			or deck != null or run_map != null or run_rng != null \
+			or is_instance_valid(base_screen) or is_instance_valid(party_picker) \
+			or is_instance_valid(route_view) or is_instance_valid(route_atlas_overlay) \
+			or is_instance_valid(battle_view) \
+			or not is_instance_valid(title_view) or not title_view.is_visible_in_tree():
+
+		return false
+	var roster: Array = _stitched_campfire_living_roster()
+	var snapshot := _stitched_postevent_build_snapshot(roster)
+	if snapshot.is_empty():
+
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(STITCHED_EVENT_PATH))
+	if not parsed is Dictionary:
+
+		return false
+	var record: Dictionary = parsed
+	if record.get("id") != STITCHED_EVENT_ID or not record.get("choices") is Array:
+
+		return false
+	var authored: Array = record["choices"]
+	if authored.size() != STITCHED_EVENT_CHOICES.size():
+
+		return false
+	# JSON.parse_string represents authored numeric tokens as floats; compare
+	# the exact integral JSON values, then let the consequence service validate.
+	var expected_effects := [
+		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": -10.0, "scraps": 2.0},
+		{"target": "party", "fray": 0.0, "candle": 8.0, "gold": 0.0, "scraps": -1.0},
+		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": 0.0, "scraps": 0.0},
+	]
+	for i in range(authored.size()):
+		if not authored[i] is Dictionary \
+				or authored[i].get("id") != STITCHED_EVENT_CHOICES[i] \
+				or str(authored[i].get("text", "")).strip_edges().is_empty() \
+				or authored[i].get("stitched_effect") != expected_effects[i]:
+
+			return false
+	var visit := RunStitchedEventConsequence.new(record)
+	if not visit.is_valid():
+
+		return false
+	var quote: Dictionary = visit.preview(snapshot.duplicate(true))
+	if quote.get("ok") != true or quote.get("event_id") != STITCHED_EVENT_ID \
+			or quote.get("candle") != snapshot["candle"] \
+			or not quote.get("choices") is Array \
+			or quote["choices"].size() != STITCHED_EVENT_CHOICES.size():
+
+		return false
+	var offered := {}
+	for i in range(STITCHED_EVENT_CHOICES.size()):
+		var row: Variant = quote["choices"][i]
+		if not row is Dictionary or row.get("choice_id") != STITCHED_EVENT_CHOICES[i] \
+				or row.get("target") != "party" or row.get("hero_id") != "" \
+				or row.get("fray_delta") != 0 or row.get("fray") != {} \
+				or row.get("gold_delta") != expected_effects[i]["gold"] \
+				or row.get("scraps_delta") != expected_effects[i]["scraps"] \
+				or row.get("candle_delta") != expected_effects[i]["candle"]:
+
+			return false
+		offered[str(row["choice_id"])] = _stitched_postevent_row_available(row, snapshot)
+	if offered.get("leave") != true:
+
+		return false
+	var generation := _stitched_postevent_generation + 1
+	var mounted: Dictionary = _mount_stitched_postevent(
+		record, snapshot, quote, offered, generation)
+	var panel: Control = mounted.get("panel")
+	if panel == null:
+
+		return false
+	# Publish authority only after the complete preview and panel are verified.
+	stitched_postevent_visit = visit
+	stitched_postevent_panel = panel
+	_stitched_postevent_roster = roster.duplicate(true)
+	_stitched_postevent_snapshot = snapshot.duplicate(true)
+	_stitched_postevent_quote = quote.duplicate(true)
+	_stitched_postevent_offered = offered.duplicate(true)
+	_stitched_postevent_generation = generation
+	_stitched_postvictory_stop_available = false
+	_stitched_peddler_roster.clear()
+	_stitched_campfire_roster.clear()
+	_stitched_campfire_swap_roster.clear()
+	_stitched_campfire_swap_satchel.clear()
+	_stitched_campfire_swap_gear.clear()
+	_refresh_stitched_peddler_button()
+	add_child(panel)
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	title_view.hide()
+	var first: Button = mounted.get("first")
+	if is_instance_valid(first):
+		first.grab_focus()
+	return true
+
+
+
+
+
+func _mount_stitched_postevent(record: Dictionary, snapshot: Dictionary,
+		quote: Dictionary, offered: Dictionary, generation: int) -> Dictionary:
+	var panel := Control.new()
+	panel.name = "StitchedFerryEvent"
+	panel.theme = load("res://themes/gothic_theme.tres")
+	panel.focus_mode = Control.FOCUS_ALL
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.set_meta("stitched_event_generation", generation)
+	var frame := NinePatchRect.new()
+	frame.name = "FerryEventFrame"
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+		frame.patch_margin_left = 24
+		frame.patch_margin_right = 24
+		frame.patch_margin_top = 24
+		frame.patch_margin_bottom = 24
+	frame.position = Vector2(180, 55)
+	frame.size = Vector2(920, 600)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.name = "FerryEventHeading"
+	heading.text = str(record["title"]).to_upper()
+	heading.position = Vector2(235, 95)
+	heading.size = Vector2(810, 50)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 30)
+	panel.add_child(heading)
+	var description := Label.new()
+	description.name = "FerryEventDescription"
+	description.text = str(record["description"])
+	description.position = Vector2(250, 164)
+	description.size = Vector2(780, 95)
+	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(description)
+	var wallet := Label.new()
+	wallet.name = "FerryEventWallet"
+	wallet.text = "GOLD %d   ·   SCRAPS %d   ·   CANDLE %d/100" % [
+		snapshot["gold"], snapshot["scraps"], snapshot["candle"]]
+	wallet.position = Vector2(240, 268)
+	wallet.size = Vector2(800, 42)
+	wallet.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	panel.add_child(wallet)
+	var first: Button = null
+	var buttons: Array[Button] = []
+	for i in range(STITCHED_EVENT_CHOICES.size()):
+		var id: String = STITCHED_EVENT_CHOICES[i]
+		var row: Dictionary = quote["choices"][i]
+		var button := Button.new()
+		match id:
+			"pay_gold":
+				button.name = "FerryPayGold"
+			"mend_wick":
+				button.name = "FerryMendWick"
+			"leave":
+				button.name = "FerryLeave"
+		button.text = str(record["choices"][i]["text"])
+		if id == "mend_wick":
+			button.text += "  (to %d/100)" % int(row["candle"])
+		button.position = Vector2(300, 325 + i * 78)
+		button.size = Vector2(680, 58)
+		button.disabled = not bool(offered.get(id, false))
+		button.focus_mode = Control.FOCUS_NONE if button.disabled else Control.FOCUS_ALL
+		button.pressed.connect(_stitched_postevent_choose.bind(
+			id, snapshot.duplicate(true), quote.duplicate(true),
+			weakref(panel), generation))
+		panel.add_child(button)
+		buttons.append(button)
+		if first == null and not button.disabled:
+			first = button
+	for i in range(buttons.size()):
+		if buttons[i].disabled:
+			continue
+		var prev: Button = buttons[2]
+		var next: Button = buttons[2]
+		for back in range(1, 4):
+			var candidate: Button = buttons[(i + buttons.size() - back) % buttons.size()]
+			if not candidate.disabled:
+				prev = candidate
+				break
+		for forward in range(1, 4):
+			var candidate: Button = buttons[(i + forward) % buttons.size()]
+			if not candidate.disabled:
+				next = candidate
+				break
+		buttons[i].focus_previous = buttons[i].get_path_to(prev)
+		buttons[i].focus_next = buttons[i].get_path_to(next)
+	if first == null:
+		panel.free()
+		return {}
+	return {"panel": panel, "first": first}
+
+
+func _stitched_postevent_choose(choice_id: String, expected_snapshot: Dictionary,
+		expected_quote: Dictionary, source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	if panel == null or not is_instance_valid(panel) \
+			or panel != stitched_postevent_panel or not panel.is_visible_in_tree() \
+			or panel.get_meta("stitched_event_generation", -1) != generation \
+			or generation != _stitched_postevent_generation \
+			or stitched_postevent_visit == null or not stitched_postevent_visit.is_valid() \
+			or stitched_postevent_visit.is_claimed() \
+			or is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_sewing_panel) \
+			or is_instance_valid(stitched_peddler_panel) or is_instance_valid(stitched_campfire_panel) \
+			or _stitched_postvictory_stop_available \
+			or deck != null or run_map != null or run_rng != null \
+			or _stitched_postevent_snapshot != expected_snapshot \
+			or _stitched_postevent_quote != expected_quote \
+			or not choice_id in STITCHED_EVENT_CHOICES \
+			or _stitched_postevent_offered.get(choice_id) != true:
+		return {"ok": false, "error": "stale or unoffered Stitched Event"}
+	var live := _stitched_postevent_live_snapshot()
+	if live.is_empty() or live != expected_snapshot \
+			or stitched_postevent_visit.preview(live.duplicate(true)) != expected_quote:
+		return {"ok": false, "error": "changed Stitched Event resources or party"}
+	var index: int = STITCHED_EVENT_CHOICES.find(choice_id)
+	if index < 0 or index >= expected_quote.get("choices", []).size():
+		return {"ok": false, "error": "missing quoted Event choice"}
+	var row: Dictionary = expected_quote["choices"][index]
+	if row.get("choice_id") != choice_id or not _stitched_postevent_row_available(row, live) \
+			or row.get("fray") != {} or row.get("target") != "party" \
+			or row.get("hero_id") != "":
+		return {"ok": false, "error": "unavailable quoted Event choice"}
+	var expected_receipt := {"ok": true, "event_id": STITCHED_EVENT_ID,
+		"choice_id": choice_id, "target": "party", "hero_id": "",
+		"candle": row["candle"], "fray": {},
+		"gold_delta": row["gold_delta"], "gold": row["gold"],
+		"scraps_delta": row["scraps_delta"], "scraps": row["scraps"]}
+	# No service claim occurs before all live-state and exact-choice checks.
+	var receipt: Dictionary = stitched_postevent_visit.choose(choice_id, live.duplicate(true))
+	if receipt != expected_receipt:
+		return {"ok": false, "error": "Stitched Event receipt mismatch"}
+	stitched_preview_gold = int(receipt["gold"])
+	stitched_preview_scraps = int(receipt["scraps"])
+	stitched_roadblock_candle = int(receipt["candle"])
+	_close_stitched_postevent()
+	return receipt
+
+
+func _close_stitched_postevent() -> void:
+	var panel := stitched_postevent_panel
+	stitched_postevent_panel = null
+	stitched_postevent_visit = null
+	_stitched_postevent_roster.clear()
+	_stitched_postevent_snapshot.clear()
+	_stitched_postevent_quote.clear()
+	_stitched_postevent_offered.clear()
+	_stitched_campfire_authorized_roster.clear()
+	_stitched_postevent_generation += 1
+	if is_instance_valid(panel):
+		if panel.get_parent() == self:
+			remove_child(panel)
+		panel.queue_free()
+	_restore_stitched_title()
+	_refresh_stitched_peddler_button()
 
 
 ## Full-screen Quilt village with no run, RNG, deck or currency allocation.

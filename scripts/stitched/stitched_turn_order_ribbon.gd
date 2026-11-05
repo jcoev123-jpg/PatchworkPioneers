@@ -43,8 +43,8 @@ func _ready() -> void:
 
 		var portrait := TextureRect.new()
 		portrait.name = "ActorPortrait"
-		portrait.position = Vector2(4, 4)
-		portrait.size = Vector2(33, 34)
+		portrait.position = Vector2(3, 5)
+		portrait.size = Vector2(28, 32)
 		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -53,7 +53,7 @@ func _ready() -> void:
 		var fallback := Label.new()
 		fallback.name = "NameFallback"
 		fallback.position = Vector2(3, 5)
-		fallback.size = Vector2(36, 32)
+		fallback.size = Vector2(28, 32)
 		fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		fallback.clip_text = true
@@ -64,19 +64,21 @@ func _ready() -> void:
 
 		var rank := Label.new()
 		rank.name = "SideRank"
-		rank.position = Vector2(39, 2)
-		rank.size = Vector2(30, 19)
+		rank.position = Vector2(35, 2)
+		rank.size = Vector2(34, 19)
+		rank.clip_text = true
 		rank.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		rank.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		rank.add_theme_font_size_override("font_size", 17)
+		rank.add_theme_font_size_override("font_size", 16)
 		rank.add_theme_color_override("font_color", BONE)
 		rank.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		tag.add_child(rank)
 
 		var marker := Label.new()
 		marker.name = "NowMarker"
-		marker.position = Vector2(36, 22)
-		marker.size = Vector2(34, 16)
+		marker.position = Vector2(35, 23)
+		marker.size = Vector2(34, 17)
+		marker.clip_text = true
 		marker.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		marker.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		marker.add_theme_font_size_override("font_size", 12)
@@ -117,6 +119,24 @@ func _ready() -> void:
 		tag.focus_entered.connect(_on_focus.bind(index))
 		tag.focus_exited.connect(_on_blur.bind(index))
 		tag.hide()
+
+
+## Fit to the resolved Gothic font rather than guessing from character count.
+## Rank and cue must fit their own cells; a shortened fallback is disclosed
+## with the complete public actor name in both mouse and keyboard tooltips.
+func _fit_chip_text(label: Label, value: String, preferred: int, minimum: int, cell: Vector2) -> void:
+	var font := label.get_theme_font("font")
+	var size := preferred
+	while size > minimum and (
+		font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > cell.x - 2.0 or
+		font.get_height(size) > cell.y - 1.0):
+		size -= 1
+	while not value.is_empty() and font.get_string_size(
+		value, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > cell.x - 2.0:
+		value = value.substr(0, value.length() - 1)
+	label.add_theme_font_size_override("font_size", size)
+	label.text = value
+	label.size = cell
 
 
 func _on_hover(index: int, hovered: bool) -> void:
@@ -184,9 +204,9 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 			code += str(int(rank))
 		control.tooltip_text = StitchedTurnStatusCues.tooltip(unit)
 		tag["help_label"].text = control.tooltip_text
-		tag["rank"].text = code
+		_fit_chip_text(tag["rank"], code, 16, 10, Vector2(34, 19))
 		var active := not is_over and not acting_id.is_empty() and id == acting_id
-		tag["marker"].text = "NOW" if active else StitchedTurnStatusCues.cue(unit)
+		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 12, 9, Vector2(34, 17))
 		tag["marker"].add_theme_color_override("font_color", AMBER if active else MUTED)
 		tag["frame"].modulate = Color(1, 0.87, 0.67) if active else Color(0.85, 0.82, 0.78)
 		# Never substitute a rank-mate's art or a generic enemy for an unknown ID.
@@ -195,7 +215,7 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 		tag["portrait"].texture = texture
 		tag["portrait"].visible = texture != null
 		tag["fallback"].visible = texture == null
-		tag["fallback"].text = full_name.substr(0, 6)
+		_fit_chip_text(tag["fallback"], full_name.substr(0, 4), 11, 9, Vector2(28, 32))
 		control.show()
 		_sync_tip(index)
 
