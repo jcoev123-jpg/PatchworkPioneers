@@ -41,8 +41,9 @@ func _admit(app: Node) -> StitchedBattleScreen:
 	return app.stitched_fight_view
 
 
-## Deterministic greedy line (highest authored damage, lowest legal rank) that
-## really defeats all three Roadblock foes with mounted part actions.
+## Deterministic line that really defeats all three Roadblock foes with mounted part
+## actions: a whole-party mending part first, then the highest authored damage at the lowest
+## legal rank. Every other part is left to its authored target rolls.
 func _victory(stage: StitchedBattleScreen) -> Dictionary:
 	if stage == null or stage.battle == null or not stage.battle.is_valid():
 		return {}
@@ -72,7 +73,9 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 				elif str(skill.get("kind", "")) == "heal":
 					var ally: Dictionary = stage._unit_at("hero", rank)
 					var missing: int = int(ally.get("max_hp", 0)) - int(ally.get("hp", 0))
-					if missing >= 8:
+					if bool(skill.get("multi", false)):
+						score = 100 + missing
+					elif missing >= 8:
 						score = 38 + missing
 				if score > best_score:
 					best_score = score

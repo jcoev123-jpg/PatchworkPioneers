@@ -29,7 +29,7 @@ const FROZEN_PARTS := {
 		"stat": {"acc": 3},
 	},
 	"lantern_monk_arms_wick_spark": {
-		"name": "Wick Spark", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
+		"name": "Wick Spark", "launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy",
 		"multi": false, "acc": 91, "dmg": [4, 6], "effects": {"blind": 1}, "move": "attack2",
 		"stat": {"dmg": 1},
 	},
@@ -89,6 +89,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_lamplight_wash_launch()
+	_test_wick_spark_launch()
 	_test_moth_cloud_fourth_rank()
 	_test_each_tier()
 	_test_multi_blind()
@@ -99,6 +100,7 @@ func _initialize() -> void:
 	_test_rank4_moth_cloud(1, 500950, 30, "tier I")
 	_test_rank4_moth_cloud(2, 500990, 30, "tier II")
 	_test_rank4_moth_cloud(3, 501030, 30, "tier III")
+	_test_rank4_wick_spark(1, 500030, 60)
 	_test_rank2_moth_cloud_replay()
 	_test_guard_and_shroud()
 	_test_rejection_no_spend()
@@ -118,6 +120,15 @@ func _check(ok: bool, message: String) -> void:
 
 func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
+
+
+## Wick Spark alone may launch from hero rank 4; every other frozen part stays limited to
+## the authored ranks 1-3. Used for the base ability and every stitch tier's inherited mask.
+func _rank4_launch_contract(id: String, mask: int) -> bool:
+	if id == STARTERS["arms"]:
+		return StitchedParts.ranks_allowed(mask, 2) and StitchedParts.ranks_allowed(mask, 3) \
+			and StitchedParts.ranks_allowed(mask, 4) and not StitchedParts.ranks_allowed(mask, 1)
+	return not StitchedParts.ranks_allowed(mask, 4)
 
 
 ## S2's shipped fixture is NOT modified: the same four existing heroes are re-ordered in
@@ -253,8 +264,9 @@ func _test_catalog() -> void:
 		"AC3: out-of-bounds target rank rejects")
 
 
-## This task's one data change: the starter torso's launch list gains hero rank 4. Every
-## other field, tier override, label and stat in the eight-part file stays frozen.
+## The starter torso launches from hero ranks 2-4 with an all-ally multi heal. Every field,
+## tier override, label and stat in the eight-part file stays frozen except Wick Spark's
+## authored launch, which gains rank 4 in _test_wick_spark_launch.
 func _test_lamplight_wash_launch() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: catalog with Lamplight Wash's fourth launch rank validates")
@@ -312,7 +324,7 @@ func _test_lamplight_wash_launch() -> void:
 		and int(ability["effects"]["heal"]) == 2,
 		"AC3: tier reads never replace Lamplight Wash's base ability in memory")
 	# The six other untouched parts stay byte-for-byte equivalent in rules terms, including
-	# their base and tier II/III launch masks: none may gain rank-4 launch as a side effect.
+	# their base and tier II/III launch masks: only Wick Spark may gain rank-4 launch.
 	for id in FROZEN_PARTS:
 		var frozen: Dictionary = FROZEN_PARTS[id]
 		var other: Dictionary = cat["by_id"][id]
@@ -329,8 +341,8 @@ func _test_lamplight_wash_launch() -> void:
 			and other_ability["effects"] == frozen["effects"]
 			and str(other_ability["move"]) == str(frozen["move"]),
 			"AC1: frozen base part unchanged: " + id)
-		_check(not StitchedParts.ranks_allowed(int(other_ability["launch_mask"]), 4),
-			"AC1: frozen base part gains no rank-4 launch: " + id)
+		_check(_rank4_launch_contract(id, int(other_ability["launch_mask"])),
+			"AC1: only Wick Spark gains rank-4 launch at base tier: " + id)
 		for tier in [1, 2, 3]:
 			var tier_ability := StitchedParts.ability_at_tier(other, tier)
 			var expected := {
@@ -350,8 +362,8 @@ func _test_lamplight_wash_launch() -> void:
 				"AC1: frozen %s tier %d keeps its authored override values" % [id, tier])
 			_check(tier_ability["launch"] == frozen["launch"]
 				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
-				and not StitchedParts.ranks_allowed(int(tier_ability["launch_mask"]), 4),
-				"AC1: frozen %s tier %d gains no rank-4 launch" % [id, tier])
+				and _rank4_launch_contract(id, int(tier_ability["launch_mask"])),
+				"AC1: only Wick Spark tier %d gains rank-4 launch: %s" % [tier, id])
 			_check(tier_ability["target"] == frozen["target"]
 				and int(tier_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
 				and str(tier_ability["target_side"]) == str(frozen["side"])
@@ -359,6 +371,101 @@ func _test_lamplight_wash_launch() -> void:
 				"AC1: frozen %s tier %d keeps its authored target ranks and side" % [id, tier])
 			_check(StitchedParts.stat_at_tier(other, tier) == frozen["stat"],
 				"AC1: frozen %s tier %d keeps its slot stat" % [id, tier])
+
+
+## S4 completion: the starter arms' authored launch list gains hero rank 4 so the rear-ranked
+## monk can fling Wick Spark at one front-rank foe. Its target list stays enemy ranks 1-3 and
+## it stays a single-target Blind hit: the fourth rank is a legal place to cast from, never a
+## fourth starting enemy. Every tier inherits the new base launch unchanged.
+func _test_wick_spark_launch() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog with Wick Spark's rank-4 launch validates")
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][STARTERS["arms"]]
+	var ability: Dictionary = part["ability"]
+	var rear_launch := [2, 3, 4]
+	var launch_mask := StitchedParts.rank_mask(rear_launch)
+	var target_mask := StitchedParts.rank_mask([1, 2, 3])
+	_check(launch_mask != 0 and launch_mask != StitchedParts.ALL_RANKS_MASK
+		and launch_mask != target_mask,
+		"AC1: Wick Spark ranks 2-4 derive a launch mask that still excludes rank 1")
+	_check(str(part["id"]) == "lantern_monk_arms_wick_spark"
+		and str(part["name"]) == "Wick Spark" and str(part["slot"]) == "arms"
+		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"dmg": 1},
+		"AC1: Wick Spark keeps its name, arms slot, owner and +1 damage stat")
+	_check(str(ability["id"]) == "lantern_monk_arms_wick_spark_move"
+		and str(ability["name"]) == "Wick Spark" and str(ability["kind"]) == "ranged"
+		and ability["launch"] == rear_launch and int(ability["launch_mask"]) == launch_mask
+		and ability["target"] == [1, 2, 3] and int(ability["target_mask"]) == target_mask
+		and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+		and int(ability["acc"]) == 91 and ability["dmg"] == [4, 6]
+		and int(ability["crit"]) == 0 and int(ability["mark_damage"]) == 0
+		and ability["effects"] == {"blind": 1} and int(ability["self_move"]) == 0
+		and str(ability["move"]) == "attack2",
+		"AC1: Wick Spark launches from [2,3,4], hits one enemy rank 1-3 and keeps its fuel values")
+	for rank in [2, 3, 4]:
+		_check(StitchedParts.ranks_allowed(launch_mask, rank),
+			"AC1: Wick Spark may launch from hero rank %d" % rank)
+	for rank in [0, 1, 5]:
+		_check(not StitchedParts.ranks_allowed(launch_mask, rank),
+			"AC1: Wick Spark never launches from rank %d" % rank)
+	for rank in [0, 4, 5]:
+		_check(not StitchedParts.ranks_allowed(target_mask, rank),
+			"AC1: Wick Spark never targets rank %d" % rank)
+	for rank in [1, 2, 3]:
+		_check(StitchedParts.ranks_allowed(target_mask, rank),
+			"AC1: Wick Spark reaches enemy rank %d" % rank)
+	_check(not StitchedParts.ranks_allowed(target_mask, 4),
+		"AC1: Wick Spark's target list stays exactly enemy ranks 1-3, never a rank-4 opener")
+	var expected_acc := {1: 91, 2: 91, 3: 95}
+	var expected_dmg := {1: [4, 6], 2: [5, 8], 3: [7, 10]}
+	for tier in [1, 2, 3]:
+		var tiered := StitchedParts.ability_at_tier(part, tier)
+		var valid := StitchedParts.validate_ability(tiered)
+		_check(bool(valid.get("ok", false)), "AC1: Wick Spark tier %d ability validates" % tier)
+		if not bool(valid.get("ok", false)):
+			continue
+		var checked: Dictionary = valid["ability"]
+		_check(checked["launch"] == rear_launch
+			and int(checked["launch_mask"]) == launch_mask,
+			"AC1: Wick Spark tier %d inherits the new base launch [2,3,4]" % tier)
+		for rank in [2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC1: Wick Spark tier %d may launch from hero rank %d" % [tier, rank])
+		for rank in [0, 1, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC1: Wick Spark tier %d never launches from rank %d" % [tier, rank])
+		_check(checked["target"] == [1, 2, 3]
+			and int(checked["target_mask"]) == target_mask
+			and str(checked["target_side"]) == "enemy" and not bool(checked["multi"]),
+			"AC1: Wick Spark tier %d keeps its single enemy target mask 1-3" % tier)
+		for rank in [1, 2, 3]:
+			_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Wick Spark tier %d still reaches enemy rank %d" % [tier, rank])
+		for rank in [0, 4, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Wick Spark tier %d never targets enemy rank %d" % [tier, rank])
+		_check(int(checked["acc"]) == int(expected_acc[tier])
+			and checked["dmg"] == expected_dmg[tier]
+			and checked["effects"] == {"blind": 1} and int(checked["crit"]) == 0
+			and int(checked["mark_damage"]) == 0 and str(checked["move"]) == "attack2",
+			"AC1: Wick Spark tier %d keeps its ACC, damage, Blind and attack2 pose" % tier)
+		_check(StitchedParts.stat_at_tier(part, tier) == {"dmg": 1},
+			"AC1: Wick Spark tier %d keeps its authored slot stat" % tier)
+	_check(ability["launch"] == rear_launch and ability["target"] == [1, 2, 3]
+		and int(ability["acc"]) == 91 and ability["dmg"] == [4, 6]
+		and ability["effects"] == {"blind": 1},
+		"AC1: tier reads never replace Wick Spark's base fields in memory")
+	for bad_launch in [[2, 3, 4, 4], [2, 3, 4, 5], [0, 2, 3, 4]]:
+		var copy: Dictionary = part.duplicate(true)
+		copy["ability"]["launch"] = bad_launch
+		_check(not bool(StitchedParts.validate_part(copy).get("ok", false)),
+			"AC3: copied Wick Spark launch %s still fails validation" % str(bad_launch))
+	var wrong_side: Dictionary = part.duplicate(true)
+	wrong_side["ability"]["target_side"] = "allies"
+	_check(not bool(StitchedParts.validate_part(wrong_side).get("ok", false)),
+		"AC3: copied Wick Spark with an unknown target side still fails validation")
 
 
 ## S4 completion: Moth Cloud's base launch list gains hero rank 4, so the Monk's alternate
@@ -758,6 +865,88 @@ func _test_rank4_moth_cloud(tier: int, seed_start: int, seed_count: int, label: 
 	_check(witnessed, "%s: a real seeded rank-4 Moth Cloud Blinds the living enemy line" % label)
 
 
+## A real seeded 4v3 battle in the shipped preview order (Lantern Monk in hero rank 4) with
+## the starter Wick Spark genuinely equipped in his arms. On his scheduled turn the authored
+## ranged spark launches from the rear rank at the living rank-1 foe, deals real HP damage and
+## carries Blind in the receipt and battle state. A miss only consumes the turn, so a bounded
+## seed list supplies the confirmed witness; the same seed replays identically.
+func _test_rank4_wick_spark(tier: int, seed_start: int, seed_count: int) -> void:
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle("", tier, seed_value, true)
+		if b == null:
+			continue
+		if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var monk := b.get_unit("lantern_monk")
+		if str(monk["parts"]["arms"]["id"]) != STARTERS["arms"]:
+			continue
+		var foe_before := b.get_unit("fray_scavenger")
+		if foe_before.is_empty() or int(foe_before.get("rank", -1)) != 1 \
+				or bool(foe_before.get("dead", false)) or int(foe_before["hp"]) <= 0:
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(STARTERS["arms"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 1:
+			continue
+		var receipt: Dictionary = receipts[0]
+		if not bool(receipt.get("hit", false)) or str(receipt.get("target", "")) != "fray_scavenger" \
+				or str(receipt.get("target_side", "")) != "foe" or int(receipt.get("target_rank", -1)) != 1:
+			continue  # a legal missile may still miss; keep searching for a genuine hit
+		var receipt_blind: bool = receipt.get("statuses", []).any(
+			func(status): return str(status.get("status", "")) == "blind"
+		)
+		if not receipt_blind:
+			continue
+		var foe_after := b.get_unit("fray_scavenger")
+		var lost_hp := int(foe_before["hp"]) - int(foe_after["hp"])
+		if lost_hp <= 0 or bool(foe_after.get("dead", false)) \
+				or int(foe_after["statuses"].get("blind", 0)) <= 0:
+			continue
+		witnessed = true
+		_check(str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "lantern_monk"
+			and str(cast.get("part", "")) == STARTERS["arms"]
+			and str(cast.get("ability", "")) == "lantern_monk_arms_wick_spark_move",
+			"AC2: hero rank 4 Wick Spark runs as the equipped Monk arms part (seed %d)" % seed_value)
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"AC2: the acting Monk really flings the spark from hero rank 4 (seed %d)" % seed_value)
+		_check(receipts.size() == 1 and int(receipt["damage"]) == lost_hp
+			and int(receipt["target_hp"]) == int(foe_after["hp"]),
+			"AC2: one enemy receipt carries the real damage dealt to the living rank-1 foe (seed %d)"
+				% seed_value)
+		_check(receipt.get("statuses", []).any(
+				func(status): return str(status.get("status", "")) == "blind")
+			and int(foe_after["statuses"].get("blind", 0)) > 0,
+			"AC2: the landed spark Blinds the foe in both the receipt and actual battle state (seed %d)"
+				% seed_value)
+		var after := b.state_snapshot()
+		var advanced_once := (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) == int(before["turn_index"]) + 1) \
+			or int(after["round"]) == int(before["round"]) + 1
+		_check(advanced_once and after != before,
+			"AC2: the rank-4 cast advances exactly one turn and changes real battle state (seed %d)"
+				% seed_value)
+		var replay := _battle("", tier, seed_value, true)
+		if replay == null or not _to(replay, "lantern_monk"):
+			_check(false, "AC2: same-seed rank-4 Wick Spark replay reached the Monk's turn (seed %d)"
+				% seed_value)
+		else:
+			var replayed := replay.use_part(STARTERS["arms"], 1)
+			_check(replayed == cast and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"AC2: same-seed rank-4 Wick Spark replays receipt, snapshot and RNG (seed %d)"
+					% seed_value)
+		break
+	_check(witnessed,
+		"AC2: a real seeded rank-4 Wick Spark damages and Blinds the living rank-1 foe")
+
+
 ## Rank 2 stays a legal launch rank after the data change, and the identical seed and action
 ## reproduce the same receipt, snapshot and RNG position.
 func _test_rank2_moth_cloud_replay() -> void:
@@ -848,23 +1037,29 @@ func _test_rejection_no_spend() -> void:
 	var back := _config()
 	if back.is_empty():
 		return
-	# Preserve the same real roster but restore original S2 rank 4, illegal for Wick Spark.
+	# Same four real heroes, only the Monk moved to the front rank in the copied fixture:
+	# Wick Spark's authored launch starts at rank 2, so a genuine rank-1 Monk must refuse it.
 	var monk: Dictionary = back["heroes"].pop_at(1)
-	back["heroes"].append(monk)
+	back["heroes"].insert(0, monk)
 	var back_result := StitchedRules.create(back)
-	_check(bool(back_result.get("ok", false)), "AC3: original preview positioning is a real valid four-rank battle")
+	_check(bool(back_result.get("ok", false)), "AC3: a real rank-1 Monk loadout enters battle")
 	if bool(back_result.get("ok", false)):
-		var far: StitchedRules = back_result["battle"]
-		if _to(far, "lantern_monk"):
-			_reject_without_spend(far, STARTERS["arms"], 1, "forbidden launch rank 4")
+		var front: StitchedRules = back_result["battle"]
+		_check(int(front.get_unit("lantern_monk")["rank"]) == 1,
+			"AC3: rank-1 Wick Spark rejection witness really stands in hero rank 1")
+		if _to(front, "lantern_monk"):
+			_check(str(front.get_unit("lantern_monk")["parts"]["arms"]["id"]) == STARTERS["arms"],
+				"AC3: the rank-1 witness really has Wick Spark equipped")
+			_reject_without_spend(front, STARTERS["arms"], 1, "Wick Spark forbidden from hero rank 1")
 		else:
-			_check(false, "AC3: rank-4 witness has a scheduled turn")
+			_check(false, "AC3: rank-1 Wick Spark witness has a scheduled turn")
 
 
-## AC3 at rank 4: only the torso and the alternate head have rank 4 in their launch arrays;
-## Wick Spark stays illegal from rank 4, both rear-rank parts stay illegal from rank 1, and
-## copied malformed launch/target arrays still fail the existing validator with no turn,
-## state or RNG spend. The rank-4 Moth Cloud success lives in _test_rank4_moth_cloud.
+## AC3 at rank 4: Wick Spark now legally launches from rank 4, so its obsolete rank-4
+## refusal is replaced by a genuine rank-1 Monk refusing it; both rear-rank parts stay
+## illegal from rank 1, and copied malformed launch/target arrays still fail the existing
+## validator with no turn, state or RNG spend. The rank-4 successes live in
+## _test_rank4_wick_spark and _test_rank4_moth_cloud.
 func _test_rank4_launch_rejections() -> void:
 	var b := _battle("", 1, 500820, true)
 	if b == null or not _to(b, "lantern_monk"):
@@ -872,7 +1067,6 @@ func _test_rank4_launch_rejections() -> void:
 	else:
 		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
 			"AC3: rejection witness really stands in hero rank 4")
-		_reject_without_spend(b, STARTERS["arms"], 1, "Wick Spark forbidden from hero rank 4")
 		_reject_without_spend(b, ALTERNATES["torso"], 1, "unequipped torso part")
 		_reject_without_spend(b, STARTERS["torso"], 0, "out-of-range target rank 0")
 		_reject_without_spend(b, STARTERS["torso"], 5, "out-of-range target rank 5")
@@ -894,6 +1088,7 @@ func _test_rank4_launch_rejections() -> void:
 				"AC3: the rank-1 witness really has Moth Cloud equipped")
 			_reject_without_spend(front, ALTERNATES["head"], 1, "Moth Cloud forbidden from hero rank 1")
 			_reject_without_spend(front, STARTERS["torso"], 1, "Lamplight Wash forbidden from hero rank 1")
+			_reject_without_spend(front, STARTERS["arms"], 1, "Wick Spark forbidden from hero rank 1")
 		else:
 			_check(false, "AC3: rank-1 Moth Cloud witness receives a real turn")
 
