@@ -739,6 +739,8 @@ var _stitched_postvictory_stop_available := false
 const STITCHED_DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
 var _stitched_party_picks: Array = STITCHED_DEFAULT_PICKS.duplicate()
 var _stitched_party_receipt: Dictionary = StitchedPartyAdmission.admit(STITCHED_DEFAULT_PICKS)
+# Only an authenticated four-survivor Sewing Circle Leave makes these picks permanent.
+var _stitched_party_locked := false
 var _stitched_party_draft: Array = []
 var _stitched_party_checkboxes: Dictionary = {}
 var _stitched_party_hint: Label
@@ -1737,6 +1739,11 @@ func _stitched_picker_sync() -> void:
 	var buttons := panel.get_choice_buttons()
 	if buttons.size() != 3:
 		return
+	if _stitched_party_locked:
+		# Read-only survivors still have the original usable Fight and Leave tickets.
+		buttons[0].disabled = StitchedPartyAdmission.admit(_stitched_party_picks) != _stitched_party_receipt
+		buttons[0].focus_mode = Control.FOCUS_ALL if not buttons[0].disabled else Control.FOCUS_NONE
+		return
 	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
 	var checked := _stitched_picker_checkbox_ids()
 	var matched := checked.size() == _stitched_party_draft.size()
@@ -1763,7 +1770,7 @@ func _stitched_picker_sync() -> void:
 
 func _stitched_picker_changed(pressed: bool, id: String, source: WeakRef,
 		gate: RunV3FightEventGate, generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation) \
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation) \
 			or not id in StitchedPartyAdmission.HERO_IDS:
 		return
 	var box: CheckBox = _stitched_party_checkboxes.get(id)
@@ -1780,7 +1787,7 @@ func _stitched_picker_changed(pressed: bool, id: String, source: WeakRef,
 
 func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 		generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation):
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation):
 		return
 	var receipt := StitchedPartyAdmission.admit(_stitched_party_draft)
 	var checked := _stitched_picker_checkbox_ids()
@@ -1829,7 +1836,7 @@ func _stitched_picker_confirm(source: WeakRef, gate: RunV3FightEventGate,
 
 func _stitched_picker_cancel(source: WeakRef, gate: RunV3FightEventGate,
 		generation: int) -> void:
-	if not _stitched_picker_live(source, gate, generation):
+	if _stitched_party_locked or not _stitched_picker_live(source, gate, generation):
 		return
 	_stitched_party_draft = _stitched_party_picks.duplicate()
 	for id in StitchedPartyAdmission.HERO_IDS:
@@ -1858,6 +1865,18 @@ func _mount_stitched_party_picker(panel: LiveEventChoicePanel,
 	heading.theme_type_variation = "PatchHeading"
 	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	container.add_child(heading)
+	if _stitched_party_locked:
+		heading.text = "EARNED SURVIVORS  ·  Party locked"
+		for hero in party["heroes"]:
+			var survivor := Label.new()
+			survivor.text = "%d  %s" % [hero["rank"], hero["name"]]
+			survivor.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			survivor.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			container.add_child(survivor)
+		panel.event_content.add_child(container)
+		panel.event_content.move_child(container, panel.choices_container.get_index())
+		_stitched_picker_sync()
+		return true
 	var grid := GridContainer.new()
 	grid.name = "StitchedHeroChoices"
 	grid.columns = 4
@@ -2027,12 +2046,14 @@ func _commit_stitched_roadblock(receipt: Dictionary, source: WeakRef, gate: RunV
 	if choice_id == gate.get_fight_choice_id():
 		var party := StitchedPartyAdmission.admit(_stitched_party_picks)
 		if party.get("ok") != true or party != _stitched_party_receipt \
-				or _stitched_party_draft != _stitched_party_picks \
-				or _stitched_picker_checkbox_ids().size() != 4:
+				or _stitched_party_draft != _stitched_party_picks:
 			return
-		for id in _stitched_party_picks:
-			if not id in _stitched_picker_checkbox_ids():
+		if not _stitched_party_locked:
+			if _stitched_picker_checkbox_ids().size() != 4:
 				return
+			for id in _stitched_party_picks:
+				if not id in _stitched_picker_checkbox_ids():
+					return
 	# A new, once-only gate settles the same choice and immutable title wallet.
 	# A cloned/forged/stale panel receipt cannot promote a visit into combat.
 	var admitted: Dictionary = gate.choose_with_wallet(choice_id, STITCHED_TITLE_WALLET.duplicate(true))
@@ -2715,6 +2736,21 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 		if not carried.is_empty():
 			next_overrides[hero_id] = carried
 	_stitched_gear_overrides = next_overrides
+	# No attempted or stale Leave may lock the roster. Require the four
+	# authenticated survivors' exact IDs and earned carry before sealing it.
+	var earned_ids: Array = []
+	for hero in swap_final["heroes"]:
+		if hero is Dictionary and typeof(hero.get("id")) == TYPE_STRING:
+			earned_ids.append(hero["id"])
+	if earned_ids.size() == 4 and _stitched_party_picks.size() == 4 \
+			and _stitched_rank_carry.size() == 4 and _stitched_hp_carry.size() == 4:
+		var same_party := true
+		for id in _stitched_party_picks:
+			if earned_ids.count(id) != 1 or not _stitched_rank_carry.has(id) \
+					or not _stitched_hp_carry.has(id):
+				same_party = false
+		if same_party:
+			_stitched_party_locked = true
 	_close_stitched_sewing()
 	# The Peddler is earned only by this exact terminal victory + Circle Leave.
 	_offer_stitched_peddler(swap_final["heroes"])

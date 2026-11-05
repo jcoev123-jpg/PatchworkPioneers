@@ -540,8 +540,9 @@ func _trace() -> Dictionary:
 	}
 
 
-## A confirmed party reselection must clear only the deselected hero's carried
-## Bleed and withdraw the stale Peddler offer; a draft or Cancel clears nothing.
+## After a genuine four-survivor Circle Leave the earned IDs are sealed: the
+## next Roadblock shows them read-only, and neither the current panel's nor a
+## stale forged picker callback can swap a wounded survivor for a free spare.
 func _reselection_trace() -> void:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -570,70 +571,164 @@ func _reselection_trace() -> void:
 	_check(not bleed_before.is_empty() and not bled_id.is_empty() \
 		and app.stitched_peddler_button.visible,
 		"the reselection scenario has a real carried Bleed and an earned Peddler")
+	var picks_before: Array = app._stitched_party_picks.duplicate()
+	var receipt_before: Dictionary = app._stitched_party_receipt.duplicate(true)
+	var fray_before: Dictionary = app._stitched_fray_carry.duplicate(true)
+	var ranks_before: Dictionary = app._stitched_rank_carry.duplicate(true)
+	var gear_before: Dictionary = app._stitched_gear_overrides.duplicate(true)
+	var roster_before: Array = app._stitched_peddler_roster.duplicate(true)
+	var living_before: Array = app._stitched_peddler_living_roster().duplicate(true)
+	var gold_before: int = app.stitched_preview_gold
+	var satchel_before: Array = app.stitched_preview_satchel.duplicate(true)
+	var scraps_before: int = app.stitched_preview_scraps
+	var candle_before: int = app.stitched_roadblock_candle
+	var stop_before: bool = app._stitched_postvictory_stop_available
+	_check(app._stitched_party_locked and picks_before.size() == 4 \
+		and receipt_before.get("ok") == true and not living_before.is_empty() \
+		and stop_before,
+		"the authentic Circle Leave alone seals the four earned IDs and their earned stop")
 	app.stitched_fight_button.pressed.emit()
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
-	_check(picker != null and app._stitched_party_checkboxes.has(bled_id) \
+	_check(picker != null and app._stitched_party_locked \
 		and app.stitched_peddler_panel == null,
-		"the Roadblock party picker reopens without altering any Peddler state")
-	if picker == null or not app._stitched_party_checkboxes.has(bled_id):
+		"the earned Roadblock reopens read-only without altering any Peddler state")
+	if picker == null:
 		app.free()
 		await process_frame
 		return
+	var container: Node = picker.find_child("StitchedPartyPicker", true, false)
+	var labels: Array = container.find_children("*", "Label", true, false) \
+		if container != null else []
+	var choices: Array = picker.get_choice_buttons()
+	var party: Dictionary = StitchedPartyAdmission.admit(picks_before)
+	var read_only_ok: bool = container != null and party.get("ok") == true \
+		and choices.size() == 3 and labels.size() == 5 \
+		and container.find_children("*", "CheckBox", true, false).is_empty() \
+		and app._stitched_party_checkboxes.is_empty() \
+		and not is_instance_valid(app._stitched_party_confirm_button) \
+		and not is_instance_valid(app._stitched_party_cancel_button) \
+		and not choices[0].disabled and not choices[2].disabled \
+		and choices[0].focus_mode != Control.FOCUS_NONE \
+		and choices[2].focus_mode != Control.FOCUS_NONE
+	if read_only_ok:
+		for hero in party["heroes"]:
+			var found := false
+			for display in labels:
+				if str(display.text) == "%d  %s" % [hero["rank"], hero["name"]]:
+					found = true
+			read_only_ok = read_only_ok and found
+	_check(read_only_ok,
+		"the locked Roadblock shows the four read-only survivors with usable Fight and Leave")
 	var spare := ""
 	for id in StitchedPartyAdmission.HERO_IDS:
-		if not id in app._stitched_party_picks:
+		if not id in picks_before:
 			spare = str(id)
 			break
-	_check(not spare.is_empty(), "a legal alternative hero exists for the reselection")
-	# An unfinished three-hero draft and Cancel leave the carry untouched.
-	app._stitched_party_checkboxes[bled_id].button_pressed = false
-	_check(app._stitched_bleed_carry == bleed_before \
+	_check(not spare.is_empty(),
+		"a legal spare hero exists but must stay excluded from the earned four")
+	# Current-panel and stale forged callbacks must all fail closed.
+	var source: WeakRef = weakref(picker)
+	var gate: RunV3FightEventGate = app.stitched_event_gate
+	var generation: int = picker._generation
+	seed(52811)
+	var rng_expected: int = randi()
+	seed(52811)
+	app._stitched_picker_changed(false, bled_id, source, gate, generation)
+	app._stitched_picker_changed(true, spare, source, gate, generation)
+	app._stitched_picker_confirm(source, gate, generation)
+	app._stitched_picker_cancel(source, gate, generation)
+	app._stitched_picker_changed(false, bled_id, WeakRef.new(), gate, generation + 1)
+	app._stitched_picker_confirm(WeakRef.new(), gate, generation + 1)
+	app._stitched_picker_cancel(WeakRef.new(), gate, generation + 1)
+	_check(app._stitched_party_picks == picks_before \
+		and app._stitched_party_draft == picks_before \
+		and app._stitched_party_receipt == receipt_before \
+		and app.stitched_event_panel == picker and not gate.is_claimed() \
+		and app._stitched_bleed_carry == bleed_before \
 		and app._stitched_hp_carry == hp_before \
-		and app.stitched_peddler_button.visible,
-		"an unfinished draft cannot clear carried Bleed or the Peddler")
-	app._stitched_party_cancel_button.pressed.emit()
-	_check(app._stitched_bleed_carry == bleed_before and app._stitched_hp_carry == hp_before,
-		"Cancel restores the confirmed party without clearing any carry")
-	# A genuine Confirm clears only the deselected hero and withdraws the offer.
-	if not spare.is_empty():
-		app._stitched_party_checkboxes[bled_id].button_pressed = false
-		app._stitched_party_checkboxes[spare].button_pressed = true
-		app._stitched_party_confirm_button.pressed.emit()
-		var remaining := true
-		for id in bleed_before:
-			if str(id) == bled_id:
-				continue
-			remaining = remaining and app._stitched_bleed_carry.get(id) == bleed_before[id]
-		_check(not app._stitched_bleed_carry.has(bled_id) and remaining \
-			and not app._stitched_hp_carry.has(bled_id) \
-			and app._stitched_party_picks.has(spare) \
-			and not app._stitched_party_picks.has(bled_id) \
-			and app._stitched_peddler_roster.is_empty() \
-			and app._stitched_peddler_living_roster().is_empty() \
-			and not app.stitched_peddler_button.visible \
-			and not app._open_stitched_peddler(),
-			"confirmed reselection clears only the deselected hero's Bleed and withdraws the Peddler")
-	picker.get_choice_buttons()[2].pressed.emit()
+		and app._stitched_fray_carry == fray_before \
+		and app._stitched_rank_carry == ranks_before \
+		and app._stitched_gear_overrides == gear_before \
+		and app._stitched_peddler_roster == roster_before \
+		and app._stitched_peddler_living_roster() == living_before \
+		and app.stitched_preview_gold == gold_before \
+		and app.stitched_preview_satchel == satchel_before \
+		and app.stitched_preview_scraps == scraps_before \
+		and app.stitched_roadblock_candle == candle_before \
+		and app._stitched_postvictory_stop_available == stop_before \
+		and randi() == rng_expected and _no_wallet(app),
+		"current and stale picker callbacks cannot reseat the locked party or change carry, RNG, resources or stop")
+	choices[2].pressed.emit()
 	await process_frame
-	_check(app.stitched_event_panel == null and not app.stitched_peddler_button.visible \
-		and not app._open_stitched_peddler() and app.stitched_peddler_panel == null \
+	_check(app.stitched_event_panel == null and app._stitched_party_locked \
+		and app._stitched_party_picks == picks_before \
+		and app._stitched_party_receipt == receipt_before \
+		and app._stitched_bleed_carry == bleed_before \
+		and app._stitched_hp_carry == hp_before \
+		and app._stitched_fray_carry == fray_before \
+		and app._stitched_rank_carry == ranks_before \
+		and app._stitched_gear_overrides == gear_before \
+		and app._stitched_peddler_roster == roster_before \
+		and app.stitched_preview_gold == gold_before \
+		and app.stitched_preview_satchel == satchel_before \
+		and app.stitched_preview_scraps == scraps_before \
+		and app.stitched_roadblock_candle == candle_before \
+		and app._stitched_postvictory_stop_available == stop_before \
 		and _no_wallet(app),
-		"the reselection Roadblock Leave spends no run resource and reopens no Peddler")
+		"the real read-only Roadblock Leave spends nothing and keeps every earned survivor")
+	_check(app.stitched_peddler_button.visible \
+		and app.stitched_peddler_button.focus_mode != Control.FOCUS_NONE \
+		and app._stitched_peddler_living_roster() == living_before \
+		and app._open_stitched_peddler() and app.stitched_peddler_panel != null \
+		and app.stitched_peddler_visit != null,
+		"the earned Peddler still opens through its real title door after the locked Leave")
+	var served: Control = app.stitched_peddler_panel
+	var visit: RunStitchedPeddlerBandage = app.stitched_peddler_visit
+	var quote: Dictionary = app._stitched_peddler_quote.duplicate(true)
+	var quoted_ids: Array = []
+	var quoted_bleed := {}
+	for hero in quote.get("heroes", []):
+		quoted_ids.append(str(hero["id"]))
+		var amount := int(hero.get("statuses", {}).get("bleed", 0))
+		if amount > 0:
+			quoted_bleed[str(hero["id"])] = amount
+	_check(served != null and visit != null and visit.is_open() \
+		and quote.get("heroes", []).size() == 4 \
+		and quoted_ids == picks_before and quoted_bleed == bleed_before \
+		and int(quote.get("price", 0)) == PRICE \
+		and int(quote.get("gold", -1)) == gold_before,
+		"the preserved Peddler quotes the locked four and their carried Bleed")
+	var free_leave: Button = served.find_child("PeddlerLeave", true, false) \
+		if served != null else null
+	_check(free_leave != null and not free_leave.disabled,
+		"the preserved Peddler still offers its free Leave")
+	if free_leave != null:
+		free_leave.pressed.emit()
+	_check(app.stitched_peddler_panel == null and app.stitched_peddler_visit == null \
+		and app.stitched_preview_gold == gold_before \
+		and app._stitched_bleed_carry == bleed_before \
+		and app._stitched_hp_carry == hp_before \
+		and app._stitched_gear_overrides == gear_before \
+		and app.stitched_preview_satchel == satchel_before \
+		and app.stitched_preview_scraps == scraps_before \
+		and app.stitched_roadblock_candle == candle_before \
+		and _no_wallet(app),
+		"the preserved Peddler's free Leave preserves carried Bleed and every resource")
 	app.free()
 	await process_frame
 
 
-## Confirming the SAME four heroes in the same rank order must not withdraw the
-## offer earned at Circle Leave: only a genuine reselection (tested above) may.
-func _unchanged_confirm_trace() -> void:
+## A genuine Circle Leave also seals the unchanged four: the reopened Roadblock
+## offers no editing control at all, and the real Leave keeps the earned Peddler.
+func _locked_roster_trace() -> void:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await process_frame
 	var first: StitchedBattleScreen = await _admit(app)
 	var won: Dictionary = _victory(first) if first != null else {}
 	_check(won.get("outcome") == "victory",
-		"the unchanged party scenario wins the real Roadblock")
+		"the locked roster scenario wins the real Roadblock")
 	if won.get("outcome") != "victory":
 		app.free()
 		await process_frame
@@ -642,21 +737,24 @@ func _unchanged_confirm_trace() -> void:
 	first._action_buttons["exit"].pressed.emit()
 	await process_frame
 	if app.stitched_sewing_panel == null:
-		_check(false, "the unchanged party scenario reaches the real Sewing Circle")
+		_check(false, "the locked roster scenario reaches the real Sewing Circle")
 		app.free()
 		await process_frame
 		return
 	app.stitched_sewing_panel.get_node("SewingLeave").pressed.emit()
 	_check(app.stitched_peddler_button.visible \
 		and app._stitched_peddler_roster.size() == 4 \
+		and app.stitched_peddler_button.focus_mode != Control.FOCUS_NONE \
 		and not wounds["bleed"].is_empty(),
-		"the unchanged party scenario really earns a Peddler offer and carried Bleed")
+		"the locked roster scenario really earns a focusable Peddler and carried Bleed")
 	if not app.stitched_peddler_button.visible or wounds["bleed"].is_empty():
 		app.free()
 		await process_frame
 		return
 	var bleed_before: Dictionary = app._stitched_bleed_carry.duplicate(true)
 	var hp_before: Dictionary = app._stitched_hp_carry.duplicate(true)
+	var picks_before: Array = app._stitched_party_picks.duplicate()
+	var receipt_before: Dictionary = app._stitched_party_receipt.duplicate(true)
 	var roster_before: Array = app._stitched_peddler_roster.duplicate(true)
 	var gold_before: int = app.stitched_preview_gold
 	var gear_before: Dictionary = app._stitched_gear_overrides.duplicate(true)
@@ -666,28 +764,44 @@ func _unchanged_confirm_trace() -> void:
 	app.stitched_fight_button.pressed.emit()
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
-	var confirm_enabled: bool = is_instance_valid(app._stitched_party_confirm_button) \
-		and not app._stitched_party_confirm_button.disabled
-	_check(picker != null and confirm_enabled \
-		and app._stitched_party_draft == app._stitched_party_picks,
-		"the reopened Roadblock picker offers an enabled Confirm for the unchanged four")
-	if picker == null or not confirm_enabled:
+	var container: Node = picker.find_child("StitchedPartyPicker", true, false) \
+		if picker != null else null
+	var labels: Array = container.find_children("*", "Label", true, false) \
+		if container != null else []
+	var choices: Array = picker.get_choice_buttons() if picker != null else []
+	var party: Dictionary = StitchedPartyAdmission.admit(picks_before)
+	var locked_ok: bool = picker != null and app._stitched_party_locked \
+		and container != null and party.get("ok") == true \
+		and app._stitched_party_draft == picks_before \
+		and app._stitched_party_picks == picks_before \
+		and app._stitched_party_receipt == receipt_before \
+		and labels.size() == 5 \
+		and container.find_children("*", "CheckBox", true, false).is_empty() \
+		and app._stitched_party_checkboxes.is_empty() \
+		and not is_instance_valid(app._stitched_party_confirm_button) \
+		and not is_instance_valid(app._stitched_party_cancel_button) \
+		and choices.size() == 3 and not choices[0].disabled and not choices[2].disabled \
+		and choices[0].focus_mode != Control.FOCUS_NONE \
+		and choices[2].focus_mode != Control.FOCUS_NONE
+	if locked_ok:
+		for hero in party["heroes"]:
+			var found := false
+			for display in labels:
+				if str(display.text) == "%d  %s" % [hero["rank"], hero["name"]]:
+					found = true
+			locked_ok = locked_ok and found
+	_check(locked_ok,
+		"the reopened Roadblock shows the locked unchanged four with no checkbox, Confirm or Cancel")
+	if picker == null:
 		app.free()
 		await process_frame
 		return
-	# The unchanged confirmation itself must keep the earned offer intact.
-	app._stitched_party_confirm_button.pressed.emit()
-	_check(app._stitched_peddler_roster == roster_before \
-		and app.stitched_peddler_button.visible \
-		and not app.stitched_peddler_button.disabled \
-		and app._stitched_bleed_carry == bleed_before \
-		and app._stitched_hp_carry == hp_before \
-		and not app._stitched_peddler_living_roster().is_empty(),
-		"confirming the unchanged four preserves the Peddler roster and carried Bleed")
 	# The Roadblock Leave is the real player exit back to the title.
 	picker.get_choice_buttons()[2].pressed.emit()
 	await process_frame
-	_check(app.stitched_event_panel == null \
+	_check(app.stitched_event_panel == null and app._stitched_party_locked \
+		and app._stitched_party_picks == picks_before \
+		and app._stitched_party_receipt == receipt_before \
 		and app._stitched_peddler_roster == roster_before \
 		and app.stitched_peddler_button.is_visible_in_tree() \
 		and not app.stitched_peddler_button.disabled \
@@ -701,7 +815,7 @@ func _unchanged_confirm_trace() -> void:
 		and app.stitched_preview_scraps == scraps_before \
 		and app.stitched_roadblock_candle == candle_before \
 		and _no_wallet(app),
-		"unchanged Confirm plus Roadblock Leave keeps the title Peddler openable and spends nothing")
+		"the locked read-only Leave keeps the title Peddler openable and spends nothing")
 	# Openability is proven through the real title door, not just a flag.
 	app.stitched_peddler_button.pressed.emit()
 	await process_frame
@@ -719,9 +833,9 @@ func _unchanged_confirm_trace() -> void:
 		and int(quote.get("price", 0)) == PRICE \
 		and int(quote.get("gold", -1)) == gold_before \
 		and quote.get("heroes", []).size() == 4 \
-		and quoted_ids == app._stitched_party_picks \
+		and quoted_ids == picks_before \
 		and quoted_bleed == bleed_before,
-		"the preserved Peddler still quotes the unchanged four and their carried Bleed")
+		"the preserved Peddler still quotes the locked four and their carried Bleed")
 	var leave: Button = panel.find_child("PeddlerLeave", true, false) if panel != null else null
 	_check(leave != null and not leave.disabled,
 		"the preserved Peddler still offers its free Leave")
@@ -813,7 +927,7 @@ func _run() -> void:
 	_check(not one.is_empty() and one == two,
 		"two fresh identical Roadblock/Victory/Circle/Peddler/Fight traces replay exactly")
 	await _reselection_trace()
-	await _unchanged_confirm_trace()
+	await _locked_roster_trace()
 	await _unaffordable_trace()
 	for failure in failures:
 		printerr(failure)
