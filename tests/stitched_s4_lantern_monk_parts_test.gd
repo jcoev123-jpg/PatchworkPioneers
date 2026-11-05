@@ -24,7 +24,7 @@ const IDS := [
 ## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
 	"lantern_monk_head_moth_wink": {
-		"name": "Moth Wink", "launch": [1, 2, 3], "target": [1, 2, 3], "side": "enemy",
+		"name": "Moth Wink", "launch": [1, 2, 3, 4], "target": [1, 2, 3], "side": "enemy",
 		"multi": false, "acc": 90, "dmg": [0, 0], "effects": {"blind": 1}, "move": "skill",
 		"stat": {"acc": 3},
 	},
@@ -101,6 +101,9 @@ func _initialize() -> void:
 	_test_rank4_moth_cloud(2, 500990, 30, "tier II")
 	_test_rank4_moth_cloud(3, 501030, 30, "tier III")
 	_test_rank4_wick_spark(1, 500030, 60)
+	_test_moth_wink_rank4(1, 501680, 20)
+	_test_moth_wink_rank4(2, 501700, 20)
+	_test_moth_wink_rank4(3, 501720, 20)
 	_test_rank4_moth_shroud(1, 501560, 40, 10, "tier I")
 	_test_rank4_moth_shroud(2, 501600, 40, 14, "tier II")
 	_test_rank4_moth_shroud(3, 501640, 40, 18, "tier III")
@@ -126,10 +129,13 @@ func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
 
 
-## Wick Spark and Moth Shroud may launch from hero rank 4; every other frozen part stays
-## limited to the authored ranks 1-3. Used for the base ability and every stitch tier's
-## inherited mask.
+## Moth Wink may launch from all four hero ranks; Wick Spark and Moth Shroud may launch from
+## hero rank 4 but not rank 1. Every other frozen part stays limited to its authored ranks.
+## Used for the base ability and every stitch tier's inherited mask.
 func _rank4_launch_contract(id: String, mask: int) -> bool:
+	if id == STARTERS["head"]:
+		return StitchedParts.ranks_allowed(mask, 1) and StitchedParts.ranks_allowed(mask, 2) \
+			and StitchedParts.ranks_allowed(mask, 3) and StitchedParts.ranks_allowed(mask, 4)
 	if id == STARTERS["arms"] or id == ALTERNATES["legs"]:
 		return StitchedParts.ranks_allowed(mask, 2) and StitchedParts.ranks_allowed(mask, 3) \
 			and StitchedParts.ranks_allowed(mask, 4) and not StitchedParts.ranks_allowed(mask, 1)
@@ -271,7 +277,7 @@ func _test_catalog() -> void:
 
 ## The starter torso launches from hero ranks 2-4 with an all-ally multi heal. Every field,
 ## tier override, label and stat in the eight-part file stays frozen except the authored
-## rank-4 launches of Wick Spark and Moth Shroud.
+## rank-4 launches of Moth Wink, Wick Spark and Moth Shroud.
 func _test_lamplight_wash_launch() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: catalog with Lamplight Wash's fourth launch rank validates")
@@ -347,7 +353,7 @@ func _test_lamplight_wash_launch() -> void:
 			and str(other_ability["move"]) == str(frozen["move"]),
 			"AC1: frozen base part unchanged: " + id)
 		_check(_rank4_launch_contract(id, int(other_ability["launch_mask"])),
-			"AC1: only Wick Spark and Moth Shroud gain rank-4 launch at base tier: " + id)
+			"AC1: only Moth Wink, Wick Spark and Moth Shroud gain rank-4 launch at base tier: " + id)
 		for tier in [1, 2, 3]:
 			var tier_ability := StitchedParts.ability_at_tier(other, tier)
 			var expected := {
@@ -368,7 +374,7 @@ func _test_lamplight_wash_launch() -> void:
 			_check(tier_ability["launch"] == frozen["launch"]
 				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
 				and _rank4_launch_contract(id, int(tier_ability["launch_mask"])),
-				"AC1: only Wick Spark and Moth Shroud tier %d gain rank-4 launch: %s" % [tier, id])
+				"AC1: only Moth Wink, Wick Spark and Moth Shroud tier %d gain rank-4 launch: %s" % [tier, id])
 			_check(tier_ability["target"] == frozen["target"]
 				and int(tier_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
 				and str(tier_ability["target_side"]) == str(frozen["side"])
@@ -950,6 +956,162 @@ func _test_rank4_wick_spark(tier: int, seed_start: int, seed_count: int) -> void
 		break
 	_check(witnessed,
 		"AC2: a real seeded rank-4 Wick Spark damages and Blinds the living rank-1 foe")
+
+
+## S4 completion: Moth Wink's authored launch list gains hero rank 4, so the starter head can
+## Blind one foe from the rear of a four-doll party. Its target list stays exactly enemy ranks
+## 1-3 (Moth Cloud remains the multi-foe rank-4 alternate), and its single-target "skill" pose,
+## slot stat and tier ACC/statuses are otherwise unchanged. A real seeded 4v3 preview with the
+## Monk in rank 4 proves the equipped head casts and lands Blind (plus Exposed at tier III);
+## illegal ranks still refuse without spending the turn, state or seeded RNG.
+func _test_moth_wink_rank4(tier: int, seed_start: int, seed_count: int) -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog with Moth Wink's rank-4 launch validates (tier %d)" % tier)
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][STARTERS["head"]]
+	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	var target_mask := StitchedParts.rank_mask([1, 2, 3])
+	var expected_acc := {1: 90, 2: 94, 3: 100}
+	_check(full_mask == StitchedParts.ALL_RANKS_MASK and full_mask != 0,
+		"AC1: ranks 1-4 derive the complete four-rank mask for Moth Wink")
+	_check(str(part["id"]) == "lantern_monk_head_moth_wink" and str(part["name"]) == "Moth Wink"
+		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
+		and part["stat"] == {"acc": 3}
+		and str(part["text"]) == "A flicker of moth-wing light blinds one nearby foe; no retired card draw.",
+		"AC1: Moth Wink keeps its name, head slot, owner, +3 ACC stat and short rules text")
+	var ability := StitchedParts.ability_at_tier(part, tier)
+	var valid := StitchedParts.validate_ability(ability)
+	_check(bool(valid.get("ok", false)), "AC1: Moth Wink tier %d ability validates" % tier)
+	if not bool(valid.get("ok", false)):
+		return
+	var checked: Dictionary = valid["ability"]
+	_check(checked["launch"] == [1, 2, 3, 4]
+		and int(checked["launch_mask"]) == full_mask,
+		"AC1: Moth Wink tier %d launches from exactly hero ranks 1-4" % tier)
+	for rank in [1, 2, 3, 4]:
+		_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+			"AC1: Moth Wink tier %d may launch from hero rank %d" % [tier, rank])
+	for rank in [0, 5]:
+		_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+			"AC1: Moth Wink tier %d never allows hero rank %d" % [tier, rank])
+	_check(checked["target"] == [1, 2, 3]
+		and int(checked["target_mask"]) == target_mask
+		and str(checked["target_side"]) == "enemy" and not bool(checked["multi"]),
+		"AC1: Moth Wink tier %d stays a single enemy target over ranks 1-3" % tier)
+	for rank in [1, 2, 3]:
+		_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+			"AC1: Moth Wink tier %d still targets enemy rank %d" % [tier, rank])
+	for rank in [0, 4, 5]:
+		_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+			"AC1: Moth Wink tier %d never targets rank %d" % [tier, rank])
+	_check(int(checked["acc"]) == int(expected_acc[tier])
+		and int(checked["effects"].get("blind", 0)) == 1
+		and int(checked["effects"].get("exposed", 0)) == (1 if tier == 3 else 0)
+		and checked["dmg"] == [0, 0] and int(checked["crit"]) == 0
+		and int(checked["self_move"]) == 0 and str(checked["move"]) == "skill",
+		"AC1: Moth Wink tier %d keeps ACC %d, Blind 1%s and its skill pose"
+			% [tier, int(expected_acc[tier]), " and Exposed 1" if tier == 3 else ""])
+	_check(StitchedParts.stat_at_tier(part, tier) == {"acc": 3},
+		"AC1: Moth Wink tier %d keeps its authored slot stat" % tier)
+
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle(STARTERS["head"], tier, seed_value, true)
+		if b == null:
+			continue
+		if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+			continue
+		if str(b.get_unit("lantern_monk")["parts"]["head"]["id"]) != STARTERS["head"]:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var living: Dictionary = {}
+		for foe in b.get_foes():
+			if not bool(foe["lost"]) and int(foe["hp"]) > 0:
+				living[str(foe["id"])] = int(foe["rank"])
+		if living.size() != 3 or not living.values().has(1):
+			continue
+		var target_id := ""
+		for foe_id in living:
+			if int(living[foe_id]) == 1:
+				target_id = str(foe_id)
+				break
+		if target_id.is_empty():
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(STARTERS["head"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 1:
+			continue
+		var receipt: Dictionary = receipts[0]
+		if not bool(receipt.get("hit", false)) or str(receipt.get("target", "")) != target_id:
+			continue  # a legal cast may still miss; keep searching for a genuine hit
+		if str(receipt.get("target_side", "")) != "foe" or int(receipt.get("target_rank", -1)) != 1:
+			continue
+		var foe_after := b.get_unit(target_id)
+		if not receipt.get("statuses", []).any(
+				func(status): return str(status.get("status", "")) == "blind"):
+			continue
+		if int(foe_after["statuses"].get("blind", 0)) != 1:
+			continue
+		if tier == 3:
+			if not receipt.get("statuses", []).any(
+					func(status): return str(status.get("status", "")) == "exposed"):
+				continue
+			if int(foe_after["statuses"].get("exposed", 0)) != 1:
+				continue
+		witnessed = true
+		_check(str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "lantern_monk"
+			and str(cast.get("part", "")) == STARTERS["head"]
+			and str(cast.get("ability", "")) == "lantern_monk_head_moth_wink_move",
+			"AC2: hero rank 4 Moth Wink runs as the equipped Monk head part (tier %d, seed %d)"
+				% [tier, seed_value])
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4,
+			"AC2: the acting Monk really winks from hero rank 4 (tier %d, seed %d)"
+				% [tier, seed_value])
+		_check(receipts.size() == 1 and str(receipt.get("target_side", "")) == "foe"
+			and int(receipt.get("target_rank", -1)) == 1 and living.has(target_id),
+			"AC2: exactly one living rank-1 foe is blinded, never a rank-4 target (tier %d, seed %d)"
+				% [tier, seed_value])
+		_check(int(foe_after["statuses"].get("blind", 0)) == 1
+			and (tier != 3 or int(foe_after["statuses"].get("exposed", 0)) == 1),
+			"AC2: the landed wink leaves Blind 1%s on the real foe (tier %d, seed %d)"
+				% [", Exposed 1" if tier == 3 else "", tier, seed_value])
+		var after := b.state_snapshot()
+		var advanced_once := (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) == int(before["turn_index"]) + 1) \
+			or int(after["round"]) == int(before["round"]) + 1
+		_check(advanced_once and after != before,
+			"AC2: the rank-4 wink spends exactly one turn and changes real battle state (tier %d, seed %d)"
+				% [tier, seed_value])
+		var replay := _battle(STARTERS["head"], tier, seed_value, true)
+		if replay == null or not _to(replay, "lantern_monk"):
+			_check(false, "AC2: same-seed rank-4 Moth Wink replay reached the Monk's turn (tier %d, seed %d)"
+				% [tier, seed_value])
+		else:
+			var replayed := replay.use_part(STARTERS["head"], 1)
+			_check(replayed == cast and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"AC2: same-seed rank-4 Moth Wink replays receipt, snapshot and RNG (tier %d, seed %d)"
+					% [tier, seed_value])
+		break
+	_check(witnessed,
+		"AC2: a real seeded rank-4 Moth Wink Blinds the living rank-1 foe (tier %d)" % tier)
+
+	var reject_b := _battle(STARTERS["head"], tier, seed_start, true)
+	if reject_b == null or not _to(reject_b, "lantern_monk"):
+		_check(false, "AC3: Moth Wink rejection witness receives a real scheduled turn (tier %d)" % tier)
+	else:
+		_check(int(reject_b.get_unit("lantern_monk")["rank"]) == 4
+			and str(reject_b.get_unit("lantern_monk")["parts"]["head"]["id"]) == STARTERS["head"],
+			"AC3: Moth Wink rejection witness really stands in hero rank 4 with it equipped (tier %d)" % tier)
+		_reject_without_spend(reject_b, STARTERS["head"], 4, "Moth Wink target rank 4 outside its 1-3 list")
+		_reject_without_spend(reject_b, STARTERS["head"], 0, "Moth Wink out-of-range target rank 0")
+		_reject_without_spend(reject_b, STARTERS["head"], 5, "Moth Wink out-of-range target rank 5")
 
 
 ## S4 completion: Moth Shroud's base launch list gains hero rank 4, so the Monk's alternate
