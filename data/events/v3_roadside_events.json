@@ -1067,6 +1067,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_sable_coatcheck_cabinet",
+      "title": "The Sable Coat-Check Cabinet",
+      "description": "A round velvet cloak-keeper with mismatched button eyes stands beneath a tower of oxblood coats; a warm brass bell swings from every pocket.",
+      "choices": [
+        {
+          "id": "buy_pocket_lining",
+          "text": "Pay 21 gold for three bundles of coat-lining thread (+3 scraps)",
+          "outcome": { "gold": -21, "scraps": 3 }
+        },
+        {
+          "id": "trade_mourning_hems",
+          "text": "Offer 2 scraps of mourning hem for 27 gold",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the little bells keep ringing behind the coats",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_thimble_raincollector",
+      "title": "The Thimble Rain-Collector",
+      "description": "A squat plum-cloth rainkeeper balances an inverted brass thimble above a gutter of black-glass buttons; candlelit drops ring into its rim.",
+      "choices": [
+        {
+          "id": "collect_gutter_offcuts",
+          "text": "Collect loose rain-washed gutter thread (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "mend_thimble_gutter",
+          "text": "Spend 2 scraps mending the thimble gutter (gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Follow the rain beyond the thimble roof",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_crooked_needle_sundial",
+      "title": "The Crooked Needle Sundial",
+      "description": "A tall silver needle stands in a slate quilt courtyard; a stuffed clockkeeper pins its long black stitched shadow with a rust-red button.",
+      "choices": [
+        {
+          "id": "buy_shadow_seam",
+          "text": "Spend 18 gold on two spools of shadow seam (+2 scraps)",
+          "outcome": { "gold": -18, "scraps": 2 }
+        },
+        {
+          "id": "sell_hour_marks",
+          "text": "Trade 3 scraps of marked clock-thread for 35 gold",
+          "outcome": { "gold": 35, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the stitched shadow turn without you",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_glass_windowmaker",
+      "title": "The Button-Glass Windowmaker",
+      "description": "A plump bone-cream mitten puppet hauls huge stained-glass buttons up an iron window frame; one ruby thread binds the cracked panes.",
+      "choices": [
+        {
+          "id": "buy_window_cord",
+          "text": "Pay 26 gold for four coils of window-mending cord (+4 scraps)",
+          "outcome": { "gold": -26, "scraps": 4 }
+        },
+        {
+          "id": "patch_broken_pane",
+          "text": "Spend 1 scrap patching a button-glass pane (earn 17 gold)",
+          "outcome": { "gold": 17, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the crimson window glowing in the fog",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
