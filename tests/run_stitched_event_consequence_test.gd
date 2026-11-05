@@ -52,6 +52,10 @@ func _initialize() -> void:
 	_test_paid_wick_opt_in_and_rejections()
 	_test_min_fray_gates()
 	_test_candle_band_gates()
+	_test_lost_heroes_ac1_party_recipients()
+	_test_lost_heroes_ac2_hero_targeted_and_required_hero()
+	_test_lost_heroes_ac3_min_fray_and_all_lost()
+	_test_lost_heroes_ac4_schema_compatibility_and_invariants()
 	_finish()
 
 
@@ -5129,6 +5133,457 @@ func _test_candle_band_gates() -> void:
 
 	# Verify warden_catalog was never mutated
 	_check(warden_catalog == catalog_original, "AC3: warden_catalog was never mutated during band tests")
+
+
+func _test_lost_heroes_ac1_party_recipients() -> void:
+	# AC1: Given a valid four-ID snapshot with one explicit lost:true doll and three living dolls,
+	# an authored party-targeted Event with FRAY -25 and HP +10 projects/receipts raw FRAY and HP
+	# intents for precisely the three living IDs, omitting the LOST ID. The wallet, candle and other
+	# earned effects follow their existing rules. Assert preview/choose equality on the same event
+	# and snapshot in the existing headless suite.
+	var party: Array = [
+		{"id": "warden", "fray": 20, "lost": false}, # healthy living ally
+		{"id": "seamstress", "fray": 150, "lost": true}, # explicitly LOST doll
+		{"id": "tinker", "fray": 50, "lost": false}, # HANGING-but-not-LOST living hero
+		{"id": "button_golem", "fray": 30}, # omitted lost -> living ally
+	]
+	var snapshot := {
+		"candle": 40,
+		"party": party,
+		"scraps": 10,
+		"gold": 25,
+		"satchel_count": 2,
+	}
+	var snap_before := snapshot.duplicate(true)
+
+	var ev := _event([
+		_choice("party_bargain", "Mend seams and heal cloth.", {
+			"candle": 20,
+			"fray": -25,
+			"target": "party",
+			"hp": 10,
+			"scraps": -2,
+			"gold": 5,
+		}),
+		_choice("leave", "Leave untouched.", _effect(0, 0, "party")),
+	], "ev_stitched_ac1_lost_party")
+	var ev_before := ev.duplicate(true)
+
+	var service := RunStitchedEventConsequence.new(ev)
+	var prev := service.preview(snapshot)
+	_check(prev.get("ok") == true, "AC1: preview succeeds with 1 lost and 3 living dolls")
+	_check(prev.get("candle") == 40, "AC1: preview preserves untouched base candle")
+
+	var entry := _entry(prev, "party_bargain")
+	_check(entry.get("available") == true, "AC1: party bargain is available with living recipients")
+	_check(entry.get("candle") == 60, "AC1: projects candle 40 + 20 = 60")
+	_check(entry.get("candle_delta") == 20, "AC1: authored candle delta 20")
+	_check(entry.get("fray_delta") == -25, "AC1: authored fray delta -25")
+	_check(entry.get("hp_delta") == 10, "AC1: authored hp delta 10")
+	_check(entry.get("scraps") == 8 and entry.get("scraps_delta") == -2, "AC1: scraps projected 10 - 2 = 8")
+	_check(entry.get("gold") == 30 and entry.get("gold_delta") == 5, "AC1: gold projected 25 + 5 = 30")
+
+	# Fray and HP intents: precisely the 3 living IDs, omitting seamstress
+	var expected_fray := {"warden": -25, "tinker": -25, "button_golem": -25}
+	var expected_hp := {"warden": 10, "tinker": 10, "button_golem": 10}
+	_check(entry.get("fray") == expected_fray, "AC1: preview fray projects precisely the 3 living IDs, omitting lost seamstress")
+	_check(entry.get("hp") == expected_hp, "AC1: preview hp projects precisely the 3 living IDs, omitting lost seamstress")
+	_check(not entry.get("fray", {}).has("seamstress"), "AC1: preview fray never includes lost seamstress")
+	_check(not entry.get("hp", {}).has("seamstress"), "AC1: preview hp never includes lost seamstress")
+
+	# Commit choose and verify exact equality with preview
+	var receipt := service.choose("party_bargain", snapshot)
+	_check(receipt.get("ok") == true, "AC1: choose succeeds")
+	_check(receipt.get("event_id") == "ev_stitched_ac1_lost_party", "AC1: receipt names event id")
+	_check(receipt.get("choice_id") == "party_bargain", "AC1: receipt names choice id")
+	_check(receipt.get("target") == "party" and receipt.get("hero_id") == "", "AC1: receipt target metadata matches")
+	_check(receipt.get("candle") == entry.get("candle"), "AC1: receipt candle matches preview equality")
+	_check(receipt.get("fray") == entry.get("fray"), "AC1: receipt fray matches preview equality")
+	_check(receipt.get("hp") == entry.get("hp"), "AC1: receipt hp matches preview equality")
+	_check(receipt.get("scraps") == entry.get("scraps") and receipt.get("scraps_delta") == entry.get("scraps_delta"),
+		"AC1: receipt scraps matches preview equality")
+	_check(receipt.get("gold") == entry.get("gold") and receipt.get("gold_delta") == entry.get("gold_delta"),
+		"AC1: receipt gold matches preview equality")
+
+	_check(service.is_claimed() == true, "AC1: successful choose latches visit")
+	_check(snapshot == snap_before, "AC1: input snapshot is untouched")
+	_check(ev == ev_before, "AC1: input event is untouched")
+
+
+func _test_lost_heroes_ac2_hero_targeted_and_required_hero() -> void:
+	# AC2: Given an authored hero-targeted Event whose hero_id is LOST, preview shows its offered
+	# choice unavailable and choose refuses without latching. Given a party-targeted choice requiring
+	# that LOST hero, treat it like an absent required_hero (hidden/refused), even when surviving
+	# allies exist; a living required_hero remains eligible. Prove with explicit preview, refused
+	# choose and a subsequent lawful Leave receipt.
+	var party: Array = [
+		{"id": "warden", "fray": 20, "lost": false}, # living
+		{"id": "seamstress", "fray": 150, "lost": true}, # explicitly LOST
+		{"id": "tinker", "fray": 50, "lost": false}, # living (hanging)
+		{"id": "button_golem", "fray": 30}, # living (omitted lost)
+	]
+	var snapshot := {
+		"candle": 50,
+		"party": party,
+		"scraps": 10,
+		"gold": 20,
+	}
+	var snap_before := snapshot.duplicate(true)
+
+	var ev := _event([
+		_choice("tend_lost", "Tend Seamstress.", _hp_effect(15, -25, 10, "hero", "seamstress")),
+		_choice("require_lost", "Seamstress leads thread.", _hp_required_hero_effect(10, -20, 5, "seamstress", "party")),
+		_choice("leave", "Leave unharmed.", _effect(0, 0, "party")),
+	], "ev_stitched_ac2_hero_gates")
+
+	var service := RunStitchedEventConsequence.new(ev)
+	var prev := service.preview(snapshot)
+	_check(prev.get("ok") == true, "AC2: preflight succeeds")
+
+	# require_lost is hidden because seamstress is LOST (treated like absent required_hero)
+	var choice_ids: Array = []
+	for c in prev.get("choices", []):
+		choice_ids.append(c.get("choice_id"))
+	_check(choice_ids == ["tend_lost", "leave"], "AC2: party choice requiring LOST hero is hidden from preview")
+	_check(not choice_ids.has("require_lost"), "AC2: require_lost is not in preview choices")
+
+	# tend_lost is offered in preview but unavailable
+	var lost_hero_entry := _entry(prev, "tend_lost")
+	_check(lost_hero_entry.get("available") == false, "AC2: choice targeting LOST hero is unavailable in preview")
+	_check(lost_hero_entry.get("candle") == 50, "AC2: unavailable choice projects base candle")
+	_check(lost_hero_entry.get("fray") == {} and lost_hero_entry.get("hp") == {},
+		"AC2: unavailable choice projects empty fray and hp")
+	_check(lost_hero_entry.get("candle_delta") == 15 and lost_hero_entry.get("fray_delta") == -25 and lost_hero_entry.get("hp_delta") == 10,
+		"AC2: unavailable choice still exposes authored deltas")
+
+	# choose(tend_lost) refuses without latching
+	_assert_rejected(service, "tend_lost", snapshot, 50, "AC2: choose(tend_lost) refused")
+	_check(not service.is_claimed(), "AC2: tend_lost refusal does not latch visit")
+	_check(snapshot == snap_before, "AC2: tend_lost refusal leaves snapshot untouched")
+
+	# choose(require_lost) refuses without latching
+	_assert_rejected(service, "require_lost", snapshot, 50, "AC2: choose(require_lost) refused")
+	_check(not service.is_claimed(), "AC2: require_lost refusal does not latch visit")
+	_check(snapshot == snap_before, "AC2: require_lost refusal leaves snapshot untouched")
+
+	# subsequent lawful Leave receipt succeeds
+	var leave_receipt := service.choose("leave", snapshot)
+	_check(leave_receipt.get("ok") == true, "AC2: lawful Leave succeeds after prior refusals")
+	_check(leave_receipt.get("candle") == 50 and leave_receipt.get("fray") == {}, "AC2: Leave receipt has base candle and empty fray")
+	_check(service.is_claimed() == true, "AC2: Leave claim latches the visit")
+
+	# Living required_hero remains eligible:
+	var living_req_ev := _event([
+		_choice("require_warden", "Warden shields.", _hp_required_hero_effect(10, -10, 5, "warden", "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac2_living_req")
+	var living_req_svc := RunStitchedEventConsequence.new(living_req_ev)
+	var living_req_prev := living_req_svc.preview(snapshot)
+	var req_entry := _entry(living_req_prev, "require_warden")
+	_check(req_entry.get("available") == true, "AC2: choice requiring living warden is visible and available")
+	_check(req_entry.get("fray") == {"warden": -10, "tinker": -10, "button_golem": -10},
+		"AC2: living required hero choice affects all living allies")
+	var req_receipt := living_req_svc.choose("require_warden", snapshot)
+	_check(req_receipt.get("ok") == true and req_receipt.get("fray") == req_entry.get("fray"),
+		"AC2: living required hero choice claims successfully with preview equality")
+
+	# Living hero-targeted choice remains eligible:
+	var living_target_ev := _event([
+		_choice("tend_tinker", "Tend hanging Tinker.", _hp_effect(5, -15, 8, "hero", "tinker")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac2_living_target")
+	var living_target_svc := RunStitchedEventConsequence.new(living_target_ev)
+	var living_target_prev := living_target_svc.preview(snapshot)
+	var target_entry := _entry(living_target_prev, "tend_tinker")
+	_check(target_entry.get("available") == true, "AC2: hero-targeted choice for living hanging Tinker is available")
+	_check(target_entry.get("fray") == {"tinker": -15} and target_entry.get("hp") == {"tinker": 8},
+		"AC2: living hanging Tinker receives fray and hp intents")
+	var target_receipt := living_target_svc.choose("tend_tinker", snapshot)
+	_check(target_receipt.get("ok") == true and target_receipt.get("fray") == {"tinker": -15},
+		"AC2: living hanging Tinker choice claims successfully")
+
+
+func _test_lost_heroes_ac3_min_fray_and_all_lost() -> void:
+	# AC3: Given min_fray:100 and one LOST doll at FRAY 150 but all living dolls below 100,
+	# the choice is unavailable and cannot charge resources; when a living eligible doll is at FRAY 100,
+	# the ordinary party or matching required_hero choice works. A party with no living recipients
+	# cannot claim targeted benefits. Test quote/claim parity and unchanged wallets on refusal.
+	var party: Array = [
+		{"id": "warden", "fray": 80, "lost": false}, # living below 100
+		{"id": "seamstress", "fray": 150, "lost": true}, # LOST at 150
+		{"id": "tinker", "fray": 50, "lost": false}, # living below 100
+		{"id": "button_golem", "fray": 20}, # living below 100
+	]
+	var snapshot := {
+		"candle": 60,
+		"party": party,
+		"gold": 25,
+		"scraps": 15,
+	}
+	var snap_before := snapshot.duplicate(true)
+
+	var ev := _event([
+		_choice("gated_party", "Soothe severe fray.", {
+			"candle": 0,
+			"fray": -30,
+			"target": "party",
+			"min_fray": 100,
+			"gold": -10,
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac3_min_fray")
+
+	var service := RunStitchedEventConsequence.new(ev)
+	var prev := service.preview(snapshot)
+	var gated_entry := _entry(prev, "gated_party")
+	_check(gated_entry.get("available") == false,
+		"AC3: min_fray 100 is unavailable when only LOST doll is at fray 150 and living dolls are < 100")
+	_check(gated_entry.get("gold") == 25, "AC3: unavailable min_fray choice does not project gold deduction")
+
+	# choose refusal: no latching, unchanged wallets
+	_assert_rejected(service, "gated_party", snapshot, 60, "AC3: gated_party refused due to living dolls < min_fray")
+	_check(not service.is_claimed(), "AC3: gated_party refusal does not latch visit")
+	_check(snapshot == snap_before, "AC3: wallets completely unchanged on min_fray refusal")
+	_check(service.choose("leave", snapshot).get("ok") == true, "AC3: leave succeeds after min_fray refusal")
+
+	# Now when a living doll is at fray 100:
+	var party_with_living_100: Array = [
+		{"id": "warden", "fray": 100, "lost": false}, # living at 100
+		{"id": "seamstress", "fray": 150, "lost": true},
+		{"id": "tinker", "fray": 50, "lost": false},
+		{"id": "button_golem", "fray": 20},
+	]
+	var snap_living_100 := {
+		"candle": 60,
+		"party": party_with_living_100,
+		"gold": 25,
+		"scraps": 15,
+	}
+	var svc_living_100 := RunStitchedEventConsequence.new(ev)
+	var prev_living_100 := svc_living_100.preview(snap_living_100)
+	var entry_living_100 := _entry(prev_living_100, "gated_party")
+	_check(entry_living_100.get("available") == true, "AC3: min_fray 100 choice is available when living warden is at fray 100")
+	_check(entry_living_100.get("gold") == 15, "AC3: projects gold 25 - 10 = 15")
+	_check(entry_living_100.get("fray") == {"warden": -30, "tinker": -30, "button_golem": -30},
+		"AC3: fray intent omits lost seamstress")
+	var rec_living_100 := svc_living_100.choose("gated_party", snap_living_100)
+	_check(rec_living_100.get("ok") == true, "AC3: claim succeeds with living doll at min_fray")
+	_check(rec_living_100.get("gold") == 15 and rec_living_100.get("gold_delta") == -10, "AC3: gold charged on successful claim")
+
+	# matching required_hero choice with min_fray:
+	var req_min_fray_ev := _event([
+		_choice("req_warden", "Warden resolve.", {
+			"candle": 0, "fray": -20, "target": "party", "required_hero": "warden", "min_fray": 100
+		}),
+		_choice("req_seamstress", "Seamstress resolve.", {
+			"candle": 0, "fray": -20, "target": "party", "required_hero": "seamstress", "min_fray": 100
+		}),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	], "ev_stitched_ac3_req_min_fray")
+	var req_svc := RunStitchedEventConsequence.new(req_min_fray_ev)
+	var req_prev := req_svc.preview(snap_living_100)
+	_check(_entry(req_prev, "req_warden").get("available") == true, "AC3: living warden satisfies both required_hero and min_fray")
+	# req_seamstress is hidden because seamstress is LOST
+	_check(_entry(req_prev, "req_seamstress").is_empty(), "AC3: req_seamstress is hidden because seamstress is LOST")
+	_assert_rejected(req_svc, "req_seamstress", snap_living_100, 60, "AC3: req_seamstress choose is refused")
+
+	# ALL-LOST edge case: party where every single doll is lost
+	var all_lost_party: Array = [
+		{"id": "warden", "fray": 40, "lost": true},
+		{"id": "seamstress", "fray": 150, "lost": true},
+		{"id": "tinker", "fray": 70, "lost": true},
+		{"id": "button_golem", "fray": 90, "lost": true},
+	]
+	var all_lost_snap := {
+		"candle": 50,
+		"party": all_lost_party,
+		"gold": 30,
+		"scraps": 10,
+	}
+	var all_lost_snap_before := all_lost_snap.duplicate(true)
+
+	var all_lost_ev := _event([
+		_choice("party_fray", "Mend seams.", {"candle": 0, "fray": -20, "target": "party", "gold": -5}),
+		_choice("party_hp", "Sew torn flesh.", _hp_effect(0, 0, 10, "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac3_all_lost_targeted")
+	var all_lost_svc := RunStitchedEventConsequence.new(all_lost_ev)
+	var all_lost_prev := all_lost_svc.preview(all_lost_snap)
+
+	# Targeted choices unavailable because no living recipients exist
+	var fray_entry := _entry(all_lost_prev, "party_fray")
+	var hp_entry := _entry(all_lost_prev, "party_hp")
+	var leave_entry := _entry(all_lost_prev, "leave")
+	_check(fray_entry.get("available") == false, "AC3: all-lost party cannot claim targeted fray benefits")
+	_check(fray_entry.get("fray") == {} and fray_entry.get("gold") == 30, "AC3: all-lost party fray entry does not project gold deduction")
+	_check(hp_entry.get("available") == false, "AC3: all-lost party cannot claim targeted hp benefits")
+	_check(leave_entry.get("available") == true, "AC3: Leave remains available when all heroes are lost")
+
+	# choose refusals on targeted benefits
+	_assert_rejected(all_lost_svc, "party_fray", all_lost_snap, 50, "AC3: choose(party_fray) refused for all-lost party")
+	_check(not all_lost_svc.is_claimed(), "AC3: party_fray refusal does not latch")
+	_check(all_lost_snap == all_lost_snap_before, "AC3: wallet unchanged after party_fray refusal")
+
+	_assert_rejected(all_lost_svc, "party_hp", all_lost_snap, 50, "AC3: choose(party_hp) refused for all-lost party")
+	_check(not all_lost_svc.is_claimed(), "AC3: party_hp refusal does not latch")
+	_check(all_lost_snap == all_lost_snap_before, "AC3: wallet unchanged after party_hp refusal")
+
+	# Trade / Leave remains claimable under existing rules
+	var all_lost_trade_ev := _event([
+		_choice("buy_scraps", "Buy scraps with gold.", {
+			"candle": 0, "fray": 0, "target": "party", "gold": -10, "scraps": 4
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac3_all_lost_trade")
+	var trade_svc := RunStitchedEventConsequence.new(all_lost_trade_ev)
+	var trade_prev := trade_svc.preview(all_lost_snap)
+	_check(_entry(trade_prev, "buy_scraps").get("available") == true,
+		"AC3: pure trade remains available for all-lost party")
+	_check(_entry(trade_prev, "buy_scraps").get("gold") == 20 and _entry(trade_prev, "buy_scraps").get("scraps") == 14,
+		"AC3: pure trade projects wallet deltas for all-lost party")
+	var trade_rec := trade_svc.choose("buy_scraps", all_lost_snap)
+	_check(trade_rec.get("ok") == true, "AC3: pure trade succeeds for all-lost party")
+	_check(trade_rec.get("gold") == 20 and trade_rec.get("scraps") == 14, "AC3: wallet updated correctly on trade")
+	_check(trade_rec.get("fray") == {}, "AC3: trade receipt fray is empty")
+
+	# Lawful leave also succeeds for all-lost party
+	var all_lost_leave_rec := all_lost_svc.choose("leave", all_lost_snap)
+	_check(all_lost_leave_rec.get("ok") == true, "AC3: lawful Leave succeeds for all-lost party")
+	_check(all_lost_leave_rec.get("candle") == 50 and all_lost_leave_rec.get("fray") == {},
+		"AC3: Leave receipt has base candle and empty fray")
+
+
+func _test_lost_heroes_ac4_schema_compatibility_and_invariants() -> void:
+	# AC4: Given the existing canonical {id,fray} snapshots, all former successful receipts
+	# and negative tests remain unchanged. An explicit lost:false has the same eligibility as an
+	# omitted flag; nonboolean lost values or unexpected keys are rejected. Input snapshots/events
+	# stay deep-copy safe, seed RNG is not drawn, and a claimed visit still refuses replay. Run the
+	# existing full Stitched consequence suite and a representative S6 Event live regression without
+	# changing live behavior.
+	var ev := _event([
+		_choice("party_bargain", "Mend seams.", _hp_effect(20, -25, 10, "party")),
+		_choice("tend_warden", "Tend Warden.", _hp_effect(10, -15, 5, "hero", "warden")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_stitched_ac4_compat")
+
+	# Omitted lost vs explicit lost:false equivalence
+	var snap_omitted := {
+		"candle": 40,
+		"party": [
+			{"id": "warden", "fray": 10},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 40},
+		],
+		"scraps": 5,
+		"gold": 10,
+	}
+	var snap_explicit_false := {
+		"candle": 40,
+		"party": [
+			{"id": "warden", "fray": 10, "lost": false},
+			{"id": "seamstress", "fray": 20, "lost": false},
+			{"id": "tinker", "fray": 30, "lost": false},
+			{"id": "button_golem", "fray": 40, "lost": false},
+		],
+		"scraps": 5,
+		"gold": 10,
+	}
+
+	var svc1 := RunStitchedEventConsequence.new(ev)
+	var svc2 := RunStitchedEventConsequence.new(ev)
+	var prev1 := svc1.preview(snap_omitted)
+	var prev2 := svc2.preview(snap_explicit_false)
+	_check(prev1 == prev2, "AC4: preview with omitted lost equals preview with explicit lost:false")
+
+	var rec1 := svc1.choose("party_bargain", snap_omitted)
+	var rec2 := svc2.choose("party_bargain", snap_explicit_false)
+	_check(rec1 == rec2, "AC4: choose receipt with omitted lost equals choose receipt with explicit lost:false")
+
+	# Nonboolean lost values and unexpected keys rejected
+	var bad_lost_snapshots: Array = [
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": 1}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": 0}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": 1.0}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": "true"}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": "false"}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": null}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": []}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": {}}]},
+		# Unexpected keys on hero
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": false, "extra": 1}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "lost": true, "hp": 10}]},
+		{"candle": 40, "party": [{"id": "warden", "fray": 10, "extra": 1}]},
+		{"candle": 40, "party": [{"id": "warden", "lost": false}]}, # missing fray
+		# Top-level unexpected key
+		{"candle": 40, "party": [{"id": "warden", "fray": 10}], "lost": false},
+	]
+
+	for idx in range(bad_lost_snapshots.size()):
+		var bad_snap: Dictionary = bad_lost_snapshots[idx]
+		var bad_snap_before := bad_snap.duplicate(true)
+		var bad_svc := RunStitchedEventConsequence.new(ev)
+		_check(bad_svc.preview(bad_snap) == _denied_preview(),
+			"AC4: bad snapshot %d denies preview" % idx)
+		_assert_rejected(bad_svc, "party_bargain", bad_snap, 0,
+			"AC4: bad snapshot %d choose rejected" % idx)
+		_check(bad_snap == bad_snap_before, "AC4: bad snapshot %d untouched" % idx)
+
+	# Input immutability & detached copy verification
+	var valid_snap := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 20, "lost": false},
+			{"id": "seamstress", "fray": 150, "lost": true},
+			{"id": "tinker", "fray": 40},
+			{"id": "button_golem", "fray": 60, "lost": false},
+		],
+		"scraps": 10,
+		"gold": 20,
+	}
+	var valid_snap_copy := valid_snap.duplicate(true)
+	var ev_copy := ev.duplicate(true)
+	var immut_svc := RunStitchedEventConsequence.new(ev)
+	var immut_prev := immut_svc.preview(valid_snap)
+	_check(valid_snap == valid_snap_copy, "AC4: preview does not mutate input snapshot")
+	_check(ev == ev_copy, "AC4: preview does not mutate input event")
+
+	var immut_rec := immut_svc.choose("party_bargain", valid_snap)
+	_check(valid_snap == valid_snap_copy, "AC4: choose does not mutate input snapshot")
+	_check(ev == ev_copy, "AC4: choose does not mutate input event")
+
+	# Mutating the returned receipt does not reach snapshot or event
+	immut_rec["fray"]["warden"] = 999
+	immut_rec["hp"]["warden"] = 999
+	immut_rec["candle"] = 999
+	_check(valid_snap == valid_snap_copy, "AC4: mutating receipt does not mutate input snapshot")
+
+	# Replay refusal
+	_check(immut_svc.is_claimed() == true, "AC4: service is claimed after choice")
+	_check(immut_svc.is_valid() == false, "AC4: service is no longer valid after claim")
+	_assert_rejected(immut_svc, "party_bargain", valid_snap, 50, "AC4: replay party_bargain refused")
+	_assert_rejected(immut_svc, "leave", valid_snap, 50, "AC4: replay leave refused")
+	_check(immut_svc.preview(valid_snap) == _denied_preview(), "AC4: preview denied on claimed visit")
+
+	# Unchanged seeded RNG
+	var test_rng := RandomNumberGenerator.new()
+	test_rng.seed = 987654321
+	var control_rng := RandomNumberGenerator.new()
+	control_rng.seed = 987654321
+
+	for i in range(5):
+		test_rng.randi()
+		control_rng.randi()
+
+	# Execute consequence preview and choose
+	var rng_svc := RunStitchedEventConsequence.new(ev)
+	rng_svc.preview(valid_snap)
+	rng_svc.choose("party_bargain", valid_snap)
+
+	# Verify test_rng was not drawn or altered
+	for i in range(5):
+		_check(test_rng.randi() == control_rng.randi(), "AC4: seeded RNG was never drawn during consequence operations")
+
 
 
 
