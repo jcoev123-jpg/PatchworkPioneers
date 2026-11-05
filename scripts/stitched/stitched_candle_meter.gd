@@ -131,7 +131,7 @@ func set_readout(amount: int, band: Dictionary) -> void:
 	band_name = str(band["name"])
 	band_effects = band.duplicate(true)
 	fill.value = amount
-	headline.text = "LIGHT  %d / 100  ·  %s" % [amount, band_name.to_upper()]
+	headline.text = "CANDLE  %d / 100  ·  %s" % [amount, band_name.to_upper()]
 	var explanation := _explanation()
 	tooltip_text = explanation
 	info.tooltip_text = explanation

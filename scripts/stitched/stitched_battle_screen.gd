@@ -201,7 +201,7 @@ func _build_screen() -> void:
 	_candle_meter.position = Vector2(651, 10)
 	_candle_meter.size = Vector2(340, 33)
 	add_child(_candle_meter)
-	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
+	_labels["candle"] = _candle_meter.headline
 	_label("HEROES  ·  back 4 to front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
 	_label("FOES  ·  front 1 to back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_labels["hero"] = _label("", Rect2(27, 564, 202, 25), 18, ACCENT)
@@ -625,7 +625,6 @@ func _refresh() -> void:
 	_turn_ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
 	var band: Dictionary = battle.candle_band()
 	_candle_meter.set_readout(battle.candle(), band)
-	_labels["candle"].text = "CANDLE  %d / 100  ·  %s" % [battle.candle(), str(band.get("name", "glowing")).capitalize()]
 	_labels["hero"].text = str(acting.get("name", "Battle ended"))
 	if acting.is_empty():
 		_labels["stats"].text = "Outcome: " + battle.outcome().capitalize()

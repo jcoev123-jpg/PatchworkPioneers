@@ -58,7 +58,7 @@ func _assert_meter(view: StitchedBattleScreen, amount: int, expected: Dictionary
 	var meter := view._candle_meter
 	var band := battle.candle_band()
 	var canonical := StitchedS1BEffects.candle_band(amount)
-	var caption := "CANDLE  %d / 100  ·  %s" % [amount, str(expected["name"]).capitalize()]
+	var caption := "CANDLE  %d / 100  ·  %s" % [amount, str(expected["name"]).to_upper()]
 	_check(battle.candle() == amount and band == canonical and
 		str(band.get("name", "")) == expected["name"],
 		"battle band and authoritative S1B policy at " + str(amount))
@@ -73,9 +73,24 @@ func _assert_meter(view: StitchedBattleScreen, amount: int, expected: Dictionary
 		meter.fill.max_value == 100 and meter.fill.min_value == 0 and
 		meter.band_name == expected["name"] and meter.band_effects == band,
 		"meter owns no second ledger and fills exactly " + str(amount))
-	_check(view._labels["candle"].text == caption and
-		meter.headline.text == "LIGHT  %d / 100  ·  %s" % [amount, str(expected["name"]).to_upper()],
-		"unchanged mounted numeric label and legible risk title at " + str(amount))
+	_check(view._labels["candle"] == meter.headline and meter.headline.is_visible_in_tree() and
+		meter.headline.text == caption,
+		"public candle label aliases the visible meter headline at " + str(amount))
+	var readouts := 0
+	for node in view.find_children("*", "Label", true, false):
+		if node.is_visible_in_tree() and node.text.begins_with("CANDLE"):
+			readouts += 1
+	_check(readouts == 1, "exactly one visible CANDLE caption in mounted screen at " + str(amount))
+	var headline := meter.headline
+	var font := headline.get_theme_font("font")
+	var font_size := headline.get_theme_font_size("font_size")
+	var text_size := font.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	_check(text_size.x <= headline.size.x and font.get_height(font_size) <= headline.size.y and
+		meter.fill.get_global_rect().encloses(headline.get_global_rect()) and
+		not headline.get_global_rect().intersects(view._labels["round"].get_global_rect()) and
+		not headline.get_global_rect().intersects(view._labels["order"].get_global_rect()) and
+		not headline.get_global_rect().intersects(view._turn_ribbon.get_global_rect()),
+		"actual caption font and bounds fit frame without round/order overlap at " + str(amount))
 	_check(meter.info.focus_mode == Control.FOCUS_ALL and not meter.info.tooltip_text.is_empty() and
 		meter.info.tooltip_text == meter.tooltip_text and
 		meter.tooltip_text.contains("Fray gained: +%d%%" % expected["fray"]) and
@@ -106,6 +121,7 @@ func _verify_passive(view: StitchedBattleScreen, amount: int) -> void:
 	var selection := view._selected_part
 	var targets := view.legal_targets()
 	var inspected := view._inspected_seat
+	var motion := view.reduced_motion
 	meter.info.mouse_entered.emit()
 	_check(meter.disclosure.visible and meter.disclosure_label.text.contains(meter.band_name.to_upper()) and
 		meter.disclosure_label.text.contains("Foes +%d ACC" % int(meter.band_effects["enemy_acc"])),
@@ -124,6 +140,12 @@ func _verify_passive(view: StitchedBattleScreen, amount: int) -> void:
 	view._action_buttons["pass"].grab_focus()
 	_check(not meter.disclosure.visible and not meter.info.has_focus(),
 		"changing focus restores unobscured header at " + str(amount))
+	view.set_reduced_motion(not motion)
+	view._refresh()
+	_check(view.reduced_motion != motion and meter.headline.text ==
+		"CANDLE  %d / 100  ·  %s" % [amount, meter.band_name.to_upper()],
+		"reduced motion preserves current caption at " + str(amount))
+	view.set_reduced_motion(motion)
 	_check(battle.state_snapshot() == before and battle.rng_state() == rng and
 		battle.current_actor_id() == actor and battle.round_number() == round and
 		view.receipts.size() == receipts and view._selected_part == selection and
@@ -167,7 +189,9 @@ func _run() -> void:
 	first._refresh()
 	_check(not first._candle_meter.visible and first._candle_meter.value == -1 and
 		first._candle_meter.info.tooltip_text.is_empty() and
-		first._candle_meter.fill.value == 0,
+		first._candle_meter.fill.value == 0 and first._labels["candle"].text.is_empty() and
+		first._candle_meter.disclosure_label.text.is_empty() and
+		not first._candle_meter.disclosure.visible,
 		"unmounted/invalid session clears the stale risk display")
 	first.free()
 	await process_frame
