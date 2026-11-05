@@ -724,6 +724,10 @@ var _stitched_postevent_offered: Dictionary = {}
 var _stitched_postevent_generation := 0
 var stitched_campfire_button: Button
 var stitched_campfire_panel: Control
+var stitched_campfire_event: RunStitchedEmberglassCampfireEvent
+var _stitched_campfire_event_state: Dictionary = {}
+var _stitched_campfire_event_context: Dictionary = {}
+var _stitched_campfire_earned: Dictionary = {}
 var stitched_campfire_visit: RunCampfireVisit
 var _stitched_campfire_state: Dictionary = {}
 var _stitched_campfire_roster: Array = []
@@ -739,6 +743,9 @@ var _stitched_postvictory_stop_available := false
 var stitched_unpicker_button: Button
 var stitched_unpicker_panel: Control
 var stitched_unpicker_visit: RunUnpickerVisit
+var stitched_unpicker_event: RunStitchedInkblackUnpickerEvent
+var _stitched_unpicker_event_receipt: Dictionary = {}
+var _stitched_unpicker_service_receipt: Dictionary = {}
 var _stitched_unpicker_earned: Dictionary = {}
 var _stitched_unpicker_state: Dictionary = {}
 var _stitched_unpicker_quote: Dictionary = {}
@@ -1459,7 +1466,7 @@ func _build_title() -> void:
 	stitched_campfire_button = Button.new()
 	stitched_campfire_button.name = "StitchedCampfireButton"
 	stitched_campfire_button.text = "Stitched Campfire"
-	stitched_campfire_button.tooltip_text = "Mend, Tell Tales, trim the Wick or Leave after the earned Roadblock"
+	stitched_campfire_button.tooltip_text = "Visit the Emberglass Hearth after the earned Roadblock"
 	stitched_campfire_button.custom_minimum_size = Vector2(240, 56)
 	stitched_campfire_button.visible = false
 	stitched_campfire_button.disabled = true
@@ -1479,7 +1486,7 @@ func _build_title() -> void:
 	stitched_unpicker_button = Button.new()
 	stitched_unpicker_button.name = "StitchedUnpickerButton"
 	stitched_unpicker_button.text = "Stitched Unpicker"
-	stitched_unpicker_button.tooltip_text = "Unpick one earned spare for two scraps"
+	stitched_unpicker_button.tooltip_text = "Visit the Inkblack Unpicker Van"
 	stitched_unpicker_button.custom_minimum_size = Vector2(240, 56)
 	stitched_unpicker_button.hide()
 	stitched_unpicker_button.disabled = true
@@ -2847,6 +2854,7 @@ func _stitched_sewing_leave(expected_state: Dictionary, source: WeakRef) -> Dict
 	_offer_stitched_peddler(swap_final["heroes"])
 	_offer_stitched_campfire(swap_final["heroes"])
 	_stitched_unpicker_earned = _stitched_unpicker_live_context()
+	_stitched_campfire_earned = _stitched_unpicker_live_context()
 	_refresh_stitched_peddler_button()
 	return receipt
 
@@ -3148,8 +3156,7 @@ func _refresh_stitched_peddler_button() -> void:
 	var unpicker_ready := _stitched_postvictory_stop_available \
 		and stitched_unpicker_visit == null and not is_instance_valid(stitched_unpicker_panel) \
 		and not _stitched_unpicker_earned.is_empty() \
-		and _stitched_unpicker_live_context() == _stitched_unpicker_earned \
-		and not stitched_preview_satchel.is_empty()
+		and _stitched_unpicker_live_context() == _stitched_unpicker_earned
 	stitched_unpicker_button.visible = unpicker_ready
 	stitched_unpicker_button.disabled = not unpicker_ready
 	stitched_unpicker_button.focus_mode = Control.FOCUS_ALL if unpicker_ready else Control.FOCUS_NONE
@@ -3807,16 +3814,14 @@ func _open_stitched_unpicker() -> bool:
 			or not title_view.is_visible_in_tree():
 		return false
 	var context := _stitched_unpicker_live_context()
-	if context.is_empty() or context != _stitched_unpicker_earned or stitched_preview_satchel.is_empty():
+	if context.is_empty() or context != _stitched_unpicker_earned:
 		return false
-	var visit := RunUnpickerVisit.open_stitched(STITCHED_UNPICKER_NODE_ID,
-		context["heroes"], stitched_preview_gold, 75, stitched_preview_satchel, stitched_preview_scraps, 2)
+	var visit := RunStitchedInkblackUnpickerEvent.new(RunStitchedInkblackUnpickerEvent.EVENT_ID,
+		STITCHED_UNPICKER_NODE_ID, context["heroes"], stitched_preview_satchel,
+		{"gold": stitched_preview_gold, "scraps": stitched_preview_scraps}, 75, 2)
 	var state := visit.read_state()
 	var quote := visit.quote()
-	if not visit.is_valid() or state.get("heroes") != context["heroes"] \
-			or state.get("satchel") != stitched_preview_satchel or state.get("consumed") != false \
-			or quote.get("ok") != true or not quote.get("choices", []).has("unpick_spare") \
-			or quote.get("spare_indices", []).size() != stitched_preview_satchel.size():
+	if not visit.is_valid() or quote.get("ok") != true:
 		return false
 	var candle := maxi(0, int(stitched_roadblock_candle) - STITCHED_ROADBLOCK_CANDLE_COST)
 	var generation := _stitched_unpicker_generation + 1
@@ -3825,11 +3830,13 @@ func _open_stitched_unpicker() -> bool:
 	if not is_instance_valid(panel):
 		return false
 	add_child(panel)
-	if panel.get_parent() != self or not panel.is_inside_tree():
+	if panel.get_parent() != self or not panel.is_inside_tree() \
+			or _stitched_unpicker_live_context() != context \
+			or not _stitched_postvictory_stop_available or not _stitched_unpicker_screens_clear():
 		panel.queue_free()
 		return false
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	stitched_unpicker_visit = visit
+	stitched_unpicker_event = visit
 	stitched_unpicker_panel = panel
 	_stitched_unpicker_state = state.duplicate(true)
 	_stitched_unpicker_quote = quote.duplicate(true)
@@ -3844,6 +3851,101 @@ func _open_stitched_unpicker() -> bool:
 	var first: Button = built["first"]
 	first.grab_focus()
 	return true
+
+
+## Mount the prospective service before claiming Hire. A failed mount leaves the
+## original Event and its complete wallet quote available for another decision.
+func _stitched_unpicker_event_choose(choice: String, expected: Dictionary,
+		source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	var context := _stitched_unpicker_live_context()
+	var live_context := context.duplicate(true)
+	context["candle"] = stitched_roadblock_candle
+	if not is_instance_valid(panel) or panel != stitched_unpicker_panel \
+			or panel.get_parent() != self or not panel.is_visible_in_tree() \
+			or generation != _stitched_unpicker_generation or stitched_unpicker_event == null \
+			or stitched_unpicker_visit != null or expected != _stitched_unpicker_state \
+			or stitched_unpicker_event.read_state() != expected \
+			or stitched_unpicker_event.quote() != _stitched_unpicker_quote \
+			or expected.get("node_id") != STITCHED_UNPICKER_NODE_ID \
+			or context != _stitched_unpicker_context \
+			or not _stitched_unpicker_screens_clear():
+		return {"ok": false}
+	var selected: Dictionary = {}
+	for row: Dictionary in stitched_unpicker_event.quote().get("choices", []):
+		if row.get("choice_id") == choice and row.get("available") == true:
+			selected = row
+	if selected.is_empty():
+		return {"ok": false}
+	var pending: RunUnpickerVisit
+	var built: Dictionary = {}
+	var next_generation := generation + 1
+	if choice == RunStitchedInkblackUnpickerEvent.SERVICE_CHOICE_ID:
+		pending = RunUnpickerVisit.open_stitched(STITCHED_UNPICKER_NODE_ID,
+			expected["heroes"], selected["wallet"]["gold"], expected["quoted_calm_price"],
+			expected["satchel"], selected["wallet"]["scraps"], expected["quoted_scrap_yield"])
+		if not pending.is_valid():
+			return {"ok": false}
+		built = _mount_stitched_unpicker(pending.quote(), stitched_roadblock_candle, next_generation)
+		var mounted: Control = built.get("panel")
+		if not is_instance_valid(mounted):
+			return {"ok": false}
+		add_child(mounted)
+		if mounted.get_parent() != self or not mounted.is_inside_tree() \
+				or _stitched_unpicker_live_context() != live_context \
+				or stitched_roadblock_candle != context["candle"] \
+				or not _stitched_unpicker_screens_clear():
+			mounted.queue_free()
+			return {"ok": false}
+		mounted.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var receipt := stitched_unpicker_event.choose(choice, STITCHED_UNPICKER_NODE_ID, expected)
+	if receipt.get("ok") != true:
+		if is_instance_valid(built.get("panel")):
+			built["panel"].queue_free()
+		return {"ok": false}
+	_stitched_unpicker_event_receipt = receipt.duplicate(true)
+	stitched_preview_gold = receipt["wallet"]["gold"]
+	stitched_preview_scraps = receipt["wallet"]["scraps"]
+	if pending == null:
+		_close_stitched_unpicker()
+	else:
+		remove_child(panel)
+		panel.queue_free()
+		stitched_unpicker_panel = built["panel"]
+		stitched_unpicker_visit = pending
+		_stitched_unpicker_state = pending.read_state().duplicate(true)
+		_stitched_unpicker_quote = pending.quote().duplicate(true)
+		_stitched_unpicker_context = _stitched_unpicker_live_context()
+		_stitched_unpicker_context["candle"] = stitched_roadblock_candle
+		_stitched_unpicker_generation = next_generation
+		built["first"].grab_focus()
+	return receipt
+
+
+func _stitched_unpicker_screens_clear() -> bool:
+	return stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel) \
+		and stitched_campfire_visit == null and not is_instance_valid(stitched_campfire_panel) \
+		and stitched_postevent_visit == null and not is_instance_valid(stitched_postevent_panel) \
+		and not is_instance_valid(stitched_event_panel) and stitched_event_gate == null \
+		and not is_instance_valid(stitched_fight_view) and not is_instance_valid(stitched_sewing_panel) \
+		and stitched_sewing_visit == null and stitched_sewing_mend_visit == null \
+		and stitched_sewing_upgrade_visit == null and deck == null and run_map == null and run_rng == null \
+		and not is_instance_valid(base_screen) and not is_instance_valid(party_picker) \
+		and not is_instance_valid(route_view) and not is_instance_valid(route_atlas_overlay) \
+		and not is_instance_valid(battle_view)
+
+
+func _stitched_campfire_event_screens_clear() -> bool:
+	return stitched_peddler_visit == null and not is_instance_valid(stitched_peddler_panel) \
+		and stitched_unpicker_visit == null and not is_instance_valid(stitched_unpicker_panel) \
+		and stitched_postevent_visit == null and not is_instance_valid(stitched_postevent_panel) \
+		and not is_instance_valid(stitched_event_panel) and stitched_event_gate == null \
+		and not is_instance_valid(stitched_fight_view) and not is_instance_valid(stitched_sewing_panel) \
+		and stitched_sewing_visit == null and stitched_sewing_mend_visit == null \
+		and stitched_sewing_upgrade_visit == null and deck == null and run_map == null and run_rng == null \
+		and not is_instance_valid(base_screen) and not is_instance_valid(party_picker) \
+		and not is_instance_valid(route_view) and not is_instance_valid(route_atlas_overlay) \
+		and not is_instance_valid(battle_view)
 
 
 func _mount_stitched_unpicker(quote: Dictionary, candle: int, generation: int) -> Dictionary:
@@ -3866,19 +3968,55 @@ func _mount_stitched_unpicker(quote: Dictionary, candle: int, generation: int) -
 	panel.add_child(frame)
 	var heading := Label.new()
 	heading.name = "UnpickerHeading"
-	heading.text = "STITCHED UNPICKER\nCANDLELIGHT  %d / 100\nUnpick one spare for 2 scraps" % candle
+	var event_mode: bool = quote.has("state")
+	heading.text = "STITCHED UNPICKER\nCANDLELIGHT  %d / 100\nChoose one service" % candle
+	if event_mode:
+		var record := RunV3ServiceWaystationEventGate.new().get_event_record(RunStitchedInkblackUnpickerEvent.EVENT_ID)
+		heading.text = "%s\nCANDLELIGHT %d / 100  ·  GOLD %d  ·  SCRAPS %d\n%s" % [
+			record["title"], candle, quote["state"]["wallet"]["gold"],
+			quote["state"]["wallet"]["scraps"], record["description"]]
+		heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	heading.position = Vector2(180, 65)
-	heading.size = Vector2(920, 110)
+	heading.size = Vector2(920, 190 if event_mode else 110)
 	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	heading.add_theme_font_size_override("font_size", 26)
+	heading.add_theme_font_size_override("font_size", 22)
 	panel.add_child(heading)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(210, 280 if event_mode else 190)
+	scroll.size = Vector2(860, 340 if event_mode else 430)
+	scroll.follow_focus = true
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
 	var actions := VBoxContainer.new()
-	actions.position = Vector2(210, 190)
-	actions.size = Vector2(860, 430)
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	actions.add_theme_constant_override("separation", 8)
-	panel.add_child(actions)
+	scroll.add_child(actions)
 	var buttons: Array[Button] = []
-	for spare in quote["spares"]:
+	if event_mode:
+		var record := RunV3ServiceWaystationEventGate.new().get_event_record(RunStitchedInkblackUnpickerEvent.EVENT_ID)
+		for index in quote["choices"].size():
+			var row: Dictionary = quote["choices"][index]
+			var button := Button.new()
+			button.name = "Inkblack_" + str(row["choice_id"])
+			button.text = str(record["choices"][index]["text"])
+			button.custom_minimum_size = Vector2(820, 64)
+			button.disabled = not row["available"]
+			button.focus_mode = Control.FOCUS_ALL if row["available"] else Control.FOCUS_NONE
+			button.tooltip_text = "After choice · Gold %d · Scraps %d" % [row["wallet"]["gold"], row["wallet"]["scraps"]]
+			button.pressed.connect(_stitched_unpicker_event_choose.bind(row["choice_id"],
+				quote["state"].duplicate(true), weakref(panel), generation))
+			actions.add_child(button)
+			if row["available"]:
+				buttons.append(button)
+	for hero_id in quote.get("hero_ids", []):
+		var calm := Button.new()
+		calm.name = "CalmHero_" + str(hero_id)
+		calm.text = "Calm %s · -50 Fray · %d gold" % [str(hero_id).replace("_", " ").capitalize(), quote["price"]]
+		calm.custom_minimum_size = Vector2(820, 46)
+		calm.pressed.connect(_stitched_unpicker_choose.bind(hero_id, weakref(panel), generation))
+		actions.add_child(calm)
+		buttons.append(calm)
+	for spare in quote.get("spares", []):
 		var button := Button.new()
 		button.name = "UnpickSpare_%d" % spare["index"]
 		button.text = "%s  -  %s  -  Tier %d%s  (+2 scraps)" % [
@@ -3888,42 +4026,53 @@ func _mount_stitched_unpicker(quote: Dictionary, candle: int, generation: int) -
 		button.pressed.connect(_stitched_unpicker_choose.bind(spare["index"], weakref(panel), generation))
 		actions.add_child(button)
 		buttons.append(button)
-	var leave := Button.new()
-	leave.name = "UnpickerLeave"
-	leave.text = "Leave"
-	leave.custom_minimum_size = Vector2(820, 46)
-	leave.pressed.connect(_stitched_unpicker_choose.bind(-1, weakref(panel), generation))
-	actions.add_child(leave)
-	buttons.append(leave)
+	if not event_mode:
+		var leave := Button.new()
+		leave.name = "UnpickerLeave"
+		leave.text = "Leave"
+		leave.custom_minimum_size = Vector2(820, 46)
+		leave.pressed.connect(_stitched_unpicker_choose.bind(-1, weakref(panel), generation))
+		actions.add_child(leave)
+		buttons.append(leave)
 	for index in buttons.size():
 		buttons[index].focus_next = buttons[index].get_path_to(buttons[(index + 1) % buttons.size()])
 		buttons[index].focus_previous = buttons[index].get_path_to(buttons[(index - 1 + buttons.size()) % buttons.size()])
 	return {"panel": panel, "first": buttons[0]}
 
 
-func _stitched_unpicker_choose(index: int, source: WeakRef, generation: int) -> Dictionary:
+func _stitched_unpicker_choose(index: Variant, source: WeakRef, generation: int) -> Dictionary:
 	var panel: Control = source.get_ref() if source != null else null
 	if not is_instance_valid(panel) or panel != stitched_unpicker_panel \
 			or panel.get_parent() != self or not panel.is_visible_in_tree() \
 			or generation != _stitched_unpicker_generation or stitched_unpicker_visit == null \
 			or stitched_unpicker_visit.read_state() != _stitched_unpicker_state \
-			or stitched_unpicker_visit.quote() != _stitched_unpicker_quote:
+			or stitched_unpicker_visit.quote() != _stitched_unpicker_quote \
+			or not _stitched_unpicker_screens_clear():
 		return {"ok": false}
 	var context := _stitched_unpicker_live_context()
 	context["candle"] = stitched_roadblock_candle
-	if context != _stitched_unpicker_context \
-			or (index != -1 and not _stitched_unpicker_quote["spare_indices"].has(index)):
+	var calm: bool = typeof(index) == TYPE_STRING and _stitched_unpicker_quote["hero_ids"].has(index)
+	var spare: bool = typeof(index) == TYPE_INT and _stitched_unpicker_quote["spare_indices"].has(index)
+	var leave: bool = typeof(index) == TYPE_INT and index == -1
+	if context != _stitched_unpicker_context or not (leave or calm or spare):
 		return {"ok": false}
 	var state := _stitched_unpicker_state
 	var receipt: Dictionary
-	if index == -1:
+	if leave:
 		receipt = stitched_unpicker_visit.leave(state["visit_id"], STITCHED_UNPICKER_NODE_ID, state)
+	elif calm:
+		receipt = stitched_unpicker_visit.calm_hero(index, state["visit_id"], STITCHED_UNPICKER_NODE_ID, state)
 	else:
 		receipt = stitched_unpicker_visit.unpick_spare(index, state["visit_id"], STITCHED_UNPICKER_NODE_ID, state)
 	if receipt.get("ok") != true or receipt.get("source_snapshot") != state \
 			or receipt.get("source_receipt") != state["receipt"] or receipt.get("consumed") != true:
 		return {"ok": false}
-	if index != -1:
+	_stitched_unpicker_service_receipt = receipt.duplicate(true)
+	if calm:
+		stitched_preview_gold = receipt["gold"]
+		for hero: Dictionary in receipt["heroes"]:
+			_stitched_fray_carry[hero["id"]] = {"fray": hero["fray"], "resolve": hero.get("resolve", "")}
+	elif spare:
 		stitched_preview_satchel = receipt["satchel"].duplicate(true)
 		stitched_preview_scraps = receipt["scraps_after"]
 	_close_stitched_unpicker()
@@ -3932,11 +4081,14 @@ func _stitched_unpicker_choose(index: int, source: WeakRef, generation: int) -> 
 
 func _close_stitched_unpicker() -> void:
 	var panel := stitched_unpicker_panel
+	if stitched_unpicker_event != null and stitched_unpicker_event.is_valid():
+		stitched_unpicker_event.leave(STITCHED_UNPICKER_NODE_ID, stitched_unpicker_event.read_state())
 	if stitched_unpicker_visit != null and not stitched_unpicker_visit.is_consumed():
 		var state := stitched_unpicker_visit.read_state()
 		stitched_unpicker_visit.leave(state["visit_id"], STITCHED_UNPICKER_NODE_ID, state)
 	stitched_unpicker_panel = null
 	stitched_unpicker_visit = null
+	stitched_unpicker_event = null
 	_stitched_unpicker_state.clear()
 	_stitched_unpicker_quote.clear()
 	_stitched_unpicker_context.clear()
@@ -3949,8 +4101,8 @@ func _close_stitched_unpicker() -> void:
 	_refresh_stitched_peddler_button()
 
 
-## A second title stop beside the Peddler. Only a one-use authenticated
-## Circle receipt can supply the complete current roster for this service.
+## The earned Campfire button first admits the Emberglass Event. Only a
+## one-use Circle receipt can supply its complete current carry.
 func _open_stitched_campfire() -> bool:
 	if stitched_unpicker_visit != null or is_instance_valid(stitched_unpicker_panel):
 		return false
@@ -3975,9 +4127,179 @@ func _open_stitched_campfire() -> bool:
 	if typeof(stitched_roadblock_candle) != TYPE_INT \
 			or stitched_roadblock_candle < 0 or stitched_roadblock_candle > 100:
 		return false
-	# This earned stop is a separate node. Quote recovery after its entry toll,
-	# but retain the original ledger until panel admission succeeds.
+	var context := _stitched_unpicker_live_context()
+	if context.is_empty() or context != _stitched_campfire_earned:
+		return false
 	var projected_candle := maxi(0, stitched_roadblock_candle - STITCHED_ROADBLOCK_CANDLE_COST)
+	var wallet := {"gold": stitched_preview_gold, "scraps": stitched_preview_scraps}
+	# Validate the original carry as well as the post-entry recovery offering.
+	var original := RunStitchedEmberglassCampfireEvent.new(
+		RunStitchedEmberglassCampfireEvent.EVENT_ID, STITCHED_CAMPFIRE_NODE_ID,
+		roster, stitched_roadblock_candle, wallet)
+	var event := RunStitchedEmberglassCampfireEvent.new(
+		RunStitchedEmberglassCampfireEvent.EVENT_ID, STITCHED_CAMPFIRE_NODE_ID,
+		roster, projected_candle, wallet)
+	if not original.is_valid() or not event.is_valid():
+		return false
+	var quote := event.quote()
+	var generation := _stitched_campfire_generation + 1
+	var mounted := _mount_stitched_campfire_event(quote, generation)
+	var panel: Control = mounted.get("panel")
+	if not is_instance_valid(panel):
+		return false
+	add_child(panel)
+	if panel.get_parent() != self or not panel.is_inside_tree() \
+			or _stitched_unpicker_live_context() != context \
+			or stitched_roadblock_candle != original.get_candle() \
+			or not _stitched_postvictory_stop_available or not _stitched_unpicker_screens_clear():
+		panel.queue_free()
+		return false
+	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	stitched_campfire_event = event
+	stitched_campfire_panel = panel
+	_stitched_campfire_event_state = event.read_state()
+	_stitched_campfire_event_context = context.duplicate(true)
+	_stitched_campfire_event_context["candle"] = projected_candle
+	_stitched_campfire_generation = generation
+	stitched_roadblock_candle = projected_candle
+	_stitched_postvictory_stop_available = false
+	_stitched_campfire_earned.clear()
+	_refresh_stitched_peddler_button()
+	title_view.hide()
+	mounted["first"].grab_focus()
+	return true
+
+
+func _stitched_campfire_event_choose(choice: String, expected: Dictionary,
+		source: WeakRef, generation: int) -> Dictionary:
+	var panel: Control = source.get_ref() if source != null else null
+	var context := _stitched_unpicker_live_context()
+	context["candle"] = stitched_roadblock_candle
+	if not is_instance_valid(panel) or panel != stitched_campfire_panel \
+			or panel.get_parent() != self or not panel.is_visible_in_tree() \
+			or generation != _stitched_campfire_generation or stitched_campfire_event == null \
+			or stitched_campfire_visit != null or expected != _stitched_campfire_event_state \
+			or stitched_campfire_event.read_state() != expected \
+			or context != _stitched_campfire_event_context \
+			or _stitched_campfire_roster != _stitched_campfire_authorized_roster \
+			or not _stitched_campfire_event_screens_clear():
+		return {"ok": false}
+	var selected: Dictionary = {}
+	for row: Dictionary in stitched_campfire_event.quote().get("choices", []):
+		if row.get("choice_id") == choice and row.get("available") == true:
+			selected = row
+	if selected.is_empty():
+		return {"ok": false}
+	var prepared: Dictionary = {}
+	var built: Dictionary = {}
+	var next_generation := generation + 1
+	if choice == RunStitchedEmberglassCampfireEvent.SERVICE_CHOICE_ID:
+		prepared = _prepare_stitched_campfire(expected["heroes"], stitched_roadblock_candle)
+		if prepared.is_empty():
+			return {"ok": false}
+		built = _mount_stitched_campfire(prepared["state"], next_generation, prepared["swap_quote"])
+		var mounted: Control = built.get("panel")
+		if not is_instance_valid(mounted):
+			return {"ok": false}
+		add_child(mounted)
+		var live_context := _stitched_unpicker_live_context()
+		live_context["candle"] = stitched_roadblock_candle
+		if mounted.get_parent() != self or not mounted.is_inside_tree() or live_context != context \
+				or not _stitched_campfire_event_screens_clear():
+			mounted.queue_free()
+			return {"ok": false}
+		mounted.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var receipt := stitched_campfire_event.choose(choice, STITCHED_CAMPFIRE_NODE_ID, expected)
+	if receipt.get("ok") != true:
+		if is_instance_valid(built.get("panel")):
+			built["panel"].queue_free()
+		return {"ok": false}
+	stitched_preview_gold = receipt["wallet"]["gold"]
+	stitched_preview_scraps = receipt["wallet"]["scraps"]
+	if prepared.is_empty():
+		_close_stitched_campfire()
+	else:
+		remove_child(panel)
+		panel.queue_free()
+		stitched_campfire_event = null
+		_stitched_campfire_event_state.clear()
+		_stitched_campfire_event_context.clear()
+		stitched_campfire_panel = built["panel"]
+		stitched_campfire_visit = prepared["visit"]
+		_stitched_campfire_state = prepared["state"].duplicate(true)
+		_stitched_campfire_swap_visit = prepared["swap_visit"]
+		_stitched_campfire_swap_state = prepared["swap_state"].duplicate(true)
+		_stitched_campfire_generation = next_generation
+		_stitched_campfire_roster.clear()
+		_stitched_peddler_roster.clear()
+		built["first"].grab_focus()
+	return receipt
+
+
+func _mount_stitched_campfire_event(quote: Dictionary, generation: int) -> Dictionary:
+	var panel := Control.new()
+	panel.name = "StitchedEmberglass"
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	var frame := NinePatchRect.new()
+	frame.name = "EmberglassFrame"
+	var art_path := "res://assets/paper/ui/panel_felt.png"
+	frame.set_meta("art_path", art_path)
+	if ResourceLoader.exists(art_path, "Texture2D"):
+		frame.texture = load(art_path)
+	frame.patch_margin_left = 24
+	frame.patch_margin_right = 24
+	frame.patch_margin_top = 24
+	frame.patch_margin_bottom = 24
+	frame.position = Vector2(120, 40)
+	frame.size = Vector2(1040, 640)
+	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(frame)
+	var heading := Label.new()
+	heading.name = "EmberglassHeading"
+	var candle: int = quote["state"]["candle"]
+	var record := RunV3ServiceWaystationEventGate.new().get_event_record(RunStitchedEmberglassCampfireEvent.EVENT_ID)
+	heading.text = "%s\nCANDLELIGHT %d / 100  ·  GOLD %d  ·  SCRAPS %d\n%s" % [
+		record["title"], candle, quote["state"]["wallet"]["gold"],
+		quote["state"]["wallet"]["scraps"], record["description"]]
+	heading.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	heading.position = Vector2(180, 65)
+	heading.size = Vector2(920, 190)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.add_theme_font_size_override("font_size", 22)
+	panel.add_child(heading)
+	var scroll := ScrollContainer.new()
+	scroll.position = Vector2(210, 280)
+	scroll.size = Vector2(860, 340)
+	scroll.follow_focus = true
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(scroll)
+	var actions := VBoxContainer.new()
+	actions.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	actions.add_theme_constant_override("separation", 8)
+	scroll.add_child(actions)
+	var buttons: Array[Button] = []
+	for index in quote["choices"].size():
+		var row: Dictionary = quote["choices"][index]
+		var button := Button.new()
+		button.name = "Emberglass_" + str(row["choice_id"])
+		button.text = str(record["choices"][index]["text"])
+		button.custom_minimum_size = Vector2(820, 64)
+		button.disabled = not row["available"]
+		button.focus_mode = Control.FOCUS_ALL if row["available"] else Control.FOCUS_NONE
+		button.tooltip_text = "After choice · Gold %d · Scraps %d" % [row["wallet"]["gold"], row["wallet"]["scraps"]]
+		button.pressed.connect(_stitched_campfire_event_choose.bind(row["choice_id"],
+			quote["state"].duplicate(true), weakref(panel), generation))
+		actions.add_child(button)
+		if row["available"]:
+			buttons.append(button)
+	for index in buttons.size():
+		buttons[index].focus_next = buttons[index].get_path_to(buttons[(index + 1) % buttons.size()])
+		buttons[index].focus_previous = buttons[index].get_path_to(buttons[(index - 1 + buttons.size()) % buttons.size()])
+	return {"panel": panel, "first": buttons[0]}
+
+
+func _prepare_stitched_campfire(roster: Array, projected_candle: int) -> Dictionary:
+	# Recovery borrows the Event node and its already-paid entry candle.
 	var visit := RunCampfireVisit.new(
 		STITCHED_CAMPFIRE_NODE_ID, roster, RunCampfireVisit.STITCHED,
 		projected_candle)
@@ -3990,7 +4312,7 @@ func _open_stitched_campfire() -> bool:
 			or state.get("quote") != visit.read_state().get("quote") \
 			or not state.get("quote", {}).get("choices", []).has(RunCampfireVisit.STITCHED_LEAVE) \
 			or not _stitched_campfire_held_fray_valid(roster):
-		return false
+		return {}
 	# Build a distinct swap service from the FINAL Circle Leave parts and six-slot
 	# satchel. Recovery remains the ordinary RunCampfireVisit with its own quote.
 	var swap_visit: RunStitchedSewingSwap = null
@@ -4029,30 +4351,8 @@ func _open_stitched_campfire() -> bool:
 				swap_visit = candidate
 				swap_state = candidate_state
 				swap_quote = candidate_quote
-	var generation := _stitched_campfire_generation + 1
-	var mounted := _mount_stitched_campfire(state, generation, swap_quote)
-	var panel: Control = mounted.get("panel")
-	if panel == null:
-		return false
-	stitched_campfire_visit = visit
-	stitched_campfire_panel = panel
-	_stitched_campfire_swap_visit = swap_visit
-	_stitched_campfire_swap_state = swap_state.duplicate(true)
-	_stitched_campfire_state = state.duplicate(true)
-	_stitched_campfire_generation = generation
-	# The stop is spent on panel selection, even if the player chooses Leave.
-	_stitched_postvictory_stop_available = false
-	_stitched_campfire_roster.clear()
-	_stitched_peddler_roster.clear()
-	_refresh_stitched_peddler_button()
-	stitched_roadblock_candle = projected_candle
-	add_child(panel)
-	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	title_view.hide()
-	var first: Button = mounted.get("first")
-	if first != null:
-		first.grab_focus()
-	return true
+	return {"visit": visit, "state": state, "swap_visit": swap_visit,
+		"swap_state": swap_state, "swap_quote": swap_quote}
 
 
 func _mount_stitched_campfire(state: Dictionary, generation: int,
@@ -4408,6 +4708,11 @@ func _stitched_campfire_choose(decision: String, expected: Dictionary,
 	return receipt
 
 func _close_stitched_campfire() -> void:
+	if stitched_campfire_event != null and stitched_campfire_event.is_valid():
+		stitched_campfire_event.leave(STITCHED_CAMPFIRE_NODE_ID, stitched_campfire_event.read_state())
+	stitched_campfire_event = null
+	_stitched_campfire_event_state.clear()
+	_stitched_campfire_event_context.clear()
 	var panel := stitched_campfire_panel
 	if _stitched_campfire_swap_visit != null:
 		var swap_open: Dictionary = _stitched_campfire_swap_visit.read_state()
