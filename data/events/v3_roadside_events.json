@@ -1155,6 +1155,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_mourning_keykeeper",
+      "title": "The Mourning Keykeeper",
+      "description": "Beneath a cracked cabinet door, a round plum ragdoll bears a brass winding key larger than itself; candlelight catches the frayed lock tassels.",
+      "choices": [
+        {
+          "id": "buy_key_thread",
+          "text": "Pay 21 gold for two coils of keyhole thread (+2 scraps)",
+          "outcome": { "gold": -21, "scraps": 2 }
+        },
+        {
+          "id": "reset_rusty_winder",
+          "text": "Spend 2 scraps resetting the giant key (earn 27 gold)",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the winding key to click in the dark",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_measureworm_survey",
+      "title": "The Measureworm Survey",
+      "description": "A plump tape-measure worm loops round a crooked bedpost, its button eyes counting every loose stitch on the ruler sewn along its back.",
+      "choices": [
+        {
+          "id": "collect_tape_tail",
+          "text": "Gather a fallen tape tail (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "reline_measure_spool",
+          "text": "Spend 1 scrap repairing the ruler spool (earn 17 gold)",
+          "outcome": { "gold": 17, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the measureworm finish its slow count",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_velvet_mousetrap_stage",
+      "title": "The Velvet Mousetrap Stage",
+      "description": "An enormous sprung brass mousetrap holds a tiny velvet-curtained stage; a rounded mouse doll raises a safety pin above its amber footlight.",
+      "choices": [
+        {
+          "id": "buy_safety_silk",
+          "text": "Pay 28 gold for three bundles of safety silk (+3 scraps)",
+          "outcome": { "gold": -28, "scraps": 3 }
+        },
+        {
+          "id": "mend_trap_spring",
+          "text": "Spend 2 scraps mending the sprung hinge (earn 24 gold)",
+          "outcome": { "gold": 24, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the mouse doll under its little spotlight",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
