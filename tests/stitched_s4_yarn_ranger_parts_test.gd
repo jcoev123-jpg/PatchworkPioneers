@@ -34,6 +34,12 @@ const PURLING_SPECS := {
 	"dmg": [[5, 8], [7, 10], [9, 12]],
 	"effects": [{"exposed": 1}, {"exposed": 2}, {"exposed": 3}],
 }
+const SNARE_ID := "yarn_ranger_torso_snare_net"
+const SNARE_LAUNCH := [2, 3, 4]
+const SNARE_SPECS := {
+	"acc": [94, 97, 100],
+	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
+}
 const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
 		"ability": "yarn_ranger_head_needle_nock_move",
@@ -70,7 +76,7 @@ const UNCHANGED_PARTS := {
 		"stat": {"dmg": 2},
 	},
 	"yarn_ranger_torso_snare_net": {
-		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": true,
+		"launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy", "multi": true,
 		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
 		"stat": {"prot": 5, "max_hp": 3},
 	},
@@ -89,10 +95,12 @@ func _initialize() -> void:
 	_test_head_launch_tiers()
 	_test_arms_launch_tiers()
 	_test_purling_launch_tiers()
+	_test_snare_net_launch_tiers()
 	_test_each_tier()
 	_test_rank_four_head_launch()
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
+	_test_rank_four_snare_net_launch()
 	_test_multi_tangled()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
@@ -193,8 +201,8 @@ func _rank_four_battle(selected_part: String, tier: int = 1, seed_value: int = 5
 
 
 ## A fresh in-memory copy of the same fixture with the equipped Ranger moved to hero rank one.
-func _rank_one_battle(seed_value: int = 505040) -> StitchedRules:
-	var config := _config("", 1, seed_value)
+func _rank_one_battle(selected_part: String = "", tier: int = 1, seed_value: int = 505040) -> StitchedRules:
+	var config := _config(selected_part, tier, seed_value)
 	if config.is_empty():
 		return null
 	var ranger: Dictionary = config["heroes"].pop_at(2)
@@ -309,6 +317,135 @@ func _test_purling_launch_tiers() -> void:
 		_check(ability["dmg"] == PURLING_SPECS["dmg"][tier - 1]
 			and ability["effects"] == PURLING_SPECS["effects"][tier - 1],
 			"AC1: tier %d Purling Barrage keeps authored damage and Exposed" % tier)
+
+
+## Snare Net keeps its multi-target enemy 1-3 debuff at every tier while its launch mask
+## gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
+func _test_snare_net_launch_tiers() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][SNARE_ID]
+	_check(str(part["slot"]) == "torso" and str(part["owner"]) == "yarn_ranger"
+		and part["stat"] == {"prot": 5, "max_hp": 3},
+		"AC1: Snare Net stays a Yarn Ranger torso part with its authored stat")
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var mask := int(ability["launch_mask"])
+		var reachable := true
+		for rank in SNARE_LAUNCH:
+			reachable = reachable and StitchedParts.ranks_allowed(mask, rank)
+		var excluded := true
+		for rank in [0, 1, 5]:
+			excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
+		_check(ability["launch"] == SNARE_LAUNCH
+			and mask == StitchedParts.rank_mask(SNARE_LAUNCH) and reachable and excluded,
+			"AC1: tier %d Snare Net launch mask allows 2,3,4 and refuses 0,1,5" % tier)
+		_check(ability["target"] == [1, 2, 3]
+			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			and str(ability["target_side"]) == "enemy" and bool(ability["multi"])
+			and str(ability["kind"]) == "debuff"
+			and int(ability["acc"]) == int(SNARE_SPECS["acc"][tier - 1])
+			and ability["dmg"] == [0, 0] and int(ability["crit"]) == 0
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "skill"
+			and ability["effects"] == SNARE_SPECS["effects"][tier - 1],
+			"AC1: tier %d Snare Net keeps its enemy 1-3 multi debuff, ACC and Tangled" % tier)
+
+
+## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
+## wearing her alternate Snare Net torso. One cast resolves independently against every foe.
+func _test_rank_four_snare_net_launch() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for tier in [1, 2, 3]:
+		var expected := int(SNARE_SPECS["effects"][tier - 1]["tangled"])
+		var b := _rank_four_battle(SNARE_ID, tier)
+		_check(b != null,
+			"AC2: fresh S2 battle equips rank-four Ranger with tier %d Snare Net" % tier)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 4
+			and str(ranger["parts"]["torso"]["id"]) == SNARE_ID,
+			"AC2: tier %d Snare Net is worn in the torso slot at hero rank four" % tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC2: rank-four Ranger reaches her actual turn for tier %d Snare Net" % tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		var before := b.state_snapshot()
+		var receipt := b.use_part(SNARE_ID, 1)
+		var after := b.state_snapshot()
+		var results: Array = receipt.get("results", [])
+		var seen_targets: Dictionary = {}
+		var seen_ranks: Dictionary = {}
+		for item in results:
+			seen_targets[str(item.get("target", ""))] = true
+			seen_ranks[int(item.get("target_rank", 0))] = true
+		_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+			and str(receipt.get("actor", "")) == "yarn_ranger"
+			and str(receipt.get("part", "")) == SNARE_ID
+			and str(receipt.get("ability", "")) == "yarn_ranger_torso_snare_net_move"
+			and results.size() == 3 and seen_targets.size() == 3
+			and seen_ranks.has(1) and seen_ranks.has(2) and seen_ranks.has(3)
+			and results.all(func(item): return str(item.get("target_side", "")) == "foe"),
+			"AC2: rank-four tier %d Snare Net legally casts on three distinct foes at ranks 1-3: %s"
+				% [tier, str(receipt.get("error", ""))])
+		_check(after != before and (int(after["round"]) > int(before["round"])
+			or (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) > int(before["turn_index"]))),
+			"AC2: rank-four tier %d Snare Net advances the real turn" % tier)
+		# A bounded explicit seed window witnesses one cast hitting all three foes, each
+		# independently carrying the tier's Tangled amount; the same seed must replay exactly.
+		var witness_seed := -1
+		for seed_value in range(506040, 506072):
+			var shot_battle := _rank_four_battle(SNARE_ID, tier, seed_value)
+			if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+				continue
+			var shot := shot_battle.use_part(SNARE_ID, 1)
+			if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 3:
+				continue
+			var hit_targets: Dictionary = {}
+			var all_hit := true
+			for result in shot["results"]:
+				var target_id := str(result.get("target", ""))
+				var foe := shot_battle.get_unit(target_id)
+				if not bool(result.get("hit", false)) or target_id.is_empty() \
+						or int(foe["statuses"].get("tangled", 0)) < expected \
+						or not result.get("statuses", []).any(
+							func(s): return str(s.get("status", "")) == "tangled"):
+					all_hit = false
+					break
+				hit_targets[target_id] = true
+			if not all_hit or hit_targets.size() != 3:
+				continue
+			var replay := _rank_four_battle(SNARE_ID, tier, seed_value)
+			if replay == null or not _to(replay, "yarn_ranger"):
+				continue
+			var replay_shot := replay.use_part(SNARE_ID, 1)
+			if shot == replay_shot and shot_battle.state_snapshot() == replay.state_snapshot() \
+					and shot_battle.rng_state() == replay.rng_state():
+				witness_seed = seed_value
+				break
+		_check(witness_seed >= 0,
+			"AC2: a bounded real seed shows rank-four tier %d Snare Net Tangling all three foes for %d, with an identical replay"
+				% [tier, expected])
+		if witness_seed >= 0:
+			print("AC2 Snare Net tier %d witness seed %d" % [tier, witness_seed])
+	# Rank one is a legal position for other parts, but Snare Net's launch mask must refuse it
+	# before any hit roll, state change or turn spend.
+	var front := _rank_one_battle(SNARE_ID)
+	_check(front != null, "AC3: same real four-hero fixture allows Ranger rank one with Snare Net")
+	if front == null:
+		return
+	var front_ranger := front.get_unit("yarn_ranger")
+	_check(int(front_ranger["rank"]) == 1
+		and str(front_ranger["parts"]["torso"]["id"]) == SNARE_ID,
+		"AC3: rank-one Ranger wears Snare Net in the torso slot")
+	_check(_to(front, "yarn_ranger"), "AC3: rank-one Snare Net Ranger obtains a real scheduled turn")
+	if front.current_actor_id() == "yarn_ranger":
+		_reject_without_spend(front, SNARE_ID, 1, "rank-one Snare Net launch")
 
 
 ## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
