@@ -78,6 +78,7 @@ func _initialize() -> void:
 		_test_ac1_membership(by_id, roster)
 		_test_ac2_ranks_and_behaviour(by_id)
 		_test_ac3_tiers(by_id)
+		_test_lint_gland_all_enemy_ranks()
 	if _failures.is_empty():
 		print("stitched_enemy_parts_catalog_test: PASS (", _checks, " checks)")
 	else:
@@ -626,6 +627,84 @@ func _check_damage_ranges(part: Dictionary, label: String) -> void:
 			"%s: tier %d damage must not fall below the previous tier" % [label, tier])
 		previous_min = int(dmg[0])
 		previous_max = int(dmg[1])
+
+
+# ---------------------------------------------------------------- Thread Biter Lint Gland
+
+## The Lint Gland's Lint Spit exposes a foe in any enemy rank 1-4, while the wearer may still
+## cast it only from the outer hero ranks 1 and 4. The part comes from the same real
+## StitchedParts catalog the live battle wiring consumes, and every stitch tier is checked.
+func _test_lint_gland_all_enemy_ranks() -> void:
+	var catalog := StitchedParts.load_catalog(PARTS_PATH)
+	_check(bool(catalog.get("ok", false)),
+		"Lint Gland AC1: the real StitchedParts catalog loads: " + str(catalog.get("error", "")))
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	_check(by_id.has("thread_biter_lint_gland"),
+		"Lint Gland AC1: the real catalog contains thread_biter_lint_gland")
+	if not by_id.has("thread_biter_lint_gland"):
+		return
+	var part: Dictionary = by_id["thread_biter_lint_gland"]
+	_check(str(part.get("id", "")) == "thread_biter_lint_gland",
+		"Lint Gland AC1: the named part keeps its id")
+	_check(str(part.get("owner", "")) == "any",
+		"Lint Gland AC1: the Lint Gland is owner any, so any hero can wear it")
+	_check(str(part.get("slot", "")) == "head",
+		"Lint Gland AC1: the Lint Gland fills the head slot")
+	_check(str(part.get("name", "")) == "Lint Gland",
+		"Lint Gland AC1: the part is named Lint Gland")
+	_check(str(part.get("text", "")) == "Spit a wad of lint that leaves any rank Exposed 2.",
+		"Lint Gland AC1: the rules text still promises any rank")
+
+	for tier in [1, 2, 3]:
+		var label := "Lint Gland tier " + str(tier)
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var stat := StitchedParts.stat_at_tier(part, tier)
+		_check(not ability.is_empty(), label + ": resolves an ability")
+		if ability.is_empty():
+			continue
+		var target := _int_list(ability.get("target", []))
+		_check(target == [1, 2, 3, 4], label + ": target is exactly enemy ranks 1-4")
+		var target_mask := int(ability.get("target_mask", 0))
+		_check(target_mask == StitchedParts.rank_mask([1, 2, 3, 4]),
+			label + ": the target mask marks enemy ranks 1-4")
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(target_mask, rank),
+				label + ": a foe in rank " + str(rank) + " may be targeted")
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(target_mask, rank),
+				label + ": rank " + str(rank) + " is never a legal target")
+		var launch := _int_list(ability.get("launch", []))
+		_check(launch == [1, 4], label + ": launch stays exactly ranks 1 and 4")
+		var launch_mask := int(ability.get("launch_mask", 0))
+		_check(launch_mask == StitchedParts.rank_mask([1, 4]),
+			label + ": the launch mask marks only ranks 1 and 4")
+		for rank in [1, 4]:
+			_check(StitchedParts.ranks_allowed(launch_mask, rank),
+				label + ": the wearer may cast from rank " + str(rank))
+		for rank in [0, 2, 3, 5]:
+			_check(not StitchedParts.ranks_allowed(launch_mask, rank),
+				label + ": the wearer may not cast from rank " + str(rank))
+		_check(str(ability.get("id", "")) == "lint_spit", label + ": ability id stays lint_spit")
+		_check(str(ability.get("kind", "")) == "debuff", label + ": Lint Spit stays a debuff")
+		_check(str(ability.get("target_side", "")) == "enemy",
+			label + ": Lint Spit still targets foes")
+		_check(typeof(ability.get("multi")) == TYPE_BOOL and not bool(ability["multi"]),
+			label + ": Lint Spit stays single-target")
+		_check(int(ability.get("acc", -1)) == 88, label + ": Lint Spit keeps ACC 88")
+		_check(_int_list(ability.get("dmg", [])) == [0, 0],
+			label + ": Lint Spit deals no direct damage")
+		_check(int(ability.get("crit", -1)) == 0, label + ": Lint Spit keeps crit 0")
+		_check(int(ability.get("self_move", -1)) == 0,
+			label + ": Lint Spit never moves the wearer")
+		_check(str(ability.get("move", "")) == "skill", label + ": Lint Spit keeps the skill pose")
+		var effects := _int_dict(ability.get("effects", {}))
+		var exposed: int = 2 + (int(tier) - 1)
+		_check(JSON.stringify(effects) == JSON.stringify({"exposed": exposed}),
+			"%s: effects are exactly Exposed %d" % [label, exposed])
+		_check(_int_dict(stat) == {"acc": 2 + tier},
+			"%s: head stat is ACC %d" % [label, 2 + tier])
 
 
 # ---------------------------------------------------------------- record helpers
