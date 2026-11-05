@@ -314,8 +314,8 @@ func _run() -> void:
 	if near_stage != null:
 		var near_witness: Dictionary = _fight_to_victory(near_stage)
 		_check(near_witness.get("outcome") == "victory" \
-			and near_stage.battle.get_unit("fray_scavenger").get("dead") == true,
-			"five-spare witness really defeats Scavenger before reward settlement")
+			and near_stage.battle.get_unit("ragling").get("dead") == true,
+			"five-spare witness really defeats follow-on Ragling before reward settlement")
 		if near_witness.get("outcome") == "victory":
 			seed(93172)
 			var near_global := randi()
