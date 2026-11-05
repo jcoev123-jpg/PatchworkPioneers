@@ -168,8 +168,6 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 
 	# Raise scraps to 2: Warden's reinforce_shield_seam (-2 scraps) becomes affordable
 	var warden_id := "v3_warden_buckle_heart_ward"
-	var tinker_greenhouse_id := "v3_tinker_copper_needle_greenhouse"
-	var tinker_blunderbuss_id := "v3_tinker_blunderbuss_fuse_well"
 	var seamstress_id := "v3_seamstress_crimson_quilt_surgeon"
 
 	var scraps_2_wallet := _wallet(0, 2)
@@ -182,7 +180,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 	# Raise gold to 12: Seamstress's stitch_wound (-12 gold) becomes affordable
 	var gold_12_wallet := _wallet(12, 0)
 	var seamstress_res := gate.select_party_actionable_event(
-		rng, [warden_id, tinker_greenhouse_id, tinker_blunderbuss_id], gold_12_wallet, min_heroes
+		rng, _exclude_all_but(gate, [seamstress_id]), gold_12_wallet, min_heroes
 	)
 	_check(seamstress_res.get("ok") == true and seamstress_res["event"].get("id") == seamstress_id,
 		"AC2: Seamstress becomes actionable when gold raised to 12")
@@ -194,7 +192,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 		_hero("tinker", 1, 10),
 	]
 	var hp5_res := gate.select_party_actionable_event(
-		rng, [warden_id, tinker_greenhouse_id, tinker_blunderbuss_id], zero_wallet, seamstress_hp5_heroes
+		rng, _exclude_all_but(gate, [seamstress_id]), zero_wallet, seamstress_hp5_heroes
 	)
 	_check(hp5_res.get("ok") == true and hp5_res["event"].get("id") == seamstress_id,
 		"AC2: Seamstress donate_red_thread becomes actionable at HP 5 (HP floor 1 satisfied)")
@@ -206,7 +204,7 @@ func _test_ac2_affordability_and_vital_floors() -> void:
 		_hero("tinker", 1, 10),
 	]
 	var hp4_res := gate.select_party_actionable_event(
-		rng, [warden_id, tinker_greenhouse_id, tinker_blunderbuss_id], zero_wallet, seamstress_hp4_heroes
+		rng, _exclude_all_but(gate, [seamstress_id]), zero_wallet, seamstress_hp4_heroes
 	)
 	_check(hp4_res.get("ok") == false,
 		"AC2: Seamstress donate_red_thread at HP 4 violates HP 1 floor and is refused")
