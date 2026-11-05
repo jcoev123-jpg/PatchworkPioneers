@@ -52,7 +52,7 @@ func _ready() -> void:
 	primary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	primary.clip_text = true
 	primary.add_theme_font_override("font", HEADING_FONT)
-	primary.add_theme_font_size_override("font_size", 21)
+	primary.add_theme_font_size_override("font_size", 22)
 	primary.add_theme_color_override("font_color", BONE)
 	primary.add_theme_color_override("font_shadow_color", Color("160c13"))
 	primary.add_theme_constant_override("shadow_offset_x", 1)
@@ -66,8 +66,11 @@ func _ready() -> void:
 	secondary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	secondary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	secondary.clip_text = true
-	secondary.add_theme_font_size_override("font_size", 15)
+	secondary.add_theme_font_size_override("font_size", 16)
 	secondary.add_theme_color_override("font_color", BRASS)
+	secondary.add_theme_color_override("font_shadow_color", Color("160c13"))
+	secondary.add_theme_constant_override("shadow_offset_x", 1)
+	secondary.add_theme_constant_override("shadow_offset_y", 1)
 	secondary.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(secondary)
 
@@ -100,6 +103,7 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	ability_kind = ""
 	var target := ""
 	var detail := ""
+	var base_detail := ""
 	if bool(intent.get("stun", false)):
 		heading = "STUN"
 		target = "NO ACTION"
@@ -127,6 +131,25 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 				side_name, ", ".join(ranks), int(intent.get("target_rank", 0))]
 		else:
 			detail = "Target: %s rank %d" % [side_name, int(intent.get("target_rank", 0))]
+		var damage: Array = intent.get("base_damage", [])
+		if damage.size() == 2:
+			var low := int(damage[0])
+			var high := int(damage[1])
+			base_detail = "BASE DMG %d–%d · BASE ACC %d%% · BASE CRIT %+d" % [
+				low, high, int(intent.get("base_acc", 0)), int(intent.get("base_crit", 0))]
+			var effects: Dictionary = intent.get("base_effects", {})
+			var keys := effects.keys()
+			keys.sort()
+			var effect_labels: Array[String] = []
+			for key in keys:
+				effect_labels.append("%s %+d" % [str(key), int(effects[key])])
+			base_detail += " · BASE EFFECTS " + (", ".join(effect_labels) if not effect_labels.is_empty() else "none")
+			# The rank list always wins over an optional damage cue. No clipped
+			# numbers, and a zero-direct-damage buff is never labelled a hit.
+			if high > 0:
+				var candidate := target + " BASE %d–%d" % [low, high]
+				if _caption_width_fits(candidate, secondary):
+					target = candidate
 	if glyph != null:
 		glyph.texture = _texture_for_kind(ability_kind)
 		glyph.visible = glyph.texture != null and not foe_id.is_empty()
@@ -136,9 +159,9 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	secondary.text = _fit_caption(target, secondary)
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
 	var disclosed_name := heading if bool(intent.get("pass", false)) or bool(intent.get("stun", false)) else actual_name
-	tooltip_text = "%s · %s · %s%s\nCurrent intent; may change if ranks or statuses change" % [
+	tooltip_text = "%s · %s · %s%s%s\nCurrent intent; may change if ranks or statuses change" % [
 		str(intent.get("foe_name", "")), disclosed_name,
-		kind_detail, detail]
+		kind_detail, detail, "\n" + base_detail if not base_detail.is_empty() else ""]
 	visible = not foe_id.is_empty()
 
 
@@ -158,6 +181,12 @@ func _texture_for_kind(kind: String) -> Texture2D:
 func set_inspected(value: bool) -> void:
 	if primary != null:
 		primary.add_theme_color_override("font_color", BRASS if value else BONE)
+
+
+func _caption_width_fits(value: String, label: Label) -> bool:
+	var font := label.get_theme_font("font")
+	return font == null or font.get_string_size(value, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		label.get_theme_font_size("font_size")).x <= label.size.x
 
 
 func _fit_caption(value: String, label: Label) -> String:
