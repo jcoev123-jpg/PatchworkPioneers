@@ -681,7 +681,8 @@ var stitched_sewing_upgrade_visit: RunStitchedSewingUpgrade
 var stitched_preview_satchel: Array = []
 var stitched_preview_scraps := 0
 ## Separate from S2's 78-candle standalone preview; lasts for this title session.
-var stitched_roadblock_candle := 100
+var stitched_roadblock_candle: Variant = 100
+var _stitched_sewing_admission: Dictionary = {}
 var _stitched_admitted_fight_gate: RunV3FightEventGate
 var _stitched_gear_overrides: Dictionary = {}
 var _stitched_hp_carry: Dictionary = {}
@@ -2191,6 +2192,7 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 				heroes.append(hero.duplicate(true))
 	# Validate all four settled hero receipts before any victory authority moves.
 	var settled_fray: Dictionary = {}
+	var circle_earned := false
 	if won and heroes.size() == 4:
 		for hero in heroes:
 			var id: Variant = hero.get("id")
@@ -2233,6 +2235,7 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 					# Only the real, settled four-survivor victory advances the
 					# next title Fight. No Leave, loss or forged receipt can.
 					_stitched_roadblock_win_count += 1
+					circle_earned = true
 		# This exact, once-only stage is the sole HP source. A lost hero is not
 		# carried; failed, retreated and replayed exits leave the ledger untouched.
 		for id in _stitched_party_picks:
@@ -2285,15 +2288,29 @@ func _stitched_fight_exit(source: WeakRef) -> void:
 			stitched_preview_satchel.append({
 				"id": trophy, "slot": str(part["slot"]), "tier": 1, "torn": false,
 			})
-		_open_stitched_sewing(heroes, expected_foes)
+		# A one-use ticket exists only during this authenticated victory exit.
+		if circle_earned:
+			_stitched_sewing_admission = {
+				"heroes": heroes.duplicate(true), "foes": expected_foes.duplicate(),
+				"candle": stitched_roadblock_candle,
+			}
+			_open_stitched_sewing(heroes, expected_foes)
+			_stitched_sewing_admission.clear()
 
 
 func _open_stitched_sewing(heroes: Array, slain_foes: Array) -> bool:
-	if is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
+	if _stitched_sewing_admission.is_empty() \
+			or _stitched_sewing_admission.get("heroes") != heroes \
+			or _stitched_sewing_admission.get("foes") != slain_foes \
+			or _stitched_sewing_admission.get("candle") != stitched_roadblock_candle \
+			or typeof(stitched_roadblock_candle) != TYPE_INT \
+			or stitched_roadblock_candle < 0 or stitched_roadblock_candle > RunPeddlerVisit.CANDLE_MAX \
+			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
 			or stitched_sewing_mend_visit != null or stitched_sewing_upgrade_visit != null \
 			or is_instance_valid(stitched_fight_view) or not is_instance_valid(title_view) \
 			or not title_view.is_visible_in_tree():
 		return false
+	var projected_candle := maxi(0, int(stitched_roadblock_candle) - STITCHED_ROADBLOCK_CANDLE_COST)
 	var config := _stitched_floor_config()
 	if config.is_empty():
 		return false
@@ -2323,15 +2340,28 @@ func _open_stitched_sewing(heroes: Array, slain_foes: Array) -> bool:
 	panel.theme = load("res://themes/gothic_theme.tres")
 	panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	panel.focus_mode = Control.FOCUS_ALL
+	# Build every service quote and control while detached, before publishing
+	# service authority or spending the node's candle entrance cost.
+	if not _build_stitched_sewing(panel, visit.quote(), mend_visit.quote(), upgrade_visit.quote()):
+		panel.free()
+		return false
+	add_child(panel)
+	if not panel.is_inside_tree() or panel.get_parent() != self:
+		panel.free()
+		return false
+	_stitched_sewing_admission.clear()
+	stitched_roadblock_candle = projected_candle
 	stitched_sewing_visit = visit
 	stitched_sewing_mend_visit = mend_visit
 	stitched_sewing_upgrade_visit = upgrade_visit
 	_stitched_sewing_catalog = catalog["by_id"].duplicate(true)
 	stitched_sewing_panel = panel
-	add_child(panel)
+	_stitched_sewing_quote = visit.quote().duplicate(true)
+	_stitched_mend_quote = mend_visit.quote().duplicate(true)
+	_stitched_upgrade_quote = upgrade_visit.quote().duplicate(true)
 	panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	title_view.hide()
-	_refresh_stitched_sewing()
+	panel.get_node("SewingLeave").grab_focus()
 	return true
 
 
@@ -2348,6 +2378,15 @@ func _refresh_stitched_sewing() -> void:
 	var quote: Dictionary = visit.quote()
 	var mend_quote: Dictionary = mend_visit.quote()
 	var upgrade_quote: Dictionary = upgrade_visit.quote()
+	if not _build_stitched_sewing(panel, quote, mend_quote, upgrade_quote):
+		return
+	_stitched_sewing_quote = quote.duplicate(true)
+	_stitched_mend_quote = mend_quote.duplicate(true)
+	_stitched_upgrade_quote = upgrade_quote.duplicate(true)
+
+
+func _build_stitched_sewing(panel: Control, quote: Dictionary,
+		mend_quote: Dictionary, upgrade_quote: Dictionary) -> bool:
 	if quote.get("ok") != true or quote.get("open") != true \
 			or mend_quote.get("ok") != true or mend_quote.get("open") != true \
 			or upgrade_quote.get("ok") != true or upgrade_quote.get("open") != true \
@@ -2356,10 +2395,7 @@ func _refresh_stitched_sewing() -> void:
 			or int(mend_quote["scraps"]) != stitched_preview_scraps \
 			or int(upgrade_quote["scraps"]) != stitched_preview_scraps \
 			or int(upgrade_quote["upgrade_cost"]) != STITCHED_SEWING_UPGRADE_COST:
-		return
-	_stitched_sewing_quote = quote.duplicate(true)
-	_stitched_mend_quote = mend_quote.duplicate(true)
-	_stitched_upgrade_quote = upgrade_quote.duplicate(true)
+		return false
 	# All the framing is shipped textile artwork, never code-drawn panels.
 	var frame := NinePatchRect.new()
 	var art_path := "res://assets/paper/ui/panel_felt.png"
@@ -2494,10 +2530,11 @@ func _refresh_stitched_sewing() -> void:
 	leave_button.size = Vector2(470, 54)
 	leave_button.pressed.connect(_stitched_sewing_leave.bind(expected_state.duplicate(true), weakref(panel)))
 	panel.add_child(leave_button)
-	if first_button != null:
+	if first_button != null and panel.is_inside_tree():
 		first_button.grab_focus()
-	else:
+	elif panel.is_inside_tree():
 		leave_button.grab_focus()
+	return true
 
 
 func _stitched_upgrade_effects(stat: Dictionary, ability: Dictionary) -> String:
@@ -3484,7 +3521,7 @@ func _stitched_peddler_buy_candle(expected_bandage: Dictionary,
 			or stitched_preview_gold < STITCHED_PEDDLER_PRICE \
 			or stitched_roadblock_candle >= RunPeddlerVisit.CANDLE_MAX:
 		return {"ok": false, "error": "unauthorized Peddler candle"}
-	var before := stitched_roadblock_candle
+	var before: int = stitched_roadblock_candle
 	var before_gold := stitched_preview_gold
 	var after := mini(RunPeddlerVisit.CANDLE_MAX,
 		before + RunPeddlerVisit.CANDLE_STUB_RESTORE)
