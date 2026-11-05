@@ -203,8 +203,13 @@ func _campfire_mend() -> Dictionary:
 		"forged roster cannot become an opened Campfire")
 	app._stitched_campfire_roster = roster.duplicate(true)
 	var before: Dictionary = _resources(app)
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var visit: RunCampfireVisit = app.stitched_campfire_visit
 	if panel == null or visit == null:
@@ -342,8 +347,13 @@ func _campfire_swap_then_mend() -> void:
 		and earned_parts[0].get("parts", {}).size() == StitchedParts.SLOTS.size(),
 		"Circle Leave earned a complete real four-hero part roster and bounded satchel")
 	var before: Dictionary = _resources(app)
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	var recovery: RunCampfireVisit = app.stitched_campfire_visit
 	var service: RunStitchedSewingSwap = app._stitched_campfire_swap_visit
@@ -546,8 +556,13 @@ func _campfire_leave() -> void:
 		await process_frame
 		return
 	var before := _resources(app)
+	var entrance := before.duplicate(true)
+	before["candle"] = maxi(0, int(before["candle"]) - 8)
 	app.stitched_campfire_button.pressed.emit()
 	await process_frame
+	_check(_resources(app) == before and not app._open_stitched_campfire()
+		and _resources(app) == before,
+		"Campfire entry debits exactly eight once and preserves every other ledger from %s" % str(entrance["candle"]))
 	var panel: Control = app.stitched_campfire_panel
 	_check(panel != null, "second complete run can select earned Campfire")
 	if panel != null:

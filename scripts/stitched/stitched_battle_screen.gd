@@ -30,6 +30,10 @@ var _selected_part := ""
 var _target_ranks: Dictionary = {}
 var _seat_buttons: Dictionary = {}
 var _puppets: Dictionary = {}
+var _figure_hits: Dictionary = {}
+var _foot_plates: Dictionary = {}
+var _status_disclosure: NinePatchRect
+var _status_disclosure_label: Label
 var _part_buttons: Dictionary = {}
 var _part_help_buttons: Dictionary = {}
 var _part_cues: Dictionary = {}
@@ -144,6 +148,21 @@ func _button(title: String, rect: Rect2, callback: Callable) -> Button:
 	return button
 
 
+func _sewn_panel(rect: Rect2, tint: Color = Color("29232ce8")) -> NinePatchRect:
+	var panel := NinePatchRect.new()
+	panel.texture = load("res://assets/paper/ui/panel_felt.png") as Texture2D
+	panel.position = rect.position
+	panel.size = rect.size
+	panel.modulate = tint
+	panel.patch_margin_left = 18
+	panel.patch_margin_right = 18
+	panel.patch_margin_top = 14
+	panel.patch_margin_bottom = 14
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(panel)
+	return panel
+
+
 func _build_screen() -> void:
 	var font_path := "res://assets/fonts/LondrinaSolid-Regular.ttf"
 	if ResourceLoader.exists(font_path):
@@ -152,19 +171,20 @@ func _build_screen() -> void:
 	var stage_path := ROSTER.stage_backdrop_path("Fight", 0)
 	if ResourceLoader.exists(stage_path, "Texture2D"):
 		var backdrop := TextureRect.new()
+		backdrop.name = "SharedStitchedBackdrop"
 		backdrop.texture = load(stage_path)
 		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		backdrop.position = Vector2(0, 95)
-		backdrop.size = Vector2(1280, 360)
+		backdrop.position = Vector2(0, 60)
+		backdrop.size = Vector2(1280, 500)
 		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(backdrop)
-	_panel(Rect2(0, 95, 1280, 360), Color(0.045, 0.05, 0.075, 0.38))
-	_panel(Rect2(12, 10, 1256, 82))
-	_panel(Rect2(12, 447, 1256, 262))
-	_panel(Rect2(20, 458, 222, 242), Color("1a1b23ed"))
-	_panel(Rect2(250, 458, 774, 242), Color("1a1b23ed"))
-	_panel(Rect2(1032, 458, 228, 242), Color("1a1b23ed"))
+	_panel(Rect2(0, 60, 1280, 500), Color(0.045, 0.05, 0.075, 0.28))
+	_sewn_panel(Rect2(12, 10, 1256, 82))
+	_sewn_panel(Rect2(12, 557, 1256, 155))
+	_sewn_panel(Rect2(19, 562, 221, 144))
+	_sewn_panel(Rect2(246, 562, 780, 144))
+	_sewn_panel(Rect2(1031, 562, 230, 144))
 	_label("STITCHED  /  " + str(config.get("title", "A frayed fray")), Rect2(26, 13, 420, 28), 26, ACCENT)
 	_labels["round"] = _label("", Rect2(454, 13, 190, 28), 21)
 	_labels["order"] = _label("TURN ORDER", Rect2(454, 46, 99, 42), 17, MUTED)
@@ -179,64 +199,67 @@ func _build_screen() -> void:
 	_candle_meter.size = Vector2(340, 33)
 	add_child(_candle_meter)
 	_labels["candle"] = _label("", Rect2(1008, 10, 242, 33), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
-	_label("4 HERO RANKS  •  rear to front", Rect2(40, 113, 520, 32), 20, ACCENT)
-	_label("4 FOE RANKS  •  front to rear", Rect2(705, 113, 535, 32), 20, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
-	_labels["hero"] = _label("", Rect2(28, 468, 204, 34), 22, ACCENT)
-	_labels["stats"] = _label("", Rect2(28, 505, 200, 140), 18)
-	_labels["thread"] = _label("", Rect2(28, 652, 204, 40), 17, ERROR)
-	_label("SEWN ABILITIES · CHOOSE A PART, THEN A LIT RANK", Rect2(264, 462, 750, 28), 19, ACCENT)
+	_label("HEROES  ·  back 4 → front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
+	_label("FOES  ·  front 1 → back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
+	_labels["hero"] = _label("", Rect2(27, 564, 202, 25), 18, ACCENT)
+	_labels["stats"] = _label("", Rect2(27, 590, 204, 86), 13)
+	_labels["stats"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_labels["thread"] = _label("", Rect2(27, 679, 204, 24), 12, ERROR)
+	_label("SEWN ABILITIES  ·  PICK A PART, THEN A LIT FIGURE", Rect2(259, 561, 758, 18), 14, ACCENT)
 	for index in range(4):
 		var slot: String = SLOTS[index]
-		var x := 266 + index * 187
-		_part_buttons[slot] = _button(slot.capitalize(), Rect2(x, 496, 147, 44),
+		var x := 260 + index * 188
+		_part_buttons[slot] = _button(slot.capitalize(), Rect2(x, 581, 152, 30),
 			func(): select_part(slot))
 		_part_buttons[slot].name = "Worn" + slot.capitalize()
-		_part_buttons[slot].add_theme_font_size_override("font_size", 13)
+		_part_buttons[slot].add_theme_font_size_override("font_size", 12)
 		_part_buttons[slot].clip_text = true
 		_part_buttons[slot].text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-		_part_help_buttons[slot] = _button("?", Rect2(x + 151, 496, 27, 44),
+		_part_help_buttons[slot] = _button("?", Rect2(x + 154, 581, 29, 30),
 			func(): _open_part_help(slot))
 		_part_help_buttons[slot].name = "Inspect" + slot.capitalize()
-		_part_help_buttons[slot].add_theme_font_size_override("font_size", 16)
+		_part_help_buttons[slot].add_theme_font_size_override("font_size", 14)
 		_bind_part_inspection(_part_buttons[slot], slot)
 		_bind_part_inspection(_part_help_buttons[slot], slot)
-	_labels["preview"] = _label("", Rect2(266, 542, 740, 48), 14, MUTED)
+	_labels["preview"] = _label("", Rect2(262, 613, 749, 26), 12, MUTED)
 	_labels["preview"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["preview"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	_action_buttons["move_front"] = _button("Move front", Rect2(266, 594, 135, 38), func(): submit_move(-1))
-	_action_buttons["move_back"] = _button("Move back", Rect2(409, 594, 135, 38), func(): submit_move(1))
-	_action_buttons["re_tie"] = _button("Re-tie", Rect2(552, 594, 135, 38), func(): submit_re_tie())
-	_action_buttons["pass"] = _button("Pass turn", Rect2(695, 594, 150, 38), func(): submit_pass())
-	_action_buttons["retreat"] = _button("Retreat", Rect2(852, 594, 155, 38), func(): submit_retreat())
+	_action_buttons["move_front"] = _button("Move front", Rect2(260, 642, 136, 29), func(): submit_move(-1))
+	_action_buttons["move_back"] = _button("Move back", Rect2(403, 642, 136, 29), func(): submit_move(1))
+	_action_buttons["re_tie"] = _button("Re-tie", Rect2(546, 642, 136, 29), func(): submit_re_tie())
+	_action_buttons["pass"] = _button("Pass turn", Rect2(689, 642, 150, 29), func(): submit_pass())
+	_action_buttons["retreat"] = _button("Retreat", Rect2(846, 642, 165, 29), func(): submit_retreat())
 	for index in range(4):
-		var hero_rank := index + 1
-		var hero_key := "hero_" + str(hero_rank)
-		var foe_key := "foe_" + str(hero_rank)
-		_target_buttons[hero_key] = _button("Ally %d" % hero_rank,
-			Rect2(266 + index * 91, 647, 86, 38), func(): submit_target("hero", hero_rank))
+		var rank := index + 1
+		var hero_key := "hero_" + str(rank)
+		var foe_key := "foe_" + str(rank)
+		_target_buttons[hero_key] = _button("Ally %d" % rank,
+			Rect2(260 + index * 92, 675, 88, 29), func(): submit_target("hero", rank))
 		_bind_seat_signals(_target_buttons[hero_key], hero_key)
-		_target_buttons[foe_key] = _button("Foe %d" % hero_rank,
-			Rect2(643 + index * 91, 647, 86, 38), func(): submit_target("foe", hero_rank))
+		_target_buttons[foe_key] = _button("Foe %d" % rank,
+			Rect2(642 + index * 92, 675, 88, 29), func(): submit_target("foe", rank))
 		_bind_seat_signals(_target_buttons[foe_key], foe_key)
-	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1042, 468, 208, 125), 18, MUTED)
+	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1041, 567, 207, 75), 13, MUTED)
 	_labels["log"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["log"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_build_part_disclosure()
 	var toggle := CheckButton.new()
 	toggle.text = "Reduce motion"
-	toggle.position = Vector2(1045, 597)
-	toggle.size = Vector2(202, 36)
+	toggle.position = Vector2(1045, 641)
+	toggle.size = Vector2(202, 29)
 	toggle.button_pressed = reduced_motion
-	toggle.add_theme_font_size_override("font_size", 17)
+	toggle.add_theme_font_size_override("font_size", 14)
 	toggle.toggled.connect(set_reduced_motion)
 	add_child(toggle)
-	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 650, 208, 42), func(): exit_requested.emit())
-	# Seats stay present even when empty or later filled by a summon.
+	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 676, 208, 29), func(): exit_requested.emit())
+	# Back ranks draw first; near-centre front figures overlap the back figures
+	# naturally, without any individual seat backdrop or gameplay rank shuffle.
 	for side in ["hero", "foe"]:
-		for rank in range(1, 5):
-			var px: float = (516.0 - rank * 124.0) if side == "hero" else (646.0 + (rank - 1) * 126.0)
+		for rank in range(4, 0, -1):
+			var px := (360.0 - (rank - 1) * 108.0) if side == "hero" else (620.0 + (rank - 1) * 110.0)
 			_seat(side, rank, px)
 	_build_foe_intent_tickets()
+	_build_status_disclosure()
 	# Pose manifest is optional: it only selects authored pixels, never a game action.
 	var pose_file := FileAccess.open(LiveMovePoseCatalog.MANIFEST_PATH, FileAccess.READ)
 	if pose_file != null:
@@ -247,35 +270,111 @@ func _build_screen() -> void:
 
 func _seat(side: String, rank: int, x: float) -> void:
 	var key := side + "_" + str(rank)
-	var seat_panel := ColorRect.new()
-	seat_panel.position = Vector2(x, 164)
-	seat_panel.size = Vector2(116, 275)
-	seat_panel.color = Color(0.075, 0.07, 0.095, 0.48)
-	seat_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(seat_panel)
 	var puppet := ROSTER.Puppet.new()
-	puppet.position = Vector2(x + 4, 194)
-	puppet.size = Vector2(108, 178)
-	puppet.stage_height = 178
+	puppet.name = "StageFigure" + side.capitalize() + str(rank)
+	puppet.position = Vector2(x, -6)
+	puppet.size = Vector2(330, 520)
+	puppet.stage_height = 520
+	puppet.intent_band = 0
+	puppet.tag_height = 0
 	puppet.slot = rank
 	puppet.facing = 1.0 if side == "hero" else -1.0
 	add_child(puppet)
 	_puppets[key] = puppet
-	var tag := _button("%s %d · empty" % [side.capitalize(), rank], Rect2(x, 373, 116, 36),
+	# Only the authored painted-figure rectangle catches pointer input. The
+	# shared Puppet stays read-only; this independent hit surface commits only
+	# through the existing legal target gate. It is also a keyboard focus stop.
+	var hit := Control.new()
+	hit.name = "FigureTarget" + side.capitalize() + str(rank)
+	hit.mouse_filter = Control.MOUSE_FILTER_STOP
+	hit.focus_mode = Control.FOCUS_ALL
+	hit.visible = false
+	hit.gui_input.connect(func(event: InputEvent):
+		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
+			submit_target(side, rank)
+			hit.accept_event())
+	_bind_seat_signals(hit, key)
+	add_child(hit)
+	_figure_hits[key] = hit
+	# Art-backed underfoot plates replace the old 116x275 seat boxes.
+	var foot_x := x + 105.0
+	var plate := _sewn_panel(Rect2(foot_x, 514, 120, 39), Color("88777fae"))
+	_foot_plates[key] = plate
+	var tag := _button("", Rect2(foot_x + 2, 515, 116, 20),
 		func(): submit_target(side, rank))
+	tag.name = "RankPlate" + side.capitalize() + str(rank)
+	tag.flat = true
+	tag.add_theme_font_size_override("font_size", 12)
+	tag.clip_text = true
+	tag.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
-	_labels[key] = _label("", Rect2(x - 3, 411, 122, 25), 16, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
+	_labels[key] = _label("", Rect2(foot_x + 3, 535, 114, 16), 11, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
+	_labels[key].clip_text = true
+
+
+func _build_status_disclosure() -> void:
+	_status_disclosure = _sewn_panel(Rect2(22, 139, 592, 52), Color("ac9696"))
+	_status_disclosure.name = "FullRankStatus"
+	_status_disclosure.visible = false
+	_status_disclosure.z_index = 4
+	_status_disclosure_label = Label.new()
+	_status_disclosure_label.position = Vector2(14, 5)
+	_status_disclosure_label.size = Vector2(564, 42)
+	_status_disclosure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_status_disclosure_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_status_disclosure_label.add_theme_font_size_override("font_size", 12)
+	_status_disclosure_label.add_theme_color_override("font_color", PAPER)
+	_status_disclosure_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_status_disclosure.add_child(_status_disclosure_label)
+
+
+func _refresh_figure_hits() -> void:
+	for key in _puppets:
+		var puppet: Control = _puppets[key]
+		var hit: Control = _figure_hits[key]
+		var side := str(key).split("_")[0]
+		var rank := int(str(key).split("_")[1])
+		var detail := status_detail(side, rank)
+		var occupied := puppet.visible
+		var art_rect: Rect2 = puppet.posed_actor_rect() if occupied else Rect2()
+		hit.visible = occupied and art_rect.size.x > 0.0 and art_rect.size.y > 0.0
+		hit.position = puppet.position + art_rect.position
+		hit.size = art_rect.size
+		hit.tooltip_text = detail
+		var legal := _target_ranks.has(key)
+		# The plate remains focusable for full status inspection even when not
+		# a legal target; submit_target remains the sole fail-closed action gate.
+		_seat_buttons[key].disabled = not _foot_plates[key].visible
+		_seat_buttons[key].tooltip_text = detail
+
+
+
+func _update_figure_lights() -> void:
+	for key in _puppets:
+		var puppet: Control = _puppets[key]
+		var legal := _target_ranks.has(key)
+		puppet.modulate = Color(1.40, 1.25, 0.98) if _inspected_seat == key else (
+			Color(1.25, 1.15, 0.89) if legal else Color.WHITE)
+		_foot_plates[key].modulate = Color("c6a56b") if legal else Color("88777fae")
+
+
+func _present_status_disclosure() -> void:
+	if _status_disclosure == null:
+		return
+	var key := _inspected_seat
+	_status_disclosure.visible = not key.is_empty() and _seat_buttons.has(key)
+	_status_disclosure_label.text = _seat_detail_for(key) if _status_disclosure.visible else ""
 
 
 func _build_foe_intent_tickets() -> void:
-	# Tickets occupy y=148..192: below the rank header (bottom 145),
-	# inside 126px-wide seat lanes, and above the puppets (top 194).
+	# The dark sewn intent patches float above the figures' actual painted tops.
+	# They are not affixed to old 116px-wide seat backplates.
 	var plate: Texture2D = load("res://assets/paper/ui/panel_felt.png")
 	for rank in range(1, 5):
 		var ticket := NinePatchRect.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		ticket.position = Vector2(646 + (rank - 1) * 126, 148)
+		ticket.position = Vector2(725 + (rank - 1) * 120, 144)
 		ticket.size = Vector2(116, 44)
 		ticket.texture = plate
 		ticket.modulate = Color("ac7777")
@@ -316,12 +415,12 @@ func _build_foe_intent_tickets() -> void:
 		ticket.mouse_exited.connect(func(): _foe_intent_exit(rank, false))
 		ticket.focus_entered.connect(func(): _foe_intent_enter(rank, true))
 		ticket.focus_exited.connect(func(): _foe_intent_exit(rank, true))
-	# Independent full disclosure in the empty 148..193 hero-side strip.
+	# Independent full disclosure above the hero faces, never over the art.
 	# It does not repurpose the action forecast or the status log.
 	_intent_disclosure = NinePatchRect.new()
 	_intent_disclosure.name = "FoeIntentDisclosure"
-	_intent_disclosure.position = Vector2(22, 148)
-	_intent_disclosure.size = Vector2(592, 45)
+	_intent_disclosure.position = Vector2(22, 143)
+	_intent_disclosure.size = Vector2(592, 48)
 	_intent_disclosure.texture = plate
 	_intent_disclosure.modulate = Color("ac7777")
 	_intent_disclosure.patch_margin_left = 22
@@ -334,7 +433,7 @@ func _build_foe_intent_tickets() -> void:
 	_intent_disclosure_label = Label.new()
 	_intent_disclosure_label.name = "FullIntent"
 	_intent_disclosure_label.position = Vector2(18, 3)
-	_intent_disclosure_label.size = Vector2(556, 39)
+	_intent_disclosure_label.size = Vector2(556, 42)
 	_intent_disclosure_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_intent_disclosure_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	_intent_disclosure_label.add_theme_font_size_override("font_size", 11)
@@ -526,7 +625,10 @@ func _inspect_seat(key: String) -> void:
 	_inspected_seat = key
 	if _labels.has("log"):
 		_labels["log"].text = _seat_detail_for(key)
+		_labels["log"].tooltip_text = _seat_detail_for(key)
+	_present_status_disclosure()
 	_present_forecast()
+	_update_figure_lights()
 
 
 func _clear_seat_inspection(key: String = "") -> void:
@@ -534,7 +636,10 @@ func _clear_seat_inspection(key: String = "") -> void:
 		_inspected_seat = ""
 		if _labels.has("log"):
 			_labels["log"].text = _default_log_text()
+			_labels["log"].tooltip_text = _default_log_text()
+		_present_status_disclosure()
 		_present_forecast()
+		_update_figure_lights()
 
 
 func _art_for(id: String) -> Dictionary:
@@ -554,7 +659,9 @@ func _sync_puppet(key: String, unit: Dictionary) -> void:
 		puppet.bind_actor(id, _art_for(id))
 	if not unit.is_empty():
 		puppet.fallen = bool(unit.get("dead", false)) or bool(unit.get("lost", false))
-		puppet.scale = Vector2.ONE * (1.10 if id == battle.current_actor_id() else 1.0)
+		# The active hero keeps the same physical foot line as every other rank.
+		# Legality/hover now highlights authored pixels without lifting their feet.
+		puppet.scale = Vector2.ONE
 	else:
 		puppet.fallen = false
 		puppet.scale = Vector2.ONE
@@ -583,7 +690,7 @@ func _refresh() -> void:
 	if acting.is_empty():
 		_labels["stats"].text = "Outcome: " + battle.outcome().capitalize()
 	else:
-		_labels["stats"].text = "Rank %d  ·  %s\nHP %d / %d\nFray %d / 200\nSpeed %d   Dodge %d\nACC %+d   PROT %d%%\nResolve: %s" % [
+		_labels["stats"].text = "R%d · %s  HP %d/%d\nFray %d/200 · Speed %d\nDodge %d · ACC %+d\nPROT %d%% · %s" % [
 			int(acting["rank"]), str(acting["side"]).capitalize(), int(acting["hp"]), int(acting["max_hp"]),
 			int(acting["fray"]), int(acting["speed"]), int(acting["dodge"]), int(acting["acc"]),
 			int(acting["prot"]), str(acting.get("resolve", "none")) if not str(acting.get("resolve", "")).is_empty() else "steady"]
@@ -599,6 +706,10 @@ func _refresh() -> void:
 			_sync_puppet(key, unit)
 			var button: Button = _seat_buttons[key]
 			var heap := _heap_at(rank) if side == "foe" and unit.is_empty() else {}
+			var occupied := not unit.is_empty() or not heap.is_empty()
+			_foot_plates[key].visible = occupied
+			button.visible = occupied
+			_labels[key].visible = occupied
 			button.text = "R%d  %s" % [rank, str(unit.get("name", "Scrap heap" if not heap.is_empty() else "—"))]
 			button.tooltip_text = status_detail(side, rank)
 			var flags: Array[String] = []
@@ -641,8 +752,8 @@ func _refresh() -> void:
 				var side := "hero" if str(targets[0]["side"]) == "hero" else "foe"
 				if not StitchedTargetForecast.for_rank(battle, acting, ability, side, rank).is_empty():
 					_target_ranks[side + "_" + str(rank)] = true
-	for key in _seat_buttons:
-		_seat_buttons[key].disabled = not _target_ranks.has(key)
+	_refresh_figure_hits()
+	_update_figure_lights()
 	for key in _target_buttons:
 		_target_buttons[key].disabled = not _target_ranks.has(key)
 	_action_buttons["move_front"].disabled = not hero_turn or not _can_move(-1)
@@ -651,6 +762,8 @@ func _refresh() -> void:
 	_action_buttons["pass"].disabled = not hero_turn
 	_action_buttons["retreat"].disabled = not hero_turn or battle.is_boss_encounter()
 	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
+	_labels["log"].tooltip_text = _labels["log"].text
+	_present_status_disclosure()
 	_present_forecast()
 
 
@@ -660,8 +773,8 @@ func _build_part_disclosure() -> void:
 	_part_disclosure = NinePatchRect.new()
 	_part_disclosure.name = "WornPartDisclosure"
 	_part_disclosure.texture = load("res://assets/paper/ui/hud_name_plate.png") as Texture2D
-	_part_disclosure.position = Vector2(1036, 463)
-	_part_disclosure.size = Vector2(222, 130)
+	_part_disclosure.position = Vector2(1036, 562)
+	_part_disclosure.size = Vector2(222, 78)
 	_part_disclosure.patch_margin_left = 20
 	_part_disclosure.patch_margin_right = 20
 	_part_disclosure.patch_margin_top = 12
@@ -672,7 +785,7 @@ func _build_part_disclosure() -> void:
 	_part_disclosure_text = RichTextLabel.new()
 	_part_disclosure_text.name = "FullWornPart"
 	_part_disclosure_text.position = Vector2(9, 6)
-	_part_disclosure_text.size = Vector2(202, 118)
+	_part_disclosure_text.size = Vector2(202, 66)
 	_part_disclosure_text.add_theme_color_override("default_color", PAPER)
 	_part_disclosure_text.add_theme_font_size_override("normal_font_size", 12)
 	_part_disclosure_text.scroll_active = true
@@ -830,6 +943,8 @@ func _present_forecast() -> void:
 		var detail := _seat_detail_for(key)
 		var tip := str(forecast.get("tooltip", "")) if key == _inspected_seat else ""
 		_seat_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
+		if _figure_hits.has(key):
+			_figure_hits[key].tooltip_text = _seat_buttons[key].tooltip_text
 		if _target_buttons.has(key):
 			_target_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
 

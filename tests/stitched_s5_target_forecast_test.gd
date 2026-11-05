@@ -96,10 +96,12 @@ func _run() -> void:
 	_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
 		and stage._seat_buttons.size() == 8 and stage._target_buttons.size() == 8,
 		"non-vacuous authentic seeded 4v3 mounted screen with all rank buttons")
-	_check(stage._labels["preview"].size.x == 740 and stage._labels["preview"].position.y == 542
-		and stage._action_buttons["move_front"].position.y >= 594
+	_check(stage._labels["preview"].size.x == 749 and stage._labels["preview"].position.y == 613
+		and stage._labels["preview"].position.y + stage._labels["preview"].size.y
+			<= stage._action_buttons["move_front"].position.y
+		and stage._action_buttons["move_front"].position.y >= 642
 		and stage._turn_ribbon != null and stage._labels["log"] != null,
-		"1280x720 readout sits above existing movement and turn-order ribbon")
+		"1280x720 compact forecast remains above movement actions, with turn-order ribbon present")
 	var slot := _choose_foe_part(stage)
 	_check(not slot.is_empty(), "authentic acting hero has a real part covering two legal foe ranks")
 	if slot.is_empty():

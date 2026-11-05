@@ -4,6 +4,101 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
+const CIRCLE_BUILD_SCRIPT := """extends "res://scripts/app.gd"
+var fail_circle_build := false
+var circle_builds := 0
+func _build_stitched_sewing(panel: Control, quote: Dictionary,
+		mend_quote: Dictionary, upgrade_quote: Dictionary) -> bool:
+	circle_builds += 1
+	if fail_circle_build:
+		return false
+	return super._build_stitched_sewing(panel, quote, mend_quote, upgrade_quote)
+"""
+
+func _carry(app: Node) -> Dictionary:
+	return {"candle": app.stitched_roadblock_candle, "gold": app.stitched_preview_gold,
+		"scraps": app.stitched_preview_scraps, "satchel": app.stitched_preview_satchel.duplicate(true),
+		"gear": app._stitched_gear_overrides.duplicate(true),
+		"hp": app._stitched_hp_carry.duplicate(true),
+		"ranks": app._stitched_rank_carry.duplicate(true),
+		"fray": app._stitched_fray_carry.duplicate(true),
+		"party": app._stitched_party_picks.duplicate()}
+
+func _circle_case(candle: Variant, fail_build: bool = false, bad_service: bool = false) -> void:
+	var app: Node = load("res://scenes/app.tscn").instantiate()
+	var script := GDScript.new()
+	script.source_code = CIRCLE_BUILD_SCRIPT
+	_check(script.reload() == OK, "Circle mount-failure subclass compiles")
+	app.set_script(script)
+	app.fail_circle_build = fail_build
+	root.add_child(app)
+	await process_frame
+	var fresh := _carry(app)
+	_check(not app._open_stitched_sewing([], []) and _carry(app) == fresh,
+		"fresh/unwon direct Circle entry cannot open or spend")
+	var stage: StitchedBattleScreen = await _admit(app)
+	_check(_battle_input(stage, 92), "boundary witness first pays real Fight 100 -> 92")
+	var victory := _victory(stage)
+	_check(victory.get("outcome") == "victory" and victory.get("abilities", 0) > 0,
+		"Circle boundary witness earns an authentic legal victory")
+	if stage == null or victory.get("outcome") != "victory":
+		app.free()
+		return
+	var heroes: Array = stage.battle.get_heroes()
+	_check(heroes.size() == 4 and heroes.all(func(hero): return not hero.get("lost", false)),
+		"Circle boundary victory has four real survivors")
+	var live := _carry(app)
+	_check(not app._open_stitched_sewing(heroes, app.STITCHED_ROADBLOCK_FOES)
+		and _carry(app) == live, "even won combat cannot bypass its authenticated exit")
+	# Boundary fixtures affect only the entrance ledger, after real combat.
+	app.stitched_roadblock_candle = candle
+	if bad_service:
+		app.stitched_preview_satchel.append({"id": "invalid", "slot": "arms", "tier": 1, "torn": false})
+	seed(53201)
+	var expected_rng := randi()
+	seed(53201)
+	var stage_ref: WeakRef = weakref(stage)
+	await _exit(stage)
+	var valid := typeof(candle) == TYPE_INT and int(candle) >= 0 and int(candle) <= 100
+	var mounted := valid and not fail_build and not bad_service
+	var expected: Variant = maxi(0, int(candle) - 8) if mounted else candle
+	_check(typeof(app.stitched_roadblock_candle) == typeof(expected)
+		and app.stitched_roadblock_candle == expected
+		and is_instance_valid(app.stitched_sewing_panel) == mounted
+		and (app.stitched_sewing_visit != null) == mounted
+		and (app.stitched_sewing_mend_visit != null) == mounted
+		and (app.stitched_sewing_upgrade_visit != null) == mounted,
+		"valid entrance debits once; invalid ledger/service/build publishes nothing: %s" % str(candle))
+	_check(app.stitched_preview_gold == 10 and app.stitched_preview_scraps == 1
+		and app.stitched_preview_satchel.size() == (4 if bad_service else 3)
+		and app._stitched_party_picks == live["party"] and app._stitched_gear_overrides == live["gear"]
+		and randi() == expected_rng and _neutral(app),
+		"entrance preserves normal victory rewards, party, gear, wallets and global RNG")
+	_check(app.circle_builds == (1 if valid and not bad_service else 0),
+		"invalid ledgers/services fail before panel construction; failed build was actually exercised")
+	var settled := _carry(app)
+	app._stitched_fight_exit(stage_ref)
+	_check(not app._open_stitched_sewing(heroes, app.STITCHED_ROADBLOCK_FOES)
+		and _carry(app) == settled, "retired exit and direct replay cannot remount or double charge")
+	if mounted:
+		var panel: Control = app.stitched_sewing_panel
+		var panel_ref: WeakRef = weakref(panel)
+		var state: Dictionary = app.stitched_sewing_visit.read_state()
+		panel.get_node("SewingLeave").pressed.emit()
+		await process_frame
+		_check(app.stitched_sewing_panel == null and _carry(app)["candle"] == expected,
+			"Circle Leave keeps the charged boundary ledger")
+		var onward := _carry(app)
+		_check(not app._stitched_sewing_leave(state, panel_ref).get("ok")
+			and not app._open_stitched_sewing(heroes, app.STITCHED_ROADBLOCK_FOES)
+			and _carry(app) == onward, "stale Leave/direct entry preserves every onward ledger")
+		var next: StitchedBattleScreen = await _admit(app)
+		_check(_battle_input(next, maxi(0, int(expected) - 8))
+			and app.stitched_roadblock_candle == maxi(0, int(expected) - 8),
+			"following real Roadblock receives exactly charged Circle carry minus its own debit")
+	app.free()
+	await process_frame
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -239,9 +334,9 @@ func _trace() -> Dictionary:
 	var circle: Control = app.stitched_sewing_panel
 	_check(circle != null and circle.is_visible_in_tree() \
 		and app.stitched_sewing_visit != null and app.stitched_sewing_mend_visit != null \
-		and app.stitched_roadblock_candle == 84 and app.stitched_preview_scraps == 1 \
+		and app.stitched_roadblock_candle == 76 and app.stitched_preview_scraps == 1 \
 		and app.stitched_preview_satchel.size() == 3,
-		"authentic victory mounts real Circle and preserves charged candle")
+		"authentic victory mounts real Circle with its independent eight-candle debit")
 	if circle == null:
 		app.free()
 		await process_frame
@@ -251,14 +346,14 @@ func _trace() -> Dictionary:
 	if leave != null:
 		leave.pressed.emit()
 		await process_frame
-	_check(app.stitched_sewing_panel == null and app.stitched_roadblock_candle == 84 \
+	_check(app.stitched_sewing_panel == null and app.stitched_roadblock_candle == 76 \
 		and app.title_view.is_visible_in_tree() and _neutral(app),
-		"Circle Leave returns to same title with 84 candle and no run-wallet change")
+		"Circle Leave returns to same title with 76 candle and no run-wallet change")
 
 	var repeats: Array = []
 	var zero_snapshot: Dictionary = {}
 	var zero_rng := 0
-	# At 84, ten more entries reach 4, the next hits 0; further real
+	# At 76, nine more entries reach 4, the next hits 0; further real
 	# admissions stay at zero (not a direct private-state clamp fixture).
 	for index in range(13):
 		var before: int = app.stitched_roadblock_candle
@@ -308,6 +403,10 @@ func _trace() -> Dictionary:
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	for candle in [92, 100, 4, 0, -1, 101, 4.5, "4", true, null]:
+		await _circle_case(candle)
+	await _circle_case(92, true)
+	await _circle_case(92, false, true)
 	var first := await _trace()
 	var second := await _trace()
 	_check(not first.is_empty() and first == second,

@@ -33,7 +33,79 @@ func _rank_key(stage: StitchedBattleScreen) -> String:
 	return ""
 
 
-func _choose_legal(stage: StitchedBattleScreen) -> Dictionary:
+func _painted_bounds(puppet: Control) -> Rect2:
+	var local: Rect2 = puppet.posed_actor_rect()
+	return Rect2(puppet.global_position + local.position, local.size)
+
+
+func _figure_click(stage: StitchedBattleScreen, key: String) -> void:
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	stage._figure_hits[key].gui_input.emit(mouse)
+
+
+func _verify_stage_art(stage: StitchedBattleScreen) -> void:
+	var backdrop := stage.get_node_or_null("SharedStitchedBackdrop") as TextureRect
+	_check(backdrop != null and backdrop.texture != null and
+		backdrop.get_global_rect() == Rect2(0, 60, 1280, 500),
+		"public 1280x720 battle paints one full-width stage from y60 to y560")
+	var actual := 0
+	var first_foot := -1.0
+	var plate_texture: Texture2D = load("res://assets/paper/ui/panel_felt.png")
+	for side in ["hero", "foe"]:
+		for rank in range(1, 5):
+			var key: String = side + "_" + str(rank)
+			var puppet: Control = stage._puppets[key]
+			var hit: Control = stage._figure_hits[key]
+			var foot: NinePatchRect = stage._foot_plates[key]
+			var painted := _painted_bounds(puppet)
+			var unit := stage._unit_at(side, rank)
+			if unit.is_empty():
+				_check(not puppet.visible and not hit.visible and not foot.visible,
+					"empty %s R%d has no figure, mouse hotspot or ghost foot plate" % [side, rank])
+				continue
+			actual += 1
+			_check(puppet.visible and puppet.current_texture() != null
+				and painted.size.y >= 275.0 and painted.size.y <= 335.0
+				and painted.position.y >= 175.0 and painted.end.y <= 512.0
+				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
+				"%s R%d renders genuine authored painted figure near 300px, not a tiny seat sprite" % [side, rank])
+			var rest_foot: float = puppet.global_position.y + puppet.foot_line()
+			_check((first_foot < 0.0 or absf(first_foot - rest_foot) < 0.1)
+				and absf(rest_foot - painted.end.y) < 7.0,
+				"%s R%d actor art rests on the same fixed line, allowing authored idle breath" % [side, rank])
+			first_foot = rest_foot
+			_check(hit.visible and hit.focus_mode == Control.FOCUS_ALL
+				and hit.get_global_rect().position.distance_to(painted.position) < 6.0
+				and hit.size.distance_to(painted.size) < 6.0,
+				"%s R%d has keyboard/pointer target only across the painted-figure bounds" % [side, rank])
+			_check(foot.visible and foot.texture == plate_texture
+				and not foot.get_global_rect().intersects(painted)
+				and foot.position.y == 514.0
+				and stage._seat_buttons[key].clip_text
+				and stage._labels[key].clip_text,
+				"%s R%d dark compact underfoot plate clears art and bounds long labels" % [side, rank])
+			_check(puppet.facing == (1.0 if side == "hero" else -1.0),
+				"%s R%d faces the opposing line" % [side, rank])
+		for rank in range(1, 4):
+			var front: Control = stage._puppets[side + "_" + str(rank)]
+			var back: Control = stage._puppets[side + "_" + str(rank + 1)]
+			if not front.visible or not back.visible:
+				continue
+			var a := _painted_bounds(front)
+			var b := _painted_bounds(back)
+			_check((a.get_center().x > b.get_center().x if side == "hero" else a.get_center().x < b.get_center().x)
+				and a.intersects(b),
+				"%s ranks %d/%d stand in correct direction with deliberate same-side figure overlap" % [side, rank, rank + 1])
+	_check(actual == 7, "non-vacuous 4 hero + 3 foe authored figures painted on the real battle stage")
+	_check(stage._target_buttons.size() == 8 and stage._turn_ribbon != null
+		and stage._candle_meter != null and stage._action_buttons["pass"].position.y >= 640
+		and stage._labels["preview"].position.y >= 610,
+		"accessible rank controls, sewn order, candle, forecast and compact actions survive below stage")
+
+
+func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Dictionary:
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	if actor.is_empty() or stage.battle.current_side() != "hero":
 		return {}
@@ -45,8 +117,15 @@ func _choose_legal(stage: StitchedBattleScreen) -> Dictionary:
 			continue
 		var parts: Dictionary = actor["parts"]
 		var before := stage.receipts.size()
-		var receipt := stage.submit_target(key.split("_")[0], int(key.split("_")[1]))
-		_check(bool(receipt.get("ok", false)), "legal target commits an authored ability")
+		if through_figure:
+			_check(stage._figure_hits[key].visible, "real lit figure has an enabled click surface")
+			_figure_click(stage, key)
+		else:
+			_check(not stage._target_buttons[key].disabled, "keyboard rank button enables only real legal target")
+			stage._target_buttons[key].grab_focus()
+			stage._target_buttons[key].pressed.emit()
+		var receipt: Dictionary = stage.receipts[before] if stage.receipts.size() > before else {}
+		_check(bool(receipt.get("ok", false)), "legal figure or keyboard rank activation commits an authored ability")
 		_check(stage.receipts.size() > before and stage.receipts[before].get("actor") == actor["id"] and
 			stage.receipts[before].get("part") == parts[slot]["id"],
 			"part action delegates exactly once, with the real acting part and receipt")
@@ -106,9 +185,21 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		stage.receipts.size() == view_receipts,
 		"mouse hover inspection spends no turn, changes no snapshot and consumes no RNG")
 	stage._seat_buttons["foe_1"].mouse_exited.emit()
+	stage._figure_hits["foe_1"].mouse_entered.emit()
+	_check(stage._status_disclosure.visible and
+		stage._status_disclosure_label.text == stage.status_detail("foe", 1) and
+		stage._figure_hits["foe_1"].tooltip_text.contains("BLEED 3"),
+		"real figure hover offers complete sewn status disclosure, not only clipped plate text")
+	stage._figure_hits["foe_1"].mouse_exited.emit()
+	_check(not stage._status_disclosure.visible,
+		"figure exit dismisses the status disclosure without spending action/RNG")
 	_check(stage._labels["log"].text == ordinary_log,
 		"leaving hovered seat restores the prior ordinary action message")
 	# Keyboard focus over hero_1 seat (Guard 2, Stun Resist 1, Dodge +8 / 2 turns).
+	stage._figure_hits["hero_1"].grab_focus()
+	_check(stage._figure_hits["hero_1"].has_focus() and stage._status_disclosure.visible
+		and stage._status_disclosure_label.text == stage.status_detail("hero", 1),
+		"keyboard figure focus exposes the same full status as hovering the painted actor")
 	stage._seat_buttons["hero_1"].grab_focus()
 	var hero_1_detail := str(stage._labels["log"].text)
 	_check(stage._seat_buttons["hero_1"].has_focus() and
@@ -175,6 +266,8 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	# Empty rank (foe_4) and scrap heap never leak stale or phantom status text.
 	stage._seat_buttons["foe_4"].mouse_entered.emit()
 	var empty_detail := str(stage._labels["log"].text)
+	_check(not stage._figure_hits["foe_4"].visible and not stage._foot_plates["foe_4"].visible,
+		"vacant fourth foe rank has no misleading artwork, plate or active mouse hotspot")
 	_check(stage._labels["foe_4"].text == "EMPTY" and
 		empty_detail.contains("R4") and empty_detail.contains("EMPTY") and
 		empty_detail.contains("STATUS: none") and
@@ -189,6 +282,8 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var heap_rng := battle.rng_state()
 	stage._refresh()
 	var heap_detail := str(stage._labels["log"].text)
+	_check(not stage._figure_hits["foe_4"].visible and stage._foot_plates["foe_4"].visible,
+		"heap-only fourth rank has an underfoot scrap HP plate, but never a selectable figure")
 	_check(stage._labels["foe_4"].text == "SCRAP 9 HP" and
 		heap_detail.contains("R4") and heap_detail.contains("Scrap heap") and
 		heap_detail.contains("SCRAP 9 HP") and heap_detail.contains("STATUS: none") and
@@ -198,6 +293,12 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		stage.receipts.size() == view_receipts,
 		"inspecting empty and scrap-heap seats preserves snapshot, RNG and receipt count")
 	stage._seat_buttons["foe_4"].mouse_exited.emit()
+	var before_heap_click := battle.state_snapshot()
+	var heap_rng_before := battle.rng_state()
+	_figure_click(stage, "foe_4")
+	_check(before_heap_click == battle.state_snapshot() and heap_rng_before == battle.rng_state()
+		and stage.receipts.size() == view_receipts,
+		"heap-only rank-four figure activation is fail-closed and consumes no seeded RNG")
 	_check(stage._labels["log"].text == ordinary_log,
 		"exiting empty/heap rank seat restores the prior action message")
 	for unit_id in saved_units:
@@ -239,7 +340,8 @@ func _run() -> void:
 		var battle := stage.battle
 		_check(battle != null and battle.is_valid() and battle.get_heroes().size() == 4 and
 			battle.get_foes().size() == 3 and stage._puppets.size() == 8,
-			"mounted stage is seeded 4v3 with all 8 rank puppet seats")
+			"mounted stage is seeded 4v3 with 8 potential stage ranks")
+		_verify_stage_art(stage)
 		_check(stage._unit_at("foe", 4).is_empty() and
 			stage._seat_buttons.has("foe_4") and not stage._puppets["foe_4"].visible,
 			"fourth foe rank is empty, available only for a later summon")
@@ -281,6 +383,28 @@ func _run() -> void:
 				break
 		_check(selected and battle.state_snapshot() == pristine and battle.rng_state() == rng,
 			"part selection and repeated hover previews spend no turn or RNG")
+		var chosen_key := _rank_key(stage)
+		var selected_slot_before := stage._selected_part
+		var illegal_witness := 0
+		for key in stage._figure_hits:
+			if not stage._puppets[key].visible or stage.legal_targets().has(key):
+				continue
+			illegal_witness += 1
+			_check(stage._target_buttons[key].disabled and
+				stage._puppets[key].modulate == Color.WHITE,
+				"unlit occupied %s has no keyboard activation or amber art highlight" % key)
+			_figure_click(stage, key)
+		_check(illegal_witness > 0 and battle.state_snapshot() == pristine
+			and battle.rng_state() == rng and stage.receipts.is_empty(),
+			"illegal figure clicks cannot spend a turn, roll or create a receipt")
+		stage._selected_part = ""
+		stage._refresh()
+		_figure_click(stage, chosen_key)
+		_check(stage.legal_targets().is_empty() and battle.state_snapshot() == pristine
+			and battle.rng_state() == rng and stage.receipts.is_empty(),
+			"unselected formerly legal figure cannot commit or spend RNG")
+		_check(stage.select_part(selected_slot_before),
+			"reselecting a real worn part restores the authentic legal target mask")
 		_verify_status_readout(stage)
 		_check(battle.state_snapshot() == pristine and battle.rng_state() == rng,
 			"status readout fixture cleanup leaves pristine snapshot and RNG intact")
@@ -290,9 +414,13 @@ func _run() -> void:
 			var worn: Dictionary = battle._units[battle.current_actor_id()]["parts"][selected_slot]
 			worn["torn"] = true
 			var torn_snapshot := battle.state_snapshot()
+			stage._refresh()
+			_figure_click(stage, chosen_key)
 			_check(not stage.select_part(selected_slot) and
 				not bool(stage.submit_part(str(worn["id"]), 1).get("ok")) and
-				battle.state_snapshot() == torn_snapshot, "torn part cannot spend a turn or roll")
+				battle.state_snapshot() == torn_snapshot and battle.rng_state() == rng
+				and stage.receipts.is_empty(),
+				"torn worn part and stale figure hit cannot spend a turn or roll")
 			worn["torn"] = false
 			stage._refresh()
 		# Snipped thread blocks swaps; Re-tie is only enabled with an actual authoritative cut.
@@ -328,7 +456,8 @@ func _run() -> void:
 		_check(stage.reduced_motion and stage._puppets["hero_1"].is_processing() == false,
 			"reduced motion suppresses puppet idle/attack tweens without changing combat")
 		_check(stage.battle.current_side() == "hero", "foe AI returns control to heroes using legal authored abilities or Pass")
-		_check(not _choose_legal(stage).is_empty(), "real mounted part control resolves a legal action")
+		_check(not _choose_legal(stage, repetition == 0).is_empty(),
+			"real mounted part resolves through both figure click and keyboard rank activation")
 		var after := battle.state_snapshot()
 		_check(stage.receipts.size() > 1 and battle.rng_state() == int(after["rng_state"]),
 			"recorded action and foe responses have one seeded authoritative RNG state")
