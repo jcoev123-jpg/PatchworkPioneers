@@ -19,6 +19,7 @@ func _initialize() -> void:
 	var next_draw := randi()
 	seed(424242)
 	_test_quote_and_admission()
+	_test_effective_quote()
 	_test_purchase_and_leave()
 	_test_refusals_and_legacy_isolation()
 	_check(randi() == next_draw,
@@ -136,6 +137,72 @@ func _test_quote_and_admission() -> void:
 			"refused admission can neither buy nor leave: " + str(bad))
 	_check(_open(0, 0, 1).is_valid() and _open(CANDLE_MAX, 0, 1).is_valid(),
 		"boundary candles 0 and 100 with a zero wallet are legal openings")
+
+
+## AC1: the quote reports the CURRENT effective gain min(25, 100 - candle) while
+## the item's intrinsic restore stays 25, and offers Buy only for a positive
+## recovery the wallet can pay; otherwise only Leave while open.
+func _test_effective_quote() -> void:
+	var gains := {0: 25, 75: 25, 84: 16, 90: 10, 99: 1, 100: 0}
+	for candle in gains:
+		var expected: int = gains[candle]
+		# Exact price, above price and below price wallets.
+		for gold in [40, 41, 500, 39, 0]:
+			var visit := _open(candle, gold, 40)
+			var state := visit.read_state()
+			var quote := visit.quote()
+			var label := "candle %d gold %d" % [candle, gold]
+			_check(quote.get("ok") == true and quote.get("restore") == expected,
+				label + ": quote restore is the true current gain " + str(expected))
+			_check(state["item"]["restore"] == RESTORE
+				and state["item"]["id"] == ITEM and state["item"]["price"] == 40
+				and state["candle"] == candle and state["gold"] == gold
+				and state["status"] == "stitched_open",
+				label + ": read_state keeps the intrinsic restore 25 and exact state")
+			_check(quote.get("mode") == MODE and quote.get("node_id") == NODE
+				and quote.get("item") == ITEM and quote.get("price") == 40
+				and quote.get("candle") == candle and quote.get("gold") == gold,
+				label + ": quote metadata stays accurate")
+			var actionable: bool = expected > 0 and gold >= 40
+			if actionable:
+				_check(quote.get("choices") == ["buy_candle_stub", "leave"],
+					label + ": positive affordable recovery offers Buy and Leave")
+			else:
+				_check(quote.get("choices") == ["leave"],
+					label + ": full or unaffordable offers Leave only")
+			# The advertised list never outranks the authoritative service.
+			var before := visit.read_state()
+			var bought := _buy(visit, NODE, before)
+			_check(bought.get("ok") == actionable,
+				label + ": select_stitched agrees with the advertised Buy")
+			if actionable:
+				_check(bought.get("restored") == expected
+					and bought.get("charged_gold") == 40
+					and bought.get("candle") == mini(CANDLE_MAX, candle + RESTORE)
+					and bought.get("gold") == gold - 40,
+					label + ": purchase gains exactly the quoted effective restore")
+			else:
+				_check(visit.read_state() == before and visit.is_open(),
+					label + ": refused Buy leaves the open visit untouched")
+				var left := _leave(visit, NODE, visit.read_state())
+				_check(left.get("ok") == true and left.get("charged_gold") == 0
+					and left.get("candle") == candle and left.get("gold") == gold,
+					label + ": free Leave still succeeds after the refusal")
+	# Closed and invalid visits advertise no choices.
+	var used := _open(60, 100, 40)
+	_buy(used, NODE, used.read_state())
+	var used_quote := used.quote()
+	_check(used_quote.get("ok") == false and used_quote.get("choices") == [],
+		"a purchased visit quotes no choices")
+	var left_visit := _open(60, 100, 40)
+	_leave(left_visit, NODE, left_visit.read_state())
+	_check(left_visit.quote().get("ok") == false
+		and left_visit.quote().get("choices") == [],
+		"a Left visit quotes no choices")
+	var invalid := _open(60, 100, 0)
+	_check(invalid.quote().get("ok") == false
+		and invalid.quote().get("choices") == [],
+		"an invalid visit quotes no choices")
 
 
 ## AC2: one affordable buy pays exactly the quoted cost and restores

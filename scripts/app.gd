@@ -2951,9 +2951,13 @@ func _open_stitched_peddler() -> bool:
 			or candle_quote.get("ok") != true \
 			or candle_quote.get("node_id") != STITCHED_PEDDLER_NODE_ID \
 			or candle_quote.get("price") != STITCHED_PEDDLER_PRICE \
-			or candle_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
-			or candle_quote.get("choices", []) != [
-				RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]:
+			or candle_quote.get("restore") != mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
+				RunPeddlerVisit.CANDLE_MAX - stitched_roadblock_candle) \
+			or candle_quote.get("choices", []) != (
+				[RunPeddlerVisit.BUY_CANDLE_STUB, RunPeddlerVisit.STITCHED_LEAVE]
+				if int(candle_quote.get("restore", 0)) > 0
+				and stitched_preview_gold >= STITCHED_PEDDLER_PRICE
+				else [RunPeddlerVisit.STITCHED_LEAVE]):
 		return false
 	# The spare-stock authority is the same validated part catalog used by
 	# the real Roadblock and Sewing Circle, never a hand-built UI offer.
@@ -3262,7 +3266,8 @@ func _stitched_peddler_buy_candle(expected_bandage: Dictionary,
 			or expected_quote.get("candle") != stitched_roadblock_candle \
 			or expected_quote.get("gold") != stitched_preview_gold \
 			or expected_quote.get("price") != STITCHED_PEDDLER_PRICE \
-			or expected_quote.get("restore") != RunPeddlerVisit.CANDLE_STUB_RESTORE \
+			or expected_quote.get("restore") != mini(RunPeddlerVisit.CANDLE_STUB_RESTORE,
+				RunPeddlerVisit.CANDLE_MAX - stitched_roadblock_candle) \
 			or stitched_preview_gold < STITCHED_PEDDLER_PRICE \
 			or stitched_roadblock_candle >= RunPeddlerVisit.CANDLE_MAX:
 		return {"ok": false, "error": "unauthorized Peddler candle"}
