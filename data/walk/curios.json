@@ -1,0 +1,9 @@
+{
+  "curios": [
+    {"id":"pin_nest","name":"Pincushion","kind":"pincushion"},
+    {"id":"borrowed_shape","name":"Tailor's Dummy","kind":"dummy"},
+    {"id":"biting_bundle","name":"Ragbag","kind":"ragbag"},
+    {"id":"pattern_scraps","name":"Wall Patterns","kind":"patterns"},
+    {"id":"sewn_threshold","name":"Stitched-shut Door","kind":"door"}
+  ]
+}

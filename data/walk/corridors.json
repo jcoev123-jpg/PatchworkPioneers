@@ -1,0 +1,10 @@
+{
+  "corridors": [
+    {"id":"wall_lath_passage","name":"Between the Laths","area":"walls","steps":3,"curios":["pin_nest","pattern_scraps"]},
+    {"id":"wall_paper_fold","name":"The Paper Fold","area":"walls","steps":6,"curios":["borrowed_shape","sewn_threshold"]},
+    {"id":"floor_dust_channel","name":"Dust Channel","area":"floorboards","steps":4,"curios":["biting_bundle","pattern_scraps"]},
+    {"id":"floor_nail_bridge","name":"Nail Bridge","area":"floorboards","steps":5,"curios":["pin_nest","sewn_threshold"]},
+    {"id":"basket_wicker_tunnel","name":"Wicker Tunnel","area":"sewing_basket","steps":3,"curios":["pin_nest","biting_bundle"]},
+    {"id":"basket_ribbon_descent","name":"Ribbon Descent","area":"sewing_basket","steps":6,"curios":["borrowed_shape","pattern_scraps"]}
+  ]
+}
