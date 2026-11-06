@@ -360,4 +360,23 @@ const SEEDS := [
 	650850, # v3_tinker_spring_marionette (outside the bounded fallback)
 	858077, # v3_warden_pincushion_gate (outside the bounded fallback)
 	1082807, # v3_raincoat_bridge (outside the bounded fallback)
+	# Genuine map/toll/rotation witnesses after the bed-spring, album and pencil
+	# roadside append shifted the sorted pool. Keep the no-fallback gate and
+	# every earlier seed; the mounted regression revalidates these candidates.
+	162779, # v3_warden_black_umbrella_gate
+	395526, # v3_warden_copper_chain_ferry
+	453946, # v3_warden_shield_menders
+	701552, # v3_coil_and_crow (outside the bounded fallback)
+	# Strict six-Event/Treasure map/toll witness, revalidated by run_full_run.
+	5050790, # fate_pin_auction after the same roadside pool append
+	117765, # v3_ember_needle_smithy
+	208748, # lantern_moth_clearing
+	235373, # v3_gloamveil_laundry
+	257067, # v3_mirror_of_missing_stitches
+	285641, # v3_tinker_brass_moth_clinic
+	292275, # v3_rosequilt_bridgekeeper
+	426863, # v3_frosted_pincushion
+	696883, # v3_puppet_box_office (outside the bounded fallback)
+	889642, # v3_seamstress_thread_cart (outside the bounded fallback)
+	520082, # v3_tinker_thunder_spool_dock (outside the bounded fallback)
 ]
