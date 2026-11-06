@@ -1441,6 +1441,72 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_underbed_glass_eye",
+      "title": "The Underbed Glass Eye",
+      "description": "A loose glass eye the size of a soup bowl stares out from under a towering bedstead, wrapped in a child's midnight-blue sock; its amber reflection tightens the dolls' visible stitches.",
+      "choices": [
+        {
+          "id": "polish_eye_socket",
+          "text": "Spend 2 scraps polishing the staring eye (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "pry_reflection",
+          "text": "Pry up its mirrored eyelid (lose 5 HP; gain 21 gold)",
+          "outcome": { "gold": 21, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Tuck the glass eye back beneath the bed",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_rainboot_thread_hatch",
+      "title": "The Rainboot Thread Hatch",
+      "description": "A colossal moss-green rain boot hangs above a floorboard crack, its oxblood laces sewn into a tiny hatch and a warm button lantern glowing far inside the heel.",
+      "choices": [
+        {
+          "id": "pack_dry_heel",
+          "text": "Pay 13 gold for dry heel stuffing (heal 9 HP)",
+          "outcome": { "gold": -13, "scraps": 0, "hp": 9, "max_hp": 0 }
+        },
+        {
+          "id": "wrench_boot_nail",
+          "text": "Wrench out the crooked boot nail (lose 4 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the great boot sway above the crack",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_lullaby_brass_keyhole",
+      "title": "The Lullaby Brass Keyhole",
+      "description": "A bedroom door rises like a cliff, its huge singing brass keyhole rocking a plush crescent moon while a single oxblood ribbon unspools through the lock.",
+      "choices": [
+        {
+          "id": "hush_keyhole_song",
+          "text": "Pay 17 gold and 1 scrap to hush the lock (heal 5 HP; gain 1 max HP)",
+          "outcome": { "gold": -17, "scraps": -1, "hp": 5, "max_hp": 1 }
+        },
+        {
+          "id": "trade_heart_thread",
+          "text": "Trade 2 max HP of heart thread for a gilded key (gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little cloth moon singing",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
