@@ -38,6 +38,14 @@ const REQUIRED_ABILITY_FIELDS := [
 const MIN_RANK := 1
 const MAX_RANK := 4
 
+## Pincushion Hedgehog's trophy drop: a torso Quill Mail any hero may wear.
+const QUILL_MAIL_PART_ID := "pincushion_hedgehog_quill_mail"
+const QUILL_MAIL_ENEMY_ID := "pincushion_hedgehog"
+const QUILL_MAIL_ABILITY_ID := "quill_mail"
+const QUILL_MAIL_PROT := [4, 5, 6]
+const QUILL_MAIL_THORNS := [3, 4, 5]
+const ALL_RANKS := [1, 2, 3, 4]
+
 ## The three parts this slice asks for, keyed by part id (never a catalog total).
 const EXPECTED_PARTS := {
 	"scissor_crab_claw_arm": {
@@ -79,6 +87,7 @@ func _initialize() -> void:
 		_test_ac2_ranks_and_behaviour(by_id)
 		_test_ac3_tiers(by_id)
 		_test_lint_gland_all_enemy_ranks()
+		_test_quill_mail_middle_rank_launch(roster)
 	if _failures.is_empty():
 		print("stitched_enemy_parts_catalog_test: PASS (", _checks, " checks)")
 	else:
@@ -705,6 +714,108 @@ func _test_lint_gland_all_enemy_ranks() -> void:
 			"%s: effects are exactly Exposed %d" % [label, exposed])
 		_check(_int_dict(stat) == {"acc": 2 + tier},
 			"%s: head stat is ACC %d" % [label, 2 + tier])
+
+
+# ---------------------------------------------------------------- Pincushion Hedgehog Quill Mail
+
+## Quill Mail is the Pincushion Hedgehog's authored trophy. It stays an owner-any torso buff that
+## stitches Thorns onto one ally in ranks 1-4, and the wearer may now cast it from every hero
+## rank 1-4 (the earlier text [1, 4] was read wrongly as the whole range). The part comes from
+## the same real StitchedParts catalog the battle wiring consumes, and every stitch tier is
+## checked; StitchedRules.use_part() gates live casts on exactly this derived launch_mask.
+func _test_quill_mail_middle_rank_launch(roster: Dictionary) -> void:
+	var catalog := StitchedParts.load_catalog(PARTS_PATH)
+	_check(bool(catalog.get("ok", false)),
+		"Quill Mail AC1: the real StitchedParts catalog loads: " + str(catalog.get("error", "")))
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	_check(by_id.has(QUILL_MAIL_PART_ID),
+		"Quill Mail AC1: the real catalog contains " + QUILL_MAIL_PART_ID)
+	if not by_id.has(QUILL_MAIL_PART_ID):
+		return
+	var part: Dictionary = by_id[QUILL_MAIL_PART_ID]
+	_check(str(part.get("id", "")) == QUILL_MAIL_PART_ID,
+		"Quill Mail AC1: the named part keeps its id")
+	_check(str(part.get("name", "")) == "Quill Mail",
+		"Quill Mail AC1: the part is named Quill Mail")
+	_check(str(part.get("owner", "")) == "any",
+		"Quill Mail AC1: the Quill Mail is owner any, so any hero can wear it")
+	_check(str(part.get("slot", "")) == "torso",
+		"Quill Mail AC1: the Quill Mail fills the torso slot")
+	_check(str(_ability_of(part).get("id", "")) == QUILL_MAIL_ABILITY_ID,
+		"Quill Mail AC1: the part grants the ability " + QUILL_MAIL_ABILITY_ID)
+	_check(str(part.get("text", "")) == "Stitch a coat of quills onto an ally: Thorns 3.",
+		"Quill Mail AC1: the rules text still promises ally Thorns")
+
+	_check(roster.has(QUILL_MAIL_ENEMY_ID),
+		"Quill Mail AC1: the enemy roster still lists " + QUILL_MAIL_ENEMY_ID)
+	var enemy: Dictionary = roster.get(QUILL_MAIL_ENEMY_ID, {})
+	var stitched: Variant = enemy.get("stitched")
+	_check(stitched is Dictionary,
+		"Quill Mail AC1: " + QUILL_MAIL_ENEMY_ID + " keeps its Stitched block")
+	var trophy := ""
+	if stitched is Dictionary:
+		trophy = str(stitched.get("trophy", ""))
+	_check(trophy == QUILL_MAIL_PART_ID,
+		"Quill Mail AC1: the Pincushion Hedgehog trophy still points at " + QUILL_MAIL_PART_ID)
+
+	for tier in [1, 2, 3]:
+		var label := "Quill Mail tier " + str(tier)
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var stat := StitchedParts.stat_at_tier(part, tier)
+		_check(not ability.is_empty(), label + ": resolves an ability")
+		if ability.is_empty():
+			continue
+		_check(str(ability.get("id", "")) == QUILL_MAIL_ABILITY_ID,
+			label + ": ability id stays " + QUILL_MAIL_ABILITY_ID)
+		_check(str(ability.get("kind", "")) == "buff", label + ": Quill Mail stays a buff")
+		_check(str(ability.get("target_side", "")) == "ally",
+			label + ": Quill Mail still targets allies, never foes")
+		_check(typeof(ability.get("multi")) == TYPE_BOOL and not bool(ability["multi"]),
+			label + ": Quill Mail stays single-target")
+
+		# AC2: the wearer may cast from any hero rank. use_part() reads launch_mask directly.
+		var launch := _int_list(ability.get("launch", []))
+		_check(launch == ALL_RANKS, label + ": launch is exactly ranks 1-4")
+		var launch_mask := int(ability.get("launch_mask", 0))
+		_check(launch_mask == StitchedParts.rank_mask(ALL_RANKS),
+			label + ": the launch mask marks ranks 1-4")
+		for rank in ALL_RANKS:
+			_check(StitchedParts.ranks_allowed(launch_mask, rank),
+				label + ": the wearer may cast from rank " + str(rank))
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(launch_mask, rank),
+				label + ": rank " + str(rank) + " is never a legal launch rank")
+
+		# A valid ally in any rank 1-4 remains targetable; nothing outside does.
+		var target := _int_list(ability.get("target", []))
+		_check(target == ALL_RANKS, label + ": target is exactly ally ranks 1-4")
+		var target_mask := int(ability.get("target_mask", 0))
+		_check(target_mask == StitchedParts.rank_mask(ALL_RANKS),
+			label + ": the target mask marks ally ranks 1-4")
+		for rank in ALL_RANKS:
+			_check(StitchedParts.ranks_allowed(target_mask, rank),
+				label + ": an ally in rank " + str(rank) + " may be targeted")
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(target_mask, rank),
+				label + ": rank " + str(rank) + " is never a legal target")
+
+		# AC3: the non-movement, zero-damage fields and tiered Thorns/PROT are unchanged.
+		_check(_int_list(ability.get("dmg", [])) == [0, 0],
+			label + ": Quill Mail deals no direct damage")
+		_check(int(ability.get("acc", -1)) == 100, label + ": Quill Mail keeps ACC 100")
+		_check(int(ability.get("crit", -1)) == 0, label + ": Quill Mail keeps crit 0")
+		_check(int(ability.get("self_move", -1)) == 0,
+			label + ": Quill Mail never moves the wearer")
+		_check(str(ability.get("move", "")) == "skill", label + ": Quill Mail keeps the skill pose")
+		var effects := _int_dict(ability.get("effects", {}))
+		var thorns := int(QUILL_MAIL_THORNS[int(tier) - 1])
+		_check(JSON.stringify(effects) == JSON.stringify({"thorns": thorns}),
+			"%s: effects are exactly Thorns %d" % [label, thorns])
+		var prot := int(QUILL_MAIL_PROT[int(tier) - 1])
+		_check(_int_dict(stat) == {"prot": prot},
+			"%s: torso stat is PROT %d" % [label, prot])
 
 
 # ---------------------------------------------------------------- record helpers
