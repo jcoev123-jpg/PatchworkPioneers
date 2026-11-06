@@ -145,6 +145,9 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 			for key in keys:
 				effect_labels.append("%s %+d" % [str(key), int(effects[key])])
 			base_detail += " · BASE EFFECTS " + (", ".join(effect_labels) if not effect_labels.is_empty() else "none")
+			var mark_damage := int(intent.get("base_mark_damage", 0))
+			if mark_damage > 0:
+				base_detail += " · BONUS VS MARK +%d" % mark_damage
 			# The rank list always wins over an optional damage cue. No clipped
 			# numbers, and a zero-direct-damage buff is never labelled a hit.
 			if high > 0:

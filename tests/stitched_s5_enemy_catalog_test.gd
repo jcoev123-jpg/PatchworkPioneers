@@ -47,6 +47,9 @@ func _run() -> void:
 	_test_fail_closed(catalog)
 	_test_seeded_fights(catalog)
 	_test_invalid_inputs(catalog)
+	_test_spool_kit(catalog)
+	var spool_seed := _test_spool_combat(catalog)
+	await _test_spool_live_intents(catalog, spool_seed)
 	await _test_live_admission(catalog)
 	_finish()
 
@@ -555,6 +558,307 @@ func _test_invalid_inputs(catalog: Dictionary) -> void:
 		"AC2: unknown abilities and illegal target ranks are refused")
 	_check(before_state == battle.state_snapshot() and before_snapshot_rng == battle.rng_state(),
 		"AC2: refused foe actions change neither state nor seeded RNG")
+
+
+# ---------------------------------------------------------------- Spool Hexer's authored mark hunt
+
+func _test_spool_kit(catalog: Dictionary) -> void:
+	var foe := StitchedEnemyCatalog.foe_for(catalog, "spool_hexer")
+	_check(not foe.is_empty(), "Hexer AC1: exact canonical id resolves")
+	if foe.is_empty():
+		return
+	_check(foe["name"] == "Spool Hexer" and foe["max_hp"] == 24
+		and foe["speed"] == 6 and foe["dodge"] == 7 and foe["acc"] == 0
+		and foe["prot"] == 2 and not foe["is_boss"] and foe["turns_per_round"] == 1
+		and StitchedEnemyCatalog.trophy_for(catalog, "spool_hexer") == "spool_hexer_spool",
+		"Hexer AC1: existing stats, one turn and named trophy stay intact")
+	var expected := [
+		{"id": "hex_bolt", "name": "Hex Bolt", "kind": "ranged", "launch": [1, 4],
+			"target": [1, 3], "target_side": "enemy", "multi": false, "acc": 88,
+			"dmg": [4, 5], "crit": 0, "mark_damage": 3, "effects": {"weak": 1},
+			"self_move": 0, "move": "attack2"},
+		{"id": "spool_curse", "name": "Spool Curse", "kind": "debuff", "launch": [1, 4],
+			"target": [1, 2, 3, 4], "target_side": "enemy", "multi": false, "acc": 90,
+			"dmg": [0, 0], "crit": 0, "effects": {"exposed": 2},
+			"self_move": 0, "move": "skill"},
+		{"id": "thread_tag", "name": "Thread Tag", "kind": "debuff", "launch": [1, 2, 3, 4],
+			"target": [1, 2, 3], "target_side": "enemy", "multi": false, "acc": 90,
+			"dmg": [0, 0], "crit": 0, "effects": {"mark": 3},
+			"self_move": 0, "move": "skill"},
+	]
+	_check(foe["abilities"].size() == 3, "Hexer AC1: exactly one third move appended")
+	for index in range(mini(3, foe["abilities"].size())):
+		var normalized := StitchedParts.validate_ability(expected[index])
+		_check(normalized.get("ok", false) and foe["abilities"][index] == normalized["ability"],
+			"Hexer AC1: exact independent ability contract at index %d" % index)
+		var ability: Dictionary = foe["abilities"][index]
+		for rank in range(1, 5):
+			_check(StitchedParts.ranks_allowed(ability["launch_mask"], rank) == expected[index]["launch"].has(rank)
+				and StitchedParts.ranks_allowed(ability["target_mask"], rank) == expected[index]["target"].has(rank),
+				"Hexer AC1: exact launch/target masks at move %d rank %d" % [index, rank])
+	var raw := _record(_documents(catalog), "spool_hexer")
+	_check(raw.get("max_hp") == 24 and raw.get("name") == "Spool Hexer"
+		and raw.get("art_path") == "res://assets/paper/enemies/spool_hexer.png",
+		"Hexer AC1: legacy HP/name/art remain exact")
+	var legacy_actions := [
+			{"type": "attack", "amount": 9, "weight": 1},
+			{"type": "attack", "amount": 8, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 10, "move": "attack3", "weight": 1},
+			{"type": "debuff", "amount": 1, "status": "exposed", "weight": 1},
+			{"type": "debuff", "amount": 1, "status": "weak", "weight": 1}]
+	var legacy: Dictionary = raw.get("intent", {})
+	_check(legacy.get("target") == "random" and legacy.get("actions", []).size() == legacy_actions.size(),
+		"Hexer AC1: legacy intent target and action count remain exact")
+	for index in range(mini(legacy.get("actions", []).size(), legacy_actions.size())):
+		var action: Dictionary = legacy["actions"][index]
+		_check(action.size() == legacy_actions[index].size(), "Hexer AC1: legacy action fields unchanged")
+		for key in legacy_actions[index]:
+			_check(action.get(key) == legacy_actions[index][key], "Hexer AC1: legacy action value unchanged: " + key)
+	# Adjacent elites retain independent stat, action-order and trophy contracts.
+	for neighbor in [
+		["needle_marshal", 28, 5, 6, 6, "needle_marshal_sash", ["marshal_prick", "marshal_volley", "iron_discipline"]],
+		["scissor_bailiff", 36, 4, 5, 8, "scissor_bailiff_shears", ["bailiff_snip", "seize_thread"]]]:
+		var adjacent := StitchedEnemyCatalog.foe_for(catalog, neighbor[0])
+		var ids: Array = []
+		for ability in adjacent.get("abilities", []):
+			ids.append(ability["id"])
+			_check(ability["mark_damage"] == 0, "Hexer AC1: no mark bonus leaks to " + str(neighbor[0]))
+		_check(adjacent.get("max_hp") == neighbor[1] and adjacent.get("speed") == neighbor[2]
+			and adjacent.get("dodge") == neighbor[3] and adjacent.get("prot") == neighbor[4]
+			and StitchedEnemyCatalog.trophy_for(catalog, neighbor[0]) == neighbor[5] and ids == neighbor[6],
+			"Hexer AC1: unchanged neighbor profile " + str(neighbor[0]))
+
+
+func _test_spool_combat(catalog: Dictionary) -> int:
+	var live_seed := -1
+	var witnesses := {"tag_hit": 0, "tag_miss": 0, "marked_hit": 0, "marked_miss": 0,
+		"unmarked_hit": 0, "expired_hit": 0, "expired": 0, "protected": 0, "ticked_hit": 0}
+	# Bounded independent seeds guarantee both accuracy outcomes without touching RNG.
+	for seed_value in range(1, 33):
+		var config := _config(catalog, ["spool_hexer", "needle_briar_guard", "scissor_bailiff"], seed_value)
+		# A second deterministic control cohort exercises real protection, not a UI forecast.
+		if seed_value > 16:
+			config["heroes"][0]["prot"] = 40
+		var created := StitchedRules.create(config)
+		_check(created.get("ok", false), "Hexer AC2: seeded preview 4v3 fixture builds")
+		if not created.get("ok", false):
+			continue
+		var battle: StitchedRules = created["battle"]
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3,
+			"Hexer AC2: living 4v3 preconditions")
+		var tagged := false
+		var ticks := 0
+		var cycle: Array = []
+		for step in range(64):
+			if battle.is_over() or battle.round_number() > 7:
+				break
+			var actor := battle.get_unit(battle.current_actor_id())
+			if battle.current_side() == "hero":
+				if actor["id"] == "warden" and tagged:
+					ticks += 1
+					_check(int(actor["statuses"].get("mark", 0)) == maxi(0, 3 - ticks),
+						"Hexer AC2: Mark counts down only on the affected hero's real turns")
+					if ticks == 3:
+						witnesses["expired"] += 1
+				battle.pass_turn()
+				continue
+			var intent := StitchedFoeIntent.choose(battle, actor)
+			if intent.get("pass", true):
+				battle.pass_turn()
+				continue
+			var rank := int(intent["target_rank"])
+			var round_value := battle.round_number()
+			# The second legal tag goes to another hero, leaving a naturally expired control.
+			if actor["id"] == "spool_hexer" and round_value == 6:
+				rank = 2
+			var targets := battle._legal_targets(actor, actor["abilities"][
+				(round_value - 1) % actor["abilities"].size()], rank) if actor["id"] == "spool_hexer" else []
+			var before: Dictionary = targets[0].duplicate(true) if not targets.is_empty() else {}
+			var receipt := battle.use_foe_ability(intent["ability_id"], rank)
+			_check(receipt.get("ok", false), "Hexer AC2: next legal action commits through StitchedRules")
+			if actor["id"] != "spool_hexer":
+				continue
+			_check(not before.is_empty() and receipt.get("results", []).size() == 1,
+				"Hexer AC2: real single hero target and receipt exist")
+			if before.is_empty() or receipt.get("results", []).size() != 1:
+				continue
+			var hit: Dictionary = receipt["results"][0]
+			cycle.append(receipt["ability"])
+			if receipt["ability"] == "thread_tag":
+				_check(hit.has("roll") and hit["hit_chance"] == StitchedRules.hit_chance(
+					90 + int(actor["acc"]) + int(battle.candle_band()["enemy_acc"]),
+					battle.effective_dodge(before), actor["miss_streak"])
+					and hit["hit"] == (hit["roll"] <= hit["hit_chance"])
+					and hit["damage"] == 0 and hit["target_hp"] == before["hp"] and not hit["crit"],
+					"Hexer AC2: zero-damage tag has a normal 90-ACC hit/miss receipt")
+				_check(hit["statuses"] == ([{"status": "mark", "duration": 3}] if hit["hit"] else []),
+					"Hexer AC2: only a confirmed tag hit applies Mark 3")
+				if round_value == 3:
+					tagged = hit["hit"]
+					witnesses["tag_hit" if tagged else "tag_miss"] += 1
+					var remaining := 3 - int(battle.current_actor_id() == "warden") if tagged else 0
+					_check(int(battle.get_unit("warden")["statuses"].get("mark", 0)) == remaining,
+						"Hexer AC2: tag updates actual hero state, accounting for next turn entry")
+			elif receipt["ability"] == "hex_bolt":
+				var marked := int(before["statuses"].get("mark", 0)) > 0
+				if round_value == 4 and tagged:
+					_check(marked, "Hexer AC2: fourth-round follow-up still finds active Mark")
+				if not hit["hit"]:
+					_check(hit["damage"] == 0 and hit["statuses"].is_empty() and hit["target_hp"] == before["hp"],
+						"Hexer AC2: missed Hex Bolt has neither damage nor bonus nor Weak")
+					if marked:
+						witnesses["marked_miss"] += 1
+					continue
+				var bases := [StitchedRules.crit_damage(5)] if hit["crit"] else [4, 5]
+				var damages: Array = []
+				for base in bases:
+					damages.append(StitchedRules.damage_after_modifiers(base, actor["statuses"],
+						before["statuses"], marked, 3, before["prot"]))
+				_check(damages.has(hit["damage"]) and hit["target_hp"] == maxi(0, int(before["hp"]) - int(hit["damage"])),
+					"Hexer AC2: real Hex Bolt damage uses authored +3 only while marked before modifiers/PROT")
+				witnesses["marked_hit" if marked else "unmarked_hit"] += 1
+				if marked and ticks >= 1:
+					witnesses["ticked_hit"] += 1
+					if round_value == 4 and seed_value <= 16 and live_seed < 0:
+						live_seed = seed_value
+				if marked and before["prot"] >= 40:
+					witnesses["protected"] += 1
+				if round_value == 7 and tagged:
+					_check(not marked and ticks >= 3, "Hexer AC2: expired Mark gives no later Hex Bolt bonus")
+					witnesses["expired_hit"] += 1
+		_check(cycle.slice(0, 4) == ["hex_bolt", "spool_curse", "thread_tag", "hex_bolt"],
+			"Hexer AC2: natural round order preserves the original moves then tag/follow-up")
+	for key in witnesses:
+		_check(witnesses[key] > 0, "Hexer AC2: non-vacuous deterministic witness: " + key)
+	_check(StitchedRules.damage_after_modifiers(5, {"weak": 1}, {"exposed": 1}, true, 3, 40) == 6
+		and StitchedRules.damage_after_modifiers(5, {"weak": 1}, {"exposed": 1}, false, 3, 40) == 3,
+		"Hexer AC2: +3 precedes combined Weak/Exposed and protection in the rules formula")
+	_check(live_seed > 0, "Hexer AC2: deterministic unmodified preview seed confirms tag and follow-up hits after ticking")
+	return live_seed
+
+
+func _test_spool_live_intents(catalog: Dictionary, seed_value: int) -> void:
+	var stage := StitchedBattleScreen.new()
+	_check(stage.begin(_config(catalog, ["spool_hexer", "needle_briar_guard", "scissor_bailiff"], seed_value)),
+		"Hexer AC3: actual live stage admits canonical elite 4v3")
+	if stage.battle == null:
+		stage.free()
+		return
+	root.add_child(stage)
+	await process_frame
+	var battle := stage.battle
+	var seen: Dictionary = {}
+	for step in range(40):
+		if battle.is_over() or battle.round_number() > 4:
+			break
+		stage._refresh()
+		var intent := StitchedFoeIntent.choose(battle, battle.get_unit("spool_hexer"))
+		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[1]
+		_check(ticket.visible and stage._foe_intents[1] == intent and ticket.focus_mode == Control.FOCUS_ALL,
+			"Hexer AC3: mounted focusable plate displays actual legal choice")
+		var ability := str(intent.get("ability_id", ""))
+		seen[ability] = true
+		_check(intent.get("base_mark_damage", -1) == (3 if ability == "hex_bolt" else 0)
+			and ticket.tooltip_text.contains("BONUS VS MARK +3") == (ability == "hex_bolt")
+			and not ticket.secondary.text.contains("MARK"),
+			"Hexer AC3: only Hex Bolt conditionally discloses bonus, separate from rank/base caption")
+		if ability == "thread_tag":
+			_check(intent["base_damage"] == [0, 0] and intent["base_effects"] == {"mark": 3}
+				and intent["base_acc"] == 90 and intent["target_rank"] == 1 and intent["target_side"] == "hero"
+				and ticket.glyph.texture == StitchedFoeIntentPlate.DEBUFF_TEXTURE,
+				"Hexer AC3: legal Thread Tag truthfully announces zero damage, Mark 3 and hero rank")
+			var units_before := battle._units.duplicate(true)
+			for target_rank in [2, 3]:
+				for hero in battle.get_heroes():
+					if int(hero["rank"]) < target_rank:
+						hero["lost"] = true
+				var before := battle.state_snapshot()
+				var legal := StitchedFoeIntent.choose(battle, battle.get_unit("spool_hexer"))
+				_check(legal.get("ability_id") == "thread_tag" and legal.get("target_rank") == target_rank
+					and legal.get("affected_ranks") == [target_rank] and before == battle.state_snapshot(),
+					"Hexer AC3: read-only next-legal tag targets hero rank %d" % target_rank)
+			battle._units = units_before
+		elif ability == "hex_bolt":
+			_check(intent["base_damage"] == [4, 5] and intent["base_effects"] == {"weak": 1}
+				and intent["base_acc"] == 88 and ticket.glyph.texture == StitchedFoeIntentPlate.ATTACK_TEXTURE
+				and ticket.tooltip_text.contains("BASE DMG 4–5") and ticket.tooltip_text.contains("weak +1"),
+				"Hexer AC3: Hex Bolt base damage/Weak remain separate from conditional bonus")
+		var snapshot := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var receipts := stage.receipts.duplicate(true)
+		for repeat in range(3):
+			stage._refresh_foe_intents()
+			ticket.grab_focus()
+			ticket.mouse_entered.emit()
+			_check(stage._intent_disclosure.visible and stage._intent_disclosure_label.text == ticket.tooltip_text,
+				"Hexer AC3: real hover/keyboard disclosure carries complete conditional text")
+		_check(stage._intent_disclosure_label.get_line_count() <= stage._intent_disclosure_label.get_visible_line_count()
+			and snapshot == battle.state_snapshot() and rng == battle.rng_state() and receipts == stage.receipts,
+			"Hexer AC3: repeated mounted projection fits 1280x720 and preserves actors/ranks/round/RNG/receipts")
+		# Drive the actual player Pass path and automatic foe driver.
+		_check(battle.current_side() == "hero", "Hexer AC3: player has a real turn before Pass")
+		stage._action_buttons["pass"].pressed.emit()
+	_check(seen.has("hex_bolt") and seen.has("spool_curse") and seen.has("thread_tag"),
+		"Hexer AC3: live intent test witnesses every authored move")
+	var live_cycle: Array = []
+	var live_tag_hit := false
+	var live_followup_hit := false
+	for receipt in stage.receipts:
+		if receipt.get("actor") == "spool_hexer":
+			live_cycle.append(receipt.get("ability"))
+			if live_cycle.size() == 3 and receipt.get("results", []).size() == 1:
+				live_tag_hit = receipt["results"][0].get("hit", false)
+			if live_cycle.size() == 4 and receipt.get("results", []).size() == 1:
+				live_followup_hit = receipt["results"][0].get("hit", false)
+	_check(live_cycle.slice(0, 4) == ["hex_bolt", "spool_curse", "thread_tag", "hex_bolt"],
+		"Hexer AC2/AC3: actual mounted foe driver executes all four natural-round actions")
+	_check(live_tag_hit and live_followup_hit,
+		"Hexer AC2/AC3: live driver seed confirms tag and marked follow-up hit witnesses")
+	# Adversarial projections change preconditions only; preview itself stays read-only.
+	var units := battle._units.duplicate(true)
+	for state in ["stun", "illegal", "empty_targets", "lost", "dead"]:
+		battle._units = units.duplicate(true)
+		var actor: Dictionary = battle._units["spool_hexer"]
+		if state == "stun":
+			actor["statuses"]["stun"] = 1
+		elif state == "illegal":
+			actor["rank"] = 5
+		elif state == "empty_targets":
+			for hero in battle.get_heroes():
+				hero["lost"] = true
+		else:
+			actor[state] = true
+		var snapshot := battle.state_snapshot()
+		var receipts := stage.receipts.duplicate(true)
+		var intent := StitchedFoeIntent.choose(battle, actor)
+		stage._foe_tickets[1].present_intent(intent, 1)
+		_check(not intent.has("base_mark_damage") and not stage._foe_tickets[1].tooltip_text.contains("BONUS")
+			and snapshot == battle.state_snapshot() and receipts == stage.receipts,
+			"Hexer AC3: no ghost bonus or mutation for " + state)
+		if state in ["stun", "illegal", "empty_targets"]:
+			_check(intent.get("pass", false) and intent.get("stun", false) == (state == "stun")
+				and not intent.has("base_damage") and intent["affected_ranks"].is_empty(),
+				"Hexer AC3: no-action sentinel shape preserved for " + state)
+		else:
+			_check(intent.is_empty(), "Hexer AC3: unavailable foe has no intent: " + state)
+	battle._units = units.duplicate(true)
+	battle._units["spool_hexer"]["rank"] = 2
+	var fallback_before := battle.state_snapshot()
+	var fallback := StitchedFoeIntent.choose(battle, battle.get_unit("spool_hexer"))
+	_check(fallback.get("ability_id") == "thread_tag" and fallback.get("base_mark_damage", -1) == 0
+		and fallback_before == battle.state_snapshot(),
+		"Hexer AC3: rank change falls through original illegal moves to legal tag without phantom bonus")
+	battle._units = units.duplicate(true)
+	var unrelated := StitchedFoeIntent.choose(battle, battle.get_unit("scissor_bailiff"))
+	stage._foe_tickets[1].present_intent(unrelated, 3)
+	_check(not unrelated.get("pass", true) and unrelated.get("base_mark_damage", -1) == 0
+		and not stage._foe_tickets[1].tooltip_text.contains("BONUS"),
+		"Hexer AC3: real unrelated legal foe clears stale conditional bonus")
+	stage._foe_tickets[1].present_intent({}, 1)
+	_check(stage._foe_tickets[1].tooltip_text.is_empty() and not stage._foe_tickets[1].visible,
+		"Hexer AC3: empty intent clears all stale disclosure")
+	stage.free()
+	await process_frame
 
 
 # ---------------------------------------------------------------- live admission uses the loader
