@@ -5443,9 +5443,9 @@ func _stitched_run_caption(parent: Node, text: String, size: int = 19) -> Label:
 
 
 func _stitched_run_node_icon(button: Button, kind: String) -> void:
-	var path := "res://assets/paper/ui/map_node_%s.png" % kind.to_lower()
+	var path := "res://assets/paper/ui/map_node_%s.png" % kind.to_snake_case()
 	match kind:
-		"SewingCircle", "Treasure":
+		"Treasure":
 			path = "res://assets/paper/ui/map_node_event.png"
 		"PatchStall":
 			path = "res://assets/paper/ui/map_node_patch_stall.png"
@@ -5684,29 +5684,37 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		_stitched_run_action(ending_actions, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
 		_stitched_run_keyboard_chain()
 		return
-	var atlas := HBoxContainer.new()
-	atlas.name = "RoutedStage"
-	atlas.add_theme_constant_override("separation", 12)
-	atlas.custom_minimum_size = Vector2(1120, 327)
-	atlas.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_child(atlas)
-	var left := _stitched_run_felt(atlas, "RouteOrVisitStory", Vector2(384, 328))
-	var right := _stitched_run_felt(atlas, "LegalChoices", Vector2(706, 328))
+	var choices_box: VBoxContainer
+	var expected := session.snapshot()
 	if session.phase == "map":
-		_stitched_run_caption(left, "ROUTE BOARD / CONNECTED THREAD", 22)
-		_stitched_run_caption(left, "Next: Floor %02d. Choose a lit node to enter." %
-			(session.map.get_current_floor() + 1), 18)
-		var visited := session.map.get_route()
-		if visited.is_empty():
-			_stitched_run_caption(left, "The first seam is unstitched. Your path begins here.", 18)
-		else:
-			_stitched_run_caption(left, "SEWN PATH / MOST RECENT FIRST", 18)
-			for index in range(visited.size() - 1, maxi(-1, visited.size() - 6), -1):
-				var previous := session.map.get_node(visited[index])
-				_stitched_run_caption(left, "%02d   %s / PATH %d" % [
-					previous.floor, previous.type, previous.position + 1], 17)
-		_stitched_run_caption(right, "AVAILABLE NEXT STOPS", 22)
+		# Read only session.map and session.choices(); keep the original guarded
+		# native admission buttons in authoritative choice order.
+		var book := StitchedRouteBookView.new()
+		content.add_child(book)
+		choices_box = book.present(session.map, session.choices())
+		for id in session.choices():
+			var node := session.map.get_node(id)
+			var button := _stitched_run_action(choices_box,
+				"      FLOOR %02d  /  %s  /  PATH %d" % [
+					node.floor, node.type, node.position + 1], func():
+				if stitched_run_session == session and session.enter(id, expected):
+					_present_stitched_run())
+			button.custom_minimum_size = Vector2(610, 56)
+			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			button.set_meta("route_id", id)
+			button.set_meta("node_kind", node.type)
+			button.tooltip_text = "Connected legal node %s" % id
+			book.decorate_ticket(button, str(node.type))
+			_stitched_run_node_icon(button, str(node.type))
 	else:
+		var atlas := HBoxContainer.new()
+		atlas.name = "RoutedStage"
+		atlas.add_theme_constant_override("separation", 12)
+		atlas.custom_minimum_size = Vector2(1120, 327)
+		atlas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		content.add_child(atlas)
+		var left := _stitched_run_felt(atlas, "RouteOrVisitStory", Vector2(384, 328))
+		var right := _stitched_run_felt(atlas, "LegalChoices", Vector2(706, 328))
 		var title := str(session.pending.get("title", session.pending.get("service", "Road stop")))
 		_stitched_run_caption(left, title.to_upper(), 22)
 		var node := session.map.get_node(str(session.pending.get("node_id", "")))
@@ -5715,32 +5723,16 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 				node.floor, node.type, node.position + 1], 19)
 		_stitched_run_caption(left, "This is a real road visit. Lit patches are legal choices; dim patches are unavailable.", 18)
 		_stitched_run_caption(right, "CHOOSE YOUR NEXT STITCH", 22)
-	var scroll := ScrollContainer.new()
-	scroll.name = "RunActionScroll"
-	scroll.custom_minimum_size = Vector2(620, 267)
-	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	right.add_child(scroll)
-	var choices_box := VBoxContainer.new()
-	choices_box.name = "PublicRouteDecisions"
-	choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	choices_box.add_theme_constant_override("separation", 8)
-	scroll.add_child(choices_box)
-	var expected := session.snapshot()
-	if session.phase == "map":
-		for id in session.choices():
-			var node := session.map.get_node(id)
-			var button := _stitched_run_action(choices_box,
-				"      FLOOR %02d  /  %s  /  PATH %d" %
-					[node.floor, node.type, node.position + 1], func():
-				if stitched_run_session == session and session.enter(id, expected):
-					_present_stitched_run())
-			button.custom_minimum_size = Vector2(620, 55)
-			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
-			button.set_meta("route_id", id)
-			button.set_meta("node_kind", node.type)
-			button.tooltip_text = "Connected legal node %s" % id
-			_stitched_run_node_icon(button, str(node.type))
-	else:
+		var scroll := ScrollContainer.new()
+		scroll.name = "RunActionScroll"
+		scroll.custom_minimum_size = Vector2(620, 267)
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		right.add_child(scroll)
+		choices_box = VBoxContainer.new()
+		choices_box.name = "PublicRouteDecisions"
+		choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		choices_box.add_theme_constant_override("separation", 8)
+		scroll.add_child(choices_box)
 		for action in session.visit_actions():
 			var button := _stitched_run_action(choices_box, str(action.text), func():
 				if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
