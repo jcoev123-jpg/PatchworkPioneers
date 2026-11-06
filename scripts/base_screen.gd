@@ -115,6 +115,8 @@ var _motion_setting_poll: Timer
 var _buildings: Array = []
 var _paths: Array = []
 var _spool_rect := Rect2()
+## S9d: Wren's bedroom, when its pictures exist. The village boards stay hidden.
+var bedroom: StitchedBedroom
 
 
 ## Dashed thread stitching and cross-stitches; never takes pointer or focus.
@@ -162,6 +164,7 @@ func _ready() -> void:
 	_build_house_shortcuts()
 	_build_difficulty()
 	_build_field_guide()
+	_mount_bedroom()
 	_wire_focus()
 	visibility_changed.connect(_on_base_visibility_changed)
 	if ProjectSettings.has_signal("settings_changed"):
@@ -329,11 +332,11 @@ func open_village(gold: int = 0, scraps: int = 0) -> bool:
 		if is_instance_valid(button):
 			button.disabled = not _selected_warden_id.is_empty()
 	if is_instance_valid(warden_panel):
-		warden_panel.visible = not _warden_options.is_empty()
+		warden_panel.visible = not _warden_options.is_empty() and bedroom == null
 	if is_instance_valid(path_panel):
-		path_panel.visible = not _path_options.is_empty()
+		path_panel.visible = not _path_options.is_empty() and bedroom == null
 	if is_instance_valid(tinker_panel):
-		tinker_panel.visible = not _tinker_options.is_empty()
+		tinker_panel.visible = not _tinker_options.is_empty() and bedroom == null
 	if is_instance_valid(wallet_label):
 		wallet_label.text = "Gold %d  ·  Scraps %d" % [gold, scraps]
 	visible = true
@@ -408,7 +411,7 @@ func present_path_options(options: Variant) -> bool:
 	if is_instance_valid(path_status_label):
 		path_status_label.text = "No Path chosen yet"
 	if is_instance_valid(path_panel):
-		path_panel.visible = _open
+		path_panel.visible = _open and bedroom == null
 	_wire_focus()
 	return true
 
@@ -548,7 +551,7 @@ func present_tinker_path_options(options: Variant) -> bool:
 	if is_instance_valid(tinker_status_label):
 		tinker_status_label.text = "No Tinker Path chosen yet"
 	if is_instance_valid(tinker_panel):
-		tinker_panel.visible = _open
+		tinker_panel.visible = _open and bedroom == null
 	_wire_focus()
 	return true
 
@@ -683,7 +686,7 @@ func present_warden_path_options(options: Variant) -> bool:
 	if is_instance_valid(warden_status_label):
 		warden_status_label.text = "No Warden Path chosen yet"
 	if is_instance_valid(warden_panel):
-		warden_panel.visible = _open
+		warden_panel.visible = _open and bedroom == null
 	_wire_focus()
 	return true
 
@@ -1304,6 +1307,57 @@ func _on_parts_pressed() -> void:
 	_open_field_guide(parts_button, true)
 
 
+## S9d: the village becomes Wren's room. Set out is the door, the battle guide
+## is his drawings and the parts house is the sewing tin; the shelf leads to the
+## same Set out, where four dolls are chosen. The window shows how dark tonight is.
+func _mount_bedroom() -> void:
+	if not StitchedBedroom.has_art():
+		return
+	bedroom = StitchedBedroom.new()
+	bedroom.name = "Bedroom"
+	add_child(bedroom)
+	move_child(bedroom, 0)
+	bedroom.adopt("door", set_out_button)
+	bedroom.adopt("drawings", guide_button)
+	bedroom.adopt("tin", parts_button)
+	bedroom.spot_pressed.connect(_on_bedroom_spot)
+	for button in [heroes_house_button, camp_house_button]:
+		if is_instance_valid(button):
+			button.visible = false
+	for panel in [path_panel, tinker_panel, warden_panel]:
+		if is_instance_valid(panel):
+			panel.visible = false
+	village_title_label.text = "Wren's room"
+	var strip := get_node("TopStrip") as PanelContainer
+	var felt := StyleBoxTexture.new()
+	felt.texture = load(StitchedBedroom.FELT)
+	felt.set_texture_margin_all(14)
+	felt.content_margin_left = 12.0
+	felt.content_margin_right = 14.0
+	strip.add_theme_stylebox_override("panel", felt)
+	village_title_label.add_theme_color_override("font_color", Color("#f4e5cd"))
+	wallet_label.add_theme_color_override("font_color", Color("#f4e5cd"))
+	_difficulty_row.position = Vector2(600, 652)
+	_difficulty_row.visible = false
+	queue_redraw()
+
+
+## Host record of past nights: the room's light, the moon and the dolls' poses.
+func present_bedroom(record: Dictionary) -> void:
+	if bedroom != null:
+		bedroom.present(record)
+
+
+func _on_bedroom_spot(spot_id: String) -> void:
+	if not _house_shortcuts_legal():
+		return
+	if spot_id == "shelf":
+		_on_set_out_pressed()
+	elif spot_id == "window":
+		_difficulty_row.visible = not _difficulty_row.visible
+		_wire_focus()
+
+
 func _on_base_visibility_changed() -> void:
 	if not is_visible_in_tree():
 		_dismiss_field_guide(false)
@@ -1329,6 +1383,12 @@ func _wire_focus() -> void:
 		loop.append(parts_button)
 	if is_instance_valid(guide_button) and not guide_button.disabled:
 		loop.append(guide_button)
+	if bedroom != null:
+		for id in ["shelf", "window"]:
+			var spot := bedroom.spot(id)
+			spot.disabled = not _house_shortcuts_legal()
+			if not spot.disabled:
+				loop.append(spot)
 	for button in path_buttons:
 		if is_instance_valid(button) and not button.disabled:
 			loop.append(button)
@@ -1603,6 +1663,8 @@ func _on_back_pressed() -> void:
 
 func _draw() -> void:
 	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	if bedroom != null:
 		return
 	draw_rect(Rect2(Vector2.ZERO, size), MATTE)
 	if _backdrop != null:

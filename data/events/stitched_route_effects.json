@@ -42,6 +42,36 @@
         {"id": "pay_toll", "text": "Front living pioneer pays 6 HP for a tier III claw", "stitched_effect": {"target": "hero", "hero_id": "$front", "candle": 0, "fray": 0, "hp": -6, "part": {"id": "scissor_crab_claw_arm", "tier": 3}}},
         {"id": "safe_exit", "text": "Pocket loose thread (+1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 1}}
       ]
+    },
+    {
+      "id": "v3_glassfront_pin_cabinet",
+      "title": "The Glassfront Pin Cabinet",
+      "description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
+      "choices": [
+        {"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "stitched_effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3}},
+        {"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "stitched_effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2}},
+        {"id": "leave", "text": "Let the cabinet's velvet drawers close", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "v3_moonblack_paperweight",
+      "title": "The Moonblack Paperweight",
+      "description": "A moonblack glass paperweight pins a torn house plan to the floorboards; a small cream-felt mapkeeper waits beneath its cold reflection, holding an ink-stained spool.",
+      "choices": [
+        {"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16}},
+        {"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "stitched_effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23}},
+        {"id": "leave", "text": "Leave the black glass holding down the plan", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "v3_cinder_brass_bedwarmer",
+      "title": "The Cinder-Brass Bedwarmer",
+      "description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
+      "choices": [
+        {"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (+22 candle, +5 fray each)", "stitched_effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11}},
+        {"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "stitched_effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2}},
+        {"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
     }
   ]
 }

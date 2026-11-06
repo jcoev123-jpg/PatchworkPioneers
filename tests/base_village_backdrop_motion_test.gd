@@ -11,6 +11,7 @@ var path_count := 0
 var difficulty_count := 0
 
 func _initialize() -> void:
+	StitchedBedroom.enabled = false
 	_run.call_deferred()
 
 func _check(ok: bool, message: String) -> void:

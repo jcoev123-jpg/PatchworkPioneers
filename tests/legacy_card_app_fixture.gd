@@ -63,6 +63,7 @@ static func prepare(app):
 
 ## Card-only regression adapter. Production App deliberately leaves these hooks inert.
 static func enable(app):
+	StitchedBedroom.enabled = false
 	var start := Callable(app, "_start_run")
 	if not app.start_run_requested.is_connected(start):
 		app.start_run_requested.connect(start)
