@@ -317,4 +317,22 @@ const SEEDS := [
 	694752, # estate_sale (outside previous bounded fallback)
 	815070, # v3_warden_cinder_shield_parade
 	5836208, # fate_pin_auction (strict six-Event/Treasure route)
+	# Lane8 three doll-scale roadside wallet stories (Bedpost Thimble Lift,
+	# Shoe-Tongue Tollbooth, Keyhole Ribbon Windmill) joined the sorted generic
+	# pool and shifted the authentic draw index. The bounded 1..499999 fallback
+	# reported the first ten; Thunder-Spool Dock and Threadmill Sewing Circle
+	# were re-derived beyond it with the same genuine map/toll/draw oracle and
+	# every seed is revalidated by the live regression itself.
+	63118, # v3_brass_buttonbear_stormgate
+	74570, # v3_frosted_pincushion
+	163832, # v3_tinker_gearhouse_midnight
+	172625, # v3_inky_needle_orchard
+	193260, # v3_rust_bell_laundry
+	208625, # v3_seamstress_thread_cart
+	274675, # v3_gloamveil_laundry
+	304085, # v3_warden_pincushion_gate
+	307013, # v3_mothlamp_tannery
+	314836, # v3_inkglass_puppet_barge
+	571898, # v3_threadmill_sewing_circle (outside previous bounded fallback)
+	1136184, # v3_tinker_thunder_spool_dock (outside previous bounded fallback)
 ]
