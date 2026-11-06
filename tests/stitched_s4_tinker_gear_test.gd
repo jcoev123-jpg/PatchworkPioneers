@@ -208,7 +208,7 @@ func _test_catalog() -> void:
 		"tinker_torso_casing_ward": [1, 2, 3, 4],
 		"tinker_legs_tune_up": [1, 2, 3, 4],
 		"tinker_head_spring_clamp": [1, 2, 3],
-		"tinker_arms_overload": [1, 2, 3],
+		"tinker_arms_overload": [1, 2, 3, 4],
 		"tinker_torso_gear_brace": [1, 2, 3, 4],
 		"tinker_legs_spare_screws": [2, 3],
 	}
@@ -251,10 +251,10 @@ func _test_catalog() -> void:
 		_check(StitchedParts.ranks_allowed(tier_mask, 2) and StitchedParts.ranks_allowed(tier_mask, 3) and StitchedParts.ranks_allowed(tier_mask, 4)
 			and not StitchedParts.ranks_allowed(tier_mask, 1) and not StitchedParts.ranks_allowed(tier_mask, 0) and not StitchedParts.ranks_allowed(tier_mask, 5),
 			"AC1: tier %d Overload launch mask accepts ranks 2-4 and refuses rank 1/0/5" % tier)
-		_check(tier_overload["target"] == [1, 2, 3] and int(tier_overload["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+		_check(tier_overload["target"] == [1, 2, 3, 4] and int(tier_overload["target_mask"]) == StitchedParts.ALL_RANKS_MASK
 			and int(tier_overload["self_move"]) == 0 and str(tier_overload["move"]) == "attack2" and str(tier_overload["target_side"]) == "enemy"
 			and not bool(tier_overload["multi"]),
-			"AC1: tier %d Overload keeps target ranks 1-3, attack2 pose, self_move 0 and one enemy target" % tier)
+			"AC1: tier %d Overload keeps target ranks 1-4, attack2 pose, self_move 0 and one enemy target" % tier)
 		_check(int(tier_overload["mark_damage"]) == [3, 4, 5][tier - 1],
 			"AC3: tier %d Overload Mark bonus is %d" % [tier, [3, 4, 5][tier - 1]])
 		_check(int(overload_part["stat"].get("dmg", 0)) == 2 and int(StitchedParts.stat_at_tier(overload_part, tier).get("dmg", 0)) == 2,
@@ -302,7 +302,7 @@ func _test_catalog() -> void:
 	var expected_shots := {
 		"tinker_head_cog_shot": {"acc": [91, 91, 95], "dmg": [[4, 6], [5, 8], [7, 10]], "mark": [2, 3, 3], "multi": false, "target": [1, 2, 3, 4]},
 		"tinker_arms_scrap_bomb": {"acc": [90, 92, 95], "dmg": [[3, 4], [4, 6], [5, 7]], "mark": [0, 0, 0], "multi": true, "target": [1, 2, 3]},
-		"tinker_arms_overload": {"acc": [90, 90, 94], "dmg": [[3, 5], [4, 7], [5, 9]], "mark": [0, 0, 0], "multi": false, "target": [1, 2, 3]},
+		"tinker_arms_overload": {"acc": [90, 90, 94], "dmg": [[3, 5], [4, 7], [5, 9]], "mark": [0, 0, 0], "multi": false, "target": [1, 2, 3, 4]},
 	}
 	for id in expected_shots:
 		var expected_shot: Dictionary = expected_shots[id]
@@ -626,7 +626,7 @@ func _front_rank_witness(seed_value: int) -> Dictionary:
 ## living foe in enemy rank 4. The shipped preview keeps its three real foes; only the existing
 ## Moth Scribe is moved to enemy rank 4 in test memory (rank 3 empty, ranks 1-2 untouched).
 ## A vacant enemy rank 4 still refuses, and torn, unequipped, rank-1 launch, ranks 0/5,
-## Scrap Bomb/Overload at rank 4 and a stale repeat all fail closed without spending.
+## Scrap Bomb at rank 4 and a stale repeat all fail closed without spending.
 func _test_cog_shot_rear_foe() -> void:
 	var mark_ladder := [2, 3, 3]
 	var structure_seed := -1
@@ -770,16 +770,18 @@ func _test_cog_shot_rear_foe() -> void:
 			"AC3: an unequipped Cog Shot refuses the rear foe without state, turn or RNG spend")
 	var overload := _rear_foe_battle(1, structure_seed, {}, {"id": ALTERNATES["arms"], "tier": 1})
 	var overload_ready := overload != null and _to(overload, "tinker")
-	_check(overload_ready, "AC3: Overload rear-foe witness reaches a real Tinker turn")
+	_check(overload_ready, "AC2: Overload rear-foe witness reaches a real Tinker turn")
 	if overload_ready:
+		_check(StitchedParts.ranks_allowed(int(_catalog()["by_id"][ALTERNATES["arms"]]["ability"]["target_mask"]), 4),
+			"AC2: Overload's authored target mask now admits foe rank 4")
 		var overload_before := overload.state_snapshot()
 		var overload_rng := overload.rng_state()
 		var overload_shot := overload.use_part(ALTERNATES["arms"], 4)
-		_check(not bool(overload_shot.get("ok", false)) and str(overload_shot.get("error", "")).contains("rank 4")
-			and overload_before == overload.state_snapshot() and overload_rng == overload.rng_state(),
-			"AC3: Overload from a legal launch rank still refuses a living enemy rank 4")
-		_check(not StitchedParts.ranks_allowed(int(_catalog()["by_id"][ALTERNATES["arms"]]["ability"]["target_mask"]), 4),
-			"AC3: Overload's authored target mask still excludes foe rank 4")
+		_check(bool(overload_shot.get("ok", false)) and overload_shot.get("results", []).size() == 1
+			and str(overload_shot["results"][0].get("target", "")) == "moth_scribe"
+			and int(overload_shot["results"][0].get("target_rank", 0)) == 4
+			and overload_before != overload.state_snapshot() and overload_rng != overload.rng_state(),
+			"AC2: Overload legally receipts the living rank-4 Moth Scribe")
 	var front: Dictionary = {}
 	for seed_value in range(499700, 499760):
 		front = _front_rank_witness(seed_value)
@@ -1030,7 +1032,7 @@ func _overload_back_rank_witness(seed_value: int) -> Dictionary:
 	var rng := battle.rng_state()
 	var actor_before := battle.current_actor_id()
 	var foe_before := battle.get_unit("fray_scavenger")
-	# Enemy rank 4, plus ranks 0 and 5, stay outside Overload's target [1,2,3]; the starter
+	# The normal preview leaves enemy rank 4 empty (ranks 0 and 5 are invalid); the starter
 	# Scrap Bomb arms are no longer equipped. Every request refuses before any spend.
 	var refusals: Array = []
 	for target_rank in [4, 0, 5]:
@@ -1107,9 +1109,12 @@ func _test_overload_back_rank() -> void:
 	for refusal in refusals:
 		all_refused = all_refused and not bool(refusal.get("ok", false))
 		errors.append(str(refusal.get("error", "")))
-	_check(all_refused and errors[0].contains("rank 4") and errors[1].contains("rank 0")
+	_check(all_refused and errors[0].contains("no legal target in rank 4") and errors[1].contains("rank 0")
 		and errors[2].contains("rank 5") and errors[3].contains("not equipped"),
-		"AC3: target ranks 4/0/5 and the unequipped part each refuse for their own reason")
+		"AC3: the empty rank 4, ranks 0/5 and the unequipped part each refuse for their own reason")
+	_check(StitchedParts.ranks_allowed(int(_catalog()["by_id"][ALTERNATES["arms"]]["ability"]["target_mask"]), 4)
+		and battle.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+		"AC3: the rank-4 refusal is an empty-target refusal, not an out-of-mask one")
 	_check(witness["before"] == witness["after_refusals"] and int(witness["rng"]) == int(witness["after_refusals"].get("rng_state", -1))
 		and str(witness["actor_after_refusals"]) == "tinker",
 		"AC3: refused launches change no battle state, spend no turn and draw no seeded RNG")
@@ -1209,6 +1214,110 @@ func _test_heal_and_guard() -> void:
 	_check(thorned, "AC2: live foe hit on Tinker's Casing Ward triggers Thorns retaliation")
 
 
+## AC2 witness: the real shipped preview with only the existing Moth Scribe moved to enemy
+## rank 4 in test memory. Tinker's scheduled Cog Shot Marks her, and on Tinker's next
+## scheduled turn the equipped Overload punishes that Mark. The unmarked twin performs the
+## identical Cog Shot and then loses only the Moth Scribe's Mark, so both keep equal RNG and
+## the same hit/crit rolls. Returns {} unless every precondition and both landed hits hold.
+func _rear_mark_overload_witness(tier: int, seed_value: int) -> Dictionary:
+	var marked_battle := _rear_foe_battle(tier, seed_value, {}, {"id": ALTERNATES["arms"], "tier": tier})
+	var unmarked_battle := _rear_foe_battle(tier, seed_value, {}, {"id": ALTERNATES["arms"], "tier": tier})
+	if marked_battle == null or unmarked_battle == null:
+		return {}
+	if not _to(marked_battle, "tinker") or not _to(unmarked_battle, "tinker"):
+		return {}
+	if int(marked_battle.get_unit("tinker")["rank"]) != 3 or int(unmarked_battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	if str(marked_battle.get_unit("tinker")["parts"]["head"]["id"]) != STARTERS["head"]:
+		return {}
+	if str(marked_battle.get_unit("tinker")["parts"]["arms"]["id"]) != ALTERNATES["arms"]:
+		return {}
+	var marked_cog := marked_battle.use_part(STARTERS["head"], 4)
+	var plain_cog := unmarked_battle.use_part(STARTERS["head"], 4)
+	if marked_cog != plain_cog or not bool(marked_cog.get("ok", false)):
+		return {}
+	var cog_results: Array = marked_cog.get("results", [])
+	if cog_results.size() != 1 or str(cog_results[0].get("target", "")) != "moth_scribe" \
+			or int(cog_results[0].get("target_rank", 0)) != 4 or not bool(cog_results[0].get("hit", false)):
+		return {}
+	var moth_before := marked_battle.get_unit("moth_scribe")
+	if bool(moth_before.get("dead", true)) or int(moth_before.get("statuses", {}).get("mark", 0)) <= 0:
+		return {}
+	# Controlled counterfactual: the twin keeps identical HP/turn/RNG but loses only that Mark.
+	unmarked_battle._units["moth_scribe"]["statuses"].erase("mark")
+	if not _to(marked_battle, "tinker") or not _to(unmarked_battle, "tinker"):
+		return {}
+	if marked_battle.is_over() or unmarked_battle.is_over():
+		return {}
+	if int(marked_battle.get_unit("tinker")["rank"]) != 3 or int(unmarked_battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	if int(marked_battle.get_unit("moth_scribe")["statuses"].get("mark", 0)) <= 0:
+		return {}
+	if int(unmarked_battle.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 0:
+		return {}
+	var rng_before := marked_battle.rng_state()
+	var unmarked_rng_before := unmarked_battle.rng_state()
+	if rng_before != unmarked_rng_before:
+		return {}
+	var turn_before := marked_battle.current_actor_id()
+	if turn_before != "tinker":
+		return {}
+	var other_hp: Dictionary = {}
+	for foe_id in ["fray_scavenger", "scissor_crab"]:
+		other_hp[foe_id] = int(marked_battle.get_unit(foe_id).get("hp", 0))
+	var charged := marked_battle.use_part(ALTERNATES["arms"], 4)
+	var plain := unmarked_battle.use_part(ALTERNATES["arms"], 4)
+	if not bool(charged.get("ok", false)) or not bool(plain.get("ok", false)):
+		return {}
+	var charged_results: Array = charged.get("results", [])
+	var plain_results: Array = plain.get("results", [])
+	if charged_results.size() != 1 or plain_results.size() != 1:
+		return {}
+	var charged_hit: Dictionary = charged_results[0]
+	var plain_hit: Dictionary = plain_results[0]
+	if str(charged_hit.get("target", "")) != "moth_scribe" or int(charged_hit.get("target_rank", 0)) != 4:
+		return {}
+	if str(plain_hit.get("target", "")) != "moth_scribe" or int(plain_hit.get("target_rank", 0)) != 4:
+		return {}
+	if not bool(charged_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)):
+		return {}
+	if int(charged_hit.get("roll", 0)) != int(plain_hit.get("roll", -1)) \
+			or bool(charged_hit.get("crit", false)) != bool(plain_hit.get("crit", false)):
+		return {}
+	if int(charged_hit.get("damage", 0)) <= int(plain_hit.get("damage", 0)):
+		return {}
+	var moth_after := marked_battle.get_unit("moth_scribe")
+	if bool(moth_after.get("dead", true)):
+		return {}
+	if int(moth_after.get("hp", -1)) != int(moth_before.get("hp", 0)) - int(charged_hit.get("damage", 0)):
+		return {}
+	if int(charged_hit.get("target_hp", -1)) != int(moth_after.get("hp", -2)):
+		return {}
+	if marked_battle.rng_state() != unmarked_battle.rng_state():
+		return {}
+	return {
+		"marked": marked_battle,
+		"unmarked": unmarked_battle,
+		"marked_cog": marked_cog,
+		"plain_cog": plain_cog,
+		"charged": charged,
+		"plain": plain,
+		"charged_hit": charged_hit,
+		"plain_hit": plain_hit,
+		"moth_before": moth_before,
+		"moth_after": moth_after,
+		"other_hp": other_hp,
+		"turn_before": turn_before,
+		"rng_before": rng_before,
+		"unmarked_rng_before": unmarked_rng_before,
+		"rng_after": marked_battle.rng_state(),
+		"unmarked_rng_after": unmarked_battle.rng_state(),
+		"marked_snapshot": marked_battle.state_snapshot(),
+		"unmarked_snapshot": unmarked_battle.state_snapshot(),
+		"actor_after": marked_battle.current_actor_id(),
+	}
+
+
 func _test_mark_overload() -> void:
 	var witness := false
 	for seed_value in range(499200, 499232):
@@ -1239,6 +1348,87 @@ func _test_mark_overload() -> void:
 			if witness:
 				break
 	_check(witness, "AC2: real Cog Shot Mark makes follow-up Overload deal extra damage with equal RNG")
+	# AC2: the same real Mark follow-up now works on the occupied fourth-rank foe. The shipped
+	# preview keeps its three foes; only the existing Moth Scribe moves to rank 4 in memory.
+	var rear: Dictionary = {}
+	var rear_seed := 0
+	for seed_value in range(499900, 500100):
+		rear = _rear_mark_overload_witness(2, seed_value)
+		if not rear.is_empty():
+			rear_seed = seed_value
+			break
+	_check(not rear.is_empty(), "AC2: real seeded rank-4 Cog Shot then Overload witness exists at tier II")
+	if rear.is_empty():
+		return
+	var marked_battle: StitchedRules = rear["marked"]
+	var unmarked_battle: StitchedRules = rear["unmarked"]
+	var marked_cog: Dictionary = rear["marked_cog"]
+	var moth_before: Dictionary = rear["moth_before"]
+	var charged: Dictionary = rear["charged"]
+	var plain: Dictionary = rear["plain"]
+	var charged_hit: Dictionary = rear["charged_hit"]
+	var plain_hit: Dictionary = rear["plain_hit"]
+	var foes: Array = marked_battle.get_foes()
+	var cog_mark := -1
+	for status in marked_cog.get("results", [{}])[0].get("statuses", []):
+		if str(status.get("status", "")) == "mark":
+			cog_mark = int(status.get("duration", -1))
+	_check(marked_battle.get_heroes().size() == 4 and foes.size() == 3
+		and int(marked_battle.get_unit("moth_scribe")["rank"]) == 4
+		and int(marked_battle.get_unit("fray_scavenger")["rank"]) == 1
+		and int(marked_battle.get_unit("scissor_crab")["rank"]) == 2
+		and foes.filter(func(foe): return int(foe["rank"]) == 4).size() == 1
+		and foes.all(func(foe): return int(foe["rank"]) != 3),
+		"AC2: tier II witness keeps four heroes and three foes, with only the Moth Scribe in rank 4")
+	_check(str(marked_cog.get("action", "")) == "ability" and str(marked_cog.get("actor", "")) == "tinker"
+		and str(marked_cog.get("part", "")) == STARTERS["head"] and str(marked_cog.get("ability", "")) == "tinker_cog_shot_move"
+		and marked_cog.get("results", []).size() == 1
+		and str(marked_cog["results"][0].get("target", "")) == "moth_scribe"
+		and int(marked_cog["results"][0].get("target_rank", 0)) == 4
+		and bool(marked_cog["results"][0].get("hit", false))
+		and cog_mark == 3 and int(moth_before.get("statuses", {}).get("mark", 0)) > 0,
+		"AC2: scheduled Cog Shot marks the occupied rank-4 Moth Scribe")
+	_check(marked_cog == rear["plain_cog"], "AC2: the unmarked twin's Cog Shot receipt is identical")
+	_check(str(rear["turn_before"]) == "tinker" and str(rear["actor_after"]) != "tinker"
+		and int(marked_battle.get_unit("tinker")["rank"]) == 3,
+		"AC2: the rank-4 Overload spends Tinker's next genuine scheduled turn from hero rank 3")
+	_check(str(charged.get("action", "")) == "ability" and str(charged.get("actor", "")) == "tinker"
+		and str(charged.get("part", "")) == ALTERNATES["arms"] and str(charged.get("ability", "")) == "tinker_overload_move",
+		"AC2: Overload executes as Tinker's own equipped arms action on the rank-4 foe")
+	_check(charged.get("results", []).size() == 1 and str(charged_hit.get("target", "")) == "moth_scribe"
+		and str(charged_hit.get("target_side", "")) == "foe" and int(charged_hit.get("target_rank", 0)) == 4
+		and bool(charged_hit.get("hit", false)) and int(charged_hit.get("damage", 0)) > 0,
+		"AC2: the seeded rank-4 Overload lands exactly one Moth Scribe hit receipt")
+	var moth_after: Dictionary = rear["moth_after"]
+	_check(int(moth_after.get("hp", -1)) == int(moth_before.get("hp", 0)) - int(charged_hit.get("damage", 0))
+		and int(charged_hit.get("target_hp", -1)) == int(moth_after.get("hp", -2)),
+		"AC2: the real Moth Scribe loses exactly the receipted rank-4 Overload damage")
+	var untouched := true
+	for foe_id in rear["other_hp"]:
+		untouched = untouched and int(marked_battle.get_unit(foe_id).get("hp", -1)) == int(rear["other_hp"][foe_id])
+	_check(untouched, "AC2: the rank-4 Overload never damages the two front foes")
+	var tinker_statuses: Dictionary = marked_battle.get_unit("tinker")["statuses"]
+	var moth_statuses: Dictionary = marked_battle.get_unit("moth_scribe")["statuses"]
+	_check(int(tinker_statuses.get("weak", 0)) == 0 and int(moth_statuses.get("exposed", 0)) == 0
+		and int(moth_statuses.get("tangled", 0)) == 0 and int(marked_battle.get_unit("moth_scribe")["prot"]) == 0,
+		"AC2: no other damage modifier is active, so the tier-II Mark bonus is the whole advantage")
+	_check(int(charged_hit.get("damage", 0)) - int(plain_hit.get("damage", 0)) == 4
+		and int(_catalog()["by_id"][ALTERNATES["arms"]]["tiers"]["2"]["ability"]["mark_damage"]) == 4,
+		"AC2: the marked copy deals exactly the authored tier-II Mark bonus 4 more than its twin")
+	_check(int(charged_hit.get("roll", 0)) == int(plain_hit.get("roll", -1))
+		and bool(charged_hit.get("crit", false)) == bool(plain_hit.get("crit", false))
+		and int(rear["rng_before"]) == int(rear["unmarked_rng_before"])
+		and int(rear["rng_after"]) == int(rear["unmarked_rng_after"]),
+		"AC2: marked and unmarked casts start from equal RNG and use equal hit/crit rolls")
+	var replay := _rear_mark_overload_witness(2, rear_seed)
+	_check(not replay.is_empty(), "AC3: the rank-4 Mark/Overload witness replays at seed %d" % rear_seed)
+	if not replay.is_empty():
+		_check(replay["marked_cog"] == marked_cog and replay["charged"] == charged and replay["plain"] == plain
+			and replay["moth_after"] == moth_after and replay["marked_snapshot"] == rear["marked_snapshot"]
+			and replay["unmarked_snapshot"] == rear["unmarked_snapshot"]
+			and int(replay["rng_after"]) == int(rear["rng_after"])
+			and str(replay["actor_after"]) == str(rear["actor_after"]),
+			"AC3: equal-seed replay reproduces both receipts, both HP states, turns and exact RNG")
 
 
 func _test_invalid_actions_and_equipment() -> void:
