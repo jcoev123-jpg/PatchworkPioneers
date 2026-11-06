@@ -16,6 +16,9 @@ extends RefCounted
 ## Opt-in S8c schedules one possible mimic at start; SNIP adds 5 WHIRR. Wrong SNIP
 ## adds 20 fray and queues a cut until re-tied. Local pins/dye protection is spent
 ## by curio traps; this service never starts combat or settles run/map awards.
+## S8e: default-off tug schedules one required resolution at a traversable step.
+## Yield tears one random intact worn rear-doll part; torn_part descriptors retain
+## its identity/tier for later mending. No equipped part means a harmless resolution.
 
 const ITEMS := ["thimble_tonic", "fresh_stuffing", "starch", "dye", "pins", "spare_spool"]
 const CURIO_KINDS := ["pincushion", "dummy", "ragbag", "patterns", "door"]
@@ -42,7 +45,7 @@ static func load_catalogs() -> Dictionary:
 ## Optional catalogs support authored-data validation without touching run state.
 ## Failure returns null and preserves the supplied RNG and all caller-owned inputs.
 static func start(random: RandomNumberGenerator, area: String, dolls: Array, pockets: Dictionary,
-		catalogs: Variant = null, enable_mimic: bool = false) -> StitchedWalkRules:
+		catalogs: Variant = null, enable_mimic: bool = false, enable_tug: bool = false) -> StitchedWalkRules:
 	if catalogs == null:
 		catalogs = load_catalogs()
 	if random == null or not catalogs is Dictionary or not validate_catalogs(catalogs) or not _valid_party(dolls, pockets):
@@ -93,6 +96,16 @@ static func start(random: RandomNumberGenerator, area: String, dolls: Array, poc
 			"step": trial.randi_range(0, int(corridor.steps) - 1),
 			"disguise": ranked[trial.randi_range(1, 3)].id, "revealed": false, "snipped": false,
 			"removed": false, "art_path": "res://assets/paper/walk/extra_thread_shadow.png"}
+		service._state.rng = trial.state
+	if enable_tug:
+		var authored: Dictionary = {}
+		for horror in catalogs.horrors:
+			if horror.id == "thread_tug" and horror.kind == "tug":
+				authored = horror
+		if authored.is_empty() or service._doll(authored.id) >= 0:
+			return null
+		service._state.tug = {"id": authored.id, "name": authored.name,
+			"step": trial.randi_range(0, int(corridor.steps) - 1), "resolved": false}
 		service._state.rng = trial.state
 	random.state = trial.state
 	return service
@@ -211,6 +224,20 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 	var cost := 5
 	var effect: Dictionary = {}
 	match kind:
+		"tug":
+			if not tug_unresolved() or command.get("target") != _state.tug.id:
+				return _receipt(false, "unavailable_tug")
+			if command.get("choice") == "yield":
+				if not _keys(command, ["kind", "actor", "target", "choice"]):
+					return _receipt(false, "invalid_command")
+			else:
+				if not _keys(command, ["kind", "actor", "target", "choice", "slot"]) or not command.get("slot") is int:
+					return _receipt(false, "invalid_command")
+				var pocket: Array = _state.pockets[command.actor]
+				if not command.choice in ["pins", "spare_spool"] or command.slot < 0 or command.slot >= pocket.size():
+					return _receipt(false, "unavailable_item")
+				if pocket[command.slot] != command.choice:
+					return _receipt(false, "unavailable_item")
 		"curio":
 			if not _keys(command, ["kind", "actor", "target", "choice"]) or not _current_curio(command.get("target")):
 				return _receipt(false, "invalid_curio")
@@ -225,6 +252,8 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 			if not _keys(command, ["kind", "actor"]):
 				return _receipt(false, "invalid_command")
 			if kind == "forward":
+				if tug_unresolved():
+					return _receipt(false, "unresolved_tug")
 				cost = 0
 		"switch":
 			if not _keys(command, ["kind", "actor", "target"]) or _doll(command.get("target")) < 0 or command.target == command.actor:
@@ -245,9 +274,18 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 			effect = {"item": item, "target": command.target}
 		_:
 			return _receipt(false, "invalid_command")
-	# All validation precedes the first mutation; only curio resolution draws RNG.
+	# All validation precedes the first mutation; only accepted resolutions roll.
 	var events: Array = []
 	match kind:
+		"tug":
+			_state.tug.resolved = true
+			if command.choice == "yield":
+				_tear_rear_part(events)
+			else:
+				_state.pockets[command.actor].remove_at(command.slot)
+				events.append({"kind": "tug_saved", "source": _state.tug.id,
+					"actor": command.actor, "item": command.choice})
+			_state.rng = _rng.state
 		"curio":
 			for curio in _state.curios:
 				if curio.instance == command.target:
@@ -310,6 +348,43 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 func shadow_visible() -> bool:
 	return _state.has("shadow") and _state.phase == "walking" and _state.looking_back \
 		and _state.shadow.present and not _state.shadow.removed and _state.step >= _state.shadow.step
+
+
+## Tug commands: {kind: tug, actor, target: thread_tug, choice: yield}, or
+## choice: pins/spare_spool with the actual actor's integer pocket slot.
+func tug_unresolved() -> bool:
+	return _state.has("tug") and _state.phase == "walking" \
+		and _state.step == _state.tug.step and not _state.tug.resolved
+
+
+func _tear_rear_part(events: Array) -> void:
+	var rear: Dictionary = {}
+	for doll in _state.dolls:
+		if not doll.lost and doll.hp > 0 and (rear.is_empty() or doll.rank > rear.rank):
+			rear = doll
+	var slots: Array = []
+	if not rear.is_empty():
+		for slot in rear.get("parts", {}):
+			var worn: Variant = rear.parts[slot]
+			if not worn is Dictionary or not worn.torn:
+				slots.append(slot)
+	slots.sort()
+	if slots.is_empty():
+		events.append({"kind": "tug_no_part", "source": _state.tug.id})
+		return
+	var slot: String = slots[_rng.randi_range(0, slots.size() - 1)]
+	var worn: Variant = rear.parts[slot]
+	# String equipment IDs are genuine tier-one parts, also accepted by curios.
+	if worn is String:
+		worn = {"id": worn, "tier": 1, "torn": false}
+		rear.parts[slot] = worn
+	worn.torn = true
+	var descriptor := {"kind": "torn_part", "source": _state.tug.id, "target": rear.id,
+		"consumed": false, "effects": {"slot": slot, "part": worn.duplicate(true),
+			"mendable": true, "already_applied": true}}
+	_state.pending.append(descriptor)
+	events.append({"kind": "tug_torn", "source": _state.tug.id, "target": rear.id,
+		"slot": slot, "part": worn.duplicate(true)})
 
 
 func snip_targets() -> Array:
