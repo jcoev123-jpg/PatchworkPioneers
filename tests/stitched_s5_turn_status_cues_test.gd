@@ -828,6 +828,263 @@ func _run() -> void:
 	r_only_hero["statuses"] = {"stun_resist": 1}
 	_check(StitchedTurnStatusCues.cue(r_only_hero) == "HERO", "AC3: stun_resist-only hero has HERO cue (resist adds no marker cue)")
 
+	# AC4 (lane4), AC5 (lane4), AC6 (lane4): Weak and Exposed status cues, tooltip inspection copy, precedence, damage multipliers and fail-closed checks
+	var we_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var we_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	we_hero["statuses"] = {"weak": 1}
+	we_foe["statuses"] = {"exposed": 2}
+
+	# AC4: Distinct <=4-character cues WEAK and EXPD on genuine public hero/foe unit snapshots
+	var we_hero_cue := StitchedTurnStatusCues.cue(we_hero)
+	var we_foe_cue := StitchedTurnStatusCues.cue(we_foe)
+	_check(we_hero_cue == "WEAK" and we_hero_cue.length() <= 4,
+		"AC4: public hero with positive native int weak 1 yields WEAK cue")
+	_check(we_foe_cue == "EXPD" and we_foe_cue.length() <= 4,
+		"AC4: public foe with positive native int exposed 2 yields EXPD cue")
+
+	# Inverted roles: foe with weak, hero with exposed
+	var we_foe_weak: Dictionary = battle.get_foes()[1].duplicate(true)
+	var we_hero_expd: Dictionary = battle.get_heroes()[1].duplicate(true)
+	we_foe_weak["statuses"] = {"weak": 3}
+	we_hero_expd["statuses"] = {"exposed": 1}
+	_check(StitchedTurnStatusCues.cue(we_foe_weak) == "WEAK",
+		"AC4: public foe with positive weak 3 yields WEAK cue")
+	_check(StitchedTurnStatusCues.cue(we_hero_expd) == "EXPD",
+		"AC4: public hero with positive exposed 1 yields EXPD cue")
+
+	# AC4: Accurate readable tooltip explanations with exact sorted status counters and metadata
+	var we_hero_tip := StitchedTurnStatusCues.tooltip(we_hero)
+	var we_foe_tip := StitchedTurnStatusCues.tooltip(we_foe)
+	_check(we_hero_tip.contains("Statuses: weak 1") and
+		we_hero_tip.contains(StitchedTurnStatusCues.WEAK_EXPLANATION) and
+		not we_hero_tip.contains("Exposed:") and
+		we_hero_tip.contains(str(we_hero["name"])) and
+		we_hero_tip.contains("HP: %s / %s" % [str(we_hero["hp"]), str(we_hero["max_hp"])]),
+		"AC4: weak hero tooltip discloses sorted weak 1 status counter and accurate explanation without exposed")
+	_check(we_foe_tip.contains("Statuses: exposed 2") and
+		we_foe_tip.contains(StitchedTurnStatusCues.EXPOSED_EXPLANATION) and
+		not we_foe_tip.contains("Weak:") and
+		we_foe_tip.contains(str(we_foe["name"])) and
+		we_foe_tip.contains("HP: %s / %s" % [str(we_foe["hp"]), str(we_foe["max_hp"])]),
+		"AC4: exposed foe tooltip discloses sorted exposed 2 status counter and accurate explanation without weak")
+
+	# AC4: Mounted ribbon marker and tooltip with mouse-hover and keyboard-focus equal disclosures
+	var we_entries := [we_hero, we_foe]
+	ribbon.show_order(we_entries, "", false)
+	_check(ribbon.displayed_entries.size() == 2, "AC4: ribbon displays 2 weak/exposed entries")
+	_check(ribbon.marker_at(0).text == "WEAK" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: mounted hero tag 0 displays WEAK marker in muted color")
+	_check(ribbon.marker_at(1).text == "EXPD" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: mounted foe tag 1 displays EXPD marker in muted color")
+
+	for idx in range(2):
+		var tag := ribbon.tag_at(idx)
+		var exp_tip := we_hero_tip if idx == 0 else we_foe_tip
+		var cue_text := "WEAK" if idx == 0 else "EXPD"
+		var marker := ribbon.marker_at(idx)
+		var font := marker.get_theme_font("font")
+		var font_sz := marker.get_theme_font_size("font_size")
+		_check(marker.size.x >= 34.0 and
+			font.get_string_size(cue_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz).x <= marker.size.x - 2.0 and
+			font.get_height(font_sz) <= marker.size.y,
+			"AC4: slot %d marker %s fits measured gothic cell without clipping" % [idx, cue_text])
+		_check(tag.tooltip_text == exp_tip, "AC4: slot %d tooltip_text matches pure tooltip" % idx)
+		tag.grab_focus()
+		await process_frame
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC4: slot %d keyboard focus reveals exact tooltip for %s" % [idx, cue_text])
+		tag.release_focus()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d blur hides tooltip" % idx)
+		tag.mouse_entered.emit()
+		_check(tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC4: slot %d mouse hover reveals identical tooltip to keyboard focus" % idx)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d mouse exit hides tooltip" % idx)
+
+	# AC5 (lane4): Inspectable text contents, dual coexistence on one unit, and damage modifier cross-checks
+	_check(StitchedTurnStatusCues.WEAK_EXPLANATION.contains("-25%") and
+		StitchedTurnStatusCues.WEAK_EXPLANATION.contains("outgoing direct attack damage") and
+		StitchedTurnStatusCues.WEAK_EXPLANATION.contains("rounded down"),
+		"AC5: Weak explanation text specifies outgoing direct attack damage -25% (rounded down)")
+	_check(StitchedTurnStatusCues.EXPOSED_EXPLANATION.contains("+50%") and
+		StitchedTurnStatusCues.EXPOSED_EXPLANATION.contains("incoming direct attack damage") and
+		StitchedTurnStatusCues.EXPOSED_EXPLANATION.contains("rounded down"),
+		"AC5: Exposed explanation text specifies incoming direct attack damage +50% (rounded down)")
+
+	# Dual coexistence on one detached unit: WEAK short cue wins, both explanations disclosed
+	var dual_we: Dictionary = battle.get_heroes()[0].duplicate(true)
+	dual_we["statuses"] = {"weak": 1, "exposed": 2}
+	_check(StitchedTurnStatusCues.cue(dual_we) == "WEAK",
+		"AC5: coexisting weak and exposed yields deterministic short cue WEAK")
+
+	var dual_we_tip := StitchedTurnStatusCues.tooltip(dual_we)
+	var dual_we_lines := StitchedTurnStatusCues.tooltip_lines(dual_we)
+	var we_status_idx := dual_we_lines.find("Statuses: exposed 2, weak 1")
+	var we_weak_idx := dual_we_lines.find(StitchedTurnStatusCues.WEAK_EXPLANATION)
+	var we_expd_idx := dual_we_lines.find(StitchedTurnStatusCues.EXPOSED_EXPLANATION)
+	var we_comb_idx := dual_we_lines.find(StitchedTurnStatusCues.COMBINED_WEAK_EXPOSED_EXPLANATION)
+	_check(we_status_idx >= 0 and we_weak_idx > we_status_idx and we_expd_idx > we_weak_idx and we_comb_idx > we_expd_idx,
+		"AC5: dual weak+exposed tooltip discloses sorted status counts, both explanations, and combined x9/8 notice")
+
+	# Cross-check declared multipliers using current unchanged StitchedRules.damage_after_modifiers
+	# 1. Base 8, no MARK/PROT/Tangled -> Weak alone on attacker: floor(8 * 3/4) = 6
+	var dmg_weak_only := StitchedRules.damage_after_modifiers(8, {"weak": 1}, {}, false, 0, 0)
+	_check(dmg_weak_only == 6, "AC5: base 8 with Weak alone reduces by 25% to 6")
+	# 2. Base 8, no MARK/PROT/Tangled -> Exposed alone on target: floor(8 * 3/2) = 12
+	var dmg_expd_only := StitchedRules.damage_after_modifiers(8, {}, {"exposed": 1}, false, 0, 0)
+	_check(dmg_expd_only == 12, "AC5: base 8 with Exposed alone increases by 50% to 12")
+	# 3. Base 8, no MARK/PROT/Tangled -> Both (Weak on attacker, Exposed on target): floor(8 * 9/8) = 9
+	var dmg_both_8 := StitchedRules.damage_after_modifiers(8, {"weak": 1}, {"exposed": 1}, false, 0, 0)
+	_check(dmg_both_8 == 9, "AC5: base 8 with Weak attacker and Exposed target yields floor(8 * 9/8) = 9")
+	# 4. Base 9 both -> floor(81/8) = 10 (proves single combined floor: floor(9*3/4)=6, floor(6*3/2)=9 != 10)
+	var dmg_both_9 := StitchedRules.damage_after_modifiers(9, {"weak": 1}, {"exposed": 1}, false, 0, 0)
+	_check(dmg_both_9 == 10, "AC5: base 9 with both yields floor(81/8) = 10, proving single-floor combined x9/8")
+	# 5. Combined x9/8 precedes Tangled (+2) and PROT:
+	var dmg_tangled_prot := StitchedRules.damage_after_modifiers(8, {"weak": 1}, {"exposed": 1, "tangled": 1}, false, 0, 10)
+	_check(dmg_tangled_prot == 10, "AC5: combined 9/8 applies once before Tangled +2 and PROT reduction")
+
+	# AC6 (lane4): Precedence and fail-closed checks
+	# Priority order: SEAM > STUN > TORN > resolve > FRAY >= 100 > BLD > BLND > TNGL > MARK > WEAK > EXPD > HERO/FOE
+	var prev_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	prev_hero["statuses"] = {"weak": 1, "exposed": 1}
+
+	# 1. SEAM overrides WEAK and EXPD
+	prev_hero["hanging"] = true
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "SEAM", "AC6: hanging overrides weak/exposed -> SEAM")
+	prev_hero["hanging"] = false
+
+	# 2. STUN overrides WEAK and EXPD
+	prev_hero["statuses"]["stun"] = 1
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "STUN", "AC6: stun overrides weak/exposed -> STUN")
+	prev_hero["statuses"]["stun"] = 0
+
+	# 3. TORN overrides WEAK and EXPD
+	prev_hero["parts"]["head"]["torn"] = true
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "TORN", "AC6: torn parts override weak/exposed -> TORN")
+	prev_hero["parts"]["head"]["torn"] = false
+
+	# 4. Resolve overrides WEAK and EXPD
+	prev_hero["resolve"] = "steadfast"
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "STFD", "AC6: resolve overrides weak/exposed -> STFD")
+	prev_hero["resolve"] = ""
+
+	# 5. Fray >= 100 overrides WEAK and EXPD for hero
+	prev_hero["fray"] = 100
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "FRAY", "AC6: hero fray >= 100 overrides weak/exposed -> FRAY")
+	prev_hero["fray"] = 40
+
+	# 6. BLD overrides WEAK and EXPD
+	prev_hero["statuses"]["bleed"] = 2
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "BLD", "AC6: bleed overrides weak/exposed -> BLD")
+	prev_hero["statuses"]["bleed"] = 0
+
+	# 7. BLND overrides WEAK and EXPD
+	prev_hero["statuses"]["blind"] = 1
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "BLND", "AC6: blind overrides weak/exposed -> BLND")
+	prev_hero["statuses"]["blind"] = 0
+
+	# 8. TNGL overrides WEAK and EXPD
+	prev_hero["statuses"]["tangled"] = 1
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "TNGL", "AC6: tangled overrides weak/exposed -> TNGL")
+	prev_hero["statuses"]["tangled"] = 0
+
+	# 9. MARK overrides WEAK and EXPD
+	prev_hero["statuses"]["mark"] = 1
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "MARK", "AC6: mark overrides weak/exposed -> MARK")
+	prev_hero["statuses"]["mark"] = 0
+
+	# 10. WEAK overrides EXPD
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "WEAK", "AC6: weak overrides exposed -> WEAK")
+
+	# 11. EXPD overrides generic HERO/FOE
+	prev_hero["statuses"]["weak"] = 0
+	_check(StitchedTurnStatusCues.cue(prev_hero) == "EXPD", "AC6: exposed overrides generic HERO -> EXPD")
+
+	var exp_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	exp_foe["statuses"] = {"exposed": 1}
+	_check(StitchedTurnStatusCues.cue(exp_foe) == "EXPD", "AC6: exposed overrides generic FOE -> EXPD")
+
+	# Foe spoofing hero resolve or fray gets WEAK/EXPD, never hero cues
+	var f_spoof_we: Dictionary = battle.get_foes()[0].duplicate(true)
+	f_spoof_we["statuses"] = {"weak": 1}
+	f_spoof_we["resolve"] = "bitter"
+	f_spoof_we["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoof_we) == "WEAK", "AC6: foe spoofing resolve/fray gets WEAK cue")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_we).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_we).contains("FRAY:"),
+		"AC6: foe with weak does not disclose spoofed resolve or fray")
+
+	# Active NOW transitions and is_over behavior for weak/exposed units
+	ribbon.show_order(we_entries, str(we_hero["id"]), false)
+	_check(ribbon.marker_at(0).text == "NOW" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC6: active weak hero shows amber NOW")
+	_check(ribbon.marker_at(1).text == "EXPD" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC6: nonacting exposed foe shows muted EXPD")
+
+	ribbon.show_order(we_entries, str(we_foe["id"]), false)
+	_check(ribbon.marker_at(0).text == "WEAK" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC6: weak hero returns to muted WEAK when foe acts")
+	_check(ribbon.marker_at(1).text == "NOW" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC6: acting exposed foe shows amber NOW")
+
+	ribbon.show_order(we_entries, str(we_foe["id"]), true)
+	_check(ribbon.marker_at(0).text == "WEAK" and ribbon.marker_at(1).text == "EXPD",
+		"AC6: is_over=true clears NOW and returns truthful WEAK and EXPD markers")
+
+	# Status clearing returns generic HERO/FOE with clean tooltips
+	var cleared_we_h := we_hero.duplicate(true)
+	var cleared_we_f := we_foe.duplicate(true)
+	cleared_we_h["statuses"] = {}
+	cleared_we_f["statuses"] = {}
+	ribbon.show_order([cleared_we_h, cleared_we_f], "", false)
+	_check(ribbon.marker_at(0).text == "HERO" and ribbon.marker_at(1).text == "FOE",
+		"AC6: cleared units return to generic HERO and FOE cues")
+	for idx in range(2):
+		var tag := ribbon.tag_at(idx)
+		_check(not tag.tooltip_text.contains("weak") and not tag.tooltip_text.contains("exposed") and
+			not tag.tooltip_text.contains("Weak:") and not tag.tooltip_text.contains("Exposed:"),
+			"AC6: slot %d tag tooltip contains no stale weak or exposed text" % idx)
+		_check(not tag.get_node("FocusTooltip/TooltipText").text.contains("weak") and
+			not tag.get_node("FocusTooltip/TooltipText").text.contains("exposed") and
+			not tag.get_node("FocusTooltip/TooltipText").text.contains("Weak:") and
+			not tag.get_node("FocusTooltip/TooltipText").text.contains("Exposed:"),
+			"AC6: slot %d focus tooltip contains no stale weak or exposed text" % idx)
+
+	# Fail-closed checks: zero, negative, float, string, null, array, dict
+	for inv in [0, -1, -3, 1.5, 2.0, "1", "weak", null, [], {}]:
+		var h_we_inv: Dictionary = battle.get_heroes()[0].duplicate(true)
+		var f_we_inv: Dictionary = battle.get_foes()[0].duplicate(true)
+		h_we_inv["statuses"] = {"weak": inv, "exposed": inv}
+		f_we_inv["statuses"] = {"weak": inv, "exposed": inv}
+		_check(StitchedTurnStatusCues.cue(h_we_inv) == "HERO",
+			"AC6: invalid weak/exposed %s yields HERO fallback" % str(inv))
+		_check(StitchedTurnStatusCues.cue(f_we_inv) == "FOE",
+			"AC6: invalid weak/exposed %s yields FOE fallback" % str(inv))
+		var h_tip := StitchedTurnStatusCues.tooltip(h_we_inv)
+		var f_tip := StitchedTurnStatusCues.tooltip(f_we_inv)
+		_check(not h_tip.contains("Weak:") and not h_tip.contains("Exposed:") and not h_tip.contains("weak") and not h_tip.contains("exposed"),
+			"AC6: invalid weak/exposed %s produces no hero explanations or counters" % str(inv))
+		_check(not f_tip.contains("Weak:") and not f_tip.contains("Exposed:") and not f_tip.contains("weak") and not f_tip.contains("exposed"),
+			"AC6: invalid weak/exposed %s produces no foe explanations or counters" % str(inv))
+
+	# Non-Dictionary statuses fail closed
+	for bad_st in [null, "weak 1", 1, [1]]:
+		var h_bad: Dictionary = battle.get_heroes()[0].duplicate(true)
+		h_bad["statuses"] = bad_st
+		_check(StitchedTurnStatusCues.cue(h_bad) == "HERO",
+			"AC6: non-Dictionary statuses %s yields HERO fallback" % str(bad_st))
+		var h_bad_tip := StitchedTurnStatusCues.tooltip(h_bad)
+		_check(not h_bad_tip.contains("Weak:") and not h_bad_tip.contains("Exposed:"),
+			"AC6: non-Dictionary statuses %s produces no weak or exposed explanations" % str(bad_st))
+
 	# AC4: Tooltip fits existing 304x218 NinePatchRect at 1280x720 without resizing
 	var test_tag := ribbon.tag_at(0)
 	var help_box: NinePatchRect = test_tag.get_node("FocusTooltip")
@@ -839,7 +1096,7 @@ func _run() -> void:
 
 	var tip_font := help_text.get_theme_font("font")
 	var tip_font_sz := help_text.get_theme_font_size("font_size")
-	for fit_unit in [s_hero, s_foe, g_hero, r_hero, tri_hero]:
+	for fit_unit in [s_hero, s_foe, g_hero, r_hero, tri_hero, we_hero, we_foe, dual_we]:
 		var text_to_measure := StitchedTurnStatusCues.tooltip(fit_unit)
 		var measured_sz := tip_font.get_multiline_string_size(text_to_measure, HORIZONTAL_ALIGNMENT_LEFT, help_text.size.x, tip_font_sz)
 		_check(measured_sz.y <= help_text.size.y,
