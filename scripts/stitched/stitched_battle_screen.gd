@@ -72,6 +72,12 @@ var _displayed_actor := ""
 var _stage_backdrop
 var _stage_art_view: Control
 var _focus_queue: Array[Dictionary] = []
+## S9b: Wren's side view (hands, strings, fear jar) and his hand-action buttons. The live run
+## points kid_fear_source at the session's fear; a preview reads config.kid_fear.
+var kid_view: StitchedKidView
+var kid_fear_source: Callable
+var _hand_buttons: Dictionary = {}
+var _hand_pending := ""
 
 static func read_preview() -> Dictionary:
 	var file := FileAccess.open(PREVIEW_PATH, FileAccess.READ)
@@ -183,8 +189,8 @@ func _build_screen() -> void:
 	_panel(Rect2(0, 0, 1280, 720), INK)
 	# Reuse the live roster's authored image painter and its shared camera math;
 	# neither the painter nor the camera changes a Control's hit geometry.
-	var stage_path := ROSTER.stage_backdrop_path("Fight", 0)
-	var texture: Texture2D = load(stage_path) as Texture2D if ResourceLoader.exists(stage_path, "Texture2D") else null
+	var backdrop_path := stage_path()
+	var texture: Texture2D = load(backdrop_path) as Texture2D if ResourceLoader.exists(backdrop_path, "Texture2D") else null
 	_stage_backdrop = ROSTER.StageBackdrop.new()
 	_stage_backdrop.name = "SharedStitchedBackdrop"
 	_stage_backdrop.position = Vector2(0, 60)
@@ -294,6 +300,9 @@ func _build_screen() -> void:
 	_stage_art_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_stage_art_view)
 	_stage_backdrop.stage_row = _stage_art_view
+	kid_view = StitchedKidView.new()
+	add_child(kid_view)
+	_build_hand_actions()
 	# Equally spaced back-to-front ranks on one quilt, with a clear centre aisle.
 	# Each 170px slot centres its own fitted authored figure and underfoot plaque.
 	# Draw back ranks first; targeting still follows the actual occupied art.
@@ -766,6 +775,7 @@ func _refresh() -> void:
 	for key in _target_buttons:
 		_target_buttons[key].disabled = not _target_ranks.has(key)
 	_refresh_action_cues(acting, hero_turn, cuts)
+	_refresh_kid_view(cuts)
 	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
 	_labels["log"].tooltip_text = _labels["log"].text
 	_present_status_disclosure()
@@ -1049,6 +1059,8 @@ func legal_targets() -> Dictionary:
 
 
 func submit_target(side: String, rank: int) -> Dictionary:
+	if _hand_pending in ["steady", "hold_back", "lift"] and side == "hero":
+		return submit_hand_action(_hand_pending, rank)
 	var key := side + "_" + str(rank)
 	if not _target_ranks.has(key) or _selected_part.is_empty():
 		return {"ok": false, "error": "target is not legal"}
@@ -1072,6 +1084,8 @@ func submit_part(part_id: String, rank: int) -> Dictionary:
 
 
 func submit_move(direction: int) -> Dictionary:
+	if _hand_pending.begins_with("lift:"):
+		return submit_hand_action("lift", int(_hand_pending.split(":")[1]), direction)
 	if not _can_move(direction):
 		return {"ok": false, "error": "move blocked"}
 	return _commit(battle.move(direction))
@@ -1100,6 +1114,7 @@ func _commit(receipt: Dictionary) -> Dictionary:
 		return receipt
 	_record(receipt)
 	_selected_part = ""
+	_hand_pending = ""
 	_drive_foes()
 	_refresh()
 	return receipt
@@ -1146,6 +1161,11 @@ func _record(receipt: Dictionary) -> void:
 	var actor_id := str(receipt.get("actor", ""))
 	var action := str(receipt.get("action", ""))
 	var log := "%s · %s" % [actor_id.replace("_", " ").capitalize(), action.replace("_", " ").capitalize()]
+	if action == "hand":
+		log = "Wren · %s%s" % [_hand_action_name(str(receipt.get("hand_action", ""))),
+			" → " + actor_id.replace("_", " ").capitalize() if not actor_id.is_empty() else ""]
+		if bool(receipt.get("failed", false)):
+			log += "\nHis hands shook (roll %d): the action slipped." % int(receipt.get("roll", 0))
 	if action == "ability":
 		log += "\n" + str(receipt.get("ability", ""))
 		for result in receipt.get("results", []):
@@ -1346,6 +1366,112 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		_selected_part = ""
+		_hand_pending = ""
 		_inspected_seat = ""
 		_refresh()
 		get_viewport().set_input_as_handled()
+
+
+## The fight's stage picture: Wren's side view of its house area when that picture is
+## installed (config kid_floor / kid_kind come from the live run), else the shared meadow.
+func stage_path() -> String:
+	var kind := str(config.get("kid_kind", "Fight"))
+	var kid_path := StitchedKidView.backdrop_path(int(config.get("kid_floor", 1)), kind)
+	return kid_path if not kid_path.is_empty() else ROSTER.stage_backdrop_path("Fight", 0)
+
+
+func kid_fear() -> int:
+	return int(kid_fear_source.call()) if kid_fear_source.is_valid() else int(config.get("kid_fear", 0))
+
+
+func _hand_action_name(action_id: String) -> String:
+	return str(StitchedKidHandActions.catalog().get("by_id", {}).get(action_id, {}).get("name", action_id.capitalize()))
+
+
+## Wren's four free hand actions sit under the title, left of the turn order.
+func _build_hand_actions() -> void:
+	var book: Dictionary = StitchedKidHandActions.catalog()
+	var short := {"steady": "Steady", "shield_candle": "Shield", "hold_back": "Hold", "lift": "Lift"}
+	for index in StitchedKidHandActions.IDS.size():
+		var action_id: String = StitchedKidHandActions.IDS[index]
+		var button := _button(short[action_id], Rect2(26 + index * 106, 48, 100, 38),
+			func(): choose_hand_action(action_id))
+		button.name = "HandAction" + action_id.to_pascal_case()
+		CHROME.style_action_button(button, StitchedKidView.icon_path(action_id))
+		var emblem := button.get_node_or_null("ActionEmblem")
+		if emblem != null:
+			emblem.position = Vector2(6, 5)
+			emblem.size = Vector2(28, 28)
+		button.tooltip_text = "%s (Wren's hand, free once a round)\n%s" % [_hand_action_name(action_id),
+			str(book.get("by_id", {}).get(action_id, {}).get("text", ""))]
+		_hand_buttons[action_id] = button
+
+
+## Shield the Candle happens at once; the others wait for a doll (Ally button or figure),
+## and Lift then for Move front / Move back.
+func choose_hand_action(action_id: String) -> Dictionary:
+	if battle == null or not action_id in StitchedKidHandActions.IDS or not battle.hand_action_open():
+		return {"ok": false, "error": "Wren's hand is not free"}
+	if action_id == "shield_candle":
+		return submit_hand_action(action_id)
+	_hand_pending = "" if _hand_pending == action_id else action_id
+	_selected_part = ""
+	_notice = "Wren · %s: pick one of his dolls (Ally button or figure). Esc cancels." % _hand_action_name(action_id) \
+		if not _hand_pending.is_empty() else ""
+	_refresh()
+	return {"ok": true, "pending": _hand_pending}
+
+
+func submit_hand_action(action_id: String, rank: int = 0, direction: int = 0) -> Dictionary:
+	if battle == null:
+		return {"ok": false, "error": "no battle"}
+	var target_id := str(_unit_at("hero", rank).get("id", "")) if rank > 0 else ""
+	if action_id == "lift" and direction == 0:
+		var refusal := battle.hand_action_check("lift", target_id, -1)
+		if not refusal.is_empty():
+			refusal = battle.hand_action_check("lift", target_id, 1)
+		if not refusal.is_empty():
+			return {"ok": false, "error": refusal}
+		_hand_pending = "lift:%d" % rank
+		_notice = "Wren · Lift %s: Move front or Move back. Esc cancels." % str(_unit_at("hero", rank).get("name", "doll"))
+		_refresh()
+		return {"ok": true, "pending": _hand_pending}
+	var receipt := battle.use_hand_action(action_id, target_id, direction, kid_fear())
+	if not bool(receipt.get("ok", false)):
+		return receipt
+	return _commit(receipt)
+
+
+func _hand_target_ok(action_id: String, hero_id: String) -> bool:
+	if action_id != "lift":
+		return battle.hand_action_check(action_id, hero_id, 0).is_empty()
+	return battle.hand_action_check("lift", hero_id, -1).is_empty() or battle.hand_action_check("lift", hero_id, 1).is_empty()
+
+
+func _refresh_kid_view(cuts: Dictionary) -> void:
+	if kid_view == null:
+		return
+	var open := battle.hand_action_open()
+	if not open:
+		_hand_pending = ""
+	for action_id in _hand_buttons:
+		var button: Button = _hand_buttons[action_id]
+		button.disabled = not open
+		button.modulate = Color(1.25, 1.1, 0.8) if _hand_pending.split(":")[0] == action_id else Color.WHITE
+	if _hand_pending in ["steady", "hold_back", "lift"]:
+		for rank in range(1, 5):
+			var key := "hero_" + str(rank)
+			var lit := _hand_target_ok(_hand_pending, str(_unit_at("hero", rank).get("id", "")))
+			if lit:
+				_target_ranks[key] = true
+			_target_buttons[key].disabled = not lit
+	elif _hand_pending.begins_with("lift:"):
+		var hero_id := str(_unit_at("hero", int(_hand_pending.split(":")[1])).get("id", ""))
+		_action_buttons["move_front"].disabled = not battle.hand_action_check("lift", hero_id, -1).is_empty()
+		_action_buttons["move_back"].disabled = not battle.hand_action_check("lift", hero_id, 1).is_empty()
+	var tops := {}
+	for rank in range(1, 5):
+		var hit: Control = _figure_hits.get("hero_" + str(rank))
+		if hit != null and hit.visible:
+			tops[rank] = hit.position + Vector2(hit.size.x * 0.5, 0)
+	kid_view.show_state(kid_fear(), battle.get_heroes(), tops, cuts, _motion_is_reduced())
