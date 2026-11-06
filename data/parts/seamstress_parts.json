@@ -94,7 +94,7 @@
         "name": "Needle Rain",
         "kind": "ranged",
         "launch": [1, 2, 3, 4],
-        "target": [1, 2, 3],
+        "target": [1, 2, 3, 4],
         "target_side": "enemy",
         "multi": true,
         "acc": 90,
@@ -108,7 +108,7 @@
         "2": {"stat": {"dmg": 2}, "ability": {"dmg": [2, 3], "effects": {"bleed": 4}}},
         "3": {"stat": {"dmg": 3}, "ability": {"dmg": [3, 4], "effects": {"bleed": 5}}}
       },
-      "text": "Shower each living foe in enemy ranks 1-3 once from hero ranks 1-4: 1-2 damage and Bleed 3 on every struck foe."
+      "text": "Shower each living foe in enemy ranks 1-4 once from hero ranks 1-4: 1-2 damage and Bleed 3 on every struck foe."
     },
     {
       "id": "seamstress_shielding_hem_coat",
