@@ -347,10 +347,10 @@ static func _validate_effects(value: Variant, label: String) -> Dictionary:
 	for key in value:
 		if not key is String or not key in EFFECT_KEYS:
 			return {"ok": false, "error": label + " has an unknown effect: " + str(key), "effects": {}}
-		if not _integral(value[key]) or int(value[key]) < 0:
+		if not _integral(value[key]) or int(value[key]) < 1:
 			return {
 				"ok": false,
-				"error": label + " effect " + str(key) + " must be a nonnegative integer",
+				"error": label + " effect " + str(key) + " must be a positive integer",
 				"effects": {},
 			}
 		if str(key) == "dodge" and int(value[key]) > MAX_TEMP_DODGE:
