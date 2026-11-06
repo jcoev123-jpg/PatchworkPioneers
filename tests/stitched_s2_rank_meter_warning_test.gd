@@ -53,6 +53,24 @@ func _bounds(meters: Dictionary, note: String) -> void:
 	for child in surface.get_children():
 		if child is Control:
 			var control := child as Control
+			if control.name == "BadgeRow":
+				# The badge band intentionally extends from meter y530 to y486..504.
+				_check(control.position == Vector2(3, -44) and control.size == Vector2(164, 18)
+					and surface.position.y + control.position.y == 486.0
+					and control.position.x >= 0.0 and control.position.x + control.size.x <= 170.0
+					and control.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+					"%s BadgeRow occupies the passive y486..504 band" % note)
+				_check(control.get_child_count() == 6,
+					"%s BadgeRow reuses exactly six slots" % note)
+				for badge in control.get_children():
+					if badge is Control:
+						var chip := badge as Control
+						_check(chip.position.x >= 0.0 and chip.position.y >= 0.0
+							and chip.position.x + chip.size.x <= control.size.x
+							and chip.position.y + chip.size.y <= control.size.y
+							and chip.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+							"%s %s fits the passive BadgeRow" % [note, chip.name])
+				continue
 			_check(control.position.x >= 0.0 and control.position.y >= 0.0
 				and control.position.x + control.size.x * control.scale.x <= 170.0
 				and control.position.y + control.size.y * control.scale.y <= 24.0,
@@ -119,8 +137,11 @@ func _run() -> void:
 		"hero glance shows genuine current values; foe retains full HP current/max")
 	_check(hp.tooltip_text == "HP 12/17" and fray.tooltip_text == _fray_detail(45)
 		and hero_root.tooltip_text.contains("HP 12/17")
-		and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(45),
+		and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(45) + " | STATUS: none",
 		"mouse-accessible stitched surface exposes both full values")
+	_check(hero_root.get_node("BadgeRow").tooltip_text == "STATUS: none"
+		and not hero_root.get_node("BadgeRow").visible,
+		"no-status snapshots show no indicator and disclose an empty list")
 	_check(hero_root.mouse_filter == Control.MOUSE_FILTER_PASS,
 		"full-value tooltip surface accepts hover")
 	_fit(hp_label, "normal HP")
@@ -136,7 +157,7 @@ func _run() -> void:
 			and fray_label.text == "FRAY %d" % sample,
 			"FRAY %d uses exact 200-point fill and shorter current-value caption" % sample)
 		_check(fray.tooltip_text == _fray_detail(sample)
-			and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(sample),
+			and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(sample) + " | STATUS: none",
 			"FRAY %d describes risk thresholds without resolving a roll" % sample)
 		var sample_style := fray.get_theme_stylebox("fill") as StyleBoxTexture
 		_check(sample_style != null and sample_style.texture == FILL
@@ -160,16 +181,19 @@ func _run() -> void:
 	_check(hero_root.visible and hp.value == 0.0 and hp.max_value == 17.0
 		and hp_label.text == "HANGING"
 		and hp.tooltip_text == "HP 0/17 — HANGING BY A THREAD (still acts and holds rank)"
-		and hero_root.tooltip_text == hp.tooltip_text + " | " + _fray_detail(150)
-		and hp_frame.self_modulate != Color.WHITE,
+		and hero_root.tooltip_text == hp.tooltip_text + " | " + _fray_detail(150) + " | STATUS: HANGING BY A THREAD"
+		and hp_frame.self_modulate != Color.WHITE
+		and hero_root.get_node("BadgeRow").visible
+		and hero_root.get_node("BadgeRow").get_node("Badge0").tooltip_text == "HANGING BY A THREAD",
 		"real hanging flag signals HANGING without fabricating HP")
 	_fit(hp_label, "HANGING")
 	unit["hanging"] = false
 	_present(hero, unit, "hero")
 	_check(hp.value == 0.0 and hp_label.text == "HP 0"
 		and hp.tooltip_text == "HP 0/17"
-		and hero_root.tooltip_text == "HP 0/17 | " + _fray_detail(150)
-		and hp_frame.self_modulate == Color.WHITE,
+		and hero_root.tooltip_text == "HP 0/17 | " + _fray_detail(150) + " | STATUS: none"
+		and hp_frame.self_modulate == Color.WHITE
+		and not hero_root.get_node("BadgeRow").visible,
 		"zero HP alone does not assert HANGING")
 	unit["lost"] = true
 	_present(hero, unit, "hero")
@@ -192,7 +216,7 @@ func _run() -> void:
 	_check(hero_root.visible and hp.value == 9.0 and fray.value == 0.0
 		and hp_label.text == "HP 9" and fray_label.text == "FRAY 0"
 		and hp.tooltip_text == "HP 9/17" and fray.tooltip_text == _fray_detail(0)
-		and hero_root.tooltip_text == "HP 9/17 | " + _fray_detail(0)
+		and hero_root.tooltip_text == "HP 9/17 | " + _fray_detail(0) + " | STATUS: none"
 		and hp_frame.self_modulate == Color.WHITE
 		and fray_frame.self_modulate == Color.WHITE,
 		"restored living hero has clean healthy styles")
