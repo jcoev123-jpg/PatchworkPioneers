@@ -1221,6 +1221,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_brass_ear_listening_post",
+      "title": "The Brass-Ear Listening Post",
+      "description": "A plump moss-velvet listener sits beneath an ear trumpet as tall as a gate; its patched fabric earpiece gathers whispers from a moonlit quilt road while a single candle glows in the copper throat.",
+      "choices": [
+        {
+          "id": "polish_ear_horn",
+          "text": "Spend 2 scraps polishing the brass ear; earn 29 gold",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "buy_echo_thread",
+          "text": "Pay 17 gold for two coils of echo thread (+2 scraps)",
+          "outcome": { "gold": -17, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the giant brass ear listening to the night",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_bone_bellows_portrait_booth",
+      "title": "The Bone-Bellows Portrait Booth",
+      "description": "A button-eyed photographer unfolds a giant bone-cream camera bellows from an oxblood velvet booth; the round black lens holds four little sewn silhouettes instead of faces.",
+      "choices": [
+        {
+          "id": "pose_for_portrait",
+          "text": "Pose for a stitched portrait (earn 12 gold)",
+          "outcome": { "gold": 12, "scraps": 0 }
+        },
+        {
+          "id": "buy_shadow_plate",
+          "text": "Pay 22 gold for three bundles of shadow-plate trim (+3 scraps)",
+          "outcome": { "gold": -22, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the velvet curtain close around the silent camera",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_blacklace_thunder_drum",
+      "title": "The Blacklace Thunder Drum",
+      "description": "A squat slate-felt drummer stands within a carriage-sized blacklace drum; great copper hoops are tied with fraying crimson thread, and each soft beat shakes loose a bundle of rivets.",
+      "choices": [
+        {
+          "id": "salvage_loose_rivets",
+          "text": "Gather the fallen copper rivets (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "reinforce_drum_rim",
+          "text": "Spend 3 scraps repairing the drum rim (earn 37 gold)",
+          "outcome": { "gold": 37, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Walk on as the soft drumbeat fades behind the mist",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

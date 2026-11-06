@@ -219,6 +219,17 @@ func _fixtures() -> Dictionary:
 	# 499999-seed fallback. The real oracle below revalidates every candidate.
 	hints.append_array([21930, 88828, 105002, 316664, 427273, 454374,
 		510679, 531335])
+	# Genuine map/toll/rotation witnesses after the three Stitched roadside
+	# object-trade tales (Brass-Ear Listening Post, Bone-Bellows Portrait Booth,
+	# Blacklace Thunder Drum) joined the sorted generic pool and moved the
+	# authentic draw index. The first eight were reported by the bounded fallback
+	# on the failing run; v3_patchwork_lighthouse, v3_tinker_gear_sideshow and
+	# v3_seamstress_crimson_mending_queue were re-derived beyond the bounded
+	# 499999-seed fallback through the real map -> toll -> rotation pipeline.
+	# The real oracle below revalidates every candidate; none is pinned by
+	# index or position.
+	hints.append_array([140348, 146086, 190010, 209157, 251140, 386261,
+		388826, 418360, 608718, 643940, 773768])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
