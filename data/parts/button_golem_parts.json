@@ -318,6 +318,7 @@
           3
         ],
         "crit": 0,
+        "mark_damage": 2,
         "effects": {},
         "self_move": 0,
         "move": "attack2"
@@ -328,7 +329,8 @@
             "dmg": [
               3,
               4
-            ]
+            ],
+            "mark_damage": 3
           }
         },
         "3": {
@@ -336,11 +338,12 @@
             "dmg": [
               4,
               6
-            ]
+            ],
+            "mark_damage": 4
           }
         }
       },
-      "text": "Scatter buttons across three foe ranks, once per target."
+      "text": "Scatter buttons across three foe ranks, once per target; each already-Marked target takes extra damage."
     },
     {
       "id": "button_golem_torso_eyelet_guard",

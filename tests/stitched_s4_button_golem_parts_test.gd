@@ -30,6 +30,8 @@ func _initialize() -> void:
 	_test_all_tiers()
 	_test_mark_bonus()
 	_test_volley()
+	_test_volley_mark_bonus()
+	_test_volley_miss()
 	_test_guard_interception()
 	_test_wheels()
 	_test_illegal()
@@ -175,9 +177,7 @@ func _test_catalog() -> void:
 			and str(c["by_id"][STARTERS[slot]]["slot"]) == slot
 			and str(c["by_id"][ALTERNATES[slot]]["slot"]) == slot,
 			"AC1: exact two starter/pool look pairing for " + slot)
-	_check(c["by_id"][ALTERNATES["arms"]]["ability"]["multi"]
-		and c["by_id"][ALTERNATES["arms"]]["ability"]["target"] == [1, 2, 3],
-		"AC1: Popping Volley has three separate foe targets, no double-hit")
+	_test_volley_catalog(c)
 	_check(c["by_id"][STARTERS["arms"]]["ability"]["mark_damage"] > 0,
 		"AC1: Button Fist consumes native Mark synergy")
 	for id in [STARTERS["legs"], ALTERNATES["legs"]]:
@@ -318,6 +318,183 @@ func _test_volley() -> void:
 		if witnessed:
 			break
 	_check(witnessed, "AC2: real Popping Volley hits each of three unique foes exactly once")
+
+
+func _test_volley_catalog(c: Dictionary) -> void:
+	var part: Dictionary = c["by_id"][ALTERNATES["arms"]]
+	_check(str(part["id"]) == "button_golem_arms_popping_volley"
+		and str(part["owner"]) == "button_golem" and str(part["slot"]) == "arms"
+		and int(part["stat"].get("dmg", 0)) == 2,
+		"AC1: Popping Volley keeps its id, owner, arms slot and dmg stat")
+	var rows := [
+		{"tier": 1, "dmg": [2, 3], "mark": 2},
+		{"tier": 2, "dmg": [3, 4], "mark": 3},
+		{"tier": 3, "dmg": [4, 6], "mark": 4},
+	]
+	for row in rows:
+		var tier := int(row["tier"])
+		var at := StitchedParts.ability_at_tier(part, tier)
+		_check(str(at["id"]) == "button_golem_arms_popping_volley_move"
+			and str(at["kind"]) == "ranged" and str(at["target_side"]) == "enemy"
+			and bool(at["multi"]) and at["launch"] == [1, 2] and at["target"] == [1, 2, 3]
+			and int(at["acc"]) == 89 and at["dmg"] == row["dmg"] and int(at["crit"]) == 0
+			and int(at["self_move"]) == 0 and at["effects"] == {} and str(at["move"]) == "attack2",
+			"AC1: Popping Volley keeps native ranks/ACC/damage/pose at tier %d" % tier)
+		_check(int(at["mark_damage"]) == int(row["mark"]),
+			"AC1: Popping Volley tier %d authored mark_damage is %d" % [tier, int(row["mark"])])
+	_check(str(part["text"]).contains("Marked")
+		and str(part["text"]).to_lower().contains("extra damage"),
+		"AC1: Popping Volley text names the extra damage a Marked target takes")
+	var loose: Dictionary = c["by_id"][STARTERS["head"]]
+	_check(int(StitchedParts.ability_at_tier(loose, 1)["effects"]["mark"]) == 2
+		and int(StitchedParts.ability_at_tier(loose, 2)["effects"]["mark"]) == 3
+		and int(StitchedParts.ability_at_tier(loose, 3)["effects"]["mark"]) == 4,
+		"AC1: Loose Button Pop keeps its Mark 2/3/4")
+	var fist: Dictionary = c["by_id"][STARTERS["arms"]]
+	_check(int(StitchedParts.ability_at_tier(fist, 1)["mark_damage"]) == 3
+		and int(StitchedParts.ability_at_tier(fist, 2)["mark_damage"]) == 5
+		and int(StitchedParts.ability_at_tier(fist, 3)["mark_damage"]) == 7,
+		"AC1: Button Fist keeps its Mark bonus 3/5/7")
+
+
+func _receipt_for(results: Array, target_id: String) -> Dictionary:
+	for receipt in results:
+		if str(receipt.get("target", "")) == target_id:
+			return receipt
+	return {}
+
+
+## True when the same raw pre-PROT base can produce both receipts: the control damage
+## through native PROT, and the Marked damage with the authored bonus added before PROT.
+func _mark_bonus_through_protection(
+	control_damage: int, marked_damage: int, prot: int, bonus: int
+) -> bool:
+	for raw in range(0, 201):
+		if StitchedRules.apply_protection(raw, prot) == control_damage \
+			and StitchedRules.apply_protection(raw + bonus, prot) == marked_damage:
+			return true
+	return false
+
+
+func _test_volley_mark_bonus() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(ALTERNATES["arms"]):
+		_check(false, "AC2: Popping Volley catalog available for the Mark battle")
+		return
+	var foe_ids := ["fray_scavenger", "scissor_crab", "moth_scribe"]
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(catalog["by_id"][ALTERNATES["arms"]], tier)
+		var bonus := int(ability["mark_damage"])
+		var witnessed := false
+		for seed_value in range(503600, 503760):
+			var marked := _battle(ALTERNATES["arms"], tier, seed_value)
+			var plain := _battle(ALTERNATES["arms"], tier, seed_value)
+			if marked == null or plain == null:
+				continue
+			if not _to(marked, "button_golem") or not _to(plain, "button_golem"):
+				continue
+			var mark_cast := marked.use_part(STARTERS["head"], 1)
+			var control_cast := plain.use_part(STARTERS["head"], 1)
+			if mark_cast != control_cast or not bool(mark_cast.get("ok", false)):
+				continue
+			var mark_results: Array = mark_cast.get("results", [])
+			if mark_results.size() != 1 or not bool(mark_results[0].get("hit", false)):
+				continue
+			var target_id := str(mark_results[0]["target"])
+			if int(marked.get_unit(target_id)["statuses"].get("mark", 0)) <= 0:
+				continue
+			# Both siblings applied the same real head action; only the control loses its Mark.
+			plain._units[target_id]["statuses"].erase("mark")
+			if not _to(marked, "button_golem") or not _to(plain, "button_golem"):
+				continue
+			if marked.current_actor_id() != "button_golem" or plain.current_actor_id() != "button_golem":
+				continue
+			if marked.rng_state() != plain.rng_state():
+				continue
+			if int(marked.get_unit(target_id)["statuses"].get("mark", 0)) <= 0:
+				continue
+			var hp_before := int(marked.get_unit(target_id)["hp"])
+			if hp_before != int(plain.get_unit(target_id)["hp"]):
+				continue
+			var boosted := marked.use_part(ALTERNATES["arms"], 1)
+			var base := plain.use_part(ALTERNATES["arms"], 1)
+			if not bool(boosted.get("ok", false)) or not bool(base.get("ok", false)):
+				continue
+			var boosted_results: Array = boosted.get("results", [])
+			var base_results: Array = base.get("results", [])
+			if boosted_results.size() != 3 or base_results.size() != 3:
+				continue
+			var marked_hit := _receipt_for(boosted_results, target_id)
+			var control_hit := _receipt_for(base_results, target_id)
+			if marked_hit.is_empty() or control_hit.is_empty():
+				continue
+			# A witness needs a genuine successful hit on the Marked foe in both siblings.
+			if not bool(marked_hit.get("hit", false)) or not bool(control_hit.get("hit", false)):
+				continue
+			var seen := {}
+			var ranks := {}
+			for receipt in boosted_results:
+				var seen_id := str(receipt["target"])
+				seen[seen_id] = int(seen.get(seen_id, 0)) + 1
+				ranks[int(receipt["target_rank"])] = true
+			var others_equal := true
+			for other_id in foe_ids:
+				if other_id == target_id:
+					continue
+				var other_marked := _receipt_for(boosted_results, other_id)
+				var other_base := _receipt_for(base_results, other_id)
+				others_equal = others_equal and not other_marked.is_empty() \
+					and not other_base.is_empty() and other_marked == other_base
+			var marked_damage := int(marked_hit["damage"])
+			var control_damage := int(control_hit["damage"])
+			var prot := int(marked.get_unit(target_id).get("prot", 0))
+			var spread := false
+			for other_id in foe_ids:
+				if other_id != target_id \
+					and int(marked.get_unit(other_id)["statuses"].get("mark", 0)) > 0:
+					spread = true
+			_check(seen.size() == 3 and seen.values().all(func(count): return int(count) == 1)
+				and ranks.size() == 3 and ranks.has(1) and ranks.has(2) and ranks.has(3),
+				"AC2: tier %d volley hits each eligible rank once with no phantom rank four" % tier)
+			_check(others_equal,
+				"AC2: tier %d unmarked foes take identical damage in both sibling battles" % tier)
+			_check(marked_damage > control_damage
+				and _mark_bonus_through_protection(control_damage, marked_damage, prot, bonus),
+				"AC2: tier %d Marked foe takes the authored +%d pre-PROT damage" % [tier, bonus])
+			_check(int(marked.get_unit(target_id)["hp"]) == hp_before - marked_damage
+				and int(plain.get_unit(target_id)["hp"]) == hp_before - control_damage,
+				"AC2: tier %d final HP reflects the matched receipt damage" % tier)
+			_check(int(marked.get_unit(target_id)["statuses"].get("mark", 0)) > 0 and not spread,
+				"AC2: tier %d Mark stays on its foe and never spreads" % tier)
+			_check(marked.rng_state() == plain.rng_state(),
+				"AC2: tier %d matched seeds keep identical RNG after the volley" % tier)
+			witnessed = true
+			break
+		_check(witnessed, "AC2: tier %d witnesses a real Marked Popping Volley hit" % tier)
+
+
+func _test_volley_miss() -> void:
+	var witnessed := false
+	for seed_value in range(503760, 503900):
+		var b := _battle(ALTERNATES["arms"], 1, seed_value)
+		if b == null or not _to(b, "button_golem"):
+			continue
+		var cast := b.use_part(ALTERNATES["arms"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var missed := false
+		var clean := true
+		for receipt in cast.get("results", []):
+			if bool(receipt.get("hit", false)):
+				continue
+			missed = true
+			clean = clean and int(receipt.get("damage", -1)) == 0 \
+				and receipt.get("statuses", []).is_empty() \
+				and int(receipt.get("target_hp", -1)) == int(b.get_unit(str(receipt["target"]))["hp"])
+		if missed:
+			witnessed = clean
+			break
+	_check(witnessed, "AC2: a real Popping Volley miss deals no damage and applies no status")
 
 
 func _test_guard_interception() -> void:
