@@ -52,6 +52,7 @@ func _initialize() -> void:
 	_test_fear_tell_tales()
 	_test_fear_other_choices_and_swap()
 	_test_fear_refusals_replay_and_rng()
+	_test_tales_clears_unravelled_below_threshold()
 	_finish()
 
 
@@ -1442,3 +1443,103 @@ func _test_fear_refusals_replay_and_rng() -> void:
 		"a refused foreign-node attempt leaves the visit open")
 	_check(randi() == expected_next and local_rng.state == local_state,
 		"fear admission, refusals and Tell Tales draw no RNG")
+
+
+## Tell Tales ends a named Unravelled trait only when the reduced FRAY is
+## strictly below 50; exactly 50 keeps it. Other resolve values never change.
+func _test_tales_clears_unravelled_below_threshold() -> void:
+	var traits: Array = StitchedS1BEffects.RESOLVE_TRAITS
+	_check(traits.size() == 5 and traits.has("frantic") and traits.has("hollow")
+		and traits.has("bitter") and traits.has("reckless") and traits.has("cowering"),
+		"the five named Unravelled traits are the clear candidates")
+	var frays: Array = [74, 75, 25, 100]
+	var resolves: Array = ["frantic", "hollow", "bitter", "steadfast"]
+	var source := _stitched_party([35, 18, 0, 48], frays)
+	for i in range(4):
+		source[i]["resolve"] = resolves[i]
+	var original := source.duplicate(true)
+	seed(313131)
+	var expected_next := randi()
+	seed(313131)
+	var visit := RunCampfireVisit.new("camp_unr", source, "stitched", 40)
+	var receipt := visit.select("tell_tales", "camp_unr", original, 40)
+	_check(receipt.get("ok") == true and receipt.get("decision") == "tell_tales",
+		"Unravelled fixture commits Tell Tales")
+	var heroes: Array = receipt.get("heroes", [])
+	_check(heroes.size() == 4, "receipt keeps four dolls")
+	if heroes.size() != 4:
+		return
+	_check([heroes[0]["fray"], heroes[1]["fray"], heroes[2]["fray"], heroes[3]["fray"]]
+		== [49, 50, 0, 75], "exactly -25 FRAY per doll with a floor of zero")
+	_check(heroes[0]["resolve"] == "", "74 -> 49 clears Frantic")
+	_check(heroes[1]["resolve"] == "hollow", "75 -> 50 keeps Hollow (exactly 50 does not clear)")
+	_check(heroes[2]["resolve"] == "", "25 -> 0 clears Bitter")
+	_check(heroes[3]["resolve"] == "steadfast", "100 -> 75 keeps Steadfast untouched")
+	var expected := original.duplicate(true)
+	expected[0]["fray"] = 49
+	expected[0]["resolve"] = ""
+	expected[1]["fray"] = 50
+	expected[2]["fray"] = 0
+	expected[2]["resolve"] = ""
+	expected[3]["fray"] = 75
+	_check(heroes == expected, "only FRAY and the eligible resolve fields change")
+	var held := visit.read_state()
+	_check(held["heroes"] == expected and held["status"] == "stitched_decided"
+		and held["candle"] == 40, "read_state agrees with the receipt")
+	_check(source == original, "caller-owned roster is not mutated")
+	_check(randi() == expected_next, "Unravelled clearing draws no RNG")
+	_assert_stitched_refused(visit, "tell_tales", "camp_unr", heroes, 40, "duplicate Tell Tales")
+	# Every named trait clears at 49; a LOST doll stays LOST; missing/empty/unknown unchanged.
+	for trait_name in traits:
+		var one := _stitched_party(FULL_HPS, [74, 75, 80, 90])
+		one[0]["resolve"] = trait_name
+		var one_visit := RunCampfireVisit.new("camp_one", one, "stitched", 100)
+		var one_receipt := one_visit.select("tell_tales", "camp_one", one, 100)
+		_check(one_receipt.get("ok") == true and one_receipt["heroes"][0]["fray"] == 49
+			and one_receipt["heroes"][0]["resolve"] == "",
+			"%s clears at resulting FRAY 49" % trait_name)
+	var mixed := _lost_party([0, 30, 26, 48], [0], [60, 70, 30, 40])
+	mixed[0]["resolve"] = "cowering"
+	mixed[1]["resolve"] = ""
+	mixed[2]["resolve"] = "mystery"
+	var mixed_before := mixed.duplicate(true)
+	var mixed_visit := RunCampfireVisit.new("camp_mix", mixed, "stitched", 100)
+	var mixed_receipt := mixed_visit.select("tell_tales", "camp_mix", mixed_before, 100)
+	var mixed_heroes: Array = mixed_receipt.get("heroes", [])
+	_check(mixed_receipt.get("ok") == true and mixed_heroes.size() == 4,
+		"mixed LOST/empty/unknown/missing fixture commits")
+	if mixed_heroes.size() == 4:
+		_check(mixed_heroes[0]["lost"] == true and mixed_heroes[0]["hp"] == 0
+			and mixed_heroes[0]["fray"] == 35 and mixed_heroes[0]["resolve"] == "",
+			"a LOST doll stays LOST at 0 HP and FRAY 35, and its Cowering clears below 50")
+		_check(mixed_heroes[1]["fray"] == 45 and mixed_heroes[1]["resolve"] == "",
+			"empty resolve stays empty")
+		_check(mixed_heroes[2]["fray"] == 5 and mixed_heroes[2]["resolve"] == "mystery",
+			"unknown resolve is left unchanged")
+		_check(mixed_heroes[3]["fray"] == 15 and not mixed_heroes[3].has("resolve"),
+			"missing resolve is not invented")
+	# A LOST doll below the threshold after Tales also clears its named trait.
+	var lost_low := _lost_party([0, 30, 26, 48], [0], [60, 0, 0, 0])
+	lost_low[0]["resolve"] = "reckless"
+	lost_low[0]["fray"] = 74
+	var lost_visit := RunCampfireVisit.new("camp_lowlost", lost_low, "stitched", 100)
+	var lost_receipt := lost_visit.select("tell_tales", "camp_lowlost", lost_low, 100)
+	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0]["lost"] == true
+		and lost_receipt["heroes"][0]["hp"] == 0 and lost_receipt["heroes"][0]["fray"] == 49
+		and lost_receipt["heroes"][0]["resolve"] == "",
+		"a LOST doll is not revived but its FRAY drop still clears the trait")
+	# Optional Wren FEAR: -15 alongside the same FRAY/resolve rule.
+	var fear_party := _stitched_party([35, 18, 0, 48], [74, 75, 25, 100])
+	fear_party[0]["resolve"] = "frantic"
+	fear_party[1]["resolve"] = "hollow"
+	var fear_before := fear_party.duplicate(true)
+	var fear_visit := RunCampfireVisit.new("camp_unr_fear", fear_party, "stitched", 40, 60)
+	var fear_receipt := fear_visit.select("tell_tales", "camp_unr_fear", fear_before, 40, 60)
+	_check(fear_receipt.get("ok") == true and fear_receipt.get("fear") == 45
+		and fear_receipt["heroes"][0]["resolve"] == "" and fear_receipt["heroes"][0]["fray"] == 49
+		and fear_receipt["heroes"][1]["resolve"] == "hollow"
+		and fear_receipt["heroes"][1]["fray"] == 50,
+		"Wren FEAR 60 -> 45 beside Unravelled clear at 49 and keep at 50")
+	_check(fear_visit.read_state()["fear"] == 45
+		and fear_visit.read_state()["heroes"] == fear_receipt["heroes"],
+		"read_state holds the soothed FEAR and the cleared resolve")
