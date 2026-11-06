@@ -14,6 +14,7 @@ var difficulty_calls := 0
 
 
 func _initialize() -> void:
+	StitchedBedroom.enabled = false
 	_run.call_deferred()
 
 
