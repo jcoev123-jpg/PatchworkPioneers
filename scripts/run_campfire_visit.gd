@@ -322,26 +322,63 @@ func _stitched_quote() -> Dictionary:
 	var choices: Array = _stitched_choices()
 	if choices.is_empty():
 		return {"text": "The fire has been tended; no choice remains.", "choices": choices}
+	# Each phrase keeps the authored maximum and adds the actual cap-aware
+	# total the held party and candle would gain right now.
 	var phrases: Array = []
 	for choice in choices:
 		match String(choice):
 			MEND:
-				phrases.append("Mend each hero for 30% of their utmost HP")
+				phrases.append("Mend %d%% max HP (+%d HP now)" % [MEND_HEAL_PERCENT, _mend_gain_now()])
 			TELL_TALES:
-				phrases.append("Tell Tales to unravel 25 FRAY from every hero")
+				var relief := "-%d FRAY now" % _tales_fray_relief_now()
 				if _has_fear:
-					phrases[phrases.size() - 1] += " and 15 FEAR from Wren"
+					relief += "; -%d Wren FEAR now" % _tales_fear_relief_now()
+				phrases.append("Tell Tales up to %d FRAY each (%s)" % [TALES_FRAY_REDUCTION, relief])
 			TRIM_THE_WICK:
-				phrases.append("Trim the Wick to recover 50 CANDLE")
+				phrases.append("Trim the Wick up to %d CANDLE (+%d now)" % [WICK_CANDLE_RESTORE, _wick_gain_now()])
 			STITCHED_LEAVE:
-				phrases.append("Leave the fire as it is")
+				phrases.append("Leave (free, no change)")
 	var text := "Four ragdoll stitches settle round the guttering flame. "
 	if phrases.size() == 1:
 		text += "No stitch needs tending tonight; " + String(phrases[0]) + "."
 	else:
-		text += ", ".join(phrases.slice(0, phrases.size() - 1)) + ", or " \
+		text += "Choose one: " + ", ".join(phrases.slice(0, phrases.size() - 1)) + ", or " \
 			+ String(phrases[phrases.size() - 1]) + "."
 	return {"text": text, "choices": choices}
+
+
+## Actual HP Mend would restore now: per non-LOST doll min(floor(30% max), missing HP).
+func _mend_gain_now() -> int:
+	var total: int = 0
+	for hero in _heroes:
+		if _is_lost_hero(hero):
+			continue
+		var max_hp: int = int(hero["max_hp"])
+		var hp: int = int(hero["hp"])
+		@warning_ignore("integer_division")
+		var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+		total += mini(amount, max_hp - hp)
+	return total
+
+
+## Actual FRAY Tell Tales would remove now, across every held record (LOST included).
+func _tales_fray_relief_now() -> int:
+	var total: int = 0
+	for hero in _heroes:
+		total += mini(TALES_FRAY_REDUCTION, int(hero["fray"]))
+	return total
+
+
+## Actual Wren FEAR Tell Tales would soothe now (zero when FEAR is not supplied).
+func _tales_fear_relief_now() -> int:
+	if not _has_fear:
+		return 0
+	return mini(TALES_FEAR_RELIEF, _fear)
+
+
+## Actual CANDLE Trim the Wick would restore now.
+func _wick_gain_now() -> int:
+	return mini(WICK_CANDLE_RESTORE, STITCHED_CANDLE_MAX - _candle)
 
 
 func _matches_stitched_open(expected_node_id: Variant,
