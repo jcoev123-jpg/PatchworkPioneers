@@ -5335,38 +5335,161 @@ func _clear_stitched_run_panel() -> void:
 	stitched_run_panel = null
 
 
-func _stitched_run_page(heading: String) -> VBoxContainer:
+func _stitched_run_texture(path: String) -> Texture2D:
+	if ResourceLoader.exists(path, "Texture2D"):
+		return load(path) as Texture2D
+	return null
+
+
+## A single image-backed page bed; the root Theme still owns fonts and focus.
+func _stitched_run_page(heading: String, page_kind: String = "picker") -> VBoxContainer:
 	_clear_stitched_run_panel()
-	var panel := NinePatchRect.new()
-	panel.name = "StitchedRunPage"
-	var art := "res://assets/paper/ui/panel_felt.png"
-	if ResourceLoader.exists(art, "Texture2D"):
-		panel.texture = load(art)
-	panel.patch_margin_left = 24
-	panel.patch_margin_right = 24
-	panel.patch_margin_top = 24
-	panel.patch_margin_bottom = 24
-	panel.position = Vector2(36, 24)
-	panel.size = Vector2(1208, 672)
-	add_child(panel)
-	stitched_run_panel = panel
+	var page := Control.new()
+	page.name = "StitchedRunPage"
+	page.size = Vector2(1280, 720)
+	page.set_meta("page_kind", page_kind)
+	add_child(page)
+	stitched_run_panel = page
+	var backdrop_path := "res://assets/paper/backgrounds/map_board.png"
+	if page_kind.begins_with("visit:"):
+		var service := page_kind.trim_prefix("visit:")
+		if service == "Campfire":
+			backdrop_path = "res://assets/paper/backgrounds/rest_camp.png"
+		elif service in ["Peddler", "PatchStall"]:
+			backdrop_path = "res://assets/paper/backgrounds/shop_stall.png"
+		else:
+			backdrop_path = "res://assets/paper/backgrounds/event_crossroads.png"
+	elif page_kind == "victory":
+		backdrop_path = "res://assets/paper/backgrounds/reward_camp.png"
+	elif page_kind == "defeat":
+		backdrop_path = "res://assets/paper/backgrounds/battle_boss.png"
+	elif page_kind == "picker":
+		backdrop_path = "res://assets/paper/backgrounds/title.png"
+	var backdrop := TextureRect.new()
+	backdrop.name = "StitchedSceneArt"
+	backdrop.set_meta("art_path", backdrop_path)
+	backdrop.texture = _stitched_run_texture(backdrop_path)
+	if backdrop.texture == null:
+		backdrop.texture = _stitched_run_texture("res://assets/paper/backgrounds/map_board.png")
+	backdrop.position = Vector2.ZERO
+	backdrop.size = page.size
+	backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(backdrop)
+	var frame := NinePatchRect.new()
+	frame.name = "StitchedFeltFrame"
+	frame.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
+	frame.patch_margin_left = 24
+	frame.patch_margin_right = 24
+	frame.patch_margin_top = 24
+	frame.patch_margin_bottom = 24
+	frame.position = Vector2(36, 24)
+	frame.size = Vector2(1208, 672)
+	frame.modulate.a = 0.96 if page_kind == "picker" else 0.82 if page_kind in ["victory", "defeat"] else 0.74
+	page.add_child(frame)
 	var content := VBoxContainer.new()
+	content.name = "StitchedPageContent"
 	content.position = Vector2(28, 20)
 	content.size = Vector2(1152, 628)
-	content.add_theme_constant_override("separation", 12)
-	panel.add_child(content)
-	var label := Label.new()
-	label.text = heading
-	label.add_theme_font_size_override("font_size", 30)
-	content.add_child(label)
+	content.add_theme_constant_override("separation", 9)
+	frame.add_child(content)
+	var title := Label.new()
+	title.name = "StitchedPageHeading"
+	title.text = heading
+	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_color_override("font_color", Color("#f4e1b8"))
+	content.add_child(title)
 	return content
+
+
+## PanelContainer uses authored felt as a true nine-slice, never code-drawn shapes.
+func _stitched_run_felt(parent: Node, label: String, minimum: Vector2) -> VBoxContainer:
+	var panel := PanelContainer.new()
+	panel.name = label
+	panel.custom_minimum_size = minimum
+	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var art := _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
+	if art != null:
+		var backing := StyleBoxTexture.new()
+		backing.texture = art
+		backing.texture_margin_left = 24
+		backing.texture_margin_right = 24
+		backing.texture_margin_top = 24
+		backing.texture_margin_bottom = 24
+		backing.content_margin_left = 18
+		backing.content_margin_right = 18
+		backing.content_margin_top = 12
+		backing.content_margin_bottom = 12
+		panel.add_theme_stylebox_override("panel", backing)
+	parent.add_child(panel)
+	var inside := VBoxContainer.new()
+	inside.add_theme_constant_override("separation", 7)
+	panel.add_child(inside)
+	return inside
+
+
+func _stitched_run_caption(parent: Node, text: String, size: int = 19) -> Label:
+	var label := Label.new()
+	label.text = text
+	label.add_theme_font_size_override("font_size", size)
+	label.add_theme_color_override("font_color", Color("#f4e1b8"))
+	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	parent.add_child(label)
+	return label
+
+
+func _stitched_run_node_icon(button: Button, kind: String) -> void:
+	var path := "res://assets/paper/ui/map_node_%s.png" % kind.to_lower()
+	match kind:
+		"SewingCircle", "Treasure":
+			path = "res://assets/paper/ui/map_node_event.png"
+		"PatchStall":
+			path = "res://assets/paper/ui/map_node_patch_stall.png"
+		"Campfire":
+			path = "res://assets/paper/ui/map_node_campfire.png"
+	var texture := _stitched_run_texture(path)
+	if texture == null:
+		texture = _stitched_run_texture("res://assets/paper/ui/map_node_event.png")
+	if texture == null:
+		return
+	var icon := TextureRect.new()
+	icon.name = "AuthoredNodeIcon"
+	icon.set_meta("art_path", path)
+	icon.texture = texture
+	icon.position = Vector2(9, 5)
+	icon.size = Vector2(44, 44)
+	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(icon)
 
 
 func _stitched_run_action(parent: Node, text: String, callback: Callable, enabled: bool = true) -> Button:
 	var button := Button.new()
 	button.text = text
 	button.custom_minimum_size = Vector2(220, 44)
+	button.focus_mode = Control.FOCUS_ALL
 	button.disabled = not enabled
+	var art := _stitched_run_texture("res://assets/paper/ui/reward_button.png")
+	if art != null:
+		for face in ["normal", "hover", "pressed", "disabled"]:
+			var felt := StyleBoxTexture.new()
+			felt.texture = art
+			felt.texture_margin_left = 14
+			felt.texture_margin_right = 14
+			felt.texture_margin_top = 14
+			felt.texture_margin_bottom = 14
+			if face == "disabled":
+				felt.modulate_color = Color(0.55, 0.55, 0.55, 0.85)
+			elif face == "hover":
+				felt.modulate_color = Color(1.12, 1.12, 1.12)
+			elif face == "pressed":
+				felt.modulate_color = Color(0.79, 0.79, 0.79)
+			button.add_theme_stylebox_override(face, felt)
+	button.add_theme_font_size_override("font_size", 19)
+	button.add_theme_color_override("font_color", Color("#f5e7cb"))
+	button.add_theme_color_override("font_disabled_color", Color("#ae9e8e"))
 	parent.add_child(button)
 	var epoch := _stitched_run_epoch
 	button.pressed.connect(func():
@@ -5375,6 +5498,19 @@ func _stitched_run_action(parent: Node, text: String, callback: Callable, enable
 			callback.call())
 	stitched_run_buttons.append(button)
 	return button
+
+
+## Explicit focus chain, preserving the exact public button order for route tests.
+func _stitched_run_keyboard_chain() -> void:
+	var enabled: Array[Button] = []
+	for button in stitched_run_buttons:
+		if is_instance_valid(button) and not button.disabled and button.is_visible_in_tree():
+			enabled.append(button)
+	for index in enabled.size():
+		enabled[index].focus_next = enabled[index].get_path_to(enabled[(index + 1) % enabled.size()])
+		enabled[index].focus_previous = enabled[index].get_path_to(enabled[(index - 1 + enabled.size()) % enabled.size()])
+	if not enabled.is_empty():
+		enabled[0].grab_focus()
 
 
 func _open_stitched_run_picker(from_base: bool = false) -> void:
@@ -5477,57 +5613,129 @@ func _present_stitched_run() -> void:
 		stage.add_child(save)
 		return
 	var terminal := session.phase in ["victory", "defeat"]
-	var content := _stitched_run_page("The candle endures" if session.phase == "victory" else
-		"The thread has fallen" if terminal else "The stitched road / Floor %d of 12" % session.map.get_current_floor())
+	var page_kind := session.phase
+	if session.phase == "visit":
+		page_kind = "visit:" + str(session.pending.get("service", "Event"))
+	var heading := "THE CANDLE ENDURES / VICTORY" if session.phase == "victory" else \
+		"THE THREAD HAS FALLEN / DEFEAT" if session.phase == "defeat" else \
+		"THE STITCHED ROAD / FLOOR %02d OF 12" % (session.map.get_current_floor() + 1) if session.phase == "map" else \
+		"ROAD ENCOUNTER / %s" % str(session.pending.get("service", "Visit")).to_upper()
+	var content := _stitched_run_page(heading, page_kind)
 	var ledger := Label.new()
 	ledger.name = "RunLedger"
 	ledger.text = "CANDLE %d / 100     GOLD %d     SCRAPS %d     SATCHEL %d / 6" % [session.candle, session.gold, session.scraps, session.satchel.size()]
 	ledger.add_theme_font_size_override("font_size", 22)
+	ledger.add_theme_color_override("font_color", Color("#f6dda6"))
 	content.add_child(ledger)
 	var hero_rows := HBoxContainer.new()
 	hero_rows.name = "FourHeroRecaps"
+	hero_rows.add_theme_constant_override("separation", 8)
 	content.add_child(hero_rows)
 	for hero in session.heroes:
+		var card := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
 		var recap := Label.new()
-		recap.name = "Recap_" + hero.id
-		recap.custom_minimum_size = Vector2(280, 92)
-		recap.add_theme_font_size_override("font_size", 18)
-		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else ""
-		recap.text = "R%d / %s\nHP %d / %d  %s\nFRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
-		hero_rows.add_child(recap)
+		recap.name = "Recap_" + str(hero.id)
+		recap.add_theme_font_size_override("font_size", 17)
+		recap.add_theme_color_override("font_color", Color("#e7d6b3"))
+		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
+		recap.text = "R%d / %s
+HP %d / %d  %s
+FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
+		card.add_child(recap)
 	if terminal:
-		_stitched_run_action(content, "Return to title", _return_stitched_run_title)
-		_stitched_run_action(content, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 245))
+		terminal_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var final_art := TextureRect.new()
+		final_art.name = "TerminalBanner"
+		final_art.texture = _stitched_run_texture("res://assets/paper/ui/reward_banner.png")
+		final_art.custom_minimum_size = Vector2(500, 85)
+		final_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		final_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		final_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		terminal_panel.add_child(final_art)
+		_stitched_run_caption(terminal_panel,
+			"%s  /  %d FLOORS REACHED  /  %d SEALED RECEIPTS" % [
+				"ALL TWELVE FLOORS CLEARED" if session.phase == "victory" else "THE ROAD ENDS HERE",
+				session.map.get_current_floor(), session.receipts.size()], 22)
+		_stitched_run_caption(terminal_panel,
+			"All four doll records remain above with their exact HP, fray and losses. The ledger is sealed.", 18)
+		var ending_actions := HBoxContainer.new()
+		content.add_child(ending_actions)
+		_stitched_run_action(ending_actions, "Return to title", _return_stitched_run_title)
+		_stitched_run_action(ending_actions, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+		_stitched_run_keyboard_chain()
 		return
+	var atlas := HBoxContainer.new()
+	atlas.name = "RoutedStage"
+	atlas.add_theme_constant_override("separation", 12)
+	atlas.custom_minimum_size = Vector2(1120, 327)
+	atlas.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(atlas)
+	var left := _stitched_run_felt(atlas, "RouteOrVisitStory", Vector2(384, 328))
+	var right := _stitched_run_felt(atlas, "LegalChoices", Vector2(706, 328))
+	if session.phase == "map":
+		_stitched_run_caption(left, "ROUTE BOARD / CONNECTED THREAD", 22)
+		_stitched_run_caption(left, "Next: Floor %02d. Choose a lit node to enter." %
+			(session.map.get_current_floor() + 1), 18)
+		var visited := session.map.get_route()
+		if visited.is_empty():
+			_stitched_run_caption(left, "The first seam is unstitched. Your path begins here.", 18)
+		else:
+			_stitched_run_caption(left, "SEWN PATH / MOST RECENT FIRST", 18)
+			for index in range(visited.size() - 1, maxi(-1, visited.size() - 6), -1):
+				var previous := session.map.get_node(visited[index])
+				_stitched_run_caption(left, "%02d   %s / PATH %d" % [
+					previous.floor, previous.type, previous.position + 1], 17)
+		_stitched_run_caption(right, "AVAILABLE NEXT STOPS", 22)
+	else:
+		var title := str(session.pending.get("title", session.pending.get("service", "Road stop")))
+		_stitched_run_caption(left, title.to_upper(), 22)
+		var node := session.map.get_node(str(session.pending.get("node_id", "")))
+		if not node.is_empty():
+			_stitched_run_caption(left, "FLOOR %02d  /  %s  /  PATH %d" % [
+				node.floor, node.type, node.position + 1], 19)
+		_stitched_run_caption(left, "This is a real road visit. Lit patches are legal choices; dim patches are unavailable.", 18)
+		_stitched_run_caption(right, "CHOOSE YOUR NEXT STITCH", 22)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(1120, 320)
+	scroll.name = "RunActionScroll"
+	scroll.custom_minimum_size = Vector2(620, 267)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	content.add_child(scroll)
+	right.add_child(scroll)
 	var choices_box := VBoxContainer.new()
+	choices_box.name = "PublicRouteDecisions"
 	choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	choices_box.add_theme_constant_override("separation", 8)
 	scroll.add_child(choices_box)
 	var expected := session.snapshot()
 	if session.phase == "map":
 		for id in session.choices():
 			var node := session.map.get_node(id)
-			_stitched_run_action(choices_box, "Floor %02d / %s / Path %d" % [node.floor, node.type, node.position + 1], func():
+			var button := _stitched_run_action(choices_box,
+				"      FLOOR %02d  /  %s  /  PATH %d" %
+					[node.floor, node.type, node.position + 1], func():
 				if stitched_run_session == session and session.enter(id, expected):
 					_present_stitched_run())
+			button.custom_minimum_size = Vector2(620, 55)
+			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
+			button.set_meta("route_id", id)
+			button.set_meta("node_kind", node.type)
+			button.tooltip_text = "Connected legal node %s" % id
+			_stitched_run_node_icon(button, str(node.type))
 	else:
-		var heading := Label.new()
-		heading.text = session.pending.get("title", session.pending.service)
-		heading.add_theme_font_size_override("font_size", 24)
-		choices_box.add_child(heading)
 		for action in session.visit_actions():
-			_stitched_run_action(choices_box, action.text, func():
+			var button := _stitched_run_action(choices_box, str(action.text), func():
 				if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
 					_present_stitched_run(), action.enabled)
+			button.custom_minimum_size = Vector2(620, 48)
+			button.set_meta("action_id", action.id)
+			button.set_meta("action_arguments", action.arguments.duplicate(true))
+			button.tooltip_text = str(action.text) if action.enabled else "Unavailable: " + str(action.text)
 	var navigation := HBoxContainer.new()
+	navigation.name = "RunNavigation"
 	content.add_child(navigation)
 	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
 	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
-	if not stitched_run_buttons.is_empty():
-		stitched_run_buttons[0].grab_focus()
+	_stitched_run_keyboard_chain()
 
 
 func _sync_stitched_run_exit() -> void:
