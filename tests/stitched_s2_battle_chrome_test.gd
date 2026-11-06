@@ -70,6 +70,70 @@ func _verify_styles(screen: StitchedBattleScreen) -> void:
 	pass_button.release_focus()
 
 
+func _verify_action_icons(screen: StitchedBattleScreen) -> void:
+	var keys := ["move_front", "move_back", "re_tie", "pass", "retreat"]
+	var names := ["Move front", "Move back", "Re-tie", "Pass turn", "Retreat"]
+	var art := ["move", "move", "retie", "pass", "retreat"]
+	# The requested 29px control height is clamped to a 30px Godot/Gothic
+	# themed minimum at runtime; confirm the real hit rect stays clear at y672.
+	var expected := [
+		Rect2(260, 642, 136, 30), Rect2(403, 642, 136, 30),
+		Rect2(546, 642, 136, 30), Rect2(689, 642, 150, 30),
+		Rect2(846, 642, 165, 30),
+	]
+	var preview: Rect2 = screen._labels["preview"].get_global_rect()
+	var figure: Rect2 = screen.get_node("SharedStitchedBackdrop").get_global_rect()
+	var references: Array[Rect2] = []
+	for control in screen._target_buttons.values():
+		references.append(control.get_global_rect())
+	for index in range(keys.size()):
+		var key: String = keys[index]
+		var button: Button = screen._action_buttons[key]
+		var path: String = "res://assets/paper/stitched/icons/action_" + art[index] + ".png"
+		var icon: Texture2D = load(path)
+		var emblem: TextureRect = button.get_node_or_null("ActionEmblem") as TextureRect
+		var rect := button.get_global_rect()
+		_check(icon != null and icon.get_size() == Vector2(128, 128)
+			and emblem != null and emblem.texture == icon
+			and emblem.size == Vector2(19, 19) and emblem.position == Vector2(9, 5)
+			and emblem.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
+			and emblem.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			and emblem.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and emblem.focus_mode == Control.FOCUS_NONE
+			and button.focus_mode == Control.FOCUS_ALL and button.text == names[index]
+			and button.get_theme_font_size("font_size") == 14,
+			"%s mounts the 128px authored art in a non-interactive 19px button emblem" % key)
+		_check(rect == expected[index] and not rect.intersects(preview)
+			and not rect.intersects(figure) and rect.position.y >= 642
+			and rect.end.y < 675 and Rect2(0, 0, 1280, 720).encloses(rect),
+			"%s retains its existing mouse rectangle clear of stage, forecast and targets" % key)
+		for other in references:
+			_check(not rect.intersects(other), "%s cannot overlap any prior action or target" % key)
+		references.append(rect)
+		var font: Font = button.get_theme_font("font")
+		_check(font != null and font.get_string_size(button.text,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x < rect.size.x - 38.0,
+			"%s has room for the authored emblem beside its unclipped readable text" % key)
+	var state := screen.battle.state_snapshot()
+	var rng := screen.battle.rng_state()
+	var receipts := screen.receipts.size()
+	for key in keys:
+		var button: Button = screen._action_buttons[key]
+		screen._action_buttons["pass"].release_focus()
+		button.mouse_entered.emit()
+		_check(screen._labels["preview"].text.contains(button.text)
+			or screen._labels["preview"].tooltip_text.contains(button.text),
+			"%s exposes a real hover description in the sewn forecast row" % key)
+		button.mouse_exited.emit()
+		if not button.disabled:
+			button.grab_focus()
+			_check(button.has_focus() and screen._labels["preview"].tooltip_text != "",
+				"%s keyboard focus reveals full action availability without activation" % key)
+			button.release_focus()
+	_no_mutation(screen, state, rng, receipts,
+		"action icon hover, keyboard focus and tooltip never consume RNG or combat state")
+
+
 func _verify_meters(screen: StitchedBattleScreen) -> void:
 	var heroes: Array = screen.battle.get_heroes()
 	var foes: Array = screen.battle.get_foes()
@@ -316,6 +380,7 @@ func _run() -> void:
 	var screen: StitchedBattleScreen = mounted["screen"]
 	if screen.battle != null and screen.battle.is_valid():
 		_verify_styles(screen)
+		_verify_action_icons(screen)
 		_verify_meters(screen)
 		_test_hanging_and_lost(screen)
 		_test_controls(screen)
