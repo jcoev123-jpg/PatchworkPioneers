@@ -51,6 +51,26 @@ static func style_button(button: BaseButton) -> void:
 	button.focus_mode = Control.FOCUS_ALL
 
 
+static func style_action_button(button: Button, icon_path: String) -> void:
+	# A non-interactive authored image beside the real Button text. This keeps
+	# the original mouse rect, pressed connection, focus and sewn style states.
+	style_button(button)
+	button.add_theme_font_size_override("font_size", 14)
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	if not ResourceLoader.exists(icon_path, "Texture2D"):
+		return # Text-only fallback if the imported emblem is unavailable.
+	var emblem := TextureRect.new()
+	emblem.name = "ActionEmblem"
+	emblem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	emblem.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	emblem.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	emblem.focus_mode = Control.FOCUS_NONE
+	emblem.texture = load(icon_path) as Texture2D
+	button.add_child(emblem)
+	emblem.position = Vector2(9, 5)
+	emblem.size = Vector2(19, 19)
+
+
 static func action_tray(parent: Control, rectangle: Rect2) -> NinePatchRect:
 	var tray := NinePatchRect.new()
 	tray.name = "StitchedActionTray"

@@ -434,6 +434,166 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	stage._refresh()
 
 
+func _mouse_activate(button: Button) -> void:
+	for down in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.position = button.get_global_rect().get_center()
+		click.pressed = down
+		root.push_input(click, true)
+	await process_frame
+
+
+func _keyboard_activate(button: Button) -> void:
+	button.grab_focus()
+	for down in [true, false]:
+		var key := InputEventKey.new()
+		key.keycode = KEY_ENTER
+		key.pressed = down
+		root.push_input(key, true)
+	await process_frame
+
+
+func _verify_turn_action_cues(stage: StitchedBattleScreen) -> void:
+	var battle := stage.battle
+	var baseline := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var receipts := stage.receipts.duplicate(true)
+	var acting_id := battle.current_actor_id()
+	var original_order := battle._order.duplicate()
+	var original_index := battle._turn_index
+	var original_cut := battle._thread_cuts.duplicate(true)
+	var original_boss := battle._boss_encounter
+	var original_outcome := battle._outcome
+	var heroes := battle.get_heroes()
+	var foes := battle.get_foes()
+	_check(heroes.size() == 4 and foes.size() == 3 and battle.current_side() == "hero"
+		and not battle.is_over() and not battle.is_boss_encounter(),
+		"precondition: mounted public S2 four-versus-three has a live non-boss hero action")
+	var front: Dictionary = {}
+	var next: Dictionary = {}
+	for hero in heroes:
+		if int(hero["rank"]) == 1:
+			front = hero
+		elif int(hero["rank"]) == 2:
+			next = hero
+	_check(not front.is_empty() and not next.is_empty(),
+		"precondition: two living adjacent front-rank heroes exist")
+	if front.is_empty() or next.is_empty():
+		return
+	var front_id := str(front["id"])
+	var next_id := str(next["id"])
+	battle._order[battle._turn_index] = front_id
+	stage._refresh()
+	var front_move: Button = stage._action_buttons["move_front"]
+	var back_move: Button = stage._action_buttons["move_back"]
+	var re_tie: Button = stage._action_buttons["re_tie"]
+	var pass_button: Button = stage._action_buttons["pass"]
+	var retreat: Button = stage._action_buttons["retreat"]
+	_check(front_move.disabled and front_move.tooltip_text.contains("rank 0")
+		and not back_move.disabled and back_move.tooltip_text.contains(str(next["name"]))
+		and back_move.tooltip_text.contains("Swap") and back_move.tooltip_text.contains("Spends")
+		and re_tie.disabled and re_tie.tooltip_text.contains("intact")
+		and not pass_button.disabled and pass_button.tooltip_text.contains("Spend")
+		and not retreat.disabled and retreat.tooltip_text.contains("75%")
+		and retreat.tooltip_text.contains("+15 fray") and retreat.tooltip_text.contains("no rewards")
+		and retreat.tooltip_text.contains("Failure spends"),
+		"rank-one hero shows true edge/adjacent swap, intact-thread, Pass and full Retreat outcomes")
+	var focus_snapshot := battle.state_snapshot()
+	var focus_rng := battle.rng_state()
+	pass_button.release_focus()
+	front_move.mouse_entered.emit()
+	_check(stage._labels["preview"].text.contains("Move front") or
+		stage._labels["preview"].tooltip_text.contains("rank 0"),
+		"blocked Move displays the current edge reason on hover")
+	front_move.mouse_exited.emit()
+	back_move.grab_focus()
+	_check(back_move.has_focus() and stage._labels["preview"].tooltip_text.contains("Swap"),
+		"keyboard action focus exposes actual adjacent swap consequence")
+	back_move.release_focus()
+	stage._refresh()
+	_check(battle.state_snapshot() == focus_snapshot and battle.rng_state() == focus_rng
+		and stage.receipts == receipts,
+		"hover, keyboard focus and repeated action refresh preserve snapshot, RNG and receipts")
+	# A TANGLED actor is blocked by the same move gate as the real command.
+	var original_status: Dictionary = battle._units[front_id]["statuses"].duplicate(true)
+	battle._units[front_id]["statuses"]["tangled"] = 1
+	stage._refresh()
+	_check(back_move.disabled and back_move.tooltip_text.contains("tangled")
+		and not bool(stage.submit_move(1).get("ok")),
+		"authoritative tangled-movement refusal has matching blocked Move tooltip")
+	battle._units[front_id]["statuses"] = original_status
+	# A cut on the actor forbids both directions, offers Re-tie and cannot be
+	# circumvented by invoking a disabled native button's original signal.
+	battle._thread_cuts[front_id] = 1
+	stage._refresh()
+	var cut_snapshot := battle.state_snapshot()
+	var cut_rng := battle.rng_state()
+	_check(back_move.disabled and back_move.tooltip_text.contains("thread cut")
+		and re_tie.disabled == false and re_tie.tooltip_text.contains("snipped")
+		and re_tie.tooltip_text.contains("spends"),
+		"authoritative actor cut blocks movement and offers accurate Re-tie help")
+	back_move.pressed.emit()
+	_check(battle.state_snapshot() == cut_snapshot and battle.rng_state() == cut_rng
+		and stage.receipts == receipts,
+		"forced disabled Move signal fails closed with no state or RNG spend")
+	battle._thread_cuts = original_cut.duplicate(true)
+	# Rules currently permit stepping into a rank vacated by a lost hero.
+	# Surface that real behavior instead of inventing an unsupported legal gate.
+	var saved_ally: Dictionary = battle._units[next_id].duplicate(true)
+	battle._units[next_id]["lost"] = true
+	stage._refresh()
+	_check(not back_move.disabled and back_move.tooltip_text.contains("empty rank 2")
+		and back_move.tooltip_text.contains("no living ally"),
+		"vacant neighbor uses the actual StitchedRules move legality, not a fictitious swap")
+	battle._units[next_id] = saved_ally
+	# Enemy turn and victory are fail-closed even when an existing pressed
+	# callback is emitted manually; no listeners are duplicated.
+	battle._order[battle._turn_index] = str(foes[0]["id"])
+	stage._refresh()
+	_check(battle.current_side() == "foe" and
+		front_move.disabled and back_move.disabled and re_tie.disabled
+		and pass_button.disabled and retreat.disabled
+		and pass_button.tooltip_text.contains("enemy turn") and retreat.tooltip_text.contains("enemy turn"),
+		"enemy turn suppresses every hero command with a current explanation")
+	var enemy_snapshot := battle.state_snapshot()
+	var enemy_rng := battle.rng_state()
+	pass_button.pressed.emit()
+	retreat.pressed.emit()
+	_check(battle.state_snapshot() == enemy_snapshot and battle.rng_state() == enemy_rng
+		and stage.receipts == receipts, "forced enemy-turn buttons cannot dispatch hero actions")
+	battle._order[battle._turn_index] = front_id
+	battle._boss_encounter = true
+	stage._refresh()
+	var boss_snapshot := battle.state_snapshot()
+	var boss_rng := battle.rng_state()
+	_check(retreat.disabled and retreat.tooltip_text.contains("boss encounter")
+		and retreat.tooltip_text.contains("75%") and not pass_button.disabled,
+		"boss disables Retreat while retaining its odds/consequences and legal Pass")
+	retreat.pressed.emit()
+	_check(battle.state_snapshot() == boss_snapshot and battle.rng_state() == boss_rng
+		and stage.receipts == receipts, "boss Retreat press refuses before any seeded roll")
+	battle._boss_encounter = original_boss
+	battle._outcome = "victory"
+	stage._refresh()
+	_check(battle.is_over() and front_move.disabled and back_move.disabled
+		and re_tie.disabled and pass_button.disabled and retreat.disabled
+		and re_tie.tooltip_text.contains("battle ended"),
+		"ended battle refuses all five controls and clears stale turn availability")
+	battle._outcome = original_outcome
+	battle._order = original_order
+	battle._turn_index = original_index
+	battle._thread_cuts = original_cut
+	stage._refresh()
+	_check(battle.current_actor_id() == acting_id and battle.state_snapshot() == baseline
+		and battle.rng_state() == rng and stage.receipts == receipts,
+		"restored real actor has pristine snapshot, seeded RNG and receipts after all cue probes")
+	_check(stage._action_buttons["re_tie"].disabled
+		and not stage._action_buttons["pass"].disabled
+		and not stage._action_buttons["retreat"].disabled,
+		"all stale thread, boss and enemy-turn explanations clear after the actor is restored")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var boot = root.get_node_or_null("LiveWebPlaytestBoot")
@@ -470,6 +630,7 @@ func _run() -> void:
 			"mounted stage is seeded 4v3 with 8 potential stage ranks")
 		_verify_stage_art(stage)
 		_verify_fourth_foe(stage)
+		_verify_turn_action_cues(stage)
 		_check(stage._unit_at("foe", 4).is_empty() and
 			stage._seat_buttons.has("foe_4") and not stage._puppets["foe_4"].visible,
 			"fourth foe rank is empty, available only for a later summon")
@@ -560,11 +721,17 @@ func _run() -> void:
 		_check(not stage._action_buttons["re_tie"].disabled and stage.battle.thread_cuts().has(battle.current_actor_id()),
 			"Re-tie is enabled only for an authoritative snipped thread")
 		var retie_before := stage.receipts.size()
-		var retie := stage.submit_re_tie()
-		_check(bool(retie.get("ok", false)) and stage.receipts.size() > retie_before and
+		var retie_actor := battle.current_actor_id()
+		await _keyboard_activate(stage._action_buttons["re_tie"])
+		var retie: Dictionary = stage.receipts[retie_before] if stage.receipts.size() > retie_before else {}
+		var retie_commits := 0
+		for index in range(retie_before, stage.receipts.size()):
+			if stage.receipts[index].get("action") == "re_tie" and stage.receipts[index].get("actor") == retie_actor:
+				retie_commits += 1
+		_check(bool(retie.get("ok", false)) and retie_commits == 1 and
 			stage.receipts[retie_before].get("action") == "re_tie" and
 			not battle.thread_cuts().has(str(retie.get("actor", ""))),
-			"live Re-tie delegates once, clears the cut and spends the acting turn")
+			"real keyboard Re-tie dispatches exactly once, clears the cut and spends the acting turn")
 		var receipt_log := str(stage._labels["log"].text)
 		var post_retie_snapshot := battle.state_snapshot()
 		var post_retie_rng := battle.rng_state()
@@ -607,22 +774,44 @@ func _run() -> void:
 		if reopened != null and reopened.battle.current_side() == "hero":
 			var direction := -1 if reopened._can_move(-1) else 1
 			var move_before := reopened.receipts.size()
-			var move_receipt := reopened.submit_move(direction)
-			_check(bool(move_receipt.get("ok", false)) and reopened.receipts.size() > move_before and
-				reopened.receipts[move_before].get("action") == "move",
-				"real mounted Move delegates once and records its rank swap")
+			var move_button: Button = reopened._action_buttons["move_front" if direction == -1 else "move_back"]
+			_check(not move_button.disabled, "precondition: selected native Move has live authority")
+			await _mouse_activate(move_button)
+			var move_receipt: Dictionary = reopened.receipts[move_before] if reopened.receipts.size() > move_before else {}
+			var hero_moves := 0
+			for receipt_index in range(move_before, reopened.receipts.size()):
+				if reopened.receipts[receipt_index].get("action") == "move" and reopened.receipts[receipt_index].get("actor") == move_receipt.get("actor"):
+					hero_moves += 1
+			_check(bool(move_receipt.get("ok", false)) and hero_moves == 1
+				and move_receipt.get("action") == "move",
+				"one genuine mouse click on sewn Move commits exactly one real rank swap")
 			var pass_before := reopened.receipts.size()
-			var pass_receipt := reopened.submit_pass()
-			_check(bool(pass_receipt.get("ok", false)) and reopened.receipts.size() > pass_before and
-				reopened.receipts[pass_before].get("action") == "pass",
-				"real mounted Pass delegates once and records a spent turn")
+			var passing_actor := reopened.battle.current_actor_id()
+			var pass_button: Button = reopened._action_buttons["pass"]
+			_check(not pass_button.disabled, "precondition: Pass is enabled for next live hero")
+			await _keyboard_activate(pass_button)
+			var pass_receipt: Dictionary = reopened.receipts[pass_before] if reopened.receipts.size() > pass_before else {}
+			var hero_passes := 0
+			for receipt_index in range(pass_before, reopened.receipts.size()):
+				if reopened.receipts[receipt_index].get("action") == "pass" and reopened.receipts[receipt_index].get("actor") == passing_actor:
+					hero_passes += 1
+			_check(bool(pass_receipt.get("ok", false)) and hero_passes == 1
+				and pass_receipt.get("action") == "pass",
+				"one keyboard Enter on sewn Pass commits exactly one spent hero turn")
 			var retreat_before := reopened.receipts.size()
 			var retreat_rng := reopened.battle.rng_state()
-			var retreat_receipt := reopened.submit_retreat()
-			_check(bool(retreat_receipt.get("ok", false)) and reopened.receipts.size() > retreat_before and
-				reopened.receipts[retreat_before].get("action") == "retreat" and
-				reopened.battle.rng_state() != retreat_rng,
-				"mounted Retreat rolls the seeded authority once and records success/failure")
+			_check(not reopened._action_buttons["retreat"].disabled,
+				"precondition: real non-boss Retreat is enabled")
+			await _mouse_activate(reopened._action_buttons["retreat"])
+			var retreat_receipt: Dictionary = reopened.receipts[retreat_before] if reopened.receipts.size() > retreat_before else {}
+			var hero_retreats := 0
+			for receipt_index in range(retreat_before, reopened.receipts.size()):
+				if reopened.receipts[receipt_index].get("action") == "retreat":
+					hero_retreats += 1
+			_check(bool(retreat_receipt.get("ok", false)) and hero_retreats == 1
+				and retreat_receipt.get("action") == "retreat"
+				and reopened.battle.rng_state() != retreat_rng,
+				"one real Retreat click rolls seeded authority once and records success/failure")
 		boot.exit_stitched_preview(app)
 		await process_frame
 		_check(app.title_view.is_visible_in_tree() and boot.stitched_view == null and
