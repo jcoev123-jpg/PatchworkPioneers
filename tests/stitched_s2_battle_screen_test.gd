@@ -63,12 +63,17 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 			var hit: Control = stage._figure_hits[key]
 			var foot: NinePatchRect = stage._foot_plates[key]
 			var tag: Button = stage._seat_buttons[key]
-			var hp: Label = stage._labels[key]
+			var duplicate: Label = stage._labels[key]
+			var meters: Dictionary = stage._rank_meters[key]
+			var meter_root: Control = meters["root"]
+			var hp: ProgressBar = meters["hp"]
+			var readout: Label = meters["hp_text"]
 			var painted := _painted_bounds(puppet)
 			var unit := stage._unit_at(side, rank)
 			if unit.is_empty():
-				_check(not puppet.visible and not hit.visible and not foot.visible,
-					"empty %s R%d has no figure, mouse hotspot or ghost foot plate" % [side, rank])
+				_check(not puppet.visible and not hit.visible and not foot.visible
+					and not meter_root.visible and not duplicate.visible,
+					"empty %s R%d has no figure, mouse hotspot, ghost text or meter" % [side, rank])
 				continue
 			actual += 1
 			visible_art.append({"key": key, "rect": painted})
@@ -100,21 +105,43 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 				and not foot.get_global_rect().intersects(painted),
 				"%s R%d enlarged sewn foot plate clears figure and lower action panel" % [side, rank])
 			var name_rect := tag.get_global_rect()
-			var hp_rect := hp.get_global_rect()
-			_check(tag.visible and hp.visible and tag.focus_mode == Control.FOCUS_ALL
-				and tag.clip_text and hp.clip_text
+			var meter_rect := meter_root.get_global_rect()
+			var caption_rect := readout.get_global_rect()
+			var fill_rect := hp.get_global_rect()
+			var frame: NinePatchRect = meter_root.get_node("HPFillSewnFrame")
+			var fill_style := hp.get_theme_stylebox("fill") as StyleBoxTexture
+			_check(tag.visible and meter_root.visible and not duplicate.visible
+				and duplicate.text.is_empty() and tag.focus_mode == Control.FOCUS_ALL
+				and tag.clip_text and readout.clip_text
 				and tag.get_theme_font_size("font_size") >= 16
-				and hp.get_theme_font_size("font_size") >= 15
-				and name_rect.size.x >= 145.0 and hp_rect.size.x >= 145.0
-				and name_rect.size.y >= 22.0 and hp_rect.size.y >= 20.0
+				and readout.get_theme_font_size("font_size") >= 8
+				and name_rect.size.x >= 145.0 and meter_rect.size.x == 170.0
+				and name_rect.size.y >= 22.0 and meter_rect.size.y == 24.0
 				and foot.get_global_rect().encloses(name_rect)
-				and foot.get_global_rect().encloses(hp_rect)
-				and not name_rect.intersects(hp_rect)
-				and tag.tooltip_text.contains(str(unit["name"]))
-				and hp.text.contains("HP "),
-				"%s R%d keeps readable name/HP rows, focus and full status disclosure" % [side, rank])
+				and foot.get_global_rect().encloses(meter_rect)
+				and not name_rect.intersects(meter_rect)
+				and not caption_rect.intersects(fill_rect)
+				and frame.texture == load("res://assets/paper/ui/hud_bar_frame.png")
+				and fill_style != null and fill_style.texture == load("res://assets/paper/ui/reward_button.png")
+				and frame.get_global_rect().size.y >= fill_rect.size.y
+				and hp.value == float(unit["hp"]) and hp.max_value == float(unit["max_hp"])
+				and readout.text == "HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])]
+				and tag.tooltip_text.contains(str(unit["name"])),
+				"%s R%d has exactly one framed HP meter row and readable name/status inspection" % [side, rank])
+			if side == "hero":
+				var fray: ProgressBar = meters["fray"]
+				var fray_text: Label = meters["fray_text"]
+				var fray_frame: NinePatchRect = meter_root.get_node("FrayFillSewnFrame")
+				var fray_fill := fray.get_theme_stylebox("fill") as StyleBoxTexture
+				_check(fray.max_value == 200.0 and fray.value == float(unit["fray"])
+					and fray_text.text == "FRAY %d/200" % int(unit["fray"])
+					and not fray_text.get_global_rect().intersects(fray_frame.get_global_rect())
+					and not caption_rect.intersects(fray_text.get_global_rect())
+					and fray_fill != null and fray_fill.texture == load("res://assets/paper/ui/reward_button.png")
+					and fray_frame.texture == load("res://assets/paper/ui/hud_bar_frame.png"),
+					"hero R%d keeps independently legible framed FRAY caption and fill" % rank)
 			name_rows.append(name_rect)
-			hp_rows.append(hp_rect)
+			hp_rows.append(caption_rect)
 			_check(puppet.facing == (1.0 if side == "hero" else -1.0),
 				"%s R%d faces the opposing rank line" % [side, rank])
 		for rank in range(1, 4):
@@ -229,8 +256,9 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var foe_1: Dictionary = battle._units[foe_1_id]
 	var hero_1: Dictionary = battle._units[hero_1_id]
 	var hero_2: Dictionary = battle._units[hero_2_id]
-	foe_1["statuses"] = {"bleed": 3, "weak": 2, "mark": 1, "stun": 1, "exposed": 0}
-	hero_1["statuses"] = {"guard": 2, "stun_resist": 1, "tangled": 0}
+	foe_1["statuses"] = {"bleed": 3, "weak": 2, "mark": 1, "stun": 1,
+		"thorns": 4, "tangled": 2, "blind": 1, "riposte": 3, "exposed": 0}
+	hero_1["statuses"] = {"guard": 2, "stun_resist": 1, "exposed": 2, "tangled": 0}
 	hero_1["dodge_buff"] = {"amount": 8, "turns": 2, "skip": false}
 	hero_2["hp"] = 0
 	hero_2["fray"] = 150
@@ -244,13 +272,16 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		"passive refresh without seat hover or focus preserves the ordinary action message")
 	_check(stage._seat_buttons["foe_1"].text.contains("R1") and
 		stage._seat_buttons["foe_1"].text.contains(str(foe_1["name"])) and
-		stage._labels["foe_1"].text.begins_with("HP %d/%d" % [int(foe_1["hp"]), int(foe_1["max_hp"])]) and
-		stage._labels["foe_1"].text.contains("BLEED 3") and
-		stage._labels["foe_1"].text.contains("WEAK 2") and
-		stage._labels["foe_1"].text.contains("STUN 1") and
-		stage._labels["foe_1"].text.contains("MARK 1") and
-		not stage._labels["foe_1"].text.contains("EXPOSED"),
-		"foe_1 rank seat keeps rank/name/HP and exposes positive counted statuses while omitting zero statuses")
+		stage._rank_meters["foe_1"]["root"].visible and
+		stage._rank_meters["foe_1"]["hp_text"].text == "HP %d/%d" % [int(foe_1["hp"]), int(foe_1["max_hp"])] and
+		stage._rank_meters["foe_1"]["hp"].value == float(foe_1["hp"]) and
+		not stage._labels["foe_1"].visible and stage._labels["foe_1"].text.is_empty() and
+		stage._seat_buttons["foe_1"].tooltip_text.contains("BLEED 3") and
+		stage._seat_buttons["foe_1"].tooltip_text.contains("WEAK 2") and
+		stage._seat_buttons["foe_1"].tooltip_text.contains("STUN 1") and
+		stage._seat_buttons["foe_1"].tooltip_text.contains("MARK 1") and
+		not stage._seat_buttons["foe_1"].tooltip_text.contains("EXPOSED"),
+		"foe_1 has only HP meter text; full counted status remains in rank tooltip")
 	# Pointer hover over foe_1 seat.
 	stage._seat_buttons["foe_1"].mouse_entered.emit()
 	var foe_detail := str(stage._labels["log"].text)
@@ -259,6 +290,8 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		foe_detail.contains("HP %d/%d" % [int(foe_1["hp"]), int(foe_1["max_hp"])]) and
 		foe_detail.contains("BLEED 3") and foe_detail.contains("WEAK 2") and
 		foe_detail.contains("STUN 1") and foe_detail.contains("MARK 1") and
+		foe_detail.contains("THORNS 4") and foe_detail.contains("TANGLED 2") and
+		foe_detail.contains("BLIND 1") and foe_detail.contains("RIPOSTE 3") and
 		not foe_detail.contains("EXPOSED") and not foe_detail.contains("DODGE") and
 		not foe_detail.contains("HANGING"),
 		"mouse hover on foe_1 shows full counted status summary in the side detail log without zero/foreign statuses")
@@ -288,9 +321,11 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		hero_1_detail.contains("R1") and hero_1_detail.contains(str(hero_1["name"])) and
 		hero_1_detail.contains("HP %d/%d" % [int(hero_1["hp"]), int(hero_1["max_hp"])]) and
 		hero_1_detail.contains("GUARD 2") and hero_1_detail.contains("STUN RESIST 1") and
-		hero_1_detail.contains("DODGE +8 / 2 turns") and
-		stage._labels["hero_1"].text.contains("GUARD 2") and
-		stage._labels["hero_1"].text.contains("DODGE +8 / 2 turns") and
+		hero_1_detail.contains("EXPOSED 2") and hero_1_detail.contains("DODGE +8 / 2 turns") and
+		stage._status_disclosure.visible and stage._status_disclosure_label.text == hero_1_detail and
+		stage._rank_meters["hero_1"]["hp_text"].text.begins_with("HP ") and
+		stage._rank_meters["hero_1"]["fray_text"].text.begins_with("FRAY ") and
+		not stage._labels["hero_1"].visible and
 		not hero_1_detail.contains("TANGLED") and not hero_1_detail.contains("BLEED") and
 		not hero_1_detail.contains("HANGING"),
 		"keyboard focus on hero_1 shows GUARD 2, STUN RESIST 1 and temporary DODGE +8 / 2 turns")
@@ -307,8 +342,12 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		hero_2_detail.contains("R2") and hero_2_detail.contains(str(hero_2["name"])) and
 		hero_2_detail.contains("HP 0/%d" % int(hero_2["max_hp"])) and
 		hero_2_detail.contains("FRAY 150/200") and hero_2_detail.contains("HANGING") and
-		stage._labels["hero_2"].text.contains("FRAY 150") and
-		stage._labels["hero_2"].text.contains("HANGING") and
+		stage._rank_meters["hero_2"]["hp"].value == 0.0 and
+		stage._rank_meters["hero_2"]["hp_text"].text == "HANGING" and
+		stage._rank_meters["hero_2"]["fray"].value == 150.0 and
+		stage._rank_meters["hero_2"]["fray_text"].text == "FRAY 150/200" and
+		stage._rank_meters["hero_2"]["root"].visible and
+		not stage._labels["hero_2"].visible and
 		not hero_2_detail.contains("DODGE") and not hero_2_detail.contains("GUARD"),
 		"Hanging hero fixture exposes HP 0, FRAY 150 and HANGING state in seat and detail readout")
 	_check(battle.state_snapshot() == view_snapshot and battle.rng_state() == view_rng and
@@ -318,6 +357,7 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	# Zero/removed statuses and expired/absent dodge_buff disappear on refresh.
 	stage._seat_buttons["hero_1"].mouse_entered.emit()
 	hero_1["statuses"]["guard"] = 0
+	hero_1["statuses"]["exposed"] = 0
 	hero_1["statuses"].erase("stun_resist")
 	hero_1["dodge_buff"] = {"amount": 8, "turns": 0, "skip": false}
 	foe_1["statuses"] = {"bleed": 0}
@@ -332,12 +372,14 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		not stage._labels["log"].text.contains("GUARD") and
 		not stage._labels["log"].text.contains("STUN RESIST") and
 		not stage._labels["log"].text.contains("DODGE") and
-		not stage._labels["hero_1"].text.contains("GUARD") and
-		not stage._labels["hero_1"].text.contains("DODGE") and
-		not stage._labels["foe_1"].text.contains("BLEED") and
-		not stage._labels["foe_1"].text.contains("WEAK") and
+		not stage.status_detail("hero", 1).contains("GUARD") and
+		not stage.status_detail("hero", 1).contains("STUN RESIST") and
+		not stage.status_detail("hero", 1).contains("DODGE") and
 		not stage.status_detail("foe", 1).contains("BLEED") and
-		not stage._labels["hero_2"].text.contains("HANGING") and
+		not stage.status_detail("foe", 1).contains("WEAK") and
+		not stage._labels["hero_1"].visible and not stage._labels["foe_1"].visible and
+		stage._rank_meters["hero_2"]["hp_text"].text == "HP %d/%d" % [int(hero_2["hp"]), int(hero_2["max_hp"])] and
+		stage._rank_meters["hero_2"]["fray"].value == 0.0 and
 		not stage.status_detail("hero", 2).contains("HANGING"),
 		"zero/removed statuses, expired temporary Dodge and cleared Hanging disappear on refresh")
 	_check(battle.state_snapshot() == cleared_snapshot and battle.rng_state() == cleared_rng and
@@ -349,7 +391,8 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var empty_detail := str(stage._labels["log"].text)
 	_check(not stage._figure_hits["foe_4"].visible and not stage._foot_plates["foe_4"].visible,
 		"vacant fourth foe rank has no misleading artwork, plate or active mouse hotspot")
-	_check(stage._labels["foe_4"].text == "EMPTY" and
+	_check(not stage._labels["foe_4"].visible and stage._labels["foe_4"].text.is_empty() and
+		not stage._rank_meters["foe_4"]["root"].visible and
 		empty_detail.contains("R4") and empty_detail.contains("EMPTY") and
 		empty_detail.contains("STATUS: none") and
 		not empty_detail.contains("BLEED") and not empty_detail.contains("GUARD") and
@@ -363,8 +406,9 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var heap_rng := battle.rng_state()
 	stage._refresh()
 	var heap_detail := str(stage._labels["log"].text)
-	_check(not stage._figure_hits["foe_4"].visible and stage._foot_plates["foe_4"].visible,
-		"heap-only fourth rank has an underfoot scrap HP plate, but never a selectable figure")
+	_check(not stage._figure_hits["foe_4"].visible and stage._foot_plates["foe_4"].visible
+		and not stage._rank_meters["foe_4"]["root"].visible and stage._labels["foe_4"].visible,
+		"heap-only fourth rank has a sewn scrap readout without a false living-foe meter")
 	_check(stage._labels["foe_4"].text == "SCRAP 9 HP" and
 		heap_detail.contains("R4") and heap_detail.contains("Scrap heap") and
 		heap_detail.contains("SCRAP 9 HP") and heap_detail.contains("STATUS: none") and
