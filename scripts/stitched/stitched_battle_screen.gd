@@ -144,8 +144,6 @@ func _panel(rect: Rect2, tint: Color = PANEL) -> ColorRect:
 func _label(text: String, rect: Rect2, font_size: int = 18, color: Color = PAPER, alignment: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.position = rect.position
-	label.size = rect.size
 	label.add_theme_color_override("font_color", color)
 	label.add_theme_font_size_override("font_size", font_size)
 	if _portrait_font != null:
@@ -154,7 +152,12 @@ func _label(text: String, rect: Rect2, font_size: int = 18, color: Color = PAPER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.clip_text = true
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Mount before sizing: on entering the tree a Control clamps its rect to the
+	# taller Gothic-themed minimum height (25px), which would overlap the ability
+	# row below the authored 22px caption slot. Sizing afterwards keeps the slot.
 	add_child(label)
+	label.position = rect.position
+	label.size = rect.size
 	return label
 
 

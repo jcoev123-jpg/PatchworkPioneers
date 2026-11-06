@@ -343,7 +343,6 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	var hp_caption := Label.new()
 	hp_caption.name = "HPReadout"
 	hp_caption.position = Vector2(10, 0)
-	hp_caption.size = Vector2(74 if is_hero else 149, 14)
 	hp_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hp_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	hp_caption.clip_text = false
@@ -356,13 +355,13 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	hp_caption.add_theme_constant_override("outline_size", 2)
 	hp_caption.z_index = 2
 	root.add_child(hp_caption)
+	hp_caption.size = Vector2(74 if is_hero else 149, 14)
 	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
 		var fray := _meter(root, "FrayFill", Rect2(90, 15, 69, 7), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
 		caption.position = Vector2(87, 0)
-		caption.size = Vector2(74, 14)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		caption.clip_text = false
@@ -375,6 +374,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		caption.z_index = 2
 		root.add_child(caption)
+		caption.size = Vector2(74, 14)
 		output["fray"] = fray
 		output["fray_text"] = caption
 	return output

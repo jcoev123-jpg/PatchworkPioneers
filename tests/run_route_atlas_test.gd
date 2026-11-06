@@ -806,6 +806,9 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 	_check(view.node_token_texture(failed_path) == null
 		and view.has_cached_node_token(failed_path), label + ": missing texture cached as null")
 	var probe := RunRouteAtlas.new()
+	root.add_child(probe)
+	_check(probe.is_inside_tree() and probe.theme == null,
+		label + ": standalone token probe inherits the installed project Theme")
 	var campfire_fallback := RunRouteAtlas.NodeToken.new()
 	campfire_fallback.token_kind = "Campfire"
 	campfire_fallback.token_texture = view.node_token_texture(failed_path)
@@ -824,6 +827,7 @@ func _verify_token_sources(view: RunRouteAtlas, label: String) -> void:
 		if shortcut > 0:
 			probe_legal.append(id)
 		probe._add_marker(id, kind, Vector2(float(i) * 90.0, 0.0), none, probe_legal, shortcut)
+		await process_frame # Let the real container fit the inherited body font.
 		var marker := probe.get_node_or_null("Node_" + id) as PanelContainer
 		_check(marker != null and marker.get_node_or_null("Art") is RunRouteAtlas.NodeToken
 			and (marker.get_node_or_null("Action") is Button) == (shortcut > 0)
@@ -2386,7 +2390,7 @@ func _run() -> void:
 	first.bind_map(null)
 	_check(first.get_child_count() == 0, "null map is empty and inert")
 	# Token mapping, optional loading/caching and both marker branches, on the mounted view.
-	_verify_token_sources(first, "token sources")
+	await _verify_token_sources(first, "token sources")
 	# AC1/AC2/AC3: Peddler's distinct tag, fallback and one-visit advice, mounted synthetically.
 	_verify_peddler_preview(first)
 	# AC1/AC2/AC3: a genuine seeded legal Shop patch rendered and admitted as Peddler.

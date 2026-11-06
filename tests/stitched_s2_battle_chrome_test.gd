@@ -95,12 +95,13 @@ func _verify_action_icons(screen: StitchedBattleScreen) -> void:
 	var keys := ["move_front", "move_back", "re_tie", "pass", "retreat"]
 	var names := ["Move front", "Move back", "Re-tie", "Pass turn", "Retreat"]
 	var art := ["move", "move", "retie", "pass", "retreat"]
-	# The requested 29px control height is clamped to a 30px Godot/Gothic
-	# themed minimum at runtime; confirm the real hit rect stays clear at y672.
+	# With the Gothic project Theme now installed globally, the action buttons
+	# keep their authored 29px height (Gothic's real themed minimum is smaller
+	# than the authored rect), so the hit band stays y642..671.
 	var expected := [
-		Rect2(260, 642, 136, 30), Rect2(403, 642, 136, 30),
-		Rect2(546, 642, 136, 30), Rect2(689, 642, 150, 30),
-		Rect2(846, 642, 165, 30),
+		Rect2(260, 642, 136, 29), Rect2(403, 642, 136, 29),
+		Rect2(546, 642, 136, 29), Rect2(689, 642, 150, 29),
+		Rect2(846, 642, 165, 29),
 	]
 	var preview: Rect2 = screen._labels["preview"].get_global_rect()
 	var figure: Rect2 = screen.get_node("SharedStitchedBackdrop").get_global_rect()
