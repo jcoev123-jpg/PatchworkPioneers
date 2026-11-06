@@ -672,6 +672,8 @@ var _stitched_run_base: WeakRef
 var stitched_run_panel: Control
 var stitched_run_battle: StitchedBattleScreen
 var stitched_run_walk: StitchedWalkScreen
+## S9c: Wren's New Run intro, laid over the first map page until he begins the night.
+var stitched_run_intro: Control
 ## S8f: new runs reach each non-boss node through a Walk. Older route tests opt out.
 @export var stitched_walks := true
 var stitched_run_buttons: Array[Button] = []
@@ -5574,9 +5576,78 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 			_stitched_run_base = null
 			if is_instance_valid(base_to_close) and base_to_close == base_screen:
 				_close_base(base_to_close)
-		_present_stitched_run())
+		_present_stitched_run()
+		_show_stitched_intro())
 	_stitched_run_action(content, "Cancel", _return_stitched_run_title)
 	stitched_run_buttons[0].grab_focus()
+
+
+## S9c: one picture of Wren with his four dolls opens a New Run. It is a child of the first
+## map page, so leaving that page removes it; the page's own buttons keep their order.
+func _show_stitched_intro() -> void:
+	if not is_instance_valid(stitched_run_panel):
+		return
+	var intro := StitchedWrenLines.intro()
+	var veil := Control.new()
+	veil.name = "WrenIntro"
+	veil.size = Vector2(1280, 720)
+	veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	stitched_run_panel.add_child(veil)
+	stitched_run_intro = veil
+	var path := str(intro.get("picture", ""))
+	if not ResourceLoader.exists(path, "Texture2D"):
+		path = str(intro.get("fallback", "res://assets/paper/kid/kid_view_bedroom.png"))
+	var picture := TextureRect.new()
+	picture.name = "WrenIntroArt"
+	picture.set_meta("art_path", path)
+	picture.texture = _stitched_run_texture(path)
+	picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	picture.size = veil.size
+	picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veil.add_child(picture)
+	var strip := NinePatchRect.new()
+	strip.name = "WrenIntroStrip"
+	strip.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
+	strip.patch_margin_left = 24
+	strip.patch_margin_right = 24
+	strip.patch_margin_top = 24
+	strip.patch_margin_bottom = 24
+	strip.position = Vector2(36, 452)
+	strip.size = Vector2(1208, 244)
+	strip.modulate.a = 0.92
+	veil.add_child(strip)
+	var content := VBoxContainer.new()
+	content.name = "WrenIntroText"
+	content.position = Vector2(28, 16)
+	content.size = Vector2(1152, 212)
+	content.add_theme_constant_override("separation", 5)
+	strip.add_child(content)
+	var heading := _stitched_run_caption(content, str(intro.get("heading", "ONE NIGHT IN THE OLD HOUSE")), 26)
+	heading.name = "WrenIntroHeading"
+	for line in intro.get("lines", []):
+		_stitched_run_caption(content, str(line), 18)
+	var begin := _stitched_run_action(content, str(intro.get("button", "Begin the night")), _dismiss_stitched_intro)
+	begin.name = "WrenIntroBegin"
+	begin.size_flags_horizontal = Control.SIZE_SHRINK_END
+	stitched_run_buttons.erase(begin)
+	# The veil blocks the mouse; keyboard focus stays on Begin until it is pressed.
+	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+		begin.set_focus_neighbor(side, begin.get_path())
+	begin.focus_next = begin.get_path()
+	begin.focus_previous = begin.get_path()
+	begin.grab_focus()
+
+
+func _dismiss_stitched_intro() -> void:
+	if not is_instance_valid(stitched_run_intro):
+		stitched_run_intro = null
+		return
+	stitched_run_intro.get_parent().remove_child(stitched_run_intro)
+	stitched_run_intro.queue_free()
+	stitched_run_intro = null
+	if not stitched_run_buttons.is_empty() and is_instance_valid(stitched_run_buttons[0]):
+		stitched_run_buttons[0].grab_focus()
 
 
 func _present_stitched_run() -> void:

@@ -1,0 +1,24 @@
+{
+	"version": 1,
+	"intro": {
+		"picture": "res://assets/paper/kid/kid_intro.png",
+		"fallback": "res://assets/paper/kid/kid_view_bedroom.png",
+		"heading": "ONE NIGHT IN THE OLD HOUSE",
+		"lines": [
+			"Wren cannot sleep. The house creaks, and the candle on the floor is almost new.",
+			"He has four patchwork dolls, sewn from old coats and buttons. Tonight they are not only toys.",
+			"He holds their strings and sends them down, room by room, toward the thing that lives deepest in the house."
+		],
+		"button": "Begin the night"
+	},
+	"doll_lost": [
+		"Wren: \"No... %s, come back. I can sew you, I promise.\"",
+		"Wren: \"Not %s. Not my %s.\"",
+		"Wren holds a string with nothing on the end of it. %s is gone."
+	],
+	"mimic": "Wren only has four dolls. He counts the strings again. Five follow.",
+	"mimic_eyes": {
+		"glass": "Glass eyes: the extra doll's seams do not join. Wren never sewed that one.",
+		"ears": "Stitched ears: the loose-seamed doll is breathing. Wren's dolls do not breathe."
+	}
+}

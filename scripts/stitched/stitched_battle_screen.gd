@@ -78,6 +78,8 @@ var kid_view: StitchedKidView
 var kid_fear_source: Callable
 var _hand_buttons: Dictionary = {}
 var _hand_pending := ""
+## Heroes already lost when Wren last spoke (S9c).
+var _lost_seen: Dictionary = {}
 
 static func read_preview() -> Dictionary:
 	var file := FileAccess.open(PREVIEW_PATH, FileAccess.READ)
@@ -112,6 +114,9 @@ func begin(data: Dictionary = {}) -> bool:
 func _ready() -> void:
 	if battle == null or not battle.is_valid():
 		return
+	for hero in battle.get_heroes():
+		if bool(hero.get("lost", false)):
+			_lost_seen[str(hero.id)] = true
 	name = "StitchedBattleScreen"
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -1170,6 +1175,11 @@ func _record(receipt: Dictionary) -> void:
 		log += "\n" + str(receipt.get("ability", ""))
 		for result in receipt.get("results", []):
 			log += "\n→ " + str(result.get("target", "")) + "  " + str(result.get("damage", result.get("hit", "")))
+	# S9c: Wren speaks once for each doll he loses.
+	for hero in battle.get_heroes():
+		if bool(hero.get("lost", false)) and not _lost_seen.has(str(hero.id)):
+			_lost_seen[str(hero.id)] = true
+			log += "\n" + StitchedWrenLines.doll_lost(str(hero.id), str(hero.get("name", "his doll")))
 	_notice = log + "\nRound %d · %s" % [battle.round_number(), battle.outcome().capitalize()]
 	_inspected_seat = ""
 	_enqueue_attack_focus(receipt)
