@@ -6,6 +6,15 @@ var failures: Array[String] = []
 var checks := 0
 
 
+class ArrivalBattle extends StitchedBattleScreen:
+	var observe: Callable
+
+	func _refresh() -> void:
+		super._refresh()
+		if observe.is_valid():
+			observe.call(self)
+
+
 func _initialize() -> void:
 	_run.call_deferred()
 
@@ -117,20 +126,18 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 	var candle_rect := Rect2(stage._labels["candle"].global_position, stage._labels["candle"].size)
 	var order_rect := Rect2(stage._labels["order"].global_position, stage._labels["order"].size)
 	var previous_right := -1.0
-	var expected_width := minf(110.0, floorf((690.0 - 4.0 * (count - 1)) / count))
 	_check(ribbon.displayed_entries.size() == count and count > 0 and
-		(count != 7 or expected_width >= 90) and (count != 8 or expected_width >= 80),
-		"populated %d-slot layout meets adaptive width minima" % count)
+		ribbon.tag_at(count - 1).visible,
+		"precondition: populated %d-slot layout exposes every actor" % count)
 	for i in range(count):
 		var tag := ribbon.tag_at(i)
 		var rect := tag.get_global_rect()
-		_check(tag.visible and rect.size == Vector2(expected_width, 42) and top_band.encloses(rect) and
+		_check(tag.visible and rect.size.x >= 69 and rect.size.y == 42 and top_band.encloses(rect) and
 			Rect2(ribbon.global_position, Vector2(690, 42)).encloses(rect) and
-			tag.position.x == i * (expected_width + 4.0) and
 			tag.get_node("SewnPlate").get_global_rect() == rect and
 			not rect.intersects(stage_area) and not rect.intersects(round_rect) and
 			not rect.intersects(candle_rect) and not rect.intersects(order_rect) and
-			rect.position.x >= previous_right,
+			(i == 0 or rect.position.x - previous_right >= 8.0),
 			"tag %d in %d-slot layout fits top band without hitting stage/round/candle/header" % [i, count])
 		var portrait: TextureRect = tag.get_node("ActorPortrait")
 		var fallback: Label = tag.get_node("NameFallback")
@@ -140,9 +147,8 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 		var rank_rect := rank.get_global_rect()
 		var cue_rect := marker.get_global_rect()
 		_check(portrait.get_global_rect() == fallback.get_global_rect() and
-			face_rect.size.x >= (39.0 if count == 7 else (32.0 if count == 8 else 28.0)) and
-			rank_rect.size.x >= (45.0 if count == 7 else (38.0 if count == 8 else 34.0)),
-			"tag %d portrait and text cells grow with available width" % i)
+			face_rect.size.x >= 24.0 and rank_rect.size.x >= 34.0,
+			"tag %d retains readable portrait and text cells at every capacity" % i)
 		_check(portrait.visible != fallback.visible and rect.encloses(face_rect) and
 			rect.encloses(rank_rect) and rect.encloses(cue_rect) and
 			not face_rect.intersects(rank_rect) and not face_rect.intersects(cue_rect) and
@@ -151,12 +157,161 @@ func _check_geometry(ribbon: StitchedTurnOrderRibbon, count: int, stage: Stitche
 			rank_rect.end.y + 2.0 <= cue_rect.position.y,
 			"tag %d portrait/fallback, rank and status occupy disjoint measured sewn-chip cells" % i)
 		_check(rank.clip_text and marker.clip_text and _text_fits(rank) and _text_fits(marker) and
+			marker.get_theme_font_size("font_size") >= 10 and
 			(marker.text == "NOW" or marker.text == StitchedTurnStatusCues.cue(ribbon.displayed_entries[i])) and
 			(fallback.visible == false or (fallback.clip_text and _text_fits(fallback))),
 			"tag %d measured Gothic glyphs fit rank, NOW/status and name fallback labels without clipping" % i)
+		var fabric: NinePatchRect = tag.get_node("SewnPlate")
+		var tint := fabric.self_modulate
+		# Even a white fabric texel cannot exceed this opaque tint's luminance.
+		var foreground := marker.get_theme_color("font_color")
+		_check(fabric.texture == load("res://assets/paper/ui/panel_felt.png") and
+			fabric.modulate == Color.WHITE and tint.a == 1.0 and
+			(foreground.srgb_to_linear().get_luminance() + 0.05) / (tint.srgb_to_linear().get_luminance() + 0.05) >= 4.5 and
+			rank.get_theme_color("font_color") == StitchedTurnOrderRibbon.BONE and
+			foreground == (StitchedTurnOrderRibbon.AMBER if marker.text == "NOW" else StitchedTurnOrderRibbon.BONE),
+			"tag %d uses dark fabric with high-contrast bone text and amber NOW" % i)
 		previous_right = rect.end.x
 	_check(previous_right <= ribbon.global_position.x + 690 and previous_right <= 1260,
 		"%d-slot ribbon ends within its allocation and before right top-band edge" % count)
+
+
+func _observe_arrival(stage: StitchedBattleScreen, count: int, evidence: Array) -> void:
+	if not evidence.is_empty():
+		return
+	var battle := stage.battle
+	var ribbon := stage._turn_ribbon
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 4 and
+		battle.turn_order().size() == count and ribbon.displayed_entries.size() == count and
+		battle.current_actor_id() == StitchedRules.WALK_MIMIC_ID,
+		"precondition: real mounted %d-turn 4v4 arrival before automatic ambush action" % count)
+	_verify_order(stage)
+	_check_geometry(ribbon, count, stage)
+	var boss_slots := 0
+	for i in range(ribbon.displayed_entries.size()):
+		var unit: Dictionary = ribbon.displayed_entries[i]
+		if unit.id == "fray_scavenger":
+			boss_slots += 1
+		_check_disclosure(ribbon, i, str(unit.name))
+	_check(boss_slots == (2 if count == 9 else 1),
+		"real %d-turn order preserves every repeated boss slot" % count)
+	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng and stage.receipts.is_empty(),
+		"inspection of real arrival projection spends no turn, receipt or RNG")
+	evidence.append({"snapshot": snapshot, "rng": rng, "entries": ribbon.displayed_entries.duplicate(true)})
+
+
+func _check_live_arrivals() -> void:
+	for count in [8, 9]:
+		var replay: Array = []
+		for attempt in range(2):
+			var host := Control.new()
+			host.size = Vector2(1280, 720)
+			host.theme = load("res://themes/gothic_theme.tres")
+			root.add_child(host)
+			var stage := ArrivalBattle.new()
+			var config := StitchedBattleScreen.read_preview()
+			config.walk_mimic = true
+			if count == 9:
+				config.foes[0].is_boss = true
+				config.foes[0].turns_per_round = 2
+			var evidence: Array = []
+			stage.observe = _observe_arrival.bind(count, evidence)
+			_check(stage.begin(config), "precondition: legal live arrival starts with %d public slots" % count)
+			host.add_child(stage)
+			await process_frame
+			_check(evidence.size() == 1 and not stage.receipts.is_empty() and
+				stage.battle.get_unit(StitchedRules.WALK_MIMIC_ID).is_empty() and
+				stage._turn_ribbon.displayed_entries.size() == count - 1 and
+				not stage._turn_ribbon.tag_at(count - 1).visible and
+				stage._turn_ribbon.tag_at(count - 1).tooltip_text.is_empty(),
+				"real ambush commits then clears its vacated disclosure slot")
+			_verify_order(stage)
+			_check_geometry(stage._turn_ribbon, count - 1, stage)
+			if attempt == 0:
+				replay = evidence.duplicate(true)
+			else:
+				_check(not evidence.is_empty() and evidence == replay,
+					"seeded %d-turn mounted arrival replays the identical order, state and RNG" % count)
+			host.free()
+
+
+func _check_live_death() -> void:
+	var host := Control.new()
+	host.size = Vector2(1280, 720)
+	host.theme = load("res://themes/gothic_theme.tres")
+	root.add_child(host)
+	var config := StitchedBattleScreen.read_preview()
+	# Legal fragile encounter fixture; all attacks still use authored hero parts.
+	for foe in config.foes:
+		foe.max_hp = 1
+	var stage := StitchedBattleScreen.new()
+	_check(stage.begin(config), "precondition: real fragile encounter starts")
+	host.add_child(stage)
+	await process_frame
+	var death_id := ""
+	for step in range(24):
+		if stage.battle.is_over() or not death_id.is_empty():
+			break
+		var accepted := false
+		for slot in ["head", "arms", "torso", "legs"]:
+			if not stage.select_part(slot):
+				continue
+			for key: String in stage.legal_targets():
+				if not key.begins_with("foe_"):
+					continue
+				var last := stage._turn_ribbon.displayed_entries.size() - 1
+				stage._turn_ribbon.tag_at(last).mouse_entered.emit()
+				_check(stage._turn_ribbon.tag_at(last).get_node("FocusTooltip").visible,
+					"precondition: vacated end slot has an open hover disclosure before attack")
+				var target_rank := int(key.trim_prefix("foe_"))
+				var target_id := ""
+				var target_slot := -1
+				for i in range(stage._turn_ribbon.displayed_entries.size()):
+					var unit: Dictionary = stage._turn_ribbon.displayed_entries[i]
+					if unit.side == "foe" and unit.rank == target_rank:
+						target_id = str(unit.id)
+						target_slot = i
+				_check(target_slot >= 0, "precondition: advertised foe target owns a live ribbon slot")
+				var target_tag := stage._turn_ribbon.tag_at(target_slot)
+				target_tag.mouse_entered.emit()
+				_check(target_tag.get_node("FocusTooltip").visible and
+					target_tag.tooltip_text == StitchedTurnStatusCues.tooltip(stage.battle.get_unit(target_id)),
+					"precondition: actual targeted foe's complete disclosure is open before attack")
+				var receipt := stage.submit_target("foe", target_rank)
+				_check(receipt.get("ok", false), "real selected part accepts its advertised foe target")
+				if stage.battle.get_unit(target_id).get("dead", false):
+					if target_tag.visible:
+						var survivor: Dictionary = stage._turn_ribbon.displayed_entries[target_slot]
+						_check(survivor.id != target_id and
+							target_tag.tooltip_text == StitchedTurnStatusCues.tooltip(survivor) and
+							target_tag.get_node("FocusTooltip/TooltipText").text == target_tag.tooltip_text,
+							"dead foe's hovered slot now discloses its exact surviving actor")
+					else:
+						_check(target_tag.tooltip_text.is_empty() and not target_tag.get_node("FocusTooltip").visible,
+							"dead foe's vacated hovered slot clears its disclosure")
+				accepted = bool(receipt.get("ok", false))
+				break
+			if accepted:
+				break
+		if not accepted:
+			_check(stage.submit_pass().get("ok", false), "real Pass reaches another attacking hero")
+		for foe in stage.battle.get_foes():
+			if foe.dead:
+				death_id = str(foe.id)
+	_check(not death_id.is_empty() and stage.battle.get_unit(death_id).get("dead", false),
+		"non-vacuous public hero action actually kills a foe")
+	var ribbon := stage._turn_ribbon
+	_check(ribbon.displayed_entries.size() == 6 and not ribbon.tag_at(6).visible and
+		ribbon.tag_at(6).tooltip_text.is_empty() and ribbon.marker_at(6).text.is_empty() and
+		ribbon.portrait_at(6).texture == null and not ribbon.tag_at(6).get_node("FocusTooltip").visible,
+		"real foe death compacts the mounted ribbon and clears the vacated open disclosure")
+	for unit in ribbon.displayed_entries:
+		_check(unit.id != death_id, "real dead foe is absent from every surviving tag")
+	_verify_order(stage)
+	_check_geometry(ribbon, 6, stage)
+	host.free()
 
 
 func _run() -> void:
@@ -283,12 +438,59 @@ func _run() -> void:
 
 	# Real committed action makes the screen refresh from the new public order.
 	var previous := battle.state_snapshot()
+	var previous_actor := battle.current_actor_id()
 	var accepted := stage.submit_pass()
 	_check(bool(accepted.get("ok", false)) and stage.receipts.size() > receipts and
 		battle.state_snapshot() != previous,
 		"real public Pass spends one live hero action and advances seeded combat")
 	_verify_order(stage)
 	_check_geometry(ribbon, ribbon.displayed_entries.size(), stage)
+	_check(battle.current_actor_id() != previous_actor,
+		"precondition: committed Pass reaches a different real actor")
+	var former_now := 0
+	for i in range(ribbon.displayed_entries.size()):
+		if ribbon.displayed_entries[i].id == previous_actor:
+			former_now += 1
+			_check(ribbon.marker_at(i).text == StitchedTurnStatusCues.cue(battle.get_unit(previous_actor)),
+				"former real actor loses NOW and restores its authoritative status cue")
+	_check(former_now == 1, "changed-turn check exercises the former acting tag")
+	# Real public fray transitions change a nonacting hero's cue, then remove LOST.
+	var frayed_id := ""
+	for unit in ribbon.displayed_entries:
+		if unit.side == "hero" and unit.id != battle.current_actor_id():
+			frayed_id = str(unit.id)
+			break
+	_check(not frayed_id.is_empty(), "precondition: a living nonacting hero can receive a real fray event")
+	var hanging := battle.apply_fray_event(frayed_id, 200)
+	_check(hanging.get("ok", false) and hanging.get("transition") == "hanging" and
+		battle.get_unit(frayed_id).hanging, "real fray event reaches Hanging before testing SEAM")
+	stage._refresh()
+	var seams := 0
+	for i in range(ribbon.displayed_entries.size()):
+		if ribbon.displayed_entries[i].id == frayed_id:
+			seams += 1
+			_check(ribbon.marker_at(i).text == "SEAM" and
+				ribbon.tag_at(i).tooltip_text == StitchedTurnStatusCues.tooltip(battle.get_unit(frayed_id)),
+				"real changed status projects SEAM with the complete unchanged public tooltip")
+	_check(seams == 1, "real Hanging witness remains in the order exactly once")
+	var last_slot := ribbon.displayed_entries.size() - 1
+	ribbon.tag_at(last_slot).grab_focus()
+	ribbon.tag_at(last_slot).mouse_entered.emit()
+	_check(ribbon.tag_at(last_slot).get_node("FocusTooltip").visible,
+		"precondition: last occupied slot has an open disclosure before LOST compacts the queue")
+	var lost_result := battle.apply_fray_event(frayed_id, 200)
+	_check(lost_result.get("ok", false) and lost_result.get("transition") == "lost" and
+		battle.get_unit(frayed_id).lost, "second real fray event loses the Hanging hero")
+	stage._refresh()
+	_verify_order(stage)
+	_check_geometry(ribbon, 6, stage)
+	_check(not ribbon.tag_at(last_slot).visible and ribbon.tag_at(last_slot).tooltip_text.is_empty() and
+		ribbon.marker_at(last_slot).text.is_empty() and ribbon.portrait_at(last_slot).texture == null and
+		not ribbon.tag_at(last_slot).get_node("FocusTooltip").visible and
+		ribbon.tag_at(last_slot).get_node("FocusTooltip/TooltipText").text.is_empty(),
+		"real LOST refresh clears the vacated actor, portrait, marker and open mouse/keyboard disclosure")
+	for unit in ribbon.displayed_entries:
+		_check(unit.id != frayed_id, "real LOST actor never remains among projected survivors")
 
 	# A new valid session must reconstruct tags from its own public round.
 	host.free()
@@ -302,6 +504,8 @@ func _run() -> void:
 	_verify_order(fresh_stage)
 	_check_geometry(fresh_stage._turn_ribbon, 7, fresh_stage)
 	fresh_host.free()
+	await _check_live_arrivals()
+	await _check_live_death()
 	_finish()
 
 
