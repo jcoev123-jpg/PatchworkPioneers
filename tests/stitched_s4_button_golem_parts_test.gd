@@ -30,6 +30,7 @@ func _initialize() -> void:
 	_test_all_tiers()
 	_test_mark_bonus()
 	_test_volley()
+	_test_volley_rank_four()
 	_test_volley_mark_bonus()
 	_test_volley_miss()
 	_test_guard_interception()
@@ -308,16 +309,205 @@ func _test_volley() -> void:
 		if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 3:
 			continue
 		var distinct := {}
+		var ranks := {}
 		var hits := 0
 		for r in cast["results"]:
 			distinct[str(r["target"])] = true
+			ranks[int(r["target_rank"])] = true
 			if bool(r["hit"]) and int(r["damage"]) > 0:
 				hits += 1
 		witnessed = (distinct.has("fray_scavenger") and distinct.has("scissor_crab")
-			and distinct.has("moth_scribe") and hits == 3)
+			and distinct.has("moth_scribe") and hits == 3
+			and ranks.has(1) and ranks.has(2) and ranks.has(3) and not ranks.has(4)
+			and b.get_foes().size() == 3)
 		if witnessed:
 			break
 	_check(witnessed, "AC2: real Popping Volley hits each of three unique foes exactly once")
+
+
+## A real 4v3 preview battle with Popping Volley equipped on the rank-2 Golem, then the
+## existing third foe moved into enemy rank 4 in this battle's own memory only. Rank 3 stays
+## vacant, ranks 1 and 2 keep their real foes, and exactly three foes remain.
+func _rank_four_battle(tier: int, seed_value: int) -> StitchedRules:
+	var cfg := _config(ALTERNATES["arms"], tier, seed_value)
+	if cfg.is_empty():
+		return null
+	var built := StitchedRules.create(cfg)
+	if not bool(built.get("ok", false)):
+		return null
+	var battle: StitchedRules = built["battle"]
+	if not battle._units.has("moth_scribe"):
+		return null
+	battle._units["moth_scribe"]["rank"] = 4
+	return battle
+
+
+## One real scheduled Golem turn on the relocated fixture, with the pre/post snapshots needed
+## for a same-seed replay check.
+func _rank_four_cast(tier: int, seed_value: int) -> Dictionary:
+	var battle := _rank_four_battle(tier, seed_value)
+	if battle == null or not _to(battle, "button_golem"):
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var moth_hp := int(battle.get_unit("moth_scribe")["hp"])
+	var cast := battle.use_part(ALTERNATES["arms"], 4)
+	return {
+		"battle": battle,
+		"cast": cast,
+		"before": before,
+		"rng_before": rng,
+		"after": battle.state_snapshot(),
+		"rng_after": battle.rng_state(),
+		"moth_hp": moth_hp,
+		"seed": seed_value,
+	}
+
+
+func _test_volley_rank_four() -> void:
+	for tier in [1, 2, 3]:
+		var structure := {}
+		var landed := {}
+		var landed_seed := 0
+		for seed_value in range(504500, 504560):
+			var attempt := _rank_four_cast(tier, seed_value)
+			if attempt.is_empty():
+				continue
+			var attempt_battle: StitchedRules = attempt["battle"]
+			if (int(attempt_battle.get_unit("moth_scribe")["rank"]) != 4
+				or bool(attempt_battle.get_unit("moth_scribe")["dead"])
+				or int(attempt_battle.get_unit("fray_scavenger")["rank"]) != 1
+				or int(attempt_battle.get_unit("scissor_crab")["rank"]) != 2
+				or attempt_battle.get_foes().any(func(foe): return int(foe["rank"]) == 3)):
+				continue
+			var cast: Dictionary = attempt["cast"]
+			if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 3:
+				continue
+			if structure.is_empty():
+				structure = attempt
+			var moth := _receipt_for(cast["results"], "moth_scribe")
+			if not moth.is_empty() and bool(moth.get("hit", false)) and int(moth.get("damage", 0)) > 0:
+				landed = attempt
+				landed_seed = seed_value
+				break
+		_check(not structure.is_empty(),
+			"AC2: tier %d reaches a real rank-4 volley cast in a bounded seed range" % tier)
+		if structure.is_empty():
+			continue
+		var battle: StitchedRules = structure["battle"]
+		var cast: Dictionary = structure["cast"]
+		var ranks := {}
+		var targets := {}
+		var foes_only := true
+		for receipt in cast["results"]:
+			ranks[int(receipt["target_rank"])] = true
+			targets[str(receipt["target"])] = true
+			foes_only = foes_only and str(receipt["target_side"]) == "foe"
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
+			and int(battle.get_unit("button_golem")["rank"]) == 2,
+			"AC2: tier %d keeps the real four-hero/three-foe battle with the Golem in rank 2" % tier)
+		_check(int(battle.get_unit("moth_scribe")["rank"]) == 4
+			and int(battle.get_unit("fray_scavenger")["rank"]) == 1
+			and int(battle.get_unit("scissor_crab")["rank"]) == 2
+			and battle.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: tier %d only the existing Moth Scribe stands in enemy rank 4 and rank 3 is empty" % tier)
+		_check(cast["results"].size() == 3 and ranks.size() == 3
+			and ranks.has(1) and ranks.has(2) and ranks.has(4) and not ranks.has(3),
+			"AC2: tier %d volley receipts exactly the occupied ranks 1, 2 and 4" % tier)
+		_check(targets.size() == 3 and targets.has("fray_scavenger")
+			and targets.has("scissor_crab") and targets.has("moth_scribe") and foes_only,
+			"AC2: tier %d volley receipts each living foe once on the enemy side" % tier)
+		_check(str(cast.get("actor", "")) == "button_golem"
+			and str(cast.get("part", "")) == ALTERNATES["arms"]
+			and str(cast.get("ability", "")) == "button_golem_arms_popping_volley_move",
+			"AC2: tier %d rank-4 volley runs as the equipped Golem arms action" % tier)
+		_check(int(structure["before"].get("turn_index", -1)) != int(structure["after"].get("turn_index", -2))
+			or int(structure["before"].get("round", -1)) != int(structure["after"].get("round", -2)),
+			"AC2: tier %d accepted rank-4 volley spends one scheduled turn" % tier)
+		_check(battle.current_actor_id() != "button_golem",
+			"AC2: tier %d the Golem no longer holds the turn after the volley" % tier)
+		_check(structure["before"] != structure["after"]
+			and int(structure["rng_before"]) != int(structure["rng_after"]),
+			"AC2: tier %d the accepted volley changes authoritative state and seeded RNG" % tier)
+		_check(not landed.is_empty(),
+			"AC2: tier %d bounded fixed-seed volley lands real damage on the rank-4 foe" % tier)
+		if landed.is_empty():
+			continue
+		var landed_battle: StitchedRules = landed["battle"]
+		var moth_hit := _receipt_for(landed["cast"]["results"], "moth_scribe")
+		var moth := landed_battle.get_unit("moth_scribe")
+		_check(not moth_hit.is_empty() and bool(moth_hit.get("hit", false))
+			and int(moth_hit.get("damage", 0)) > 0 and int(moth_hit.get("target_rank", 0)) == 4
+			and int(moth["hp"]) == int(landed["moth_hp"]) - int(moth_hit["damage"])
+			and int(moth_hit.get("target_hp", -1)) == int(moth["hp"]),
+			"AC2: tier %d landed rank-4 receipt drops the real Moth Scribe HP" % tier)
+		var replay := _rank_four_cast(tier, landed_seed)
+		_check(not replay.is_empty() and replay["cast"] == landed["cast"]
+			and replay["before"] == landed["before"] and replay["after"] == landed["after"]
+			and int(replay["rng_after"]) == int(landed["rng_after"]),
+			"AC2: tier %d equal-seed replay reproduces the receipt, snapshot and RNG" % tier)
+	# AC3: the untouched three-foe preview genuinely has no foe at enemy rank 4. A multi volley
+	# receipts only the occupied ranks its mask allows, so aiming there adds no phantom rear
+	# target; aims outside an authored mask and single-target rear aims are atomic refusals.
+	var plain := _battle(ALTERNATES["arms"], 1, 504561)
+	if plain == null or not _to(plain, "button_golem"):
+		_check(false, "AC3: untouched preview reaches a real Golem turn")
+	else:
+		_check(plain.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+			"AC3: untouched preview genuinely has no foe in enemy rank 4")
+		_reject(plain, ALTERNATES["arms"], 0, "volley target rank zero")
+		_reject(plain, ALTERNATES["arms"], 5, "volley target rank five")
+		_reject(plain, STARTERS["head"], 4, "single-target Loose Button Pop has no rank-four target")
+		_reject(plain, ALTERNATES["head"], 4, "Buttonhole Snag's authored mask excludes rank four")
+		var before := plain.state_snapshot()
+		var rng := plain.rng_state()
+		var anchored := plain.use_part(ALTERNATES["arms"], 4)
+		var anchored_ranks := {}
+		var anchored_targets := {}
+		if bool(anchored.get("ok", false)):
+			for receipt in anchored["results"]:
+				anchored_ranks[int(receipt["target_rank"])] = true
+				anchored_targets[str(receipt["target"])] = true
+		_check(bool(anchored.get("ok", false)) and anchored.get("results", []).size() == 3
+			and anchored_targets.size() == 3 and anchored_ranks.has(1) and anchored_ranks.has(2)
+			and anchored_ranks.has(3) and not anchored_ranks.has(4)
+			and plain.current_actor_id() != "button_golem"
+			and before != plain.state_snapshot() and rng != plain.rng_state(),
+			"AC3: a vacant enemy rank 4 yields no phantom receipt and still spends the one turn")
+	var torn_cfg := _config(ALTERNATES["arms"], 1, 504562)
+	if not torn_cfg.is_empty():
+		torn_cfg["heroes"][1]["parts"]["arms"]["torn"] = true
+		var torn_built := StitchedRules.create(torn_cfg)
+		_check(bool(torn_built.get("ok", false)), "AC3: torn volley equipment builds before its cast")
+		if bool(torn_built.get("ok", false)):
+			var torn: StitchedRules = torn_built["battle"]
+			if _to(torn, "button_golem"):
+				_reject(torn, ALTERNATES["arms"], 4, "torn Popping Volley")
+			else:
+				_check(false, "AC3: torn volley battle reaches the Golem turn")
+	var bare := _battle("", 1, 504563)
+	if bare == null or not _to(bare, "button_golem"):
+		_check(false, "AC3: unequipped volley battle reaches the Golem turn")
+	else:
+		_reject(bare, ALTERNATES["arms"], 4, "Popping Volley not equipped")
+	for hero_rank in [3, 4]:
+		var cfg := _config(ALTERNATES["arms"], 1, 504564 + hero_rank)
+		if cfg.is_empty():
+			_check(false, "AC3: rank-%d Golem configuration builds" % hero_rank)
+			continue
+		var golem: Dictionary = cfg["heroes"].pop_at(1)
+		cfg["heroes"].insert(hero_rank - 1, golem)
+		var made := StitchedRules.create(cfg)
+		_check(bool(made.get("ok", false)), "AC3: rank-%d Golem battle builds" % hero_rank)
+		if not bool(made.get("ok", false)):
+			continue
+		var rear: StitchedRules = made["battle"]
+		if not _to(rear, "button_golem"):
+			_check(false, "AC3: rank-%d Golem receives its scheduled turn" % hero_rank)
+			continue
+		_check(int(rear.get_unit("button_golem")["rank"]) == hero_rank,
+			"AC3: the Golem really stands in hero rank %d" % hero_rank)
+		_reject(rear, ALTERNATES["arms"], 1, "volley cannot launch from hero rank %d" % hero_rank)
 
 
 func _test_volley_catalog(c: Dictionary) -> void:
@@ -334,17 +524,51 @@ func _test_volley_catalog(c: Dictionary) -> void:
 	for row in rows:
 		var tier := int(row["tier"])
 		var at := StitchedParts.ability_at_tier(part, tier)
+		var target_mask := int(at["target_mask"])
+		var launch_mask := int(at["launch_mask"])
 		_check(str(at["id"]) == "button_golem_arms_popping_volley_move"
 			and str(at["kind"]) == "ranged" and str(at["target_side"]) == "enemy"
-			and bool(at["multi"]) and at["launch"] == [1, 2] and at["target"] == [1, 2, 3]
+			and bool(at["multi"]) and at["launch"] == [1, 2] and at["target"] == [1, 2, 3, 4]
+			and launch_mask == StitchedParts.rank_mask([1, 2])
+			and target_mask == StitchedParts.rank_mask([1, 2, 3, 4])
 			and int(at["acc"]) == 89 and at["dmg"] == row["dmg"] and int(at["crit"]) == 0
 			and int(at["self_move"]) == 0 and at["effects"] == {} and str(at["move"]) == "attack2",
 			"AC1: Popping Volley keeps native ranks/ACC/damage/pose at tier %d" % tier)
 		_check(int(at["mark_damage"]) == int(row["mark"]),
 			"AC1: Popping Volley tier %d authored mark_damage is %d" % [tier, int(row["mark"])])
-	_check(str(part["text"]).contains("Marked")
-		and str(part["text"]).to_lower().contains("extra damage"),
-		"AC1: Popping Volley text names the extra damage a Marked target takes")
+		for rank in [1, 2]:
+			_check(StitchedParts.ranks_allowed(launch_mask, rank)
+				and StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: Popping Volley tier %d launches from and reaches rank %d" % [tier, rank])
+		for rank in [3, 4]:
+			_check(not StitchedParts.ranks_allowed(launch_mask, rank)
+				and StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: Popping Volley tier %d reaches foe rank %d but cannot launch there" % [tier, rank])
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: Popping Volley tier %d never targets rank %d" % [tier, rank])
+	var text := str(part["text"]).to_lower()
+	_check(text.contains("occupied") and text.contains("marked")
+		and text.contains("extra damage") and not text.contains("three foe ranks"),
+		"AC1: Popping Volley text names every occupied rank and the Marked extra damage")
+	var unchanged := {
+		STARTERS["head"]: {"launch": [1, 2], "target": [1, 2], "stat": {"acc": 5}},
+		STARTERS["arms"]: {"launch": [1, 2], "target": [1, 2], "stat": {"dmg": 1}},
+		STARTERS["torso"]: {"launch": [1, 2, 3], "target": [1, 2, 3], "stat": {"max_hp": 6, "prot": 3}},
+		STARTERS["legs"]: {"launch": [1, 2, 3], "target": [1, 2, 3], "stat": {"speed": 2}},
+		ALTERNATES["head"]: {"launch": [1, 2], "target": [1, 2, 3], "stat": {"crit": 4}},
+		ALTERNATES["torso"]: {"launch": [1, 2, 3], "target": [1, 2, 3, 4], "stat": {"max_hp": 5, "prot": 5}},
+		ALTERNATES["legs"]: {"launch": [2, 3, 4], "target": [2, 3, 4], "stat": {"dodge": 5}},
+	}
+	for id in unchanged:
+		for tier in [1, 2, 3]:
+			var at := StitchedParts.ability_at_tier(c["by_id"][id], tier)
+			var stat := StitchedParts.stat_at_tier(c["by_id"][id], tier)
+			_check(at["launch"] == unchanged[id]["launch"] and at["target"] == unchanged[id]["target"]
+				and int(at["launch_mask"]) == StitchedParts.rank_mask(unchanged[id]["launch"])
+				and int(at["target_mask"]) == StitchedParts.rank_mask(unchanged[id]["target"])
+				and stat == unchanged[id]["stat"],
+				"AC1: %s keeps its authored ranks and slot stat at tier %d" % [id, tier])
 	var loose: Dictionary = c["by_id"][STARTERS["head"]]
 	_check(int(StitchedParts.ability_at_tier(loose, 1)["effects"]["mark"]) == 2
 		and int(StitchedParts.ability_at_tier(loose, 2)["effects"]["mark"]) == 3
