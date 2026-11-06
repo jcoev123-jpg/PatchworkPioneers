@@ -384,6 +384,39 @@
         { "id": "cut_windknots", "text": "Cut the barbed windknots (lose 6 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
         { "id": "leave", "text": "Leave the kite swaying beyond the road", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_warden_iron_mitten_sluice",
+      "title": "The Iron-Mitten Sluice",
+      "description": "At a drowned stair, a giant iron mitten grips the sluice chain. The Warden braces its swollen thumb with a patched shield while one candle burns inside the cuff.",
+      "required_hero": "warden",
+      "choices": [
+        { "id": "pad_mitten_sluice", "text": "Spend 2 scraps on dry shield padding (heal 7 HP; gain 1 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 } },
+        { "id": "wrench_mitten_clasp", "text": "Wrench out the brass clasp (lose 5 HP; gain 23 gold)", "outcome": { "gold": 23, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the iron mitten clamped shut", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_seamstress_whisper_spool_archive",
+      "title": "The Whisper-Spool Archive",
+      "description": "Hundreds of silent button eyes peer from a velvet archive wall. The Seamstress's red thread loops through whispering spools beneath a bent thimble lamp.",
+      "required_hero": "seamstress",
+      "choices": [
+        { "id": "bind_hush_spool", "text": "Pay 16 gold for a lasting hush-stitch (+3 max HP)", "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "pluck_archive_braid", "text": "Unspool a barbed braid (lose 4 HP; gain 2 scraps)", "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the silent spools keep their secrets", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_tinker_windup_birdcage",
+      "title": "The Wind-Up Birdcage",
+      "description": "A wind-up crow with a copper beak sleeps inside a towering brass birdcage. The Tinker's uneven goggles catch the single amber eye of its clockwork heart.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "oil_cage_bearings", "text": "Spend 1 scrap to oil the worn bearings (heal 6 HP)", "outcome": { "gold": 0, "scraps": -1, "hp": 6, "max_hp": 0 } },
+        { "id": "pry_clockbird_beak", "text": "Pry free a brass clockbird beak (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the clockbird asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
