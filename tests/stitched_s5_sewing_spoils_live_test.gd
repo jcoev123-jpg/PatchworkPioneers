@@ -29,7 +29,7 @@ func _no_wallet(app: Node) -> bool:
 
 
 func _admit(app: Node) -> StitchedBattleScreen:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	# Let the authored Roadblock's deferred focus settle, as real input does.
 	await process_frame
 	var offer: LiveEventChoicePanel = app.stitched_event_panel

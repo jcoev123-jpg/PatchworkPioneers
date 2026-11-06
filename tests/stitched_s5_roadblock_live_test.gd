@@ -1,5 +1,5 @@
 extends SceneTree
-## S5: the title's mounted Fight-or-toll Roadblock is the sole Stitched battle admission.
+## S5: explicit regression entry retains authenticated Fight-or-toll Roadblock admission.
 var failures: Array[String] = []
 var checks := 0
 
@@ -37,20 +37,21 @@ func _key(number: Key) -> InputEventKey:
 func _exercise(repetition: int) -> Dictionary:
 	var app := _spawn()
 	await process_frame
-	_check(app.title_view.is_visible_in_tree() and app.stitched_fight_button.is_visible_in_tree() \
-		and app.stitched_fight_button.focus_mode != Control.FOCUS_NONE and _no_run(app),
-		"ordinary title has a keyboard-reachable Roadblock entry and no run")
+	_check(app.title_view.is_visible_in_tree() and not app.stitched_fight_button.is_visible_in_tree() \
+		and app.stitched_fight_button.disabled and app.stitched_fight_button.focus_mode == Control.FOCUS_NONE \
+		and app.stitched_fight_button.pressed.get_connections().is_empty() and _no_run(app),
+		"ordinary title keeps Roadblock dormant and has no run")
 	seed(804215)
 	var expected_rng := randi()
 	seed(804215)
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var panel: LiveEventChoicePanel = app.stitched_event_panel
 	var gate: RunV3FightEventGate = app.stitched_event_gate
 	_check(panel != null and gate != null and gate.is_valid() \
 		and app.stitched_fight_view == null and _no_run(app) \
 		and not app.title_view.is_visible_in_tree(),
-		"the real title click admits an authored offer without combat, deck, RNG or wallet")
+		"the explicit regression entry admits an authored offer without combat, deck, RNG or wallet")
 	if panel == null or gate == null:
 		app.free()
 		await process_frame
@@ -102,13 +103,13 @@ func _exercise(repetition: int) -> Dictionary:
 	panel._on_choice_pressed(selector, "break_barricade", panel._generation, buttons[0])
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_fight_view == null \
-		and app.get_viewport().gui_get_focus_owner() == app.stitched_fight_button,
+		and app.get_viewport().gui_get_focus_owner() == app.base_button,
 		"Leave frees the ticket panel and restores title keyboard focus")
 	# Re-enter with the same title and obtain a fresh, still-unclaimed authority.
 	seed(804216)
 	var second_rng := randi()
 	seed(804216)
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var fight_panel: LiveEventChoicePanel = app.stitched_event_panel
 	var fight_gate: RunV3FightEventGate = app.stitched_event_gate
@@ -191,7 +192,7 @@ func _exercise(repetition: int) -> Dictionary:
 	await process_frame
 	_check(app.stitched_fight_view == null and not is_instance_valid(old_stage) \
 		and app.title_view.is_visible_in_tree() and _no_run(app) \
-		and app.get_viewport().gui_get_focus_owner() == app.stitched_fight_button,
+		and app.get_viewport().gui_get_focus_owner() == app.base_button,
 		"Back restores the clean ordinary title and keyboard focus")
 	app.free()
 	await process_frame

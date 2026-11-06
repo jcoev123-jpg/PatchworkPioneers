@@ -9,6 +9,7 @@ var set_out_count := 0
 var back_count := 0
 
 func _initialize() -> void:
+	StitchedBedroom.enabled = false
 	_run.call_deferred()
 
 func _check(value: bool, what: String) -> void:

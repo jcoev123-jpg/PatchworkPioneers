@@ -6,6 +6,10 @@ var _difficulty_completed_map: RunMap
 var heirloom_unlocked := false
 const PROFILE_VERSION := 1
 @export var difficulty_save_path := "user://quilt_difficulty.json"
+## S9d: what Wren's room remembers between nights. Only the running game's root writes it.
+@export var bedroom_save_path := "user://wren_room.json"
+var bedroom_record: Dictionary = {}
+var _bedroom_noted_run := 0
 
 
 func difficulty_state() -> Dictionary:
@@ -1477,7 +1481,10 @@ func _build_title() -> void:
 	stitched_fight_button.text = "Stitched Roadblock"
 	stitched_fight_button.tooltip_text = "Face the Stitchline Roadblock before Floor 01 combat"
 	stitched_fight_button.custom_minimum_size = Vector2(240, 56)
-	stitched_fight_button.pressed.connect(_open_stitched_fight)
+	# Retained for regression callers; production enters combat through New Run.
+	stitched_fight_button.hide()
+	stitched_fight_button.disabled = true
+	stitched_fight_button.focus_mode = Control.FOCUS_NONE
 	box.add_child(stitched_fight_button)
 	# The Peddler stays hidden and unfocusable until a real Roadblock victory
 	# and Sewing Circle Leave earn it; it is never part of an unwon title.
@@ -1521,20 +1528,42 @@ func _build_title() -> void:
 	stitched_unpicker_button.focus_mode = Control.FOCUS_NONE
 	stitched_unpicker_button.pressed.connect(_open_stitched_unpicker)
 	box.add_child(stitched_unpicker_button)
-	start_button.focus_next = start_button.get_path_to(stitched_continue_button)
-	stitched_continue_button.focus_previous = stitched_continue_button.get_path_to(start_button)
-	stitched_continue_button.focus_next = stitched_continue_button.get_path_to(base_button)
-	base_button.focus_next = base_button.get_path_to(stitched_fight_button)
-	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(start_button)
-	start_button.focus_previous = start_button.get_path_to(stitched_fight_button)
-	base_button.focus_previous = base_button.get_path_to(stitched_continue_button)
-	stitched_fight_button.focus_previous = stitched_fight_button.get_path_to(base_button)
+	_wire_stitched_title_focus()
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
 
 
+## Include earned fixture stops only while their authenticated actions are eligible.
+func _wire_stitched_title_focus() -> void:
+	var actions: Array[Button] = []
+	for button in [start_button, stitched_continue_button, base_button,
+			stitched_peddler_button, stitched_campfire_button,
+			stitched_postevent_button, stitched_unpicker_button]:
+		if is_instance_valid(button) and button.visible and not button.disabled \
+				and button.focus_mode != Control.FOCUS_NONE:
+			actions.append(button)
+	for index in range(actions.size()):
+		actions[index].focus_next = actions[index].get_path_to(actions[(index + 1) % actions.size()])
+		actions[index].focus_previous = actions[index].get_path_to(
+			actions[(index - 1 + actions.size()) % actions.size()])
 
-## S3's ordinary-title, card-free Stitched encounter. The preview record is only
+
+## Recheck after deferred cleanup so focus never lands on a retired stop.
+func _focus_stitched_title(preferred: Button) -> void:
+	var actions := [start_button, stitched_continue_button, base_button,
+		stitched_peddler_button, stitched_campfire_button,
+		stitched_postevent_button, stitched_unpicker_button]
+	var origin := maxi(0, actions.find(preferred))
+	for offset in range(actions.size()):
+		var button: Button = actions[(origin + offset) % actions.size()]
+		if is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled \
+				and button.focus_mode != Control.FOCUS_NONE:
+			button.grab_focus()
+			return
+
+
+
+## S3's regression-only, card-free Stitched encounter. The preview record is only
 ## the title roster: the three foes themselves come from the canonical S5 enemy
 ## profiles, so every live Roadblock fight uses the same authored kit as the
 ## catalog and every enemy trophy is resolved by the same loader.
@@ -1891,7 +1920,7 @@ func _mount_stitched_party_picker(panel: LiveEventChoicePanel,
 func _open_stitched_fight() -> bool:
 	if stitched_unpicker_visit != null or is_instance_valid(stitched_unpicker_panel):
 		return false
-	# The title button admits only the authored Roadblock visit. No combat or
+	# Explicit regression entry admits only the authored Roadblock visit. No combat or
 	# run objects exist until a separately authenticated Fight is committed.
 	if is_instance_valid(stitched_fight_view) or is_instance_valid(stitched_event_panel) \
 			or is_instance_valid(stitched_sewing_panel) or stitched_sewing_visit != null \
@@ -2053,8 +2082,7 @@ func _retire_stitched_roadblock() -> void:
 func _restore_stitched_title() -> void:
 	if is_instance_valid(title_view):
 		title_view.show()
-		if is_instance_valid(stitched_fight_button):
-			stitched_fight_button.grab_focus.call_deferred()
+		_focus_stitched_title.call_deferred(base_button)
 
 
 func _begin_stitched_battle(admission: Dictionary, gate: RunV3FightEventGate) -> bool:
@@ -2822,8 +2850,7 @@ func _close_stitched_fight() -> void:
 	stage.queue_free()
 	if is_instance_valid(title_view):
 		title_view.show()
-		if is_instance_valid(stitched_fight_button):
-			stitched_fight_button.grab_focus.call_deferred()
+		_focus_stitched_title.call_deferred(base_button)
 
 
 ## The winning survivors, by ID and rank, are the only Peddler customers. The
@@ -3055,7 +3082,7 @@ func _refresh_stitched_peddler_button() -> void:
 	stitched_campfire_button.disabled = not campfire_ready
 	stitched_campfire_button.focus_mode = Control.FOCUS_ALL if campfire_ready else Control.FOCUS_NONE
 	if not is_instance_valid(title_view) or not title_view.is_inside_tree() \
-			or not is_instance_valid(stitched_fight_button) or not is_instance_valid(start_button):
+			or not is_instance_valid(base_button) or not is_instance_valid(start_button):
 		return
 	var event_ready: bool = _stitched_postvictory_stop_available \
 		and not _stitched_campfire_roster.is_empty() \
@@ -3065,8 +3092,6 @@ func _refresh_stitched_peddler_button() -> void:
 	stitched_postevent_button.visible = event_ready
 	stitched_postevent_button.disabled = not event_ready
 	stitched_postevent_button.focus_mode = Control.FOCUS_ALL if event_ready else Control.FOCUS_NONE
-	var first: Control = stitched_peddler_button if peddler_ready else stitched_campfire_button \
-		if campfire_ready else stitched_postevent_button if event_ready else start_button
 	var unpicker_ready := _stitched_postvictory_stop_available \
 		and stitched_unpicker_visit == null and not is_instance_valid(stitched_unpicker_panel) \
 		and not _stitched_unpicker_earned.is_empty() \
@@ -3078,30 +3103,7 @@ func _refresh_stitched_peddler_button() -> void:
 	title_view.add_theme_constant_override("separation", 12 if _stitched_postvictory_stop_available else 32)
 	title_view.reset_size()
 	title_view.position = (get_viewport_rect().size - title_view.get_combined_minimum_size()) / 2.0
-	var last: Control = stitched_unpicker_button if unpicker_ready else stitched_postevent_button if event_ready else stitched_campfire_button \
-		if campfire_ready else stitched_peddler_button if peddler_ready else stitched_fight_button
-	stitched_fight_button.focus_next = stitched_fight_button.get_path_to(first)
-	start_button.focus_previous = start_button.get_path_to(last)
-	if peddler_ready:
-		stitched_peddler_button.focus_previous = stitched_peddler_button.get_path_to(stitched_fight_button)
-		stitched_peddler_button.focus_next = stitched_peddler_button.get_path_to(
-			stitched_campfire_button if campfire_ready else start_button)
-	if campfire_ready:
-		stitched_campfire_button.focus_previous = stitched_campfire_button.get_path_to(
-			stitched_peddler_button if peddler_ready else stitched_fight_button)
-		stitched_campfire_button.focus_next = stitched_campfire_button.get_path_to(
-			stitched_postevent_button if event_ready else start_button)
-	if event_ready:
-		stitched_postevent_button.focus_previous = stitched_postevent_button.get_path_to(
-			stitched_campfire_button if campfire_ready else stitched_peddler_button
-			if peddler_ready else stitched_fight_button)
-		stitched_postevent_button.focus_next = stitched_postevent_button.get_path_to(
-			stitched_unpicker_button if unpicker_ready else start_button)
-	if unpicker_ready:
-		stitched_unpicker_button.focus_previous = stitched_unpicker_button.get_path_to(
-			stitched_postevent_button if event_ready else stitched_campfire_button
-			if campfire_ready else stitched_peddler_button if peddler_ready else stitched_fight_button)
-		stitched_unpicker_button.focus_next = stitched_unpicker_button.get_path_to(start_button)
+	_wire_stitched_title_focus()
 
 
 ## The title-accessible Peddler: one quoted bandage, candle stub or canonical
@@ -3680,10 +3682,7 @@ func _close_stitched_peddler() -> void:
 	if is_instance_valid(title_view):
 		title_view.show()
 	_refresh_stitched_peddler_button()
-	if is_instance_valid(stitched_peddler_button) and stitched_peddler_button.visible:
-		stitched_peddler_button.grab_focus.call_deferred()
-	elif is_instance_valid(stitched_fight_button):
-		stitched_fight_button.grab_focus.call_deferred()
+	_focus_stitched_title.call_deferred(stitched_peddler_button)
 
 
 ## The authenticated Circle's full carry remains the authority even though the
@@ -4656,8 +4655,7 @@ func _close_stitched_campfire() -> void:
 	if is_instance_valid(title_view):
 		title_view.show()
 	_refresh_stitched_peddler_button()
-	if is_instance_valid(stitched_fight_button):
-		stitched_fight_button.grab_focus.call_deferred()
+	_focus_stitched_title.call_deferred(stitched_campfire_button)
 
 
 
@@ -5038,8 +5036,32 @@ func _open_base() -> bool:
 	_present_base_difficulty(view)
 	view.difficulty_choice_requested.connect(_base_difficulty_choice.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
+	view.present_bedroom(_bedroom_state())
 	title_view.hide()
 	return true
+
+
+func _bedroom_state() -> Dictionary:
+	if bedroom_record.is_empty():
+		bedroom_record = StitchedBedroomRecord.load_file(bedroom_save_path) \
+			if get_tree().current_scene == self else StitchedBedroomRecord.fresh()
+	return bedroom_record
+
+
+## Each finished run is one night in the room's record, counted once.
+func _note_bedroom_run(session: StitchedRunSession) -> void:
+	if session == null or _bedroom_noted_run == session.get_instance_id():
+		return
+	_bedroom_noted_run = session.get_instance_id()
+	bedroom_record = StitchedBedroomRecord.after_run(_bedroom_state(), session)
+	if get_tree().current_scene == self:
+		StitchedBedroomRecord.save_file(bedroom_save_path, bedroom_record)
+
+
+func _return_stitched_run_room() -> void:
+	_return_stitched_run_title()
+	if title_view.is_visible_in_tree():
+		_open_base()
 
 
 func _base_difficulty_choice(tier: int, source: WeakRef) -> void:
@@ -5737,6 +5759,7 @@ HP %d / %d  %s
 FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
 		card.add_child(recap)
 	if terminal:
+		_note_bedroom_run(session)
 		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 245))
 		terminal_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
 		var final_art := TextureRect.new()
@@ -5757,6 +5780,8 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		content.add_child(ending_actions)
 		_stitched_run_action(ending_actions, "Return to title", _return_stitched_run_title)
 		_stitched_run_action(ending_actions, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+		if StitchedBedroom.has_art():
+			_stitched_run_action(ending_actions, "Back to Wren's room", _return_stitched_run_room)
 		_stitched_run_keyboard_chain()
 		return
 	var choices_box: VBoxContainer

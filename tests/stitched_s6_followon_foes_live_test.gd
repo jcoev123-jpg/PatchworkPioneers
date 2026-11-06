@@ -32,7 +32,7 @@ func _foe_ids(foes: Array) -> Array:
 
 
 func _offer(app: Node) -> LiveEventChoicePanel:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	return app.stitched_event_panel
 

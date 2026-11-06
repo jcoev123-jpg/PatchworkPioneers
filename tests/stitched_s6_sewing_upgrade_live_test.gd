@@ -21,7 +21,7 @@ func _no_wallet(app: Node) -> bool:
 
 
 func _admit(app: Node) -> StitchedBattleScreen:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var offer: LiveEventChoicePanel = app.stitched_event_panel
 	if offer == null or not offer.has_open_event() or offer.get_choice_buttons().size() != 3:

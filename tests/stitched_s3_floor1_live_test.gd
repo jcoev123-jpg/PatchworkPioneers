@@ -148,10 +148,11 @@ func _run() -> void:
 	for repetition in range(2):
 		var app := _spawn()
 		await process_frame
-		_check(app.stitched_fight_button != null and app.stitched_fight_button.is_visible_in_tree() and
-			app.stitched_fight_button.focus_mode != Control.FOCUS_NONE and
-			app.base_button.focus_next == app.base_button.get_path_to(app.stitched_fight_button),
-			"ordinary title action is visible and keyboard reachable")
+		_check(app.stitched_fight_button != null and not app.stitched_fight_button.is_visible_in_tree() and
+			app.stitched_fight_button.disabled and app.stitched_fight_button.focus_mode == Control.FOCUS_NONE and
+			app.stitched_fight_button.pressed.get_connections().is_empty() and
+			app.base_button.focus_next == app.base_button.get_path_to(app.start_button),
+			"Roadblock is fixture-only and the title focus wraps over real actions")
 		var config: Dictionary = app._stitched_floor_config()
 		var merged := StitchedParts.build_catalog(config.get("parts", []))
 		_check(config.get("seed", 0) == 4982026 and config.get("heroes", []).size() == 4 and
@@ -196,13 +197,13 @@ func _run() -> void:
 		seed(global_seed)
 		var expected_global := randi()
 		seed(global_seed)
-		app.stitched_fight_button.pressed.emit()
+		app._open_stitched_fight() # Explicit Roadblock regression entry.
 		await process_frame
 		var panel: LiveEventChoicePanel = app.stitched_event_panel
 		_check(panel != null and panel.has_open_event() and panel.is_visible_in_tree() \
 			and app.stitched_event_gate != null and app.stitched_event_gate.is_valid() \
 			and not app.title_view.is_visible_in_tree(),
-			"ordinary title opens the authentic Roadblock offer before any battle")
+			"explicit regression entry opens the authentic Roadblock offer before any battle")
 		if panel == null:
 			app.free()
 			continue

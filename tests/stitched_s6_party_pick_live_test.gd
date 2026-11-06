@@ -35,7 +35,7 @@ func _toggle(app: Node, id: String, pressed: bool) -> void:
 
 
 func _offer(app: Node) -> LiveEventChoicePanel:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	return app.stitched_event_panel
 
@@ -112,8 +112,9 @@ func _exercise() -> Dictionary:
 	var app := _fresh()
 	await process_frame
 	_check(not app._stitched_party_locked and _neutral(app) \
-		and app.stitched_fight_button.is_visible_in_tree(),
-		"real title has Roadblock without ordinary run or wallet")
+		and not app.stitched_fight_button.is_visible_in_tree()
+		and app.stitched_fight_button.disabled and app.start_button.is_visible_in_tree(),
+		"real title has a dormant Roadblock without ordinary run or wallet")
 	var offer: LiveEventChoicePanel = await _offer(app)
 	_check(offer != null and offer.has_open_event() and app.stitched_event_gate != null,
 		"title mounts real Roadblock gate and authored offer")

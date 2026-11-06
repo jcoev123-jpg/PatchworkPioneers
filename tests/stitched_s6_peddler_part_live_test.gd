@@ -32,7 +32,7 @@ func _resources(app: Node) -> Dictionary:
 
 
 func _admit(app: Node) -> StitchedBattleScreen:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var panel: LiveEventChoicePanel = app.stitched_event_panel
 	if panel == null or not panel.has_open_event() or panel.get_choice_buttons().size() != 3:

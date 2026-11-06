@@ -21,7 +21,7 @@ func _no_wallet(app: Node) -> bool:
 
 
 func _admit(app: Node) -> StitchedBattleScreen:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var offer: LiveEventChoicePanel = app.stitched_event_panel
 	if offer == null or not offer.has_open_event() or offer.get_choice_buttons().size() != 3:
@@ -559,7 +559,7 @@ func _trace() -> Dictionary:
 	# After genuine four-survivor Circle Leave, wounded earned IDs are sealed.
 	# Even a direct stale/forged checkbox/Confirm/Cancel callback cannot recruit
 	# a fresh spare or erase HP, FRAY, ranks, gear, Bleed or stop entitlement.
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
 	_check(picker != null and app._stitched_party_locked
