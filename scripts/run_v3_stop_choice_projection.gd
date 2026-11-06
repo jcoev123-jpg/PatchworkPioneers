@@ -35,6 +35,59 @@ static func project_legal_choices(map: RunMap) -> Array:
 	return projected
 
 
+## Opt-in companion to project_legal_choices(): the same detached entries, in the
+## same order, where each of the five split stop kinds (Campfire, SewingCircle,
+## Peddler, Unpicker, PatchStall) also gains exactly one stitched_stop_help =
+## {"lead": String, "detail": String}. Fights, events, elites, treasure and
+## bosses never receive it. The help describes services a stop MAY offer; it is
+## not a confirmed offer, price or gain. Pure read: no node advance, no stop
+## service call, no spending, no offer sampling and no RNG. Not live-wired yet.
+static func project_stitched_legal_choices(map: RunMap) -> Array:
+	var projected: Array = project_legal_choices(map)
+	for entry in projected:
+		var help := stitched_stop_help_for(str(entry.get("v3_kind", "")))
+		if not help.is_empty():
+			entry["stitched_stop_help"] = help
+	return projected
+
+
+## Fresh, detached {"lead", "detail"} for a split v3 kind, or {} for any other.
+static func stitched_stop_help_for(v3_kind: String) -> Dictionary:
+	match v3_kind:
+		"Campfire":
+			return {
+				"lead": "Campfire: rest the dolls and tend the flame.",
+				"detail": "May offer Mend (%d%% max HP for each non-lost doll), Tell Tales (-%d FRAY each) or Trim Wick (+%d CANDLE, cap %d), plus eligible part swaps from a satchel of up to %d spare parts. Possible services, not guaranteed gains." % [
+					RunCampfireVisit.MEND_HEAL_PERCENT,
+					RunCampfireVisit.TALES_FRAY_REDUCTION,
+					RunCampfireVisit.WICK_CANDLE_RESTORE,
+					RunCampfireVisit.STITCHED_CANDLE_MAX,
+					RunUnpickerVisit.SATCHEL_MAX,
+				],
+			}
+		"SewingCircle":
+			return {
+				"lead": "Sewing Circle: mend, upgrade or swap worn parts.",
+				"detail": "May offer paid scraps mending, one tier upgrade (I to II or II to III), same-slot part swaps from a satchel of up to %d spare parts, and replacing a LOST doll with an unused starter doll. Offers and costs are checked on arrival." % RunUnpickerVisit.SATCHEL_MAX,
+			}
+		"Peddler":
+			return {
+				"lead": "Peddler: a travelling seller of oddments.",
+				"detail": "May sell a priced part or patch, a +%d CANDLE stub, or a bandage that cures Bleed, subject to the real offers and your gold. Nothing is promised until you arrive." % RunPeddlerVisit.CANDLE_STUB_RESTORE,
+			}
+		"Unpicker":
+			return {
+				"lead": "Unpicker: loosen stitches and trade spare parts.",
+				"detail": "May unpick one eligible doll for -%d FRAY at a quoted gold price, or take a spare part for quoted scraps. Quotes are given on arrival." % RunUnpickerVisit.CALM_AMOUNT,
+			}
+		"PatchStall":
+			return {
+				"lead": "Patch Stall: trinkets and patches for sale.",
+				"detail": "May sell a priced trinket or patch, subject to the real offers and your gold. Each hero can wear up to 2 patches.",
+			}
+	return {}
+
+
 ## Legacy aliases only; native and unknown kinds are returned unchanged.
 static func v3_kind_for(kind: String) -> String:
 	return str(V3_KIND_ALIASES.get(kind, kind))
