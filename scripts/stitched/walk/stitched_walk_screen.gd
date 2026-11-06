@@ -10,6 +10,9 @@ const ART_PATH := "res://data/walk/walk_view_art.json"
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
 const PREVIEW_SEED := 548
 const VIEW := Rect2(32, 100, 920, 440)
+## S9c: at fear 50+ the borrowed sight flickers; a fixed brightness beat, never the run's RNG.
+const FLICKER_BEAT := 0.11
+const FLICKER := [1.0, 1.0, 0.55, 1.0, 1.0, 1.0, 0.38, 0.8, 1.0, 1.0, 1.0, 0.62]
 var walk: StitchedWalkRules
 var expected: Dictionary = {}
 var receipts: Array = []
@@ -38,6 +41,12 @@ var snip_picker: OptionButton
 var snip_button: Button
 ## S8f: in a run every command goes through the session, which journals and saves it.
 var host: StitchedRunSession
+## S9c: Wren's fear; a run reads its session, a preview its own value.
+var fear_source: Callable
+var preview_fear := 0
+var flickering := false
+var _flicker_time := 0.0
+var _layer_tone := Color.WHITE
 
 
 func attach(run: StitchedRunSession) -> bool:
@@ -50,6 +59,7 @@ func attach(run: StitchedRunSession) -> bool:
 	walk = run.walk
 	art = parsed
 	candle = run.candle
+	fear_source = run.kid_fear
 	expected = walk.snapshot()
 	return true
 
@@ -117,6 +127,7 @@ static func validate_art(value: Dictionary) -> bool:
 
 
 func _ready() -> void:
+	set_process(false)
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	reduced_motion = bool(ProjectSettings.get_setting("patchwork/reduced_motion", false))
@@ -248,6 +259,28 @@ func set_reduced_motion(value: bool) -> void:
 	reduced_motion = value
 	if value:
 		_stop_travel()
+	_update_flicker()
+
+
+func fear() -> int:
+	return clampi(int(fear_source.call()) if fear_source.is_valid() else preview_fear, 0, 100)
+
+
+## The walk is Wren's borrowed sight: at fear 50+ it flickers, unless motion is reduced.
+func _update_flicker() -> void:
+	flickering = fear() >= StitchedKidFear.SHAKE_THRESHOLD
+	set_process(flickering and not reduced_motion)
+	if not is_processing():
+		_flicker_time = 0.0
+		for layer in layers:
+			layer.modulate = _layer_tone
+
+
+func _process(delta: float) -> void:
+	_flicker_time += delta
+	var dim: float = FLICKER[int(_flicker_time / FLICKER_BEAT) % FLICKER.size()]
+	for layer in layers:
+		layer.modulate = Color(_layer_tone.r * dim, _layer_tone.g * dim, _layer_tone.b * dim, 1)
 
 
 func _stop_travel() -> void:
@@ -267,8 +300,9 @@ func refresh() -> void:
 	for index in layers.size():
 		layers[index].texture = texture_or_fallback(paths[index], art.fallbacks[index])
 		layers[index].self_modulate = Color(1, 1, 1, [1.0, 0.22, 0.65][index])
-		layers[index].modulate = Color.WHITE * (0.35 + depth * 0.16)
-		layers[index].modulate.a = 1
+		_layer_tone = Color.WHITE * (0.35 + depth * 0.16)
+		_layer_tone.a = 1
+		layers[index].modulate = _layer_tone
 	if expected.looking_back:
 		layers[0].texture = texture_or_fallback(art.look_back.path, art.look_back.fallback) if walk.shadow_visible() \
 			else texture_or_fallback(art.look_back.fallback, art.fallbacks[0])
@@ -323,9 +357,7 @@ func refresh() -> void:
 			if doll.id == shadow.disguise:
 				shadow_picture.texture = texture_or_fallback(shadow.art_path, "res://assets/paper/heroes/" + doll.id + ".png")
 				shadow_label.text = "Rank %d - %s\nLoose seam" % [doll.rank, doll.name]
-		clue.text = {"glass": "Glass eyes: the extra doll's seams do not join.",
-			"ears": "Stitched ears: the loose-seamed doll is breathing."}.get(eye_profile,
-			"You own four dolls. Four follow? One has a loose seam.")
+		clue.text = StitchedWrenLines.mimic(eye_profile)
 		for target in walk.snip_targets():
 			var caption := "Loose-seamed extra doll"
 			for doll in expected.dolls:
@@ -337,7 +369,7 @@ func refresh() -> void:
 	snip_picker.visible = shadow_visible and snip_picker.item_count > 0
 	snip_button.visible = snip_picker.visible
 	snip_button.disabled = not snip_picker.visible
-	readout.text = "%s   |   Step %d/%d   |   Candle %d - %s   |   WHIRR %d/100" % [expected.corridor.name, expected.step, expected.corridor.steps, candle, band.name, expected.whirr]
+	readout.text = "%s   |   Step %d/%d   |   Candle %d - %s   |   WHIRR %d/100   |   WREN FEAR %d/100" % [expected.corridor.name, expected.step, expected.corridor.steps, candle, band.name, expected.whirr, fear()]
 	var pocket: Array = expected.pockets[expected.viewpoint]
 	for index in pocket_buttons.size():
 		pocket_buttons[index].text = str(pocket[index]).replace("_", " ").capitalize() if index < pocket.size() else "Empty pocket"
@@ -348,3 +380,4 @@ func refresh() -> void:
 	back_button.disabled = expected.phase != "walking"
 	if expected.phase == "complete":
 		feedback.text = "Walk complete. Back to title."
+	_update_flicker()
