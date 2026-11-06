@@ -80,7 +80,7 @@ func _fear_save_guards(session: StitchedRunSession, label: String) -> void:
 		undigested.journal.append({"action": "settle"})
 		_check(StitchedRunSave.restore(undigested) == null, label + " legacy migration retains original digest validation")
 		if without_pockets:
-			for purchase in ["buy_pins", "buy_thimble_tonic"]:
+			for purchase in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing"]:
 				var smuggled := legacy_fear.duplicate(true)
 				smuggled.journal.append({"action": "visit", "id": purchase, "arguments": [session.heroes[0].id]})
 				smuggled.digest = StitchedRunSave._digest(smuggled)
