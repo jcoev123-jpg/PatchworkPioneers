@@ -72,9 +72,11 @@ func _test_ac1_genuine_trap() -> void:
 	_check(not catalogs.is_empty(), "AC1: walk catalogs loaded")
 
 	# Seed 24 in floorboards spawns biting_bundle at step 0; reach triggers trap.
+	# Reach with doll_1 who is Hanging by a Thread (hp = 0, lost = false).
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 24
 	var party := _party()
+	party[0]["hp"] = 0
 	var pockets := _pockets()
 	var walk := Walk.start(rng, "floorboards", party, pockets, catalogs)
 	_check(walk != null, "AC1: walk started on seed 24")
@@ -113,10 +115,12 @@ func _test_ac1_genuine_trap() -> void:
 	_check(genuine_trap.get("target") == "doll_1", "AC1: trap targets true reacher doll_1")
 	_check(not bool(genuine_trap.get("consumed")), "AC1: trap descriptor consumed is false")
 	_check(genuine_trap.get("effects") == {"status": "bleed", "amount": 2}, "AC1: trap effects status=bleed amount=2")
+	_check(snap_after.dolls[0].get("hp") == 0 and not bool(snap_after.dolls[0].get("lost")),
+		"AC1: reacher doll_1 is Hanging by a Thread (hp=0, lost=false)")
 
 	# Project via primary API with curio instance
 	var result := BleedEvent.project(genuine_trap, ragbag, snap_after.dolls)
-	_check(bool(result.get("ok")), "AC1: projection succeeds on genuine trap")
+	_check(bool(result.get("ok")), "AC1: projection succeeds on genuine trap with Hanging recipient")
 	_check(result.get("error", "") == "", "AC1: error is empty on success")
 
 	var expected_carry := {
@@ -311,12 +315,29 @@ func _test_ac2_safe_and_negative_cases() -> void:
 	_check(not bool(res_bad_rank.get("ok")), "AC2: invalid doll rank rejected")
 	_check(res_bad_rank.get("carry", {}).is_empty(), "AC2: no carry on invalid rank")
 
-	# 10. Doll with 0 or negative HP
-	var dead_roster: Array = _party()
-	dead_roster[0]["hp"] = 0
-	var res_dead := BleedEvent.project(base_trap, base_curio, dead_roster)
-	_check(not bool(res_dead.get("ok")), "AC2: doll with 0 HP rejected")
-	_check(res_dead.get("carry", {}).is_empty(), "AC2: no carry on dead doll")
+	# 10. Doll with negative HP (hp < 0 remains invalid)
+	var negative_hp_roster: Array = _party()
+	negative_hp_roster[0]["hp"] = -1
+	var res_negative_hp := BleedEvent.project(base_trap, base_curio, negative_hp_roster)
+	_check(not bool(res_negative_hp.get("ok")), "AC2: doll with negative HP rejected")
+	_check(res_negative_hp.get("carry", {}).is_empty(), "AC2: no carry on negative HP doll")
+
+	# 10b. Doll with hp == 0 and lost == false (Hanging by a Thread) is admitted
+	var hanging_roster: Array = _party()
+	hanging_roster[0]["hp"] = 0
+	hanging_roster[0]["lost"] = false
+	var res_hanging := BleedEvent.project(base_trap, base_curio, hanging_roster)
+	_check(bool(res_hanging.get("ok")), "AC1: doll with hp==0 and lost==false (Hanging) is admitted")
+	_check(res_hanging.get("carry") == {"kind": "bleed", "target": "doll_1", "amount": 2},
+		"AC1: carry projected for Hanging doll")
+
+	# 10c. Doll with hp == 0 and lost == true is rejected
+	var lost_hanging_roster: Array = _party()
+	lost_hanging_roster[0]["hp"] = 0
+	lost_hanging_roster[0]["lost"] = true
+	var res_lost_hanging := BleedEvent.project(base_trap, base_curio, lost_hanging_roster)
+	_check(not bool(res_lost_hanging.get("ok")), "AC2: lost doll with 0 HP rejected")
+	_check(res_lost_hanging.get("carry", {}).is_empty(), "AC2: no carry on lost doll with 0 HP")
 
 	# 11. Missing status
 	var missing_status_trap := base_trap.duplicate(true)
