@@ -417,6 +417,39 @@
         { "id": "pry_clockbird_beak", "text": "Pry free a brass clockbird beak (lose 2 max HP; gain 25 gold)", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Leave the clockbird asleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_yarn_ranger_needlefish_cistern",
+      "title": "The Needlefish Cistern",
+      "description": "In an old wall niche, a giant glass cistern holds a silver-button needlefish; the Yarn Ranger's moss-and-teal bolas tether its woven tail while moonlight glints on a single cracked seam.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "mend_needlefins", "text": "Spend 2 scraps to mend the needlefish's felt fins (heal 9 HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 9, "max_hp": 0 } },
+        { "id": "pry_glass_scales", "text": "Pull out sharp glass scales (lose 5 HP; gain 24 gold)", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the needlefish swimming in silence", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_mourning_glove_marquee",
+      "title": "The Mourning Glove Marquee",
+      "description": "An oxblood velvet glove the size of a tent droops over an abandoned toy stage; the Rag Duelist pins its frayed cuff with a needle rapier while pale ribbons sway above the candlelit seats.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        { "id": "line_glove_cuff", "text": "Pay 18 gold to line the velvet cuff (+3 max HP)", "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "cut_marquee_tassels", "text": "Cut barbed tassels (lose 5 HP; gain 3 scraps)", "outcome": { "gold": 0, "scraps": 3, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the great velvet glove fall closed", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_starwheel_dumbwaiter",
+      "title": "The Starwheel Dumbwaiter",
+      "description": "A button-faced brass dumbwaiter hangs over a stairwell as deep as night; the Button Golem presses its huge round fists against a painted starwheel to keep the thread-slung platform from slipping.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "brace_starwheel", "text": "Spend 2 scraps on a stronger hauling seam (+2 max HP)", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 } },
+        { "id": "pull_brass_pins", "text": "Pull the brass axle pins (lose 2 max HP; gain 26 gold)", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the starwheel turning in the dark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
