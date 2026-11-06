@@ -337,11 +337,13 @@ func _seat(side: String, rank: int, x: float) -> void:
 	tag.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
+	# Only heap-only ranks need a separate second-row label. Living ranks
+	# use the sewn HP/FRAY meter captions below, never a duplicate status overlay.
 	_labels[key] = _label("", Rect2(foot_x + 11, 530, 148, 22), 15, PAPER, HORIZONTAL_ALIGNMENT_CENTER)
 	_labels[key].clip_text = true
-	_labels[key].horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_labels[key].add_theme_color_override("font_outline_color", Color("25181d"))
 	_labels[key].add_theme_constant_override("outline_size", 2)
+	_labels[key].visible = false
 	_rank_meters[key] = CHROME.make_rank_meters(self, side, foot_x)
 
 
@@ -669,15 +671,12 @@ func _refresh() -> void:
 			CHROME.present_rank(_rank_meters[key], unit, side)
 			_foot_plates[key].visible = occupied
 			button.visible = occupied
-			_labels[key].visible = occupied
+			# RankMeters owns the only occupied HP/fray row. Preserve the same
+			# label solely for the heap HP readout; an empty rank paints nothing.
+			_labels[key].visible = unit.is_empty() and not heap.is_empty()
 			button.text = "R%d  %s" % [rank, str(unit.get("name", "Scrap heap" if not heap.is_empty() else "—"))]
 			button.tooltip_text = status_detail(side, rank)
-			var flags: Array[String] = []
-			if not unit.is_empty():
-				if int(unit.get("fray", 0)) > 0:
-					flags.append("FRAY %d" % int(unit["fray"]))
-				flags.append_array(_status_tokens(unit))
-			_labels[key].text = ("HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])] if not unit.is_empty() else ("SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() else "EMPTY")) + (" · " + ", ".join(flags) if not flags.is_empty() else "")
+			_labels[key].text = "SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() and unit.is_empty() else ""
 	_refresh_foe_intents()
 	_target_ranks.clear()
 	var actor_key := str(acting.get("id", "")) if hero_turn else ""
