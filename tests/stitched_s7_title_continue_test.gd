@@ -32,6 +32,7 @@ func _run() -> void:
 	DirAccess.remove_absolute(TEST_SAVE)
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	app.run_seed = 42
+	app.stitched_walks = false
 	app.stitched_save_path = TEST_SAVE
 	root.add_child(app)
 	await process_frame

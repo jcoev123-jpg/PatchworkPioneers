@@ -671,6 +671,9 @@ var stitched_run_session: StitchedRunSession
 var _stitched_run_base: WeakRef
 var stitched_run_panel: Control
 var stitched_run_battle: StitchedBattleScreen
+var stitched_run_walk: StitchedWalkScreen
+## S8f: new runs reach each non-boss node through a Walk. Older route tests opt out.
+@export var stitched_walks := true
 var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
@@ -5563,7 +5566,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 		if selected_set != draft_set:
 			return
 		var session := StitchedRunSession.start(run_seed, stitched_run_draft)
-		if session == null:
+		if session == null or (stitched_walks and not session.enable_walks()):
 			return
 		stitched_run_session = session
 		if _stitched_run_base != null:
@@ -5579,6 +5582,21 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 func _present_stitched_run() -> void:
 	var session := stitched_run_session
 	if session == null or not session.is_consistent():
+		return
+	if session.phase == "walk":
+		_clear_stitched_run_panel()
+		var walker := StitchedWalkScreen.new()
+		if not walker.attach(session):
+			return
+		stitched_run_walk = walker
+		walker.walk_finished.connect(func():
+			if stitched_run_session != session or stitched_run_walk != walker:
+				return
+			stitched_run_walk = null
+			remove_child(walker)
+			walker.queue_free()
+			_present_stitched_run())
+		add_child(walker)
 		return
 	if session.phase == "battle":
 		_clear_stitched_run_panel()
@@ -5771,6 +5789,10 @@ func _return_stitched_run_title() -> void:
 		remove_child(stitched_run_battle)
 		stitched_run_battle.queue_free()
 	stitched_run_battle = null
+	if is_instance_valid(stitched_run_walk):
+		remove_child(stitched_run_walk)
+		stitched_run_walk.queue_free()
+	stitched_run_walk = null
 	stitched_run_session = null
 	stitched_run_draft.clear()
 	var village := _stitched_run_base.get_ref() as BaseScreen if _stitched_run_base != null else null

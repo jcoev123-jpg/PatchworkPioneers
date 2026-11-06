@@ -38,21 +38,38 @@ static func restore(document: Variant) -> StitchedRunSession:
 	var candidate := StitchedRunSession.start(document.seed, document.picks, document.initial)
 	if candidate == null:
 		return null
+	# Pre-S8f saves have no Walk block and never walked.
+	var legacy_walk: bool = not document.state.has("walk")
+	if not legacy_walk:
+		var walk_state: Variant = document.state.walk
+		if not walk_state is Dictionary or not walk_state.get("enabled") is bool:
+			return null
+		if walk_state.enabled and not candidate.enable_walks():
+			return null
 	var legacy_pockets: bool = not document.state.has("pockets")
 	var legacy_fear: bool = not document.state.has("kid_fear")
+	# Pre-S9a saves have no battle "hand" block and so no hand actions to replay.
+	var legacy_hand: bool = document.state.get("battle") is Dictionary and not document.state.battle.is_empty() \
+		and not document.state.battle.has("hand")
 	for command in document.journal:
 		# Pre-pocket saves can replay their old actions, never a new purchase
 		# hidden by omitting its ownership ledger from the saved state.
 		if legacy_pockets and command is Dictionary and command.get("action") == "visit" \
 				and command.get("id") in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing", "buy_dye"]:
 			return null
+		if legacy_hand and command is Dictionary and command.get("method") == "use_hand_action":
+			return null
 		if not _replay(candidate, command):
 			return null
 	var replayed := candidate.snapshot()
+	if legacy_walk:
+		replayed.erase("walk")
 	if legacy_pockets:
 		replayed.erase("pockets")
 	if legacy_fear:
 		replayed.erase("kid_fear")
+	if legacy_hand and replayed.get("battle") is Dictionary:
+		replayed.battle.erase("hand")
 	if candidate.journal != document.journal or replayed != document.state:
 		return null
 	return candidate
@@ -73,6 +90,9 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 				and session.choose_visit(command.id, command.arguments, session.snapshot())
 		"settle":
 			return command.size() == 1 and session.settle_battle(session.battle)
+		"walk":
+			return command.size() == 2 and command.get("command") is Dictionary \
+				and session.walk_act(command.command, session.snapshot()).get("ok") == true
 		"battle":
 			if command.size() != 3 or session.phase != "battle" or session.battle == null:
 				return false
@@ -86,6 +106,9 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 						return false
 				"move":
 					if args.size() != 1 or not args[0] is int:
+						return false
+				"use_hand_action":
+					if args.size() != 3 or not args[0] is String or not args[1] is String or not args[2] is int:
 						return false
 				"pass_turn", "re_tie", "retreat":
 					if not args.is_empty():
