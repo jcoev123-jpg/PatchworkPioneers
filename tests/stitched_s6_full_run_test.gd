@@ -5,6 +5,7 @@ extends "res://tests/stitched_s6_followon_foes_live_test.gd"
 func _new_run(seed_number: int) -> Node:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	app.run_seed = seed_number
+	app.stitched_walks = false   # S8f Walks are covered by stitched_s8f_routed_walk_test
 	root.add_child(app)
 	await process_frame
 	app.start_button.pressed.emit()
