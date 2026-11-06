@@ -1471,9 +1471,10 @@ func _build_title() -> void:
 	route_button.focus_mode = Control.FOCUS_NONE
 	box.add_child(route_button)
 	base_button = Button.new()
-	base_button.text = "Quilt village"
+	# S9d: the base is Wren's bedroom whenever its painting ships; the village name only names the fallback.
+	base_button.text = "Wren's room" if StitchedBedroom.has_art() else "Quilt village"
 	base_button.custom_minimum_size = Vector2(240, 56)
-	base_button.tooltip_text = "Visit the Quilt village"
+	base_button.tooltip_text = "Go back to Wren's bedroom" if StitchedBedroom.has_art() else "Visit the Quilt village"
 	base_button.pressed.connect(_open_base)
 	box.add_child(base_button)
 	stitched_fight_button = Button.new()
@@ -5484,12 +5485,19 @@ func _stitched_run_node_icon(button: Button, kind: String) -> void:
 	icon.name = "AuthoredNodeIcon"
 	icon.set_meta("art_path", path)
 	icon.texture = texture
-	icon.position = Vector2(9, 5)
-	icon.size = Vector2(44, 44)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(icon)
+	# Sized after it joins the button: set earlier, the texture's own size won and the stamp covered the label.
+	icon.position = Vector2(9, 5)
+	icon.size = Vector2(46, 46)
+	for face in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var skin := button.get_theme_stylebox(face)
+		if skin != null:
+			skin = skin.duplicate()
+			skin.content_margin_left = 64
+			button.add_theme_stylebox_override(face, skin)
 
 
 func _stitched_run_action(parent: Node, text: String, callback: Callable, enabled: bool = true) -> Button:
@@ -5720,8 +5728,13 @@ func _present_stitched_run() -> void:
 		var save := Button.new()
 		save.name = "SaveStitchedBattle"
 		save.text = "Save run"
-		save.position = Vector2(1149, 676)
+		save.position = Vector2(1149, 642)   # beside Continue; the old row hid Help & settings
 		save.size = Vector2(102, 29)
+		save.add_theme_font_size_override("font_size", 18)
+		save.add_theme_color_override("font_color", StitchedBattleScreen.PAPER)
+		save.add_theme_color_override("font_hover_color", StitchedBattleScreen.ACCENT)
+		save.add_theme_color_override("font_focus_color", StitchedBattleScreen.ACCENT)
+		StitchedBattleScreen.CHROME.style_button(save)
 		save.pressed.connect(func():
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
 				StitchedRunSave.write_file(stitched_save_path, session))
@@ -5748,7 +5761,28 @@ func _present_stitched_run() -> void:
 	hero_rows.add_theme_constant_override("separation", 8)
 	content.add_child(hero_rows)
 	for hero in session.heroes:
-		var card := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var felt := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var card := HBoxContainer.new()
+		card.add_theme_constant_override("separation", 8)
+		felt.add_child(card)
+		# The doll's own battle painting, cropped to head and shoulders, fills the felt's empty stitched frame.
+		var idle_path := str(STAGE_ROSTER.art_paths(str(hero.id)).get("idle", ""))
+		if ResourceLoader.exists(idle_path, "Texture2D"):
+			var full := load(idle_path) as Texture2D
+			var side := minf(full.get_width(), full.get_height() * 0.5)
+			var bust := AtlasTexture.new()
+			bust.atlas = full
+			bust.region = Rect2((full.get_width() - side) / 2.0, 0.0, side, side)
+			var portrait := TextureRect.new()
+			portrait.name = "Bust_" + str(hero.id)
+			portrait.texture = bust
+			portrait.custom_minimum_size = Vector2(76, 82)
+			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if hero.lost:
+				portrait.modulate = Color(0.35, 0.3, 0.3)
+			card.add_child(portrait)
 		var recap := Label.new()
 		recap.name = "Recap_" + str(hero.id)
 		recap.add_theme_font_size_override("font_size", 17)
@@ -5795,7 +5829,7 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		for id in session.choices():
 			var node := session.map.get_node(id)
 			var button := _stitched_run_action(choices_box,
-				"      FLOOR %02d  /  %s  /  PATH %d" % [
+				"FLOOR %02d  /  %s  /  PATH %d" % [
 					node.floor, node.type, node.position + 1], func():
 				if stitched_run_session == session and session.enter(id, expected):
 					_present_stitched_run())

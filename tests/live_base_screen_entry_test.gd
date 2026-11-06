@@ -809,7 +809,7 @@ func _run() -> void:
 		"ordinary title boot keeps its own focus")
 	var title_children: Array = app.title_view.get_children()
 	_check(is_instance_valid(app.base_button) and app.base_button.is_visible_in_tree()
-		and app.base_button.text == "Quilt village", "third title action is the Quilt village")
+		and app.base_button.text == ("Wren's room" if StitchedBedroom.has_art() else "Quilt village"), "third title action is the Quilt village")
 	_check(title_children.find(app.base_button) == title_children.find(app.route_button) + 1,
 		"Quilt village follows Choose a route")
 	_check(app.base_button.get_child_count() == 1
