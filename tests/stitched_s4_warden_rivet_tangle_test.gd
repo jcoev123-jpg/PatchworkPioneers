@@ -1,11 +1,15 @@
 extends SceneTree
-## S4 Warden contract: Rivet Pummel's Tangled seam deepens with its stitch tier (I/II/III -> 1/2/3).
+## S4 Warden contract: Rivet Pummel's Tangled seam deepens with its stitch tier (I/II/III -> 1/2/3),
+## and a target that already carries Mark takes the authored mark_damage bonus (3/4/5) before the
+## unchanged damage modifiers.
 ##
 ## The real Warden catalog is loaded and every tier is resolved through StitchedParts.ability_at_tier, then
 ## the same part is worn into a real seeded four-hero/three-foe StitchedRules fight so the landed hit's
 ## receipt and the authoritative foe status are checked through the shipped use_part path. Seeds are fixed
 ## (seed 1 hits at every tier against the shipped preview) and the target starts untangled, so a tier II/III
-## result cannot pass by inheriting an older status. Records are found by named id: this test never asserts
+## result cannot pass by inheriting an older status. The Mark witnesses compare a marked and an unmarked
+## sibling built from the same copied preview, with the rank-one foe's PROT set to zero so the +N bonus is
+## exact; only the controlled starting Mark differs. Records are found by named id: this test never asserts
 ## a catalog total or an ordered id list, so other coders may append parts in parallel.
 
 const WARDEN_PATH := "res://data/parts/warden_parts.json"
@@ -19,6 +23,8 @@ const HIT_SEED := 1
 const TIER_TANGLED := [1, 2, 3]
 const TIER_DMG := [[5, 7], [6, 9], [8, 11]]
 const TIER_ACC := [90, 90, 95]
+const TIER_MARK_DAMAGE := [3, 4, 5]
+const MARKED_TEXT := "Double-fist a front foe, tangle its thread, and strike Marked seams harder."
 ## The seven other authored Warden parts that must stay present when this one entry changes.
 const OTHER_WARDEN_IDS := [
 	"warden_head_pot_helm_bonk", "warden_head_helmet_rattle", "warden_arms_shield_catch",
@@ -33,6 +39,8 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog_tiers()
 	_test_seeded_landed_tangle()
+	_test_marked_bonus_witness()
+	_test_missed_pummel()
 	_test_illegal_actions_do_not_mutate()
 	_test_torn_part_does_not_mutate()
 	_test_off_turn_does_not_mutate()
@@ -107,8 +115,8 @@ func _test_catalog_tiers() -> void:
 	_check(str(part.get("owner", "")) == WARDEN, "AC1: Rivet Pummel stays Warden's own part")
 	_check(JSON.stringify(part.get("stat")) == JSON.stringify({"dmg": 2}),
 		"AC1: Rivet Pummel keeps its arms stat dmg 2")
-	_check(str(part.get("text", "")) == "Double-fist a front foe and tangle its thread.",
-		"AC1: Rivet Pummel keeps its authored rules text")
+	_check(str(part.get("text", "")) == MARKED_TEXT,
+		"AC1: Rivet Pummel states its Marked-seam bonus in its authored rules text")
 
 	var base: Dictionary = part.get("ability", {})
 	_check(str(base.get("id", "")) == ABILITY_ID, "AC1: tier I is the named Rivet Pummel move")
@@ -123,6 +131,8 @@ func _test_catalog_tiers() -> void:
 	_check(int(base.get("crit", -1)) == 0, "AC1: the move keeps crit 0")
 	_check(int(base.get("self_move", -1)) == 0, "AC1: the move never shifts the wearer")
 	_check(str(base.get("move", "")) == "attack2", "AC1: the move keeps the attack2 pose")
+	_check(int(base.get("mark_damage", -1)) == TIER_MARK_DAMAGE[0],
+		"AC1: tier I adds mark_damage 3")
 	_check(int(base.get("effects", {}).get("tangled", 0)) == 1,
 		"AC1: tier I stays Tangled 1")
 
@@ -136,6 +146,8 @@ func _test_catalog_tiers() -> void:
 			label + " keeps the authored damage " + str(TIER_DMG[tier - 1]))
 		_check(int(tier_ability.get("acc", -1)) == TIER_ACC[tier - 1],
 			label + " keeps the authored ACC " + str(TIER_ACC[tier - 1]))
+		_check(int(tier_ability.get("mark_damage", -1)) == TIER_MARK_DAMAGE[tier - 1],
+			label + " carries the authored mark_damage " + str(TIER_MARK_DAMAGE[tier - 1]))
 		_check(int(tier_ability.get("effects", {}).get("tangled", 0)) == TIER_TANGLED[tier - 1],
 			label + " applies Tangled " + str(TIER_TANGLED[tier - 1]))
 		_check(JSON.stringify(tier_stat) == JSON.stringify({"dmg": 2}),
@@ -162,7 +174,9 @@ func _test_catalog_tiers() -> void:
 
 # ---------------------------------------------------------------- AC2: seeded live battle
 
-func _config(catalog: Dictionary, seed_value: int, tier: int, torn: bool = false) -> Dictionary:
+func _config(
+	catalog: Dictionary, seed_value: int, tier: int, torn: bool = false, zero_prot: bool = false
+) -> Dictionary:
 	var parsed: Variant = _read_json(PREVIEW_PATH)
 	if not parsed is Dictionary:
 		return {}
@@ -170,13 +184,17 @@ func _config(catalog: Dictionary, seed_value: int, tier: int, torn: bool = false
 	config["parts"].append_array(catalog["parts"])
 	config["seed"] = seed_value
 	config["heroes"][0]["parts"]["arms"] = {"id": PART_ID, "tier": tier, "torn": torn}
+	if zero_prot:
+		# Test-only fixture: the rank-one witness foe keeps its HP, DODGE and other stats
+		# but loses PROT so the authored +N Mark bonus can be compared exactly.
+		config["foes"][0]["prot"] = 0
 	return config
 
 
 func _battle(
-	catalog: Dictionary, seed_value: int, tier: int, torn: bool = false
+	catalog: Dictionary, seed_value: int, tier: int, torn: bool = false, zero_prot: bool = false
 ) -> StitchedRules:
-	var config := _config(catalog, seed_value, tier, torn)
+	var config := _config(catalog, seed_value, tier, torn, zero_prot)
 	if config.is_empty():
 		return null
 	var created := StitchedRules.create(config)
@@ -301,6 +319,221 @@ func _test_seeded_landed_tangle() -> void:
 		_check(int(victim["statuses"].get("tangled", 0)) == TIER_TANGLED[tier - 1],
 			label + ": the authoritative target carries exactly Tangled "
 				+ str(TIER_TANGLED[tier - 1]))
+
+
+# ---------------------------------------------------------------- AC2: Marked-front-rank bonus
+
+## A marked and an unmarked sibling from the same seed and copied preview. Both are brought to
+## the Warden's turn with no action taken, then only the marked twin receives a controlled
+## starting Mark (the authored status an earlier Rim Toss would leave). Setting a status draws
+## no RNG, so both pummels resolve from exactly the same seeded position.
+func _marked_pair(catalog: Dictionary, tier: int) -> Dictionary:
+	var marked := _battle(catalog, HIT_SEED, tier, false, true)
+	var plain := _battle(catalog, HIT_SEED, tier, false, true)
+	if marked == null or plain == null:
+		return {}
+	if not _to(marked, WARDEN) or not _to(plain, WARDEN):
+		return {}
+	marked._units[FOE_ID]["statuses"]["mark"] = 1
+	return {"marked": marked, "plain": plain}
+
+
+## The same pummel witness without the later turn-expiration step, used only to prove that
+## duplicate seeded runs replay identical receipts, state and RNG.
+func _pummel_signature(catalog: Dictionary, tier: int) -> Dictionary:
+	var pair := _marked_pair(catalog, tier)
+	if pair.is_empty():
+		return {}
+	var marked: StitchedRules = pair["marked"]
+	var plain: StitchedRules = pair["plain"]
+	var marked_receipt := marked.use_part(PART_ID, 1)
+	var plain_receipt := plain.use_part(PART_ID, 1)
+	return {
+		"marked_receipt": marked_receipt,
+		"plain_receipt": plain_receipt,
+		"marked_state": marked.state_snapshot(),
+		"plain_state": plain.state_snapshot(),
+	}
+
+
+func _test_marked_bonus_witness() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	for tier in [1, 2, 3]:
+		var label := "AC2: tier " + str(tier) + " marked pummel"
+		var pair := _marked_pair(catalog, tier)
+		if pair.is_empty():
+			_check(false, label + ": the seeded marked/unmarked witnesses reach Warden's turn")
+			continue
+		var marked: StitchedRules = pair["marked"]
+		var plain: StitchedRules = pair["plain"]
+		var warden := marked.get_unit(WARDEN)
+		var twin_warden := plain.get_unit(WARDEN)
+		var marked_before := marked.get_unit(FOE_ID)
+		var plain_before := plain.get_unit(FOE_ID)
+		_check(warden == twin_warden,
+			label + ": both witnesses start from the same Warden stats and statuses")
+		_check(int(marked_before["hp"]) > 0
+			and int(marked_before["hp"]) == int(plain_before["hp"])
+			and int(marked_before["prot"]) == int(plain_before["prot"]),
+			label + ": both legal rank-one targets start at the same HP and PROT")
+		_check(int(marked_before["prot"]) == 0,
+			label + ": zero PROT makes the authored +N comparison exact")
+		for status in ["weak", "exposed", "tangled"]:
+			_check(int(marked_before["statuses"].get(status, 0))
+				== int(plain_before["statuses"].get(status, 0)),
+				label + ": both targets start with equal " + status)
+		_check(int(marked_before["statuses"].get("mark", 0)) == 1,
+			label + ": the marked witness carries positive Mark before the hit")
+		_check(int(plain_before["statuses"].get("mark", 0)) == 0,
+			label + ": the paired witness carries no Mark before the hit")
+		_check(marked.rng_state() == plain.rng_state(),
+			label + ": both witnesses share the same seeded RNG position")
+		var ability := StitchedParts.ability_at_tier(catalog["by_id"][PART_ID], tier)
+		var bonus: int = int(TIER_MARK_DAMAGE[tier - 1])
+		_check(int(ability.get("mark_damage", 0)) == bonus,
+			label + ": the equipped tier carries mark_damage " + str(bonus))
+		var turn_before := int(marked.state_snapshot()["turn_index"])
+		var round_before := int(marked.state_snapshot()["round"])
+
+		var marked_receipt := marked.use_part(PART_ID, 1)
+		var plain_receipt := plain.use_part(PART_ID, 1)
+		_check(bool(marked_receipt.get("ok", false)) and bool(plain_receipt.get("ok", false)),
+			label + ": the real use_part action resolves in both witnesses: "
+				+ str(marked_receipt.get("error", "")) + str(plain_receipt.get("error", "")))
+		var marked_results: Array = marked_receipt.get("results", [])
+		var plain_results: Array = plain_receipt.get("results", [])
+		_check(marked_results.size() == 1 and plain_results.size() == 1,
+			label + ": each pummel produces exactly one target result")
+		if marked_results.size() != 1 or plain_results.size() != 1:
+			continue
+		var marked_hit: Dictionary = marked_results[0]
+		var plain_hit: Dictionary = plain_results[0]
+		_check(str(marked_hit.get("target", "")) == FOE_ID
+			and str(plain_hit.get("target", "")) == FOE_ID
+			and int(marked_hit.get("target_rank", -1)) == 1
+			and int(plain_hit.get("target_rank", -1)) == 1,
+			label + ": the single receipt lands on the legal rank-one foe")
+		_check(bool(marked_hit.get("hit", false)) and bool(plain_hit.get("hit", false)),
+			label + ": the fixed seed is a genuine hit for both witnesses")
+		if not bool(marked_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)):
+			continue
+		var marked_damage := int(marked_hit.get("damage", -1))
+		var plain_damage := int(plain_hit.get("damage", -1))
+		_check(marked_damage == plain_damage + bonus,
+			label + ": the confirmed hit deals exactly +" + str(bonus)
+				+ " to the already-Marked foe")
+		# Corroborate the receipt through the shipped modifier order: zero PROT, no Weak or
+		# Exposed, and the target is still untangled when this hit's damage is calculated.
+		_check(marked_damage == StitchedRules.damage_after_modifiers(
+			plain_damage, {}, {}, true, bonus, 0),
+			label + ": the Mark bonus is added before the unchanged damage modifiers")
+		# The unmarked control keeps the original authored range plus the arms stat.
+		var expected_min := int(ability["dmg"][0]) + int(warden["dmg_bonus"])
+		var expected_max := int(ability["dmg"][1]) + int(warden["dmg_bonus"])
+		if bool(plain_hit.get("crit", false)):
+			_check(plain_damage == StitchedRules.crit_damage(int(ability["dmg"][1]))
+				+ int(warden["dmg_bonus"]),
+				label + ": the unmarked critical pummel keeps its authored damage")
+		else:
+			_check(plain_damage >= expected_min and plain_damage <= expected_max,
+				label + ": the unmarked pummel keeps its authored damage range")
+		var marked_status := _status_entry(marked_hit.get("statuses", []), "tangled")
+		var tangled_entries := 0
+		for status in marked_hit.get("statuses", []):
+			if status is Dictionary and str(status.get("status", "")) == "tangled":
+				tangled_entries += 1
+		_check(tangled_entries == 1 and not marked_status.is_empty()
+			and int(marked_status.get("duration", 0)) == TIER_TANGLED[tier - 1],
+			label + ": the receipt records exactly one Tangled " + str(TIER_TANGLED[tier - 1]))
+		_check(_status_entry(marked_hit.get("statuses", []), "mark").is_empty(),
+			label + ": the pummel neither consumes nor renews Mark")
+		var victim := marked.get_unit(FOE_ID)
+		_check(int(victim["statuses"].get("tangled", 0)) == TIER_TANGLED[tier - 1],
+			label + ": the victim carries exactly Tangled " + str(TIER_TANGLED[tier - 1]))
+		_check(int(victim["statuses"].get("mark", 0)) == 1,
+			label + ": Mark stays on the victim unchanged after the hit")
+		_check(int(victim["hp"]) == int(plain.get_unit(FOE_ID)["hp"]) - bonus,
+			label + ": the victim's final HP reflects the boosted receipt")
+		var after := marked.state_snapshot()
+		_check(int(after["round"]) > round_before or int(after["turn_index"]) > turn_before,
+			label + ": the Warden's one action is spent")
+		var signature := {
+			"marked_receipt": marked_receipt,
+			"plain_receipt": plain_receipt,
+			"marked_state": marked.state_snapshot(),
+			"plain_state": plain.state_snapshot(),
+		}
+		# Normal turn-based expiration: the victim's own turn start ticks Mark away.
+		var reached_victim := _to(marked, FOE_ID)
+		_check(reached_victim
+			and int(marked.get_unit(FOE_ID)["statuses"].get("mark", 0)) == 0,
+			label + ": Mark expires on the victim's next turn start")
+		var replay := _pummel_signature(catalog, tier)
+		_check(not replay.is_empty() and signature == replay,
+			label + ": duplicate seeded witnesses replay receipts, state and RNG identically")
+
+
+## A bounded seed search proves a real miss on the rank-one foe (marked and unmarked siblings)
+## deals no damage and applies no Tangled or Mark change while still spending the turn.
+func _test_missed_pummel() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	for tier in [1, 2, 3]:
+		var label := "AC3: tier " + str(tier) + " missed pummel"
+		var witnessed := false
+		for seed_value in range(1, 160):
+			var marked := _battle(catalog, seed_value, tier, false, true)
+			var plain := _battle(catalog, seed_value, tier, false, true)
+			if marked == null or plain == null:
+				continue
+			if not _to(marked, WARDEN) or not _to(plain, WARDEN):
+				continue
+			marked._units[FOE_ID]["statuses"]["mark"] = 1
+			var target_before := marked.get_unit(FOE_ID)
+			var twin_before := plain.get_unit(FOE_ID)
+			if marked.rng_state() != plain.rng_state():
+				continue
+			var turn_before := int(marked.state_snapshot()["turn_index"])
+			var round_before := int(marked.state_snapshot()["round"])
+			var marked_receipt := marked.use_part(PART_ID, 1)
+			var plain_receipt := plain.use_part(PART_ID, 1)
+			var marked_results: Array = marked_receipt.get("results", [])
+			var plain_results: Array = plain_receipt.get("results", [])
+			if not bool(marked_receipt.get("ok", false)) \
+				or not bool(plain_receipt.get("ok", false)) \
+				or marked_results.size() != 1 or plain_results.size() != 1:
+				continue
+			var marked_hit: Dictionary = marked_results[0]
+			var plain_hit: Dictionary = plain_results[0]
+			if bool(marked_hit.get("hit", true)) or bool(plain_hit.get("hit", true)):
+				continue
+			var marked_after := marked.get_unit(FOE_ID)
+			_check(int(marked_hit.get("roll", 0)) > int(marked_hit.get("hit_chance", 100))
+				and int(plain_hit.get("roll", 0)) > int(plain_hit.get("hit_chance", 100)),
+				label + ": the bounded seed finds genuine seeded misses")
+			_check(int(marked_hit.get("damage", 0)) == 0
+				and int(marked_hit.get("target_hp", -1)) == int(target_before["hp"])
+				and marked_hit.get("statuses", []).is_empty(),
+				label + ": a miss deals no damage and applies no bonus or Tangled")
+			_check(int(marked_after["hp"]) == int(target_before["hp"])
+				and int(marked_after["statuses"].get("mark", 0)) == 1
+				and int(marked_after["statuses"].get("tangled", 0)) == 0,
+				label + ": a miss leaves HP, Mark and Tangled unchanged on the victim")
+			_check(int(plain.get_unit(FOE_ID)["hp"]) == int(twin_before["hp"])
+				and int(plain.get_unit(FOE_ID)["statuses"].get("tangled", 0)) == 0,
+				label + ": the unmarked miss likewise changes no HP or Tangled")
+			_check(marked_receipt == plain_receipt
+				and marked.rng_state() == plain.rng_state(),
+				label + ": marked and unmarked misses replay identically from the same seed")
+			var after := marked.state_snapshot()
+			_check(int(after["round"]) > round_before or int(after["turn_index"]) > turn_before,
+				label + ": the missed pummel still spends the Warden's action")
+			witnessed = true
+			break
+		_check(witnessed, label + ": a bounded seed witnesses a real missed use")
 
 
 # ---------------------------------------------------------------- AC3: fail-closed rejections
