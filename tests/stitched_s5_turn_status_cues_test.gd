@@ -661,6 +661,194 @@ func _run() -> void:
 		not StitchedTurnStatusCues.tooltip(f_spoof_t).contains("FRAY:"),
 		"AC3: foe with tangled does not disclose spoofed resolve or fray")
 
+	# Genuine public hero/foe Stun, Guard and Stun Resist cues and tooltip disclosure (AC1, AC2, AC3, AC4)
+	var real_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var real_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	var real_ally: Dictionary = battle.get_heroes()[1].duplicate(true)
+	var ally_target_id := str(real_ally["id"])
+
+	# AC1: Hero and foe with positive Stun
+	var s_hero := real_hero.duplicate(true)
+	var s_foe := real_foe.duplicate(true)
+	s_hero["statuses"] = {"stun": 1}
+	s_foe["statuses"] = {"stun": 2}
+
+	_check(StitchedTurnStatusCues.cue(s_hero) == "STUN", "AC1: hero with positive stun 1 yields STUN cue")
+	_check(StitchedTurnStatusCues.cue(s_foe) == "STUN", "AC1: foe with positive stun 2 yields STUN cue")
+
+	var s_hero_tip := StitchedTurnStatusCues.tooltip(s_hero)
+	var s_foe_tip := StitchedTurnStatusCues.tooltip(s_foe)
+	_check(s_hero_tip.contains("Statuses: stun 1") and s_hero_tip.contains(StitchedTurnStatusCues.STUN_EXPLANATION),
+		"AC1: stunned hero tooltip explains that Stun skips next turn and resists next")
+	_check(s_foe_tip.contains("Statuses: stun 2") and s_foe_tip.contains(StitchedTurnStatusCues.STUN_EXPLANATION),
+		"AC1: stunned foe tooltip explains that Stun skips next turn and resists next")
+
+	ribbon.show_order([s_hero, s_foe], "", false)
+	_check(ribbon.displayed_entries.size() == 2, "AC1: mounted ribbon shows 2 stunned units")
+
+	for idx in range(2):
+		var tag := ribbon.tag_at(idx)
+		var exp_tip := s_hero_tip if idx == 0 else s_foe_tip
+		var side_label := "hero" if idx == 0 else "foe"
+		_check(tag.tooltip_text == exp_tip, "AC1: %s tag tooltip_text matches pure tooltip" % side_label)
+		tag.grab_focus()
+		await process_frame
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC1: %s keyboard focus reveals exact tooltip with Stun explanation" % side_label)
+		tag.release_focus()
+		_check(not tag.get_node("FocusTooltip").visible, "AC1: %s release focus hides tooltip" % side_label)
+		tag.mouse_entered.emit()
+		_check(tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC1: %s mouse hover reveals exact tooltip matching keyboard focus" % side_label)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible, "AC1: %s mouse exit hides tooltip" % side_label)
+
+	# AC2: Hero with positive Guard and assigned guard_target
+	var g_hero := real_hero.duplicate(true)
+	g_hero["statuses"] = {"guard": 2, "guard_target": ally_target_id}
+
+	var g_lines := StitchedTurnStatusCues.tooltip_lines(g_hero)
+	var g_tip := StitchedTurnStatusCues.tooltip(g_hero)
+	_check(g_tip.contains("Statuses: guard 2"),
+		"AC2: guarding hero tooltip contains sorted guard 2 status counter")
+	_check(g_tip.contains(StitchedTurnStatusCues.GUARD_EXPLANATION),
+		"AC2: guarding hero tooltip explains intercepting hits while thread is joined")
+	_check(not g_tip.contains(ally_target_id) and not g_tip.contains("guard_target"),
+		"AC2: guarding hero tooltip does not invent ally target lookup or leak raw guard_target")
+
+	ribbon.show_order([g_hero], "", false)
+	var g_tag := ribbon.tag_at(0)
+	_check(g_tag.tooltip_text == g_tip, "AC2: guarding hero tag tooltip_text matches pure tooltip")
+	g_tag.grab_focus()
+	await process_frame
+	var g_focus_text := str(g_tag.get_node("FocusTooltip/TooltipText").text)
+	_check(g_tag.has_focus() and g_tag.get_node("FocusTooltip").visible and g_focus_text == g_tip,
+		"AC2: guarding hero keyboard focus exposes complete Guard disclosure")
+	g_tag.release_focus()
+	g_tag.mouse_entered.emit()
+	var g_hover_text := str(g_tag.get_node("FocusTooltip/TooltipText").text)
+	_check(g_tag.get_node("FocusTooltip").visible and g_hover_text == g_tip and g_hover_text == g_focus_text,
+		"AC2: guarding hero hover and keyboard focus are in full parity")
+	g_tag.mouse_exited.emit()
+
+	# Clear Guard and refresh: prior explanation disappears
+	var g_cleared := real_hero.duplicate(true)
+	g_cleared["statuses"] = {}
+	ribbon.show_order([g_cleared], "", false)
+	_check(not ribbon.tag_at(0).tooltip_text.contains("guard") and
+		not ribbon.tag_at(0).tooltip_text.contains("Guard:"),
+		"AC2: cleared guard removes guard counter and explanation from tag tooltip")
+	_check(not ribbon.tag_at(0).get_node("FocusTooltip/TooltipText").text.contains("guard") and
+		not ribbon.tag_at(0).get_node("FocusTooltip/TooltipText").text.contains("Guard:"),
+		"AC2: cleared guard leaves no stale text in FocusTooltip")
+
+	# Existing MARK / BLIND / TANGLED explanations remain unaltered with Guard
+	var combo_hero := real_hero.duplicate(true)
+	combo_hero["statuses"] = {"guard": 2, "mark": 1, "blind": 1, "tangled": 1}
+	var combo_tip := StitchedTurnStatusCues.tooltip(combo_hero)
+	_check(combo_tip.contains(StitchedTurnStatusCues.GUARD_EXPLANATION) and
+		combo_tip.contains(StitchedTurnStatusCues.MARK_EXPLANATION) and
+		combo_tip.contains(StitchedTurnStatusCues.BLIND_EXPLANATION) and
+		combo_tip.contains(StitchedTurnStatusCues.TANGLED_EXPLANATION),
+		"AC2: guard coexisting with mark, blind and tangled preserves all existing explanations")
+
+	# AC3: Temporary stun_resist following consumed Stun, combined statuses, invalid values
+	var r_hero := real_hero.duplicate(true)
+	r_hero["statuses"] = {"stun_resist": 1}
+	var r_tip := StitchedTurnStatusCues.tooltip(r_hero)
+	_check(r_tip.contains("Statuses: stun_resist 1") and
+		r_tip.contains(StitchedTurnStatusCues.STUN_RESIST_EXPLANATION),
+		"AC3: positive stun_resist explains that unit refuses further stun until next turn begins")
+	_check(not r_tip.contains(StitchedTurnStatusCues.STUN_EXPLANATION) and
+		not r_tip.contains(StitchedTurnStatusCues.GUARD_EXPLANATION),
+		"AC3: stun_resist unit does not disclose Stun or Guard explanations")
+
+	# Combined Stun + Guard + stun_resist
+	var tri_hero := real_hero.duplicate(true)
+	tri_hero["statuses"] = {"stun": 1, "guard": 2, "stun_resist": 1}
+	var tri_lines := StitchedTurnStatusCues.tooltip_lines(tri_hero)
+	var tri_tip := StitchedTurnStatusCues.tooltip(tri_hero)
+	var tri_status_idx := tri_lines.find("Statuses: guard 2, stun 1, stun_resist 1")
+	var tri_stun_idx := tri_lines.find(StitchedTurnStatusCues.STUN_EXPLANATION)
+	var tri_guard_idx := tri_lines.find(StitchedTurnStatusCues.GUARD_EXPLANATION)
+	var tri_resist_idx := tri_lines.find(StitchedTurnStatusCues.STUN_RESIST_EXPLANATION)
+	_check(tri_status_idx >= 0 and tri_stun_idx > tri_status_idx and
+		tri_guard_idx > tri_status_idx and tri_resist_idx > tri_status_idx,
+		"AC3: combined stun+guard+resist produces sorted status counter line followed by all three explanations")
+
+	# Fail-closed checks for stun, guard, stun_resist
+	for inv in [0, -1, -3, 1.5, 2.0, "1", "stun", null, [], {}]:
+		var h_fail := real_hero.duplicate(true)
+		var f_fail := real_foe.duplicate(true)
+		h_fail["statuses"] = {"stun": inv, "guard": inv, "stun_resist": inv}
+		f_fail["statuses"] = {"stun": inv, "guard": inv, "stun_resist": inv}
+		_check(StitchedTurnStatusCues.cue(h_fail) == "HERO",
+			"AC3: invalid stun/guard/resist %s yields HERO" % str(inv))
+		_check(StitchedTurnStatusCues.cue(f_fail) == "FOE",
+			"AC3: invalid stun/guard/resist %s yields FOE" % str(inv))
+		var h_fail_tip := StitchedTurnStatusCues.tooltip(h_fail)
+		var f_fail_tip := StitchedTurnStatusCues.tooltip(f_fail)
+		_check(not h_fail_tip.contains("Stun:") and not h_fail_tip.contains("Guard:") and
+			not h_fail_tip.contains("Stun Resist:") and not h_fail_tip.contains("Statuses:"),
+			"AC3: invalid stun/guard/resist %s produces no hero explanations or counters" % str(inv))
+		_check(not f_fail_tip.contains("Stun:") and not f_fail_tip.contains("Guard:") and
+			not f_fail_tip.contains("Stun Resist:") and not f_fail_tip.contains("Statuses:"),
+			"AC3: invalid stun/guard/resist %s produces no foe explanations or counters" % str(inv))
+
+	# Precedence: SEAM > STUN > TORN > resolve > FRAY > other cues
+	var p_hero := real_hero.duplicate(true)
+	p_hero["hanging"] = true
+	p_hero["statuses"] = {"stun": 1, "guard": 2, "stun_resist": 1}
+	_check(StitchedTurnStatusCues.cue(p_hero) == "SEAM", "AC3: SEAM overrides STUN, Guard and stun_resist")
+
+	p_hero["hanging"] = false
+	p_hero["parts"]["head"]["torn"] = true
+	_check(StitchedTurnStatusCues.cue(p_hero) == "STUN", "AC3: STUN overrides TORN parts")
+
+	p_hero["parts"]["head"]["torn"] = false
+	p_hero["resolve"] = "steadfast"
+	_check(StitchedTurnStatusCues.cue(p_hero) == "STUN", "AC3: STUN overrides steadfast resolve")
+
+	p_hero["resolve"] = ""
+	p_hero["fray"] = 120
+	_check(StitchedTurnStatusCues.cue(p_hero) == "STUN", "AC3: STUN overrides high FRAY >= 100")
+
+	p_hero["fray"] = 20
+	p_hero["statuses"] = {"stun": 1, "bleed": 3, "blind": 1, "tangled": 1, "mark": 1}
+	_check(StitchedTurnStatusCues.cue(p_hero) == "STUN", "AC3: STUN overrides bleed, blind, tangled, mark")
+
+	# Unit with Guard or stun_resist only (no STUN) falls back to normal role cues
+	var g_only_hero := real_hero.duplicate(true)
+	g_only_hero["statuses"] = {"guard": 2}
+	_check(StitchedTurnStatusCues.cue(g_only_hero) == "HERO", "AC3: guard-only hero has HERO cue (guard adds no marker cue)")
+
+	var r_only_hero := real_hero.duplicate(true)
+	r_only_hero["statuses"] = {"stun_resist": 1}
+	_check(StitchedTurnStatusCues.cue(r_only_hero) == "HERO", "AC3: stun_resist-only hero has HERO cue (resist adds no marker cue)")
+
+	# AC4: Tooltip fits existing 304x218 NinePatchRect at 1280x720 without resizing
+	var test_tag := ribbon.tag_at(0)
+	var help_box: NinePatchRect = test_tag.get_node("FocusTooltip")
+	var help_text: Label = test_tag.get_node("FocusTooltip/TooltipText")
+	_check(help_box.size == Vector2(304, 218),
+		"AC4: FocusTooltip NinePatchRect preserves 304x218 dimensions without resizing")
+	_check(help_text.size == Vector2(280, 198),
+		"AC4: TooltipText label inside FocusTooltip preserves 280x198 text bounds")
+
+	var tip_font := help_text.get_theme_font("font")
+	var tip_font_sz := help_text.get_theme_font_size("font_size")
+	for fit_unit in [s_hero, s_foe, g_hero, r_hero, tri_hero]:
+		var text_to_measure := StitchedTurnStatusCues.tooltip(fit_unit)
+		var measured_sz := tip_font.get_multiline_string_size(text_to_measure, HORIZONTAL_ALIGNMENT_LEFT, help_text.size.x, tip_font_sz)
+		_check(measured_sz.y <= help_text.size.y,
+			"AC4: tooltip for %s fits inside 280x198 text area (measured height %d <= %d)" %
+			[fit_unit.get("name", fit_unit.get("id")), int(measured_sz.y), int(help_text.size.y)])
+
+	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng,
+		"AC4: battle snapshot and RNG state are byte-for-byte unaffected by status cue assertions")
+
 	# AC4: Zero, negative, float, string, missing, malformed status values fail closed
 	for invalid_val in [0, -1, -3, 1.5, 2.0, "1", "blind", null, [], {}]:
 		var h_inv := blind_hero.duplicate(true)
@@ -708,7 +896,10 @@ func _run() -> void:
 		not StitchedTurnStatusCues.tooltip(sparse).contains("Statuses:") and
 		not StitchedTurnStatusCues.tooltip(sparse).contains("Resolve:") and
 		not StitchedTurnStatusCues.tooltip(sparse).contains("Blind:") and
-		not StitchedTurnStatusCues.tooltip(sparse).contains("Tangled:"),
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Tangled:") and
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Stun:") and
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Guard:") and
+		not StitchedTurnStatusCues.tooltip(sparse).contains("Stun Resist:"),
 		"malformed/missing fields fail closed, without fabricated numeric stats or conditions")
 	_check(StitchedTurnStatusCues.cue({"id":"empty"}) == "" and
 		StitchedTurnStatusCues.tooltip({"id":"empty"}) == "empty",

@@ -23,6 +23,9 @@ const RESOLVE_EFFECTS := {
 const BLIND_EXPLANATION := "Blind: next attack misses; consumed on that attack."
 const TANGLED_EXPLANATION := "Tangled: cannot move or be moved by its side; attacks gain +2 damage."
 const MARK_EXPLANATION := "Marked: mark-hunting abilities gain their authored bonus damage."
+const STUN_EXPLANATION := "Stun: skip the next turn; then briefly resist another Stun."
+const GUARD_EXPLANATION := "Guard: intercept hits aimed at a chosen ally while their thread is joined."
+const STUN_RESIST_EXPLANATION := "Stun Resist: blocks another Stun until this unit's next turn begins."
 
 
 static func _number(value: Variant) -> bool:
@@ -141,6 +144,12 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			for key in keys:
 				active.append("%s %d" % [key, int(raw[key])])
 			lines.append("Statuses: " + ", ".join(active))
+		if _positive_count(raw.get("stun")):
+			lines.append(STUN_EXPLANATION)
+		if _positive_count(raw.get("guard")):
+			lines.append(GUARD_EXPLANATION)
+		if _positive_count(raw.get("stun_resist")):
+			lines.append(STUN_RESIST_EXPLANATION)
 		if _positive_count(raw.get("blind")):
 			lines.append(BLIND_EXPLANATION)
 		if _positive_count(raw.get("tangled")):
