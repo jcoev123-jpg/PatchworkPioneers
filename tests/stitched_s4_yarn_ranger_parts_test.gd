@@ -51,12 +51,14 @@ const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
 		"ability": "yarn_ranger_head_needle_nock_move",
 		"stat": {"acc": 3},
+		"target": [1, 2, 3],
 		"dmg": [[4, 6], [5, 8], [7, 10]],
 		"effects": [{"exposed": 1}, {"exposed": 1}, {"exposed": 2}],
 	},
 	"yarn_ranger_head_needle_arrow": {
 		"ability": "yarn_ranger_head_needle_arrow_move",
 		"stat": {"crit": 3},
+		"target": [1, 2, 3, 4],
 		"dmg": [[5, 7], [7, 9], [9, 11]],
 		"effects": [{"mark": 1}, {"mark": 2}, {"mark": 3}],
 	},
@@ -106,6 +108,7 @@ func _initialize() -> void:
 	_test_reel_thread_launch_tiers()
 	_test_each_tier()
 	_test_rank_four_head_launch()
+	_test_needle_arrow_rank_four_target()
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
 	_test_rank_four_snare_net_launch()
@@ -256,8 +259,23 @@ func _rank_four_foe_battle(selected_part: String, tier: int = 1, seed_value: int
 	return battle
 
 
+## The same fresh three-foe fixture with the equipped Ranger at hero rank one and one real foe
+## moved into enemy rank four. Her HEAD launch mask must refuse the shot even though a living
+## rear-rank target now exists.
+func _front_rank_four_foe_battle(
+		selected_part: String, tier: int = 1, seed_value: int = 508040) -> StitchedRules:
+	var battle := _rank_one_battle(selected_part, tier, seed_value)
+	if battle == null:
+		return null
+	if battle.get_unit("moth_scribe").is_empty():
+		return null
+	battle._units["moth_scribe"]["rank"] = 4
+	return battle
+
+
 ## Both needle-bow HEAD abilities keep their authored numbers at every tier while the launch
-## mask gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
+## mask gains hero rank four. Needle Nock still stops at enemy rank three; only Needle Arrow
+## admits a fourth-rank foe. Ranks 1, 0 and 5 stay illegal launches.
 func _test_head_launch_tiers() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -277,10 +295,32 @@ func _test_head_launch_tiers() -> void:
 			_check(ability["launch"] == HEAD_LAUNCH
 				and mask == StitchedParts.rank_mask(HEAD_LAUNCH) and reachable and excluded,
 				"AC2: tier %d %s launch mask allows 2,3,4 and refuses 0,1,5" % [tier, head_id])
+			var target_mask := int(ability["target_mask"])
+			var targets_reachable := true
+			for rank in spec["target"]:
+				targets_reachable = targets_reachable and StitchedParts.ranks_allowed(
+					target_mask, rank)
+			_check(targets_reachable
+				and target_mask == StitchedParts.rank_mask(spec["target"])
+				and not StitchedParts.ranks_allowed(target_mask, 0)
+				and not StitchedParts.ranks_allowed(target_mask, 5),
+				"AC1: tier %d %s target mask covers exactly its authored enemy ranks %s"
+					% [tier, head_id, str(spec["target"])])
+			_check(StitchedParts.ranks_allowed(target_mask, 4) == (head_id == ALTERNATES["head"]),
+				"AC1: tier %d %s %s enemy rank four" % [tier, head_id,
+					"reaches" if head_id == ALTERNATES["head"] else "refuses"])
 			_check(ability["dmg"] == spec["dmg"][tier - 1]
 				and ability["effects"] == spec["effects"][tier - 1]
-				and int(ability["acc"]) == 93 and ability["target"] == [1, 2, 3],
+				and int(ability["acc"]) == 93 and ability["target"] == spec["target"],
 				"AC2: tier %d %s keeps authored damage, status, ACC and enemy targets"
+					% [tier, head_id])
+			_check(StitchedParts.stat_at_tier(part, tier) == spec["stat"]
+				and str(ability["id"]) == str(spec["ability"])
+				and str(ability["kind"]) == "ranged"
+				and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+				and int(ability["crit"]) == 0
+				and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
+				"AC4: tier %d %s keeps its authored stat, ranged single-target attack, no self move and attack2 pose"
 					% [tier, head_id])
 
 
@@ -658,6 +698,206 @@ func _test_rank_four_head_launch() -> void:
 			% [head_id, effect])
 
 
+## The task goal: at every stitch tier the alternate Needle Arrow reaches the living moth_scribe
+## in enemy rank four from the Ranger's real scheduled turn in the ordinary three-foe battle.
+## A seeded miss is a legal shot, while a bounded seed window must witness damage plus the
+## tier's exact Mark and an identical receipt/snapshot/RNG replay. Absent, front-rank, torn,
+## unequipped and out-of-bounds shots remain atomic refusals.
+func _test_needle_arrow_rank_four_target() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var arrow := ALTERNATES["head"]
+	var ability_id := str(HEAD_SPECS[arrow]["ability"])
+	for tier in [1, 2, 3]:
+		var expected_mark := int(HEAD_SPECS[arrow]["effects"][tier - 1]["mark"])
+		var b := _rank_four_foe_battle(arrow, tier)
+		_check(b != null,
+			"AC2: fresh three-foe battle equips tier %d Needle Arrow with a living foe at enemy rank 4"
+				% tier)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		var rear := b.get_unit("moth_scribe")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 3 and str(ranger["parts"]["head"]["id"]) == arrow
+			and int(rear["rank"]) == 4 and int(rear["hp"]) > 0,
+			"AC2: tier %d Ranger launches legally while the real fourth-rank foe lives" % tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC2: Ranger reaches her actual scheduled turn for tier %d rank-four Needle Arrow"
+				% tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		for bad_rank in [0, 5]:
+			_reject_without_spend(b, arrow, bad_rank,
+				"tier %d Needle Arrow target rank %d outside 1..4" % [tier, bad_rank])
+		var other_before := {}
+		for foe in b.get_foes():
+			if str(foe["id"]) != "moth_scribe":
+				other_before[str(foe["id"])] = {
+					"hp": int(foe["hp"]),
+					"statuses": foe["statuses"].duplicate(true),
+				}
+		var rear_hp_before := int(b.get_unit("moth_scribe")["hp"])
+		var before := b.state_snapshot()
+		var receipt := b.use_part(arrow, 4)
+		var after := b.state_snapshot()
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+			and str(receipt.get("actor", "")) == "yarn_ranger"
+			and str(receipt.get("part", "")) == arrow
+			and str(receipt.get("ability", "")) == ability_id
+			and results.size() == 1
+			and str(results[0].get("target", "")) == "moth_scribe"
+			and str(results[0].get("target_side", "")) == "foe"
+			and int(results[0].get("target_rank", 0)) == 4,
+			"AC2: tier %d Needle Arrow legally resolves on the single enemy at rank four: %s"
+				% [tier, str(receipt.get("error", ""))])
+		_check(after != before and (int(after["round"]) > int(before["round"])
+			or (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) > int(before["turn_index"])))
+			and b.current_actor_id() != "yarn_ranger",
+			"AC2: tier %d rank-four Needle Arrow spends exactly one Ranger turn" % tier)
+		var untouched := true
+		for foe in b.get_foes():
+			var foe_id := str(foe["id"])
+			if foe_id == "moth_scribe":
+				continue
+			var prior: Dictionary = other_before.get(foe_id, {})
+			if prior.is_empty() or int(foe["hp"]) != int(prior["hp"]) \
+					or foe["statuses"] != prior["statuses"]:
+				untouched = false
+		_check(untouched, "AC2: tier %d Needle Arrow touches no other foe" % tier)
+		if results.size() != 1:
+			continue
+		var result: Dictionary = results[0]
+		if bool(result.get("hit", false)):
+			var marked: bool = result.get("statuses", []).any(
+				func(s): return str(s.get("status", "")) == "mark" \
+					and int(s.get("duration", 0)) == expected_mark)
+			_check(int(result.get("damage", 0)) > 0
+				and int(result.get("target_hp", -1))
+					== rear_hp_before - int(result.get("damage", 0)) and marked,
+				"AC2: tier %d Needle Arrow's hit on the rank-four foe deals its damage and Mark %d"
+					% [tier, expected_mark])
+		else:
+			_check(int(result.get("damage", -1)) == 0
+				and int(result.get("target_hp", -1)) == rear_hp_before,
+				"AC2: tier %d Needle Arrow's legal miss leaves the rank-four foe unharmed" % tier)
+		# A bounded explicit seed window witnesses a real hit that carries exactly the tier's
+		# Mark, no collateral on the other two foes, and an identical replay.
+		var witness_seed := -1
+		for seed_value in range(507040, 507096):
+			var shot_battle := _rank_four_foe_battle(arrow, tier, seed_value)
+			if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+				continue
+			var shot_others := {}
+			for foe in shot_battle.get_foes():
+				if str(foe["id"]) != "moth_scribe":
+					shot_others[str(foe["id"])] = {
+						"hp": int(foe["hp"]),
+						"statuses": foe["statuses"].duplicate(true),
+					}
+			var shot_rear_before := shot_battle.get_unit("moth_scribe")
+			var shot := shot_battle.use_part(arrow, 4)
+			if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 1:
+				continue
+			var shot_result: Dictionary = shot["results"][0]
+			if not bool(shot_result.get("hit", false)) \
+					or int(shot_result.get("damage", 0)) <= 0 \
+					or str(shot_result.get("target", "")) != "moth_scribe" \
+					or int(shot_result.get("target_rank", 0)) != 4:
+				continue
+			if not shot_result.get("statuses", []).any(
+					func(s): return str(s.get("status", "")) == "mark" \
+						and int(s.get("duration", 0)) == expected_mark):
+				continue
+			var shot_foe := shot_battle.get_unit("moth_scribe")
+			if int(shot_foe["rank"]) != 4 or int(shot_foe["hp"]) <= 0 \
+					or int(shot_foe["hp"]) != int(shot_rear_before["hp"]) \
+						- int(shot_result.get("damage", 0)) \
+					or int(shot_foe["statuses"].get("mark", 0)) != expected_mark:
+				continue
+			var collateral := false
+			for foe in shot_battle.get_foes():
+				var foe_id := str(foe["id"])
+				if foe_id == "moth_scribe":
+					continue
+				var prior: Dictionary = shot_others.get(foe_id, {})
+				if prior.is_empty() or int(foe["hp"]) != int(prior["hp"]) \
+						or foe["statuses"] != prior["statuses"]:
+					collateral = true
+			if collateral:
+				continue
+			var replay := _rank_four_foe_battle(arrow, tier, seed_value)
+			if replay == null or not _to(replay, "yarn_ranger"):
+				continue
+			var replay_shot := replay.use_part(arrow, 4)
+			if shot == replay_shot and shot_battle.state_snapshot() == replay.state_snapshot() \
+					and shot_battle.rng_state() == replay.rng_state():
+				witness_seed = seed_value
+				break
+		_check(witness_seed >= 0,
+			"AC2: a bounded real seed shows tier %d Needle Arrow hitting the rank-four foe for damage and Mark %d, with an identical replay"
+				% [tier, expected_mark])
+		if witness_seed >= 0:
+			print("AC2 Needle Arrow rank-four foe tier %d witness seed %d"
+				% [tier, witness_seed])
+	# A fresh three-foe fixture has no living foe in enemy rank four, so the expanded target
+	# mask still refuses the shot without spending anything.
+	for tier in [1, 2, 3]:
+		var absent := _battle(arrow, tier)
+		_check(absent != null,
+			"AC3: fresh three-foe battle equips tier %d Needle Arrow with no rear-rank foe"
+				% tier)
+		if absent == null:
+			continue
+		_check(_to(absent, "yarn_ranger"),
+			"AC3: tier %d Needle Arrow Ranger obtains a real scheduled turn" % tier)
+		if absent.current_actor_id() == "yarn_ranger":
+			_check(absent.get_foes().size() == 3
+				and absent.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+				"AC3: tier %d fixture really has no foe at enemy rank four" % tier)
+			_reject_without_spend(absent, arrow, 4,
+				"tier %d Needle Arrow enemy rank 4 has no living foe" % tier)
+	# Needle Arrow still launches only from hero ranks two to four: the front rank cannot fire
+	# even when a living enemy really stands at rank four.
+	for tier in [1, 2, 3]:
+		var front := _front_rank_four_foe_battle(arrow, tier, 508040 + tier)
+		_check(front != null,
+			"AC3: fresh fixture allows tier %d rank-one Ranger with a real rear foe" % tier)
+		if front == null:
+			continue
+		var front_ranger := front.get_unit("yarn_ranger")
+		var rear_foe := front.get_unit("moth_scribe")
+		_check(int(front_ranger["rank"]) == 1
+			and str(front_ranger["parts"]["head"]["id"]) == arrow
+			and int(rear_foe["rank"]) == 4 and int(rear_foe["hp"]) > 0,
+			"AC3: tier %d front-rank Ranger really faces a living enemy at rank four" % tier)
+		_check(_to(front, "yarn_ranger"),
+			"AC3: tier %d rank-one Needle Arrow Ranger obtains a real scheduled turn" % tier)
+		if front.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(front, arrow, 4,
+				"tier %d rank-one Needle Arrow launch" % tier)
+	# A torn alternate head and an unequipped alternate head never spend the turn.
+	var torn_config := _config(arrow, 1, 509040)
+	if not torn_config.is_empty():
+		torn_config["heroes"][2]["parts"]["head"]["torn"] = true
+		var torn_created := StitchedRules.create(torn_config)
+		_check(bool(torn_created.get("ok", false)),
+			"AC3: real torn Needle Arrow admitted as equipment")
+		if bool(torn_created.get("ok", false)):
+			var torn_battle: StitchedRules = torn_created["battle"]
+			_check(_to(torn_battle, "yarn_ranger"),
+				"AC3: torn Needle Arrow Ranger obtains a real scheduled turn")
+			if torn_battle.current_actor_id() == "yarn_ranger":
+				_reject_without_spend(torn_battle, arrow, 4, "torn Needle Arrow")
+	var unequipped := _battle("", 1, 509041)
+	_check(unequipped != null, "AC3: starter three-foe battle exists for the unequipped check")
+	if unequipped != null and _to(unequipped, "yarn_ranger"):
+		_reject_without_spend(unequipped, arrow, 4, "unequipped Needle Arrow")
+
+
 ## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
 ## wearing her own starter Wool Bolas in the arms slot. A genuine seeded miss is a legal shot.
 func _test_rank_four_bolas_launch() -> void:
@@ -1011,12 +1251,13 @@ func _test_catalog() -> void:
 		_check(str(ability["id"]) == str(spec["ability"]) and str(ability["kind"]) == "ranged"
 			and ability["launch"] == HEAD_LAUNCH
 			and int(ability["launch_mask"]) == StitchedParts.rank_mask(HEAD_LAUNCH)
-			and ability["target"] == [1, 2, 3]
+			and ability["target"] == spec["target"]
+			and int(ability["target_mask"]) == StitchedParts.rank_mask(spec["target"])
 			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
 			and int(ability["acc"]) == 93 and int(ability["crit"]) == 0
 			and ability["dmg"] == spec["dmg"][0] and ability["effects"] == spec["effects"][0]
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
-			"AC1: %s keeps every authored value except the rank-four launch" % head_id)
+			"AC1: %s keeps every authored value and its own target ranks" % head_id)
 	for other_id in UNCHANGED_PARTS:
 		var other: Dictionary = cat["by_id"][other_id]
 		var expected: Dictionary = UNCHANGED_PARTS[other_id]
