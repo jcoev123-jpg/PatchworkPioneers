@@ -5602,6 +5602,9 @@ func _present_stitched_run() -> void:
 		_clear_stitched_run_panel()
 		var stage := StitchedBattleScreen.new()
 		stage.config = session.battle_config.duplicate(true)
+		stage.config["kid_floor"] = session.map.get_current_floor() + 1
+		stage.config["kid_kind"] = str(session.pending.kind)
+		stage.kid_fear_source = func(): return session.kid_fear()
 		stage.battle = session.battle
 		stage.parts = session.catalog
 		stitched_run_battle = stage
