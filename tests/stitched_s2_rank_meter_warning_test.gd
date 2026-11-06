@@ -24,13 +24,27 @@ func _present(meters: Dictionary, unit: Dictionary, side: String) -> void:
 	_check(unit == before, "%s unit snapshot is not modified by presentation" % side)
 
 
-func _fit(label: Label, note: String) -> void:
+func _fray_detail(value: int) -> String:
+	return ("FRAY %d/200" % value
+		+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
+		+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
+
+
+func _fit(label: Label, note: String, standard: bool = true) -> void:
 	var face: Font = label.get_theme_font("font")
 	var size_used := label.get_theme_font_size("font_size")
-	_check(face != null and size_used >= 8 and size_used <= 11, note + " inherits and sizes the Gothic font")
+	_check(label.has_theme_font_override("font") and face is FontVariation and (face as FontVariation).base_font == StitchedBattleChrome.RANK_FONT
+		and size_used >= (13 if standard else 10), note + " explicitly binds readable PatrickHand")
+	_check(label.size.y == 14.0 and label.position.y == 0.0
+		and label.scale.y == 1.0 and not label.clip_text
+		and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
+		note + " remains in the fourteen-pixel caption band without clipping or vertical shrink")
 	if face != null:
-		var width := face.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_used).x
-		_check(width <= label.size.x - 1.0, "%s: measured text %.1f fits %.1f px" % [note, width, label.size.x])
+		var measured := face.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_used)
+		_check(measured.x * label.scale.x <= label.size.x - 1.0
+			and measured.y >= (13.0 if standard else 10.0) and measured.y <= 14.0 and label.scale.x > 0.0,
+			"%s: measured face %.1fx%.1f fits %.1fpx horizontal slot and real-height type" % [
+				note, measured.x, measured.y, label.size.x])
 
 
 func _bounds(meters: Dictionary, note: String) -> void:
@@ -100,12 +114,12 @@ func _run() -> void:
 		and fray.value == 45.0 and fray.max_value == 200.0
 		and foe["hp"].value == 9.0 and foe["hp"].max_value == 21.0,
 		"authentic snapshots present exact HP and FRAY values and denominators")
-	_check(hp_label.text == "HP 12/17" and fray_label.text == "FRAY 45/200"
+	_check(hp_label.text == "HP 12" and fray_label.text == "FRAY 45"
 		and foe["hp_text"].text == "HP 9/21",
-		"both sides visibly show their exact meter numerators/denominators")
-	_check(hp.tooltip_text == "HP 12/17" and fray.tooltip_text.begins_with("FRAY 45/200")
+		"hero glance shows genuine current values; foe retains full HP current/max")
+	_check(hp.tooltip_text == "HP 12/17" and fray.tooltip_text == _fray_detail(45)
 		and hero_root.tooltip_text.contains("HP 12/17")
-		and hero_root.tooltip_text.contains("FRAY 45/200"),
+		and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(45),
 		"mouse-accessible stitched surface exposes both full values")
 	_check(hero_root.mouse_filter == Control.MOUSE_FILTER_PASS,
 		"full-value tooltip surface accepts hover")
@@ -115,16 +129,14 @@ func _run() -> void:
 
 	var base_fill := (fray.get_theme_stylebox("fill") as StyleBoxTexture).modulate_color
 	var base_frame := fray_frame.self_modulate
-	for sample in [0, 45, 99, 100, 150, 199]:
+	for sample in [0, 45, 99, 100, 150, 199, 200]:
 		unit["fray"] = sample
 		_present(hero, unit, "hero")
 		_check(fray.value == float(sample) and fray.max_value == 200.0
-			and fray_label.text == "FRAY %d/200" % sample,
-			"FRAY %d uses the exact 200-point fill and caption" % sample)
-		_check(fray.tooltip_text.begins_with("FRAY %d/200" % sample)
-			and fray.tooltip_text.contains("100 FRAY: resolve threshold")
-			and fray.tooltip_text.contains("200 FRAY: COMES APART")
-			and fray.tooltip_text.contains("STEADFAST or UNRAVELLED"),
+			and fray_label.text == "FRAY %d" % sample,
+			"FRAY %d uses exact 200-point fill and shorter current-value caption" % sample)
+		_check(fray.tooltip_text == _fray_detail(sample)
+			and hero_root.tooltip_text == "HP 12/17 | " + _fray_detail(sample),
 			"FRAY %d describes risk thresholds without resolving a roll" % sample)
 		var sample_style := fray.get_theme_stylebox("fill") as StyleBoxTexture
 		_check(sample_style != null and sample_style.texture == FILL
@@ -147,15 +159,16 @@ func _run() -> void:
 	_present(hero, unit, "hero")
 	_check(hero_root.visible and hp.value == 0.0 and hp.max_value == 17.0
 		and hp_label.text == "HANGING"
-		and hp.tooltip_text.contains("HP 0/17")
-		and hp.tooltip_text.contains("HANGING BY A THREAD")
+		and hp.tooltip_text == "HP 0/17 — HANGING BY A THREAD (still acts and holds rank)"
+		and hero_root.tooltip_text == hp.tooltip_text + " | " + _fray_detail(150)
 		and hp_frame.self_modulate != Color.WHITE,
 		"real hanging flag signals HANGING without fabricating HP")
 	_fit(hp_label, "HANGING")
 	unit["hanging"] = false
 	_present(hero, unit, "hero")
-	_check(hp.value == 0.0 and hp_label.text == "HP 0/17"
-		and not hp.tooltip_text.contains("HANGING")
+	_check(hp.value == 0.0 and hp_label.text == "HP 0"
+		and hp.tooltip_text == "HP 0/17"
+		and hero_root.tooltip_text == "HP 0/17 | " + _fray_detail(150)
 		and hp_frame.self_modulate == Color.WHITE,
 		"zero HP alone does not assert HANGING")
 	unit["lost"] = true
@@ -168,14 +181,18 @@ func _run() -> void:
 		and fray_frame.self_modulate == Color.WHITE,
 		"LOST clears all bar, caption, tooltip and warning ghosts")
 	_present(hero, {}, "hero")
-	_check(not hero_root.visible and hp_label.text.is_empty() and hero_root.tooltip_text.is_empty(),
+	_check(not hero_root.visible and hp_label.text.is_empty() and fray_label.text.is_empty()
+		and hp.tooltip_text.is_empty() and fray.tooltip_text.is_empty()
+		and hero_root.tooltip_text.is_empty(),
 		"empty rank also clears warning and accessibility state")
 	unit["lost"] = false
 	unit["hp"] = 9
 	unit["fray"] = 0
 	_present(hero, unit, "hero")
 	_check(hero_root.visible and hp.value == 9.0 and fray.value == 0.0
-		and hp_label.text == "HP 9/17" and fray_label.text == "FRAY 0/200"
+		and hp_label.text == "HP 9" and fray_label.text == "FRAY 0"
+		and hp.tooltip_text == "HP 9/17" and fray.tooltip_text == _fray_detail(0)
+		and hero_root.tooltip_text == "HP 9/17 | " + _fray_detail(0)
 		and hp_frame.self_modulate == Color.WHITE
 		and fray_frame.self_modulate == Color.WHITE,
 		"restored living hero has clean healthy styles")
@@ -184,8 +201,30 @@ func _run() -> void:
 	unit["fray"] = 200
 	_present(hero, unit, "hero")
 	_check(hero_root.visible and hp.value == 0.0 and fray.value == 200.0
-		and hp_label.text == "HANGING" and fray.tooltip_text.contains("COMES APART"),
+		and hp_label.text == "HANGING" and fray_label.text == "FRAY 200"
+		and fray.tooltip_text == _fray_detail(200)
+		and hp.tooltip_text == "HP 0/17 — HANGING BY A THREAD (still acts and holds rank)",
 		"200 FRAY displays authoritative supplied hanging outcome, not a simulated LOST")
+	# Exceptional wide source numerals must not be truncated or falsified.
+	unit["hp"] = 123456789123
+	unit["max_hp"] = 123456789123
+	unit["fray"] = 123456789
+	unit["hanging"] = false
+	_present(hero, unit, "hero")
+	_check(hp_label.text == "HP 123456789123" and fray_label.text == "FRAY 123456789"
+		and hp.tooltip_text == "HP 123456789123/123456789123"
+		and fray.tooltip_text == _fray_detail(123456789),
+		"wide numerals preserve every true digit in readouts and tooltips")
+	_check(not hp_label.get_global_rect().intersects(fray_label.get_global_rect())
+		and hero_root.get_global_rect().encloses(hp_label.get_global_rect())
+		and hero_root.get_global_rect().encloses(fray_label.get_global_rect()),
+		"unsupported wide numeral fallback stays separate inside the existing 170px plate")
+	_fit(hp_label, "wide HP", false)
+	_fit(fray_label, "wide FRAY", false)
+	_present(hero, {}, "hero")
+	_check(not hero_root.visible and hp_label.text.is_empty()
+		and fray_label.text.is_empty() and hero_root.tooltip_text.is_empty(),
+		"wide fallback leaves no stale tooltip after empty rank")
 	_check(randi() == expected_random, "rendering never changes the global RNG stream")
 	_check(hero_root.get_signal_connection_list("gui_input").is_empty(),
 		"meter chrome connects no battle actions or receipts")

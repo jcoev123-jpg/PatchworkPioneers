@@ -35,6 +35,27 @@ func _no_mutation(screen: StitchedBattleScreen, state: Dictionary, rng: int, cou
 		and screen.receipts.size() == count, note)
 
 
+func _verify_readout(label: Label, note: String) -> void:
+	var font: Font = label.get_theme_font("font")
+	var point_size := label.get_theme_font_size("font_size")
+	_check(font is FontVariation and (font as FontVariation).base_font == StitchedBattleChrome.RANK_FONT and label.has_theme_font_override("font")
+		and point_size >= 13 and label.size.y == 14.0 and label.scale.y == 1.0
+		and not label.clip_text and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
+		note + " has locally bound real 13px-or-larger lettering, no clipping or vertical shrink")
+	if font != null:
+		var measured := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size)
+		_check(measured.x * label.scale.x <= label.size.x - 1.0
+			and measured.y >= 13.0 and measured.y <= 14.0
+			and label.get_global_rect().size.y == 14.0,
+			note + " measured font fits the existing fourteen-pixel global caption band")
+
+
+func _fray_full(value: int) -> String:
+	return ("FRAY %d/200" % value
+		+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
+		+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
+
+
 func _verify_styles(screen: StitchedBattleScreen) -> void:
 	var fabric: Texture2D = load("res://assets/paper/ui/panel_felt.png")
 	var button_art: Texture2D = load("res://assets/paper/ui/reward_button.png")
@@ -165,10 +186,11 @@ func _verify_meters(screen: StitchedBattleScreen) -> void:
 				continue
 			var foot: NinePatchRect = screen._foot_plates[key]
 			var name: Button = screen._seat_buttons[key]
+			_verify_readout(hp_text, "%s rank %d HP" % [side, rank])
 			_check(hp.value == float(expected["hp"]) and
 				hp.max_value == float(expected["max_hp"]) and
 				hp.tooltip_text.contains("%d/%d" % [int(expected["hp"]), int(expected["max_hp"])]) and
-				hp_text.text == "HP %d/%d" % [int(expected["hp"]), int(expected["max_hp"])] and
+				hp_text.text == ("HP %d" % int(expected["hp"]) if side == "hero" else "HP %d/%d" % [int(expected["hp"]), int(expected["max_hp"])]) and
 				hp_text.get_theme_color("font_color") == StitchedBattleChrome.BONE and
 				foot.get_global_rect().encloses(surface.get_global_rect()) and
 				not name.get_global_rect().intersects(surface.get_global_rect()) and
@@ -181,8 +203,11 @@ func _verify_meters(screen: StitchedBattleScreen) -> void:
 				var fray_frame: NinePatchRect = surface.get_node("FrayFillSewnFrame")
 				var fray_caption: Label = meters["fray_text"]
 				var fray_style := fray.get_theme_stylebox("fill") as StyleBoxTexture
+				_verify_readout(fray_caption, "hero rank %d FRAY" % rank)
 				_check(fray.max_value == 200.0 and fray.value == float(expected["fray"])
-					and fray_caption.text == "FRAY %d/200" % int(expected["fray"])
+					and fray_caption.text == "FRAY %d" % int(expected["fray"])
+					and fray.tooltip_text == _fray_full(int(expected["fray"]))
+					and meters["root"].tooltip_text.contains(_fray_full(int(expected["fray"])))
 					and fray_frame.texture == load("res://assets/paper/ui/hud_bar_frame.png")
 					and fray_style != null and fray_style.texture == load("res://assets/paper/ui/reward_button.png")
 					and not fray_caption.get_global_rect().intersects(fray_frame.get_global_rect())
@@ -210,11 +235,13 @@ func _test_hanging_and_lost(screen: StitchedBattleScreen) -> void:
 		and meters["hp"].value == 0.0 and meters["hp_text"].text == "HANGING"
 		and meters["hp_text"].get_theme_color("font_color") == StitchedBattleChrome.AMBER
 		and hp_frame.self_modulate == Color("ffd18c")
-		and meters["fray"].value == 173.0 and meters["fray_text"].text == "FRAY 173/200"
+		and meters["fray"].value == 173.0 and meters["fray_text"].text == "FRAY 173"
+		and meters["fray"].tooltip_text == _fray_full(173)
+		and meters["hp"].tooltip_text.contains("HP 0/")
 		and meters["fray_text"].get_theme_color("font_color") == StitchedBattleChrome.AMBER
 		and fray_frame.self_modulate == Color("ffd18c")
 		and screen.status_detail("hero", int(hero["rank"])).contains("HANGING")
-		and meters["root"].tooltip_text.contains("FRAY 173/200"),
+		and meters["root"].tooltip_text.contains(_fray_full(173)),
 		"zero-HP HANGING doll retains warned bone/amber captions, framed fills and full status")
 	screen.battle._units[id]["lost"] = true
 	screen._refresh()
@@ -223,8 +250,8 @@ func _test_hanging_and_lost(screen: StitchedBattleScreen) -> void:
 		"LOST hero removes all meter surfaces instead of leaving a ghost bar")
 	screen.battle._units[id] = original
 	screen._refresh()
-	_check(meters["root"].visible and meters["hp_text"].text == "HP %d/%d" % [int(original["hp"]), int(original["max_hp"])]
-		and meters["fray_text"].text == "FRAY %d/200" % int(original["fray"])
+	_check(meters["root"].visible and meters["hp_text"].text == "HP %d" % int(original["hp"])
+		and meters["fray_text"].text == "FRAY %d" % int(original["fray"])
 		and hp_frame.self_modulate == Color.WHITE and fray_frame.self_modulate == Color.WHITE
 		and meters["hp_text"].get_theme_color("font_color") == StitchedBattleChrome.BONE
 		and meters["fray_text"].get_theme_color("font_color") == StitchedBattleChrome.BONE,

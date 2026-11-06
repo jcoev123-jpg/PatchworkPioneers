@@ -6,6 +6,7 @@ const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const BUTTON := preload("res://assets/paper/ui/reward_button.png")
 const NAME_PLATE := preload("res://assets/paper/ui/hud_name_plate.png")
 const BAR_FRAME := preload("res://assets/paper/ui/hud_bar_frame.png")
+const RANK_FONT := preload("res://assets/fonts/PatrickHand-Regular.ttf")
 const BONE := Color("f5e4cd")
 const AMBER := Color("efc16e")
 
@@ -123,22 +124,28 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 
 
 static func _fit_readout(readout: Label, caption: String) -> void:
-	# Measure the inherited Gothic font instead of relying on Label clipping.
+	# The real caption row keeps its fixed physical slot even when a rare
+	# oversized source number would otherwise grow Label's minimum width.
+	var hero_row := readout.name == "FrayReadout" or readout.get_parent().has_node("FrayReadout")
+	var slot_width := 74.0 if hero_row else 149.0
 	readout.text = caption
+	readout.scale = Vector2.ONE
 	var face: Font = readout.get_theme_font("font")
-	var point_size := 11
+	var point_size := 13
+	var available := slot_width - 2.0
 	if face != null:
-		for size_step in range(11, 7, -1):
-			point_size = size_step
-			if face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, size_step).x <= readout.size.x - 2.0:
-				break
+		# Standard numerators stay at >=13px; only exceptional wide source
+		# values use smaller measured type, never omitted digits.
+		while point_size > 10 and face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x > available:
+			point_size -= 1
 	readout.add_theme_font_size_override("font_size", point_size)
-	# The inherited Gothic font can enforce a 16px minimum after text
-	# changes. Scale its visible caption to 14px so it never covers the
-	# adjacent image-backed progress frame in this 24px rank row.
-	readout.size = Vector2(readout.size.x, 14)
-	readout.scale.y = 14.0 / maxf(14.0, readout.size.y)
-
+	readout.size = Vector2(slot_width, 14.0)
+	if face != null:
+		var width := face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
+		# If native Label insists on an extra-wide minimum for unusual data,
+		# compress only horizontally so it cannot collide with FRAY's slot.
+		if width > available or readout.size.x > slot_width:
+			readout.scale.x = available / maxf(width, readout.size.x)
 
 static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Dictionary:
 	# y530..554 is the existing HP row, below the full-size rank/name button.
@@ -150,6 +157,12 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	# without consuming the parent's rank-button input.
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(root)
+	# Keep PatrickHand's glyphs at their native size while removing only
+	# the font's unused line leading. No vertical glyph scaling or clipping.
+	var caption_font := FontVariation.new()
+	caption_font.base_font = RANK_FONT
+	caption_font.spacing_top = -3
+	caption_font.spacing_bottom = -2
 	var is_hero := side == "hero"
 	var hp := _meter(root, "HPFill", Rect2(11, 15, 74 if is_hero else 148, 7),
 		Color("af655b"))
@@ -159,8 +172,10 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	hp_caption.size = Vector2(74 if is_hero else 149, 14)
 	hp_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hp_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	hp_caption.clip_text = true
-	hp_caption.add_theme_font_size_override("font_size", 11)
+	hp_caption.clip_text = false
+	hp_caption.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+	hp_caption.add_theme_font_override("font", caption_font)
+	hp_caption.add_theme_font_size_override("font_size", 13)
 	hp_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hp_caption.add_theme_color_override("font_color", BONE)
 	hp_caption.add_theme_color_override("font_outline_color", Color("25181d"))
@@ -176,8 +191,10 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 		caption.size = Vector2(74, 14)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		caption.clip_text = true
-		caption.add_theme_font_size_override("font_size", 11)
+		caption.clip_text = false
+		caption.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
+		caption.add_theme_font_override("font", caption_font)
+		caption.add_theme_font_size_override("font_size", 13)
 		caption.add_theme_color_override("font_color", BONE)
 		caption.add_theme_color_override("font_outline_color", Color("25181d"))
 		caption.add_theme_constant_override("outline_size", 2)
@@ -205,7 +222,7 @@ static func present_rank(meters: Dictionary, unit: Dictionary, side: String) -> 
 	hp.tooltip_text = ("HP %d/%d" % [hp_value, hp_max]) if occupied else ""
 	if hanging:
 		hp.tooltip_text += " — HANGING BY A THREAD (still acts and holds rank)"
-	_fit_readout(hp_caption, ("HANGING" if hanging else "HP %d/%d" % [hp_value, hp_max]) if occupied else "")
+	_fit_readout(hp_caption, ("HANGING" if hanging else ("HP %d" % hp_value if side == "hero" else "HP %d/%d" % [hp_value, hp_max])) if occupied else "")
 	hp_caption.add_theme_color_override("font_color", AMBER if hanging else BONE)
 	hp_frame.self_modulate = Color("ffd18c") if hanging else Color.WHITE
 	surface.tooltip_text = hp.tooltip_text
@@ -221,7 +238,7 @@ static func present_rank(meters: Dictionary, unit: Dictionary, side: String) -> 
 			Color("b95450") if danger else Color("d7a560"), 4.0))
 		fray_frame.self_modulate = Color("ffd18c") if danger else Color.WHITE
 		readout.add_theme_color_override("font_color", AMBER if danger else BONE)
-		_fit_readout(readout, "FRAY %d/200" % fray_value if occupied else "")
+		_fit_readout(readout, "FRAY %d" % fray_value if occupied else "")
 		fray.tooltip_text = ""
 		if occupied:
 			# Thresholds are risks, not a guessed roll result. At 200,
