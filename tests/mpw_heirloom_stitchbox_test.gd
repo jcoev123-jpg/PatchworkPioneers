@@ -127,6 +127,9 @@ func _run() -> void:
 	# App envelope accepts old two-field records and new versioned records,
 	# without adding fields to RunDifficulty itself.
 	var app: Variant = load("res://scenes/app.tscn").instantiate()
+	# The real profile (user://quilt_difficulty.json) is shared by every test run and lane on this machine; a
+	# run that another test cleared there made the "fresh" app start unlocked (flaky 2026-11-04).
+	app.difficulty_save_path = ""
 	root.add_child(app)
 	current_scene = app
 	for _i in range(3):
