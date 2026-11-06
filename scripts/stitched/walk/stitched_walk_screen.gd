@@ -20,6 +20,8 @@ var art: Dictionary = {}
 var candle := 78
 var reduced_motion := false
 var eye_profile := "neutral"
+## The corridor's own far picture, dimmed behind the whole screen (no bare clear colour).
+var backdrop: TextureRect
 var layers: Array[TextureRect] = []
 var trailing: Array[TextureRect] = []
 var rank_labels: Array[Label] = []
@@ -131,6 +133,9 @@ func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	reduced_motion = bool(ProjectSettings.get_setting("patchwork/reduced_motion", false))
+	backdrop = _picture(self, "WalkBackdrop", Rect2(Vector2.ZERO, Vector2(1280, 720)))
+	backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	backdrop.modulate = Color(0.32, 0.28, 0.3)
 	CHROME.action_tray(self, Rect2(16, 16, 1248, 688))
 	for index in 3:
 		layers.append(_picture(self, "Depth" + str(index), VIEW))
@@ -242,7 +247,7 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 	expected = walk.snapshot() if host != null else receipt.snapshot.duplicate(true)
 	if is_node_ready():
 		refresh()
-		feedback.text = (kind.replace("_", " ").to_upper() + "  |  " + str(receipt.events)) if receipt.ok else receipt.error
+		feedback.text = describe(kind, request, receipt, expected.dolls)
 		if receipt.ok and expected.phase == "complete":
 			feedback.text = "Walk complete. Back to title."
 		if receipt.ok and kind == "forward" and not reduced_motion:
@@ -253,6 +258,60 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 				travel.tween_property(layers[index], "position", VIEW.position, 0.28)
 				travel.tween_property(layers[index], "scale", Vector2.ONE, 0.28)
 	return receipt
+
+
+## Player-facing line for one receipt; never shows ids or raw event data.
+static func describe(kind: String, request: Dictionary, receipt: Dictionary, dolls: Array) -> String:
+	if not receipt.get("ok", false):
+		return "That cannot be done: %s." % str(receipt.get("error", "blocked")).replace("_", " ")
+	var names := {}
+	for doll in dolls:
+		names[doll.id] = doll.name
+	var lines: Array[String] = []
+	for event in receipt.get("events", []):
+		var who: String = names.get(event.get("target", event.get("actor", "")), "a doll")
+		match str(event.get("kind", "")):
+			"tug_torn":
+				lines.append("Something tugs from the dark: %s's %s tears." % [who, str(event.get("slot", "seam"))])
+			"tug_saved":
+				lines.append("%s gives up the %s and the tug lets go." % [who, str(event.get("item", "item")).replace("_", " ")])
+			"tug_no_part":
+				lines.append("Something tugs at the last doll but finds nothing left to tear.")
+			"mimic_removed":
+				lines.append("The snip finds the false thread. The extra doll falls away.")
+			"wrong_snip":
+				lines.append("Wrong thread! %s frays (+%d)." % [who, int(event.get("fray", 0))])
+			"mimic_pending":
+				lines.append("A fifth doll follows you into the next room.")
+			"mannequins_stage":
+				lines.append("The mannequins have moved closer.")
+			"mannequins_pending":
+				lines.append("The mannequins wait at the next stop.")
+			"shadow_revealed":
+				lines.append("Looking back, there is one doll too many.")
+			"heal":
+				lines.append("%s is mended (+%d)." % [who, int(event.get("amount", 0))])
+			"whirr_warning":
+				lines.append("A sewing machine whirrs somewhere ahead.")
+			"machine_pending":
+				lines.append("The sewing machine waits at the next stop.")
+			"dummy_inspected":
+				lines.append("You study the tailor's dummy.")
+			"curio_choice":
+				lines.append("You chose to %s." % str(event.get("choice", "look")).replace("_", " "))
+	if lines.is_empty():
+		match kind:
+			"forward":
+				lines.append("You creep forward.")
+			"look_back":
+				lines.append("You look back the way you came.")
+			"switch":
+				lines.append("You borrow %s's eyes." % names.get(request.get("target", ""), "another doll"))
+			"use_item":
+				lines.append("Used.")
+			_:
+				lines.append("Done.")
+	return " ".join(lines)
 
 
 func set_reduced_motion(value: bool) -> void:
@@ -303,6 +362,7 @@ func refresh() -> void:
 		_layer_tone = Color.WHITE * (0.35 + depth * 0.16)
 		_layer_tone.a = 1
 		layers[index].modulate = _layer_tone
+	backdrop.texture = layers[0].texture
 	if expected.looking_back:
 		layers[0].texture = texture_or_fallback(art.look_back.path, art.look_back.fallback) if walk.shadow_visible() \
 			else texture_or_fallback(art.look_back.fallback, art.fallbacks[0])

@@ -7,7 +7,7 @@
   ],
   "look_back": {
     "path": "res://assets/paper/walk/look_back_four.png",
-    "fallback": "res://assets/paper/backgrounds/rest_camp.png"
+    "fallback": "res://assets/paper/walk/look_back_empty.png"
   },
   "heads": {
     "warden_head_pot_helm_bonk": "cracked",
@@ -40,179 +40,179 @@
   "corridors": {
     "wall_lath_passage": [
       [
-        "res://assets/paper/walk/wall_lath_passage_0_far.png",
-        "res://assets/paper/walk/wall_lath_passage_0_mid.png",
-        "res://assets/paper/walk/wall_lath_passage_0_near.png"
+        "res://assets/paper/walk/wall_lath_passage_a.png",
+        "res://assets/paper/walk/wall_lath_passage_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_lath_passage_1_far.png",
-        "res://assets/paper/walk/wall_lath_passage_1_mid.png",
-        "res://assets/paper/walk/wall_lath_passage_1_near.png"
+        "res://assets/paper/walk/wall_lath_passage_a.png",
+        "res://assets/paper/walk/wall_lath_passage_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_lath_passage_2_far.png",
-        "res://assets/paper/walk/wall_lath_passage_2_mid.png",
-        "res://assets/paper/walk/wall_lath_passage_2_near.png"
+        "res://assets/paper/walk/wall_lath_passage_b.png",
+        "res://assets/paper/walk/wall_lath_passage_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_lath_passage_3_far.png",
-        "res://assets/paper/walk/wall_lath_passage_3_mid.png",
-        "res://assets/paper/walk/wall_lath_passage_3_near.png"
+        "res://assets/paper/walk/wall_lath_passage_b.png",
+        "res://assets/paper/walk/wall_lath_passage_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ],
     "wall_paper_fold": [
       [
-        "res://assets/paper/walk/wall_paper_fold_0_far.png",
-        "res://assets/paper/walk/wall_paper_fold_0_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_0_near.png"
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_1_far.png",
-        "res://assets/paper/walk/wall_paper_fold_1_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_1_near.png"
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_2_far.png",
-        "res://assets/paper/walk/wall_paper_fold_2_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_2_near.png"
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_3_far.png",
-        "res://assets/paper/walk/wall_paper_fold_3_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_3_near.png"
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/walk/wall_paper_fold_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_4_far.png",
-        "res://assets/paper/walk/wall_paper_fold_4_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_4_near.png"
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_5_far.png",
-        "res://assets/paper/walk/wall_paper_fold_5_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_5_near.png"
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/wall_paper_fold_6_far.png",
-        "res://assets/paper/walk/wall_paper_fold_6_mid.png",
-        "res://assets/paper/walk/wall_paper_fold_6_near.png"
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/walk/wall_paper_fold_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ],
     "floor_dust_channel": [
       [
-        "res://assets/paper/walk/floor_dust_channel_0_far.png",
-        "res://assets/paper/walk/floor_dust_channel_0_mid.png",
-        "res://assets/paper/walk/floor_dust_channel_0_near.png"
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_dust_channel_1_far.png",
-        "res://assets/paper/walk/floor_dust_channel_1_mid.png",
-        "res://assets/paper/walk/floor_dust_channel_1_near.png"
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_dust_channel_2_far.png",
-        "res://assets/paper/walk/floor_dust_channel_2_mid.png",
-        "res://assets/paper/walk/floor_dust_channel_2_near.png"
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/walk/floor_dust_channel_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_dust_channel_3_far.png",
-        "res://assets/paper/walk/floor_dust_channel_3_mid.png",
-        "res://assets/paper/walk/floor_dust_channel_3_near.png"
+        "res://assets/paper/walk/floor_dust_channel_b.png",
+        "res://assets/paper/walk/floor_dust_channel_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_dust_channel_4_far.png",
-        "res://assets/paper/walk/floor_dust_channel_4_mid.png",
-        "res://assets/paper/walk/floor_dust_channel_4_near.png"
+        "res://assets/paper/walk/floor_dust_channel_b.png",
+        "res://assets/paper/walk/floor_dust_channel_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ],
     "floor_nail_bridge": [
       [
-        "res://assets/paper/walk/floor_nail_bridge_0_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_0_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_0_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_nail_bridge_1_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_1_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_1_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_nail_bridge_2_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_2_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_2_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/walk/floor_nail_bridge_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_nail_bridge_3_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_3_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_3_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_nail_bridge_4_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_4_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_4_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/floor_nail_bridge_5_far.png",
-        "res://assets/paper/walk/floor_nail_bridge_5_mid.png",
-        "res://assets/paper/walk/floor_nail_bridge_5_near.png"
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/walk/floor_nail_bridge_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ],
     "basket_wicker_tunnel": [
       [
-        "res://assets/paper/walk/basket_wicker_tunnel_0_far.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_0_mid.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_0_near.png"
+        "res://assets/paper/walk/basket_wicker_tunnel_a.png",
+        "res://assets/paper/walk/basket_wicker_tunnel_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_wicker_tunnel_1_far.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_1_mid.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_1_near.png"
+        "res://assets/paper/walk/basket_wicker_tunnel_a.png",
+        "res://assets/paper/walk/basket_wicker_tunnel_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_wicker_tunnel_2_far.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_2_mid.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_2_near.png"
+        "res://assets/paper/walk/basket_wicker_tunnel_b.png",
+        "res://assets/paper/walk/basket_wicker_tunnel_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_wicker_tunnel_3_far.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_3_mid.png",
-        "res://assets/paper/walk/basket_wicker_tunnel_3_near.png"
+        "res://assets/paper/walk/basket_wicker_tunnel_b.png",
+        "res://assets/paper/walk/basket_wicker_tunnel_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ],
     "basket_ribbon_descent": [
       [
-        "res://assets/paper/walk/basket_ribbon_descent_0_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_0_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_0_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_1_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_1_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_1_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_2_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_2_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_2_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_3_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_3_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_3_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/walk/basket_ribbon_descent_a.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_4_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_4_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_4_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_5_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_5_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_5_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ],
       [
-        "res://assets/paper/walk/basket_ribbon_descent_6_far.png",
-        "res://assets/paper/walk/basket_ribbon_descent_6_mid.png",
-        "res://assets/paper/walk/basket_ribbon_descent_6_near.png"
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/walk/basket_ribbon_descent_b.png",
+        "res://assets/paper/backgrounds/battle_vignette.png"
       ]
     ]
   }
