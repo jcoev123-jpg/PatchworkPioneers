@@ -32,6 +32,9 @@ static func for_rank(battle: StitchedRules, actor: Dictionary, ability: Dictiona
 	var fragments: Array[String] = []
 	var tooltip_rows: Array[String] = []
 	var attack := str(ability.get("target_side", "")) == "enemy"
+	var effects: Dictionary = ability.get("effects", {})
+	var authored_heal := int(effects.get("heal", 0))
+	var healing := not attack and authored_heal > 0
 	for target in targets:
 		var entry := {
 			"id": str(target.get("id", "")),
@@ -69,17 +72,41 @@ static func for_rank(battle: StitchedRules, actor: Dictionary, ability: Dictiona
 				summary += " · COWERING: 30% refusal"
 			if not effect.is_empty():
 				summary += " · on hit: " + effect
+		elif healing and str(target.get("side", "")) == "hero" and not bool(target.get("lost", false)):
+			# The same cap used by StitchedRules._apply_effects; only detached
+			# presentation fields are written, never the battle's target dictionary.
+			var before := int(target.get("hp", 0))
+			var maximum_hp := int(target.get("max_hp", 0))
+			var after := mini(maximum_hp, before + authored_heal)
+			var hanging_before := bool(target.get("hanging", false))
+			var hanging_after := hanging_before if after <= 0 else false
+			entry["heal_amount"] = after - before
+			entry["hp_before"] = before
+			entry["hp_after"] = after
+			entry["max_hp"] = maximum_hp
+			entry["hanging_before"] = hanging_before
+			entry["hanging_after"] = hanging_after
+			var relief := " · HANGING ENDS" if hanging_before and not hanging_after else ""
+			summary = "%s +%d HP → %d/%d%s" % [target_name, after - before, after, maximum_hp, relief]
+			tooltip_rows.append("%s · NO HIT ROLL · %s · HP %d/%d → %d/%d · RESTORED +%d HP · HANGING %s → %s" % [
+				target_name, effect, before, maximum_hp, after, maximum_hp, after - before,
+				"yes" if hanging_before else "no", "yes" if hanging_after else "no",
+			])
 		else:
 			summary = "%s NO HIT ROLL · NON-CRIT 0" % target_name
 			if not effect.is_empty():
 				summary += " · " + effect
 			else:
 				summary += " · " + str(ability.get("kind", "support")).to_upper()
+			tooltip_rows.append(summary)
+		if attack:
+			tooltip_rows.append(summary)
 		rows.append(entry)
 		fragments.append(summary)
-		tooltip_rows.append(summary)
 	var name := str(ability.get("name", "Ability"))
 	var heading := name + (" · MULTI %d TARGETS" % rows.size() if bool(ability.get("multi", false)) else "")
+	if healing:
+		heading += " · HEAL +%d · NO HIT ROLL" % authored_heal
 	return {
 		"ability": name,
 		"rank": rank,
