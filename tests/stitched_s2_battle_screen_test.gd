@@ -46,6 +46,28 @@ func _figure_click(stage: StitchedBattleScreen, key: String) -> void:
 	stage._figure_hits[key].gui_input.emit(mouse)
 
 
+func _fray_full(value: int) -> String:
+	return ("FRAY %d/200" % value
+		+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
+		+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
+
+
+func _check_rank_font(label: Label, note: String) -> void:
+	var face: Font = label.get_theme_font("font")
+	var actual_size := label.get_theme_font_size("font_size")
+	_check(face is FontVariation and (face as FontVariation).base_font == StitchedBattleChrome.RANK_FONT and label.has_theme_font_override("font")
+		and actual_size >= 13 and label.size.y == 14.0 and label.scale.y == 1.0
+		and not label.clip_text and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
+		note + " binds genuine 13px-or-larger font with an unscaled, unclipped caption slot")
+	if face != null:
+		var measured := face.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, actual_size)
+		_check(measured.x * label.scale.x <= label.size.x - 1.0
+			and measured.y >= 13.0 and measured.y <= 14.0
+			and label.get_global_rect().size.y == 14.0
+			and label.get_global_rect().end.y <= 544.0,
+			note + " has measured visible width/height inside the genuine y530..544 underfoot band")
+
+
 func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 	var backdrop = stage.get_node_or_null("SharedStitchedBackdrop")
 	_check(backdrop is ROSTER_STAGE.StageBackdrop and backdrop.has_image() and
@@ -111,12 +133,13 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 			var caption_rect := readout.get_global_rect()
 			var fill_rect := hp.get_global_rect()
 			var frame: NinePatchRect = meter_root.get_node("HPFillSewnFrame")
+			_check_rank_font(readout, "%s rank %d HP" % [side, rank])
 			var fill_style := hp.get_theme_stylebox("fill") as StyleBoxTexture
 			_check(tag.visible and meter_root.visible and not duplicate.visible
 				and duplicate.text.is_empty() and tag.focus_mode == Control.FOCUS_ALL
-				and tag.clip_text and readout.clip_text
+				and tag.clip_text and not readout.clip_text
 				and tag.get_theme_font_size("font_size") >= 16
-				and readout.get_theme_font_size("font_size") >= 8
+				and readout.get_theme_font_size("font_size") >= 13
 				and name_rect.size.x >= 145.0 and meter_rect.size.x == 170.0
 				and name_rect.size.y >= 22.0 and meter_rect.size.y == 24.0
 				and foot.get_global_rect().encloses(name_rect)
@@ -127,16 +150,20 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 				and fill_style != null and fill_style.texture == load("res://assets/paper/ui/reward_button.png")
 				and frame.get_global_rect().size.y >= fill_rect.size.y
 				and hp.value == float(unit["hp"]) and hp.max_value == float(unit["max_hp"])
-				and readout.text == "HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])]
+				and readout.text == ("HP %d" % int(unit["hp"]) if side == "hero" else "HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])])
+				and hp.tooltip_text == "HP %d/%d" % [int(unit["hp"]), int(unit["max_hp"])]
 				and tag.tooltip_text.contains(str(unit["name"])),
 				"%s R%d has exactly one framed HP meter row and readable name/status inspection" % [side, rank])
 			if side == "hero":
 				var fray: ProgressBar = meters["fray"]
 				var fray_text: Label = meters["fray_text"]
+				_check_rank_font(fray_text, "hero rank %d FRAY" % rank)
 				var fray_frame: NinePatchRect = meter_root.get_node("FrayFillSewnFrame")
 				var fray_fill := fray.get_theme_stylebox("fill") as StyleBoxTexture
 				_check(fray.max_value == 200.0 and fray.value == float(unit["fray"])
-					and fray_text.text == "FRAY %d/200" % int(unit["fray"])
+					and fray_text.text == "FRAY %d" % int(unit["fray"])
+					and fray.tooltip_text == _fray_full(int(unit["fray"]))
+					and meter_root.tooltip_text.contains(_fray_full(int(unit["fray"])))
 					and not fray_text.get_global_rect().intersects(fray_frame.get_global_rect())
 					and not caption_rect.intersects(fray_text.get_global_rect())
 					and fray_fill != null and fray_fill.texture == load("res://assets/paper/ui/reward_button.png")
@@ -385,7 +412,8 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		stage._rank_meters["hero_2"]["hp"].value == 0.0 and
 		stage._rank_meters["hero_2"]["hp_text"].text == "HANGING" and
 		stage._rank_meters["hero_2"]["fray"].value == 150.0 and
-		stage._rank_meters["hero_2"]["fray_text"].text == "FRAY 150/200" and
+		stage._rank_meters["hero_2"]["fray_text"].text == "FRAY 150" and
+		stage._rank_meters["hero_2"]["fray"].tooltip_text == _fray_full(150) and
 		stage._rank_meters["hero_2"]["root"].visible and
 		not stage._labels["hero_2"].visible and
 		not hero_2_detail.contains("DODGE") and not hero_2_detail.contains("GUARD"),
@@ -394,6 +422,28 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		stage.receipts.size() == view_receipts,
 		"viewing Hanging seat preserves battle snapshot, RNG and receipt count")
 	stage._seat_buttons["hero_2"].mouse_exited.emit()
+	# Second high-FRAY witness runs on the public mounted route.
+	hero_2["fray"] = 199
+	stage._refresh()
+	var high_fray: Dictionary = stage._rank_meters["hero_2"]
+	_check(high_fray["hp_text"].text == "HANGING"
+		and high_fray["fray_text"].text == "FRAY 199"
+		and high_fray["fray"].value == 199.0
+		and high_fray["fray"].max_value == 200.0
+		and high_fray["fray"].tooltip_text == _fray_full(199)
+		and high_fray["root"].tooltip_text.contains(_fray_full(199))
+		and high_fray["fray_text"].get_theme_color("font_color") == StitchedBattleChrome.AMBER,
+		"public HANGING / FRAY 199 retains legible glance and exact status")
+	_check_rank_font(high_fray["fray_text"], "public FRAY 199")
+	_check_rank_font(high_fray["hp_text"], "public HANGING")
+	stage._seat_buttons["hero_2"].grab_focus()
+	_check(stage._seat_buttons["hero_2"].has_focus()
+		and stage.status_detail("hero", 2).contains("FRAY 199/200")
+		and stage._status_disclosure_label.text.contains("FRAY 199/200"),
+		"keyboard focus retains full high-FRAY 199/200 disclosure")
+	stage._action_buttons["pass"].grab_focus()
+	_check(battle.rng_state() == view_rng and stage.receipts.size() == view_receipts,
+		"high-FRAY and focus inspection spend no RNG or action")
 	# Zero/removed statuses and expired/absent dodge_buff disappear on refresh.
 	stage._seat_buttons["hero_1"].mouse_entered.emit()
 	hero_1["statuses"]["guard"] = 0
@@ -418,7 +468,7 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		not stage.status_detail("foe", 1).contains("BLEED") and
 		not stage.status_detail("foe", 1).contains("WEAK") and
 		not stage._labels["hero_1"].visible and not stage._labels["foe_1"].visible and
-		stage._rank_meters["hero_2"]["hp_text"].text == "HP %d/%d" % [int(hero_2["hp"]), int(hero_2["max_hp"])] and
+		stage._rank_meters["hero_2"]["hp_text"].text == "HP %d" % int(hero_2["hp"]) and
 		stage._rank_meters["hero_2"]["fray"].value == 0.0 and
 		not stage.status_detail("hero", 2).contains("HANGING"),
 		"zero/removed statuses, expired temporary Dodge and cleared Hanging disappear on refresh")
@@ -641,6 +691,12 @@ func _run() -> void:
 		boot.screen_from_query("?screen=stitched_battle&screen=battle") == "",
 		"only the exact, unambiguous public query is admitted")
 	_check(not ProjectSettings.has_setting("patchwork/combat_mode"), "S2 needs no retired combat setting")
+	var configured_theme_path := str(ProjectSettings.get_setting("gui/theme/custom", ""))
+	var configured_theme := load(configured_theme_path) as Theme
+	_check(configured_theme_path == "res://assets/fonts/patchwork_theme.tres"
+		and configured_theme != null and configured_theme.default_font == StitchedBattleChrome.RANK_FONT
+		and configured_theme != load("res://themes/gothic_theme.tres"),
+		"precondition: ACTUAL project mounts patchwork theme, not rejected Gothic default")
 	var config := StitchedBattleScreen.read_preview()
 	_check(str(config.get("mode", "")) == "stitched" and config.get("heroes", []).size() == 4 and
 		config.get("foes", []).size() == 3, "representative seed and real 4v3 inputs exist")
@@ -663,6 +719,9 @@ func _run() -> void:
 			continue
 		await process_frame
 		var battle := stage.battle
+		_check(stage.theme == null and stage.get_theme_font("font") == configured_theme.default_font
+			and (stage._rank_meters["hero_1"]["hp_text"].get_theme_font("font") as FontVariation).base_font == StitchedBattleChrome.RANK_FONT,
+			"public screen inherits configured patchwork theme, with only local rank fonts")
 		_check(battle != null and battle.is_valid() and battle.get_heroes().size() == 4 and
 			battle.get_foes().size() == 3 and stage._puppets.size() == 8,
 			"mounted stage is seeded 4v3 with 8 potential stage ranks")
