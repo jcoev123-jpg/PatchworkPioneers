@@ -260,11 +260,31 @@ func walk_act(command: Dictionary, expected: Dictionary) -> Dictionary:
 ## fray, the mimic, cut threads and the Machine's toll at the next battle.
 func _finish_walk() -> bool:
 	var state := walk.snapshot()
+	# Validate the whole trap claim before publishing any carry or settling dolls.
+	# Only the placed instance can authenticate a Ragbag; loot shares its source.
+	var bleeds: Array = []
+	var claimed: Array = []
+	for effect in state.pending:
+		if effect.kind != "curio_trap" or effect.get("consumed") == true:
+			continue
+		var matches: Array = state.curios.filter(func(curio: Dictionary): return curio.instance == effect.get("source"))
+		if matches.size() != 1 or not matches[0].get("resolved", false) or effect.get("source") in claimed:
+			return false
+		var projected := RunStitchedRagbagBleedEvent.project(effect, matches[0], state.dolls)
+		if projected.get("ok") != true:
+			return false
+		bleeds.append(projected.carry.duplicate(true))
+		claimed.append(effect.source)
+	walk_carry.append_array(bleeds)
 	if state.whirr == 100:
 		var toll := walk.claim_machine_toll(state)
 		if toll.ok:
 			walk_carry.append({"kind": "machine", "extra_foes": toll.next_fight_extra_foes, "party_fray": toll.party_fray})
 			state = walk.snapshot()
+	# Consume only the detached saved receipt after the Walk's own claims.
+	for effect in state.pending:
+		if effect.kind == "curio_trap" and effect.get("source") in claimed:
+			effect.consumed = true
 	var cut: Array = []
 	for effect in state.pending:
 		if effect.consumed:
@@ -317,8 +337,8 @@ func _hero_inputs() -> Array:
 		record.acc = hero.base_acc
 		record.prot = hero.base_prot
 		record.statuses = {}
-		if int(hero.statuses.get("bleed", 0)) > 0:
-			record.statuses["bleed"] = int(hero.statuses.bleed)
+		if typeof(hero.statuses.get("bleed")) == TYPE_INT and hero.statuses.bleed > 0:
+			record.statuses["bleed"] = hero.statuses.bleed
 		result.append(record)
 	return result
 
@@ -347,6 +367,17 @@ func _open_battle(kind: String) -> bool:
 	var fray_gains: Array = []
 	for carried in walk_carry:
 		match carried.kind:
+			"bleed":
+				if carried.size() != 3 or not carried.get("target") is String \
+						or typeof(carried.get("amount")) != TYPE_INT or carried.amount != 2:
+					return false
+				var found := false
+				for hero in hero_inputs:
+					if hero.id == carried.target and not hero.lost:
+						hero.statuses["bleed"] = maxi(int(hero.statuses.get("bleed", 0)), carried.amount)
+						found = true
+				if not found:
+					return false
 			"machine":
 				# The Machine's extra mouth is an ordinary foe picked in catalog order, so no draw is spent.
 				for id in enemies.order:
