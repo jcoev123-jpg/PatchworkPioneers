@@ -216,7 +216,7 @@ func _summary(part: Dictionary, slot: String) -> Dictionary:
 		"owner": str(entry["owner"]),
 		"tier": tier,
 		"torn": bool(part["torn"]),
-		"ability": {"id": str(ability["id"]), "name": str(ability["name"]), "kind": str(ability["kind"])},
+		"ability": ability.duplicate(true),
 		"stat": StitchedParts.stat_at_tier(entry, tier),
 		"text": str(entry["text"]),
 	}
