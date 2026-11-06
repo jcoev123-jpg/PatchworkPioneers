@@ -5613,15 +5613,16 @@ func _show_stitched_intro() -> void:
 	strip.patch_margin_right = 24
 	strip.patch_margin_top = 24
 	strip.patch_margin_bottom = 24
-	strip.position = Vector2(36, 452)
-	strip.size = Vector2(1208, 244)
+	# Wren, the candle and the dolls fill the left of the picture; his story sits beside them.
+	strip.position = Vector2(820, 40)
+	strip.size = Vector2(424, 640)
 	strip.modulate.a = 0.92
 	veil.add_child(strip)
 	var content := VBoxContainer.new()
 	content.name = "WrenIntroText"
-	content.position = Vector2(28, 16)
-	content.size = Vector2(1152, 212)
-	content.add_theme_constant_override("separation", 5)
+	content.position = Vector2(44, 40)
+	content.size = Vector2(336, 560)
+	content.add_theme_constant_override("separation", 14)
 	strip.add_child(content)
 	var heading := _stitched_run_caption(content, str(intro.get("heading", "ONE NIGHT IN THE OLD HOUSE")), 26)
 	heading.name = "WrenIntroHeading"
