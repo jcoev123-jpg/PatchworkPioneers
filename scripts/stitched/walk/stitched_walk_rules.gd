@@ -20,6 +20,8 @@ const HORROR_KINDS := ["mimic", "machine", "stitches", "tug", "mannequins"]
 
 var _rng: RandomNumberGenerator
 var _state: Dictionary = {}
+## Owned by the Walk, so separate bridge instances cannot consume it twice.
+var _battle_consumed := false
 
 
 static func load_catalogs() -> Dictionary:
