@@ -46,6 +46,9 @@ func _parcel_fixture(terminal: String = "Fight", stitched: bool = false) -> Dict
 	# another RUNNING lane holds the shared append-only hints file. Every seed is
 	# re-verified below through the authentic map, toll and draw.
 	hints.append_array([590817, 975147, 1012371])
+	# Witnesses re-derived after three hero-gated wallet stories joined the pool (11-06).
+	for seed_value in [254370, 222279, 182652]:
+		hints.push_front(seed_value)
 	hints.append_array(range(1, 500000))
 	for value in hints:
 		var rng := RandomNumberGenerator.new()
