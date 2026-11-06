@@ -5821,18 +5821,39 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 	var choices_box: VBoxContainer
 	var expected := session.snapshot()
 	if session.phase == "map":
-		# Read only session.map and session.choices(); keep the original guarded
-		# native admission buttons in authoritative choice order.
+		# Both pages use the same captured admission, never graph-local run state.
+		var mounted_page := stitched_run_panel
+		var map_epoch := _stitched_run_epoch
+		var mounted_legal := session.choices()
+		var admit_route := func(id: String):
+			if stitched_run_session == session and stitched_run_panel == mounted_page \
+				and map_epoch == _stitched_run_epoch and mounted_page.is_visible_in_tree() \
+				and session.phase == "map" and mounted_legal.has(id) \
+				and session.snapshot() == expected and session.enter(id, expected):
+				_present_stitched_run()
 		var book := StitchedRouteBookView.new()
 		content.add_child(book)
-		choices_box = book.present(session.map, session.choices())
-		for id in session.choices():
+		choices_box = book.present(session.map, mounted_legal)
+		var graph := book.graph_view
+		graph.route_requested.connect(func(id: String):
+			if not mounted_legal.has(id) or book.graph_view != graph \
+				or not is_instance_valid(graph) or not graph.is_visible_in_tree():
+				return
+			var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+			if tile == null or tile.get_meta("route_id", "") != id \
+				or tile.get_meta("status", "") != "legal":
+				return
+			var control := tile.get_node_or_null("GraphNodeActivate") as Button
+			if control == null or control.get_meta("route_id", "") != id \
+				or control.disabled or not control.is_visible_in_tree():
+				return
+			admit_route.call(id))
+		for id in mounted_legal:
 			var node := session.map.get_node(id)
 			var button := _stitched_run_action(choices_box,
 				"FLOOR %02d  /  %s  /  PATH %d" % [
 					node.floor, node.type, node.position + 1], func():
-				if stitched_run_session == session and session.enter(id, expected):
-					_present_stitched_run())
+					admit_route.call(id))
 			button.custom_minimum_size = Vector2(610, 56)
 			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			button.set_meta("route_id", id)
@@ -5840,6 +5861,12 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 			button.tooltip_text = "Connected legal node %s" % id
 			book.decorate_ticket(button, str(node.type))
 			_stitched_run_node_icon(button, str(node.type))
+			# Left/right keyboard movement joins the lit atlas to its matching
+			# right-page ticket without changing the ticket Tab chain.
+			var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+			var graph_button := tile.get_node("GraphNodeActivate") as Button
+			button.focus_neighbor_left = button.get_path_to(graph_button)
+			graph_button.focus_neighbor_right = graph_button.get_path_to(button)
 			# Only inspect the authentic ticket's destination; the atlas has no
 			# admission callbacks and does not modify session or RNG authority.
 			button.mouse_entered.connect(func(): book.graph_view.set_inspected_route(id))
