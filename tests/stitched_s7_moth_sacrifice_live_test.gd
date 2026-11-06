@@ -2,10 +2,10 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
-const RICH_SEED := 36633
-const POOR_SEED := 819
-const FIRST_NODE := "f01_n0"
-const SHOP_NODE := "f02_n0"
+const RICH_SEED := 54376
+const POOR_SEED := 3148
+const FIRST_NODE := "f01_n1"
+const SHOP_NODE := "f02_n1"
 const MOTH_NODE := "f03_n1"
 const POOR_NODE := "f01_n0"
 var settled_branches := 0
