@@ -499,3 +499,86 @@ static func _future_effects(item: String) -> Dictionary:
 
 func _receipt(ok: bool, error: String, events: Array = []) -> Dictionary:
 	return {"ok": ok, "error": error, "events": events.duplicate(true), "snapshot": snapshot()}
+
+
+## Claim the one-shot Machine horror toll once from a completed Walk.
+## Preconditions: started real Walk, matching expected snapshot, matching RNG state,
+## phase complete, WHIRR 100, exactly one authentic unconsumed Machine pending descriptor.
+## Returns detached authoritative receipt for +1 foe in next fight and +10 fray per doll.
+func claim_machine_toll(expected: Dictionary) -> Dictionary:
+	if _state.is_empty() or _rng == null:
+		return _claim_receipt(false, "not_started")
+	if expected != _state or _rng.state != _state.get("rng"):
+		return _claim_receipt(false, "stale_snapshot")
+	if _state.get("phase") != "complete":
+		return _claim_receipt(false, "walk_incomplete")
+	if _state.get("whirr") != 100:
+		return _claim_receipt(false, "whirr_below_100")
+	var machine_descriptors: Array = []
+	for effect in _state.get("pending", []):
+		if effect is Dictionary and effect.get("kind") == "machine":
+			machine_descriptors.append(effect)
+	if machine_descriptors.size() != 1:
+		return _claim_receipt(false, "invalid_machine_descriptor")
+	var machine_effect: Dictionary = machine_descriptors[0]
+	if machine_effect.get("consumed") != false:
+		return _claim_receipt(false, "machine_already_consumed")
+	var expected_effects := {"next_fight_extra_foes": 1, "party_fray": 10}
+	if machine_effect.get("effects") != expected_effects:
+		return _claim_receipt(false, "invalid_machine_effects")
+	if not _keys(machine_effect, ["kind", "consumed", "effects"]):
+		return _claim_receipt(false, "invalid_machine_descriptor")
+	if not _state.get("dolls") is Array or _state.dolls.size() != 4:
+		return _claim_receipt(false, "invalid_party")
+	var targets: Array = []
+	for doll in _state.dolls:
+		if not doll is Dictionary or not _text(doll.get("id")) or doll.id in targets:
+			return _claim_receipt(false, "invalid_party")
+		targets.append(doll.id)
+	machine_effect.consumed = true
+	_state.revision += 1
+	return _claim_receipt(true, "", targets)
+
+
+func _claim_receipt(ok: bool, error: String, targets: Array = []) -> Dictionary:
+	var snap := snapshot()
+	if not ok:
+		return {
+			"ok": false,
+			"error": error,
+			"snapshot": snap,
+			"source": "",
+			"horror": "",
+			"horror_id": "",
+			"next_fight_extra_foes": 0,
+			"extra_foes": 0,
+			"reinforcements": 0,
+			"party_fray": 0,
+			"fray": 0,
+			"targets": [],
+			"dolls": [],
+			"fray_targets": [],
+			"effects": {},
+		}
+	var copied_targets := targets.duplicate(true)
+	return {
+		"ok": true,
+		"error": "",
+		"snapshot": snap,
+		"source": "hungry_machine",
+		"horror": "hungry_machine",
+		"horror_id": "hungry_machine",
+		"next_fight_extra_foes": 1,
+		"extra_foes": 1,
+		"reinforcements": 1,
+		"party_fray": 10,
+		"fray": 10,
+		"targets": copied_targets,
+		"dolls": copied_targets.duplicate(true),
+		"fray_targets": copied_targets.duplicate(true),
+		"effects": {
+			"next_fight_extra_foes": 1,
+			"party_fray": 10,
+			"targets": copied_targets.duplicate(true),
+		},
+	}
