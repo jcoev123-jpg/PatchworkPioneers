@@ -234,6 +234,7 @@ func _exercise_partial_carry() -> void:
 	_check(not shop_id.is_empty() and _press_route(app, shop_id), "earned carry enters the real connected Peddler")
 	var actions := session.visit_actions()
 	var bought := false
+	var bought_part: Dictionary = {}
 	for index in actions.size():
 		if actions[index].id == "buy_part" and actions[index].enabled:
 			var before := session.snapshot()
@@ -241,6 +242,7 @@ func _exercise_partial_carry() -> void:
 			button.pressed.emit()
 			_check(session.gold == before.gold - StitchedRunSession.PEDDLER_PRICE \
 				and session.satchel.size() == before.satchel.size() + 1, "real Peddler receipt charges gold and adds exactly one part")
+			bought_part = session.satchel.back().duplicate(true)
 			var paid := session.snapshot()
 			button.pressed.emit()
 			_check(session.snapshot() == paid, "stale paid button cannot duplicate its part or spend")
@@ -256,8 +258,8 @@ func _exercise_partial_carry() -> void:
 	var swapped := false
 	for index in actions.size():
 		var action: Dictionary = actions[index]
-		if action.id == "swap" and action.enabled and action.arguments[1] == "arms" \
-			and session.satchel[action.arguments[2]].id == "scissor_crab_claw_arm":
+		if action.id == "swap" and action.enabled and action.arguments[1] == bought_part.get("slot", "") \
+			and session.satchel[action.arguments[2]].id == bought_part.get("id", ""):
 			app.stitched_run_buttons[index].pressed.emit()
 			swapped = true
 			break

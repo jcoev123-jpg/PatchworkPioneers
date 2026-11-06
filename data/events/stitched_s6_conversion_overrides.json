@@ -1,0 +1,10 @@
+{
+  "events": {
+    "v3_mothlace_clock": {
+      "wind_bell": {"target": "party", "candle": 3, "fray": 0}
+    },
+    "v3_midnight_wickwork_jetty": {
+      "repair_wick_ladder": {"target": "party", "candle": 4, "fray": 0}
+    }
+  }
+}

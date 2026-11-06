@@ -236,8 +236,27 @@ func _lost_circle() -> void:
 	_check(stage != null and stage.battle == session.battle, "follow-on battle is actually mounted")
 	if stage != null:
 		var installed := stage.battle.get_unit(args[0])
+		# The mounted battle opens with foe initiative, so the replacement can
+		# legitimately take authenticated opening damage before this check.
+		# Derive the exact post-opening HP from the canonical receipts instead of
+		# the starter's pre-battle full HP.
+		var opening_hp: int = expected_hero.hp
+		var opening_bleed := 0
+		for receipt in stage.receipts:
+			for hit in receipt.get("results", []):
+				if str(hit.get("target", "")) != args[0]:
+					continue
+				opening_hp = int(hit["target_hp"])
+				for status in hit.get("statuses", []):
+					if str(status.get("status", "")) == "bleed":
+						opening_bleed = maxi(opening_bleed, int(status["duration"]))
+		# Bleed ticks at the start of the affected doll's turn. The tick is
+		# recorded in unit state rather than a damage receipt, so account for it
+		# only when the applied duration has actually decremented.
+		if opening_bleed > 0 and int(installed.get("statuses", {}).get("bleed", 0)) < opening_bleed:
+			opening_hp -= opening_bleed
 		_check(not installed.is_empty() and installed.parts == expected_hero.parts and installed.rank == expected_hero.rank
-			and installed.hp == expected_hero.hp and not installed.lost
+			and installed.hp == opening_hp and not installed.lost
 			and stage.battle.get_unit(lost_id).is_empty(), "follow-on battle owns the replacement's truthful identity, rank, gear and HP")
 		var restored := StitchedRunSave.restore(StitchedRunSave.capture(session))
 		_check(restored != null and restored.snapshot() == session.snapshot(), "onward battle replays the exact replaced snapshot and RNG")

@@ -54,6 +54,7 @@ const PEDDLER_PRICE := 10
 const CALM_PRICE := 75
 const UNPICK_YIELD := 2
 const DEFAULT_PICKS := ["warden", "seamstress", "tinker", "lantern_monk"]
+const EVENT_OVERRIDES_PATH := "res://data/events/stitched_s6_conversion_overrides.json"
 
 var map: RunMap
 var rng: RandomNumberGenerator
@@ -418,10 +419,32 @@ func _open_visit(kind: String) -> bool:
 			var bandage := RunStitchedPeddlerBandage.open_stitched(id, roster, gold, PEDDLER_PRICE)
 			for hero_id in bandage.quote().get("eligible", []):
 				_offer("bandage", "Bandage %s / %d gold" % [hero_id, PEDDLER_PRICE], true, [hero_id])
-			var stock := RunStitchedPeddlerPart.open_stitched(id, gold, satchel, catalog,
-				"scissor_crab_claw_arm", PEDDLER_PRICE)
-			if stock.is_valid():
-				_offer("buy_part", "Spare claw / %d gold" % PEDDLER_PRICE, gold >= PEDDLER_PRICE and satchel.size() < 6)
+			# The canonical RNG samples only on first entry, never on a refresh or
+			# a replayed receipt. Stock remains sealed with the pending node.
+			if not pending.has("peddler_stock"):
+				var sampled := RunStitchedPeddlerStock.sample(rng, catalog, patches, PEDDLER_PRICE)
+				if sampled.get("ok") != true:
+					return false
+				pending["peddler_stock"] = {"part": sampled.part.duplicate(true),
+					"patch": sampled.patch.duplicate(true)}
+			var stock: Dictionary = pending.peddler_stock
+			var part: Dictionary = stock.part
+			var part_service := RunStitchedPeddlerPart.open_stitched(id, gold, satchel, catalog,
+				str(part.id), int(part.price), int(part.tier))
+			if not part_service.is_valid():
+				return false
+			_offer("buy_part", "%s / tier I / %d gold" % [str(catalog[part.id].name), part.price],
+				gold >= int(part.price) and satchel.size() < RunStitchedPeddlerPart.SATCHEL_CAP)
+			var patch: Dictionary = stock.patch
+			if not patch.is_empty():
+				var patch_service := RunStitchedPeddlerStock.open_stitched(id, gold, patches, patch)
+				if not patch_service.is_valid():
+					return false
+				for hero in roster:
+					for slot in range(2):
+						_offer("buy_patch", "%s / %s / patch slot %d / %d gold" % [
+							str(patch.id), hero.name, slot + 1, int(patch.price)],
+							not hero.lost and gold >= int(patch.price), [patch.id, hero.id, slot])
 			var pins := RunStitchedPeddlerPins.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
 			var quote := pins.quote()
 			if quote.get("ok") != true:
@@ -546,8 +569,23 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					var visit := RunStitchedPeddlerBandage.open_stitched(id, _roster(), gold, PEDDLER_PRICE)
 					result = visit.choose_bandage(arguments[0], id, visit.read_state())
 				"buy_part":
-					var visit := RunStitchedPeddlerPart.open_stitched(id, gold, satchel, catalog, "scissor_crab_claw_arm", PEDDLER_PRICE)
+					var offered: Dictionary = pending.peddler_stock.part
+					var visit := RunStitchedPeddlerPart.open_stitched(id, gold, satchel, catalog,
+						str(offered.id), int(offered.price), int(offered.tier))
 					result = visit.buy(id, visit.read_state())
+				"buy_patch":
+					var offered: Dictionary = pending.peddler_stock.patch
+					if str(offered.get("id", "")) != str(arguments[0]):
+						return false
+					var visit := RunStitchedPeddlerStock.open_stitched(id, gold, patches, offered)
+					result = visit.buy_patch(arguments[0], id, visit.read_state())
+					if result.get("ok") == true:
+						for hero in heroes:
+							if hero.id == arguments[1] and not hero.lost and arguments[2] in [0, 1]:
+								while hero.patches.size() < 2:
+									hero.patches.append("")
+								displaced_patch = str(hero.patches[arguments[2]])
+								hero.patches[arguments[2]] = arguments[0]
 				_:
 					result = _service.select_stitched(action_id, id, _service.read_state())
 		"Unpicker":
@@ -661,18 +699,42 @@ func _apply_receipt(result: Dictionary) -> void:
 
 
 func _open_event() -> bool:
+	# No record is dropped on conversion failure. The whole unentered node
+	# refuses without consuming the route/RNG, rather than silently shrinking
+	# a seeded Event pool or choosing a different Event.
+	var override_document: Variant = JSON.parse_string(FileAccess.get_file_as_string(EVENT_OVERRIDES_PATH))
+	if not override_document is Dictionary or not override_document.get("events") is Dictionary:
+		return false
+	var overrides: Dictionary = override_document.events
 	var records: Array = []
+	var seen_overrides: Dictionary = {}
 	for path in ["res://data/events/m04_events.json", "res://data/events/v3_roadside_events.json",
-		"res://data/events/v3_candlelit_bargains.json", "res://data/events/v3_service_waystation_events.json",
+		"res://data/events/v3_candlelit_bargains.json", "res://data/events/v3_hero_choice_events.json",
+		"res://data/events/v3_service_waystation_events.json",
 		"res://data/events/s6_stitched_lantern_bobbin_ferry.json", "res://data/events/stitched_route_effects.json",
 		"res://data/events/estate_sale.json", "res://data/events/needle_gate.json", "res://data/events/thimble_exchange.json"]:
 		var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
 		if not document is Dictionary:
 			return false
-		for record in document.get("events", [document]):
-			var converted: Dictionary = record if record.has("service_kind") else _convert_event(record)
-			if not converted.is_empty():
-				records.append(converted)
+		var source_records: Variant = document.get("events", [document])
+		if not source_records is Array:
+			return false
+		for record in source_records:
+			if not record is Dictionary:
+				return false
+			var converted: Dictionary = record.duplicate(true) if record.has("service_kind") else _convert_event(record, overrides)
+			if converted.is_empty() or not RunEventChoice.new(converted).is_valid():
+				return false
+			if overrides.has(converted.id):
+				seen_overrides[converted.id] = true
+			# A hero-exclusive story is not drawn when its protagonist is
+			# absent; the authored record remains fully validated above.
+			if converted.has("required_hero") and not _party_ids().has(converted.required_hero):
+				continue
+			records.append(converted)
+	for override_id in overrides:
+		if not seen_overrides.has(override_id):
+			return false
 	if records.is_empty():
 		return false
 	records.sort_custom(func(a: Dictionary, b: Dictionary): return a.id < b.id)
@@ -721,25 +783,89 @@ func _open_event() -> bool:
 	return not _actions.is_empty()
 
 
-func _convert_event(raw: Dictionary) -> Dictionary:
+## JSON-decoded signed values may be whole floats, never truncated fractions
+## or boolean values. This keeps a malformed authored wallet from turning into
+## a valid free/cheap transaction.
+func _event_amount(value: Variant) -> Variant:
+	if typeof(value) == TYPE_INT:
+		return value
+	if typeof(value) == TYPE_FLOAT and is_finite(value) and floor(value) == value \
+			and absf(value) <= 9007199254740992.0:
+		return int(value)
+	return null
+
+
+func _convert_event(raw: Dictionary, overrides: Dictionary = {}) -> Dictionary:
 	var record := raw.duplicate(true)
+	if not record.get("choices") is Array or not record.get("id") is String:
+		return {}
+	var event_overrides: Variant = overrides.get(record.id, {})
+	if not event_overrides is Dictionary:
+		return {}
+	var hero_gate: Variant = record.get("required_hero", "")
+	var hero_choices: Variant = record.get("hero_choice_ids", [])
+	if not hero_gate is String or not hero_choices is Array:
+		return {}
+	if not hero_gate.is_empty() and not hero_gate in StitchedPartyAdmission.HERO_IDS:
+		return {}
 	var choices_array: Array = []
-	for choice in record.get("choices", []):
+	var observed: Dictionary = {}
+	for choice in record.choices:
+		if not choice is Dictionary or not choice.get("id") is String or not choice.get("text") is String:
+			return {}
+		observed[choice.id] = true
+		var effect: Dictionary = {"target": "party", "candle": 0, "fray": 0}
 		if choice.has("stitched_effect"):
-			var converted: Dictionary = choice.duplicate(true)
-			if converted.stitched_effect.get("hero_id") == "$front":
-				converted.stitched_effect.hero_id = _living_roster()[0].id
-			if converted.stitched_effect.has("part"):
-				converted.stitched_effect.part.tier = int(converted.stitched_effect.part.tier)
-			choices_array.append(converted)
-			continue
-		var outcome: Dictionary = choice.get("outcome", {})
-		for key in outcome:
-			if not key in ["gold", "scraps"]:
+			if not choice.stitched_effect is Dictionary:
 				return {}
-		choices_array.append({"id": choice.id, "text": choice.text,
-			"stitched_effect": {"target": "party", "candle": 0, "fray": 0,
-				"gold": int(outcome.get("gold", 0)), "scraps": int(outcome.get("scraps", 0))}})
+			effect = choice.stitched_effect.duplicate(true)
+		else:
+			var outcome: Variant = choice.get("outcome")
+			if not outcome is Dictionary:
+				return {}
+			for key in outcome:
+				# Extra legacy semantics must be explicitly translated, not
+				# discarded or treated as wallet-only.
+				if not key in ["gold", "scraps"]:
+					return {}
+				var amount: Variant = _event_amount(outcome[key])
+				if amount == null:
+					return {}
+				effect[key] = amount
+		var authored: Variant = event_overrides.get(choice.id, {})
+		if not authored is Dictionary:
+			return {}
+		for key in authored:
+			# Never let an override silently change a legacy wallet outcome.
+			if not key in ["target", "hero_id", "required_hero", "candle",
+					"fray", "hp", "part", "min_fray", "require_full_candle",
+					"required_candle_band", "required_candle_bands"]:
+				return {}
+			effect[key] = authored[key]
+		if not hero_gate.is_empty() and choice.id in hero_choices:
+			if effect.has("required_hero") and effect.required_hero != hero_gate:
+				return {}
+			effect["required_hero"] = hero_gate
+		if effect.get("hero_id") == "$front":
+			var living := _living_roster()
+			if living.is_empty():
+				return {}
+			effect["hero_id"] = living[0].id
+		if effect.has("part"):
+			if not effect.part is Dictionary or not effect.part.has("tier"):
+				return {}
+			var tier: Variant = _event_amount(effect.part.tier)
+			if tier == null:
+				return {}
+			effect.part.tier = tier
+		choices_array.append({"id": choice.id, "text": choice.text, "stitched_effect": effect})
+	# Stale/typoed overrides fail the Event rather than silently doing nothing.
+	for choice_id in event_overrides:
+		if not observed.has(choice_id):
+			return {}
+	for choice_id in hero_choices:
+		if not observed.has(choice_id):
+			return {}
 	record.choices = choices_array
 	return record
 
