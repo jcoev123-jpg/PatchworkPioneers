@@ -230,6 +230,39 @@
         { "id": "pay_measurement_seal", "text": "Pay 21 gold for a stamped crossing measure", "outcome": { "gold": -21, "scraps": 0 } },
         { "id": "leave", "text": "Wait for the ruler bridge to fold shut", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_oxblood_musicbox_checkpoint",
+      "title": "The Oxblood Music-Box Checkpoint",
+      "description": "An enormous oxblood music box straddles the floorboard lane; three plump button-eyed sentries turn its brass winding key while a toothed velvet tune gate blocks the dolls.",
+      "fight_choice_id": "silence_clockwork_sentries",
+      "choices": [
+        { "id": "silence_clockwork_sentries", "text": "Silence the winding sentries and force the music-box gate (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_copper_winding_pass", "text": "Pay 17 gold for a copper winding pass", "outcome": { "gold": -17, "scraps": 0 } },
+        { "id": "leave", "text": "Let the music box finish its crooked lullaby", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_crimson_zipper_causeway",
+      "title": "The Crimson Zipper Causeway",
+      "description": "A carriage-sized crimson zipper joins two torn felt cliffs; round burlap puller dolls brace its brass teeth with rope as a loose black thread snarls at their ankles.",
+      "fight_choice_id": "force_zipper_teeth",
+      "choices": [
+        { "id": "force_zipper_teeth", "text": "Wrench the zipper teeth apart and fight the puller dolls (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_satin_hem_scraps", "text": "Offer 2 scraps to stitch a safe crossing", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Follow the frayed cliff hem away from the zipper", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mossfelt_scissorbridge",
+      "title": "The Moss-Felt Scissorbridge",
+      "description": "Two enormous blunted dressmaking shears form a wavering bridge above a black button pond; squat moss-felt keeper dolls guard its brass pivot beneath a tiny candle lantern.",
+      "fight_choice_id": "break_scissor_lock",
+      "choices": [
+        { "id": "break_scissor_lock", "text": "Break the scissor lock and face the keeper dolls (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_dull_blade_permit", "text": "Pay 23 gold for a dull-blade crossing permit", "outcome": { "gold": -23, "scraps": 0 } },
+        { "id": "leave", "text": "Take the long bank around the quiet button pond", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
