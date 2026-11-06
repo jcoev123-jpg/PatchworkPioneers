@@ -10,6 +10,16 @@ const SEED_RANGE := 64
 const ALIASES := {"Rest": "Campfire", "Shop": "Peddler"}
 const NATIVE_SPLIT_KINDS := ["Campfire", "SewingCircle", "PatchStall", "Unpicker"]
 const NON_STOP_KINDS := ["Fight", "Elite", "Event", "Treasure"]
+## Independent oracle for the opt-in Stitched help: exact numbers and abilities.
+const HELP_REQUIRED := {
+	"Campfire": ["30%", "non-lost", "-25 FRAY", "+50 CANDLE", "cap 100", "part swaps", "satchel of up to 6"],
+	"SewingCircle": ["scraps mending", "one tier upgrade", "I to II or II to III", "same-slot",
+		"satchel of up to 6", "LOST doll", "unused starter doll"],
+	"Peddler": ["priced part or patch", "+25 CANDLE stub", "cures Bleed", "real offers", "your gold"],
+	"Unpicker": ["one eligible doll", "-50 FRAY", "quoted gold price", "spare part", "quoted scraps"],
+	"PatchStall": ["priced trinket or patch", "real offers", "your gold", "up to 2 patches"],
+}
+const HELP_FORBIDDEN := ["card", "deck", "hand", "energy", "stock", "pocket"]
 
 var failures: Array[String] = []
 var checks := 0
@@ -22,6 +32,9 @@ func _initialize() -> void:
 	_test_matched_seeded_routes()
 	_test_detached_snapshots()
 	_test_rng_isolation()
+	_test_stitched_help_invalid_maps()
+	_test_stitched_help_routes()
+	_test_stitched_help_detached_and_pure()
 	_finish()
 
 
@@ -271,3 +284,149 @@ func _test_rng_isolation() -> void:
 		"projection leaves the real graph, route, revision and legal choices untouched")
 	_check(_global_draws(8) == expected_global,
 		"projection never draws from Godot's global RNG stream")
+
+
+func _test_stitched_help_invalid_maps() -> void:
+	_check(RunV3StopChoiceProjection.project_stitched_legal_choices(null).is_empty(),
+		"stitched: null map projects nothing")
+	_check(RunV3StopChoiceProjection.project_stitched_legal_choices(RunMap.new()).is_empty(),
+		"stitched: ungenerated map projects nothing")
+	var rng := _rng(7)
+	var map := RunMap.new()
+	_check(not map.generate(null)
+		and RunV3StopChoiceProjection.project_stitched_legal_choices(map).is_empty(),
+		"stitched: rejected generation projects nothing")
+	_check(map.generate(rng), "stitched: terminal fixture generated")
+	for step in range(RunMap.FLOOR_COUNT):
+		var legal := map.get_legal_choices()
+		if legal.is_empty() or not map.choose_node(legal[0]):
+			break
+	_check(map.is_complete(), "stitched: terminal fixture reaches the boss")
+	var terminal := _snapshot(map, rng)
+	_check(RunV3StopChoiceProjection.project_stitched_legal_choices(map).is_empty(),
+		"stitched: completed map projects nothing")
+	_check(RunV3StopChoiceProjection.project_legal_choices(map).is_empty(),
+		"stitched: legacy projection of a completed map stays empty")
+	_check(_snapshot(map, rng) == terminal, "stitched: terminal reads change nothing")
+	for kind in ["Fight", "Elite", "Event", "Treasure", "Boss", "Rest", "Shop", "Mystery", ""]:
+		_check(RunV3StopChoiceProjection.stitched_stop_help_for(kind).is_empty(),
+			"stitched: no helper guidance for non-split kind '%s'" % kind)
+
+
+func _help_text_ok(help: Dictionary, kind: String, label: String) -> void:
+	_check(help.size() == 2 and help.has("lead") and help.has("detail")
+		and typeof(help["lead"]) == TYPE_STRING and typeof(help["detail"]) == TYPE_STRING,
+		"%s: help is exactly {lead, detail} strings" % label)
+	var lead := str(help.get("lead", ""))
+	var detail := str(help.get("detail", ""))
+	_check(not lead.is_empty() and not detail.is_empty() and detail.length() <= 330,
+		"%s: help is non-empty and concise" % label)
+	var lowered := (lead + " " + detail).to_lower()
+	for term in HELP_FORBIDDEN:
+		_check(not lowered.contains(term), "%s: help avoids '%s'" % [label, term])
+	for needle in HELP_REQUIRED[kind]:
+		_check(detail.contains(needle), "%s: detail conveys '%s'" % [label, needle])
+
+
+func _test_stitched_help_routes() -> void:
+	var witnessed: Dictionary = {}
+	var stop_sets: Dictionary = {}
+	for kind in HELP_REQUIRED:
+		_help_text_ok(RunV3StopChoiceProjection.stitched_stop_help_for(kind), kind, "direct " + kind)
+	for value in range(1, SEED_RANGE + 1):
+		var rng := _rng(value)
+		var map := RunMap.new()
+		_check(map.generate(rng), "stitched seed %d generates" % value)
+		for step in range(RunMap.FLOOR_COUNT):
+			var legal := map.get_legal_choices()
+			if legal.is_empty():
+				_check(false, "stitched seed %d step %d has a legal choice" % [value, step])
+				break
+			var before := _snapshot(map, rng)
+			var legacy := RunV3StopChoiceProjection.project_legal_choices(map)
+			var stitched := RunV3StopChoiceProjection.project_stitched_legal_choices(map)
+			_check(_snapshot(map, rng) == before,
+				"stitched seed %d step %d: projection changes nothing" % [value, step])
+			_check(stitched.size() == legal.size() and legacy.size() == legal.size() and not stitched.is_empty(),
+				"stitched seed %d step %d: one entry per real legal choice" % [value, step])
+			for index in range(mini(stitched.size(), legal.size())):
+				var entry: Dictionary = stitched[index]
+				var source := map.get_node(legal[index])
+				var source_kind: String = str(source["type"])
+				var kind: String = str(ALIASES.get(source_kind, source_kind))
+				var label := "stitched seed %d step %d %s" % [value, step, legal[index]]
+				_check(entry.get("id") == legal[index] and entry.get("type") == source_kind
+					and entry.get("v3_kind") == kind,
+					"%s: real id, source type and v3_kind retained" % label)
+				if HELP_REQUIRED.has(kind):
+					_check(entry.has("stitched_stop_help") and entry.size() == source.size() + 2,
+						"%s: split stop gains exactly one help field" % label)
+					var help: Dictionary = entry.get("stitched_stop_help", {})
+					_help_text_ok(help, kind, label)
+					var plain := entry.duplicate(true)
+					plain.erase("stitched_stop_help")
+					_check(plain == legacy[index] and plain == _expected(source),
+						"%s: apart from help the entry equals the legacy projection" % label)
+					witnessed[kind] = int(witnessed.get(kind, 0)) + 1
+					if source_kind != kind:
+						witnessed[source_kind + "->" + kind] = int(witnessed.get(source_kind + "->" + kind, 0)) + 1
+					if not stop_sets.has(kind):
+						stop_sets[kind] = help
+					else:
+						_check(stop_sets[kind] == help,
+							"%s: help is identical for every %s stop" % [label, kind])
+				else:
+					_check(not entry.has("stitched_stop_help") and entry == legacy[index]
+						and entry == _expected(source) and entry.size() == source.size() + 1,
+						"%s: non-stop %s carries no help and equals legacy" % [label, kind])
+					witnessed["none:" + kind] = int(witnessed.get("none:" + kind, 0)) + 1
+				_check(not map.get_node(legal[index]).has("stitched_stop_help")
+					and not map.get_node(legal[index]).has("v3_kind"),
+					"%s: real source record is never labelled" % label)
+			_check(map.choose_node(legal[(value + step) % legal.size()]),
+				"stitched seed %d step %d: real choice still commits" % [value, step])
+	for kind in HELP_REQUIRED:
+		_check(int(witnessed.get(kind, 0)) > 0, "seeded routes genuinely witness help for " + kind)
+	_check(int(witnessed.get("Rest->Campfire", 0)) > 0, "a legacy Rest displays Campfire help")
+	_check(int(witnessed.get("Shop->Peddler", 0)) > 0, "a legacy Shop displays Peddler help")
+	for kind in NON_STOP_KINDS + ["Boss"]:
+		_check(int(witnessed.get("none:" + kind, 0)) > 0, "seeded routes witness help-free " + kind)
+
+
+func _test_stitched_help_detached_and_pure() -> void:
+	for value in [3, 11, 29, 47]:
+		var rng := _rng(value)
+		var map := RunMap.new()
+		_check(map.generate(rng), "stitched detach pair %d generated" % value)
+		seed(value + 5000)
+		var expected_global := _global_draws(4)
+		seed(value + 5000)
+		for step in range(RunMap.FLOOR_COUNT):
+			var legal := map.get_legal_choices()
+			if legal.is_empty():
+				break
+			var before := _snapshot(map, rng)
+			var first := RunV3StopChoiceProjection.project_stitched_legal_choices(map)
+			var pristine := RunV3StopChoiceProjection.project_stitched_legal_choices(map)
+			_check(first == pristine, "stitched detach %d step %d: repeated reads agree" % [value, step])
+			for entry in first:
+				if entry.has("stitched_stop_help"):
+					var help: Dictionary = entry["stitched_stop_help"]
+					help["lead"] = "Mutated"
+					help["detail"] = "Mutated"
+					help["extra"] = true
+					entry["stitched_stop_help"] = {"lead": "x", "detail": "y"}
+				entry["v3_kind"] = "Mutated"
+				var edges: Array = entry["outgoing"]
+				edges.append("f99_n9")
+			_check(_snapshot(map, rng) == before,
+				"stitched detach %d step %d: mutating previews cannot edit the map or RNG" % [value, step])
+			_check(RunV3StopChoiceProjection.project_stitched_legal_choices(map) == pristine,
+				"stitched detach %d step %d: a fresh projection ignores earlier mutations" % [value, step])
+			var direct := RunV3StopChoiceProjection.stitched_stop_help_for("Campfire")
+			direct["lead"] = "Mutated"
+			_check(RunV3StopChoiceProjection.stitched_stop_help_for("Campfire")["lead"] != "Mutated",
+				"stitched detach %d step %d: helper guidance is never shared" % [value, step])
+			_check(map.choose_node(legal[0]), "stitched detach %d step %d commits" % [value, step])
+		_check(_global_draws(4) == expected_global,
+			"stitched detach %d: projection never draws from the global RNG" % value)
