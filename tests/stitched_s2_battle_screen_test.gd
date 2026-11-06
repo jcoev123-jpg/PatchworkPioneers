@@ -52,6 +52,15 @@ func _fray_full(value: int) -> String:
 		+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
 
 
+func _visible_badges(stage: StitchedBattleScreen, key: String) -> Array[Control]:
+	var result: Array[Control] = []
+	var row: Control = stage._rank_meters[key]["root"].get_node("BadgeRow")
+	for chip in row.get_children():
+		if chip.visible:
+			result.append(chip)
+	return result
+
+
 func _check_rank_font(label: Label, note: String) -> void:
 	var face: Font = label.get_theme_font("font")
 	var actual_size := label.get_theme_font_size("font_size")
@@ -90,13 +99,22 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 			var duplicate: Label = stage._labels[key]
 			var meters: Dictionary = stage._rank_meters[key]
 			var meter_root: Control = meters["root"]
+			var badge_row: Control = meter_root.get_node("BadgeRow")
+			_check(badge_row.get_global_rect().position.y == 486.0
+				and badge_row.get_global_rect().end.y == 504.0
+				and badge_row.get_child_count() == 6
+				and badge_row.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and badge_row.get_global_rect().position.x >= meter_root.global_position.x
+				and badge_row.get_global_rect().end.x <= meter_root.global_position.x + 170.0,
+				"public %s badge slots are passive and inside the 170px rank above its footplate" % key)
 			var hp: ProgressBar = meters["hp"]
 			var readout: Label = meters["hp_text"]
 			var painted := _painted_bounds(puppet)
 			var unit := stage._unit_at(side, rank)
 			if unit.is_empty():
 				_check(not puppet.visible and not hit.visible and not foot.visible
-					and not meter_root.visible and not duplicate.visible,
+					and not meter_root.visible and not duplicate.visible
+					and _visible_badges(stage, key).is_empty(),
 					"empty %s R%d has no figure, mouse hotspot, ghost text or meter" % [side, rank])
 				continue
 			actual += 1
@@ -230,15 +248,22 @@ func _verify_fourth_foe(stage: StitchedBattleScreen) -> void:
 	extra["id"] = "ragling"
 	extra["name"] = "Ragling"
 	extra["rank"] = 4
+	extra["statuses"] = {"mark": 2}
 	battle._units[extra["id"]] = extra
 	stage._refresh()
 	_check(battle.get_foes().size() == 4 and stage._puppets["foe_4"].visible
-		and stage._foe_tickets[4].visible, "genuine fourth foe has art, target and intent")
+		and stage._foe_tickets[4].visible
+		and _visible_badges(stage, "foe_4").size() == 1
+		and _visible_badges(stage, "foe_4")[0].tooltip_text == "MARK 2"
+		and _visible_badges(stage, "foe_4")[0].get_node("Emblem").texture ==
+			load("res://assets/paper/stitched/icons/status_mark.png"),
+		"genuine fourth foe has art, target, intent and its exact authoritative Mark icon")
 	_verify_stage_art(stage, 4)
 	battle._units.erase(extra["id"])
 	stage._refresh()
 	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng
-		and not stage._puppets["foe_4"].visible and not stage._foe_tickets[4].visible,
+		and not stage._puppets["foe_4"].visible and not stage._foe_tickets[4].visible
+		and _visible_badges(stage, "foe_4").is_empty(),
 		"restoring 4v3 fixture removes fourth-rank figure and intent without RNG changes")
 
 
@@ -335,6 +360,42 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var view_snapshot := battle.state_snapshot()
 	var view_rng := battle.rng_state()
 	var view_receipts := stage.receipts.size()
+	var foe_badges := _visible_badges(stage, "foe_1")
+	var hero_badges := _visible_badges(stage, "hero_1")
+	var hanging_badges := _visible_badges(stage, "hero_2")
+	_check(foe_badges.size() == 6
+		and foe_badges[0].tooltip_text == "BLEED 3"
+		and foe_badges[0].get_node("Emblem").texture ==
+			load("res://assets/paper/stitched/icons/status_bleed.png")
+		and foe_badges[1].tooltip_text == "WEAK 2"
+		and foe_badges[1].get_node("Short").text == "WK"
+		and foe_badges[5].get_node("Short").text == "+"
+		and foe_badges[5].get_node("Count").text == "3"
+		and foe_badges[5].tooltip_text.contains("RIPOSTE 3")
+		and foe_badges[5].tooltip_text.contains("STUN 1")
+		and foe_badges[5].tooltip_text.contains("MARK 1"),
+		"public 4v3 foe shows real Bleed art, Weak felt and five plus three overflow, never zero Exposed")
+	_check(hero_badges.size() == 4
+		and hero_badges[0].tooltip_text == "EXPOSED 2"
+		and hero_badges[0].get_node("Short").text == "EX"
+		and hero_badges[1].tooltip_text == "STUN RESIST 1"
+		and hero_badges[1].get_node("Short").text == "SR"
+		and hero_badges[2].tooltip_text == "GUARD 2"
+		and hero_badges[2].get_node("Emblem").texture ==
+			load("res://assets/paper/stitched/icons/status_guard.png")
+		and hero_badges[3].tooltip_text == "DODGE +8 / 2 turns"
+		and not stage._rank_meters["hero_1"]["root"].tooltip_text.contains("TANGLED"),
+		"public hero shows only positive Exposed, Stun resist, Guard and actual Dodge buff")
+	_check(hanging_badges.size() == 1
+		and hanging_badges[0].tooltip_text == "HANGING BY A THREAD"
+		and hanging_badges[0].get_node("Emblem").texture ==
+			load("res://assets/paper/stitched/icons/status_hanging.png")
+		and stage._rank_meters["hero_2"]["root"].tooltip_text.contains("FRAY 150/200")
+		and stage._rank_meters["hero_2"]["root"].tooltip_text.contains("HANGING BY A THREAD"),
+		"public 0 HP living hero occupies its actual rank with Hanging art and full fray disclosure")
+	_check(battle.state_snapshot() == view_snapshot and battle.rng_state() == view_rng
+		and stage.receipts.size() == view_receipts,
+		"mounted badge painting never ticks statuses, changes RNG or adds receipts")
 	_check(stage._labels["log"].text == ordinary_log,
 		"passive refresh without seat hover or focus preserves the ordinary action message")
 	_check(stage._seat_buttons["foe_1"].text.contains("R1") and
@@ -458,6 +519,14 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 	var cleared_snapshot := battle.state_snapshot()
 	var cleared_rng := battle.rng_state()
 	stage._refresh()
+	_check(_visible_badges(stage, "hero_1").is_empty()
+		and _visible_badges(stage, "foe_1").is_empty()
+		and _visible_badges(stage, "hero_2").is_empty()
+		and not stage._rank_meters["hero_1"]["root"].get_node("BadgeRow").visible
+		and not stage._rank_meters["foe_1"]["root"].get_node("BadgeRow").visible
+		and not stage._rank_meters["hero_2"]["root"].get_node("BadgeRow").visible
+		and stage._rank_meters["hero_1"]["root"].get_node("BadgeRow").get_child_count() == 6,
+		"live status expiry removes old bleed/guard/dodge/Hanging chips without accumulating children")
 	_check(stage._labels["log"].text.contains("STATUS: none") and
 		not stage._labels["log"].text.contains("GUARD") and
 		not stage._labels["log"].text.contains("STUN RESIST") and
