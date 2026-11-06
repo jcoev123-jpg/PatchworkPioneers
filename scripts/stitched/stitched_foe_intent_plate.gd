@@ -7,7 +7,7 @@ const PLATE_TEXTURE := preload("res://assets/paper/ui/hud_name_plate.png")
 const HEADING_FONT := preload("res://assets/fonts/LondrinaSolid-Regular.ttf")
 const BONE := Color("f5e5cd")
 const BRASS := Color("e5b86d")
-const PLATE_SIZE := Vector2(144, 62)
+const PLATE_SIZE := Vector2(150, 76)
 const ATTACK_TEXTURE := preload("res://assets/paper/ui/intent_attack.png")
 const DEFEND_TEXTURE := preload("res://assets/paper/ui/intent_defend.png")
 const BUFF_TEXTURE := preload("res://assets/paper/ui/intent_buff.png")
@@ -37,8 +37,8 @@ func _init() -> void:
 func _ready() -> void:
 	glyph = TextureRect.new()
 	glyph.name = "IntentGlyph"
-	glyph.position = Vector2(10, 9)
-	glyph.size = Vector2(24, 24)
+	glyph.position = Vector2(9, 10)
+	glyph.size = Vector2(26, 26)
 	glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	glyph.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -46,13 +46,13 @@ func _ready() -> void:
 	add_child(glyph)
 	primary = Label.new()
 	primary.name = "IntentText"
-	primary.position = Vector2(9, 6)
-	primary.size = Vector2(126, 29)
+	primary.position = Vector2(8, 6)
+	primary.size = Vector2(134, 33)
 	primary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	primary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	primary.clip_text = true
 	primary.add_theme_font_override("font", HEADING_FONT)
-	primary.add_theme_font_size_override("font_size", 22)
+	primary.add_theme_font_size_override("font_size", 24)
 	primary.add_theme_color_override("font_color", BONE)
 	primary.add_theme_color_override("font_shadow_color", Color("160c13"))
 	primary.add_theme_constant_override("shadow_offset_x", 1)
@@ -61,12 +61,13 @@ func _ready() -> void:
 	add_child(primary)
 	secondary = Label.new()
 	secondary.name = "IntentTarget"
-	secondary.position = Vector2(9, 36)
-	secondary.size = Vector2(126, 20)
+	secondary.position = Vector2(8, 43)
+	secondary.size = Vector2(134, 26)
 	secondary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	secondary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	secondary.clip_text = true
-	secondary.add_theme_font_size_override("font_size", 16)
+	secondary.add_theme_font_override("font", HEADING_FONT)
+	secondary.add_theme_font_size_override("font_size", 19)
 	secondary.add_theme_color_override("font_color", BRASS)
 	secondary.add_theme_color_override("font_shadow_color", Color("160c13"))
 	secondary.add_theme_constant_override("shadow_offset_x", 1)
@@ -85,8 +86,8 @@ func clear_intent() -> void:
 		glyph.texture = null
 		glyph.visible = false
 	if primary != null:
-		primary.position.x = 9
-		primary.size.x = 126
+		primary.position.x = 8
+		primary.size.x = 134
 		primary.text = ""
 	if secondary != null:
 		secondary.text = ""
@@ -153,8 +154,8 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	if glyph != null:
 		glyph.texture = _texture_for_kind(ability_kind)
 		glyph.visible = glyph.texture != null and not foe_id.is_empty()
-	primary.position.x = 36 if glyph != null and glyph.visible else 9
-	primary.size.x = 99 if glyph != null and glyph.visible else 126
+	primary.position.x = 38 if glyph != null and glyph.visible else 8
+	primary.size.x = 104 if glyph != null and glyph.visible else 134
 	primary.text = _fit_caption(heading, primary)
 	secondary.text = _fit_caption(target, secondary)
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
@@ -177,6 +178,12 @@ func _texture_for_kind(kind: String) -> Texture2D:
 			return DEBUFF_TEXTURE
 	return null
 
+
+# The dedicated image-backed disclosure on hover/focus is the visible help.
+# Keep tooltip_text as the complete, testable accessibility description, but
+# prevent Godot's default floating tooltip from masking adjacent foe tickets.
+func _get_tooltip(_at_position: Vector2) -> String:
+	return ""
 
 func set_inspected(value: bool) -> void:
 	if primary != null:

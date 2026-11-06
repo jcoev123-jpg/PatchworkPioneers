@@ -456,6 +456,7 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	var id: String = pending.node_id
 	var result: Dictionary = {}
 	var kind: String = pending.service
+	var displaced_patch := ""
 	match kind:
 		"Campfire":
 			if action_id == "swap":
@@ -510,10 +511,15 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 						if hero.id == arguments[1]:
 							while hero.patches.size() < 2:
 								hero.patches.append("")
+							displaced_patch = str(hero.patches[arguments[2]])
 							hero.patches[arguments[2]] = arguments[0]
 	if result.get("ok") != true:
 		return false
 	_apply_receipt(result)
+	if displaced_patch != "":
+		# The replaced patch is unpicked: it stops being owned and yields exactly 1 scrap.
+		patches.erase(displaced_patch)
+		scraps += 1
 	pending.steps.append({"action": action_id, "arguments": arguments.duplicate(true),
 		"gold": gold, "scraps": scraps, "candle": candle})
 	if kind == "Campfire" and action_id == "swap":
