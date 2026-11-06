@@ -212,11 +212,11 @@
           "name": "Needle Barrage",
           "kind": "ranged",
           "launch": [1, 4],
-          "target": [1, 3],
+          "target": [1, 2, 3],
           "target_side": "enemy",
-          "multi": false,
+          "multi": true,
           "acc": 80,
-          "dmg": [3, 5],
+          "dmg": [2, 3],
           "crit": 0,
           "effects": {
             "bleed": 1
