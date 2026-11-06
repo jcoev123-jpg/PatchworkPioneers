@@ -230,6 +230,11 @@ func _fixtures() -> Dictionary:
 	# index or position.
 	hints.append_array([140348, 146086, 190010, 209157, 251140, 386261,
 		388826, 418360, 608718, 643940, 773768])
+	# Re-derived through the same six-Event map/toll/draw oracle after the
+	# current roadside pool shifted these six required witnesses. Keep every
+	# previous seed and the no-fallback gate; mounted settlement/replay checks
+	# below still authenticate the selected record and exact RNG state.
+	hints.append_array([216328, 308609, 438189, 443215, 677232, 1037087])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():
