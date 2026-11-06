@@ -199,6 +199,7 @@
           7
         ],
         "crit": 0,
+        "mark_damage": 3,
         "effects": {
           "tangled": 1
         },
@@ -212,6 +213,7 @@
               6,
               9
             ],
+            "mark_damage": 4,
             "effects": {
               "tangled": 2
             }
@@ -224,13 +226,14 @@
               11
             ],
             "acc": 95,
+            "mark_damage": 5,
             "effects": {
               "tangled": 3
             }
           }
         }
       },
-      "text": "Double-fist a front foe and tangle its thread."
+      "text": "Double-fist a front foe, tangle its thread, and strike Marked seams harder."
     },
     {
       "id": "warden_torso_iron_challenge",
