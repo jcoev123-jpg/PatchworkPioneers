@@ -150,11 +150,11 @@ static func project(pending_entry: Variant, curio_context: Variant, roster: Vari
 		if typeof(rank_val) != TYPE_INT or int(rank_val) < MIN_RANK or int(rank_val) > MAX_RANK:
 			return _fail("target doll '%s' rank must be %d..%d, got %s" % [target, MIN_RANK, MAX_RANK, str(rank_val)])
 
-	# Validate HP if present
+	# Validate HP if present (hp == 0 is Hanging by a Thread, admitted for non-lost dolls; hp < 0 remains invalid)
 	if recipient_doll.has("hp"):
 		var hp_val: Variant = recipient_doll.get("hp")
-		if typeof(hp_val) == TYPE_INT and int(hp_val) <= 0:
-			return _fail("target doll '%s' has 0 or negative HP (%d)" % [target, int(hp_val)])
+		if (typeof(hp_val) == TYPE_INT or typeof(hp_val) == TYPE_FLOAT) and hp_val < 0:
+			return _fail("target doll '%s' has negative HP (%d)" % [target, int(hp_val)])
 
 	# 4. Construct exact detached carry intent
 	var carry_intent := {
