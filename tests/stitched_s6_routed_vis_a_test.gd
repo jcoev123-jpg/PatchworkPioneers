@@ -62,6 +62,7 @@ func _assert_book(app: Node, label: String) -> void:
 		and book.get_meta("legal_ids", []) == choices
 		and book.get_meta("current_id", "invalid") == session.map.get_current_node_id(),
 		label + " reads authoritative history, current position and connected IDs")
+	_assert_graph(app, book, label)
 	var here := book.find_child("CurrentSeam", true, false) as Label
 	var current := session.map.get_node(session.map.get_current_node_id())
 	_check(here != null and here.is_visible_in_tree()
@@ -128,6 +129,172 @@ func _assert_book(app: Node, label: String) -> void:
 			label + " legal ticket %d is truthful, image-backed and keyboard-focusable" % index)
 
 
+
+func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> void:
+	var session: StitchedRunSession = app.stitched_run_session
+	var graph: StitchedRouteGraphView = book.graph_view
+	_check(graph != null and graph.get_parent() != null and graph.is_visible_in_tree(),
+		label + " embeds the live, passive atlas on the left page")
+	if graph == null:
+		return
+	var left := book.find_child("RouteOrVisitStory", true, false)
+	var scroll := graph.find_child("RouteGraphScroll", true, false) as ScrollContainer
+	var bands := graph.find_child("RouteGraphBands", true, false) as VBoxContainer
+	var preview := graph.find_child("RouteGraphPreview", true, false) as Label
+	var floors := session.map.get_floors()
+	var route := session.map.get_route()
+	var choices := session.choices()
+	_check(graph.is_ancestor_of(scroll) and left.is_ancestor_of(graph)
+		and scroll != null and bands != null and preview != null
+		and scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
+		and graph.get_meta("floor_count") == floors.size() and floors.size() == 12,
+		label + " nests all twelve authored bands in the left-page scroll")
+	if bands == null or preview == null:
+		return
+	_check(bands.get_child_count() == floors.size()
+		and graph.get_meta("visited_ids") == route and graph.get_meta("legal_ids") == choices
+		and graph.get_meta("current_id") == session.map.get_current_node_id(),
+		label + " projects actual visit/current/legal state without adding a node")
+	var expected_legal: Array = floors[0].map(func(node: Dictionary): return str(node.id)) if route.is_empty() else session.map.get_node(route.back()).outgoing
+	_check(choices == expected_legal and not choices.is_empty(),
+		label + " shows only the session's genuine connected next-floor paths")
+	var seen: Dictionary = {}
+	var edge_count := 0
+	for floor_index in floors.size():
+		var floor_nodes: Array = floors[floor_index]
+		var band := graph.find_child("GraphFloor_%02d" % (floor_index + 1), true, false) as VBoxContainer
+		_check(band != null and band.get_meta("floor", -1) == floor_index + 1
+			and band.get_meta("node_ids", []) == floor_nodes.map(func(node: Dictionary): return str(node.id)),
+			label + " authored floor %02d has the exact generated nodes" % (floor_index + 1))
+		if band == null:
+			continue
+		var row := band.find_child("GraphFloorPaths", false, false) as HBoxContainer
+		_check(row != null and row.get_child_count() == floor_nodes.size()
+			and floor_nodes.size() in [3, 4],
+			label + " floor %02d retains every path in order" % (floor_index + 1))
+		for record in floor_nodes:
+			var id: String = record.id
+			var tile := band.find_child("GraphNode_" + id, true, false) as VBoxContainer
+			_check(tile != null and not seen.has(id),
+				label + " displays unique genuine path " + id)
+			if tile == null:
+				continue
+			seen[id] = true
+			var expected_status := "current" if id == session.map.get_current_node_id() else (
+				"visited" if route.has(id) else "legal" if choices.has(id) else "future")
+			var art := tile.find_child("GraphNodeIcon", false, false) as TextureRect
+			var kind := tile.find_child("GraphNodeKind", false, false) as Label
+			var floor_label := tile.find_child("GraphNodeFloor", false, false) as Label
+			var path_label := tile.find_child("GraphNodePath", false, false) as Label
+			var state_label := tile.find_child("GraphNodeState", false, false) as Label
+			_check(tile.get_meta("route_id") == id and tile.get_meta("node_kind") == record.type
+				and tile.get_meta("floor") == record.floor
+				and tile.get_meta("path") == record.position + 1
+				and tile.get_meta("node_data") == record
+				and tile.get_meta("outgoing") == record.outgoing
+				and tile.get_meta("visited") == route.has(id)
+				and tile.get_meta("current") == (id == session.map.get_current_node_id())
+				and tile.get_meta("legal") == choices.has(id)
+				and tile.get_meta("status") == expected_status
+				and tile.focus_mode == Control.FOCUS_NONE
+				and tile.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+				label + " " + id + " has exact detached session truth and cannot admit")
+			_check(art != null and art.texture != null and art.get_meta("art_path", "").begins_with("res://assets/paper/ui/map_node_")
+				and kind != null and record.type.to_upper() in kind.text
+				and floor_label != null and "FLOOR %02d" % record.floor in floor_label.text
+				and path_label != null and "PATH %d" % (record.position + 1) in path_label.text
+				and state_label != null and not state_label.text.is_empty(),
+				label + " " + id + " has authored art and legible floor/kind/path/state")
+			var edges := tile.find_child("GraphNodeEdges", false, false) as HFlowContainer
+			_check(edges != null and edges.get_child_count() == record.outgoing.size(),
+				label + " " + id + " has every real directed edge, including crossings")
+			if edges != null:
+				for edge_index in record.outgoing.size():
+					var target: String = record.outgoing[edge_index]
+					var edge := edges.get_child(edge_index) as Label
+					_check(edge != null and edge.get_meta("source_id") == id
+						and edge.get_meta("target_id") == target
+						and edge.name == "GraphEdge_" + target
+						and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+						label + " " + id + " retains directed link to " + target)
+					edge_count += 1
+	_check(seen.size() == floors.reduce(func(count, floor: Array): return count + floor.size(), 0)
+		and edge_count > seen.size(),
+		label + " retains the entire branching/crossing graph, not a route ticket list")
+	var inspected_id: String = graph.inspected_route_id
+	var expected_preview: Array = [] if inspected_id.is_empty() else session.map.get_node(inspected_id).outgoing
+	_check(preview.get_meta("preview_ids", []) == expected_preview
+		and (inspected_id.is_empty() or choices.has(inspected_id)),
+		label + " inspection previews only the selected legal node's outgoing links")
+
+
+func _exercise_graph_inspection(app: Node, label: String) -> void:
+	var session: StitchedRunSession = app.stitched_run_session
+	var book := app.stitched_run_panel.find_child("StitchedRouteBookView", true, false) as StitchedRouteBookView
+	_check(book != null and book.graph_view != null, label + " has a real atlas for focus testing")
+	if book == null or book.graph_view == null:
+		return
+	var graph: StitchedRouteGraphView = book.graph_view
+	await process_frame
+	var left := book.find_child("RouteOrVisitStory", true, false) as Control
+	var right := book.find_child("LegalChoices", true, false) as Control
+	var graph_scroll := graph.find_child("RouteGraphScroll", true, false) as Control
+	var hero_recaps := app.stitched_run_panel.find_child("FourHeroRecaps", true, false) as Control
+	var navigation := app.stitched_run_panel.find_child("RunNavigation", true, false) as Control
+	var l := left.get_global_rect()
+	var r := right.get_global_rect()
+	var g := graph_scroll.get_global_rect()
+	_check(l.size.x > 0 and r.size.x > 0 and g.size.y >= 100
+		and l.end.x <= r.position.x and g.position.x >= l.position.x
+		and g.end.x <= l.end.x and g.end.y <= l.end.y
+		and hero_recaps.get_global_rect().end.y <= l.position.y
+		and navigation.get_global_rect().position.y >= l.end.y
+		and navigation.get_global_rect().end.y <= 720
+		and r.end.x <= 1280,
+		label + " fits the branch scroll, tickets, four heroes, ledger and nav at 1280x720")
+	var initial := session.snapshot()
+	var choices := session.choices()
+	_check(choices.size() > 0, label + " has at least one real choice to inspect")
+	for index in choices.size():
+		var id: String = choices[index]
+		var button: Button = app.stitched_run_buttons[index]
+		button.mouse_entered.emit()
+		_check(graph.inspected_route_id == id
+			and graph.find_child("GraphNode_" + id, true, false).get_meta("inspected")
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
+				== session.map.get_node(id).outgoing
+			and session.snapshot() == initial,
+			label + " mouse inspection matches " + id + " and draws no RNG")
+		for other_id in choices:
+			if other_id != id:
+				_check(not graph.find_child("GraphNode_" + other_id, true, false).get_meta("inspected"),
+					label + " hover does not illuminate unrelated legal " + other_id)
+		button.mouse_exited.emit()
+		_check(graph.inspected_route_id == (id if button.has_focus() else ""),
+			label + " leaving the ticket keeps an existing keyboard focus only")
+		button.grab_focus()
+		await process_frame
+		_check(button.has_focus() and graph.inspected_route_id == id
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
+				== session.map.get_node(id).outgoing
+			and session.snapshot() == initial,
+			label + " keyboard focus highlights same node/links without mutating run")
+		button.mouse_entered.emit()
+		button.mouse_exited.emit()
+		_check(graph.inspected_route_id == id,
+			label + " mouse exit preserves the still-focused ticket")
+		var save: Button = app.stitched_run_buttons[choices.size()]
+		save.grab_focus()
+		await process_frame
+		_check(graph.inspected_route_id.is_empty()
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids", []) == []
+			and session.snapshot() == initial,
+			label + " keyboard focus exit clears preview without a game action")
+	graph.set_inspected_route("invented")
+	_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
+		label + " nonexistent map focus cannot create a path or draw RNG")
+
+
 func _keyboard_route() -> void:
 	var witness := _seed_with_kind("Event")
 	_check(not witness.is_empty(), "keyboard finds a real opening Event witness")
@@ -139,6 +306,7 @@ func _keyboard_route() -> void:
 		app.free()
 		return
 	_assert_book(app, "keyboard opening")
+	await _exercise_graph_inspection(app, "keyboard opening")
 	var index: int = session.choices().find(str(witness.id))
 	_check(index >= 0, "keyboard Event is a connected legal choice")
 	if index < 0:
@@ -212,6 +380,7 @@ func _visit_kind(kind: String, expect_disabled: bool) -> void:
 			var icon: TextureRect = button.find_child("AuthoredNodeIcon", false, false)
 			_check(icon != null and icon.texture != null, "legal node carries real authored icon")
 	_assert_book(app, kind + " opening")
+	await _exercise_graph_inspection(app, kind + " opening")
 	var old_route_button: Button = app.stitched_run_buttons[route_choices.find(node_id)]
 	var initial := session.snapshot()
 	old_route_button.disabled = true
@@ -271,6 +440,7 @@ func _visit_kind(kind: String, expect_disabled: bool) -> void:
 			kind + " accepted decision cannot replay, double-spend or redraw RNG")
 	if session.phase == "map":
 		_assert_book(app, kind + " committed stop")
+		await _exercise_graph_inspection(app, kind + " committed stop")
 		var returned := session.snapshot()
 		var next_ids := session.choices()
 		var old_page_buttons: Array[Button] = app.stitched_run_buttons.duplicate()
@@ -287,11 +457,14 @@ func _visit_kind(kind: String, expect_disabled: bool) -> void:
 			and restored.choices() == next_ids,
 			kind + " mounted Reload restores the exact connected map and choices")
 		_assert_book(app, kind + " reloaded journey")
+		# Exercise old callbacks before yielding: the previous page is already
+		# queued for deletion, while the new atlas uses independent controls.
 		for stale in old_page_buttons:
 			stale.pressed.emit()
 		_check(session.snapshot() == returned and app.stitched_run_session == restored
 			and restored.snapshot() == returned,
 			kind + " stale Save/Reload/route buttons cannot replay or consume RNG")
+		await _exercise_graph_inspection(app, kind + " reloaded journey")
 		DirAccess.remove_absolute(save_path)
 	app.free()
 	await process_frame

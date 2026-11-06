@@ -5706,6 +5706,16 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 			button.tooltip_text = "Connected legal node %s" % id
 			book.decorate_ticket(button, str(node.type))
 			_stitched_run_node_icon(button, str(node.type))
+			# Only inspect the authentic ticket's destination; the atlas has no
+			# admission callbacks and does not modify session or RNG authority.
+			button.mouse_entered.connect(func(): book.graph_view.set_inspected_route(id))
+			button.mouse_exited.connect(func():
+				if not button.has_focus():
+					book.graph_view.clear_inspected_route(id))
+			button.focus_entered.connect(func(): book.graph_view.set_inspected_route(id))
+			button.focus_exited.connect(func():
+				if not button.is_hovered():
+					book.graph_view.clear_inspected_route(id))
 	else:
 		var atlas := HBoxContainer.new()
 		atlas.name = "RoutedStage"
