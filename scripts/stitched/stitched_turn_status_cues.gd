@@ -26,6 +26,9 @@ const MARK_EXPLANATION := "Marked: mark-hunting abilities gain their authored bo
 const STUN_EXPLANATION := "Stun: skip the next turn; then briefly resist another Stun."
 const GUARD_EXPLANATION := "Guard: intercept hits aimed at a chosen ally while their thread is joined."
 const STUN_RESIST_EXPLANATION := "Stun Resist: blocks another Stun until this unit's next turn begins."
+const WEAK_EXPLANATION := "Weak: outgoing direct attack damage -25% (rounded down)."
+const EXPOSED_EXPLANATION := "Exposed: incoming direct attack damage +50% (rounded down)."
+const COMBINED_WEAK_EXPOSED_EXPLANATION := "With Weak on the attacker and Exposed on the target, apply combined x9/8 once, rounded down before Tangled/PROT."
 
 
 static func _number(value: Variant) -> bool:
@@ -88,6 +91,10 @@ static func cue(unit: Dictionary) -> String:
 		return "TNGL"
 	if statuses is Dictionary and _positive_count(statuses.get("mark")):
 		return "MARK"
+	if statuses is Dictionary and _positive_count(statuses.get("weak")):
+		return "WEAK"
+	if statuses is Dictionary and _positive_count(statuses.get("exposed")):
+		return "EXPD"
 	if side == "hero":
 		return "HERO"
 	if side == "foe":
@@ -156,6 +163,12 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			lines.append(TANGLED_EXPLANATION)
 		if _positive_count(raw.get("mark")):
 			lines.append(MARK_EXPLANATION)
+		if _positive_count(raw.get("weak")):
+			lines.append(WEAK_EXPLANATION)
+		if _positive_count(raw.get("exposed")):
+			lines.append(EXPOSED_EXPLANATION)
+		if _positive_count(raw.get("weak")) and _positive_count(raw.get("exposed")):
+			lines.append(COMBINED_WEAK_EXPOSED_EXPLANATION)
 	return lines
 
 
