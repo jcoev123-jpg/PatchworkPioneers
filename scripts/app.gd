@@ -5760,7 +5760,28 @@ func _present_stitched_run() -> void:
 	hero_rows.add_theme_constant_override("separation", 8)
 	content.add_child(hero_rows)
 	for hero in session.heroes:
-		var card := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var felt := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var card := HBoxContainer.new()
+		card.add_theme_constant_override("separation", 8)
+		felt.add_child(card)
+		# The doll's own battle painting, cropped to head and shoulders, fills the felt's empty stitched frame.
+		var idle_path := str(STAGE_ROSTER.art_paths(str(hero.id)).get("idle", ""))
+		if ResourceLoader.exists(idle_path, "Texture2D"):
+			var full := load(idle_path) as Texture2D
+			var side := minf(full.get_width(), full.get_height() * 0.5)
+			var bust := AtlasTexture.new()
+			bust.atlas = full
+			bust.region = Rect2((full.get_width() - side) / 2.0, 0.0, side, side)
+			var portrait := TextureRect.new()
+			portrait.name = "Bust_" + str(hero.id)
+			portrait.texture = bust
+			portrait.custom_minimum_size = Vector2(76, 82)
+			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if hero.lost:
+				portrait.modulate = Color(0.35, 0.3, 0.3)
+			card.add_child(portrait)
 		var recap := Label.new()
 		recap.name = "Recap_" + str(hero.id)
 		recap.add_theme_font_size_override("font_size", 17)
