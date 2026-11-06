@@ -480,9 +480,12 @@ func _terminal(app: Node, mode: String) -> void:
 		return
 	var banner: TextureRect = page.find_child("TerminalBanner", true, false)
 	_check(banner != null and banner.texture != null, mode + " has authored result banner")
-	_check(app.stitched_run_buttons.size() == 2
+	# S9d adds a third action back to Wren's room once the bedroom pictures exist.
+	var room_action := 1 if StitchedBedroom.has_art() else 0
+	_check(app.stitched_run_buttons.size() == 2 + room_action
 		and app.stitched_run_buttons[0].text == "Return to title"
-		and app.stitched_run_buttons[1].text == "Save run",
+		and app.stitched_run_buttons[1].text == "Save run"
+		and (room_action == 0 or app.stitched_run_buttons[2].text == "Back to Wren's room"),
 		mode + " keeps public Return and Save actions")
 	_assert_actions(app, 2, mode + " result")
 	var settled := session.snapshot()

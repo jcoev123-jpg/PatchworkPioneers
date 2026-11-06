@@ -77,14 +77,33 @@ func _expect_slot(ribbon: StitchedTurnOrderRibbon, i: int, unit: Dictionary) -> 
 
 func _check_fit(ribbon: StitchedTurnOrderRibbon, count: int) -> void:
 	var prior_right := -1.0
-	var width := minf(110.0, floorf((690.0 - 4.0 * (count - 1)) / count))
+	_check(count > 0 and ribbon.displayed_entries.size() == count,
+		"precondition: measured cue layout contains every expected entry")
 	for i in range(count):
 		var tag := ribbon.tag_at(i)
 		var bounds := tag.get_global_rect()
-		_check(tag.visible and bounds.size == Vector2(width, 42) and bounds.position.x >= prior_right and
+		_check(tag.visible and bounds.size.x >= 69 and bounds.size.y == 42 and
+			(i == 0 or bounds.position.x - prior_right >= 8.0) and
 			bounds.end.x <= ribbon.global_position.x + 690 and
 			bounds.position.x >= 0 and bounds.end.x <= 1280 and bounds.position.y >= 0 and bounds.end.y <= 720,
 			"%d-slot turn tag %d has adaptive width, height 42, is ordered and fits 1280x720" % [count, i])
+		var rank: Label = tag.get_node("SideRank")
+		var cue := ribbon.marker_at(i)
+		var frame: NinePatchRect = tag.get_node("SewnPlate")
+		_check(frame.get_global_rect() == bounds and frame.texture == load("res://assets/paper/ui/panel_felt.png") and
+			frame.self_modulate.a == 1.0 and frame.modulate == Color.WHITE and
+			bounds.encloses(rank.get_global_rect()) and bounds.encloses(cue.get_global_rect()) and
+			not rank.get_global_rect().intersects(cue.get_global_rect()),
+			"slot %d rank and cue sit in separate cells on opaque dark fabric" % i)
+		for label: Label in [rank, cue]:
+			var size := label.get_theme_font_size("font_size")
+			var font := label.get_theme_font("font")
+			var ink := label.get_theme_color("font_color")
+			_check(not label.text.is_empty() and size >= 10 and
+				font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x <= label.size.x - 2.0 and
+				font.get_height(size) <= label.size.y and
+				(ink.srgb_to_linear().get_luminance() + 0.05) / (frame.self_modulate.srgb_to_linear().get_luminance() + 0.05) >= 4.5,
+				"slot %d full %s text fits and contrasts against even the brightest tinted fabric texel" % [i, label.name])
 		prior_right = bounds.end.x
 
 
@@ -1190,6 +1209,8 @@ func _run() -> void:
 		fourth["name"] = "Fourth Foe"
 		fourth["rank"] = 4
 		boss_entries.append(fourth)
+		var boss_snapshot := boss.state_snapshot()
+		var boss_rng := boss.rng_state()
 		ribbon.show_order(boss_entries, boss_id, false)
 		_check(ribbon.displayed_entries.size() == 9 and
 			ribbon.tag_at(8).visible and ribbon.get_child_count() == 9 and
@@ -1203,8 +1224,37 @@ func _run() -> void:
 					"each repeated boss NOW cue has the original amber highlight")
 		_check(highlighted == 2, "both occurrences of boss ID are NOW, no deduplication")
 		_check_fit(ribbon, 9)
-		_check(boss.turn_order().size() == 8 and boss.rng_state() == boss.rng_state(),
+		_check(boss.turn_order().size() == 8 and boss.state_snapshot() == boss_snapshot and boss.rng_state() == boss_rng,
 			"boss public order remains present after view projection")
+
+	# Every existing cue must remain complete at the narrowest nine-tag capacity.
+	var all_cues: Array = resolve_snapshots.duplicate(true)
+	for status in ["stun", "bleed", "blind", "tangled", "mark", "weak", "exposed"]:
+		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
+		sample.statuses = {status: 2}
+		all_cues.append(sample)
+	for state in ["hanging", "torn", "fray"]:
+		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
+		if state == "hanging":
+			sample.hanging = true
+		elif state == "torn":
+			sample.parts.head.torn = true
+		else:
+			sample.fray = 100
+		all_cues.append(sample)
+	all_cues.append(hero)
+	all_cues.append(battle.get_heroes()[0])
+	all_cues.append(battle.get_foes()[0])
+	for sample: Dictionary in all_cues:
+		var crowded: Array = []
+		for i in range(9):
+			crowded.append(sample.duplicate(true))
+		ribbon.show_order(crowded, "", false)
+		_check_fit(ribbon, 9)
+		for i in range(9):
+			_check(ribbon.marker_at(i).text == StitchedTurnStatusCues.cue(sample) and
+				ribbon.tag_at(i).tooltip_text == StitchedTurnStatusCues.tooltip(sample),
+				"nine-tag capacity preserves full %s cue and exact tooltip at slot %d" % [StitchedTurnStatusCues.cue(sample), i])
 
 	# Negative filters and refresh: hiding never leaves stale tooltips or condition labels.
 	var dead := hero.duplicate(true)
