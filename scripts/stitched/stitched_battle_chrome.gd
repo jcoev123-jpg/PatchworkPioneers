@@ -90,8 +90,9 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 	var frame := NinePatchRect.new()
 	frame.name = title + "SewnFrame"
 	frame.texture = BAR_FRAME
-	frame.position = rectangle.position - Vector2(1, 2)
-	frame.size = rectangle.size + Vector2(2, 4)
+	# Keep the stitched frame in the bar band, not over the caption above.
+	frame.position = rectangle.position - Vector2(1, 1)
+	frame.size = rectangle.size + Vector2(2, 2)
 	frame.patch_margin_left = 7
 	frame.patch_margin_right = 7
 	frame.patch_margin_top = 5
@@ -112,8 +113,11 @@ static func _fit_readout(readout: Label, caption: String) -> void:
 			if face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, size_step).x <= readout.size.x - 2.0:
 				break
 	readout.add_theme_font_size_override("font_size", point_size)
-	# Theme minimum sizes may have expanded the initial rect during entry.
+	# The inherited Gothic font can enforce a 16px minimum after text
+	# changes. Scale its visible caption to 14px so it never covers the
+	# adjacent image-backed progress frame in this 24px rank row.
 	readout.size = Vector2(readout.size.x, 14)
+	readout.scale.y = 14.0 / maxf(14.0, readout.size.y)
 
 
 static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Dictionary:
@@ -127,7 +131,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(root)
 	var is_hero := side == "hero"
-	var hp := _meter(root, "HPFill", Rect2(11, 14, 74 if is_hero else 148, 8),
+	var hp := _meter(root, "HPFill", Rect2(11, 15, 74 if is_hero else 148, 7),
 		Color("af655b"))
 	var hp_caption := Label.new()
 	hp_caption.name = "HPReadout"
@@ -145,7 +149,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	root.add_child(hp_caption)
 	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
-		var fray := _meter(root, "FrayFill", Rect2(90, 14, 69, 8), Color("d7a560"))
+		var fray := _meter(root, "FrayFill", Rect2(90, 15, 69, 7), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
 		caption.position = Vector2(87, 0)
