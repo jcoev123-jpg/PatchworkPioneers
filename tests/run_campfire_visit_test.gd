@@ -48,6 +48,10 @@ func _initialize() -> void:
 	_test_swap_admission_and_quote()
 	_test_swap_exchanges_and_decisions()
 	_test_swap_refusals_and_isolation()
+	_test_fear_admission_and_shape()
+	_test_fear_tell_tales()
+	_test_fear_other_choices_and_swap()
+	_test_fear_refusals_replay_and_rng()
 	_finish()
 
 
@@ -1212,3 +1216,229 @@ func _test_swap_refusals_and_isolation() -> void:
 	_check(rng_decision.get("ok") == true, "rng fixture commits a real decision")
 	_check(randi() == expected_next, "swap quotes, exchanges and refusals draw no global RNG")
 	_check(local_rng.state == local_state, "local RNG state does not move")
+
+
+const FEAR_NODE := "camp_fear"
+const FEAR_FRAYS: Array = [30, 25, 10, 200]
+
+
+func _fear_visit(fear: Variant, frays: Array = FEAR_FRAYS, candle: int = 40,
+		node: String = FEAR_NODE) -> RunCampfireVisit:
+	return RunCampfireVisit.new(node, _stitched_party([35, 18, 0, 48], frays), "stitched",
+		candle, fear)
+
+
+func _assert_fear_refused(visit: RunCampfireVisit, decision: Variant, node: Variant,
+		heroes: Variant, candle: Variant, fear: Variant, label: String) -> void:
+	var before := visit.read_state()
+	var result: Dictionary = visit.select(decision, node, heroes, candle, fear)
+	_check(result == {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0},
+		label + ": uniformly typed fear refusal, no forged receipt")
+	_check(visit.read_state() == before, label + ": refusal does not consume or modify visit")
+
+
+func _test_fear_admission_and_shape() -> void:
+	var invalid_state := {"ok": false, "node_id": "", "status": "invalid", "heroes": []}
+	var original := _stitched_party([35, 18, 0, 48], FEAR_FRAYS)
+	for boundary in [0, 100]:
+		var visit := _fear_visit(boundary)
+		var state := visit.read_state()
+		_check(state.get("ok") == true and state.get("status") == "stitched_open"
+			and state.get("fear") == boundary and state.get("candle") == 40
+			and state.get("heroes") == original
+			and state.get("quote", {}).get("choices")
+				== ["mend", "tell_tales", "trim_the_wick", "leave"],
+			"boundary fear %d admits an open visit exposing its fear" % boundary)
+		var swap_visit := RunCampfireVisit.open_stitched_with_satchel(SWAP_NODE, _swap_party(), 40,
+			_swap_satchel(), _swap_catalog(), boundary)
+		_check(swap_visit.read_state().get("ok") == true
+			and swap_visit.read_state().get("fear") == boundary
+			and swap_visit.read_state().get("satchel") == _swap_satchel(),
+			"boundary fear %d admits the satchel visit" % boundary)
+	for bad_fear in [-1, 101, 1.5, "50", true, 50.0, [], {}]:
+		var rejected := _fear_visit(bad_fear)
+		_check(rejected.read_state() == invalid_state,
+			"invalid fear never admits a stitched visit: " + str(bad_fear))
+		_assert_fear_refused(rejected, "leave", FEAR_NODE, original, 40, 50,
+			"invalid fear stays inert " + str(bad_fear))
+		var rejected_swap := RunCampfireVisit.open_stitched_with_satchel(SWAP_NODE, _swap_party(),
+			40, _swap_satchel(), _swap_catalog(), bad_fear)
+		_check(rejected_swap.read_state() == invalid_state,
+			"invalid fear never admits a satchel visit: " + str(bad_fear))
+		_check(rejected_swap.swap_part("warden", "arms", 0, SWAP_NODE, {})
+			== {"ok": false, "error": "no open part-swap opportunity"},
+			"invalid-fear satchel visit cannot swap: " + str(bad_fear))
+	# A fear input is meaningless for the legacy three-hero service.
+	_check(RunCampfireVisit.new("camp", _party([35, 18, 0]), null, null, 50).read_state()
+		== invalid_state, "legacy three-hero visit refuses a fear input")
+	# Without fear nothing about the public shape changes.
+	var plain := _fear_visit(null)
+	_check(not plain.read_state().has("fear"), "absent fear adds no fear key to read_state")
+	var plain_receipt := plain.select("tell_tales", FEAR_NODE, original, 40)
+	_check(plain_receipt.get("ok") == true and not plain_receipt.has("fear")
+		and not plain.read_state().has("fear"),
+		"absent fear adds no fear key to a receipt or decided state")
+	var plain_swap := _swap_visit()
+	var plain_swap_result := plain_swap.swap_part("warden", "arms", 0, SWAP_NODE,
+		plain_swap.read_state()["swap_state"])
+	_check(plain_swap_result.get("ok") == true and not plain_swap_result.has("fear")
+		and not plain_swap.read_state().has("fear"),
+		"absent fear adds no fear key to satchel state or swap receipt")
+	_check(plain.select("tell_tales", FEAR_NODE, original, 40, 60)
+		== {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0},
+		"a spent visit still refuses")
+	var plain_open := _fear_visit(null)
+	_assert_fear_refused(plain_open, "tell_tales", FEAR_NODE, original, 40, 60,
+		"expected fear on a visit without fear")
+	_assert_fear_refused(plain_open, "tell_tales", FEAR_NODE, original, 40, 0,
+		"expected zero fear on a visit without fear")
+	# Detached snapshots.
+	var held := _fear_visit(60)
+	var exposed := held.read_state()
+	exposed["fear"] = 1
+	_check(held.read_state()["fear"] == 60, "mutating a projected fear cannot alter the visit")
+	var receipt := held.select("leave", FEAR_NODE, original, 40, 60)
+	receipt["fear"] = 99
+	_check(held.read_state()["fear"] == 60, "mutating a receipt fear cannot alter the visit")
+
+
+func _test_fear_tell_tales() -> void:
+	var original := _stitched_party([35, 18, 0, 48], FEAR_FRAYS)
+	for pair in [[60, 45], [9, 0], [0, 0], [15, 0], [100, 85]]:
+		var visit := _fear_visit(pair[0])
+		_check(visit.read_state()["quote"]["choices"].has("tell_tales"),
+			"Tell Tales is offered at fear %d" % pair[0])
+		var receipt := visit.select("tell_tales", FEAR_NODE, original, 40, pair[0])
+		_check(receipt.get("ok") == true and receipt.get("decision") == "tell_tales"
+			and receipt.get("node_id") == FEAR_NODE and receipt.get("candle") == 40
+			and receipt.get("fear") == pair[1],
+			"Tell Tales fear %d -> %d in one receipt" % [pair[0], pair[1]])
+		var expected := original.duplicate(true)
+		for hero in expected:
+			hero["fray"] = maxi(0, int(hero["fray"]) - 25)
+		_check(receipt.get("heroes") == expected
+			and [receipt["heroes"][0]["fray"], receipt["heroes"][1]["fray"],
+				receipt["heroes"][2]["fray"], receipt["heroes"][3]["fray"]] == [5, 0, 0, 175],
+			"fear %d: all four dolls lose exactly 25 FRAY, floored, nothing else changes" % pair[0])
+		var decided := visit.read_state()
+		_check(decided["status"] == "stitched_decided" and decided["fear"] == pair[1]
+			and decided["heroes"] == expected and decided["candle"] == 40,
+			"fear %d: decided state holds the soothed fear" % pair[0])
+	# Fear alone makes Tell Tales worthwhile; neither FRAY nor fear does not.
+	var calm := RunCampfireVisit.new(FEAR_NODE, _stitched_party(FULL_HPS, NO_FRAY), "stitched",
+		100, 20)
+	_check(calm.read_state()["quote"]["choices"] == ["tell_tales", "leave"],
+		"fear above zero keeps Tell Tales offered with no FRAY")
+	var calm_original := _stitched_party(FULL_HPS, NO_FRAY)
+	var calm_receipt := calm.select("tell_tales", FEAR_NODE, _stitched_party(FULL_HPS, NO_FRAY),
+		100, 20)
+	_check(calm_receipt.get("ok") == true and calm_receipt.get("fear") == 5
+		and calm_receipt.get("heroes") == calm_original,
+		"Tell Tales at zero FRAY still soothes fear 20 to 5")
+	var spent := RunCampfireVisit.new(FEAR_NODE, _stitched_party(FULL_HPS, NO_FRAY), "stitched",
+		100, 0)
+	_check(spent.read_state()["quote"]["choices"] == ["leave"],
+		"no FRAY and no fear leaves only Leave")
+	_assert_fear_refused(spent, "tell_tales", FEAR_NODE, _stitched_party(FULL_HPS, NO_FRAY), 100, 0,
+		"no-op Tell Tales at zero fear")
+
+
+func _test_fear_other_choices_and_swap() -> void:
+	var original := _stitched_party([35, 18, 0, 48], FEAR_FRAYS)
+	var mend := _fear_visit(60).select("mend", FEAR_NODE, original, 40, 60)
+	_check(mend.get("ok") == true and mend.get("fear") == 60 and mend["heroes"][2]["hp"] == 7,
+		"Mend keeps fear")
+	var wick_visit := _fear_visit(60)
+	var wick := wick_visit.select("trim_the_wick", FEAR_NODE, original, 40, 60)
+	_check(wick.get("ok") == true and wick.get("fear") == 60 and wick.get("candle") == 90
+		and wick.get("heroes") == original and wick_visit.read_state()["fear"] == 60,
+		"Trim the Wick keeps fear")
+	var leave_visit := _fear_visit(60)
+	var leave := leave_visit.select("leave", FEAR_NODE, original, 40, 60)
+	_check(leave.get("ok") == true and leave.get("fear") == 60 and leave.get("heroes") == original
+		and leave_visit.read_state()["fear"] == 60,
+		"Leave keeps fear")
+	# Genuine satchel fixture: swap once, then Tell Tales.
+	var visit := RunCampfireVisit.open_stitched_with_satchel(SWAP_NODE, _swap_party(), 40,
+		_swap_satchel(), _swap_catalog(), 60)
+	var opened := visit.read_state()
+	_check(opened.get("ok") == true and opened.get("fear") == 60 and opened.get("satchel") == _swap_satchel()
+		and opened["swap_quote"]["open"] == true,
+		"satchel visit opens with fear and a real swap quote")
+	var swap := visit.swap_part("warden", "arms", 0, SWAP_NODE, opened["swap_state"])
+	_check(swap.get("ok") == true and swap.get("fear") == 60
+		and swap.get("worn_after") == _worn(ARMS_RIVET, 2),
+		"the swap commits and its receipt carries the unchanged fear")
+	var latest := visit.read_state()
+	_check(latest["fear"] == 60 and latest["heroes"][0]["parts"]["arms"] == _worn(ARMS_RIVET, 2)
+		and latest["satchel"][0] == _spare(ARMS_SHIELD, 1, "arms"),
+		"the held state keeps fear across the swap and reconciles gear")
+	# Opening state (before the swap) is stale for a full-state swap request.
+	_assert_swap_refused(visit, "warden", "head", 1, SWAP_NODE, opened,
+		"stale pre-swap full state with fear")
+	_assert_fear_refused(visit, "tell_tales", SWAP_NODE, latest["heroes"], 40, null,
+		"swapped visit without expected fear")
+	_assert_fear_refused(visit, "tell_tales", SWAP_NODE, latest["heroes"], 40, 59,
+		"swapped visit with wrong fear")
+	var tales := visit.select("tell_tales", SWAP_NODE, latest["heroes"], 40, 60)
+	var expected: Array = latest["heroes"].duplicate(true)
+	for hero in expected:
+		hero["fray"] = maxi(0, int(hero["fray"]) - 25)
+	_check(tales.get("ok") == true and tales.get("fear") == 45 and tales.get("heroes") == expected
+		and tales.get("satchel") == latest["satchel"] and tales.get("candle") == 40
+		and tales["heroes"][0]["parts"]["arms"] == _worn(ARMS_RIVET, 2),
+		"Tell Tales after a swap soothes fear and preserves gear and satchel")
+	_check(visit.read_state()["fear"] == 45 and visit.read_state()["swap_quote"]["open"] == false,
+		"the decision closes the swap and holds the soothed fear")
+	_assert_swap_refused(visit, "warden", "head", 1, SWAP_NODE, visit.read_state()["swap_state"],
+		"swap after Tell Tales with fear")
+	_assert_fear_refused(visit, "tell_tales", SWAP_NODE, tales["heroes"], 40, 45,
+		"replay of Tell Tales with the new fear")
+	_assert_fear_refused(visit, "tell_tales", SWAP_NODE, latest["heroes"], 40, 60,
+		"replay of Tell Tales with the old snapshot")
+
+
+func _test_fear_refusals_replay_and_rng() -> void:
+	var original := _stitched_party([35, 18, 0, 48], FEAR_FRAYS)
+	seed(626262)
+	var expected_next := randi()
+	seed(626262)
+	var local_rng := RandomNumberGenerator.new()
+	local_rng.seed = 91
+	var local_state := local_rng.state
+	var visit := _fear_visit(60)
+	for bad_fear in [null, 0, 59, 61, 100, -1, "60", 60.0, true, [], {}]:
+		_assert_fear_refused(visit, "tell_tales", FEAR_NODE, original, 40, bad_fear,
+			"missing, wrong or malformed expected fear " + str(bad_fear))
+	_assert_fear_refused(visit, "tell_tales", "other", original, 40, 60, "wrong node with fear")
+	_assert_fear_refused(visit, "tell_tales", null, original, 40, 60, "null node with fear")
+	var stale_hero := original.duplicate(true)
+	stale_hero[1]["fray"] += 1
+	_assert_fear_refused(visit, "tell_tales", FEAR_NODE, stale_hero, 40, 60, "stale hero with fear")
+	var forged_extra := original.duplicate(true)
+	forged_extra[0]["unowned_currency"] = 999
+	_assert_fear_refused(visit, "tell_tales", FEAR_NODE, forged_extra, 40, 60, "forged hero with fear")
+	_assert_fear_refused(visit, "tell_tales", FEAR_NODE, original, 41, 60, "stale candle with fear")
+	_assert_fear_refused(visit, "tell_tales", FEAR_NODE, original, "40", 60, "malformed candle with fear")
+	_assert_fear_refused(visit, "heal", FEAR_NODE, original, 40, 60, "forged decision with fear")
+	_check(visit.read_state()["status"] == "stitched_open" and visit.read_state()["fear"] == 60
+		and visit.read_state()["heroes"] == original and visit.read_state()["candle"] == 40,
+		"every refusal left the visit open with fear untouched")
+	var receipt := visit.select("tell_tales", FEAR_NODE, original, 40, 60)
+	_check(receipt.get("ok") == true and receipt.get("fear") == 45,
+		"a legal Tell Tales still succeeds after every refusal")
+	_assert_fear_refused(visit, "tell_tales", FEAR_NODE, receipt["heroes"], 40, 45, "duplicate Tell Tales")
+	_assert_fear_refused(visit, "mend", FEAR_NODE, receipt["heroes"], 40, 45, "second decision")
+	_assert_fear_refused(visit, "leave", FEAR_NODE, receipt["heroes"], 40, 45, "Leave after Tell Tales")
+	# Two independent opted-in visits replay identically.
+	var twin := _fear_visit(60)
+	_check(twin.select("tell_tales", FEAR_NODE, original, 40, 60) == receipt
+		and twin.read_state() == visit.read_state(),
+		"independent opted-in visits replay the same receipt and state")
+	# A refused action on a different node spends nothing either.
+	var elsewhere := _fear_visit(60, FEAR_FRAYS, 40, "camp_else")
+	_assert_fear_refused(elsewhere, "tell_tales", FEAR_NODE, original, 40, 60, "other visit's node")
+	_check(elsewhere.read_state()["fear"] == 60 and elsewhere.read_state()["status"] == "stitched_open",
+		"a refused foreign-node attempt leaves the visit open")
+	_check(randi() == expected_next and local_rng.state == local_state,
+		"fear admission, refusals and Tell Tales draw no RNG")

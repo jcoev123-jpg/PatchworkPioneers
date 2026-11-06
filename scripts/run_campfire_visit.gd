@@ -26,6 +26,9 @@ const STITCHED_CANDLE_MAX := 100
 const MEND_HEAL_PERCENT := 30
 const TALES_FRAY_REDUCTION := 25
 const WICK_CANDLE_RESTORE := 50
+## Opt-in Wren FEAR (STITCHED_DESIGN 9c): Tell Tales also soothes 15 FEAR.
+const FEAR_MAX := 100
+const TALES_FEAR_RELIEF := 15
 
 var _node_id: String = ""
 var _heroes: Array = []
@@ -36,14 +39,20 @@ var _candle: int = 0
 var _swap: RunStitchedSewingSwap = null
 var _satchel: Array = []
 var _swap_state: Dictionary = {}
+# Opt-in Wren FEAR scalar (only held when a real 0..100 integer was supplied).
+var _has_fear: bool = false
+var _fear: int = 0
 
 
 func _init(node_id: Variant = null, run_heroes: Variant = null,
-		mode: Variant = null, candle: Variant = null) -> void:
+		mode: Variant = null, candle: Variant = null, fear: Variant = null) -> void:
 	if not _valid_node_id(node_id) or typeof(run_heroes) != TYPE_ARRAY:
 		return
 	if mode == null:
-		# Legacy three-hero service, byte-for-byte unchanged.
+		# Legacy three-hero service, byte-for-byte unchanged. A fear input is
+		# only meaningful for Stitched, so it fails closed here.
+		if fear != null:
+			return
 		# Share exactly Rest's admission rules, including rejecting total defeat.
 		# Validate before copying; no invalid data can become an open visit.
 		if not RunRestRecovery._is_valid_roster(run_heroes):
@@ -57,6 +66,11 @@ func _init(node_id: Variant = null, run_heroes: Variant = null,
 		return
 	if not _is_valid_stitched_party(run_heroes, candle):
 		return
+	if fear != null:
+		if not _is_valid_fear(fear):
+			return
+		_has_fear = true
+		_fear = int(fear)
 	_mode = STITCHED
 	_node_id = node_id
 	_heroes = run_heroes.duplicate(true)
@@ -69,8 +83,9 @@ func _init(node_id: Variant = null, run_heroes: Variant = null,
 ## Heroes must also carry full worn slot records. Any invalid input fails
 ## closed and returns the same invalid visit as a rejected constructor call.
 static func open_stitched_with_satchel(node_id: Variant, run_heroes: Variant,
-		candle: Variant, satchel: Variant, catalog_by_id: Variant) -> RunCampfireVisit:
-	var visit := RunCampfireVisit.new(node_id, run_heroes, STITCHED, candle)
+		candle: Variant, satchel: Variant, catalog_by_id: Variant,
+		fear: Variant = null) -> RunCampfireVisit:
+	var visit := RunCampfireVisit.new(node_id, run_heroes, STITCHED, candle, fear)
 	if visit._status != STITCHED_OPEN:
 		return RunCampfireVisit.new()
 	var swap := RunStitchedSewingSwap.new(node_id, run_heroes, satchel, catalog_by_id)
@@ -119,7 +134,7 @@ func swap_part(hero_id: Variant, slot: Variant, satchel_index: Variant,
 				_heroes[index]["parts"] = changed_hero["parts"].duplicate(true)
 	_satchel = result["satchel"].duplicate(true)
 	_swap_state = result["state"].duplicate(true)
-	return {
+	var swap_receipt := {
 		"ok": true,
 		"error": "",
 		"action": "swap",
@@ -136,6 +151,9 @@ func swap_part(hero_id: Variant, slot: Variant, satchel_index: Variant,
 		"candle": _candle,
 		"swap_state": _swap_state.duplicate(true),
 	}
+	if _has_fear:
+		swap_receipt["fear"] = _fear
+	return swap_receipt
 
 
 func _swap_rejected(message: String) -> Dictionary:
@@ -153,6 +171,8 @@ func read_state() -> Dictionary:
 			"heroes": _heroes.duplicate(true),
 			"candle": _candle,
 		}
+		if _has_fear:
+			state["fear"] = _fear
 		if _swap != null:
 			state["satchel"] = _satchel.duplicate(true)
 			state["swap_state"] = _swap_state.duplicate(true)
@@ -192,8 +212,16 @@ func leave(expected_node_id: Variant, expected_heroes: Variant) -> Dictionary:
 ## expected open-state snapshot (heroes and candle) and one quoted decision.
 ## A refusal never consumes the visit or changes held state.
 func select(decision: Variant, expected_node_id: Variant,
-		expected_heroes: Variant, expected_candle: Variant) -> Dictionary:
+		expected_heroes: Variant, expected_candle: Variant,
+		expected_fear: Variant = null) -> Dictionary:
 	if not _matches_stitched_open(expected_node_id, expected_heroes, expected_candle) or not _is_stitched_decision(decision):
+		return _stitched_rejected()
+	# An opted-in visit needs the exact current fear; a visit without fear
+	# accepts none. A missing or stale value never authorises a selection.
+	if _has_fear:
+		if typeof(expected_fear) != TYPE_INT or int(expected_fear) != _fear:
+			return _stitched_rejected()
+	elif expected_fear != null:
 		return _stitched_rejected()
 	# A choice that cannot change anything is not advertised, so it is refused
 	# here without consuming the visit or touching the swap opportunity.
@@ -201,6 +229,7 @@ func select(decision: Variant, expected_node_id: Variant,
 		return _stitched_rejected()
 	var updated: Array = _heroes.duplicate(true)
 	var candle: int = _candle
+	var fear: int = _fear
 	match String(decision):
 		MEND:
 			for hero in updated:
@@ -216,6 +245,8 @@ func select(decision: Variant, expected_node_id: Variant,
 		TELL_TALES:
 			for hero in updated:
 				hero["fray"] = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+			if _has_fear:
+				fear = maxi(0, fear - TALES_FEAR_RELIEF)
 		TRIM_THE_WICK:
 			candle = mini(STITCHED_CANDLE_MAX, candle + WICK_CANDLE_RESTORE)
 		STITCHED_LEAVE:
@@ -224,6 +255,7 @@ func select(decision: Variant, expected_node_id: Variant,
 			return _stitched_rejected()
 	_heroes = updated
 	_candle = candle
+	_fear = fear
 	_status = STITCHED_DECIDED
 	if _swap != null:
 		# The one decision also closes the swap opportunity.
@@ -269,6 +301,8 @@ static func _is_lost_hero(hero: Variant) -> bool:
 
 
 func _tales_changes_party() -> bool:
+	if _has_fear and _fear > 0:
+		return true
 	for hero in _heroes:
 		if int(hero["fray"]) > 0:
 			return true
@@ -286,6 +320,8 @@ func _stitched_quote() -> Dictionary:
 				phrases.append("Mend each hero for 30% of their utmost HP")
 			TELL_TALES:
 				phrases.append("Tell Tales to unravel 25 FRAY from every hero")
+				if _has_fear:
+					phrases[phrases.size() - 1] += " and 15 FEAR from Wren"
 			TRIM_THE_WICK:
 				phrases.append("Trim the Wick to recover 50 CANDLE")
 			STITCHED_LEAVE:
@@ -366,7 +402,14 @@ func _stitched_receipt(decision: String) -> Dictionary:
 	}
 	if _swap != null:
 		receipt["satchel"] = _satchel.duplicate(true)
+	if _has_fear:
+		receipt["fear"] = _fear
 	return receipt
+
+
+## Only a realinteger 0..100 is a Wren FEAR; bool, float and string are not.
+static func _is_valid_fear(candidate: Variant) -> bool:
+	return typeof(candidate) == TYPE_INT and int(candidate) >= 0 and int(candidate) <= FEAR_MAX
 
 
 func _matches_open_visit(expected_node_id: Variant, expected_heroes: Variant) -> bool:
