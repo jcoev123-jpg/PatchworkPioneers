@@ -1287,6 +1287,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_bedpost_thimble_lift",
+      "title": "The Bedpost Thimble Lift",
+      "description": "A stout button-eyed liftkeeper hauls a brass thimble up a giant bedpost on crossed red threads; the wooden rungs vanish into candlelit dark.",
+      "choices": [
+        {
+          "id": "gather_pulley_shavings",
+          "text": "Collect brass pulley shavings (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "oil_lift_pulley",
+          "text": "Offer 2 scraps to oil the thimble lift (gain 28 gold)",
+          "outcome": { "gold": 28, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the lift climb without you",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_shoe_tongue_tollbooth",
+      "title": "The Shoe-Tongue Tollbooth",
+      "description": "An enormous oxblood boot blocks the passage, its tongue folded into a toll desk while a round mismatched-eye cobbler threads the towering eyelets.",
+      "choices": [
+        {
+          "id": "fix_boot_laces",
+          "text": "Spend 1 scrap re-lacing the giant boot (gain 19 gold)",
+          "outcome": { "gold": 19, "scraps": -1 }
+        },
+        {
+          "id": "buy_heel_threads",
+          "text": "Pay 22 gold for four heel-thread bundles (+4 scraps)",
+          "outcome": { "gold": -22, "scraps": 4 }
+        },
+        {
+          "id": "leave",
+          "text": "Tiptoe past the boot's loose lace",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_keyhole_ribbon_windmill",
+      "title": "The Keyhole Ribbon Windmill",
+      "description": "Behind peeled wallpaper a bone-cream keyhole towers over the dolls; a squat velvet windkeeper turns a ribbon windmill inside the lock.",
+      "choices": [
+        {
+          "id": "gather_ribbon_tails",
+          "text": "Gather fallen ribbon tails (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "buy_windmill_spools",
+          "text": "Pay 17 gold for three windmill spools (+3 scraps)",
+          "outcome": { "gold": -17, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the keyhole to its quiet wind",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
