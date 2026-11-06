@@ -179,6 +179,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_tiers()
 	_test_flourish_catalog()
+	_test_cape_slip_text()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
@@ -487,6 +488,40 @@ func _test_flourish_catalog() -> void:
 	_check(backward == 0, "AC1: no other Rag Duelist part authors a backward self move")
 	_check(int(StitchedParts.ability_at_tier(by_id[flourish_id], 1).get("self_move", 0)) == 1,
 		"AC1: Cape Flourish is the single backward-moving part in this kit")
+
+
+# ---------------------------------------------------------------- AC1: Cape Slip rules text
+
+## The shipped Cape Slip copy must admit every legal launch rank and describe its one-turn Dodge
+## as helpful rather than guaranteed, without adopting Cape Flourish's backward step. These are
+## semantic checks on the loaded record, not a copy of one long literal sentence.
+func _test_cape_slip_text() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC1: the shipped catalog loads for the Cape Slip text check")
+		return
+	var slip_id := str(STARTER_PARTS["legs"])
+	if not catalog["by_id"].has(slip_id):
+		_check(false, "AC1: the Cape Slip text check needs the starter legs part")
+		return
+	var text := str(catalog["by_id"][slip_id].get("text", "")).strip_edges()
+	_check(not text.is_empty(), "AC1: Cape Slip carries rules text")
+	var lower := text.to_lower()
+	# Rank 4 is really legal, so the copy must not stop at the old 1-3 claim.
+	_check(text.contains("1-4") or lower.contains("any rank"),
+		"AC1: Cape Slip text allows rank 4 as well as ranks 1-3: " + text)
+	_check(not text.contains("1-3"),
+		"AC1: Cape Slip text no longer claims the false ranks 1-3 limit: " + text)
+	# Its Dodge is temporary and lasts exactly one turn.
+	_check(lower.contains("dodge"), "AC1: Cape Slip text names the Dodge it grants: " + text)
+	_check(lower.contains("one turn") or lower.contains("1 turn"),
+		"AC1: Cape Slip text states the one-turn duration: " + text)
+	# The Dodge lowers the chance to be hit; it never guarantees a miss.
+	_check(lower.contains("can still hit") or lower.contains("not guarante"),
+		"AC1: Cape Slip text says the Dodge is not guaranteed evasion: " + text)
+	# Cape Flourish is the different legs ability; its backward step must not leak into this copy.
+	_check(not lower.contains("backward") and not lower.contains("step"),
+		"AC1: Cape Slip text never claims Cape Flourish's backward step: " + text)
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
@@ -1048,6 +1083,8 @@ func _test_cape_slip_rank_four() -> void:
 		_check(int(battle.get_unit(OWNER)["rank"]) == MAX_RANK,
 			"AC2: " + tag + " really starts with the living Duelist at rank 4")
 		var ability := StitchedParts.ability_at_tier(catalog["by_id"][slip_id], tier)
+		_check(int(ability.get("self_move", -99)) == 0,
+			"AC2: " + tag + " keeps its authored zero self move")
 		_check(StitchedParts.ranks_allowed(int(ability["launch_mask"]), MAX_RANK)
 			and StitchedParts.ranks_allowed(int(ability["target_mask"]), MAX_RANK),
 			"AC2: " + tag + " derives launch AND target legality from rank 4")
