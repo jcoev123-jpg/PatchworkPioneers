@@ -179,6 +179,12 @@ func _texture_for_kind(kind: String) -> Texture2D:
 	return null
 
 
+# The dedicated image-backed disclosure on hover/focus is the visible help.
+# Keep tooltip_text as the complete, testable accessibility description, but
+# prevent Godot's default floating tooltip from masking adjacent foe tickets.
+func _get_tooltip(_at_position: Vector2) -> String:
+	return ""
+
 func set_inspected(value: bool) -> void:
 	if primary != null:
 		primary.add_theme_color_override("font_color", BRASS if value else BONE)

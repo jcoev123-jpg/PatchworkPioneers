@@ -143,7 +143,8 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 				_verify_base(intent, selected, ticket, "rank %d selected ability" % rank)
 		_check(ticket.foe_id == str(foe["id"]) and ticket.foe_rank == rank and
 			ticket.tooltip_text.contains(str(foe["name"])) and
-			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change"),
+			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change") and
+			ticket.get_tooltip(Vector2(10, 10)).is_empty(),
 			"foe rank %d names actual actor and provisionality" % rank)
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
 
