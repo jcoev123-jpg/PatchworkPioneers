@@ -5507,16 +5507,16 @@ func _stitched_run_action(parent: Node, text: String, callback: Callable, enable
 			felt.texture_margin_right = 14
 			felt.texture_margin_top = 14
 			felt.texture_margin_bottom = 14
-			if face == "disabled":
-				felt.modulate_color = Color(0.55, 0.55, 0.55, 0.85)
-			elif face == "hover":
-				felt.modulate_color = Color(1.12, 1.12, 1.12)
-			elif face == "pressed":
-				felt.modulate_color = Color(0.79, 0.79, 0.79)
+			# The battle chrome's dusk tints: bare parchment under bone text could not be read.
+			felt.modulate_color = {"normal": Color("9b7779"), "hover": Color("e9b873"),
+				"pressed": Color("714a48"), "disabled": Color("64565b9c")}[face]
 			button.add_theme_stylebox_override(face, felt)
 	button.add_theme_font_size_override("font_size", 19)
 	button.add_theme_color_override("font_color", Color("#f5e7cb"))
+	button.add_theme_color_override("font_hover_color", Color("#ffedc8"))
 	button.add_theme_color_override("font_disabled_color", Color("#ae9e8e"))
+	button.add_theme_color_override("font_outline_color", Color("#2b191b"))
+	button.add_theme_constant_override("outline_size", 2)
 	parent.add_child(button)
 	var epoch := _stitched_run_epoch
 	button.pressed.connect(func():

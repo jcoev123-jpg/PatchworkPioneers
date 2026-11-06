@@ -99,7 +99,7 @@ func decorate_ticket(button: Button, kind: String) -> void:
 		focus.texture_margin_right = 13
 		focus.texture_margin_top = 13
 		focus.texture_margin_bottom = 13
-		focus.modulate_color = Color("#f4c77b")
+		focus.modulate_color = Color("#a8703f")
 		button.add_theme_stylebox_override("focus", focus)
 	button.add_theme_color_override("font_hover_color", AMBER)
 	button.add_theme_color_override("font_pressed_color", AMBER)

@@ -493,6 +493,13 @@ func _roster() -> Array:
 	return result
 
 
+func _hero_name(hero_id: String) -> String:
+	for hero in heroes:
+		if hero.id == hero_id:
+			return str(hero.name)
+	return hero_id.capitalize()
+
+
 func _living_roster() -> Array:
 	return _roster().filter(func(hero: Dictionary): return not hero.lost)
 
@@ -616,7 +623,7 @@ func _open_visit(kind: String) -> bool:
 			_offer("buy_candle_stub", "Candle stub / %d gold" % PEDDLER_PRICE, gold >= PEDDLER_PRICE and candle < 100)
 			var bandage := RunStitchedPeddlerBandage.open_stitched(id, roster, gold, PEDDLER_PRICE)
 			for hero_id in bandage.quote().get("eligible", []):
-				_offer("bandage", "Bandage %s / %d gold" % [hero_id, PEDDLER_PRICE], true, [hero_id])
+				_offer("bandage", "Bandage %s / %d gold" % [_hero_name(hero_id), PEDDLER_PRICE], true, [hero_id])
 			# The canonical RNG samples only on first entry, never on a refresh or
 			# a replayed receipt. Stock remains sealed with the pending node.
 			if not pending.has("peddler_stock"):
@@ -641,7 +648,7 @@ func _open_visit(kind: String) -> bool:
 				for hero in roster:
 					for slot in range(2):
 						_offer("buy_patch", "%s / %s / patch slot %d / %d gold" % [
-							str(patch.id), hero.name, slot + 1, int(patch.price)],
+							str(patch.id).capitalize(), hero.name, slot + 1, int(patch.price)],
 							not hero.lost and gold >= int(patch.price), [patch.id, hero.id, slot])
 			var pins := RunStitchedPeddlerPins.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
 			var quote := pins.quote()
@@ -690,7 +697,7 @@ func _open_visit(kind: String) -> bool:
 			if not _service.is_valid():
 				return false
 			for hero_id in _service.quote().get("hero_ids", []):
-				_offer("calm", "Calm %s / %d gold" % [hero_id, CALM_PRICE], true, [hero_id])
+				_offer("calm", "Calm %s / %d gold" % [_hero_name(hero_id), CALM_PRICE], true, [hero_id])
 			for index in satchel.size():
 				_offer("unpick", "Unpick %s / +%d scraps" % [satchel[index].id, UNPICK_YIELD], true, [index])
 			_offer("leave", "Leave Unpicker")
@@ -712,7 +719,7 @@ func _open_visit(kind: String) -> bool:
 			for offer in _service.quote().get("offers", []):
 				for hero in roster:
 					for slot in range(2):
-						_offer("buy_patch", "%s / %s / slot %d / %d gold" % [offer.id, hero.name, slot + 1, offer.price],
+						_offer("buy_patch", "%s / %s / slot %d / %d gold" % [str(offer.id).capitalize(), hero.name, slot + 1, offer.price],
 							not hero.lost and gold >= offer.price, [offer.id, hero.id, slot])
 			_offer("leave", "Leave Patch Stall")
 		_:
