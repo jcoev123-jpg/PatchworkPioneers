@@ -2903,6 +2903,7 @@ func _typed_stage(app, presenter) -> void:
 	if fixture.is_empty():
 		return
 	app.run_seed = fixture.seed
+	preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 	app.start_run_requested.emit()
 	preload("res://tests/party_choice.gd").choose(app)
 	await process_frame
@@ -3072,6 +3073,7 @@ func _mount_m05_pair(app, presenter, pool: Dictionary, target_id: String) -> Arr
 	if seed_info.is_empty():
 		return admitted
 	app.run_seed = int(seed_info.seed)
+	preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 	app.route_button.pressed.emit()
 	await process_frame
 	var route_button: Button = null
@@ -3264,6 +3266,7 @@ func _band_felt_bulwark(app, presenter, first_seed: int = 1, attempts: int = 0) 
 	if seed_info.is_empty():
 		return
 	app.run_seed = int(seed_info.seed)
+	preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 	app.route_button.pressed.emit()
 	await process_frame
 	var reached := true
@@ -4566,6 +4569,7 @@ func _routed_thread_lash(scene: PackedScene) -> void:
 			root.add_child(app)
 			await process_frame
 			app.run_seed = witness.seed
+			preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 			app.route_button.pressed.emit()
 			await process_frame
 			var route: Button = null
@@ -4781,6 +4785,7 @@ func _finish() -> void:
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
 func _fixture_start(target) -> void:
 	if target.deck != null:
+		preload("res://tests/legacy_card_app_fixture.gd").enable(target)
 		target.start_run_requested.emit()
 		preload("res://tests/party_choice.gd").choose(target)
 		return

@@ -235,6 +235,7 @@ func _test_routed_peddler_to_battle(app) -> void:
 			continue
 		eligible_routes += 1
 		app.run_seed = seed_value
+		preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 		app.route_button.pressed.emit()
 		await process_frame
 		await process_frame
@@ -769,6 +770,7 @@ func _test_routed_needle_echo_purchase(app) -> void:
 				continue
 			eligible_routes += 1
 			app.run_seed = seed_value
+			preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 			app.route_button.pressed.emit()
 			await process_frame
 			await process_frame

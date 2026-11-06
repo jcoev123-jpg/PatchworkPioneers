@@ -38,7 +38,7 @@ func _run() -> void:
 	for screen in ["title", "base", "stitched_battle", "stitched_walk"]:
 		_check(screen in BOOT.PUBLIC_SCREENS and screen in BOOT.SCREENS, "public and direct preview supported: " + screen)
 	for screen in ["map", "battle", "reward", "shop", "rest", "event", "results"]:
-		_check(screen in BOOT.SCREENS and screen not in BOOT.PUBLIC_SCREENS, "legacy preview is direct-only: " + screen)
+		_check(screen not in BOOT.SCREENS and screen not in BOOT.PUBLIC_SCREENS, "legacy preview cannot admit: " + screen)
 	_check(root.get_node_or_null("LiveWebPlaytestBoot") != null, "startup autoload registered")
 	var boot = root.get_node("LiveWebPlaytestBoot")
 	var app = load("res://scenes/app.tscn").instantiate()
@@ -78,7 +78,7 @@ func _run() -> void:
 	await process_frame
 	app.free()
 	# Both parts of the explicit fixture opt-in are required, before any mutation.
-	for preparation in ["none", "start_only", "route_only"]:
+	for preparation in ["none", "start_only", "route_only", "both"]:
 		app = load("res://scenes/app.tscn").instantiate()
 		root.add_child(app)
 		await process_frame
@@ -86,11 +86,13 @@ func _run() -> void:
 			LEGACY_ENTRY.start_button(app)
 		elif preparation == "route_only":
 			LEGACY_ENTRY.route_button(app)
+		elif preparation == "both":
+			LEGACY_ENTRY.prepare(app)
 		pristine = _snapshot(app)
 		seed(114116)
 		expected_global = randi()
 		seed(114116)
-		for screen in BOOT.SCREENS:
+		for screen in LEGACY_ENTRY.LEGACY_SCREENS:
 			if screen in BOOT.PUBLIC_SCREENS:
 				continue
 			_check(not await boot.enter_preview(app, screen), "unprepared legacy preview refused: " + preparation + ": " + screen)
@@ -165,47 +167,6 @@ func _run() -> void:
 				_check(stage.battle.get_heroes().size() == 4 and stage.battle.get_foes().size() == 3, "stitched preview starts 4v3, with fourth foe rank empty")
 				_check(app.deck == null and app.run_map == null and app.run_rng == null and app.run_deck.is_empty() and app.run_heroes.is_empty(), "stitched preview never allocates card run")
 				_check(stage._puppets.size() == 8 and stage._seat_buttons.size() == 8, "four mounted rank seats per side")
-			else:
-				_check(app.run_seed == {"rest": 14, "shop": 14, "event": 6}.get(screen, 1), "fixed seed: " + screen)
-				_check(app.session_gold == 100 and app.run_scraps == 10, "consistent currency fixture: " + screen)
-				_check(app.run_deck == RunV3PartyAdmission.admit(["warden", "seamstress", "tinker"]).deck, "authored complete starter deck: " + screen)
-				var heroes: Array = app.run_heroes
-				_check(heroes.size() == 3, "three actual heroes")
-				for index in range(heroes.size()):
-					_check(heroes[index].id == ["warden", "seamstress", "tinker"][index]
-						and heroes[index].position == index + 1 and heroes[index].hp > 0, "authored hero identity/position")
-				var route: Array = app.run_map.get_route()
-				if screen == "map":
-					_check(route.is_empty() and app.deck == null and not app.route_buttons.is_empty(), "seed-1 actionable chooser")
-					_check(app._unfought_run(), "bound preview wallet admits opening route")
-					app.session_gold += 1
-					_check(not app._unfought_run(), "preview gold drift still fails closed")
-					app.session_gold -= 1
-					app.run_scraps += 1
-					_check(not app._unfought_run(), "preview scraps drift still fails closed")
-					app.run_scraps -= 1
-				else:
-					var id: String = {"rest": "f02_n2", "shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
-					_check(route == (["f01_n2", id] if screen == "rest" else [id])
-						and app.run_map.get_current_node_id() == id, "exact real route chosen")
-					if screen == "rest":
-						_check(app.run_map.get_node(route[0]).type == "Treasure"
-							and app.run_map.get_node(id).floor == 2 and app.campfire_visit == null,
-							"preview reaches genuine later legacy Rest without an opening Campfire")
-					_check(app.run_map.get_node(id).type == {"rest": "Rest", "shop": "Shop", "event": "Event"}.get(screen, "Fight"), "legal node type")
-				if screen in ["battle", "reward", "results"]:
-					_check(app.party != null and app.enemies != null and app.party.is_valid() and app.enemies.is_valid() and not app.enemies.get_enemies().is_empty(), "real mounted combat services")
-				if screen == "reward":
-					_check(app.enemies.is_defeated() and not app.party.is_defeated()
-						and app.battle_result.get_outcome() == CombatBattleResult.VICTORY, "actual victory witnessed")
-					_check(app.reward_buttons.size() == 4 and app.fight_rewards != null
-						and not app.fight_reward_claimed and app.terminal_result_panel == null, "unclaimed legal reward without defeat panel")
-					for button in app.reward_buttons:
-						_check(button.is_visible_in_tree() and not button.disabled, "reward action mounted and enabled")
-				if screen == "results":
-					_check(app.party.is_defeated() and not app.enemies.is_defeated()
-						and app.act_outcome.get_state().run_status == "DEFEAT", "actual routed defeat settled")
-					_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.card_reward == null, "defeat never offers rewards")
 			var snapshot := _snapshot(app)
 			if screen == "stitched_walk":
 				pass # Model replay checked above, independently of app globals.
@@ -224,35 +185,19 @@ func _run() -> void:
 					_check(_snapshot(app) == opening_globals, "preview exit restores all opening app globals")
 					boot.exit_stitched_preview(app)
 					_check(app.start_button.has_focus(), "repeat exit preserves title focus")
-				else:
-					app._return_to_title()
-				app.start_run_requested.emit()
-				_check(is_instance_valid(app.party_picker) and app.run_map == null, "restart first mounts picker")
-				for id in ["warden", "seamstress", "tinker"]:
-					app.party_picker._tiles[id].pressed.emit()
-				app.party_picker.continue_button.pressed.emit()
-				_check(app.run_map != null and app.session_gold == 0 and app.run_scraps == 0
-					and app._unfought_run(), "ordinary restart on same app restores zero wallet")
-				app.session_gold = 100
-				app.run_scraps = 10
-				_check(not app._unfought_run(), "previous preview cannot authorize new map wallet drift")
 			app.free()
 			await process_frame
-	# Failed Start and failed route admission never announce readiness.
-	for broken in ["start", "route"]:
-		app = load("res://scenes/app.tscn").instantiate()
-		root.add_child(app)
-		await process_frame
-		if broken == "start":
-			app.starter_deck_path = "res://missing-preview-deck.json"
-		else:
-			app.start_run_requested.connect(func():
-				app.party_picker.party_requested.connect(func(_ids):
-					for button in app.route_buttons:
-						button.disabled = true))
-		_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "battle") and not boot.preview_ready, "failed admission never ready: " + broken)
-		_check(app.deck == null and app.battle_result == null, "failed admission creates no combat")
-		app.free()
+	# A failed public callback must not announce readiness or allocate a run.
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	pristine = _snapshot(app)
+	app.base_button.pressed.disconnect(Callable(app, "_open_base"))
+	_check(not await boot.enter_preview(app, "base") and not boot.preview_ready and not boot._busy,
+		"failed public Base admission never ready")
+	_check(_snapshot(app) == pristine and app.run_rng == null and app.deck == null and app.run_map == null,
+		"failed public Base admission preserves all resources")
+	app.free()
 	for failure in failures:
 		printerr(failure)
 	print("live_web_playtest_boot_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")

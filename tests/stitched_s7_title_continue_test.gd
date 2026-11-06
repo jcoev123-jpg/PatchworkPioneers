@@ -40,6 +40,9 @@ func _run() -> void:
 	var actions: Array = [app.start_button, app.stitched_continue_button,
 		app.base_button, app.stitched_fight_button]
 	_check(shell._actions == actions, "shell binds exactly four default production actions")
+	_check(not app.start_run_requested.is_connected(Callable(app, "_start_run"))
+		and not app.route_button.pressed.is_connected(Callable(app, "_open_route")),
+		"the old card start and route hooks have no production listeners")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	var previous := Rect2()
 	for button: Button in actions:
@@ -90,6 +93,9 @@ func _run() -> void:
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null, "seeded live picker created real run")
+	_check(app.deck == null and app.run_map == null and app.run_rng == null
+		and app.party_picker == null and app.run_deck.is_empty(),
+		"real four-doll New Run never mounts a card deck or legacy map")
 	if session != null:
 		var before := session.snapshot()
 		app.title_view.show()

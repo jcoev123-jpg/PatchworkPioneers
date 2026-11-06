@@ -1137,6 +1137,7 @@ func _test_special_round_atomicity() -> void:
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
 func _fixture_start(target) -> void:
 	if target.deck != null:
+		preload("res://tests/legacy_card_app_fixture.gd").enable(target)
 		target.start_run_requested.emit()
 		return
 	var started: bool = target._start_battle()

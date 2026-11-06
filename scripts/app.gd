@@ -1055,7 +1055,7 @@ var action_corner_row: HBoxContainer
 func _ready() -> void:
 	_build_title()
 	_load_difficulty_progress.call_deferred()
-	start_run_requested.connect(_start_run)
+	# Retired card start signal has no production subscriber; legacy tests bind it explicitly.
 	var attack_preview := Node.new()
 	attack_preview.name = "LiveAttackPreview"
 	attack_preview.set_script(preload("res://scripts/live_attack_preview.gd"))
@@ -1455,7 +1455,7 @@ func _build_title() -> void:
 	route_button = Button.new()
 	route_button.text = "Choose a route"
 	route_button.custom_minimum_size = Vector2(240, 56)
-	route_button.pressed.connect(_open_route)
+	# Inert legacy title control: test-only fixture binds this callback.
 	# Retain the object for isolated legacy regressions, not the live title.
 	route_button.hide()
 	route_button.disabled = true

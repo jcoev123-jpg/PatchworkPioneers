@@ -1276,6 +1276,7 @@ func _start_battle_in_app(app: Control, target_fight_id: String = "") -> bool:
 	await _frames()
 	await _mouse_click(LEGACY_ENTRY.start_button(app))
 	if not is_instance_valid(app.route_view) or not app.route_view.is_visible_in_tree():
+		preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 		app.start_run_requested.emit()
 		preload("res://tests/party_choice.gd").choose(app)
 		await _frames()

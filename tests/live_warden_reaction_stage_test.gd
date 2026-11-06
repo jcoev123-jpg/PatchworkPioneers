@@ -196,6 +196,7 @@ func _enter(seed: int) -> bool:
 	app.run_seed = seed
 	_check(app.deck == null, "new battle starts from title")
 	# Real routed start: its scheduler is seeded and bound to the admitted enemy roster.
+	preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 	app.start_run_requested.emit()
 	preload("res://tests/party_choice.gd").choose(app)
 	await _frames()

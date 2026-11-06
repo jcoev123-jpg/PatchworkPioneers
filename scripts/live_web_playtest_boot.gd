@@ -1,7 +1,7 @@
 extends Node
 ## Opt-in exported-web fixtures. Ordinary startup never allocates a run or RNG.
 
-const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results", "stitched_battle", "stitched_walk"]
+const SCREENS := ["title", "base", "stitched_battle", "stitched_walk"]
 const PUBLIC_SCREENS := ["title", "base", "stitched_battle", "stitched_walk"]
 const GOLD := 100
 const SCRAPS := 10
@@ -54,13 +54,13 @@ func screen_from_query(query: Variant) -> String:
 
 ## Uses the same mounted controls/services as normal play; also runs without JS.
 func enter_preview(app, screen: String) -> bool:
-	if screen not in SCREENS or _busy or not is_instance_valid(app) \
+	if screen not in PUBLIC_SCREENS or _busy or not is_instance_valid(app) \
 		or not app.is_node_ready() or app.run_map != null or app.deck != null \
 		or not _visible(app.title_view):
 		return false
-	# Only explicit test wiring may open retained card fixtures. Reject before
+	# Production rejects every old card preview before
 	# changing readiness, seed, wallet, picker, or any run state.
-	if screen not in PUBLIC_SCREENS and not _legacy_preview_enabled(app):
+	if screen not in PUBLIC_SCREENS:
 		return false
 	_busy = true
 	preview_ready = false
@@ -93,43 +93,6 @@ func enter_preview(app, screen: String) -> bool:
 		if not _visible(app.base_screen) or not app.base_screen.has_open_village():
 			_busy = false
 			return false
-	elif screen != "title":
-		app.run_seed = {"rest": 14, "shop": 14, "event": 6}.get(screen, 1)
-		app.start_button.pressed.emit()
-		if is_instance_valid(app.party_picker):
-			for id in ["warden", "seamstress", "tinker"]:
-				app.party_picker._tiles[id].pressed.emit()
-			app.party_picker.continue_button.pressed.emit()
-		if app.run_map == null or not _visible(app.route_view):
-			_busy = false
-			return false
-		# Set before admission, so visit ledgers capture these authoritative values.
-		app.session_gold = GOLD
-		app.run_scraps = SCRAPS
-		_preview_map = weakref(app.run_map)
-		if screen != "map":
-			var route: String = {"shop": "f01_n3", "event": "f01_n1"}.get(screen, "f01_n0")
-			# Ordinary Rest now opens Campfire. Explicitly preview retained legacy Rest
-			# through a genuine Treasure -> floor-two Rest with no resource effects.
-			var steps: Array = ["f01_n2", "f02_n2"] if screen == "rest" else [route]
-			for id in steps:
-				for button in app.route_buttons:
-					if button.get_meta("route_id") == id and not button.disabled:
-						if screen == "rest" and app.run_map.get_node(id).type == "Rest":
-							if not app._choose_rest_route(id, weakref(app.run_map), app.run_map.get_route(), button):
-								_busy = false
-								return false
-						else:
-							button.pressed.emit()
-						break
-		if screen in ["reward", "results"] and app.battle_result != null:
-			if screen == "reward":
-				for enemy in app.enemies.get_enemies():
-					app.enemies.apply_damage(enemy.position, enemy.hp + enemy.block)
-			else:
-				for hero in app.party.get_heroes():
-					app.party.apply_damage(hero.position, hero.hp + hero.block)
-			app._observe_battle_result()
 	if not _expected_view(app, screen):
 		_busy = false
 		return false
@@ -146,14 +109,6 @@ func enter_preview(app, screen: String) -> bool:
 		JavaScriptBridge.eval("window.pioneersReady = true")
 	_busy = false
 	return true
-
-
-func _legacy_preview_enabled(app) -> bool:
-	return is_instance_valid(app.start_button) and is_instance_valid(app.route_button) \
-		and app.start_button.pressed.is_connected(app.start_run_requested.emit) \
-		and not app.start_button.pressed.is_connected(Callable(app, "_open_stitched_run_picker")) \
-		and _visible(app.route_button) and not app.route_button.disabled \
-		and app.route_button.focus_mode == Control.FOCUS_ALL
 
 
 func _visible(view) -> bool:

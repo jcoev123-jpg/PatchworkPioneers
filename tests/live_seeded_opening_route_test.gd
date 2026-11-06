@@ -643,6 +643,7 @@ func _run() -> void:
 			var before := _record(app)
 			for callback in stale:
 				callback.call()
+			preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 			app.start_run_requested.emit()
 			app._open_route()
 			_check(_record(app) == before, "duplicate Start and stale Back/Return callbacks are inert")

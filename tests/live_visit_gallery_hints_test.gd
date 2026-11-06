@@ -125,7 +125,7 @@ func _check_mounted_labels(screen: String) -> void:
 	root.add_child(app)
 	await process_frame
 	var boot = root.get_node("LiveWebPlaytestBoot")
-	var entered: bool = await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen)
+	var entered: bool = await LEGACY_ENTRY.enter_preview(boot, app, screen)
 	_check(entered, "real mounted " + screen + " preview precondition")
 	if screen == "shop":
 		await _check_peddler_labels(app)

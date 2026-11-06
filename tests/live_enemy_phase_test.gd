@@ -796,6 +796,7 @@ func _mounted_scavenger_moves() -> void:
 			root.add_child(app)
 			await process_frame
 			app.run_seed = fixture.seed
+			preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 			app.start_run_requested.emit()
 			preload("res://tests/party_choice.gd").choose(app)
 			for button in app.route_buttons:
@@ -876,6 +877,7 @@ func _mounted_scavenger_wallet() -> void:
 		root.add_child(app)
 		await process_frame
 		app.run_seed = fixture.seed
+		preload("res://tests/legacy_card_app_fixture.gd").enable(app)
 		app.start_run_requested.emit()
 		preload("res://tests/party_choice.gd").choose(app)
 		_check(app.run_map != null and app.route_view != null, "wallet test entered real run chooser")
@@ -976,6 +978,7 @@ func _finish() -> void:
 ## Standalone M01 admission; seeded title input is covered by live_seeded_opening_route_test.
 func _fixture_start(target) -> void:
 	if target.deck != null:
+		preload("res://tests/legacy_card_app_fixture.gd").enable(target)
 		target.start_run_requested.emit()
 		return
 	var started: bool = target._start_battle()

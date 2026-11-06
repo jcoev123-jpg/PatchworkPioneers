@@ -322,12 +322,12 @@ func _run() -> void:
 	app.free()
 	# All V1 screens mount real downstream Controls with the same inherited theme.
 	var boot = root.get_node("LiveWebPlaytestBoot")
-	for screen in boot.SCREENS:
+	for screen in boot.SCREENS + LEGACY_ENTRY.LEGACY_SCREENS:
 		app = scene.instantiate()
 		root.add_child(app)
 		preload("res://tests/legacy_card_app_fixture.gd").prepare(app)
 		await process_frame
-		_check(await boot.enter_preview(LEGACY_ENTRY.prepare(app), screen), "nonempty real preview precondition: " + screen)
+		_check(await LEGACY_ENTRY.enter_preview(boot, app, screen), "nonempty real preview precondition: " + screen)
 		# Live mounted Event and terminal views resolve the master typography through
 		# the App theme the shell installed, not only in a standalone panel mount.
 		if screen == "event":
