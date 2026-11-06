@@ -1471,9 +1471,10 @@ func _build_title() -> void:
 	route_button.focus_mode = Control.FOCUS_NONE
 	box.add_child(route_button)
 	base_button = Button.new()
-	base_button.text = "Quilt village"
+	# S9d: the base is Wren's bedroom whenever its painting ships; the village name only names the fallback.
+	base_button.text = "Wren's room" if StitchedBedroom.has_art() else "Quilt village"
 	base_button.custom_minimum_size = Vector2(240, 56)
-	base_button.tooltip_text = "Visit the Quilt village"
+	base_button.tooltip_text = "Go back to Wren's bedroom" if StitchedBedroom.has_art() else "Visit the Quilt village"
 	base_button.pressed.connect(_open_base)
 	box.add_child(base_button)
 	stitched_fight_button = Button.new()
