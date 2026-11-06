@@ -19,6 +19,8 @@ extends RefCounted
 ## S8e: default-off tug schedules one required resolution at a traversable step.
 ## Yield tears one random intact worn rear-doll part; torn_part descriptors retain
 ## its identity/tier for later mending. No equipped part means a harmless resolution.
+## Default-off mannequins schedule a possible trailing witness after earlier opt-ins;
+## three accepted LOOK BACK actions from its step queue one future rear encounter.
 
 const ITEMS := ["thimble_tonic", "fresh_stuffing", "starch", "dye", "pins", "spare_spool"]
 const CURIO_KINDS := ["pincushion", "dummy", "ragbag", "patterns", "door"]
@@ -45,7 +47,8 @@ static func load_catalogs() -> Dictionary:
 ## Optional catalogs support authored-data validation without touching run state.
 ## Failure returns null and preserves the supplied RNG and all caller-owned inputs.
 static func start(random: RandomNumberGenerator, area: String, dolls: Array, pockets: Dictionary,
-		catalogs: Variant = null, enable_mimic: bool = false, enable_tug: bool = false) -> StitchedWalkRules:
+		catalogs: Variant = null, enable_mimic: bool = false, enable_tug: bool = false,
+		enable_mannequins: bool = false) -> StitchedWalkRules:
 	if catalogs == null:
 		catalogs = load_catalogs()
 	if random == null or not catalogs is Dictionary or not validate_catalogs(catalogs) or not _valid_party(dolls, pockets):
@@ -106,6 +109,17 @@ static func start(random: RandomNumberGenerator, area: String, dolls: Array, poc
 			return null
 		service._state.tug = {"id": authored.id, "name": authored.name,
 			"step": trial.randi_range(0, int(corridor.steps) - 1), "resolved": false}
+		service._state.rng = trial.state
+	if enable_mannequins:
+		var authored: Dictionary = {}
+		for horror in catalogs.horrors:
+			if horror.id == "following_forms" and horror.kind == "mannequins":
+				authored = horror
+		if authored.is_empty() or service._doll(authored.id) >= 0:
+			return null
+		service._state.mannequins = {"id": authored.id, "name": authored.name,
+			"present": trial.randi_range(0, 1) == 1,
+			"step": trial.randi_range(0, int(corridor.steps) - 1), "stage": 0}
 		service._state.rng = trial.state
 	random.state = trial.state
 	return service
@@ -314,6 +328,15 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 					events.append({"kind": "mimic_pending"})
 		"look_back":
 			_state.looking_back = true
+			if mannequins_visible() and _state.mannequins.stage < 3:
+				_state.mannequins.stage += 1
+				events.append({"kind": "mannequins_stage", "source": _state.mannequins.id,
+					"stage": _state.mannequins.stage})
+				if _state.mannequins.stage == 3:
+					_state.pending.append({"kind": "mannequins", "source": _state.mannequins.id,
+						"consumed": false, "effects": {"next_fight": true,
+							"position": "party_back_rank"}})
+					events.append({"kind": "mannequins_pending", "source": _state.mannequins.id})
 			if shadow_visible():
 				_state.shadow.revealed = true
 				events.append({"kind": "shadow_revealed", "shadow": _state.shadow.duplicate(true), "targets": snip_targets()})
@@ -343,6 +366,12 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 		events.append({"kind": "machine_pending"})
 	_state.revision += 1
 	return _receipt(true, "", events)
+
+
+## Presence marks the trailing witness; this service never spawns battle foes.
+func mannequins_visible() -> bool:
+	return _state.has("mannequins") and _state.phase == "walking" \
+		and _state.mannequins.present and _state.step >= _state.mannequins.step
 
 
 func shadow_visible() -> bool:
