@@ -7,7 +7,7 @@ const PLATE_TEXTURE := preload("res://assets/paper/ui/hud_name_plate.png")
 const HEADING_FONT := preload("res://assets/fonts/LondrinaSolid-Regular.ttf")
 const BONE := Color("f5e5cd")
 const BRASS := Color("e5b86d")
-const PLATE_SIZE := Vector2(150, 76)
+const PLATE_SIZE := Vector2(148, 64)
 const ATTACK_TEXTURE := preload("res://assets/paper/ui/intent_attack.png")
 const DEFEND_TEXTURE := preload("res://assets/paper/ui/intent_defend.png")
 const BUFF_TEXTURE := preload("res://assets/paper/ui/intent_buff.png")
@@ -26,8 +26,8 @@ func _init() -> void:
 	self_modulate = Color("62464a")
 	patch_margin_left = 22
 	patch_margin_right = 22
-	patch_margin_top = 13
-	patch_margin_bottom = 13
+	patch_margin_top = 11
+	patch_margin_bottom = 11
 	size = PLATE_SIZE
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
@@ -37,7 +37,7 @@ func _init() -> void:
 func _ready() -> void:
 	glyph = TextureRect.new()
 	glyph.name = "IntentGlyph"
-	glyph.position = Vector2(9, 10)
+	glyph.position = Vector2(8, 8)
 	glyph.size = Vector2(26, 26)
 	glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -46,8 +46,8 @@ func _ready() -> void:
 	add_child(glyph)
 	primary = Label.new()
 	primary.name = "IntentText"
-	primary.position = Vector2(8, 6)
-	primary.size = Vector2(134, 33)
+	primary.position = Vector2(8, 4)
+	primary.size = Vector2(132, 29)
 	primary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	primary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	primary.clip_text = true
@@ -61,8 +61,8 @@ func _ready() -> void:
 	add_child(primary)
 	secondary = Label.new()
 	secondary.name = "IntentTarget"
-	secondary.position = Vector2(8, 43)
-	secondary.size = Vector2(134, 26)
+	secondary.position = Vector2(8, 36)
+	secondary.size = Vector2(132, 24)
 	secondary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	secondary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	secondary.clip_text = true
@@ -87,7 +87,7 @@ func clear_intent() -> void:
 		glyph.visible = false
 	if primary != null:
 		primary.position.x = 8
-		primary.size.x = 134
+		primary.size.x = 132
 		primary.text = ""
 	if secondary != null:
 		secondary.text = ""
@@ -168,7 +168,7 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 		glyph.texture = _texture_for_kind(ability_kind)
 		glyph.visible = glyph.texture != null and not foe_id.is_empty()
 	primary.position.x = 38 if glyph != null and glyph.visible else 8
-	primary.size.x = 104 if glyph != null and glyph.visible else 134
+	primary.size.x = 102 if glyph != null and glyph.visible else 132
 	primary.text = _fit_caption(heading, primary)
 	secondary.text = target
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
