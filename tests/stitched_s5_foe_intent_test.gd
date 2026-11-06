@@ -79,13 +79,38 @@ func _verify_base(intent: Dictionary, ability: Dictionary, ticket: StitchedFoeIn
 	for key in effects:
 		_check(ticket.tooltip_text.contains("%s %+d" % [str(key), int(effects[key])]),
 			"%s reveals authored BASE effect %s" % [note, str(key)])
+	_check(not ticket.secondary.text.contains("BASE"), "%s keeps base-stat terminology in disclosure" % note)
+	if int(intent.get("base_mark_damage", 0)) > 0:
+		_check(ticket.tooltip_text.contains("BONUS VS MARK +%d" % int(intent["base_mark_damage"])),
+			"%s retains exact authored Mark bonus" % note)
 	if int(damage[1]) <= 0:
-		_check(not ticket.secondary.text.contains("BASE") and ticket.tooltip_text.contains("BASE DMG 0–0"),
+		_check(not ticket.secondary.text.contains("DAMAGE") and ticket.tooltip_text.contains("BASE DMG 0–0"),
 			"%s: zero-damage ability has no misleading damage threat caption" % note)
-	elif not bool(intent.get("multi", false)) and ticket.secondary.text.contains("BASE"):
-		_check(ticket.secondary.text.contains("BASE %d–%d" % [int(damage[0]), int(damage[1])])
+	elif ticket.secondary.text.contains("DAMAGE"):
+		_check(str(intent.get("ability_kind", "")) in ["melee", "ranged"]
+			and ticket.secondary.text.ends_with(" · %d–%d DAMAGE" % [int(damage[0]), int(damage[1])])
 			and _caption_fits(ticket.secondary),
-			"%s: optional BASE damage caption is complete and pixel-fit" % note)
+			"%s: optional authored damage caption is complete and pixel-fit" % note)
+
+
+func _verify_target(intent: Dictionary, ticket: StitchedFoeIntentPlate, note: String) -> void:
+	var ranks: Array[String] = []
+	for rank in intent["affected_ranks"]:
+		ranks.append(str(rank))
+	var several := bool(intent["multi"]) or ranks.size() > 1
+	var cue := ("HERO" if intent["target_side"] == "hero" else "FOE") \
+		+ (" RANKS " if several else " RANK ") + ",".join(ranks)
+	var damage: Array = intent["base_damage"]
+	var candidate := cue + " · %d–%d DAMAGE" % [int(damage[0]), int(damage[1])]
+	var label := ticket.secondary
+	var font := label.get_theme_font("font")
+	var fits := font.get_string_size(candidate, HORIZONTAL_ALIGNMENT_LEFT, -1,
+		label.get_theme_font_size("font_size")).x <= label.size.x
+	var show_damage := str(intent["ability_kind"]) in ["melee", "ranged"] and int(damage[1]) > 0 and fits
+	_check(label.text == (candidate if show_damage else cue)
+		and not label.text.contains("…") and not label.text.contains("BASE")
+		and label.get_theme_font_size("font_size") >= 18 and _caption_fits(label),
+		"%s shows the complete ordinary-word side/ranks and only measured complete damage" % note)
 
 
 func _verify_tickets(stage: StitchedBattleScreen) -> void:
@@ -141,6 +166,7 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 				"rank %d icon and kind match exactly the selected legal authored ID" % rank)
 			if matches == 1 and not selected.is_empty():
 				_verify_base(intent, selected, ticket, "rank %d selected ability" % rank)
+				_verify_target(intent, ticket, "live rank %d" % rank)
 		_check(ticket.foe_id == str(foe["id"]) and ticket.foe_rank == rank and
 			ticket.tooltip_text.contains(str(foe["name"])) and
 			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change") and
@@ -185,9 +211,10 @@ func _verify_kind_fixtures(host: Control) -> void:
 			and ticket.glyph.visible == (expected != null)
 			and ticket.tooltip_text.contains(str(intent["ability_name"]))
 			and (kind.is_empty() or ticket.tooltip_text.contains("Kind: " + kind.to_upper()))
-			and ticket.secondary.text.contains("H2")
+			and ticket.secondary.text.begins_with("HERO RANK 2")
 			and _caption_fits(ticket.primary) and _caption_fits(ticket.secondary),
 			"mounted fixture kind '%s' has truthful icon and full legal ability/target disclosure" % kind)
+		_verify_target(intent, ticket, "mounted kind " + kind)
 		if expected != null:
 			mapped += 1
 		if kind in ["buff", "debuff", "heal", "guard"]:
@@ -195,9 +222,66 @@ func _verify_kind_fixtures(host: Control) -> void:
 				"non-damaging mounted %s never advertises direct attack damage" % kind)
 		if kind == "move":
 			_check(ticket.primary.text.begins_with("MOVE")
-				and ticket.tooltip_text.contains("Flutter Back") and not ticket.glyph.visible,
+				and ticket.tooltip_text.contains("Flutter Back") and not ticket.glyph.visible
+				and not ticket.secondary.text.contains("DAMAGE"),
 				"MOVE is explicitly labelled without pretending to be an attack or buff")
 	_check(mapped == 6, "six mapped authored ability kinds tested with exact shipped PNGs")
+	# Every lawful rank subset, including gaps and all four ranks on both sides.
+	intent["ability_kind"] = "melee"
+	intent["base_damage"] = [4, 7]
+	intent["base_mark_damage"] = 3
+	for side in ["hero", "foe"]:
+		intent["target_side"] = side
+		for mask in range(1, 16):
+			var ranks: Array[int] = []
+			for rank in range(1, 5):
+				if mask & (1 << (rank - 1)):
+					ranks.append(rank)
+			intent["affected_ranks"] = ranks
+			intent["target_rank"] = ranks[0]
+			for multi in [false, true]:
+				intent["multi"] = multi
+				ticket.present_intent(intent, 1)
+				_verify_target(intent, ticket, "%s ranks %s multi %s" % [side, ranks, multi])
+	# Exact measured boundaries exercise inclusion and omission without chopping numbers.
+	intent["target_side"] = "hero"
+	intent["affected_ranks"] = [2]
+	intent["target_rank"] = 2
+	intent["multi"] = false
+	intent["base_damage"] = [123, 4567]
+	var candidate := "HERO RANK 2 · 123–4567 DAMAGE"
+	var width := ticket.secondary.get_theme_font("font").get_string_size(
+		candidate, HORIZONTAL_ALIGNMENT_LEFT, -1, 19).x
+	for delta in [1, -1]:
+		ticket.secondary.size.x = width + delta
+		ticket.present_intent(intent, 1)
+		_verify_target(intent, ticket, "damage boundary %d pixels" % delta)
+		_check(ticket.secondary.text == (candidate if delta > 0 else "HERO RANK 2")
+			and ticket.tooltip_text.contains("BASE DMG 123–4567")
+			and ticket.tooltip_text.contains("BASE ACC 88%")
+			and ticket.tooltip_text.contains("BASE CRIT +3")
+			and ticket.tooltip_text.contains("fray +4")
+			and ticket.tooltip_text.contains("BONUS VS MARK +3"),
+			"width boundary keeps complete interval or target-only cue and all authored disclosure")
+	for kind in ["move", "guard", "buff", "heal", "debuff", "unknown"]:
+		intent["ability_kind"] = kind
+		ticket.secondary.size.x = width + 1
+		ticket.present_intent(intent, 1)
+		_check(ticket.secondary.text == "HERO RANK 2"
+			and ticket.tooltip_text.contains("BASE DMG 123–4567"),
+			"%s with positive base numbers still cannot advertise an attack hit" % kind)
+	intent["ability_kind"] = "melee"
+	ticket.secondary.size.x = 134
+	for missing in [{"target_side": "hero", "affected_ranks": []},
+			{"target_side": "", "affected_ranks": [2]},
+			{"target_side": "heap", "affected_ranks": [2]},
+			{"target_side": "foe", "affected_ranks": [0, 2, 5]}]:
+		intent.merge(missing, true)
+		ticket.present_intent(intent, 1)
+		_check(ticket.secondary.text == "NO TARGET" and not ticket.tooltip_text.contains("Target:")
+			and ticket.tooltip_text.contains("No currently legal target")
+			and ticket.tooltip_text.contains("BASE DMG 123–4567"),
+			"missing or invalid side/ranks cannot fabricate a target or hit")
 	for state in ["pass", "stun"]:
 		intent["ability_kind"] = "melee" # malformed stale data must not paint a strike
 		intent["pass"] = state == "pass"
@@ -465,8 +549,9 @@ func _run() -> void:
 	battle._round -= 1
 	stage._refresh()
 	_check(stage._foe_tickets[sample_rank].glyph.texture == opening_texture
-		and stage._foe_tickets[sample_rank].secondary.text.contains("BASE 4–7"),
-		"return to earlier legal rotation restores attack glyph and fitted BASE 4–7 cue")
+		and stage._foe_tickets[sample_rank].secondary.text.begins_with("HERO RANK 1")
+		and stage._foe_tickets[sample_rank].tooltip_text.contains("BASE DMG 4–7"),
+		"return to earlier legal rotation restores attack glyph, readable target and exact damage disclosure")
 	# A genuinely authored long name is kept in the complete disclosure but
 	# safely ellipsized in the narrow visual caption; neither view spends a turn.
 	var long_name := "A Long Tangle of Moonlit Needles and Unravelling Threads"
@@ -567,7 +652,8 @@ func _run() -> void:
 	hero_one["lost"] = true
 	stage._refresh()
 	_check(int(stage._foe_intents[sample_rank]["target_rank"]) == 2
-		and stage._foe_tickets[sample_rank].tooltip_text.contains("rank 2"),
+		and stage._foe_tickets[sample_rank].tooltip_text.contains("rank 2")
+		and stage._foe_tickets[sample_rank].secondary.text.begins_with("HERO RANK 2"),
 		"lost front hero makes first legal target rank 2, never a phantom rank 1")
 	hero_one["lost"] = false
 	# Original first ability is disabled: fall through to authored next ability.
@@ -658,6 +744,9 @@ func _run() -> void:
 		for ability in foe["abilities"]:
 			if str(ability["target_side"]) == "enemy":
 				ability["multi"] = true
+			elif str(ability["id"]) == "rag_cloak":
+				ability["target_side"] = "ally"
+				ability["multi"] = true
 	var multi_mount := _mount(multi_config)
 	var multi_host: Control = multi_mount["host"]
 	var multi_stage: StitchedBattleScreen = multi_mount["stage"]
@@ -670,12 +759,22 @@ func _run() -> void:
 			multi_witness += 1
 			_check(intent["affected_ranks"].size() >= 2
 				and multi_stage._foe_tickets[int(foe["rank"])].tooltip_text.contains("ALL legal HERO ranks")
-				and multi_stage._foe_ticket_target_labels[int(foe["rank"])].text.contains("ALL H")
+				and multi_stage._foe_ticket_target_labels[int(foe["rank"])].text.begins_with("HERO RANKS ")
 				and not multi_stage._foe_ticket_target_labels[int(foe["rank"])].text.contains("…")
 				and _caption_fits(multi_stage._foe_ticket_target_labels[int(foe["rank"])]),
 				"authored multi ability displays all living legal HERO ranks")
 	_check(multi_witness >= 2, "non-vacuous: two or more seeded foes have real multi-target abilities")
 	_verify_receipt(multi_stage)
+	multi_stage.battle._round = 2
+	multi_stage._refresh()
+	_verify_tickets(multi_stage)
+	var ally_intent: Dictionary = multi_stage._foe_intents[1]
+	_check(ally_intent["ability_id"] == "rag_cloak" and ally_intent["target_side"] == "foe"
+		and ally_intent["multi"] and ally_intent["affected_ranks"] == [1, 2]
+		and multi_stage._foe_tickets[1].secondary.text == "FOE RANKS 1,2"
+		and multi_stage._foe_tickets[1].tooltip_text.contains("ALL legal FOE ranks 1, 2")
+		and multi_stage._foe_tickets[1].tooltip_text.contains("BASE DMG 0–0"),
+		"mounted legal multi-foe buff names exact allied ranks without a fictitious attack")
 	multi_host.free()
 	_finish()
 

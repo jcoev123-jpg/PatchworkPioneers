@@ -105,6 +105,7 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	var target := ""
 	var detail := ""
 	var base_detail := ""
+	secondary.add_theme_font_size_override("font_size", 19)
 	if bool(intent.get("stun", false)):
 		heading = "STUN"
 		target = "NO ACTION"
@@ -120,18 +121,27 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 		var side := str(intent.get("target_side", ""))
 		var ranks: Array[String] = []
 		for affected in intent.get("affected_ranks", []):
-			ranks.append(str(affected))
-		var prefix := "H" if side == "hero" else "F"
+			if affected is int and affected >= 1 and affected <= 4:
+				ranks.append(str(affected))
 		var multi := bool(intent.get("multi", false))
 		var several := multi or ranks.size() > 1
-		target = ("ALL " if several else "") + prefix + ",".join(ranks)
 		var side_name := "HERO" if side == "hero" else "FOE"
-		if several:
+		var has_target: bool = side in ["hero", "foe"] and not ranks.is_empty() \
+			and ranks.size() == intent.get("affected_ranks", []).size()
+		if not has_target:
+			target = "NO TARGET"
+			detail = "No currently legal target"
+		elif several:
+			target = "%s RANKS %s" % [side_name, ",".join(ranks)]
 			detail = "%s %s ranks %s (chosen target rank %d)" % [
 				"ALL legal" if multi else "Multiple",
 				side_name, ", ".join(ranks), int(intent.get("target_rank", 0))]
 		else:
-			detail = "Target: %s rank %d" % [side_name, int(intent.get("target_rank", 0))]
+			target = "%s RANK %s" % [side_name, ranks[0]]
+			detail = "Target: %s rank %s" % [side_name, ranks[0]]
+		# Keep every affected rank readable, even for a four-rank target cue.
+		while not _caption_width_fits(target, secondary) and secondary.get_theme_font_size("font_size") > 1:
+			secondary.add_theme_font_size_override("font_size", secondary.get_theme_font_size("font_size") - 1)
 		var damage: Array = intent.get("base_damage", [])
 		if damage.size() == 2:
 			var low := int(damage[0])
@@ -150,8 +160,8 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 				base_detail += " · BONUS VS MARK +%d" % mark_damage
 			# The rank list always wins over an optional damage cue. No clipped
 			# numbers, and a zero-direct-damage buff is never labelled a hit.
-			if high > 0:
-				var candidate := target + " BASE %d–%d" % [low, high]
+			if has_target and ability_kind in ["melee", "ranged"] and high > 0:
+				var candidate := target + " · %d–%d DAMAGE" % [low, high]
 				if _caption_width_fits(candidate, secondary):
 					target = candidate
 	if glyph != null:
@@ -160,7 +170,7 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	primary.position.x = 38 if glyph != null and glyph.visible else 8
 	primary.size.x = 104 if glyph != null and glyph.visible else 134
 	primary.text = _fit_caption(heading, primary)
-	secondary.text = _fit_caption(target, secondary)
+	secondary.text = target
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
 	var disclosed_name := heading if bool(intent.get("pass", false)) or bool(intent.get("stun", false)) else actual_name
 	tooltip_text = "%s · %s · %s%s%s\nCurrent intent; may change if ranks or statuses change" % [
