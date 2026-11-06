@@ -815,6 +815,78 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_belljar_moth_shelter",
+      "title": "The Bell-Jar Moth Shelter",
+      "description": "Beneath an inverted glass bell as high as a wardrobe, small stuffed moths crowd around a dying wick; the Lantern Monk lifts his glowing patchwork lantern and peers through the darkened glass.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["lift_bell_for_silk", "rewick_shelter_lamp"],
+      "choices": [
+        {
+          "id": "lift_bell_for_silk",
+          "text": "Lift the bell with the lantern pole and gather loose silk (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "rewick_shelter_lamp",
+          "text": "Spend 2 scraps to rewick the keeper's lamp (earn 27 gold)",
+          "outcome": {"gold": 27, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the moths sleep beneath their glass roof",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_satin_glove_box",
+      "title": "The Satin Glove Box",
+      "description": "A gigantic oxblood satin glove hangs from a dresser hook over the doll-sized path; the Rag Duelist's needle rapier holds open its cuff while his patched cape flutters against a brass clasp.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["buy_satin_cord", "seal_glove_cuff"],
+      "choices": [
+        {
+          "id": "buy_satin_cord",
+          "text": "Pay 15 gold for three bundles of satin cord (+3 scraps)",
+          "outcome": {"gold": -15, "scraps": 3}
+        },
+        {
+          "id": "seal_glove_cuff",
+          "text": "Spend 1 scrap resealing the glove cuff (earn 22 gold)",
+          "outcome": {"gold": 22, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Lower the cuff and bow to the silent glove",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_biscuit_tin_gear_lift",
+      "title": "The Biscuit-Tin Gear Lift",
+      "description": "A dented biscuit tin towers over a narrow skirting-board trail; brass gears lift its heavy lid while the Tinker's mismatched goggles gleam above her overstuffed scrap backpack.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["collect_loose_gear_teeth", "repair_tin_ratchet"],
+      "choices": [
+        {
+          "id": "collect_loose_gear_teeth",
+          "text": "Gather loose brass gear teeth from the sill (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1}
+        },
+        {
+          "id": "repair_tin_ratchet",
+          "text": "Spend 2 scraps repairing the lid ratchet (earn 30 gold)",
+          "outcome": {"gold": 30, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the great tin lid to rattle in the dark",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
