@@ -16,6 +16,9 @@ const LEFT := "left"
 const MODE := "stitched"
 const THIMBLE_TONIC := "thimble_tonic"
 const BUY_THIMBLE_TONIC := "buy_thimble_tonic"
+const SPARE_SPOOL := "spare_spool"
+const BUY_SPARE_SPOOL := "buy_spare_spool"
+const OFFERS := ["thimble_tonic", "spare_spool"]
 const LEAVE := "leave"
 const DOLL_COUNT := 4
 const MIN_RANK := 1
@@ -29,20 +32,26 @@ var _dolls: Array = []
 var _pockets: Dictionary = {}
 var _gold := 0
 var _quoted_price := 0
+var _item: String = THIMBLE_TONIC
 
 
-## Admits a nonempty trimmed node ID, exactly four distinct dolls with unique ranks 1..4
+## Admitsa nonempty trimmed node ID, exactly four distinct dolls with unique ranks 1..4
 ## and boolean lost flags, one pocket Array (0..2 recognized items) per doll ID, a
 ## nonnegative integer wallet and a strictly positive integer quote. Else invalid/inert.
+## The optional trailing item selects the single offer: "thimble_tonic" (default) or
+## "spare_spool"; any other selector is inert (never recast as a tonic). The spool is only
+## placed in a pocket here; its thread repair happens when it is used in a later Walk.
 static func open_stitched(node_id: Variant, dolls: Variant, pockets: Variant, gold: Variant,
-		quoted_price: Variant) -> RunStitchedPeddlerTonic:
+		quoted_price: Variant, item: Variant = THIMBLE_TONIC) -> RunStitchedPeddlerTonic:
 	var visit := RunStitchedPeddlerTonic.new()
-	visit._admit(node_id, dolls, pockets, gold, quoted_price)
+	visit._admit(node_id, dolls, pockets, gold, quoted_price, item)
 	return visit
 
 
 func _admit(node_id: Variant, dolls: Variant, pockets: Variant, gold: Variant,
-		quoted_price: Variant) -> void:
+		quoted_price: Variant, item: Variant = THIMBLE_TONIC) -> void:
+	if typeof(item) != TYPE_STRING or not OFFERS.has(item):
+		return
 	if not _valid_id(node_id):
 		return
 	var ids := _admitted_ids(dolls)
@@ -61,6 +70,7 @@ func _admit(node_id: Variant, dolls: Variant, pockets: Variant, gold: Variant,
 	_pockets = (pockets as Dictionary).duplicate(true)
 	_gold = gold
 	_quoted_price = quoted_price
+	_item = item
 	_status = OPEN
 
 
@@ -142,7 +152,7 @@ func read_state() -> Dictionary:
 		"node_id": _node_id,
 		"status": _status,
 		"mode": MODE,
-		"item": THIMBLE_TONIC,
+		"item": _item,
 		"gold": _gold,
 		"price": _quoted_price,
 		"dolls": _dolls.duplicate(true),
@@ -169,14 +179,18 @@ func quote() -> Dictionary:
 		"ok": true,
 		"mode": MODE,
 		"node_id": _node_id,
-		"item": THIMBLE_TONIC,
+		"item": _item,
 		"price": _quoted_price,
 		"gold": _gold,
 		"eligible": eligible,
 		"can_buy": can_buy,
 		"blocked": blocked,
-		"choices": [BUY_THIMBLE_TONIC, LEAVE] if can_buy else [LEAVE],
+		"choices": [_buy_label(), LEAVE] if can_buy else [LEAVE],
 	}
+
+
+func _buy_label() -> String:
+	return BUY_SPARE_SPOOL if _item == SPARE_SPOOL else BUY_THIMBLE_TONIC
 
 
 ## Buys one thimble_tonic for one eligible doll: appends it to ONLY that pocket, charges the
@@ -188,11 +202,11 @@ func buy(doll_id: Variant, expected_node_id: Variant, expected_snapshot: Variant
 		return _rejected()
 	if _gold < _quoted_price:
 		return _rejected()
-	(_pockets[doll_id] as Array).append(THIMBLE_TONIC)
+	(_pockets[doll_id] as Array).append(_item)
 	_gold -= _quoted_price
 	_status = USED
-	var receipt := _receipt(BUY_THIMBLE_TONIC)
-	receipt["item"] = THIMBLE_TONIC
+	var receipt := _receipt(_buy_label())
+	receipt["item"] = _item
 	receipt["target_id"] = doll_id
 	receipt["price"] = _quoted_price
 	receipt["charged_gold"] = _quoted_price
