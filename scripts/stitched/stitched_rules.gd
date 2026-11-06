@@ -45,6 +45,7 @@ const SATCHEL_CAP := 6
 const FRAY_MAX := 200
 const FRAY_RESOLVE := 100
 const FRAY_RECOVER := 50
+const WALK_MIMIC_ID := "extra_thread_shadow"
 const COUNTDOWN_KEYS := [
 	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "stun_resist", "guard",
 ]
@@ -345,6 +346,10 @@ func use_foe_ability(ability_id: String, target_rank: int) -> Dictionary:
 		return gate
 	var actor := _current_unit()
 	var ability := _foe_ability(actor, ability_id)
+	if bool(actor.get("walk_intruder", false)):
+		var heroes := _units_of_side("hero").filter(func(hero: Dictionary) -> bool: return not hero.lost)
+		if heroes.is_empty() or target_rank != int(heroes.back().rank):
+			return _reject("ability", WALK_MIMIC_ID, "the ambush must target the back-rank doll")
 	if ability.is_empty():
 		return _reject("ability", str(actor["id"]), "the foe has no ability " + ability_id)
 	if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])):
@@ -360,6 +365,14 @@ func use_foe_ability(ability_id: String, target_rank: int) -> Dictionary:
 	if not blocked.is_empty():
 		return blocked
 	var receipt := _resolve_ability(actor, ability, targets, "")
+	if bool(actor.get("walk_intruder", false)):
+		# Flee even after a miss or lethal reaction. Never enter reward/heap accounting.
+		receipt["fled"] = true
+		_spend_dodge_turn(actor)
+		_units.erase(WALK_MIMIC_ID)
+		_order.remove_at(_turn_index)
+		_enter_turn()
+		return receipt
 	_advance_turn()
 	return receipt
 
@@ -573,13 +586,33 @@ func _setup(config: Dictionary) -> String:
 	var foes: Variant = config.get("foes")
 	if not foes is Array or foes.size() < MIN_FOES or foes.size() > MAX_FOES:
 		return "stitched mode starts with two or three foes, never four"
+	var mimic: Variant = config.get("walk_mimic", false)
+	var cuts: Variant = config.get("walk_cuts", {})
+	if not mimic is bool or not cuts is Dictionary:
+		return "invalid Walk arrival options"
 	var rank := 0
 	for entry in heroes:
 		rank += 1
-		var built := _build_hero(entry, rank)
+		var carried: Variant = entry
+		if entry is Dictionary and cuts.has(entry.get("id")):
+			# The Walk already paid exactly +20, but defers combat resolve/seam
+			# transitions. Validate its pre-SNIP state, then settle that same gain.
+			if not entry.get("fray") is int or entry.fray < 20:
+				return "Walk cut requires its paid SNIP fray"
+			carried = entry.duplicate(true)
+			carried.fray -= 20
+		var built := _build_hero(carried, rank)
 		if not built["ok"]:
 			return str(built["error"])
 		_units[str(built["unit"]["id"])] = built["unit"]
+	# Check the Walk's pre-transition vitality before a paid fray gain can tear a
+	# part and legitimately change maximum HP. No RNG has been borrowed yet.
+	var vitality: Variant = config.get("walk_vitality", {})
+	if not vitality is Dictionary:
+		return "invalid Walk vitality"
+	for id in vitality:
+		if not _units.has(id) or not vitality[id] is int or vitality[id] != _units[id].max_hp:
+			return "combat vitality does not match Walk"
 	rank = 0
 	for entry in foes:
 		rank += 1
@@ -589,12 +622,36 @@ func _setup(config: Dictionary) -> String:
 		_units[str(built["unit"]["id"])] = built["unit"]
 		if bool(built["unit"]["is_boss"]):
 			_boss_encounter = true
+	for id in cuts:
+		if not _units.has(id) or _units[id].side != "hero" or _units[id].lost \
+				or not cuts[id] is int or cuts[id] != _units[id].rank:
+			return "invalid Walk cut boundary"
+	_thread_cuts = cuts.duplicate(true)
+	if mimic:
+		# Until a dedicated mimic profile is authored, reuse Rag Rake's existing
+		# combat numbers. Only its special arrival/target masks differ.
+		var enemy_catalog := StitchedEnemyCatalog.load_catalog()
+		var intruder := StitchedEnemyCatalog.foe_for(enemy_catalog, "ragling")
+		if intruder.is_empty():
+			return "missing ambush combat profile"
+		intruder.id = WALK_MIMIC_ID
+		intruder.name = "One Doll Too Many"
+		intruder.abilities = [intruder.abilities[0].duplicate(true)]
+		intruder.abilities[0].launch = [1, 2, 3, 4]
+		intruder.abilities[0].target = [1, 2, 3, 4]
+		var built := _build_foe(intruder, MAX_RANK)
+		if not built.ok:
+			return str(built.error)
+		built.unit["walk_intruder"] = true
+		_units[WALK_MIMIC_ID] = built.unit
 	_valid = true
 	if config.get("run_rng") is RandomNumberGenerator:
 		_rng = config["run_rng"]
 	else:
 		_rng = RandomNumberGenerator.new()
 		_rng.seed = int(seed_value)
+	for id in _thread_cuts.keys():
+		_change_fray(_units[id], 20, false)
 	_round = 0
 	_outcome = "ongoing"
 	_begin_round()
@@ -932,6 +989,8 @@ func _begin_round() -> void:
 						_order.push_front(first)
 						_opening["triggered"] = true
 						break
+		if _units.has(WALK_MIMIC_ID) and bool(_units[WALK_MIMIC_ID].get("walk_intruder", false)):
+			_order.push_front(WALK_MIMIC_ID)
 
 
 ## Rolls SPEED + 1d8 for every living unit. Draw order is heroes by rank (1..4), then foes
@@ -952,6 +1011,8 @@ func _roll_order() -> Array:
 		})
 		sequence += 1
 	for unit in _units_of_side("foe"):
+		if bool(unit.get("walk_intruder", false)):
+			continue  # A first-round arrival, not a recurring initiative roll.
 		if bool(unit["dead"]) or int(unit["hp"]) <= 0:
 			continue
 		var total := int(unit["speed"]) + _rng.randi_range(1, D8)
@@ -1057,6 +1118,8 @@ func _require_turn(action: String) -> Dictionary:
 	if not _units.has(unit_id):
 		return _reject(action, unit_id, "the acting unit is missing")
 	var unit: Dictionary = _units[unit_id]
+	if bool(unit.get("walk_intruder", false)) and action != "ability":
+		return _reject(action, unit_id, "the intruder must attack then flee")
 	if not _can_act(unit):
 		return _reject(action, unit_id, "the acting unit cannot act")
 	return {}
@@ -1455,6 +1518,8 @@ func _kill_foe(foe: Dictionary) -> Dictionary:
 	foe["hp"] = 0
 	foe["hanging"] = false
 	foe["statuses"] = {}
+	if bool(foe.get("walk_intruder", false)):
+		return {}  # Reactions cannot turn the fleeting arrival into loot or a heap.
 	var heap_hp := heap_hp_for(int(foe["max_hp"]))
 	var heap := {
 		"id": "heap:" + str(foe["id"]),
@@ -1610,11 +1675,11 @@ static func _valid_text(value: Variant) -> String:
 
 ## All fray gains use the candle of this battle, clamp to 200, and are applied
 ## through the same seeded resolve gate. Recovery is never candle-multiplied.
-func _change_fray(hero: Dictionary, amount: int) -> Dictionary:
+func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -> Dictionary:
 	if str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
-	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 else amount
+	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle else amount
 	hero["fray"] = clampi(before + applied, 0, FRAY_MAX)
 	var transition := ""
 	if int(hero["fray"]) >= FRAY_MAX:

@@ -34,7 +34,8 @@ func _snapshot(app) -> Array:
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_check(not ProjectSettings.has_setting("patchwork/combat_mode"), "retired combat mode setting removed")
-	for screen in ["title", "base", "stitched_battle"]:
+	_check(BOOT.PUBLIC_SCREENS == ["title", "base", "stitched_battle", "stitched_walk"], "exact public URL allowlist")
+	for screen in ["title", "base", "stitched_battle", "stitched_walk"]:
 		_check(screen in BOOT.PUBLIC_SCREENS and screen in BOOT.SCREENS, "public and direct preview supported: " + screen)
 	for screen in ["map", "battle", "reward", "shop", "rest", "event", "results"]:
 		_check(screen in BOOT.SCREENS and screen not in BOOT.PUBLIC_SCREENS, "legacy preview is direct-only: " + screen)
@@ -56,6 +57,9 @@ func _run() -> void:
 		"?screen=title&screen=title", "?screen=stitched_battle&screen=title", "?screen=stitched_battle&screen=stitched_battle",
 		"?screen=stitched_battle%26x", "?screen=title=base", "?screen=%20title", "?screen=title%00",
 		"?screen%00=title", "?screen=title&scr%65en=base", "?screen=%6dap", "?screen=%62attle",
+		"?screen=stitched_walk&screen=stitched_walk", "?screen=stitched_walk&scr%65en=title",
+		"?screen=stitched_walk%00", "?screen=stitched_walk%", "?screen=stitched_walk%GG", "?screen=stitched_walk%2",
+		"?screen=stitched_walk&x=%-1", "?screen=stitched_walk&x=%+a",
 		null, 12]:
 		var parsed: String = boot.screen_from_query(query)
 		_check(parsed == "", "unsupported query rejected: " + str(query))
@@ -64,6 +68,14 @@ func _run() -> void:
 			"invalid input preserves all title resources and seed")
 		_check(not boot.preview_ready and app.title_view.is_visible_in_tree(), "invalid URL never ready or leaves title")
 	_check(randi() == expected_global, "invalid input consumes no global RNG")
+	_check(await boot.enter_preview(app, "stitched_walk"), "walk opens on pristine app")
+	var first_walk: Dictionary = boot.walk_view.expected.duplicate(true)
+	boot.walk_view.exit_button.pressed.emit()
+	await process_frame
+	_check(_snapshot(app) == pristine and boot.walk_view == null, "mounted exit restores pristine app")
+	_check(await boot.enter_preview(app, "stitched_walk") and boot.walk_view.expected == first_walk, "same-app reopen creates identical seeded walk after cleanup")
+	boot.walk_view.exit_button.pressed.emit()
+	await process_frame
 	app.free()
 	# Both parts of the explicit fixture opt-in are required, before any mutation.
 	for preparation in ["none", "start_only", "route_only"]:
@@ -116,6 +128,7 @@ func _run() -> void:
 			seed(114115)
 			if not public_screen:
 				LEGACY_ENTRY.prepare(app)
+			var opening_globals := _snapshot(app)
 			_check(await boot.enter_preview(app, parsed if public_screen else screen), "preview succeeds: " + screen)
 			_check(boot.preview_ready and Engine.get_process_frames() >= frames + 2, "ready follows two frames: " + screen)
 			_check(boot._expected_view(app, screen), "matching mounted live view: " + screen)
@@ -133,6 +146,19 @@ func _run() -> void:
 					and app.base_screen.set_out_button.has_focus()
 					and app.base_screen.back_button.is_visible_in_tree(),
 					"village preview mounts focusable Set out and Back to title")
+			elif screen == "stitched_walk":
+				var stage: StitchedWalkScreen = boot.walk_view
+				_check(stage != null and stage.is_visible_in_tree() and stage.walk != null, "public walk mounts authoritative rules")
+				_check(stage.expected.dolls.size() == 4 and stage.expected.step == 0 and stage.expected.revision == 0, "walk starts seeded four-doll fixture")
+				_check(app.deck == null and app.run_map == null and app.run_rng == null and app.stitched_run_session == null, "walk remains isolated from run globals")
+				if repeat == 0:
+					replay = [stage.expected.duplicate(true)]
+				else:
+					_check(replay == [stage.expected], "public walk replay is identical")
+				var walk_before := stage.walk.snapshot()
+				_check(not await boot.enter_preview(app, "stitched_walk") and stage.walk.snapshot() == walk_before, "walk reentry refuses without mutation")
+				boot.exit_stitched_preview(null)
+				_check(boot.walk_view == stage and stage.is_visible_in_tree(), "foreign exit cannot unmount the active preview")
 			elif screen == "stitched_battle":
 				var stage: StitchedBattleScreen = boot.stitched_view
 				_check(stage != null and stage.is_visible_in_tree() and stage.battle != null and stage.battle.is_valid(), "stitched public scene mounts real rules")
@@ -181,7 +207,9 @@ func _run() -> void:
 						and app.act_outcome.get_state().run_status == "DEFEAT", "actual routed defeat settled")
 					_check(app.reward_buttons.is_empty() and app.fight_rewards == null and app.card_reward == null, "defeat never offers rewards")
 			var snapshot := _snapshot(app)
-			if repeat == 0:
+			if screen == "stitched_walk":
+				pass # Model replay checked above, independently of app globals.
+			elif repeat == 0:
 				replay = snapshot
 			else:
 				_check(snapshot == replay, "independent deterministic model replay: " + screen)
@@ -190,9 +218,12 @@ func _run() -> void:
 					"already-open village preview cannot be re-entered")
 			if screen not in ["title", "base"]:
 				_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
-				if screen == "stitched_battle":
+				if screen in ["stitched_battle", "stitched_walk"]:
 					boot.exit_stitched_preview(app)
-					_check(boot.stitched_view == null and app.title_view.is_visible_in_tree(), "stitched preview unmounts and restores title")
+					_check(boot.stitched_view == null and boot.walk_view == null and app.title_view.is_visible_in_tree() and not boot.preview_ready, "stitched preview unmounts and restores title")
+					_check(_snapshot(app) == opening_globals, "preview exit restores all opening app globals")
+					boot.exit_stitched_preview(app)
+					_check(app.start_button.has_focus(), "repeat exit preserves title focus")
 				else:
 					app._return_to_title()
 				app.start_run_requested.emit()

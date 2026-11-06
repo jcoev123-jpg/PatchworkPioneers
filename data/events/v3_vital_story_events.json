@@ -1375,6 +1375,138 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_amber_stuffing_pump",
+      "title": "The Amber Stuffing Pump",
+      "description": "A round button-eyed pump keeper works towering copper bellows with an oxblood quilt heart at its valve; warm lanterns pulse beneath the stitched pipes.",
+      "choices": [
+        {
+          "id": "buy_warm_valve",
+          "text": "Spend 2 scraps to refill the heart valve (heal 8 HP; gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 1 }
+        },
+        {
+          "id": "squeeze_cracked_bellows",
+          "text": "Squeeze the cracked bellows (lose 5 HP; gain 21 gold)",
+          "outcome": { "gold": 21, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the heart valve beating",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_plum_needle_tide_clock",
+      "title": "The Needle-Tide Clock",
+      "description": "A sleepy plum-plaid timekeeper tends a giant crescent clock of sliding silver sewing needles; a single amber candle lights its sweeping quilt dial.",
+      "choices": [
+        {
+          "id": "buy_still_hour",
+          "text": "Pay 17 gold for one still hour (gain 2 max HP)",
+          "outcome": { "gold": -17, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "wind_moon_hand",
+          "text": "Wind the needle hand (lose 4 HP; collect 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the silver hands tick on",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_moss_copper_darners_gate",
+      "title": "The Darners' Button Gate",
+      "description": "Three plump moss-velvet dolls guide a brass button through a door-sized safety-pin gate on a woven thread belt, with a tiny candle at the hinge.",
+      "choices": [
+        {
+          "id": "rent_button_lining",
+          "text": "Pay 11 gold and 1 scrap for a padded button seam (heal 6 HP)",
+          "outcome": { "gold": -11, "scraps": -1, "hp": 6, "max_hp": 0 }
+        },
+        {
+          "id": "surrender_heart_button",
+          "text": "Give up 1 max HP at the gate (gain 18 gold)",
+          "outcome": { "gold": 18, "scraps": 0, "hp": 0, "max_hp": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the tiny gatekeepers to their work",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_underbed_glass_eye",
+      "title": "The Underbed Glass Eye",
+      "description": "A loose glass eye the size of a soup bowl stares out from under a towering bedstead, wrapped in a child's midnight-blue sock; its amber reflection tightens the dolls' visible stitches.",
+      "choices": [
+        {
+          "id": "polish_eye_socket",
+          "text": "Spend 2 scraps polishing the staring eye (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "pry_reflection",
+          "text": "Pry up its mirrored eyelid (lose 5 HP; gain 21 gold)",
+          "outcome": { "gold": 21, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Tuck the glass eye back beneath the bed",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_rainboot_thread_hatch",
+      "title": "The Rainboot Thread Hatch",
+      "description": "A colossal moss-green rain boot hangs above a floorboard crack, its oxblood laces sewn into a tiny hatch and a warm button lantern glowing far inside the heel.",
+      "choices": [
+        {
+          "id": "pack_dry_heel",
+          "text": "Pay 13 gold for dry heel stuffing (heal 9 HP)",
+          "outcome": { "gold": -13, "scraps": 0, "hp": 9, "max_hp": 0 }
+        },
+        {
+          "id": "wrench_boot_nail",
+          "text": "Wrench out the crooked boot nail (lose 4 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the great boot sway above the crack",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_lullaby_brass_keyhole",
+      "title": "The Lullaby Brass Keyhole",
+      "description": "A bedroom door rises like a cliff, its huge singing brass keyhole rocking a plush crescent moon while a single oxblood ribbon unspools through the lock.",
+      "choices": [
+        {
+          "id": "hush_keyhole_song",
+          "text": "Pay 17 gold and 1 scrap to hush the lock (heal 5 HP; gain 1 max HP)",
+          "outcome": { "gold": -17, "scraps": -1, "hp": 5, "max_hp": 1 }
+        },
+        {
+          "id": "trade_heart_thread",
+          "text": "Trade 2 max HP of heart thread for a gilded key (gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little cloth moon singing",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }

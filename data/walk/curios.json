@@ -1,9 +1,123 @@
 {
   "curios": [
-    {"id":"pin_nest","name":"Pincushion","kind":"pincushion"},
-    {"id":"borrowed_shape","name":"Tailor's Dummy","kind":"dummy"},
-    {"id":"biting_bundle","name":"Ragbag","kind":"ragbag"},
-    {"id":"pattern_scraps","name":"Wall Patterns","kind":"patterns"},
-    {"id":"sewn_threshold","name":"Stitched-shut Door","kind":"door"}
+    {
+      "id": "pin_nest",
+      "name": "Pincushion",
+      "kind": "pincushion",
+      "rules": {
+        "wake_chances": [
+          15,
+          35,
+          60,
+          100
+        ],
+        "fight_chance": 50,
+        "fray": 15,
+        "loot": [
+          {
+            "kind": "scraps",
+            "id": "scraps",
+            "amount": 2
+          },
+          {
+            "kind": "gold",
+            "id": "gold",
+            "amount": 5
+          },
+          {
+            "kind": "pocket_item",
+            "id": "thimble_tonic",
+            "amount": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "borrowed_shape",
+      "name": "Tailor's Dummy",
+      "kind": "dummy",
+      "rules": {
+        "mimic_chance": 35,
+        "parts": [
+          "scissor_crab_claw_arm",
+          "moth_swarm_wings",
+          "felt_bulwark_button_shield"
+        ],
+        "glass_heads": [
+          "seamstress_mending_knot_hat",
+          "seamstress_scarlet_knot_hat"
+        ]
+      }
+    },
+    {
+      "id": "biting_bundle",
+      "name": "Ragbag",
+      "kind": "ragbag",
+      "rules": {
+        "bleed_chance": 50,
+        "bleed": 2,
+        "loot": [
+          {
+            "kind": "scraps",
+            "id": "scraps",
+            "amount": 2
+          },
+          {
+            "kind": "gold",
+            "id": "gold",
+            "amount": 5
+          },
+          {
+            "kind": "pocket_item",
+            "id": "thimble_tonic",
+            "amount": 1
+          }
+        ]
+      }
+    },
+    {
+      "id": "pattern_scraps",
+      "name": "Wall Patterns",
+      "kind": "patterns",
+      "rules": {
+        "marker": "wall_pattern_secret"
+      }
+    },
+    {
+      "id": "sewn_threshold",
+      "name": "Stitched-shut Door",
+      "kind": "door",
+      "rules": {
+        "needle_arms": [
+          "seamstress_thread_prick_needle",
+          "seamstress_needle_rain_needle",
+          "needle_wasp_stinger",
+          "sewing_machine_colossus_needle_arm",
+          "rag_duelist_arms_needle_prick"
+        ],
+        "room_curios": [
+          "pin_nest",
+          "biting_bundle",
+          "pattern_scraps"
+        ],
+        "loot": [
+          {
+            "kind": "scraps",
+            "id": "scraps",
+            "amount": 2
+          },
+          {
+            "kind": "gold",
+            "id": "gold",
+            "amount": 5
+          },
+          {
+            "kind": "pocket_item",
+            "id": "thimble_tonic",
+            "amount": 1
+          }
+        ]
+      }
+    }
   ]
 }

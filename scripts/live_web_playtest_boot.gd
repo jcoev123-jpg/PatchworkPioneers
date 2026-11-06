@@ -1,14 +1,16 @@
 extends Node
 ## Opt-in exported-web fixtures. Ordinary startup never allocates a run or RNG.
 
-const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results", "stitched_battle"]
-const PUBLIC_SCREENS := ["title", "base", "stitched_battle"]
+const SCREENS := ["title", "base", "map", "battle", "reward", "shop", "rest", "event", "results", "stitched_battle", "stitched_walk"]
+const PUBLIC_SCREENS := ["title", "base", "stitched_battle", "stitched_walk"]
 const GOLD := 100
 const SCRAPS := 10
 var preview_ready := false
 var _busy := false
 var _preview_map: WeakRef
 var stitched_view: StitchedBattleScreen
+var walk_view: StitchedWalkScreen
+var _stitched_app: WeakRef
 
 
 ## Preserve ordinary zero-wallet admission; authorize only this preview's map.
@@ -37,6 +39,11 @@ func screen_from_query(query: Variant) -> String:
 	# an exact public screen (or a malformed key become a screen key).
 	if "%00" in query:
 		return ""
+	for index in query.length():
+		if query[index] == "%":
+			if index + 2 >= query.length() or not query[index + 1] in "0123456789abcdefABCDEF" \
+				or not query[index + 2] in "0123456789abcdefABCDEF":
+				return ""
 	var found: Array[String] = []
 	for field in query.trim_prefix("?").split("&"):
 		var pair: PackedStringArray = field.split("=", true, 1)
@@ -57,7 +64,18 @@ func enter_preview(app, screen: String) -> bool:
 		return false
 	_busy = true
 	preview_ready = false
-	if screen == "stitched_battle":
+	if screen == "stitched_walk":
+		var view := StitchedWalkScreen.new()
+		if not view.begin():
+			view.free()
+			_busy = false
+			return false
+		app.title_view.hide()
+		app.add_child(view)
+		walk_view = view
+		_stitched_app = weakref(app)
+		view.exit_requested.connect(func(): exit_stitched_preview(app))
+	elif screen == "stitched_battle":
 		# S2 is an independent opt-in rules session; no run, card deck, or map is allocated.
 		var view := StitchedBattleScreen.new()
 		if not view.begin():
@@ -67,6 +85,7 @@ func enter_preview(app, screen: String) -> bool:
 		app.title_view.hide()
 		app.add_child(view)
 		stitched_view = view
+		_stitched_app = weakref(app)
 		view.exit_requested.connect(func(): exit_stitched_preview(app))
 	elif screen == "base":
 		# The village preview mounts the real Base and allocates no run at all.
@@ -149,6 +168,10 @@ func _expected_view(app, screen: String) -> bool:
 			return _visible(stitched_view) and stitched_view.battle != null and stitched_view.battle.is_valid() \
 				and not _visible(app.title_view) and app.run_map == null and app.deck == null \
 				and app.run_rng == null and app.run_heroes.is_empty()
+		"stitched_walk":
+			return _visible(walk_view) and walk_view.walk != null and not walk_view.expected.is_empty() \
+				and not _visible(app.title_view) and app.run_map == null and app.deck == null \
+				and app.run_rng == null and app.run_heroes.is_empty() and app.stitched_run_session == null
 		"base":
 			return _visible(app.base_screen) and app.base_screen.has_open_village() \
 				and not _visible(app.title_view) and app.run_map == null \
@@ -174,11 +197,24 @@ func _expected_view(app, screen: String) -> bool:
 
 ## Undo only this opt-in screen. Ordinary Stitched start remains pristine on the same app.
 func exit_stitched_preview(app) -> void:
-	if stitched_view == null or not is_instance_valid(stitched_view):
+	if _stitched_app == null or _stitched_app.get_ref() != app:
 		return
-	stitched_view.queue_free()
+	var has_walk := is_instance_valid(walk_view)
+	var has_battle := is_instance_valid(stitched_view)
+	if not has_walk and not has_battle:
+		return
+	if has_walk:
+		walk_view.hide()
+		walk_view.queue_free()
+	if has_battle:
+		stitched_view.hide()
+		stitched_view.queue_free()
+	walk_view = null
 	stitched_view = null
+	_stitched_app = null
 	preview_ready = false
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.pioneersReady = false")
 	if is_instance_valid(app) and is_instance_valid(app.title_view):
 		app.title_view.show()
 		if is_instance_valid(app.start_button):

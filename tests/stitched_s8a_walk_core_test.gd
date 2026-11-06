@@ -141,7 +141,7 @@ func _replay_and_completion() -> void:
 			_check(initial.step == 0 and initial.whirr == 0 and initial.curios.size() <= 2, "walk begins before first forward step")
 			var occupied: Array = []
 			for curio in initial.curios:
-				_check(curio.step >= 1 and curio.step <= initial.corridor.steps and not curio.step in occupied, "at most one curio per valid step")
+				_check(curio.step >= 0 and curio.step < initial.corridor.steps and not curio.step in occupied, "at most one curio per reachable position before exit")
 				occupied.append(curio.step)
 			var detached: Dictionary = first.snapshot()
 			detached.dolls[0].hp = -100

@@ -7,17 +7,26 @@ extends RefCounted
 ## snapshot returns detached state. act requires the entire expected snapshot and an
 ## exact command dictionary. Every command names its actor (the current viewpoint).
 ## Commands: forward/look_back {kind, actor}, switch {kind, actor, target},
-## use_item {kind, actor, slot, target}. Item targets are dolls, except pins which
+## use_item {kind, actor, slot, target}, snip {kind, actor, target}. Item targets are dolls, except pins which
 ## target the current step's curio instance. Receipts report ok/error, events and
 ## the resulting snapshot. Rejected commands never spend items or draw randomness.
-## Pending descriptors remain unconsumed for S8c-f. No battle/fray/curio resolution.
+## S8d: curio {kind, actor, target: instance, choice}; curio_choices lists legal
+## choices. Each accepted interaction costs 5 WHIRR. Curios occupy positions
+## 0..steps-1, before the final forward exits. Awards/rooms/traps await S8f.
+## Opt-in S8c schedules one possible mimic at start; SNIP adds 5 WHIRR. Wrong SNIP
+## adds 20 fray and queues a cut until re-tied. Local pins/dye protection is spent
+## by curio traps; this service never starts combat or settles run/map awards.
 
 const ITEMS := ["thimble_tonic", "fresh_stuffing", "starch", "dye", "pins", "spare_spool"]
 const CURIO_KINDS := ["pincushion", "dummy", "ragbag", "patterns", "door"]
 const HORROR_KINDS := ["mimic", "machine", "stitches", "tug", "mannequins"]
+const Curios = preload("res://scripts/stitched/walk/stitched_walk_curios.gd")
 
 var _rng: RandomNumberGenerator
 var _state: Dictionary = {}
+var _curio_catalog: Dictionary = {}
+## Owned by the Walk, so separate bridge instances cannot consume it twice.
+var _battle_consumed := false
 
 
 static func load_catalogs() -> Dictionary:
@@ -33,7 +42,7 @@ static func load_catalogs() -> Dictionary:
 ## Optional catalogs support authored-data validation without touching run state.
 ## Failure returns null and preserves the supplied RNG and all caller-owned inputs.
 static func start(random: RandomNumberGenerator, area: String, dolls: Array, pockets: Dictionary,
-		catalogs: Variant = null) -> StitchedWalkRules:
+		catalogs: Variant = null, enable_mimic: bool = false) -> StitchedWalkRules:
 	if catalogs == null:
 		catalogs = load_catalogs()
 	if random == null or not catalogs is Dictionary or not validate_catalogs(catalogs) or not _valid_party(dolls, pockets):
@@ -48,7 +57,9 @@ static func start(random: RandomNumberGenerator, area: String, dolls: Array, poc
 	trial.state = random.state
 	var corridor: Dictionary = eligible[trial.randi_range(0, eligible.size() - 1)].duplicate(true)
 	var count := trial.randi_range(0, mini(2, corridor.curios.size()))
-	var free_steps: Array = range(1, int(corridor.steps) + 1)
+	# Encounters occupy traversable positions, including the entrance and the
+	# final position before the exit. The exit itself is never interactive.
+	var free_steps: Array = range(0, int(corridor.steps))
 	var choices: Array = corridor.curios.duplicate()
 	var placed: Array = []
 	for index in count:
@@ -61,10 +72,28 @@ static func start(random: RandomNumberGenerator, area: String, dolls: Array, poc
 	ranked.sort_custom(func(a: Dictionary, b: Dictionary) -> bool: return a.rank < b.rank)
 	var service := StitchedWalkRules.new()
 	service._rng = random
+	for record in catalogs.curios:
+		service._curio_catalog[record.id] = record.duplicate(true)
 	service._state = {"revision": 0, "phase": "walking", "area": area, "corridor": corridor,
 		"step": 0, "curios": placed, "dolls": ranked, "pockets": pockets.duplicate(true),
 		"viewpoint": ranked[0].id, "looking_back": false, "whirr": 0, "warning": false,
 		"pending": [], "rng": trial.state}
+	if enable_mimic:
+		var authored: Dictionary = {}
+		for horror in catalogs.horrors:
+			if horror.id == "extra_thread_shadow" and horror.kind == "mimic":
+				authored = horror
+		if authored.is_empty() or service._doll(authored.id) >= 0:
+			return null
+		for doll in ranked:
+			if not doll.get("fray", 0) is int or doll.get("fray", 0) < 0:
+				return null
+		var present := trial.randi_range(0, 1) == 1
+		service._state.shadow = {"id": authored.id, "name": authored.name, "present": present,
+			"step": trial.randi_range(0, int(corridor.steps) - 1),
+			"disguise": ranked[trial.randi_range(1, 3)].id, "revealed": false, "snipped": false,
+			"removed": false, "art_path": "res://assets/paper/walk/extra_thread_shadow.png"}
+		service._state.rng = trial.state
 	random.state = trial.state
 	return service
 
@@ -80,7 +109,11 @@ static func validate_catalogs(catalogs: Dictionary) -> bool:
 		var ids: Array = []
 		var kinds: Array = []
 		for record in catalogs[group]:
-			if not record is Dictionary or not _keys(record, ["id", "name", "kind"]):
+			if not record is Dictionary:
+				return false
+			if group == "curios" and not Curios.validate(record, ITEMS):
+				return false
+			if group == "horrors" and not _keys(record, ["id", "name", "kind"]):
 				return false
 			if not _text(record.id) or not _text(record.name) or record.id in ids:
 				return false
@@ -94,6 +127,11 @@ static func validate_catalogs(catalogs: Dictionary) -> bool:
 				return false
 		if group == "curios":
 			curio_ids = ids
+	for record in catalogs.curios:
+		if record.kind == "door":
+			for id in record.rules.room_curios:
+				if not id in curio_ids or id == record.id:
+					return false
 	var corridor_ids: Array = []
 	for record in catalogs.corridors:
 		if not record is Dictionary or not _keys(record, ["id", "name", "area", "steps", "curios"]):
@@ -118,6 +156,8 @@ static func _valid_party(dolls: Array, pockets: Dictionary) -> bool:
 	var ranks: Array = []
 	for doll in dolls:
 		if not doll is Dictionary:
+			return false
+		if not Curios.valid_doll(doll):
 			return false
 		if not _text(doll.get("id")) or doll.id in ids or not doll.get("rank") is int:
 			return false
@@ -171,6 +211,16 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 	var cost := 5
 	var effect: Dictionary = {}
 	match kind:
+		"curio":
+			if not _keys(command, ["kind", "actor", "target", "choice"]) or not _current_curio(command.get("target")):
+				return _receipt(false, "invalid_curio")
+			if not command.choice is String or not command.choice in curio_choices(command.target):
+				return _receipt(false, "unavailable_choice")
+		"snip":
+			if not _keys(command, ["kind", "actor", "target"]) or not shadow_visible() or _state.shadow.snipped:
+				return _receipt(false, "unavailable_snip")
+			if command.target != _state.shadow.id and (_doll(command.target) < 0 or command.target == command.actor):
+				return _receipt(false, "invalid_target")
 		"forward", "look_back":
 			if not _keys(command, ["kind", "actor"]):
 				return _receipt(false, "invalid_command")
@@ -195,16 +245,40 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 			effect = {"item": item, "target": command.target}
 		_:
 			return _receipt(false, "invalid_command")
-	# All validation precedes the first mutation. Actions require no RNG draws.
+	# All validation precedes the first mutation; only curio resolution draws RNG.
 	var events: Array = []
 	match kind:
+		"curio":
+			for curio in _state.curios:
+				if curio.instance == command.target:
+					Curios.resolve(_state, curio, _curio_catalog[curio.id], command.choice, _rng, events)
+			_state.rng = _rng.state
+		"snip":
+			_state.shadow.snipped = true
+			if command.target == _state.shadow.id:
+				_state.shadow.removed = true
+				events.append({"kind": "mimic_removed", "target": command.target})
+			else:
+				var doll: Dictionary = _state.dolls[_doll(command.target)]
+				doll.fray = doll.get("fray", 0) + 20
+				_state.pending.append({"kind": "cut_thread", "target": command.target,
+					"source": _state.shadow.id, "consumed": false, "effects": {"until_re_tied": true}})
+				events.append({"kind": "wrong_snip", "target": command.target, "fray": 20})
 		"forward":
 			_state.step += 1
 			_state.looking_back = false
 			if _state.step == int(_state.corridor.steps):
 				_state.phase = "complete"
+				if _state.has("shadow") and _state.shadow.present and not _state.shadow.removed:
+					_state.pending.append({"kind": "mimic", "source": _state.shadow.id, "consumed": false,
+						"effects": {"next_fight": true, "position": "party_back_rank", "round": 1,
+							"sequence": ["attack", "flee"]}})
+					events.append({"kind": "mimic_pending"})
 		"look_back":
 			_state.looking_back = true
+			if shadow_visible():
+				_state.shadow.revealed = true
+				events.append({"kind": "shadow_revealed", "shadow": _state.shadow.duplicate(true), "targets": snip_targets()})
 		"switch":
 			_state.viewpoint = command.target
 			_state.looking_back = false
@@ -233,6 +307,22 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 	return _receipt(true, "", events)
 
 
+func shadow_visible() -> bool:
+	return _state.has("shadow") and _state.phase == "walking" and _state.looking_back \
+		and _state.shadow.present and not _state.shadow.removed and _state.step >= _state.shadow.step
+
+
+func snip_targets() -> Array:
+	if not shadow_visible() or _state.shadow.snipped:
+		return []
+	var targets: Array = []
+	for doll in _state.dolls:
+		if doll.id != _state.viewpoint and not doll.lost:
+			targets.append(doll.id)
+	targets.append(_state.shadow.id)
+	return targets
+
+
 func _doll(id: Variant) -> int:
 	for index in _state.dolls.size():
 		if _state.dolls[index].id == id and not _state.dolls[index].lost:
@@ -242,9 +332,19 @@ func _doll(id: Variant) -> int:
 
 func _current_curio(id: Variant) -> bool:
 	for curio in _state.curios:
-		if curio.instance == id and curio.step == _state.step:
+		if curio.instance == id and curio.step == _state.step and not curio.get("resolved", false):
 			return true
 	return false
+
+
+## Detached legal choices derived from the authoritative equipped part IDs.
+func curio_choices(instance: String) -> Array:
+	if _state.is_empty() or _state.phase != "walking" or not _current_curio(instance):
+		return []
+	for curio in _state.curios:
+		if curio.instance == instance:
+			return Curios.choices(curio, _curio_catalog[curio.id], _state.dolls[_doll(_state.viewpoint)])
+	return []
 
 
 func _machine_pending() -> bool:
