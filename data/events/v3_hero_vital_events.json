@@ -519,6 +519,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_scarecrow_inkwell_thresher",
+      "title": "The Inkwell Thresher",
+      "description": "A house-sized glass inkwell shelters a tiny black-wheat field; the Scarecrow lowers its crooked pitchfork over the rim as a button-eyed crow taps the cork.",
+      "required_hero": "scarecrow",
+      "choices": [
+        {
+          "id": "seal_wheat_straw",
+          "text": "Spend 2 scraps to pad the inkwell rim (heal 8 HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 0 }
+        },
+        {
+          "id": "pluck_ink_wheat",
+          "text": "Harvest razor-black wheat (lose 5 HP; gain 23 gold)",
+          "outcome": { "gold": 23, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the crow to guard the dark harvest",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_sockdrawer_aviary",
+      "title": "The Sock-Drawer Aviary",
+      "description": "A house-high sock drawer opens on a flock of knitted bird dolls; the Yarn Ranger loops white-wool bolas around its brass handle beneath a single amber candle.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "retie_sockdrawer",
+          "text": "Pay 14 gold to retie the drawer (heal 7 HP; gain 1 max HP)",
+          "outcome": { "gold": -14, "scraps": 0, "hp": 7, "max_hp": 1 }
+        },
+        {
+          "id": "pluck_wool_wings",
+          "text": "Take wool feathers (lose 5 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the knitted birds sleep inside the drawer",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_velvet_chess_knight",
+      "title": "The Velvet Chess Knight",
+      "description": "A giant bone-cream cloth chess knight kneels on a velvet roadside board; the Rag Duelist steadies its embroidered crest with a needle rapier and a torn crimson cape.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "sew_knights_crest",
+          "text": "Spend 2 scraps to brace the knight's crest (+3 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "pawn_brass_bit",
+          "text": "Pawn its brass bit (lose 2 max HP; gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Bow to the cloth knight and depart",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
