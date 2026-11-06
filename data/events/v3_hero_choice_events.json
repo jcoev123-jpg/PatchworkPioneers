@@ -671,6 +671,78 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_warden_oxblood_shield_clock",
+      "title": "The Oxblood Shield Clock",
+      "description": "An enormous slate-blue shield swings as the pendulum of a crooked roadside clock; the Warden's dented pot helmet props its brass axle while small button-eyed sentries count each candlelit chime.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["steady_shield_pendulum", "gather_clock_rivets"],
+      "choices": [
+        {
+          "id": "steady_shield_pendulum",
+          "text": "Spend 2 scraps to steady the swinging shield (gain 28 gold)",
+          "outcome": {"gold": 28, "scraps": -2}
+        },
+        {
+          "id": "gather_clock_rivets",
+          "text": "Gather two bundles of loose clock rivets (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the huge shield keep its slow time",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_seamstress_crimson_shadow_choir",
+      "title": "The Crimson Shadow Choir",
+      "description": "A row of plump button-eyed glove puppets sings behind a bone-cream curtain; the Seamstress's giant needle lifts scarlet strings from their velvet shoulders beneath a single plum lantern.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["sew_shadow_strings", "buy_choir_thread"],
+      "choices": [
+        {
+          "id": "sew_shadow_strings",
+          "text": "Spend 1 scrap restringing the choir (gain 22 gold)",
+          "outcome": {"gold": 22, "scraps": -1}
+        },
+        {
+          "id": "buy_choir_thread",
+          "text": "Pay 17 gold for three reels of choir thread (+3 scraps)",
+          "outcome": {"gold": -17, "scraps": 3}
+        },
+        {
+          "id": "leave",
+          "text": "Lower the curtain on the quiet choir",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_moonbolas_windharp",
+      "title": "The Moonbolas Windharp",
+      "description": "Two giant knitting-needle poles carry a web of moss and teal wool; the Yarn Ranger's huge braided bolas have caught three brass crescent chimes above a misty toy-sized road.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["gather_windharp_knots", "trade_moonharp_braid"],
+      "choices": [
+        {
+          "id": "gather_windharp_knots",
+          "text": "Gather two fallen moon-wool knots (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "trade_moonharp_braid",
+          "text": "Trade 2 scrap bundles of braided wool for 29 gold",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the brass moons chime in the wind",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
