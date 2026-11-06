@@ -8,6 +8,8 @@ extends Control
 const ART_PATH := "res://data/kid/kid_view_art.json"
 const BAR_PATH := "res://assets/paper/ui/hud_bar_frame.png"
 const HANDS_RECT := Rect2(0, 92, 680, 383)
+## The hands layer is clipped below the HEROES / FOES labels (y 105-130) so the sleeves never cover them.
+const LAYER_TOP := 132.0
 ## Where each cross-bar's string knots sit inside HANDS_RECT (0..1); the back two ranks
 ## hang from the left bar and the front two from the right one.
 const BAR_KNOTS := [Vector2(0.62, 0.30), Vector2(0.50, 0.30), Vector2(0.34, 0.27), Vector2(0.22, 0.27)]
@@ -73,8 +75,8 @@ func _ready() -> void:
 	_thread_cut = _texture(str(_art.get("thread_cut", "")))
 	var hand_layer := Control.new()
 	hand_layer.name = "KidHandsLayer"
-	hand_layer.position = Vector2(0, 92)
-	hand_layer.size = Vector2(1280, 468)
+	hand_layer.position = Vector2(0, LAYER_TOP)
+	hand_layer.size = Vector2(1280, 560 - LAYER_TOP)
 	hand_layer.clip_contents = true
 	hand_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hand_layer)
@@ -90,9 +92,9 @@ func _ready() -> void:
 	hands = TextureRect.new()
 	hands.name = "KidHands"
 	hands.texture = _texture(str(_art.get("hands", "")))
+	hands.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hands.position = HANDS_RECT.position - hand_layer.position
 	hands.size = HANDS_RECT.size
-	hands.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hands.stretch_mode = TextureRect.STRETCH_SCALE
 	hands.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hands.visible = hands.texture != null
@@ -129,15 +131,16 @@ func _build_meter() -> void:
 	meter_fill.stretch_margin_right = 12
 	meter_fill.stretch_margin_top = 9
 	meter_fill.stretch_margin_bottom = 9
+	meter_fill.size = Vector2(232, 30)   # again: before nine_patch_stretch the bar clamps to its texture
 	meter_fill.tint_under = Color("4f4448")
 	meter_fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	meter.add_child(meter_fill)
 	var jar := TextureRect.new()
 	jar.name = "KidFearJar"
 	jar.texture = _texture(str(_art.get("fear_jar", "")))
+	jar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	jar.position = Vector2(0, 0)
 	jar.size = Vector2(34, 34)
-	jar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	jar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	jar.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	meter.add_child(jar)
@@ -174,7 +177,7 @@ func show_state(fear_value: int, heroes: Array, doll_tops: Dictionary, cuts: Dic
 		_hang(strings[rank], rank, doll_tops[rank], cuts.has(str(hero.get("id", ""))))
 	set_process(shaking and not reduced_motion)
 	if not is_processing():
-		hands.position = HANDS_RECT.position - Vector2(0, 92)
+		hands.position = HANDS_RECT.position - Vector2(0, LAYER_TOP)
 		hands.rotation = 0.0
 
 
@@ -194,7 +197,7 @@ func _hang(string: TextureRect, rank: int, top: Vector2, cut: bool) -> void:
 	string.visible = true
 	string.size = Vector2(THREAD_WIDTH, length)
 	string.pivot_offset = Vector2(THREAD_WIDTH * 0.5, 0)
-	string.position = from - Vector2(0, 92) - string.pivot_offset
+	string.position = from - Vector2(0, LAYER_TOP) - string.pivot_offset
 	# A cut string hangs straight down; a whole one leans toward its doll.
 	string.rotation = 0.0 if cut else reach.angle() - PI * 0.5
 	string.set_meta("cut", cut)
@@ -203,5 +206,5 @@ func _hang(string: TextureRect, rank: int, top: Vector2, cut: bool) -> void:
 
 func _process(delta: float) -> void:
 	_clock += delta
-	hands.position = HANDS_RECT.position - Vector2(0, 92) + Vector2(sin(_clock * 9.0), cos(_clock * 7.0)) * SHAKE_PIXELS
+	hands.position = HANDS_RECT.position - Vector2(0, LAYER_TOP) + Vector2(sin(_clock * 9.0), cos(_clock * 7.0)) * SHAKE_PIXELS
 	hands.rotation = sin(_clock * 6.0) * 0.012
