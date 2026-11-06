@@ -1353,6 +1353,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_moonlit_darning_egg",
+      "title": "The Moonlit Darning Egg",
+      "description": "A house-sized bone-cream darning egg lies cracked on a black quilt ledge; a tiny button-eyed mender gathers silver thread from its split seam beneath one amber candle.",
+      "choices": [
+        {
+          "id": "gather_egg_shell_stitches",
+          "text": "Collect stray silver stitches from the cracked egg (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "resew_egg_crack",
+          "text": "Spend 2 scraps sealing the great egg seam (earn 28 gold)",
+          "outcome": { "gold": 28, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the great egg beneath its pale quilt moon",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_velvet_curtain_pulley",
+      "title": "The Velvet Curtain Pulley",
+      "description": "Across a high window ledge, a carriage-wide plum curtain hangs from a groaning brass pulley; a round moth-cloaked doll steadies its stitched rope in wavering candlelight.",
+      "choices": [
+        {
+          "id": "buy_pulley_braid",
+          "text": "Pay 16 gold for three coils of curtain braid (+3 scraps)",
+          "outcome": { "gold": -16, "scraps": 3 }
+        },
+        {
+          "id": "repair_curtain_guide",
+          "text": "Spend 1 scrap repairing the brass guide (earn 21 gold)",
+          "outcome": { "gold": 21, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the heavy curtain fall across the ledge",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_inkblack_hatpin_ladder",
+      "title": "The Inkblack Hatpin Ladder",
+      "description": "Five towering silver hatpins lean against an inkblack wardrobe door; a squat moss-velvet ladder keeper lashes their heads together with oxblood yarn as the candle gutters.",
+      "choices": [
+        {
+          "id": "salvage_hatpin_caps",
+          "text": "Gather a loose hatpin cap (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "buy_ladder_lashing",
+          "text": "Pay 23 gold for four bundles of ladder lashing (+4 scraps)",
+          "outcome": { "gold": -23, "scraps": 4 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the hatpin ladder rattling against the wardrobe",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

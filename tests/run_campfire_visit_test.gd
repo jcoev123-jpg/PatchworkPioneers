@@ -43,6 +43,7 @@ func _initialize() -> void:
 	_test_stitched_decisions()
 	_test_stitched_rejections_and_replay()
 	_test_stitched_actionable_quotes()
+	_test_stitched_quote_actual_totals()
 	_test_stitched_noop_refusals()
 	_test_stitched_lost_dolls_not_mended()
 	_test_swap_admission_and_quote()
@@ -654,6 +655,158 @@ func _test_stitched_actionable_quotes() -> void:
 		"completed visit has no selectable choices")
 	_assert_stitched_refused(visit, "leave", "camp_q", heroes, 100, "Leave on a decided visit")
 	_assert_stitched_refused(visit, "tell_tales", "camp_q", heroes, 100, "Tell Tales on a decided visit")
+
+
+## Independent cap-aware oracles for the quoted actual recovery totals.
+func _mend_oracle(party: Array) -> int:
+	var total: int = 0
+	for hero in party:
+		if hero.get("lost", false) == true:
+			continue
+		@warning_ignore("integer_division")
+		total += mini((int(hero["max_hp"]) * RunCampfireVisit.MEND_HEAL_PERCENT) / 100,
+			int(hero["max_hp"]) - int(hero["hp"]))
+	return total
+
+
+func _fray_oracle(party: Array) -> int:
+	var total: int = 0
+	for hero in party:
+		total += mini(RunCampfireVisit.TALES_FRAY_REDUCTION, int(hero["fray"]))
+	return total
+
+
+## AC1-AC3: each quoted actual recovery total matches an independent fresh
+## select() receipt on the same roster, beside the authored maximums, with no
+## state, RNG or schema change.
+func _test_stitched_quote_actual_totals() -> void:
+	seed(474747)
+	var expected_next := randi()
+	seed(474747)
+	# AC1: four distinct dolls at distinct ranks: full, wounded, Hanging and an
+	# explicitly LOST doll wounded at 12/48 (still excluded from Mend).
+	var mend_source := _lost_party([40, 18, 0, 12], [3], [30, 25, 10, 200])
+	var mend_original := mend_source.duplicate(true)
+	var ids: Dictionary = {}
+	for i in range(4):
+		ids[mend_original[i]["id"]] = true
+		_check(int(mend_original[i]["position"]) == i + 1,
+			"totals fixture doll %d holds rank position %d" % [i + 1, i + 1])
+	_check(ids.size() == 4, "totals fixture uses four distinct doll identities")
+	var mend_visit := RunCampfireVisit.new("camp_tot_m", mend_source, "stitched", 40)
+	var mend_state := mend_visit.read_state()
+	var mend_quote: Dictionary = mend_state["quote"]
+	_check(mend_state["status"] == "stitched_open"
+		and mend_quote["choices"] == ["mend", "tell_tales", "trim_the_wick", "leave"],
+		"totals fixture stays open with the same ordered action ids")
+	var mend_gain := _mend_oracle(mend_original)
+	_check(mend_gain == 16,
+		"independent Mend oracle: 0 full + 9 wounded + 7 Hanging, no LOST, no revive bonus")
+	_check(mend_quote["text"].find("Mend 30%% max HP (+%d HP now)" % mend_gain) != -1,
+		"quote states the exact summed Mend gain beside the literal 30% head")
+	_check(mend_quote["text"].find("Leave (free") != -1, "quote keeps Leave present and free")
+	var fresh_mend := RunCampfireVisit.new("camp_tot_m2",
+		mend_original.duplicate(true), "stitched", 40)
+	var mend_receipt: Dictionary = fresh_mend.select("mend", "camp_tot_m2", mend_original, 40)
+	var receipt_gain: int = 0
+	for i in range(4):
+		receipt_gain += int(mend_receipt["heroes"][i]["hp"]) - int(mend_original[i]["hp"])
+	_check(mend_receipt.get("ok") == true and receipt_gain == mend_gain
+		and mend_receipt["heroes"][3]["hp"] == 12 and mend_receipt["heroes"][3]["lost"] == true
+		and mend_receipt["heroes"][2]["hp"] == 7,
+		"fresh Mend receipt commits exactly the quoted gain; LOST stays wounded, Hanging gets no bonus")
+	_check(mend_visit.read_state() == mend_state,
+		"reading the quote and a fresh receipt leave the first visit untouched")
+	# AC2: FRAY 0/1/25/200 with and without optional Wren FEAR 0/5/15, plus FEAR-only.
+	var fray_source := _stitched_party(FULL_HPS, [0, 1, 25, 200])
+	var fray_original := fray_source.duplicate(true)
+	var fray_gain := _fray_oracle(fray_original)
+	_check(fray_gain == 51, "independent Tales oracle: 0 + 1 + 25 + 25 capped relief")
+	var fray_visit := RunCampfireVisit.new("camp_tot_t", fray_source, "stitched", 100)
+	var fray_quote: Dictionary = fray_visit.read_state()["quote"]
+	_check(fray_quote["choices"] == ["tell_tales", "leave"],
+		"full-HP fray fixture offers Tales and Leave only")
+	_check(fray_quote["text"].find("Tell Tales up to 25 FRAY each (-%d FRAY now)" % fray_gain) != -1
+		and fray_quote["text"].find("Wren FEAR") == -1,
+		"quote states the summed FRAY relief beside the literal 25 FRAY head, no fear segment")
+	var fray_receipt: Dictionary = fray_visit.select("tell_tales", "camp_tot_t", fray_original, 100)
+	var fray_delta: int = 0
+	for i in range(4):
+		fray_delta += int(fray_original[i]["fray"]) - int(fray_receipt["heroes"][i]["fray"])
+	_check(fray_receipt.get("ok") == true and fray_delta == fray_gain
+		and not fray_receipt.has("fear"),
+		"fresh Tales receipt removes exactly the quoted FRAY and stays fear-free")
+	for fear in [0, 5, 15]:
+		var fear_visit := RunCampfireVisit.new("camp_tot_f", _stitched_party(FULL_HPS,
+			[0, 1, 25, 200]), "stitched", 100, fear)
+		var fear_quote: Dictionary = fear_visit.read_state()["quote"]
+		_check(fear_quote["text"].find("Tell Tales up to 25 FRAY each (-%d FRAY now; -%d Wren FEAR now)"
+			% [fray_gain, mini(RunCampfireVisit.TALES_FEAR_RELIEF, fear)]) != -1,
+			"quote at Wren FEAR %d states the actual FRAY and FEAR relief" % fear)
+		var fear_receipt: Dictionary = fear_visit.select("tell_tales", "camp_tot_f",
+			_stitched_party(FULL_HPS, [0, 1, 25, 200]), 100, fear)
+		var fear_fray_delta: int = 0
+		for i in range(4):
+			fear_fray_delta += int(fray_original[i]["fray"]) - int(fear_receipt["heroes"][i]["fray"])
+		_check(fear_receipt.get("ok") == true and fear_fray_delta == fray_gain
+			and fear_receipt["fear"] == maxi(0, fear - RunCampfireVisit.TALES_FEAR_RELIEF),
+			"fresh Tales receipt at Wren FEAR %d matches the quoted relief" % fear)
+	# FEAR alone keeps Tales an actionable choice, truthful about zero FRAY.
+	var only_fear := RunCampfireVisit.new("camp_tot_of", _stitched_party(FULL_HPS, NO_FRAY),
+		"stitched", 100, 20)
+	var only_quote: Dictionary = only_fear.read_state()["quote"]
+	_check(only_quote["choices"] == ["tell_tales", "leave"]
+		and only_quote["text"].find("Tell Tales up to 25 FRAY each (-0 FRAY now; -15 Wren FEAR now)") != -1,
+		"FEAR-only Tales stays offered and truthful about the zero FRAY relief")
+	var only_receipt: Dictionary = only_fear.select("tell_tales", "camp_tot_of",
+		_stitched_party(FULL_HPS, NO_FRAY), 100, 20)
+	_check(only_receipt.get("ok") == true and only_receipt["fear"] == 5
+		and only_receipt["heroes"] == _stitched_party(FULL_HPS, NO_FRAY),
+		"FEAR-only Tales soothes exactly 15 FEAR and changes no doll")
+	# A LOST record still counts toward the Tales relief and stays LOST.
+	var lost_fray := _lost_party([40, 30, 26, 0], [3], [0, 0, 0, 200])
+	var lost_visit := RunCampfireVisit.new("camp_tot_l", lost_fray, "stitched", 100)
+	var lost_quote: Dictionary = lost_visit.read_state()["quote"]
+	_check(lost_quote["choices"] == ["tell_tales", "leave"]
+		and lost_quote["text"].find("Tell Tales up to 25 FRAY each (-25 FRAY now)") != -1,
+		"a LOST doll's FRAY still counts toward the quoted Tales relief")
+	var lost_receipt: Dictionary = lost_visit.select("tell_tales", "camp_tot_l", lost_fray, 100)
+	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][3]["fray"] == 175
+		and lost_receipt["heroes"][3]["lost"] == true and lost_receipt["heroes"][3]["hp"] == 0,
+		"Tales still unravels a LOST doll's FRAY and never revives it")
+	# AC3: the quoted Wick gain is cap-aware at CANDLE 0/60/99 and absent at 100.
+	for candle in [0, 60, 99]:
+		var gain := mini(RunCampfireVisit.WICK_CANDLE_RESTORE,
+			RunCampfireVisit.STITCHED_CANDLE_MAX - candle)
+		var wick_visit := RunCampfireVisit.new("camp_tot_w",
+			_stitched_party(FULL_HPS, NO_FRAY), "stitched", candle)
+		var wick_quote: Dictionary = wick_visit.read_state()["quote"]
+		_check(wick_quote["choices"] == ["trim_the_wick", "leave"]
+			and wick_quote["text"].find("Trim the Wick up to %d CANDLE (+%d now)"
+				% [RunCampfireVisit.WICK_CANDLE_RESTORE, gain]) != -1,
+			"CANDLE %d quotes the exact cap-aware Wick gain beside the 50 CANDLE head" % candle)
+		var wick_receipt: Dictionary = wick_visit.select("trim_the_wick", "camp_tot_w",
+			_stitched_party(FULL_HPS, NO_FRAY), candle)
+		_check(wick_receipt.get("ok") == true and wick_receipt["candle"] == candle + gain
+			and wick_receipt["heroes"] == _stitched_party(FULL_HPS, NO_FRAY),
+			"fresh Wick receipt at CANDLE %d commits exactly the quoted gain" % candle)
+	var full_visit := RunCampfireVisit.new("camp_tot_w100",
+		_stitched_party(FULL_HPS, NO_FRAY), "stitched", 100)
+	var full_quote: Dictionary = full_visit.read_state()["quote"]
+	_check(full_quote["choices"] == ["leave"]
+		and full_quote["text"].find("Trim the Wick") == -1
+		and full_quote["text"].find("Mend") == -1
+		and full_quote["text"].find("Tell Tales") == -1,
+		"CANDLE 100 quotes only the free Leave with no unavailable option")
+	_assert_stitched_refused(full_visit, "trim_the_wick", "camp_tot_w100",
+		_stitched_party(FULL_HPS, NO_FRAY), 100, "unquoted Wick at CANDLE 100")
+	# A closed visit offers nothing further, and none of this drew RNG.
+	var closed := fresh_mend.read_state()
+	_check(closed["status"] == "stitched_decided" and closed["quote"]["choices"] == []
+		and closed["quote"]["text"].find("no choice remains") != -1,
+		"a closed visit quotes no further choices")
+	_check(randi() == expected_next,
+		"quote totals, receipts and refusals draw no global RNG")
 
 
 func _test_stitched_noop_refusals() -> void:
