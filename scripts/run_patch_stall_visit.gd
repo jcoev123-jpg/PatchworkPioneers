@@ -109,22 +109,36 @@ func quote() -> Dictionary:
 		return {"offers": [], "decisions": []}
 	var offers: Array = _purchases.get_stock().trinkets
 	var decisions: Array = ["buy_patch", "leave"]
-	# Stitched only: Buy Patch is advertised only while some quoted offer is
-	# unsold and affordable; the three priced rows are never hidden or reordered.
-	if _stitched and not _has_affordable_unsold(offers):
-		decisions = ["leave"]
+	# Stitched only: every row reports its own availability, and Buy Patch is
+	# advertised only while some quoted offer is buyable from that same rule. The
+	# three priced rows are never hidden or reordered.
+	if _stitched:
+		var rows: Array = []
+		var any_buyable := false
+		for offer in offers:
+			var row: Dictionary = offer.duplicate(true)
+			var blocked := _blocked_reason(row)
+			row["can_buy"] = blocked.is_empty()
+			row["blocked"] = blocked
+			any_buyable = any_buyable or blocked.is_empty()
+			rows.append(row)
+		offers = rows
+		if not any_buyable:
+			decisions = ["leave"]
 	return {
 		"offers": offers,
 		"decisions": decisions
 	}
 
 
-func _has_affordable_unsold(offers: Array) -> bool:
-	for offer in offers:
-		if offer.get("sold") == false and typeof(offer.get("price")) == TYPE_INT \
-				and offer.price <= _snapshot.gold:
-			return true
-	return false
+## Stitched availability of one quoted row from the service-held gold and its
+## sold flag. Sold takes precedence over price; "" means genuinely buyable.
+func _blocked_reason(offer: Dictionary) -> String:
+	if offer.get("sold") != false:
+		return "already owned"
+	if typeof(offer.get("price")) != TYPE_INT or offer.price > _snapshot.gold:
+		return "not enough gold"
+	return ""
 
 
 func _validate_request(expected_visit_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> bool:
