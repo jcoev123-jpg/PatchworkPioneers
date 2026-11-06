@@ -1,6 +1,7 @@
 extends SceneTree
 ## Mounted, public-entry S2 test: not a made-up test-only action bridge.
 const BOOT := preload("res://scripts/live_web_playtest_boot.gd")
+const ROSTER_STAGE := preload("res://scripts/live_enemy_roster.gd")
 var failures: Array[String] = []
 var checks := 0
 
@@ -46,8 +47,9 @@ func _figure_click(stage: StitchedBattleScreen, key: String) -> void:
 
 
 func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
-	var backdrop := stage.get_node_or_null("SharedStitchedBackdrop") as TextureRect
-	_check(backdrop != null and backdrop.texture != null and
+	var backdrop = stage.get_node_or_null("SharedStitchedBackdrop")
+	_check(backdrop is ROSTER_STAGE.StageBackdrop and backdrop.has_image() and
+		backdrop.stage_texture.resource_path == ROSTER_STAGE.stage_backdrop_path("Fight", 0) and
 		backdrop.get_global_rect() == Rect2(0, 60, 1280, 500),
 		"public 1280x720 battle paints one full-width stage from y60 to y560")
 	var actual := 0
