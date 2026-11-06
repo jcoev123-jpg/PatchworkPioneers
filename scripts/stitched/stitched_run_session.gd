@@ -524,6 +524,11 @@ func visit_actions() -> Array:
 	return _actions.duplicate(true) if phase == "visit" and is_consistent() else []
 
 
+func _walk_supply_offers() -> Array:
+	return [{"id": RunStitchedPeddlerWalkSupplies.STARCH, "price": PEDDLER_PRICE},
+		{"id": RunStitchedPeddlerWalkSupplies.SPARE_SPOOL, "price": PEDDLER_PRICE}]
+
+
 func _offer(id: String, text: String, enabled: bool = true, arguments: Array = []) -> void:
 	_actions.append({"id": id, "text": text, "enabled": enabled, "arguments": arguments})
 
@@ -638,6 +643,16 @@ func _open_visit(kind: String) -> bool:
 			for hero in roster:
 				_offer("buy_dye", "Dye / %s / %d gold" % [hero.name, dye_quote.price],
 					dye_quote.can_buy and hero.id in dye_quote.eligible, [hero.id])
+			# Walk supplies need the full four-doll ledger; a short roster sells none.
+			var supplies := RunStitchedPeddlerWalkSupplies.open_stitched(id, roster, pockets, gold,
+				_walk_supply_offers())
+			var supplies_quote := supplies.quote()
+			if supplies_quote.get("ok") == true:
+				for row in supplies_quote.offers:
+					var label := "Starch" if row.id == RunStitchedPeddlerWalkSupplies.STARCH else "Spare spool"
+					for hero in roster:
+						_offer("buy_" + str(row.id), "%s / %s / %d gold" % [label, hero.name, row.price],
+							row.can_buy and hero.id in supplies_quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
@@ -728,6 +743,10 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					result = _replacement(arguments[1], arguments[0])
 		"Peddler":
 			match action_id:
+				"buy_starch", "buy_spare_spool":
+					var visit := RunStitchedPeddlerWalkSupplies.open_stitched(id, _roster(), pockets, gold,
+						_walk_supply_offers())
+					result = visit.buy(action_id.trim_prefix("buy_"), arguments[0], id, visit.read_state())
 				"buy_dye":
 					var visit := RunStitchedPeddlerDye.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
 					result = visit.buy_dye(arguments[0], id, visit.read_state())
