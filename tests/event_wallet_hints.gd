@@ -335,4 +335,10 @@ const SEEDS := [
 	314836, # v3_inkglass_puppet_barge
 	571898, # v3_threadmill_sewing_circle (outside previous bounded fallback)
 	1136184, # v3_tinker_thunder_spool_dock (outside previous bounded fallback)
+	216328, # v3_briar_button_mending_bench (hero-gated events reshuffle, 11-06)
+	308609, # v3_rosequilt_bridgekeeper (hero-gated events reshuffle, 11-06)
+	438189, # dusk_post_bobbin (hero-gated events reshuffle, 11-06)
+	443215, # loose_seam (hero-gated events reshuffle, 11-06)
+	677232, # v3_emberglass_campfire (outside previous bounded fallback)
+	1037087, # v3_seamstress_needle_oracle (outside previous bounded fallback)
 ]
