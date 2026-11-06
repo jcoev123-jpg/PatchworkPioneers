@@ -260,6 +260,207 @@ func _test_hanging_and_lost(screen: StitchedBattleScreen) -> void:
 		"restored authority, RNG and receipts unchanged after hanging/LOST presentation probes")
 
 
+func _badge_active(row: Control) -> Array[Control]:
+	var active: Array[Control] = []
+	for chip in row.get_children():
+		if chip.visible:
+			active.append(chip)
+	return active
+
+
+func _test_badges(screen: StitchedBattleScreen) -> void:
+	# Real 1280x720 mounted rank meters; slots are allocated once and never
+	# replaced on _refresh. All badges are passive descendants of RankMeters.
+	var battle := screen.battle
+	var baseline := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var receipts := screen.receipts.size()
+	for side in ["hero", "foe"]:
+		for rank in range(1, 5):
+			var key := "%s_%d" % [side, rank]
+			var meters: Dictionary = screen._rank_meters[key]
+			var root_meter: Control = meters["root"]
+			var row: Control = root_meter.get_node("BadgeRow")
+			_check(row.get_child_count() == 6 and row.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and row.focus_mode == Control.FOCUS_NONE and row.get_global_rect().position.y == 486.0
+				and row.size == Vector2(164, 18)
+				and row.get_global_rect().position.x >= root_meter.global_position.x
+				and row.get_global_rect().end.x <= root_meter.global_position.x + 170,
+				"%s has stable six-chip rank footprint at global y486..504" % key)
+			for chip in row.get_children():
+				_check(chip is Control and chip.mouse_filter == Control.MOUSE_FILTER_IGNORE
+					and chip.focus_mode == Control.FOCUS_NONE
+					and row.get_global_rect().encloses(chip.get_global_rect())
+					and chip.get_node("Felt") is NinePatchRect
+					and chip.get_node("Felt").texture == StitchedBattleChrome.NAME_PLATE,
+					"%s chip is passive, sewn-textured and inside its own rank" % key)
+				for child in chip.get_children():
+					_check(child.mouse_filter == Control.MOUSE_FILTER_IGNORE
+						and child.focus_mode == Control.FOCUS_NONE,
+						"%s badge child never takes mouse or keyboard focus" % key)
+	_check(not screen._rank_meters["foe_4"]["root"].visible
+		and _badge_active(screen._rank_meters["foe_4"]["root"].get_node("BadgeRow")).is_empty(),
+		"initial absent foe rank has no ghost chip")
+	var hero_id := str(screen._unit_at("hero", 1)["id"])
+	var hero_2_id := str(screen._unit_at("hero", 2)["id"])
+	var foe_id := str(screen._unit_at("foe", 1)["id"])
+	var hero_original: Dictionary = battle._units[hero_id].duplicate(true)
+	var hero_2_original: Dictionary = battle._units[hero_2_id].duplicate(true)
+	var foe_original: Dictionary = battle._units[foe_id].duplicate(true)
+	battle._units[hero_id]["statuses"] = {}
+	battle._units[hero_id]["dodge_buff"] = {}
+	battle._units[hero_id]["resolve"] = ""
+	battle._units[hero_2_id]["statuses"] = {}
+	battle._units[hero_2_id]["resolve"] = ""
+	battle._units[foe_id]["statuses"] = {}
+	screen._refresh()
+	var empty_row: Control = screen._rank_meters["hero_1"]["root"].get_node("BadgeRow")
+	_check(not empty_row.visible and _badge_active(empty_row).is_empty()
+		and empty_row.tooltip_text == "STATUS: none",
+		"actual unmodified no-status hero has no badge or fabricated status")
+
+	# Hanging + Steadfast outrank canonical status counters; positives only.
+	battle._units[hero_id]["hp"] = 0
+	battle._units[hero_id]["hanging"] = true
+	battle._units[hero_id]["fray"] = 145
+	battle._units[hero_id]["resolve"] = "steadfast"
+	battle._units[hero_id]["statuses"] = {
+		"bleed": 3, "weak": 2, "exposed": 2, "thorns": 4,
+		"tangled": 2, "blind": 1, "riposte": 3, "stun": 1,
+		"stun_resist": 1, "mark": 2, "guard": 1, "zeta": 4,
+		"alpha": 1, "expired": 0,
+	}
+	battle._units[hero_id]["dodge_buff"] = {"amount": 6, "turns": 2}
+	battle._units[foe_id]["statuses"] = {"mark": 3, "stun": 1, "guard": 0}
+	screen._refresh()
+	var shown := _badge_active(empty_row)
+	var full: Array[Dictionary] = StitchedBattleChrome._badge_entries(battle.get_unit(hero_id), "hero")
+	var overflow := full.size() - 5
+	_check(full.size() > 6 and shown.size() == 6
+		and shown[0].tooltip_text == "HANGING BY A THREAD"
+		and shown[1].tooltip_text == "STEADFAST"
+		and shown[2].tooltip_text == "BLEED 3"
+		and shown[3].tooltip_text == "WEAK 2"
+		and shown[4].tooltip_text == "EXPOSED 2"
+		and shown[5].get_node("Short").text == "+"
+		and shown[5].get_node("Count").text == str(overflow)
+		and shown[5].tooltip_text.contains("DODGE +6 / 2 turns")
+		and shown[5].tooltip_text.contains("ALPHA 1")
+		and shown[5].tooltip_text.contains("ZETA 4")
+		and not empty_row.tooltip_text.contains("EXPIRED"),
+		"overflow is five ordered real badges + truthful +N and sorted/complete named disclosure")
+	_check(shown[0].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/status_hanging.png")
+		and shown[1].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/badge_steadfast.png")
+		and shown[2].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/status_bleed.png")
+		and shown[3].get_node("Short").text == "WK"
+		and shown[4].get_node("Short").text == "EX"
+		and shown[3].get_node("Felt").texture == StitchedBattleChrome.NAME_PLATE
+		and shown[5].get_node("Felt").texture == StitchedBattleChrome.NAME_PLATE,
+		"authored Hanging/Steadfast/Bleed icons and bone-on-felt Weak/Exposed/overflow fallbacks")
+	_check(screen._rank_meters["hero_1"]["root"].tooltip_text.contains("FRAY 145/200")
+		and screen._rank_meters["hero_1"]["root"].tooltip_text.contains("HANGING BY A THREAD")
+		and screen._rank_meters["hero_1"]["root"].tooltip_text.contains("ZETA 4")
+		and screen._seat_buttons["hero_1"].tooltip_text.contains("BLEED 3")
+		and screen.status_detail("hero", 1).contains("DODGE +6 / 2 turns"),
+		"rank tooltip, ordinary seat and existing status detail retain full fray/counts")
+	var foe_row: Control = screen._rank_meters["foe_1"]["root"].get_node("BadgeRow")
+	var foe_chips := _badge_active(foe_row)
+	_check(foe_chips.size() == 2 and foe_chips[0].tooltip_text == "STUN 1"
+		and foe_chips[0].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/status_stun.png")
+		and foe_chips[1].tooltip_text == "MARK 3"
+		and foe_chips[1].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/status_mark.png"),
+		"foe displays only two positive canonical cross-stitch badges, not zero guard or intent")
+	var inspected := battle.state_snapshot()
+	var inspected_rng := battle.rng_state()
+	screen._seat_buttons["hero_1"].grab_focus()
+	screen._seat_buttons["hero_1"].mouse_entered.emit()
+	_check(screen._labels["log"].text == screen.status_detail("hero", 1)
+		and screen._status_disclosure_label.text.contains("HANGING")
+		and battle.state_snapshot() == inspected and battle.rng_state() == inspected_rng
+		and screen.receipts.size() == receipts,
+		"keyboard and mouse status inspection are complete and non-mutating")
+	screen._seat_buttons["hero_1"].mouse_exited.emit()
+	screen._action_buttons["pass"].grab_focus()
+
+	for resolved_trait in ["frantic", "hollow", "bitter", "reckless", "cowering"]:
+		battle._units[hero_2_id]["resolve"] = resolved_trait
+		battle._units[hero_2_id]["fray"] = 125
+		screen._refresh()
+		var trait_row: Control = screen._rank_meters["hero_2"]["root"].get_node("BadgeRow")
+		var trait_chips := _badge_active(trait_row)
+		_check(trait_chips.size() == 1
+			and trait_chips[0].tooltip_text == "UNRAVELLED — " + resolved_trait.to_upper()
+			and trait_chips[0].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/badge_unravelled.png")
+			and trait_chips[0].get_node("Count").text == str(StitchedBattleChrome.BADGE_SHORT[resolved_trait])
+			and screen._rank_meters["hero_2"]["root"].tooltip_text.contains(resolved_trait.to_upper()),
+			"each real UNRAVELLED trait has its own visible identity and authored icon: " + resolved_trait)
+	battle._units[hero_2_id]["lost"] = true
+	screen._refresh()
+	var lost_row: Control = screen._rank_meters["hero_2"]["root"].get_node("BadgeRow")
+	_check(not screen._rank_meters["hero_2"]["root"].visible
+		and not lost_row.visible and _badge_active(lost_row).is_empty(),
+		"LOST hero clears even previously populated resolve chips")
+	battle._units[hero_2_id] = hero_2_original.duplicate(true)
+	var extra: Dictionary = battle.get_foes()[2].duplicate(true)
+	extra["id"] = "badge_fourth_foe"
+	extra["rank"] = 4
+	extra["statuses"] = {"blind": 2}
+	battle._units[str(extra["id"])] = extra
+	screen._refresh()
+	var fourth: Control = screen._rank_meters["foe_4"]["root"].get_node("BadgeRow")
+	_check(battle.get_foes().size() == 4 and _badge_active(fourth).size() == 1
+		and _badge_active(fourth)[0].get_node("Emblem").texture == load("res://assets/paper/stitched/icons/status_blind.png"),
+		"genuine fourth summoned foe rank receives its own authored Blind chip")
+	battle._units.erase(str(extra["id"]))
+	battle._units[hero_id] = hero_original
+	battle._units[hero_2_id] = hero_2_original
+	battle._units[foe_id] = foe_original
+	screen._refresh()
+	_check(_badge_active(fourth).is_empty()
+		and screen._rank_meters["hero_1"]["root"].get_node("BadgeRow").get_child_count() == 6
+		and battle.state_snapshot() == baseline and battle.rng_state() == rng
+		and screen.receipts.size() == receipts,
+		"expired/absent ranks clear on refresh, reuse fixed children and preserve model, RNG and receipts")
+
+
+func _test_committed_badge_action() -> void:
+	# A fresh mounted screen commits a 100%-accurate authored status move via
+	# the public submit_part entry (not a status fabricated by the renderer).
+	var mounted := _mount()
+	var screen: StitchedBattleScreen = mounted["screen"]
+	await process_frame
+	var battle := screen.battle
+	_check(battle != null and battle.is_valid() and battle._units.has("warden"),
+		"precondition: genuine seeded Warden is in mounted combat")
+	battle._order = ["warden"]
+	battle._turn_index = 0
+	screen._refresh()
+	var before := battle.state_snapshot()
+	var prior_receipts := screen.receipts.size()
+	_check(screen.select_part("torso") and screen.legal_targets().has("hero_4"),
+		"precondition: mounted Quilt Up can legally give an ally Thorns")
+	var result := screen.submit_part("warden_torso_quilt", 4)
+	var target: Dictionary = battle.get_unit("lantern_monk")
+	var real_status := int(target.get("statuses", {}).get("thorns", 0))
+	var row: Control = screen._rank_meters["hero_4"]["root"].get_node("BadgeRow")
+	var chips := _badge_active(row)
+	_check(bool(result.get("ok", false)) and battle.state_snapshot() != before
+		and screen.receipts.size() > prior_receipts and real_status > 0
+		and chips.size() == 1 and chips[0].tooltip_text == "THORNS %d" % real_status
+		and chips[0].get_node("Short").text == "TH",
+		"real committed Quilt Up creates authoritative Thorns and updates mounted text fallback")
+	var after := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var receipts := screen.receipts.size()
+	for attempt in range(3):
+		screen._refresh()
+		_check(_badge_active(row).size() == 1 and battle.state_snapshot() == after
+			and battle.rng_state() == rng and screen.receipts.size() == receipts,
+			"post-commit badge refresh #%d cannot tick statuses or spend RNG/receipts" % attempt)
+	mounted["host"].free()
+	await process_frame
+
+
 func _test_controls(screen: StitchedBattleScreen) -> void:
 	var state := screen.battle.state_snapshot()
 	var rng := screen.battle.rng_state()
@@ -410,8 +611,10 @@ func _run() -> void:
 		_verify_action_icons(screen)
 		_verify_meters(screen)
 		_test_hanging_and_lost(screen)
+		_test_badges(screen)
 		_test_controls(screen)
 		await _test_utilities(screen)
+	await _test_committed_badge_action()
 	mounted["host"].free()
 	await process_frame
 	for failure in failures:
