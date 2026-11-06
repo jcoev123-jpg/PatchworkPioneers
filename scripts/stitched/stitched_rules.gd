@@ -67,6 +67,12 @@ var _opening: Dictionary = {}
 var _thread_cuts: Dictionary = {}  # snipped hero id -> fixed rank boundary behind it
 var _satchel: Array = []
 var _turn_events: Array = []
+## S9a Wren's hand: the round its one free action was spent, the round the candle is
+## shielded, held doll id -> round, and every attempt's receipt (failures included).
+var _hand_round := 0
+var _shield_round := 0
+var _held: Dictionary = {}
+var _hand_receipts: Array = []
 
 
 ## Builds a stitched battle from authored data:
@@ -295,7 +301,106 @@ func state_snapshot() -> Dictionary:
 		"thread_cuts": _thread_cuts.duplicate(true),
 		"satchel": _satchel.duplicate(true),
 		"turn_events": _turn_events.duplicate(true),
+		"hand": {
+			"round_used": _hand_round,
+			"shield_round": _shield_round,
+			"held": _held.duplicate(true),
+			"receipts": _hand_receipts.duplicate(true),
+		},
 	}
+
+
+## S9a: true while Wren's one free hand action for this round is unspent and a doll has
+## the turn (the action happens before that doll acts and never spends its turn).
+func hand_action_open() -> bool:
+	return _require_side_turn("hand", "hero").is_empty() and _hand_round != _round
+
+
+func hand_receipts() -> Array:
+	return _hand_receipts.duplicate(true)
+
+
+func is_held(hero_id: String) -> bool:
+	return int(_held.get(hero_id, 0)) == _round
+
+
+func candle_shielded() -> bool:
+	return _shield_round == _round
+
+
+## Why a hand action would be refused right now ("" when legal); changes nothing.
+func hand_action_check(action_id: String, target_id: String, direction: int) -> String:
+	var gate := _require_side_turn("hand", "hero")
+	if not gate.is_empty():
+		return str(gate["error"])
+	if _hand_round == _round:
+		return "Wren's hand action is spent this round"
+	if not action_id in StitchedKidHandActions.IDS:
+		return "unknown hand action " + action_id
+	if action_id == "shield_candle":
+		return "" if target_id.is_empty() else "Shield the Candle takes no doll"
+	var hero: Dictionary = _units.get(target_id, {})
+	if hero.is_empty() or str(hero["side"]) != "hero" or bool(hero["lost"]):
+		return "pick one of Wren's dolls"
+	if action_id == "lift":
+		var plan := _shift_valid(hero, direction)
+		if not bool(plan["ok"]):
+			return "Lift is blocked: " + str(plan["reason"])
+	elif direction != 0:
+		return "only Lift takes a direction"
+	return ""
+
+
+## S9a: Wren's one free hand action for the round, taken during a doll's turn before it acts.
+## fear is his current fear; at StitchedKidFear.SHAKE_THRESHOLD+ one seeded 1..100 roll is
+## drawn and 1..25 fails (the action is still spent). Validates before any draw; never
+## advances the turn.
+func use_hand_action(action_id: String, target_id: String = "", direction: int = 0, fear: int = 0) -> Dictionary:
+	var refusal := hand_action_check(action_id, target_id, direction)
+	if not refusal.is_empty():
+		return _reject("hand", target_id, refusal)
+	var book := StitchedKidHandActions.catalog()
+	if not bool(book.get("ok", false)):
+		return _reject("hand", target_id, str(book.get("error", "hand actions missing")))
+	var receipt := {
+		"ok": true,
+		"action": "hand",
+		"hand_action": action_id,
+		"actor": target_id,
+		"direction": direction,
+		"round": _round,
+		"fear": fear,
+		"roll": 0,
+		"failed": false,
+	}
+	_hand_round = _round
+	if fear >= StitchedKidFear.SHAKE_THRESHOLD:
+		receipt["roll"] = _rng.randi_range(1, 100)
+		receipt["failed"] = int(receipt["roll"]) <= StitchedKidFear.HAND_FAILURE_CHANCE_PERCENT
+	if not bool(receipt["failed"]):
+		match action_id:
+			"steady":
+				receipt["effect"] = _change_fray(_units[target_id], int(book.by_id["steady"]["fray"]), false)
+			"shield_candle":
+				_shield_round = _round
+			"hold_back":
+				_held[target_id] = _round
+			"lift":
+				receipt["effect"] = _shift(_units[target_id], direction)
+	_hand_receipts.append(receipt.duplicate(true))
+	return receipt
+
+
+## S9a fear 100, LOSING THE STRINGS: the doll whose turn it is loses it without acting.
+## The session calls this once and then drops Wren's fear to 60.
+func skip_lost_strings_turn() -> Dictionary:
+	var gate := _require_side_turn("lost_strings", "hero")
+	if not gate.is_empty():
+		return gate
+	var actor := _current_unit()
+	_turn_events.append({"actor": str(actor["id"]), "action": "lost_strings", "round": _round})
+	_advance_turn()
+	return {"ok": true, "action": "lost_strings", "actor": str(actor["id"])}
 
 
 ## A hero's turn: use one equipped, untorn part ability from a legal launch rank against a
@@ -388,6 +493,8 @@ func move(direction: int) -> Dictionary:
 		return _reject("move", str(actor["id"]), "a tangled hero cannot move")
 	if _thread_cuts.has(str(actor["id"])):
 		return _reject("move", str(actor["id"]), "the snipped hero cannot move")
+	if is_held(str(actor["id"])):
+		return _reject("move", str(actor["id"]), "Wren is holding this doll back")
 	if direction != -1 and direction != 1:
 		return _reject("move", str(actor["id"]), "move is one rank forward (-1) or back (1)")
 	var destination := int(actor["rank"]) + direction
@@ -398,6 +505,8 @@ func move(direction: int) -> Dictionary:
 		return _reject("move", str(actor["id"]), "a tangled ally cannot be swapped")
 	if _crosses_cut(int(actor["rank"]), destination) or (not other.is_empty() and _thread_cuts.has(str(other["id"]))):
 		return _reject("move", str(actor["id"]), "thread cut blocks the swap")
+	if not other.is_empty() and is_held(str(other["id"])):
+		return _reject("move", str(actor["id"]), "Wren is holding that doll back")
 	var from := int(actor["rank"])
 	var swapped := ""
 	if not other.is_empty():
@@ -1452,8 +1561,12 @@ func _shift_valid(unit: Dictionary, direction: int) -> Dictionary:
 		return {"ok": false, "reason": "tangled units cannot move"}
 	if str(unit["side"]) == "hero" and (_thread_cuts.has(str(unit["id"])) or _crosses_cut(from, destination)):
 		return {"ok": false, "reason": "thread cut blocks movement"}
+	if str(unit["side"]) == "hero" and is_held(str(unit["id"])):
+		return {"ok": false, "reason": "Wren is holding this doll back"}
 	if str(unit["side"]) == "hero":
 		var other := _hero_at(destination)
+		if not other.is_empty() and is_held(str(other["id"])):
+			return {"ok": false, "reason": "Wren is holding that doll back"}
 		if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
 			return {"ok": false, "reason": "a tangled ally cannot be swapped"}
 		if not other.is_empty() and _thread_cuts.has(str(other["id"])):
@@ -1679,7 +1792,7 @@ func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -
 	if str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
-	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle else amount
+	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle and not candle_shielded() else amount
 	hero["fray"] = clampi(before + applied, 0, FRAY_MAX)
 	var transition := ""
 	if int(hero["fray"]) >= FRAY_MAX:

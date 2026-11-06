@@ -40,11 +40,16 @@ static func restore(document: Variant) -> StitchedRunSession:
 		return null
 	var legacy_pockets: bool = not document.state.has("pockets")
 	var legacy_fear: bool = not document.state.has("kid_fear")
+	# Pre-S9a saves have no battle "hand" block and so no hand actions to replay.
+	var legacy_hand: bool = document.state.get("battle") is Dictionary and not document.state.battle.is_empty() \
+		and not document.state.battle.has("hand")
 	for command in document.journal:
 		# Pre-pocket saves can replay their old actions, never a new purchase
 		# hidden by omitting its ownership ledger from the saved state.
 		if legacy_pockets and command is Dictionary and command.get("action") == "visit" \
 				and command.get("id") in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing", "buy_dye"]:
+			return null
+		if legacy_hand and command is Dictionary and command.get("method") == "use_hand_action":
 			return null
 		if not _replay(candidate, command):
 			return null
@@ -53,6 +58,8 @@ static func restore(document: Variant) -> StitchedRunSession:
 		replayed.erase("pockets")
 	if legacy_fear:
 		replayed.erase("kid_fear")
+	if legacy_hand and replayed.get("battle") is Dictionary:
+		replayed.battle.erase("hand")
 	if candidate.journal != document.journal or replayed != document.state:
 		return null
 	return candidate
@@ -86,6 +93,9 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 						return false
 				"move":
 					if args.size() != 1 or not args[0] is int:
+						return false
+				"use_hand_action":
+					if args.size() != 3 or not args[0] is String or not args[1] is String or not args[2] is int:
 						return false
 				"pass_turn", "re_tie", "retreat":
 					if not args.is_empty():
