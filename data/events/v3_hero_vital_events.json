@@ -588,6 +588,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_warden_quiltpress_switch",
+      "title": "The Quilt-Press Switch",
+      "description": "A brass quilt press towers above a narrow skirting-board path, its stack of oxblood blankets held by a single bent lever; the Warden braces the lever with a huge round patchwork shield.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "wedge_shield_under_press",
+          "text": "Spend 2 scraps to pad the shield brace (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "strip_brass_counterweight",
+          "text": "Strip the falling brass weight (lose 5 HP; gain 22 gold)",
+          "outcome": { "gold": 22, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the enormous quilt press settle in silence",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_seamstress_puppetlamp_infirmary",
+      "title": "The Puppet-Lamp Infirmary",
+      "description": "A milk-glass bedside lamp shelters a row of tiny sleeping rag dolls, its cracked shade bound with crimson thread; the Seamstress lifts her oversized needle to the frayed pull-cord.",
+      "required_hero": "seamstress",
+      "choices": [
+        {
+          "id": "stitch_lamp_shade",
+          "text": "Pay 15 gold for warm lamp-lining (heal 9 HP)",
+          "outcome": { "gold": -15, "scraps": 0, "hp": 9, "max_hp": 0 }
+        },
+        {
+          "id": "sell_crimson_cord",
+          "text": "Sell 2 max HP of crimson cord for 25 gold",
+          "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little dolls beneath their amber light",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_spectacle_footbridge",
+      "title": "The Spectacle Footbridge",
+      "description": "A giant pair of tarnished spectacles spans a black rain gutter, one cracked lens turning slowly on a gear hinge; the Tinker studies its screws through mismatched goggles.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "tighten_spectacle_hinge",
+          "text": "Spend 3 scraps reinforcing the gear hinge (+3 max HP)",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "pocket_lens_prisms",
+          "text": "Salvage loose lens prisms (lose 6 HP; gain 3 scraps)",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the rain shining through the broken spectacles",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }

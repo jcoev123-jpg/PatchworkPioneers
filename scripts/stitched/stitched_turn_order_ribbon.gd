@@ -6,12 +6,14 @@ extends Control
 const RIBBON_WIDTH := 690.0
 const MAX_TAG_WIDTH := 110.0
 const TAG_HEIGHT := 42.0
-const TAG_GAP := 4.0
+const TAG_GAP := 8.0
 const MAX_TAGS := 9
-const PLATE_PATH := "res://assets/paper/ui/hud_name_plate.png"
+const PLATE_PATH := "res://assets/paper/ui/panel_felt.png"
 const AMBER := Color("e4b76a")
 const BONE := Color("f0ddc0")
-const MUTED := Color("c7b4a1")
+const MUTED := BONE
+const FABRIC := Color("48404c")
+const ACTIVE_FABRIC := Color("54412f")
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 
 var displayed_entries: Array[Dictionary] = []
@@ -33,11 +35,12 @@ func _ready() -> void:
 		var frame := NinePatchRect.new()
 		frame.name = "SewnPlate"
 		frame.texture = plate
+		frame.self_modulate = FABRIC
 		frame.size = tag.size
 		frame.patch_margin_left = 10
 		frame.patch_margin_right = 10
-		frame.patch_margin_top = 8
-		frame.patch_margin_bottom = 8
+		frame.patch_margin_top = 6
+		frame.patch_margin_bottom = 6
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		tag.add_child(frame)
 
@@ -91,6 +94,7 @@ func _ready() -> void:
 		var help := NinePatchRect.new()
 		help.name = "FocusTooltip"
 		help.texture = plate
+		help.self_modulate = FABRIC
 		help.size = Vector2(304, 218)
 		help.patch_margin_left = 10
 		help.patch_margin_right = 10
@@ -105,6 +109,7 @@ func _ready() -> void:
 		help_label.size = Vector2(280, 198)
 		help_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		help_label.add_theme_font_size_override("font_size", 12)
+		# Tint the fabric alone so the lettering keeps its full bone contrast.
 		help_label.add_theme_color_override("font_color", BONE)
 		help_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		help.add_child(help_label)
@@ -169,7 +174,8 @@ func _layout_tag(tag: Dictionary, index: int, width: float) -> void:
 	control.position = Vector2(index * (width + TAG_GAP), 0)
 	control.size = Vector2(width, TAG_HEIGHT)
 	tag["frame"].size = control.size
-	var portrait_width := 28.0 + floorf((width - 73.0) * 0.5)
+	# Reserve the larger share for full four-letter cues even at nine places.
+	var portrait_width := minf(36.0, 24.0 + floorf((width - 69.0) * 0.35))
 	var face_size := Vector2(portrait_width, 32)
 	tag["portrait"].position = Vector2(3, 5)
 	tag["portrait"].size = face_size
@@ -233,9 +239,9 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 		tag["help_label"].text = control.tooltip_text
 		_fit_chip_text(tag["rank"], code, 16, 10, Vector2(tag["rank"].size.x, 19))
 		var active := not is_over and not acting_id.is_empty() and id == acting_id
-		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 12, 9, Vector2(tag["marker"].size.x, 17))
+		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 13, 10, Vector2(tag["marker"].size.x, 17))
 		tag["marker"].add_theme_color_override("font_color", AMBER if active else MUTED)
-		tag["frame"].modulate = Color(1, 0.87, 0.67) if active else Color(0.85, 0.82, 0.78)
+		tag["frame"].self_modulate = ACTIVE_FABRIC if active else FABRIC
 		# Never substitute a rank-mate's art or a generic enemy for an unknown ID.
 		var path := str(ROSTER.art_paths(id).get("idle", ""))
 		var texture: Texture2D = load(path) if not path.is_empty() and ResourceLoader.exists(path, "Texture2D") else null

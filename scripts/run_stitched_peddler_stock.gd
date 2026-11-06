@@ -5,7 +5,7 @@ extends RefCounted
 ## authorities; no legacy card-shop stock is constructed.
 
 const PART_SOURCE := "res://data/parts/enemy_parts.json"
-const PATCH_SOURCE := "res://data/shop/initial_offers.json"
+const PATCH_SOURCE := "res://data/shop/stitched_patch_offers.json"
 
 var _node_id := ""
 var _offer: Dictionary = {}

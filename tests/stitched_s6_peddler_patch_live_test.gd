@@ -161,7 +161,88 @@ func _run() -> void:
 		and not patch_service.buy_patch(patch_offer.id, "poor", patch_before).ok
 		and patch_service.read_state() == patch_before,
 		"insufficient earned gold fails without ownership/wallet drift")
+	_card_free_source_checks()
 	_finish(app)
+
+
+## Card-free Stitched patch price source, resolved through the real helper.
+func _card_free_source_checks() -> void:
+	var source_path := RunStitchedPeddlerStock.PATCH_SOURCE
+	_check(source_path == "res://data/shop/stitched_patch_offers.json",
+		"Peddler patch prices come from the Stitched-only source")
+	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string(source_path))
+	_check(document is Dictionary and not document.has("cards") and document.get("trinkets") is Array
+		and not document.trinkets.is_empty(), "Stitched patch source has trinkets and no cards field")
+	if not document is Dictionary or not document.get("trinkets") is Array:
+		return
+	var rows := {}
+	for item in document.trinkets:
+		rows[item.get("id")] = item.get("price")
+	var named := ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm",
+		"switchback_button", "padded_vest", "double_quilt_coat", "scrap_lined_vest", "wool_patch_cloak",
+		"chain_stitched_coat", "reinforced_patchcoat", "thick_felt_mantle", "bloodstitch_bonnet",
+		"button_glass_visor", "stern_seam_cap", "reinforced_browband", "hemguard_cuff",
+		"red_bobbin_cuff", "loose_thread_glove", "threadguard_wrap", "frayfinder_mitt",
+		"borrowed_button", "relay_bobbin", "hearth_lining"]
+	var inert := {}
+	for record in JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/initial_patch_slots.json")):
+		inert[record.id] = true
+	_check(not inert.is_empty(), "starter inert patch IDs are readable")
+	var authored: Dictionary = RunStitchedPeddlerStock._authored_patches()
+	var power_ids: Array = []
+	for id in named:
+		_check(rows.has(id) and int(rows[id]) == 100, "source row costs exactly 100 gold: " + id)
+		if inert.has(id):
+			_check(not authored.has(id), "inert starter slot is not Peddler stock: " + id)
+		else:
+			_check(authored.has(id) and authored[id] == 100,
+				"helper resolves the ordinary patch at 100 gold: " + id)
+			power_ids.append(id)
+	_check(power_ids.size() >= 20, "ordinary power rows were actually exercised")
+	var parts: Variant = JSON.parse_string(FileAccess.get_file_as_string(RunStitchedPeddlerStock.PART_SOURCE))
+	var catalog := {}
+	var part_ids: Array = []
+	for raw in parts.parts:
+		catalog[raw.id] = {"slot": raw.slot}
+		part_ids.append(raw.id)
+	part_ids.sort()
+	var first := RandomNumberGenerator.new()
+	var second := RandomNumberGenerator.new()
+	first.seed = 20261106
+	second.seed = 20261106
+	var one := RunStitchedPeddlerStock.sample(first, catalog, [], 10)
+	var two := RunStitchedPeddlerStock.sample(second, catalog, [], 10)
+	_check(one.get("ok", false) and one == two and first.state == second.state,
+		"equal seeds reproduce the same part, patch and RNG state")
+	_check(one.get("ok", false) and part_ids.has(one.part.id) and one.part.tier == 1
+		and one.part.price == 10 and authored.has(one.patch.get("id"))
+		and int(one.patch.price) == int(authored[one.patch.id]),
+		"sample picks a catalogued tier-I part and a priced ordinary patch")
+	if not one.get("ok", false) or one.patch.is_empty():
+		return
+	var owned_state := RandomNumberGenerator.new()
+	owned_state.seed = 20261106
+	var skipped := RunStitchedPeddlerStock.sample(owned_state, catalog, [one.patch.id], 10)
+	_check(skipped.get("ok", false) and skipped.patch.get("id") != one.patch.id
+		and not authored.is_empty() and authored.has(skipped.patch.get("id")),
+		"an already-owned patch is never offered")
+	var all_owned: Array = authored.keys()
+	var drained := RandomNumberGenerator.new()
+	drained.seed = 20261106
+	var reference := RandomNumberGenerator.new()
+	reference.seed = 20261106
+	reference.randi_range(0, part_ids.size() - 1)
+	var empty := RunStitchedPeddlerStock.sample(drained, catalog, all_owned, 10)
+	_check(empty.get("ok", false) and empty.patch.is_empty() and part_ids.has(empty.part.id)
+		and drained.state == reference.state,
+		"all authored patches owned still sells the part with an empty patch offer and one draw")
+	var spent := RandomNumberGenerator.new()
+	spent.seed = 20261106
+	var before_state := spent.state
+	_check(not RunStitchedPeddlerStock.sample(spent, {}, [], 10).get("ok", false)
+		and not RunStitchedPeddlerStock.sample(spent, catalog, [7], 10).get("ok", false)
+		and spent.state == before_state, "invalid catalogs or ledgers refuse without an RNG draw")
 
 
 func _finish(app: Node) -> void:

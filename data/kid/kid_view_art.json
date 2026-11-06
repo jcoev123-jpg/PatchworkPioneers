@@ -1,0 +1,22 @@
+{
+	"version": 1,
+	"note": "S9b (design v4 section 9c): Wren's side view of a fight. One authored Flow picture per house area (floors deepen into the house), the boss lives deepest. Hands, threads, the fear jar and the hand action icons are Flow pictures too; nothing is drawn in code.",
+	"areas": [
+		{"name": "Bedroom", "last_floor": 3, "path": "res://assets/paper/kid/kid_view_bedroom.png"},
+		{"name": "Hallway", "last_floor": 6, "path": "res://assets/paper/kid/kid_view_hallway.png"},
+		{"name": "Stairs", "last_floor": 9, "path": "res://assets/paper/kid/kid_view_stairs.png"},
+		{"name": "Cellar", "last_floor": 11, "path": "res://assets/paper/kid/kid_view_cellar.png"}
+	],
+	"boss": {"name": "Under the Old Bed", "path": "res://assets/paper/kid/kid_view_deep.png"},
+	"hands": "res://assets/paper/kid/kid_hands.png",
+	"thread": "res://assets/paper/kid/kid_thread.png",
+	"thread_cut": "res://assets/paper/kid/kid_thread_cut.png",
+	"fear_jar": "res://assets/paper/kid/kid_fear_jar.png",
+	"fear_ink": "res://assets/paper/kid/kid_fear_ink.png",
+	"icons": {
+		"steady": "res://assets/paper/kid/hand_steady.png",
+		"shield_candle": "res://assets/paper/kid/hand_shield_candle.png",
+		"hold_back": "res://assets/paper/kid/hand_hold_back.png",
+		"lift": "res://assets/paper/kid/hand_lift.png"
+	}
+}

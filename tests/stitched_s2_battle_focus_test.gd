@@ -153,7 +153,7 @@ func _run() -> void:
 	var neutral := _fixed(screen)
 	_verify_intent_anchors(screen, 3)
 	_check(backdrop is ROSTER.StageBackdrop and backdrop.has_image()
-		and backdrop.stage_texture.resource_path == ROSTER.stage_backdrop_path("Fight", 0)
+		and backdrop.stage_texture.resource_path == screen.stage_path()
 		and backdrop.get_global_rect() == Rect2(0, 60, 1280, 500)
 		and screen._stage_art_view.clip_contents and backdrop.clip_contents,
 		"AC1 authored art is fitted to clipped y60..560 without moving input mounts")
