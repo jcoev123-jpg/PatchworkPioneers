@@ -20,6 +20,7 @@ const MUTED := Color("c7b4a1")
 const ACCENT := Color("e4b76a")
 const ERROR := Color("ffa9a0")
 const MAX_FOE_STEPS := 28
+const MAX_PENDING_FOCUS := 8
 
 var battle: StitchedRules
 var config: Dictionary = {}
@@ -64,6 +65,9 @@ var _portrait_font: Font
 var _pose_catalog := LiveMovePoseCatalog.new()
 var _pose_manifest: Dictionary = {}
 var _displayed_actor := ""
+var _stage_backdrop
+var _stage_art_view: Control
+var _focus_queue: Array[Dictionary] = []
 
 static func read_preview() -> Dictionary:
 	var file := FileAccess.open(PREVIEW_PATH, FileAccess.READ)
@@ -103,6 +107,7 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	focus_mode = Control.FOCUS_ALL
 	_build_screen()
+	_refresh() # Bind the real actors before any opening foe receipt can animate.
 	_drive_foes()
 	_refresh()
 	if _action_buttons.has("pass"):
@@ -172,17 +177,20 @@ func _build_screen() -> void:
 	if ResourceLoader.exists(font_path):
 		_portrait_font = load(font_path) as Font
 	_panel(Rect2(0, 0, 1280, 720), INK)
+	# Reuse the live roster's authored image painter and its shared camera math;
+	# neither the painter nor the camera changes a Control's hit geometry.
 	var stage_path := ROSTER.stage_backdrop_path("Fight", 0)
-	if ResourceLoader.exists(stage_path, "Texture2D"):
-		var backdrop := TextureRect.new()
-		backdrop.name = "SharedStitchedBackdrop"
-		backdrop.texture = load(stage_path)
-		backdrop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		backdrop.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-		backdrop.position = Vector2(0, 60)
-		backdrop.size = Vector2(1280, 500)
-		backdrop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(backdrop)
+	var texture: Texture2D = load(stage_path) as Texture2D if ResourceLoader.exists(stage_path, "Texture2D") else null
+	_stage_backdrop = ROSTER.StageBackdrop.new()
+	_stage_backdrop.name = "SharedStitchedBackdrop"
+	_stage_backdrop.position = Vector2(0, 60)
+	_stage_backdrop.size = Vector2(1280, 500)
+	_stage_backdrop.clip_contents = true
+	_stage_backdrop.battle_view = _stage_backdrop
+	_stage_backdrop.bind_battle("Fight", texture)
+	add_child(_stage_backdrop)
+	# This screen owns the sole focus clock: queue advancement is deterministic.
+	_stage_backdrop.set_process(false)
 	_panel(Rect2(0, 60, 1280, 500), Color(0.045, 0.05, 0.075, 0.28))
 	_sewn_panel(Rect2(12, 10, 1256, 82))
 	CHROME.action_tray(self, Rect2(12, 557, 1256, 155))
@@ -263,6 +271,16 @@ func _build_screen() -> void:
 	_action_buttons["exit"] = _button("Back to title", Rect2(1043, 642, 208, 29), func(): exit_requested.emit())
 	_action_buttons["close_help"] = _button("Close help", Rect2(1043, 675, 208, 29), func(): _set_utilities_open(false))
 	_set_utilities_open(false, false)
+	# Clip *painted figures only* to y=60..560. Hits and sewn chrome remain
+	# direct screen children, motionless and fully accessible throughout zoom.
+	_stage_art_view = Control.new()
+	_stage_art_view.name = "SharedStitchedArt"
+	_stage_art_view.position = Vector2(0, 60)
+	_stage_art_view.size = Vector2(1280, 500)
+	_stage_art_view.clip_contents = true
+	_stage_art_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_stage_art_view)
+	_stage_backdrop.stage_row = _stage_art_view
 	# Equally spaced back-to-front ranks on one quilt, with a clear centre aisle.
 	# Each 170px slot centres its own fitted authored figure and underfoot plaque.
 	# Draw back ranks first; targeting still follows the actual occupied art.
@@ -299,14 +317,15 @@ func _seat(side: String, rank: int, x: float) -> void:
 	var key := side + "_" + str(rank)
 	var puppet := ROSTER.Puppet.new()
 	puppet.name = "StageFigure" + side.capitalize() + str(rank)
-	puppet.position = Vector2(x, -6)
+	puppet.position = Vector2(x, -66) # Same global -6 as before the stage clipping layer.
 	puppet.size = Vector2(170, 508)
 	puppet.stage_height = 508
 	puppet.intent_band = 0
 	puppet.tag_height = 0
 	puppet.slot = rank
 	puppet.facing = 1.0 if side == "hero" else -1.0
-	add_child(puppet)
+	puppet.stage_focus = _stage_backdrop
+	_stage_art_view.add_child(puppet)
 	_puppets[key] = puppet
 	# Only the authored painted-figure rectangle catches pointer input. The
 	# shared Puppet stays read-only; this independent hit surface commits only
@@ -373,7 +392,7 @@ func _refresh_figure_hits() -> void:
 		var occupied := puppet.visible
 		var art_rect: Rect2 = puppet.posed_actor_rect() if occupied else Rect2()
 		hit.visible = occupied and art_rect.size.x > 0.0 and art_rect.size.y > 0.0
-		hit.position = puppet.position + art_rect.position
+		hit.position = _stage_art_view.position + puppet.position + art_rect.position
 		hit.size = art_rect.size
 		hit.tooltip_text = detail
 		var legal := _target_ranks.has(key)
@@ -724,6 +743,7 @@ func _refresh() -> void:
 	_labels["log"].tooltip_text = _labels["log"].text
 	_present_status_disclosure()
 	_present_forecast()
+	_advance_focus(0.0) # Immediately reject removed or rebound painted anchors.
 
 
 func _build_part_disclosure() -> void:
@@ -1025,6 +1045,7 @@ func _record(receipt: Dictionary) -> void:
 			log += "\n→ " + str(result.get("target", "")) + "  " + str(result.get("damage", result.get("hit", "")))
 	_notice = log + "\nRound %d · %s" % [battle.round_number(), battle.outcome().capitalize()]
 	_inspected_seat = ""
+	_enqueue_attack_focus(receipt)
 	if reduced_motion:
 		return
 	var actor := battle.get_unit(actor_id)
@@ -1042,6 +1063,134 @@ func _record(receipt: Dictionary) -> void:
 		var key := str(target["side"]) + "_" + str(target["rank"])
 		if _puppets.has(key):
 			_puppets[key].trigger_recoil(0.28)
+
+
+func _motion_is_reduced() -> bool:
+	return reduced_motion or bool(ProjectSettings.get_setting("patchwork/reduced_motion", false)) \
+		or bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+
+
+func _bound_focus_puppet(actor_id: String) -> Control:
+	if actor_id.is_empty():
+		return null
+	for key in _puppets:
+		var puppet: Control = _puppets[key]
+		if puppet.actor_id == actor_id and puppet.visible and puppet.is_inside_tree():
+			return puppet
+	return null
+
+
+func _damage_capable_receipt(receipt: Dictionary) -> bool:
+	if not bool(receipt.get("ok", false)) or str(receipt.get("action", "")) != "ability" \
+			or receipt.get("results", []).is_empty():
+		return false
+	var actor := battle.get_unit(str(receipt.get("actor", "")))
+	if actor.is_empty():
+		return false
+	var ability_id := str(receipt.get("ability", ""))
+	var ability: Dictionary = {}
+	if str(actor.get("side", "")) == "hero":
+		for worn in actor.get("parts", {}).values():
+			var definition: Dictionary = parts.get(str(worn.get("id", "")), {})
+			if definition.is_empty():
+				continue
+			var candidate: Dictionary = StitchedParts.ability_at_tier(definition, int(worn.get("tier", 1)))
+			if str(candidate.get("id", "")) == ability_id:
+				ability = candidate
+				break
+	else:
+		for candidate in actor.get("abilities", []):
+			if str(candidate.get("id", "")) == ability_id:
+				ability = candidate
+				break
+	var damage: Variant = ability.get("dmg", [])
+	return str(ability.get("target_side", "")) == "enemy" \
+		and damage is Array and damage.size() == 2 and int(damage[1]) > 0
+
+
+func _enqueue_attack_focus(receipt: Dictionary) -> void:
+	if _stage_backdrop == null or _motion_is_reduced() or not _damage_capable_receipt(receipt):
+		return
+	var attacker_id := str(receipt.get("actor", ""))
+	var attacker := _bound_focus_puppet(attacker_id)
+	if attacker == null:
+		return
+	# The receipt names actual redirected/area targets; never use the selected
+	# rank (or a late lookup by another unit's rank) as a camera identity.
+	for result in receipt.get("results", []):
+		var target_id := str(result.get("target", ""))
+		var target := _bound_focus_puppet(target_id)
+		if target == null or target == attacker:
+			continue
+		if _focus_queue.size() < MAX_PENDING_FOCUS:
+			_focus_queue.append({
+				"attacker": attacker, "attacker_id": attacker_id,
+				"target": target, "target_id": target_id,
+			})
+		_start_next_focus()
+		break # One shared attacker/target camera beat per accepted ability.
+
+
+func _focus_anchor_valid(puppet: Control, actor_id: String) -> bool:
+	if not is_instance_valid(puppet) or not puppet.is_inside_tree() \
+			or not puppet.is_visible_in_tree() or puppet.actor_id != actor_id:
+		return false
+	var unit := battle.get_unit(actor_id)
+	# A swapped seat, lost actor or re-bound puppet cannot inherit an older
+	# receipt's presentation. No rules-side state is mutated by this check.
+	if unit.is_empty() or bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+		return false
+	var key := str(unit.get("side", "")) + "_" + str(unit.get("rank", 0))
+	return _puppets.get(key) == puppet
+
+
+func _start_next_focus() -> void:
+	if _stage_backdrop == null or not _stage_backdrop.focus_anchors.is_empty():
+		return
+	if _motion_is_reduced():
+		_cancel_stage_focus()
+		return
+	while not _focus_queue.is_empty():
+		var shot: Dictionary = _focus_queue.pop_front()
+		if not _focus_anchor_valid(shot["attacker"], str(shot["attacker_id"])) \
+				or not _focus_anchor_valid(shot["target"], str(shot["target_id"])):
+			continue
+		if _stage_backdrop.start_focus(shot["attacker"], shot["target"], false):
+			return
+
+
+func _cancel_stage_focus() -> void:
+	_focus_queue.clear()
+	if is_instance_valid(_stage_backdrop):
+		_stage_backdrop.cancel_focus()
+
+
+func _advance_focus(delta: float) -> void:
+	if not is_instance_valid(_stage_backdrop):
+		return
+	if _motion_is_reduced():
+		if not _focus_queue.is_empty() or not _stage_backdrop.focus_anchors.is_empty():
+			_cancel_stage_focus()
+		return
+	# Check both identity and rank on every advance, including a manual
+	# zero-delta sample. The backdrop also rejects hidden/rebound anchors.
+	if not _stage_backdrop.focus_anchors.is_empty():
+		var a: Control = _stage_backdrop.focus_anchors[0]
+		var b: Control = _stage_backdrop.focus_anchors[1]
+		if not _focus_anchor_valid(a, str(_stage_backdrop.focus_ids[0])) \
+				or not _focus_anchor_valid(b, str(_stage_backdrop.focus_ids[1])):
+			_stage_backdrop.cancel_focus()
+		else:
+			_stage_backdrop.advance_focus(delta)
+	_start_next_focus()
+
+
+func _process(delta: float) -> void:
+	_advance_focus(delta)
+
+
+func _exit_tree() -> void:
+	_cancel_stage_focus()
 
 
 func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: String) -> void:
@@ -1071,6 +1220,8 @@ func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: St
 
 func set_reduced_motion(value: bool) -> void:
 	reduced_motion = value
+	if _motion_is_reduced():
+		_cancel_stage_focus()
 	for puppet in _puppets.values():
 		if reduced_motion:
 			puppet.cancel_attack()
