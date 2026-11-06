@@ -1471,9 +1471,10 @@ func _build_title() -> void:
 	route_button.focus_mode = Control.FOCUS_NONE
 	box.add_child(route_button)
 	base_button = Button.new()
-	base_button.text = "Quilt village"
+	# S9d: the base is Wren's bedroom whenever its painting ships; the village name only names the fallback.
+	base_button.text = "Wren's room" if StitchedBedroom.has_art() else "Quilt village"
 	base_button.custom_minimum_size = Vector2(240, 56)
-	base_button.tooltip_text = "Visit the Quilt village"
+	base_button.tooltip_text = "Go back to Wren's bedroom" if StitchedBedroom.has_art() else "Visit the Quilt village"
 	base_button.pressed.connect(_open_base)
 	box.add_child(base_button)
 	stitched_fight_button = Button.new()
@@ -5484,12 +5485,19 @@ func _stitched_run_node_icon(button: Button, kind: String) -> void:
 	icon.name = "AuthoredNodeIcon"
 	icon.set_meta("art_path", path)
 	icon.texture = texture
-	icon.position = Vector2(9, 5)
-	icon.size = Vector2(44, 44)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(icon)
+	# Sized after it joins the button: set earlier, the texture's own size won and the stamp covered the label.
+	icon.position = Vector2(9, 5)
+	icon.size = Vector2(46, 46)
+	for face in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var skin := button.get_theme_stylebox(face)
+		if skin != null:
+			skin = skin.duplicate()
+			skin.content_margin_left = 64
+			button.add_theme_stylebox_override(face, skin)
 
 
 func _stitched_run_action(parent: Node, text: String, callback: Callable, enabled: bool = true) -> Button:
@@ -5720,8 +5728,13 @@ func _present_stitched_run() -> void:
 		var save := Button.new()
 		save.name = "SaveStitchedBattle"
 		save.text = "Save run"
-		save.position = Vector2(1149, 676)
+		save.position = Vector2(1149, 642)   # beside Continue; the old row hid Help & settings
 		save.size = Vector2(102, 29)
+		save.add_theme_font_size_override("font_size", 18)
+		save.add_theme_color_override("font_color", StitchedBattleScreen.PAPER)
+		save.add_theme_color_override("font_hover_color", StitchedBattleScreen.ACCENT)
+		save.add_theme_color_override("font_focus_color", StitchedBattleScreen.ACCENT)
+		StitchedBattleScreen.CHROME.style_button(save)
 		save.pressed.connect(func():
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
 				StitchedRunSave.write_file(stitched_save_path, session))
@@ -5748,7 +5761,28 @@ func _present_stitched_run() -> void:
 	hero_rows.add_theme_constant_override("separation", 8)
 	content.add_child(hero_rows)
 	for hero in session.heroes:
-		var card := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var felt := _stitched_run_felt(hero_rows, "HeroPatch_" + str(hero.id), Vector2(280, 106))
+		var card := HBoxContainer.new()
+		card.add_theme_constant_override("separation", 8)
+		felt.add_child(card)
+		# The doll's own battle painting, cropped to head and shoulders, fills the felt's empty stitched frame.
+		var idle_path := str(STAGE_ROSTER.art_paths(str(hero.id)).get("idle", ""))
+		if ResourceLoader.exists(idle_path, "Texture2D"):
+			var full := load(idle_path) as Texture2D
+			var side := minf(full.get_width(), full.get_height() * 0.5)
+			var bust := AtlasTexture.new()
+			bust.atlas = full
+			bust.region = Rect2((full.get_width() - side) / 2.0, 0.0, side, side)
+			var portrait := TextureRect.new()
+			portrait.name = "Bust_" + str(hero.id)
+			portrait.texture = bust
+			portrait.custom_minimum_size = Vector2(76, 82)
+			portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			if hero.lost:
+				portrait.modulate = Color(0.35, 0.3, 0.3)
+			card.add_child(portrait)
 		var recap := Label.new()
 		recap.name = "Recap_" + str(hero.id)
 		recap.add_theme_font_size_override("font_size", 17)
@@ -5787,18 +5821,39 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 	var choices_box: VBoxContainer
 	var expected := session.snapshot()
 	if session.phase == "map":
-		# Read only session.map and session.choices(); keep the original guarded
-		# native admission buttons in authoritative choice order.
+		# Both pages use the same captured admission, never graph-local run state.
+		var mounted_page := stitched_run_panel
+		var map_epoch := _stitched_run_epoch
+		var mounted_legal := session.choices()
+		var admit_route := func(id: String):
+			if stitched_run_session == session and stitched_run_panel == mounted_page \
+				and map_epoch == _stitched_run_epoch and mounted_page.is_visible_in_tree() \
+				and session.phase == "map" and mounted_legal.has(id) \
+				and session.snapshot() == expected and session.enter(id, expected):
+				_present_stitched_run()
 		var book := StitchedRouteBookView.new()
 		content.add_child(book)
-		choices_box = book.present(session.map, session.choices())
-		for id in session.choices():
+		choices_box = book.present(session.map, mounted_legal)
+		var graph := book.graph_view
+		graph.route_requested.connect(func(id: String):
+			if not mounted_legal.has(id) or book.graph_view != graph \
+				or not is_instance_valid(graph) or not graph.is_visible_in_tree():
+				return
+			var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+			if tile == null or tile.get_meta("route_id", "") != id \
+				or tile.get_meta("status", "") != "legal":
+				return
+			var control := tile.get_node_or_null("GraphNodeActivate") as Button
+			if control == null or control.get_meta("route_id", "") != id \
+				or control.disabled or not control.is_visible_in_tree():
+				return
+			admit_route.call(id))
+		for id in mounted_legal:
 			var node := session.map.get_node(id)
 			var button := _stitched_run_action(choices_box,
-				"      FLOOR %02d  /  %s  /  PATH %d" % [
+				"FLOOR %02d  /  %s  /  PATH %d" % [
 					node.floor, node.type, node.position + 1], func():
-				if stitched_run_session == session and session.enter(id, expected):
-					_present_stitched_run())
+					admit_route.call(id))
 			button.custom_minimum_size = Vector2(610, 56)
 			button.alignment = HORIZONTAL_ALIGNMENT_LEFT
 			button.set_meta("route_id", id)
@@ -5806,6 +5861,12 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 			button.tooltip_text = "Connected legal node %s" % id
 			book.decorate_ticket(button, str(node.type))
 			_stitched_run_node_icon(button, str(node.type))
+			# Left/right keyboard movement joins the lit atlas to its matching
+			# right-page ticket without changing the ticket Tab chain.
+			var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+			var graph_button := tile.get_node("GraphNodeActivate") as Button
+			button.focus_neighbor_left = button.get_path_to(graph_button)
+			graph_button.focus_neighbor_right = graph_button.get_path_to(button)
 			# Only inspect the authentic ticket's destination; the atlas has no
 			# admission callbacks and does not modify session or RNG authority.
 			button.mouse_entered.connect(func(): book.graph_view.set_inspected_route(id))

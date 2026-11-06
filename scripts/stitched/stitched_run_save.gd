@@ -56,7 +56,7 @@ static func restore(document: Variant) -> StitchedRunSession:
 		# hidden by omitting its ownership ledger from the saved state.
 		if legacy_pockets and command is Dictionary and command.get("action") == "visit" \
 				and command.get("id") in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing", "buy_dye",
-					"buy_starch", "buy_spare_spool"]:
+				"buy_starch", "buy_spare_spool"]:
 			return null
 		if legacy_hand and command is Dictionary and command.get("method") == "use_hand_action":
 			return null

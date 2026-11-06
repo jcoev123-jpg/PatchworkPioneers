@@ -1419,6 +1419,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_squeaking_bedspring_bridge",
+      "title": "The Squeaking Bed-Spring Bridge",
+      "description": "A towering brass bed spring hangs across a cracked nursery floorboard like a swaying bridge; a plump button-eyed porter coils thread around its rattling hooks in amber lamplight.",
+      "choices": [
+        {
+          "id": "unhook_spare_coils",
+          "text": "Gather two loose coils of stitching thread (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "mend_spring_crossing",
+          "text": "Spend 2 scraps fastening the spring bridge (earn 28 gold)",
+          "outcome": { "gold": 28, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the spring swing over the dark crack",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_forgotten_photograph_album",
+      "title": "The Forgotten Photograph Album",
+      "description": "An enormous accordion photograph album lies open across a stair landing, stitched portraits slipping from its velvet pockets; a tiny oxblood archivist offers brass clasps to help rebind its spine.",
+      "choices": [
+        {
+          "id": "sell_lost_corners",
+          "text": "Trade 1 scrap of album corners for 17 gold",
+          "outcome": { "gold": 17, "scraps": -1 }
+        },
+        {
+          "id": "buy_spine_thread",
+          "text": "Pay 19 gold for three bundles of spine thread (+3 scraps)",
+          "outcome": { "gold": -19, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Fold the giant album shut without disturbing its portraits",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_pencil_ferry_crossing",
+      "title": "The Pencil-Ferry Crossing",
+      "description": "A pencil longer than a bridge floats across a pool of spilled blue-black ink; a stubby moss-cloaked ferry keeper steers it with an oversized sewing needle under an amber candle.",
+      "choices": [
+        {
+          "id": "gather_eraser_stitch",
+          "text": "Gather a loose thread cuff around the pencil eraser (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "buy_ferry_binding",
+          "text": "Pay 15 gold for two bundles of pencil-ferry binding (+2 scraps)",
+          "outcome": { "gold": -15, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Wait for the pencil ferry to drift downstream",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

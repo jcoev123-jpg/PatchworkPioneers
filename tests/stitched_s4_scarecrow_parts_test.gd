@@ -199,11 +199,17 @@ func _test_catalog() -> void:
 		_check(str(cat["by_id"][STARTERS[slot]]["slot"]) == slot and
 			str(cat["by_id"][ALTERNATES[slot]]["slot"]) == slot,
 			"AC1: four named starters and four named alternates slot correctly")
-	for id in [ALTERNATES["head"], ALTERNATES["arms"]]:
+	var crowd_targets := {
+		ALTERNATES["head"]: [1, 2, 3, 4],
+		ALTERNATES["arms"]: [1, 2, 3],
+	}
+	for id in crowd_targets:
 		_check(bool(cat["by_id"][id]["ability"]["multi"])
-			and cat["by_id"][id]["ability"]["target"] == [1, 2, 3]
+			and cat["by_id"][id]["ability"]["target"] == crowd_targets[id]
+			and int(cat["by_id"][id]["ability"]["target_mask"])
+				== StitchedParts.rank_mask(crowd_targets[id])
 			and str(cat["by_id"][id]["ability"]["target_side"]) == "enemy",
-			"AC1: crowd move hits first three foe ranks with native multi " + id)
+			"AC1: crowd move hits its authored foe ranks with native multi " + id)
 	_check(int(cat["by_id"][STARTERS["legs"]]["ability"]["mark_damage"]) > 0
 		and int(cat["by_id"][ALTERNATES["legs"]]["ability"]["mark_damage"]) > 0,
 		"AC1: crow moves use implemented mark_damage, not ignore_block")
@@ -405,8 +411,8 @@ func _test_mark_damage() -> void:
 
 ## AC1/AC3 data contract: both crow legs abilities may launch from allied ranks 1-4 at every
 ## tier; Crow Peck reaches enemy rank 4 while Crow Dive still targets enemy ranks 1-3 only.
-## Crow Flock's alternate head extends its launch to allied rank 4 while staying a three-foe
-## reach. Every other authored value stays unchanged.
+## Crow Flock's alternate head launches from hero ranks 2-4 and now reaches all four enemy
+## ranks. Every other authored value stays unchanged.
 func _test_leg_rank4_data() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -421,12 +427,12 @@ func _test_leg_rank4_data() -> void:
 	for id in unchanged_launches:
 		_check(cat["by_id"][id]["ability"]["launch"] == unchanged_launches[id],
 			"AC1: five other Scarecrow parts keep their authored launch: " + id)
-	# This task's one data change: Crow Flock may now be loosed from hero rank 4, while its
-	# enemy reach, multi semantics, potency and pose stay exactly as authored.
+	# The one data change: Crow Flock reaches enemy rank 4, while its launch, multi
+	# semantics, potency and pose stay exactly as authored.
 	var flock: Dictionary = cat["by_id"][ALTERNATES["head"]]
 	var flock_launch := [2, 3, 4]
 	var flock_launch_mask := StitchedParts.rank_mask(flock_launch)
-	var flock_target := [1, 2, 3]
+	var flock_target := [1, 2, 3, 4]
 	var flock_target_mask := StitchedParts.rank_mask(flock_target)
 	_check(str(flock["name"]) == "Crow Flock" and str(flock["slot"]) == "head"
 		and str(flock["owner"]) == "scarecrow" and flock["stat"] == {"crit": 4},
@@ -444,10 +450,11 @@ func _test_leg_rank4_data() -> void:
 		and int(flock["ability"]["launch_mask"]) == flock_launch_mask,
 		"AC1: Crow Flock base launch is exactly hero ranks 2-4")
 	_check(flock["ability"]["target"] == flock_target
-		and int(flock["ability"]["target_mask"]) == flock_target_mask,
-		"AC1: Crow Flock still reaches exactly enemy ranks 1-3")
-	_check(str(flock["text"]) == "Call crows over the first three foe ranks; Weak and Mark each struck foe.",
-		"AC1: Crow Flock keeps its short rules text")
+		and int(flock["ability"]["target_mask"]) == flock_target_mask
+		and flock_target_mask == StitchedParts.ALL_RANKS_MASK,
+		"AC1: Crow Flock base target is exactly all four enemy ranks")
+	_check(str(flock["text"]) == "Call crows across foe ranks one to four; Weak and Mark each struck foe.",
+		"AC1: Crow Flock text states its four-foe reach")
 	for flock_tier in [1, 2, 3]:
 		var flock_ability := StitchedParts.ability_at_tier(flock, flock_tier)
 		_check(bool(StitchedParts.validate_ability(flock_ability).get("ok", false)),
@@ -462,12 +469,13 @@ func _test_leg_rank4_data() -> void:
 			_check(not StitchedParts.ranks_allowed(int(flock_ability["launch_mask"]), rank),
 				"AC1: Crow Flock tier %d never launches from hero rank %d" % [flock_tier, rank])
 		_check(flock_ability["target"] == flock_target
-			and int(flock_ability["target_mask"]) == flock_target_mask,
-			"AC1: Crow Flock tier %d keeps exactly enemy ranks 1-3" % flock_tier)
-		for rank in [1, 2, 3]:
+			and int(flock_ability["target_mask"]) == flock_target_mask
+			and flock_target_mask == StitchedParts.ALL_RANKS_MASK,
+			"AC1: Crow Flock tier %d keeps all four enemy ranks" % flock_tier)
+		for rank in [1, 2, 3, 4]:
 			_check(StitchedParts.ranks_allowed(int(flock_ability["target_mask"]), rank),
 				"AC1: Crow Flock tier %d reaches enemy rank %d" % [flock_tier, rank])
-		for rank in [0, 4, 5]:
+		for rank in [0, 5]:
 			_check(not StitchedParts.ranks_allowed(int(flock_ability["target_mask"]), rank),
 				"AC1: Crow Flock tier %d excludes enemy rank %d" % [flock_tier, rank])
 		_check(flock_ability["effects"] == {"weak": flock_tier, "mark": flock_tier},
@@ -561,9 +569,14 @@ func _rank4_battle(selected: String, tier: int, seed_value: int) -> StitchedRule
 
 ## The shipped 4v3 battle stays exactly as authored; only the already-existing third foe,
 ## the Moth Scribe, moves to enemy rank 4 in test memory. Rank 3 is left empty and no
-## fourth foe is introduced. Scarecrow keeps his real rank-2 preview slot.
-func _rank4_foe_battle(seed_value: int) -> StitchedRules:
-	var config := _config(ALTERNATES["legs"], 1, seed_value)
+## fourth foe is introduced. Scarecrow keeps his real rank-2 preview slot; the selected
+## part and tier let other abilities reuse the same authentic fixture.
+func _rank4_foe_battle(
+	seed_value: int,
+	selected: String = ALTERNATES["legs"],
+	tier: int = 1
+) -> StitchedRules:
+	var config := _config(selected, tier, seed_value)
 	if config.is_empty():
 		return null
 	var built := StitchedRules.create(config)
@@ -717,79 +730,79 @@ func _test_rank4_crows() -> void:
 			"AC2: same rank-4 input and seed replay identical receipt, snapshot and RNG")
 
 
-## AC2, the task goal: the real shipped preview order is rearranged only in memory so
-## Scarecrow genuinely stands in hero rank 4 wearing the alternate head. On his scheduled
-## turn Crow Flock actually launches against living foe rank 1 and resolves the three real
-## foes once each. Every seeded hit carries native Weak and Mark in both the receipt and the
-## foe's battle state; tier II keeps both statuses after the next actor's start-of-turn tick.
-## The same seed and action replay to an identical receipt, snapshot and RNG position.
+## AC2, the task goal: the real three-foe S2 preview with only the already-present Moth Scribe
+## moved to occupied foe rank 4 (its old rank 3 left vacant). On Scarecrow's real scheduled
+## turn Crow Flock is selected at rank 4 and resolves one genuine receipt for each living foe
+## at ranks 1, 2 and 4. Every landed tier-II hit carries native Weak 2 and Mark 2 in the
+## receipt and in the foe's battle state; the same seed and action replay to an identical
+## receipt, snapshot and RNG position.
 func _test_rank4_crow_flock() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
 		return
 	var ability := StitchedParts.ability_at_tier(cat["by_id"][ALTERNATES["head"]], 2)
-	var setup := _rank4_battle(ALTERNATES["head"], 2, 501500)
-	_check(setup != null, "AC2: genuine rank-4 Crow Flock battle builds")
+	var setup := _rank4_foe_battle(501500, ALTERNATES["head"], 2)
+	_check(setup != null, "AC2: genuine occupied-rank-4 Crow Flock battle builds")
 	if setup != null:
 		var heroes: Array = setup.get_heroes()
 		var foes: Array = setup.get_foes()
 		_check(heroes.size() == 4 and foes.size() == 3,
-			"AC2: rank-4 Crow Flock witness keeps four real heroes and the three S2 foes")
+			"AC2: occupied-rank-4 witness keeps four real heroes and the three S2 foes")
 		var scarecrow := setup.get_unit("scarecrow")
-		_check(int(scarecrow.get("rank", -1)) == 4
+		_check(int(scarecrow.get("rank", -1)) == 2
 			and str(scarecrow.get("parts", {}).get("head", {}).get("id", "")) == ALTERNATES["head"],
-			"AC2: Scarecrow actually stands in rank 4 wearing Crow Flock")
+			"AC2: Scarecrow keeps his real preview rank wearing Crow Flock")
+		_check(int(setup.get_unit("moth_scribe")["rank"]) == 4
+			and int(setup.get_unit("fray_scavenger")["rank"]) == 1
+			and int(setup.get_unit("scissor_crab")["rank"]) == 2,
+			"AC2: only the existing Moth Scribe moves to occupied foe rank 4")
+		_check(foes.all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: the Moth Scribe's former enemy rank 3 stays vacant")
 		for id in ENEMY_IDS:
 			_check(not setup.get_unit(id).is_empty(), "AC2: actual shipped foe retained: " + id)
 	var witnessed := false
 	for seed_value in range(501500, 501580):
-		var b := _rank4_battle(ALTERNATES["head"], 2, seed_value)
+		var b := _rank4_foe_battle(seed_value, ALTERNATES["head"], 2)
 		if b == null or not _to(b, "scarecrow"):
-			continue
-		if int(b.get_unit("scarecrow")["rank"]) != 4:
 			continue
 		if str(b.get_unit("scarecrow")["parts"]["head"]["id"]) != ALTERNATES["head"]:
 			continue
-		var foe_before := b.get_unit("fray_scavenger")
-		if int(foe_before.get("hp", 0)) <= 0:
-			continue
 		var before := b.state_snapshot()
-		var cast := b.use_part(ALTERNATES["head"], 1)
+		var cast := b.use_part(ALTERNATES["head"], 4)
 		if not bool(cast.get("ok", false)):
 			continue
 		var receipts: Array = cast.get("results", [])
 		if receipts.size() != 3:
 			continue
 		var targets: Dictionary = {}
-		var ranks_ok := true
+		var ranks: Dictionary = {}
 		var sides_ok := true
-		var rank_one_ok := false
 		var landed := 0
 		var status_hits := 0
 		for receipt in receipts:
 			var target := str(receipt["target"])
 			targets[target] = true
-			var target_rank := int(receipt.get("target_rank", 0))
-			ranks_ok = ranks_ok and target_rank >= 1 and target_rank <= 3
+			ranks[int(receipt.get("target_rank", 0))] = target
 			sides_ok = sides_ok and str(receipt.get("target_side", "")) == "foe"
-			rank_one_ok = rank_one_ok or (target_rank == 1 and target == "fray_scavenger")
 			if not bool(receipt.get("hit", false)):
 				continue
 			landed += 1
 			var statuses: Array = receipt.get("statuses", [])
-			var receipt_weak: bool = statuses.any(
-				func(s): return str(s.get("status", "")) == "weak")
-			var receipt_mark: bool = statuses.any(
-				func(s): return str(s.get("status", "")) == "mark")
 			var state_statuses: Dictionary = b.get_unit(target)["statuses"]
-			if receipt_weak and receipt_mark \
+			if _status_amount(statuses, "weak") == 2 and _status_amount(statuses, "mark") == 2 \
 				and int(state_statuses.get("weak", 0)) > 0 \
 				and int(state_statuses.get("mark", 0)) > 0:
 				status_hits += 1
-		if not ranks_ok or not sides_ok or not rank_one_ok or landed < 1 or status_hits != landed:
+		if not sides_ok or landed != 3 or status_hits != landed:
 			continue
 		if targets.size() != 3 or not targets.has("fray_scavenger") \
 			or not targets.has("scissor_crab") or not targets.has("moth_scribe"):
+			continue
+		if ranks.size() != 3 or not ranks.has(1) or not ranks.has(2) or not ranks.has(4) \
+			or ranks.has(3):
+			continue
+		if str(ranks[1]) != "fray_scavenger" or str(ranks[2]) != "scissor_crab" \
+			or str(ranks[4]) != "moth_scribe":
 			continue
 		witnessed = true
 		var after := b.state_snapshot()
@@ -797,17 +810,16 @@ func _test_rank4_crow_flock() -> void:
 			and str(cast.get("actor", "")) == "scarecrow"
 			and str(cast.get("part", "")) == ALTERNATES["head"]
 			and str(cast.get("ability", "")) == str(ability["id"]),
-			"AC2: hero rank 4 Crow Flock runs as the equipped Scarecrow head (seed %d)"
+			"AC2: Crow Flock runs as the equipped Scarecrow head at target rank 4 (seed %d)"
 				% seed_value)
-		_check(int(b.get_unit("scarecrow")["rank"]) == 4,
-			"AC2: the acting Scarecrow really looses the flock from hero rank 4 (seed %d)"
+		_check(int(b.get_unit("scarecrow")["rank"]) == 2,
+			"AC2: the acting Scarecrow keeps his real preview rank 2 (seed %d)" % seed_value)
+		_check(receipts.size() == 3 and targets.size() == 3 and ranks.size() == 3
+			and ranks.has(1) and ranks.has(2) and ranks.has(4) and not ranks.has(3),
+			"AC2: one distinct foe receipt each at enemy ranks 1, 2 and 4, never rank 3 (seed %d)"
 				% seed_value)
-		_check(receipts.size() == 3 and targets.size() == 3 and ranks_ok and sides_ok
-			and rank_one_ok,
-			"AC2: one distinct foe result per living enemy rank 1-3, aimed at rank 1 (seed %d)"
-				% seed_value)
-		_check(landed > 0 and status_hits == landed,
-			"AC2: every landed flock hit carries native Weak and Mark in receipt and state (seed %d)"
+		_check(landed == 3 and status_hits == landed,
+			"AC2: all three landed tier-II hits carry Weak 2 and Mark 2 in receipt and state (seed %d)"
 				% seed_value)
 		var advanced := int(after["round"]) > int(before["round"]) \
 			or (int(after["round"]) == int(before["round"]) \
@@ -815,18 +827,26 @@ func _test_rank4_crow_flock() -> void:
 		_check(advanced and after != before,
 			"AC2: the cast spends Scarecrow's genuine turn and changes real battle state (seed %d)"
 				% seed_value)
-		var replay := _rank4_battle(ALTERNATES["head"], 2, seed_value)
+		var replay := _rank4_foe_battle(seed_value, ALTERNATES["head"], 2)
 		if replay == null or not _to(replay, "scarecrow"):
-			_check(false, "AC2: same-seed rank-4 Crow Flock replay reached Scarecrow's turn (seed %d)"
+			_check(false, "AC2: same-seed occupied-rank-4 replay reached Scarecrow's turn (seed %d)"
 				% seed_value)
 		else:
-			var replayed := replay.use_part(ALTERNATES["head"], 1)
+			var replayed := replay.use_part(ALTERNATES["head"], 4)
 			_check(replayed == cast and replay.state_snapshot() == after
 				and replay.rng_state() == int(after["rng_state"]),
-				"AC2: same-seed rank-4 Crow Flock replays receipt, snapshot and RNG (seed %d)"
+				"AC2: same-seed occupied-rank-4 Crow Flock replays receipt, snapshot and RNG (seed %d)"
 					% seed_value)
 		break
-	_check(witnessed, "AC2: a real seeded rank-4 Crow Flock Weakens and Marks the enemy line")
+	_check(witnessed,
+		"AC2: a real seeded rank-4 Crow Flock Weakens and Marks every living foe at ranks 1, 2 and 4")
+
+
+func _status_amount(statuses: Array, key: String) -> int:
+	for status in statuses:
+		if str(status.get("status", "")) == key:
+			return int(status.get("duration", 0))
+	return 0
 
 
 func _reject_without_spend(b: StitchedRules, id: String, rank: int, label: String) -> void:
@@ -875,18 +895,35 @@ func _test_rejections() -> void:
 	_check(bool(played.get("ok", false)), "AC3: legal Scarecrow action actually spends turn")
 	if bool(played.get("ok", false)):
 		_reject_without_spend(b, STARTERS["arms"], 1, "wrong active side / off-turn Scarecrow action")
-	# Crow Flock's authored reach stays enemy ranks 1-3: from a legal rank-2 launch, an empty
-	# enemy rank 4 and out-of-range ranks 0/5 refuse without spending the turn.
+	# Crow Flock's authored reach is now all four enemy ranks: from a legal rank-2 launch,
+	# out-of-range ranks 0/5 still refuse without spending the turn, while a legal but vacant
+	# enemy rank 4 resolves only the three living foes at ranks 1-3 with no phantom result.
 	var flock := _battle(ALTERNATES["head"])
 	if flock == null or not _to(flock, "scarecrow"):
 		_check(false, "AC3: Crow Flock target rejection witness receives an actual turn")
 	else:
-		for bad_rank in [0, 4, 5]:
+		for bad_rank in [0, 5]:
 			_reject_without_spend(flock, ALTERNATES["head"], bad_rank,
 				"Crow Flock rejects enemy rank %d" % bad_rank)
-		var flock_cast := flock.use_part(ALTERNATES["head"], 1)
-		_check(bool(flock_cast.get("ok", false)) and flock_cast.get("results", []).size() == 3,
-			"AC3: the same rank-2 Crow Flock still spends the turn on its legal rank-1 cast")
+		var before := flock.state_snapshot()
+		var flock_cast := flock.use_part(ALTERNATES["head"], 4)
+		var results: Array = flock_cast.get("results", [])
+		var result_ranks: Dictionary = {}
+		var ghost := false
+		for receipt in results:
+			var target_rank := int(receipt.get("target_rank", 0))
+			result_ranks[target_rank] = str(receipt["target"])
+			ghost = ghost or target_rank == 4
+		var after := flock.state_snapshot()
+		_check(bool(flock_cast.get("ok", false)) and results.size() == 3
+			and result_ranks.size() == 3 and result_ranks.has(1)
+			and result_ranks.has(2) and result_ranks.has(3) and not ghost,
+			"AC3: vacant selected enemy rank 4 resolves only the three living ranks 1-3")
+		_check(int(after["round"]) != int(before["round"])
+			or int(after["turn_index"]) != int(before["turn_index"]),
+			"AC3: the legal empty-rank-4 Crow Flock cast spends Scarecrow's turn")
+		_reject_without_spend(flock, ALTERNATES["head"], 4,
+			"replayed Crow Flock after the turn is spent")
 	# The real remaining preview heroes are kept; only an in-memory rearrangement moves
 	# Scarecrow's entry to the front, so he genuinely stands in hero rank 1, where Crow
 	# Flock may not launch even against a living rank-1 foe.

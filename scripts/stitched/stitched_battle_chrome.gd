@@ -147,6 +147,179 @@ static func _fit_readout(readout: Label, caption: String) -> void:
 		if width > available or readout.size.x > slot_width:
 			readout.scale.x = available / maxf(width, readout.size.x)
 
+# Mirror the mounted screen's canonical order, without asking the screen to
+# interpret statuses or touching its combat/inspection authority.
+const STATUS_ORDER := [
+	"bleed", "weak", "exposed", "thorns", "tangled", "blind",
+	"riposte", "stun", "stun_resist", "mark", "guard",
+]
+const STATUS_ICONS := {
+	"bleed": "status_bleed", "stun": "status_stun", "mark": "status_mark",
+	"guard": "status_guard", "blind": "status_blind",
+	"tangled": "status_tangled", "hanging": "status_hanging",
+	"steadfast": "badge_steadfast", "unravelled": "badge_unravelled",
+}
+const BADGE_SHORT := {
+	"weak": "WK", "exposed": "EX", "thorns": "TH",
+	"riposte": "RP", "stun_resist": "SR", "dodge": "DG",
+	"steadfast": "ST", "frantic": "FR", "hollow": "HO",
+	"bitter": "BI", "reckless": "RE", "cowering": "CO",
+	"hanging": "H",
+}
+const UNRAVELLED_TRAITS := ["frantic", "hollow", "bitter", "reckless", "cowering"]
+
+
+static func _badge_entries(unit: Dictionary, side: String) -> Array[Dictionary]:
+	var entries: Array[Dictionary] = []
+	if unit.is_empty() or bool(unit.get("lost", false)) or bool(unit.get("dead", false)):
+		return entries
+	if int(unit.get("hp", 0)) == 0 and bool(unit.get("hanging", false)):
+		entries.append({"id": "hanging", "short": "H", "count": "",
+			"full": "HANGING BY A THREAD", "icon": "status_hanging"})
+	if side == "hero":
+		var resolve := str(unit.get("resolve", ""))
+		if resolve == "steadfast":
+			entries.append({"id": "steadfast", "short": "ST", "count": "",
+				"full": "STEADFAST", "icon": "badge_steadfast"})
+		elif resolve in UNRAVELLED_TRAITS:
+			entries.append({"id": resolve, "short": str(BADGE_SHORT[resolve]), "count": "",
+				"full": "UNRAVELLED — " + resolve.to_upper(), "icon": "badge_unravelled"})
+	var statuses: Variant = unit.get("statuses", {})
+	if statuses is Dictionary:
+		var sorted_keys: Array[String] = []
+		for key in STATUS_ORDER:
+			if int(statuses.get(key, 0)) > 0:
+				sorted_keys.append(key)
+		var extras: Array[String] = []
+		for key in statuses:
+			var status := str(key)
+			if not status in STATUS_ORDER and int(statuses[key]) > 0:
+				extras.append(status)
+		extras.sort()
+		sorted_keys.append_array(extras)
+		for key in sorted_keys:
+			var amount := int(statuses[key])
+			entries.append({"id": key,
+				"short": str(BADGE_SHORT.get(key, key.left(2).to_upper())),
+				"count": str(amount),
+				"full": "%s %d" % [key.replace("_", " ").to_upper(), amount],
+				"icon": str(STATUS_ICONS.get(key, ""))})
+	var buff: Variant = unit.get("dodge_buff", {})
+	if buff is Dictionary:
+		var amount := int(buff.get("amount", 0))
+		var turns := int(buff.get("turns", 0))
+		if amount > 0 and turns > 0:
+			entries.append({"id": "dodge", "short": "DG", "count": str(turns),
+				"full": "DODGE +%d / %d turns" % [amount, turns], "icon": ""})
+	return entries
+
+
+static func _make_badge_row(root: Control) -> Control:
+	# Child extends above the meter's y530 origin; global y486..504 exactly.
+	# Six preallocated ticket nodes are reused for every presentation/refresh.
+	var row := Control.new()
+	row.name = "BadgeRow"
+	row.position = Vector2(3, -44)
+	row.size = Vector2(164, 18)
+	row.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.focus_mode = Control.FOCUS_NONE
+	root.add_child(row)
+	for index in range(6):
+		var chip := Control.new()
+		chip.name = "Badge%d" % index
+		chip.position = Vector2(index * 27, 0)
+		chip.size = Vector2(26, 18)
+		chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.focus_mode = Control.FOCUS_NONE
+		chip.visible = false
+		row.add_child(chip)
+		var felt := NinePatchRect.new()
+		felt.name = "Felt"
+		felt.texture = NAME_PLATE
+		felt.size = chip.size
+		felt.patch_margin_left = 5
+		felt.patch_margin_right = 5
+		felt.patch_margin_top = 5
+		felt.patch_margin_bottom = 5
+		felt.self_modulate = Color("9d817ee8")
+		felt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(felt)
+		var emblem := TextureRect.new()
+		emblem.name = "Emblem"
+		emblem.position = Vector2(2, 2)
+		emblem.size = Vector2(14, 14)
+		emblem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		emblem.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		emblem.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(emblem)
+		var caption := Label.new()
+		caption.name = "Short"
+		caption.position = Vector2(2, 1)
+		caption.size = Vector2(16, 16)
+		caption.add_theme_font_override("font", RANK_FONT)
+		caption.add_theme_font_size_override("font_size", 10)
+		caption.add_theme_color_override("font_color", BONE)
+		caption.add_theme_color_override("font_outline_color", Color("25181d"))
+		caption.add_theme_constant_override("outline_size", 1)
+		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(caption)
+		var count := Label.new()
+		count.name = "Count"
+		count.position = Vector2(16, 1)
+		count.size = Vector2(10, 16)
+		count.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		count.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		count.add_theme_font_override("font", RANK_FONT)
+		count.add_theme_font_size_override("font_size", 9)
+		count.add_theme_color_override("font_color", AMBER)
+		count.add_theme_color_override("font_outline_color", Color("25181d"))
+		count.add_theme_constant_override("outline_size", 1)
+		count.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		chip.add_child(count)
+	return row
+
+
+static func _present_badges(root: Control, unit: Dictionary, side: String) -> void:
+	var row: Control = root.get_node("BadgeRow")
+	var entries := _badge_entries(unit, side)
+	var names: Array[String] = []
+	for entry in entries:
+		names.append(str(entry["full"]))
+	row.tooltip_text = "STATUS: " + (", ".join(names) if not names.is_empty() else "none")
+	root.tooltip_text += " | " + row.tooltip_text if root.visible else ""
+	var shown := entries.size()
+	var overflow := shown > 6
+	if overflow:
+		shown = 6
+	for index in range(6):
+		var chip: Control = row.get_node("Badge%d" % index)
+		chip.visible = index < shown
+		if index >= shown:
+			chip.tooltip_text = ""
+			continue
+		var item: Dictionary = entries[index] if not overflow or index < 5 else {
+			"id": "overflow", "short": "+", "count": str(entries.size() - 5),
+			"full": "+%d more: %s" % [entries.size() - 5, ", ".join(names.slice(5))],
+			"icon": "",
+		}
+		var emblem: TextureRect = chip.get_node("Emblem")
+		var caption: Label = chip.get_node("Short")
+		var count: Label = chip.get_node("Count")
+		var icon_id := str(item["icon"])
+		var icon_path := "res://assets/paper/stitched/icons/%s.png" % icon_id
+		emblem.texture = load(icon_path) as Texture2D if not icon_id.is_empty() and ResourceLoader.exists(icon_path, "Texture2D") else null
+		emblem.visible = emblem.texture != null
+		caption.text = str(item["short"]) if not emblem.visible or str(item["count"]).is_empty() else ""
+		caption.position.x = 16 if emblem.visible else 2
+		caption.size.x = 10 if emblem.visible else 16
+		# Resolve and Hanging icon identities also expose their real short name.
+		count.text = str(item["short"]) if emblem.visible and str(item["count"]).is_empty() else str(item["count"])
+		count.visible = not count.text.is_empty()
+		chip.tooltip_text = str(item["full"])
+	row.visible = not entries.is_empty()
+
+
 static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Dictionary:
 	# y530..554 is the existing HP row, below the full-size rank/name button.
 	var root := Control.new()
@@ -157,6 +330,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	# without consuming the parent's rank-button input.
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
 	parent.add_child(root)
+	_make_badge_row(root)
 	# Keep PatrickHand's glyphs at their native size while removing only
 	# the font's unused line leading. No vertical glyph scaling or clipping.
 	var caption_font := FontVariation.new()
@@ -169,7 +343,6 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	var hp_caption := Label.new()
 	hp_caption.name = "HPReadout"
 	hp_caption.position = Vector2(10, 0)
-	hp_caption.size = Vector2(74 if is_hero else 149, 14)
 	hp_caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	hp_caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	hp_caption.clip_text = false
@@ -182,13 +355,13 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	hp_caption.add_theme_constant_override("outline_size", 2)
 	hp_caption.z_index = 2
 	root.add_child(hp_caption)
+	hp_caption.size = Vector2(74 if is_hero else 149, 14)
 	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
 		var fray := _meter(root, "FrayFill", Rect2(90, 15, 69, 7), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
 		caption.position = Vector2(87, 0)
-		caption.size = Vector2(74, 14)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		caption.clip_text = false
@@ -201,6 +374,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		caption.z_index = 2
 		root.add_child(caption)
+		caption.size = Vector2(74, 14)
 		output["fray"] = fray
 		output["fray_text"] = caption
 	return output
@@ -247,3 +421,4 @@ static func present_rank(meters: Dictionary, unit: Dictionary, side: String) -> 
 				+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
 				+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
 			surface.tooltip_text += " | " + fray.tooltip_text
+	_present_badges(surface, unit if occupied else {}, side)

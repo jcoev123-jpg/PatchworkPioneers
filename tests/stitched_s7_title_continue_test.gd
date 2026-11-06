@@ -1,6 +1,75 @@
 extends "res://tests/stitched_s6_followon_foes_live_test.gd"
 ## Mounted production callbacks; the save path belongs exclusively to this test.
 const TEST_SAVE := "user://s7_title_continue_test.save"
+const GOTHIC_THEME := "res://themes/gothic_theme.tres"
+const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
+const HEADING_FONT := "res://assets/fonts/LondrinaSolid-Regular.ttf"
+const TITLE_FONT := "res://assets/fonts/LondrinaSolid-Black.ttf"
+
+
+func _project_theme() -> void:
+	_check(ProjectSettings.get_setting("gui/theme/custom", "") == GOTHIC_THEME,
+		"production project installs the Gothic Theme at startup")
+	var master := load(GOTHIC_THEME) as Theme
+	_check(master != null, "production Gothic Theme loads")
+	if master == null:
+		return
+	# A sibling of App with no local Theme proves the project default resolves
+	# independently of App's already-styled scene and the title shell.
+	var host := Control.new()
+	root.add_child(host)
+	var body := Label.new()
+	host.add_child(body)
+	_check(host.theme == null and body.theme == null
+		and not body.has_theme_font_override("font")
+		and body.get_theme_font("font").resource_path == BODY_FONT
+		and body.get_theme_color("font_color").is_equal_approx(Color("e9ddc7")),
+		"unassigned project-root body inherits Patrick Hand and bone Label ink")
+	for spec in [["PatchHeading", HEADING_FONT], ["PatchTitle", TITLE_FONT]]:
+		body.theme_type_variation = spec[0]
+		_check(body.get_theme_font("font").resource_path == spec[1],
+			"project-root named heading inherits " + spec[0])
+	var button := Button.new()
+	button.text = "Project default action"
+	host.add_child(button)
+	_check(button.theme == null and not button.has_theme_font_override("font")
+		and button.get_theme_font("font").resource_path == BODY_FONT
+		and button.get_theme_color("font_color").is_equal_approx(Color("e9ddc7")),
+		"unassigned project-root Button inherits the body font")
+	button.theme_type_variation = "PatchHeadingButton"
+	_check(button.get_theme_font("font").resource_path == HEADING_FONT,
+		"project-root named heading Button inherits Londrina")
+	var surfaces: Array[StyleBox] = []
+	for state in ["normal", "hover", "disabled", "focus"]:
+		var surface := button.get_theme_stylebox(state)
+		_check(master.has_stylebox(state, "Button") and surface != null
+			and surface == master.get_stylebox(state, "Button")
+			and not button.has_theme_stylebox_override(state) and not surfaces.has(surface),
+			"project-root Button resolves a distinct inherited Gothic " + state + " style")
+		surfaces.append(surface)
+	var normal := button.get_theme_stylebox("normal") as StyleBoxFlat
+	var hover := button.get_theme_stylebox("hover") as StyleBoxFlat
+	var disabled := button.get_theme_stylebox("disabled") as StyleBoxFlat
+	var focus := button.get_theme_stylebox("focus") as StyleBoxFlat
+	_check(normal != null and hover != null and disabled != null and focus != null,
+		"inherited project surfaces have inspectable authored visual properties")
+	if normal != null and hover != null and disabled != null and focus != null:
+		_check(not normal.bg_color.is_equal_approx(hover.bg_color)
+			and not normal.bg_color.is_equal_approx(disabled.bg_color)
+			and not hover.bg_color.is_equal_approx(disabled.bg_color)
+			and not focus.draw_center and focus.border_width_left == 3
+			and focus.border_color.is_equal_approx(Color("e6ad58")),
+			"project default has distinct surfaces and a visible amber focus outline")
+	var activations := [0]
+	button.pressed.connect(func(): activations[0] += 1)
+	button.grab_focus()
+	await _physical(KEY_SPACE)
+	_check(root.gui_get_focus_owner() == button and activations[0] == 1,
+		"independently themed Button accepts physical keyboard activation and focus")
+	button.disabled = true
+	await _physical(KEY_SPACE)
+	_check(activations[0] == 1, "disabled project-default Button rejects keyboard activation")
+	host.free()
 
 
 func _physical(code: Key, reverse: bool = false) -> void:
@@ -11,6 +80,26 @@ func _physical(code: Key, reverse: bool = false) -> void:
 		event.shift_pressed = reverse
 		event.pressed = down
 		Input.parse_input_event(event)
+		await process_frame
+
+
+func _click(button: Button) -> void:
+	# Newly mounted Containers settle their child hit rectangles after layout.
+	await process_frame
+	await process_frame
+	_check(button.is_visible_in_tree() and not button.disabled
+		and button.get_global_rect().has_area(), "mouse target is a live action: " + button.text)
+	var point := button.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await process_frame
+	for down in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = down
+		root.push_input(event, true)
 		await process_frame
 
 
@@ -39,7 +128,14 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	await process_frame
+	await _project_theme()
 	var shell = app.get_node("PatchworkUIShell")
+	_check(app.theme != null and app.theme.resource_path == GOTHIC_THEME
+		and app.title_label.theme == null
+		and not app.title_label.has_theme_font_override("font")
+		and app.title_label.theme_type_variation == "PatchTitle"
+		and app.title_label.get_theme_font("font").resource_path == TITLE_FONT,
+		"actual mounted title inherits the production Gothic Londrina title face")
 	var actions: Array = [app.start_button, app.stitched_continue_button,
 		app.base_button]
 	_check(shell._actions == actions, "shell binds exactly three default production actions")
@@ -67,11 +163,13 @@ func _run() -> void:
 			and button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"felt and nonblocking stitches cover " + button.text)
 		_check(button.theme_type_variation == "PatchHeadingButton"
+			and button.theme == null and not button.has_theme_font_override("font")
 			and button.get_theme_font("font").resource_path == shell.HEADING_FONT
 			and button.get_theme_font_size("font_size") == actions[0].get_theme_font_size("font_size"),
 			"shared sewn heading typography: " + button.text)
 		for state in ["normal", "hover", "disabled", "focus"]:
-			_check(button.get_theme_stylebox(state) == app.theme.get_stylebox(state, "Button"),
+			_check(not button.has_theme_stylebox_override(state)
+				and button.get_theme_stylebox(state) == app.theme.get_stylebox(state, "Button"),
 				"inherited " + state + " style: " + button.text)
 	var carry := _carry(app)
 	for button in [app.route_button, app.stitched_fight_button]:
@@ -105,7 +203,29 @@ func _run() -> void:
 	await _physical(KEY_SPACE)
 	_check(app.stitched_run_panel != null and app.stitched_run_session == null,
 		"original New Run opens Stitched picker")
-	app.stitched_run_buttons[0].pressed.emit()
+	if app.stitched_run_panel != null:
+		var body := app.stitched_run_panel.find_child("StitchedPageHeading", true, false) as Label
+		_check(body != null and body.is_visible_in_tree() and not body.text.is_empty()
+			and body.theme == null and not body.has_theme_font_override("font")
+			and body.get_theme_font("font").resource_path == BODY_FONT,
+			"real New Run page inherits the Gothic Patrick Hand body face")
+	app.stitched_run_buttons[1].grab_focus()
+	await _physical(KEY_ENTER)
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and _carry(app) == carry,
+		"physical Enter cancels the picker without spending or drawing")
+	app.start_button.grab_focus()
+	await _physical(KEY_ENTER)
+	_check(app.stitched_run_panel != null and app.stitched_run_session == null,
+		"physical Enter also opens the original New Run picker")
+	await _click(app.stitched_run_buttons[1])
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and _carry(app) == carry,
+		"mouse cancels the picker without spending or drawing")
+	await _click(app.start_button)
+	_check(app.stitched_run_panel != null and app.stitched_run_session == null,
+		"mouse opens New Run through the visible three-action menu")
+	await _click(app.stitched_run_buttons[0])
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null, "seeded live picker created real run")

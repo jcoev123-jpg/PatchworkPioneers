@@ -8,6 +8,7 @@ signal exit_requested
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
+const SCRAP_TEXTURE: Texture2D = preload("res://assets/paper/stitched/icons/scrap_heap.png")
 const SLOTS := ["head", "arms", "torso", "legs"]
 const STATUS_ORDER := [
 	"bleed", "weak", "exposed", "thorns", "tangled", "blind",
@@ -33,6 +34,7 @@ var _target_ranks: Dictionary = {}
 var _seat_buttons: Dictionary = {}
 var _puppets: Dictionary = {}
 var _figure_hits: Dictionary = {}
+var _scrap_images: Dictionary = {}
 var _foot_plates: Dictionary = {}
 var _rank_meters: Dictionary = {}
 var _status_disclosure: NinePatchRect
@@ -142,8 +144,6 @@ func _panel(rect: Rect2, tint: Color = PANEL) -> ColorRect:
 func _label(text: String, rect: Rect2, font_size: int = 18, color: Color = PAPER, alignment: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
 	var label := Label.new()
 	label.text = text
-	label.position = rect.position
-	label.size = rect.size
 	label.add_theme_color_override("font_color", color)
 	label.add_theme_font_size_override("font_size", font_size)
 	if _portrait_font != null:
@@ -152,7 +152,12 @@ func _label(text: String, rect: Rect2, font_size: int = 18, color: Color = PAPER
 	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	label.clip_text = true
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Mount before sizing: on entering the tree a Control clamps its rect to the
+	# taller Gothic-themed minimum height (25px), which would overlap the ability
+	# row below the authored 22px caption slot. Sizing afterwards keeps the slot.
 	add_child(label)
+	label.position = rect.position
+	label.size = rect.size
 	return label
 
 
@@ -369,6 +374,23 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_bind_seat_signals(hit, key)
 	add_child(hit)
 	_figure_hits[key] = hit
+	# Heaps occupy the same rank station but have their own smaller, authored
+	# image and hit surface. Never bind a living Puppet to a heap.
+	if side == "foe":
+		var scrap := TextureRect.new()
+		scrap.name = "ScrapTargetRank%d" % rank
+		scrap.texture = SCRAP_TEXTURE
+		scrap.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		scrap.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		scrap.position = Vector2(x + 27.0, 382.0)
+		scrap.size = Vector2(116.0, 116.0)
+		scrap.mouse_filter = Control.MOUSE_FILTER_STOP
+		scrap.focus_mode = Control.FOCUS_ALL
+		scrap.visible = false
+		scrap.gui_input.connect(func(event: InputEvent): _scrap_input(event, rank))
+		_bind_seat_signals(scrap, key)
+		add_child(scrap)
+		_scrap_images[key] = scrap
 	# Enlarged art-backed plate: each 170px patch has two readable 148px
 	# text rows. The patches' sewn edges may meet, but text rows never do.
 	var foot_x := x
@@ -391,6 +413,21 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_labels[key].add_theme_constant_override("outline_size", 2)
 	_labels[key].visible = false
 	_rank_meters[key] = CHROME.make_rank_meters(self, side, foot_x)
+
+
+func _scrap_input(event: InputEvent, rank: int) -> void:
+	var key := "foe_" + str(rank)
+	var scrap: TextureRect = _scrap_images.get(key)
+	if scrap == null or not scrap.is_visible_in_tree() or not _unit_at("foe", rank).is_empty() \
+			or _heap_at(rank).is_empty():
+		return
+	var activated: bool = (event is InputEventMouseButton
+		and event.button_index == MOUSE_BUTTON_LEFT and event.pressed) or (
+		event is InputEventKey and event.pressed and not event.echo
+		and event.keycode in [KEY_ENTER, KEY_KP_ENTER])
+	if activated:
+		submit_target("foe", rank)
+		scrap.accept_event()
 
 
 func _build_status_disclosure() -> void:
@@ -437,6 +474,9 @@ func _update_figure_lights() -> void:
 		puppet.modulate = Color(1.40, 1.25, 0.98) if _inspected_seat == key else (
 			Color(1.25, 1.15, 0.89) if legal else Color.WHITE)
 		_foot_plates[key].modulate = Color("c6a56b") if legal else Color("88777fae")
+		if _scrap_images.has(key):
+			_scrap_images[key].modulate = Color(1.40, 1.25, 0.98) if _inspected_seat == key else (
+				Color(1.25, 1.15, 0.89) if legal else Color.WHITE)
 
 
 func _present_status_disclosure() -> void:
@@ -770,6 +810,13 @@ func _refresh() -> void:
 			var button: Button = _seat_buttons[key]
 			var heap := _heap_at(rank) if side == "foe" and unit.is_empty() else {}
 			var occupied := not unit.is_empty() or not heap.is_empty()
+			if _scrap_images.has(key):
+				var scrap: TextureRect = _scrap_images[key]
+				scrap.visible = unit.is_empty() and not heap.is_empty()
+				if not scrap.visible and scrap.has_focus():
+					scrap.release_focus()
+			if not occupied and _inspected_seat == key:
+				_clear_seat_inspection(key)
 			CHROME.present_rank(_rank_meters[key], unit, side)
 			_foot_plates[key].visible = occupied
 			button.visible = occupied
@@ -1102,6 +1149,8 @@ func _present_forecast() -> void:
 		_seat_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
 		if _figure_hits.has(key):
 			_figure_hits[key].tooltip_text = _seat_buttons[key].tooltip_text
+		if _scrap_images.has(key):
+			_scrap_images[key].tooltip_text = _seat_buttons[key].tooltip_text
 		if _target_buttons.has(key):
 			_target_buttons[key].tooltip_text = detail + ("\n\n" + tip if not tip.is_empty() else "")
 
@@ -1216,21 +1265,51 @@ func _drive_foes() -> void:
 		_record(receipt)
 
 
+# The log names dolls and abilities as the player sees them; raw ids read as broken text.
+func _unit_name(unit_id: String) -> String:
+	var unit: Dictionary = battle.get_unit(unit_id) if battle != null else {}
+	return str(unit.get("name", unit_id.replace("_", " ").capitalize()))
+
+
+func _ability_name(unit_id: String, ability_id: String) -> String:
+	var found := _named_entry(battle.get_unit(unit_id) if battle != null else {}, ability_id)
+	return found if not found.is_empty() else ability_id.replace("_", " ").capitalize()
+
+
+func _named_entry(value: Variant, entry_id: String) -> String:
+	if value is Dictionary:
+		if str(value.get("id", "")) == entry_id and value.has("name"):
+			return str(value["name"])
+		for item in value.values():
+			var found := _named_entry(item, entry_id)
+			if not found.is_empty():
+				return found
+	elif value is Array:
+		for item in value:
+			var found := _named_entry(item, entry_id)
+			if not found.is_empty():
+				return found
+	return ""
+
+
 func _record(receipt: Dictionary) -> void:
 	last_receipt = receipt.duplicate(true)
 	receipts.append(last_receipt.duplicate(true))
 	var actor_id := str(receipt.get("actor", ""))
 	var action := str(receipt.get("action", ""))
-	var log := "%s · %s" % [actor_id.replace("_", " ").capitalize(), action.replace("_", " ").capitalize()]
+	var log := "%s · %s" % [_unit_name(actor_id), action.replace("_", " ").capitalize()]
 	if action == "hand":
 		log = "Wren · %s%s" % [_hand_action_name(str(receipt.get("hand_action", ""))),
-			" → " + actor_id.replace("_", " ").capitalize() if not actor_id.is_empty() else ""]
+			" → " + _unit_name(actor_id) if not actor_id.is_empty() else ""]
 		if bool(receipt.get("failed", false)):
 			log += "\nHis hands shook (roll %d): the action slipped." % int(receipt.get("roll", 0))
 	if action == "ability":
-		log += "\n" + str(receipt.get("ability", ""))
+		log += "\n" + _ability_name(actor_id, str(receipt.get("ability", "")))
 		for result in receipt.get("results", []):
-			log += "\n→ " + str(result.get("target", "")) + "  " + str(result.get("damage", result.get("hit", "")))
+			var outcome := "miss"
+			if bool(result.get("hit", true)):
+				outcome = "%d damage" % int(result["damage"]) if int(result.get("damage", 0)) > 0 else "hit"
+			log += "\n→ %s: %s" % [_unit_name(str(result.get("target", ""))), outcome]
 	# S9c: Wren speaks once for each doll he loses.
 	for hero in battle.get_heroes():
 		if bool(hero.get("lost", false)) and not _lost_seen.has(str(hero.id)):

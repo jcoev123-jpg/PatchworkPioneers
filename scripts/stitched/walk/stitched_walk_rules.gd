@@ -540,6 +540,107 @@ func claim_machine_toll(expected: Dictionary) -> Dictionary:
 	return _claim_receipt(true, "", targets)
 
 
+## Claim the one-shot Pincushion fray consequence once from a completed Walk.
+## Preconditions: started real Walk, matching expected snapshot, matching RNG state,
+## phase complete, scheduled curio pin_nest with matching instance, exactly one matching
+## unconsumed curio_fray pending descriptor with authentic doll target and already-applied +15 fray.
+## Returns detached authoritative receipt. Does not re-apply fray or draw RNG.
+func claim_pincushion_fray(expected: Dictionary, curio_instance: String) -> Dictionary:
+	if _state.is_empty() or _rng == null:
+		return _pincushion_fray_receipt(false, "not_started")
+	if expected != _state or _rng.state != _state.get("rng"):
+		return _pincushion_fray_receipt(false, "stale_snapshot")
+	if _state.get("phase") != "complete":
+		return _pincushion_fray_receipt(false, "walk_incomplete")
+	if not _text(curio_instance):
+		return _pincushion_fray_receipt(false, "invalid_curio_instance")
+	var found_curio: Dictionary = {}
+	for curio in _state.get("curios", []):
+		if curio is Dictionary and curio.get("instance") == curio_instance:
+			found_curio = curio
+			break
+	if found_curio.is_empty():
+		return _pincushion_fray_receipt(false, "curio_not_found")
+	if found_curio.get("id") != "pin_nest":
+		return _pincushion_fray_receipt(false, "curio_not_pincushion")
+	var matching_fray: Array = []
+	var already_consumed := false
+	var has_conflict := false
+	for effect in _state.get("pending", []):
+		if not effect is Dictionary:
+			continue
+		if effect.get("source") == curio_instance:
+			if effect.get("kind") == "curio_fray":
+				if effect.get("consumed") == true:
+					already_consumed = true
+				matching_fray.append(effect)
+			elif effect.get("kind") == "curio_fight":
+				has_conflict = true
+	if already_consumed:
+		return _pincushion_fray_receipt(false, "already_consumed")
+	if has_conflict:
+		return _pincushion_fray_receipt(false, "conflicting_curio_descriptors")
+	if matching_fray.is_empty():
+		return _pincushion_fray_receipt(false, "no_pincushion_fray_outcome")
+	if matching_fray.size() != 1:
+		return _pincushion_fray_receipt(false, "duplicate_curio_fray_descriptor")
+	var fray_desc: Dictionary = matching_fray[0]
+	if fray_desc.get("consumed") != false:
+		return _pincushion_fray_receipt(false, "already_consumed")
+	if not _keys(fray_desc, ["kind", "source", "target", "consumed", "effects"]):
+		return _pincushion_fray_receipt(false, "invalid_descriptor_shape")
+	if fray_desc.get("effects") != {"amount": 15, "already_applied": true}:
+		return _pincushion_fray_receipt(false, "invalid_curio_fray_effects")
+	var target_id: Variant = fray_desc.get("target")
+	if not _text(target_id):
+		return _pincushion_fray_receipt(false, "invalid_target_doll")
+	var doll_index := _doll(target_id)
+	if doll_index < 0:
+		return _pincushion_fray_receipt(false, "invalid_target_doll")
+	var doll: Dictionary = _state.dolls[doll_index]
+	if not doll.get("fray") is int or doll.fray < 15:
+		return _pincushion_fray_receipt(false, "doll_fray_missing_consequence")
+	fray_desc.consumed = true
+	_state.revision += 1
+	return _pincushion_fray_receipt(true, "", curio_instance, String(target_id))
+
+
+func _pincushion_fray_receipt(ok: bool, error: String, source: String = "", target: String = "") -> Dictionary:
+	var snap := snapshot()
+	if not ok:
+		return {
+			"ok": false,
+			"error": error,
+			"reason": error,
+			"kind": "curio_fray",
+			"source": "",
+			"target": "",
+			"fray_delta": 0,
+			"amount": 0,
+			"fray": 0,
+			"already_applied": false,
+			"effects": {},
+			"snapshot": snap,
+		}
+	return {
+		"ok": true,
+		"error": "",
+		"reason": "",
+		"kind": "curio_fray",
+		"source": source,
+		"target": target,
+		"fray_delta": 15,
+		"amount": 15,
+		"fray": 15,
+		"already_applied": true,
+		"effects": {
+			"amount": 15,
+			"already_applied": true,
+		},
+		"snapshot": snap,
+	}
+
+
 func _claim_receipt(ok: bool, error: String, targets: Array = []) -> Dictionary:
 	var snap := snapshot()
 	if not ok:
