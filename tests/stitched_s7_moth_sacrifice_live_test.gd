@@ -7,7 +7,9 @@ const POOR_SEED := 819
 const FIRST_NODE := "f01_n0"
 const SHOP_NODE := "f02_n0"
 const MOTH_NODE := "f03_n1"
-const POOR_NODE := "f01_n0"
+## The poor witness is the first seed from POOR_SEED whose floor-one Event is the Moth, so new
+## events shifting the seeded draws do not retire it.
+const POOR_SEARCH := 4000
 var settled_branches := 0
 
 
@@ -289,17 +291,35 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 	await process_frame
 
 
+## [seed, node] of the first run from POOR_SEED that meets the Moth on floor one.
+func _poor_witness() -> Array:
+	for seed_number in range(POOR_SEED, POOR_SEED + POOR_SEARCH):
+		var probe := StitchedRunSession.start(seed_number)
+		if probe == null:
+			continue
+		for id in probe.choices():
+			if probe.map.get_node(str(id)).type != "Event":
+				continue
+			var session := StitchedRunSession.start(seed_number)
+			if session.enter(str(id), session.snapshot()) and session.pending.get("event_id") == "moth_infestation":
+				return [seed_number, str(id)]
+	return [POOR_SEED, ""]
+
+
 func _poor_branch() -> void:
-	var app: Node = await _new_run(POOR_SEED)
+	var witness := _poor_witness()
+	_check(not str(witness[1]).is_empty(), "a seed from %d meets the Moth on floor one" % POOR_SEED)
+	var poor_node := str(witness[1])
+	var app: Node = await _new_run(int(witness[0]))
 	var session: StitchedRunSession = app.stitched_run_session
 	if session != null:
 		var before_entry := session.snapshot()
-		_check(_press_route(app, POOR_NODE), "real route control activates connected empty Moth witness node")
+		_check(_press_route(app, poor_node), "real route control activates connected empty Moth witness node")
 		_check(session.pending.get("event_id") == "moth_infestation",
 			"empty witness selected Event ID: " + str(session.pending.get("event_id")))
 		_check(session.satchel.is_empty(), "opening Moth has no spare parts: " + str(session.satchel))
 		_check(session.scraps == 0, "opening Moth has no scraps: " + str(session.scraps))
-		_check(session.phase == "visit" and session.map.get_route() == before_entry.map.route + [POOR_NODE],
+		_check(session.phase == "visit" and session.map.get_route() == before_entry.map.route + [poor_node],
 			"empty Event entry advances the authentic route once: " + str(session.map.get_route()))
 		_check(session.is_consistent() and session.rng.state != before_entry.rng,
 			"empty Event entry seals the actual selector RNG: %d -> %d" % [before_entry.rng, session.rng.state])
