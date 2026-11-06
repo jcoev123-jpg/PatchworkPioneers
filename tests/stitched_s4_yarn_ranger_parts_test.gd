@@ -40,6 +40,13 @@ const SNARE_SPECS := {
 	"acc": [94, 97, 100],
 	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
 }
+const REEL_ID := "yarn_ranger_legs_reel_thread"
+const REEL_LAUNCH := [2, 3, 4]
+const REEL_TARGET := [2, 3]
+const REEL_SPECS := {
+	"acc": [94, 97, 100],
+	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3, "mark": 1}],
+}
 const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
 		"ability": "yarn_ranger_head_needle_nock_move",
@@ -61,7 +68,7 @@ const UNCHANGED_PARTS := {
 		"stat": {"dmg": 1},
 	},
 	"yarn_ranger_legs_reel_thread": {
-		"launch": [2, 3], "target": [2, 3], "side": "enemy", "multi": false,
+		"launch": [2, 3, 4], "target": [2, 3], "side": "enemy", "multi": false,
 		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
 		"stat": {"speed": 1},
 	},
@@ -96,11 +103,13 @@ func _initialize() -> void:
 	_test_arms_launch_tiers()
 	_test_purling_launch_tiers()
 	_test_snare_net_launch_tiers()
+	_test_reel_thread_launch_tiers()
 	_test_each_tier()
 	_test_rank_four_head_launch()
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
 	_test_rank_four_snare_net_launch()
+	_test_rank_four_reel_thread_launch()
 	_test_multi_tangled()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
@@ -350,6 +359,42 @@ func _test_snare_net_launch_tiers() -> void:
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "skill"
 			and ability["effects"] == SNARE_SPECS["effects"][tier - 1],
 			"AC1: tier %d Snare Net keeps its enemy 1-3 multi debuff, ACC and Tangled" % tier)
+
+
+## Reel Thread launches from hero rank four as well as ranks two and three at every stitch
+## tier, while its enemy target lock stays exactly ranks 2-3 and its authored numbers,
+## statuses and skill pose are untouched.
+func _test_reel_thread_launch_tiers() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][REEL_ID]
+	_check(str(part["slot"]) == "legs" and str(part["owner"]) == "yarn_ranger"
+		and str(part["name"]) == "Reel Thread" and part["stat"] == {"speed": 1},
+		"AC1: Reel Thread stays a Yarn Ranger legs part with its authored speed stat")
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var mask := int(ability["launch_mask"])
+		var reachable := true
+		for rank in REEL_LAUNCH:
+			reachable = reachable and StitchedParts.ranks_allowed(mask, rank)
+		var excluded := true
+		for rank in [0, 1, 5]:
+			excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
+		_check(ability["launch"] == REEL_LAUNCH
+			and mask == StitchedParts.rank_mask(REEL_LAUNCH) and reachable and excluded,
+			"AC1: tier %d Reel Thread launch mask allows 2,3,4 and refuses 0,1,5" % tier)
+		_check(ability["target"] == REEL_TARGET
+			and int(ability["target_mask"]) == StitchedParts.rank_mask(REEL_TARGET)
+			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
+			and str(ability["kind"]) == "debuff"
+			and str(ability["id"]) == "yarn_ranger_legs_reel_thread_move"
+			and int(ability["acc"]) == int(REEL_SPECS["acc"][tier - 1])
+			and ability["dmg"] == [0, 0] and int(ability["crit"]) == 0
+			and ability["effects"] == REEL_SPECS["effects"][tier - 1]
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "skill",
+			"AC1: tier %d Reel Thread keeps enemy targets 2-3, ACC, Tangled, Mark and skill pose"
+				% tier)
 
 
 ## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
@@ -645,6 +690,123 @@ func _test_rank_four_bolas_launch() -> void:
 	_check(witnessed, "AC2: a bounded real seed shows rank-four Wool Bolas hitting rank one with Tangled")
 
 
+## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
+## wearing her own starter Reel Thread. From the rear rank she may now snare the living
+## rank-two foe at every tier; hero ranks two and three stay legal launch positions.
+func _test_rank_four_reel_thread_launch() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for tier in [1, 2, 3]:
+		var expected: Dictionary = REEL_SPECS["effects"][tier - 1]
+		var b := _rank_four_battle(REEL_ID, tier)
+		_check(b != null,
+			"AC2: fresh S2 battle equips rank-four Ranger with tier %d Reel Thread" % tier)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		var rank_two_foes := b.get_foes().filter(
+			func(foe): return int(foe["rank"]) == 2 and int(foe["hp"]) > 0)
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 4
+			and str(ranger["parts"]["legs"]["id"]) == REEL_ID
+			and rank_two_foes.size() == 1,
+			"AC2: tier %d Reel Thread is worn in the legs slot at hero rank four with a living enemy at rank two"
+				% tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC2: rank-four Ranger reaches her actual turn for tier %d Reel Thread" % tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		var before := b.state_snapshot()
+		var receipt := b.use_part(REEL_ID, 2)
+		var after := b.state_snapshot()
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+			and str(receipt.get("actor", "")) == "yarn_ranger"
+			and str(receipt.get("part", "")) == REEL_ID
+			and str(receipt.get("ability", "")) == "yarn_ranger_legs_reel_thread_move"
+			and results.size() == 1
+			and str(results[0].get("target_side", "")) == "foe"
+			and int(results[0].get("target_rank", 0)) == 2,
+			"AC2: rank-four tier %d Reel Thread legally snares the living rank-two foe: %s"
+				% [tier, str(receipt.get("error", ""))])
+		_check(after != before and (int(after["round"]) > int(before["round"])
+			or (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) > int(before["turn_index"]))),
+			"AC2: rank-four tier %d Reel Thread spends exactly one Ranger turn" % tier)
+		# A bounded explicit seed window witnesses an actual hit that does not pull the foe
+		# and carries exactly the tier's Tangled (plus Mark 1 at tier III); the same seed
+		# must replay the identical receipts, snapshot and RNG position.
+		var witness_seed := -1
+		for seed_value in range(504040, 504072):
+			var shot_battle := _rank_four_battle(REEL_ID, tier, seed_value)
+			if shot_battle == null or not _to(shot_battle, "yarn_ranger"):
+				continue
+			var shot := shot_battle.use_part(REEL_ID, 2)
+			if not bool(shot.get("ok", false)) or shot.get("results", []).size() != 1:
+				continue
+			var result: Dictionary = shot["results"][0]
+			var target_id := str(result.get("target", ""))
+			if not bool(result.get("hit", false)) or target_id.is_empty() \
+					or int(result.get("target_rank", 0)) != 2:
+				continue
+			var statuses: Array = result.get("statuses", [])
+			if not statuses.any(func(s): return str(s.get("status", "")) == "tangled"):
+				continue
+			if expected.has("mark") and not statuses.any(
+					func(s): return str(s.get("status", "")) == "mark"):
+				continue
+			var foe := shot_battle.get_unit(target_id)
+			if int(foe["rank"]) != 2 or int(foe["hp"]) <= 0:
+				continue
+			if int(foe["statuses"].get("tangled", 0)) != int(expected["tangled"]) \
+					or int(foe["statuses"].get("mark", 0)) != int(expected.get("mark", 0)):
+				continue
+			var replay := _rank_four_battle(REEL_ID, tier, seed_value)
+			if replay == null or not _to(replay, "yarn_ranger"):
+				continue
+			var replay_shot := replay.use_part(REEL_ID, 2)
+			if shot == replay_shot and shot_battle.state_snapshot() == replay.state_snapshot() \
+					and shot_battle.rng_state() == replay.rng_state():
+				witness_seed = seed_value
+				break
+		_check(witness_seed >= 0,
+			"AC2: a bounded real seed shows rank-four tier %d Reel Thread hitting the rank-two foe with Tangled %d%s, no pull, and an identical replay"
+				% [tier, int(expected["tangled"]),
+					" and Mark 1" if expected.has("mark") else ""])
+		if witness_seed >= 0:
+			print("AC2 Reel Thread tier %d witness seed %d" % [tier, witness_seed])
+	# The starter legs keep their already-legal launches from hero ranks two and three.
+	var rank_two := _rank_two_battle(REEL_ID)
+	_check(rank_two != null, "AC2: same real four-hero fixture allows Ranger rank two with Reel Thread")
+	if rank_two != null:
+		_check(_to(rank_two, "yarn_ranger"),
+			"AC2: rank-two Reel Thread Ranger obtains a real scheduled turn")
+		if rank_two.current_actor_id() == "yarn_ranger":
+			var mid_before := rank_two.state_snapshot()
+			var mid := rank_two.use_part(REEL_ID, 2)
+			var mid_results: Array = mid.get("results", [])
+			_check(bool(mid.get("ok", false)) and str(mid.get("part", "")) == REEL_ID
+				and mid_results.size() == 1 and int(mid_results[0].get("target_rank", 0)) == 2
+				and rank_two.state_snapshot() != mid_before,
+				"AC2: Reel Thread still launches legally from hero rank two: "
+					+ str(mid.get("error", "")))
+	var rank_three := _battle(REEL_ID, 1)
+	_check(rank_three != null, "AC2: same real four-hero fixture allows Ranger rank three with Reel Thread")
+	if rank_three != null:
+		_check(_to(rank_three, "yarn_ranger"),
+			"AC2: rank-three Reel Thread Ranger obtains a real scheduled turn")
+		if rank_three.current_actor_id() == "yarn_ranger":
+			var back_before := rank_three.state_snapshot()
+			var back := rank_three.use_part(REEL_ID, 2)
+			var back_results: Array = back.get("results", [])
+			_check(bool(back.get("ok", false)) and str(back.get("part", "")) == REEL_ID
+				and back_results.size() == 1 and int(back_results[0].get("target_rank", 0)) == 2
+				and rank_three.state_snapshot() != back_before,
+				"AC2: Reel Thread still launches legally from hero rank three: "
+					+ str(back.get("error", "")))
+
+
 func _test_catalog() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: complete Yarn Ranger JSON validates with StitchedParts")
@@ -754,6 +916,15 @@ func _test_catalog() -> void:
 		malformed_head["ability"]["launch"] = malformed_launch
 		_check(not bool(StitchedParts.validate_part(malformed_head).get("ok", false)),
 			"AC3: malformed head launch %s fails closed" % str(malformed_launch))
+	for malformed_reel_launch in [[2, 3, 4, 5], [2, 3, 4, 4], [0, 2, 3, 4]]:
+		var malformed_legs: Dictionary = cat["by_id"][REEL_ID].duplicate(true)
+		malformed_legs["ability"]["launch"] = malformed_reel_launch
+		_check(not bool(StitchedParts.validate_part(malformed_legs).get("ok", false)),
+			"AC3: malformed Reel Thread launch %s fails closed" % str(malformed_reel_launch))
+	var malformed_reel_target: Dictionary = cat["by_id"][REEL_ID].duplicate(true)
+	malformed_reel_target["ability"]["target"] = [2, 5]
+	_check(not bool(StitchedParts.validate_part(malformed_reel_target).get("ok", false)),
+		"AC3: malformed Reel Thread target mask fails closed")
 	var wrong_tier: Dictionary = cat["parts"][0].duplicate(true)
 	wrong_tier["tiers"]["4"] = {"ability": {"acc": 100}}
 	_check(not bool(StitchedParts.validate_part(wrong_tier).get("ok", false)),
@@ -924,7 +1095,8 @@ func _test_invalid_and_no_spend() -> void:
 		var rear: StitchedRules = relocated["battle"]
 		_check(_to(rear, "yarn_ranger"), "AC3: rank-four Ranger obtains real scheduled turn")
 		if rear.current_actor_id() == "yarn_ranger":
-			_reject_without_spend(rear, STARTERS["legs"], 2, "rank-four Reel Thread launch illegal")
+			_reject_without_spend(rear, STARTERS["legs"], 4,
+				"Reel Thread enemy target rank 4 has no living foe")
 	var front := _rank_one_battle()
 	_check(front != null, "AC3: same real four-hero fixture allows Ranger rank one")
 	if front != null:
@@ -934,6 +1106,20 @@ func _test_invalid_and_no_spend() -> void:
 		_check(_to(front, "yarn_ranger"), "AC3: rank-one Ranger obtains real scheduled turn")
 		if front.current_actor_id() == "yarn_ranger":
 			_reject_without_spend(front, STARTERS["arms"], 1, "rank-one Wool Bolas launch")
+	var front_legs := _rank_one_battle(STARTERS["legs"])
+	_check(front_legs != null,
+		"AC3: same real four-hero fixture allows Ranger rank one with Reel Thread")
+	if front_legs != null:
+		var legs_ranger := front_legs.get_unit("yarn_ranger")
+		var legs_target := front_legs.get_unit("scissor_crab")
+		_check(int(legs_ranger["rank"]) == 1
+			and str(legs_ranger["parts"]["legs"]["id"]) == REEL_ID
+			and int(legs_target["rank"]) == 2 and int(legs_target["hp"]) > 0,
+			"AC3: rank-one Ranger wears Reel Thread while a living enemy waits at target rank two")
+		_check(_to(front_legs, "yarn_ranger"),
+			"AC3: rank-one Reel Thread Ranger obtains real scheduled turn")
+		if front_legs.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(front_legs, STARTERS["legs"], 2, "rank-one Reel Thread launch")
 	var rank_two := _rank_two_battle(PURLING_ID)
 	_check(rank_two != null, "AC3: same real four-hero fixture allows Ranger rank two")
 	if rank_two != null:
