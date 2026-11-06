@@ -669,6 +669,18 @@ func _open_visit(kind: String) -> bool:
 			for hero in roster:
 				_offer("buy_dye", "Dye / %s / %d gold" % [hero.name, dye_quote.price],
 					dye_quote.can_buy and hero.id in dye_quote.eligible, [hero.id])
+			# S6 stop integration: the already-authored Walk-supplies service sells its
+			# two prepared offers (starch, spare_spool) at the established Peddler price.
+			var supplies := RunStitchedPeddlerWalkSupplies.open_stitched(id, roster, pockets, gold,
+				[{"id": "starch", "price": PEDDLER_PRICE}, {"id": "spare_spool", "price": PEDDLER_PRICE}])
+			var supplies_quote := supplies.quote()
+			if supplies_quote.get("ok") != true:
+				return false
+			for hero in roster:
+				for row in supplies_quote.offers:
+					_offer("buy_" + str(row.id), "%s / %s / %d gold" % [
+						str(row.id).replace("_", " ").capitalize(), hero.name, int(row.price)],
+						row.can_buy and hero.id in supplies_quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
@@ -771,6 +783,14 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 				"buy_pins":
 					var visit := RunStitchedPeddlerPins.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
 					result = visit.buy_pins(arguments[0], id, visit.read_state())
+				"buy_starch":
+					var starch_visit := RunStitchedPeddlerWalkSupplies.open_stitched(id, _roster(), pockets, gold,
+						[{"id": "starch", "price": PEDDLER_PRICE}, {"id": "spare_spool", "price": PEDDLER_PRICE}])
+					result = starch_visit.buy("starch", arguments[0], id, starch_visit.read_state())
+				"buy_spare_spool":
+					var spool_visit := RunStitchedPeddlerWalkSupplies.open_stitched(id, _roster(), pockets, gold,
+						[{"id": "starch", "price": PEDDLER_PRICE}, {"id": "spare_spool", "price": PEDDLER_PRICE}])
+					result = spool_visit.buy("spare_spool", arguments[0], id, spool_visit.read_state())
 				"bandage":
 					var visit := RunStitchedPeddlerBandage.open_stitched(id, _roster(), gold, PEDDLER_PRICE)
 					result = visit.choose_bandage(arguments[0], id, visit.read_state())

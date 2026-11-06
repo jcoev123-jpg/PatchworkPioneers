@@ -9,6 +9,13 @@ const MODE := "stitched"
 const STARCH_PRICE := 30
 const SPOOL_PRICE := 45
 
+const RUN_SEED := 14
+const SHOP_NODE := "f01_n3"
+const ROUTE_PRICE := 10
+## Deliberately fixture-funded wallet for the routed paid-purchase witnesses;
+## explicitly NOT battle-earned gold.
+const FIXTURE_GOLD := 40
+
 var failures: Array[String] = []
 var checks := 0
 
@@ -22,6 +29,9 @@ func _initialize() -> void:
 	_test_purchases()
 	_test_refusals()
 	_test_leave()
+	_test_routed_zero_gold_route()
+	_test_routed_funded_purchases()
+	_test_routed_disabled_offers()
 	_check(randi() == next_draw,
 		"open, quote, buys, Leaves and every refusal draw no global RNG")
 	if failures.is_empty():
@@ -488,3 +498,176 @@ func _test_leave() -> void:
 	_check(late.buy("starch", "rag_duelist", NODE, late_snap).get("ok", true) == false
 		and late.read_state()["gold"] == 100 and late.read_state()["status"] == "left",
 		"the pre-Leave snapshot cannot buy after the visit is closed")
+## --- Routed Stitched Peddler witness (S6 stop integration): the real
+## StitchedRunSession mounts the combined Walk-supplies service at a seeded,
+## connected Shop node entered through session.enter. ---
+
+
+func _shop_action(actions: Array, id: String, arguments: Array) -> Dictionary:
+	for action in actions:
+		if action.id == id and action.arguments == arguments:
+			return action
+	return {}
+
+
+func _enter_shop(session: StitchedRunSession, label: String) -> bool:
+	_check(session != null and session.phase == "map", label + ": run is at the map phase")
+	if session == null or session.phase != "map":
+		return false
+	_check(session.choices().has(SHOP_NODE) and session.map.get_node(SHOP_NODE).type == "Shop",
+		label + ": pinned seed %d offers the legal opening Shop %s" % [RUN_SEED, SHOP_NODE])
+	_check(session.enter(SHOP_NODE, session.snapshot()) and session.phase == "visit"
+		and session.pending.service == "Peddler" and session.pending.node_id == SHOP_NODE
+		and session.candle == 100 - StitchedRunSession.NODE_CANDLE_COST,
+		label + ": authentic route entry mounts the real Peddler with the existing candle toll")
+	return session.phase == "visit" and session.pending.service == "Peddler"
+
+
+## AC1/AC3/AC4: zero-gold fresh route at the pinned Shop, including save/reload.
+func _test_routed_zero_gold_route() -> void:
+	var session := StitchedRunSession.start(RUN_SEED)
+	_check(session != null and session.gold == 0 and session.heroes.size() == 4
+		and session.pockets.size() == 4,
+		"fresh route starts with four dolls, four pockets and the normal empty wallet")
+	if not _enter_shop(session, "zero-gold route"):
+		return
+	var actions := session.visit_actions()
+	_check(actions.filter(func(a): return a.id in ["buy_starch", "buy_spare_spool"]).size() == 8,
+		"both Walk-supply offers are mounted exactly once per doll")
+	for hero in session.heroes:
+		for item in ["starch", "spare_spool"]:
+			var action := _shop_action(actions, "buy_" + item, [hero.id])
+			_check(not action.is_empty() and action.enabled == false
+				and (str(StitchedRunSession.PEDDLER_PRICE) + " gold") in action.text
+				and hero.name in action.text,
+				"zero-gold route mounts a disabled buy_" + item + " for " + hero.id + " at the Peddler price")
+	for id in ["buy_candle_stub", "buy_part", "buy_pins", "buy_thimble_tonic",
+			"buy_fresh_stuffing", "buy_dye", "leave"]:
+		_check(actions.any(func(a): return a.id == id),
+			"zero-gold route retains the existing " + id + " action")
+	_check(actions.any(func(a): return a.id == "leave" and a.enabled), "free Leave stays enabled")
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	for hero in session.heroes:
+		_check(not session.choose_visit("buy_starch", [hero.id], before)
+			and not session.choose_visit("buy_spare_spool", [hero.id], before),
+			"zero-gold starch/spool offers are refused for " + hero.id)
+	var forged := before.duplicate(true)
+	forged.gold = 999
+	_check(not session.choose_visit("buy_starch", [session.heroes[0].id], forged),
+		"a forged wallet snapshot cannot authorize a purchase")
+	_check(not session.choose_visit("buy_starch", ["nobody"], before),
+		"an incorrect action argument is refused")
+	_check(not session.choose_visit("buy_dye_vat", [session.heroes[0].id], before),
+		"an unoffered item is refused")
+	_check(session.snapshot() == before and session.journal == journal,
+		"every zero-gold refusal is atomic and RNG-neutral")
+	var saved := StitchedRunSave.capture(session)
+	_check(not saved.is_empty() and saved.version == StitchedRunSession.VERSION,
+		"the pending legal Peddler node captures a VERSION 1 save")
+	var restored := StitchedRunSave.restore(bytes_to_var(var_to_bytes(saved)))
+	_check(restored != null and restored.snapshot() == before,
+		"restore replays the exact pending Peddler state, wallet, pockets and canonical RNG")
+	if restored != null:
+		_check(restored.visit_actions() == actions,
+			"the restored visit mounts the identical starch/spool actions and 10-gold quotes")
+		_check(not restored.choose_visit("buy_starch", [restored.heroes[0].id], restored.snapshot()),
+			"the restored zero-gold visit still refuses the purchase")
+	_check(session.choose_visit("leave", [], before) and session.phase == "map"
+		and session.gold == 0 and session.pockets == before.pockets
+		and session.rng.state == before.rng and session.map.export_state() == before.map,
+		"free Leave closes the zero-gold Peddler without charge or RNG change")
+	var left := session.snapshot()
+	_check(not session.choose_visit("buy_starch", [session.heroes[0].id], before)
+		and not session.choose_visit("leave", [], before) and session.snapshot() == left,
+		"the consumed node refuses old-node and repeat-click decisions")
+	var after_restored := StitchedRunSave.restore(bytes_to_var(var_to_bytes(StitchedRunSave.capture(session))))
+	_check(after_restored != null and after_restored.snapshot() == left,
+		"the left Peddler route still round-trips its sealed state")
+
+
+## AC2: each item in its own fresh fixture-funded visit through choose_visit.
+func _test_routed_funded_purchases() -> void:
+	for item in ["starch", "spare_spool"]:
+		var session := StitchedRunSession.start(RUN_SEED)
+		# FIXTURE: a deliberately test-funded wallet, sealed before the authentic
+		# route entry; explicitly NOT battle-earned gold.
+		session.gold = FIXTURE_GOLD
+		session._seal()
+		if not _enter_shop(session, item + " funded visit"):
+			continue
+		var actions := session.visit_actions()
+		for hero in session.heroes:
+			var action := _shop_action(actions, "buy_" + item, [hero.id])
+			_check(not action.is_empty() and action.enabled
+				and (str(StitchedRunSession.PEDDLER_PRICE) + " gold") in action.text,
+				item + ": the funded visit enables the offer for every doll " + hero.id)
+		var hero_id: String = session.heroes[0].id
+		var before := session.snapshot()
+		var stale := before.duplicate(true)
+		stale.gold = FIXTURE_GOLD - 1
+		_check(not session.choose_visit("buy_" + item, [hero_id], stale)
+			and session.snapshot() == before, item + ": a stale snapshot cannot authorize the purchase")
+		var receipts_before := session.receipts.size()
+		var journal_size := session.journal.size()
+		_check(session.choose_visit("buy_" + item, [hero_id], before),
+			item + ": choose_visit commits the purchase through the real service")
+		var expected_pockets: Dictionary = before.pockets.duplicate(true)
+		expected_pockets[hero_id] = [item]
+		var after := session.snapshot()
+		_check(session.phase == "map"
+			and session.gold == FIXTURE_GOLD - StitchedRunSession.PEDDLER_PRICE
+			and session.pockets == expected_pockets and session.heroes == before.heroes
+			and after.rng == before.rng and after.map == before.map and after.candle == before.candle
+			and after.walk == before.walk and session.pending.is_empty(),
+			item + ": exactly 10 gold is charged once and one item is appended; heroes, candle, RNG and Walk are untouched")
+		_check(session.receipts.size() == receipts_before + 1
+			and session.receipts.back().decision == "buy_" + item
+			and session.receipts.back().steps.size() == 1
+			and session.journal.size() == journal_size + 1
+			and session.journal.back() == {"action": "visit", "id": "buy_" + item, "arguments": [hero_id]},
+			item + ": the visited node closes with exactly one receipt and one journal entry")
+		_check(not session.choose_visit("buy_" + item, [hero_id], before)
+			and not session.choose_visit("buy_starch" if item == "spare_spool" else "buy_spare_spool",
+				[hero_id], after) and session.snapshot() == after,
+			item + ": repeat clicks, the other offer and stale snapshots are refused after the close")
+
+
+## AC3: a full pocket and a LOST doll disable exactly their own offers; Leave stays free.
+func _test_routed_disabled_offers() -> void:
+	var session := StitchedRunSession.start(RUN_SEED)
+	session.gold = FIXTURE_GOLD
+	# Fixture ledger: one full pocket and one LOST doll, sealed before entry.
+	var full_id: String = session.heroes[0].id
+	var lost_id: String = session.heroes[1].id
+	session.pockets[full_id] = ["dye", "dye"]
+	for hero in session.heroes:
+		if hero.id == lost_id:
+			hero.lost = true
+	session._seal()
+	if not _enter_shop(session, "disabled-offer route"):
+		return
+	var actions := session.visit_actions()
+	for item in ["starch", "spare_spool"]:
+		for hero in session.heroes:
+			var action := _shop_action(actions, "buy_" + item, [hero.id])
+			var expected: bool = hero.id != lost_id and hero.id != full_id
+			_check(not action.is_empty() and action.enabled == expected,
+				item + ": the offer for " + hero.id + " is enabled only for a living doll with a free slot")
+	var before := session.snapshot()
+	_check(not session.choose_visit("buy_starch", [full_id], before)
+		and not session.choose_visit("buy_spare_spool", [lost_id], before)
+		and session.snapshot() == before,
+		"full-pocket and LOST-doll offers are refused without any change")
+	var buyer: String = session.heroes[2].id
+	_check(session.choose_visit("buy_starch", [buyer], before)
+		and session.gold == FIXTURE_GOLD - StitchedRunSession.PEDDLER_PRICE
+		and session.pockets[buyer] == ["starch"] and session.pockets[full_id] == ["dye", "dye"],
+		"the eligible doll still buys starch once while the full/lost offers stay disabled")
+	var poor := StitchedRunSession.start(RUN_SEED)
+	if _enter_shop(poor, "leave-only route"):
+		var poor_before := poor.snapshot()
+		_check(poor.choose_visit("leave", [], poor_before) and poor.phase == "map"
+			and poor.gold == 0 and poor.pockets == poor_before.pockets
+			and poor.rng.state == poor_before.rng,
+			"Leave still works without charge when purchases are unavailable")
