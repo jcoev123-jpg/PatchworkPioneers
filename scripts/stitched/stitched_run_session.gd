@@ -62,6 +62,7 @@ var battle_config: Dictionary = {}
 var heroes: Array = []
 var satchel: Array = []
 var patches: Array = []
+var pockets: Dictionary = {}
 var gold := 0
 var scraps := 0
 var candle := 100
@@ -102,6 +103,7 @@ static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Di
 	for hero in session.heroes:
 		hero["position"] = hero.rank
 		hero["patches"] = []
+		session.pockets[hero.id] = []
 	session.rng = RandomNumberGenerator.new()
 	session.rng.seed = seed_number
 	session.map = RunMap.new()
@@ -122,7 +124,8 @@ static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Di
 
 func snapshot() -> Dictionary:
 	return {"phase": phase, "heroes": heroes.duplicate(true), "satchel": satchel.duplicate(true),
-		"patches": patches.duplicate(true), "gold": gold, "scraps": scraps, "candle": candle,
+		"patches": patches.duplicate(true), "pockets": pockets.duplicate(true),
+		"gold": gold, "scraps": scraps, "candle": candle,
 		"pending": pending.duplicate(true), "receipts": receipts.duplicate(true),
 		"map": map.export_state() if map != null else {},
 		"rng": rng.state if rng != null else 0,
@@ -189,7 +192,7 @@ func _hero_inputs() -> Array:
 		record.prot = hero.base_prot
 		record.statuses = {}
 		if int(hero.statuses.get("bleed", 0)) > 0:
-			record.statuses.bleed = int(hero.statuses.bleed)
+			record.statuses["bleed"] = int(hero.statuses.bleed)
 		result.append(record)
 	return result
 
@@ -325,6 +328,8 @@ func _replacement(hero_id: String, lost_id: String) -> Dictionary:
 			var built := probe._build_hero(entry, heroes[index].rank)
 			if built.get("ok") != true:
 				return {"ok": false}
+			pockets.erase(lost_id)
+			pockets[hero_id] = []
 			heroes[index] = built.unit
 			heroes[index]["position"] = heroes[index].rank
 			heroes[index]["patches"] = []
@@ -363,7 +368,8 @@ func _open_visit(kind: String) -> bool:
 		"SewingCircle":
 			var mend := RunStitchedSewingMend.new(id, _living_roster(), scraps, SEWING_COST, catalog)
 			var upgrade := RunStitchedSewingUpgrade.new(id, _living_roster(), scraps, SEWING_COST, catalog)
-			if mend.read_state().get("ok") != true or upgrade.read_state().get("ok") != true:
+			# Upgrade needs four equipped dolls. A LOST doll must still reach replacement.
+			if mend.read_state().get("ok") != true:
 				return false
 			for hero in roster:
 				if hero.lost:
@@ -373,7 +379,7 @@ func _open_visit(kind: String) -> bool:
 					_offer("mend", "%s / Mend %s / %d scraps" % [hero.name, slot, SEWING_COST],
 						not hero.lost and worn.torn and scraps >= SEWING_COST, [hero.id, slot])
 					_offer("upgrade", "%s / Raise %s tier / %d scraps" % [hero.name, slot, SEWING_COST],
-						not hero.lost and not worn.torn and worn.tier < 3 and scraps >= SEWING_COST, [hero.id, slot])
+						upgrade.read_state().get("ok") == true and not worn.torn and worn.tier < 3 and scraps >= SEWING_COST, [hero.id, slot])
 			_add_swaps(roster)
 			for hero in roster:
 				if hero.lost:
@@ -391,6 +397,13 @@ func _open_visit(kind: String) -> bool:
 				"scissor_crab_claw_arm", PEDDLER_PRICE)
 			if stock.is_valid():
 				_offer("buy_part", "Spare claw / %d gold" % PEDDLER_PRICE, gold >= PEDDLER_PRICE and satchel.size() < 6)
+			var pins := RunStitchedPeddlerPins.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
+			var quote := pins.quote()
+			if quote.get("ok") != true:
+				return false
+			for hero in roster:
+				_offer("buy_pins", "Pins / %s / %d gold" % [hero.name, quote.price],
+					quote.can_buy and hero.id in quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
@@ -481,6 +494,9 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					result = _replacement(arguments[0], arguments[1])
 		"Peddler":
 			match action_id:
+				"buy_pins":
+					var visit := RunStitchedPeddlerPins.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
+					result = visit.buy_pins(arguments[0], id, visit.read_state())
 				"bandage":
 					var visit := RunStitchedPeddlerBandage.open_stitched(id, _roster(), gold, PEDDLER_PRICE)
 					result = visit.choose_bandage(arguments[0], id, visit.read_state())
@@ -548,6 +564,10 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 
 
 func _apply_receipt(result: Dictionary) -> void:
+	if result.has("pockets_after"):
+		gold = result.gold
+		pockets = result.pockets_after.duplicate(true)
+		return
 	var lost: Dictionary = {}
 	for hero in heroes:
 		if hero.lost:

@@ -11,12 +11,23 @@ func _roundtrip(session: StitchedRunSession, label: String) -> StitchedRunSessio
 	_check(restored != null and restored != session and restored.snapshot() == before,
 		label + " restores exact map, RNG, heroes, ledgers and pending state")
 	_check(session.snapshot() == before, label + " is read-only for the source")
-	for key in ["gold", "candle", "rng", "phase", "heroes", "map"]:
+	for key in ["gold", "candle", "rng", "phase", "heroes", "map", "pockets"]:
 		var corrupt := document.duplicate(true)
 		corrupt.state[key] = "forged"
 		corrupt.digest = StitchedRunSave._digest(corrupt)
 		_check(StitchedRunSave.restore(corrupt) == null and session.snapshot() == before,
 			label + " rejects corrupted " + key + " atomically")
+	var legacy := document.duplicate(true)
+	legacy.state.erase("pockets")
+	legacy.digest = StitchedRunSave._digest(legacy)
+	var migrated := StitchedRunSave.restore(legacy)
+	_check(migrated != null and migrated.snapshot() == before,
+		label + " replays a pre-pocket save into four empty canonical pockets")
+	var forged_purchase := legacy.duplicate(true)
+	forged_purchase.journal.append({"action": "visit", "id": "buy_pins", "arguments": [session.heroes[0].id]})
+	forged_purchase.digest = StitchedRunSave._digest(forged_purchase)
+	_check(StitchedRunSave.restore(forged_purchase) == null,
+		label + " a pre-pocket save cannot smuggle a purchase command past replay")
 	for invalid_version in [true, false, 1.0, "1", null, 999]:
 		var corrupt := document.duplicate(true)
 		corrupt.version = invalid_version

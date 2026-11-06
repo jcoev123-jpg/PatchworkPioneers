@@ -38,10 +38,18 @@ static func restore(document: Variant) -> StitchedRunSession:
 	var candidate := StitchedRunSession.start(document.seed, document.picks, document.initial)
 	if candidate == null:
 		return null
+	var legacy_pockets: bool = not document.state.has("pockets")
 	for command in document.journal:
+		# Pre-pocket saves can replay their old actions, never a new purchase
+		# hidden by omitting its ownership ledger from the saved state.
+		if legacy_pockets and command is Dictionary and command.get("action") == "visit" and command.get("id") == "buy_pins":
+			return null
 		if not _replay(candidate, command):
 			return null
-	if candidate.journal != document.journal or candidate.snapshot() != document.state:
+	var replayed := candidate.snapshot()
+	if legacy_pockets:
+		replayed.erase("pockets")
+	if candidate.journal != document.journal or replayed != document.state:
 		return null
 	return candidate
 
