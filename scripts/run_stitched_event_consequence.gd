@@ -8,7 +8,8 @@ extends RefCounted
 ##     {"candle": int, "fray": int, "target": "party"|"hero", "hero_id": "...",
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
-##      "min_fray": 1..200, "required_candle_band": "bright"|...}
+##      "min_fray": 1..200, "required_candle_band": "bright"|...,
+##      "required_candle_bands": ["dark", "snuffed"]|...}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -26,6 +27,11 @@ extends RefCounted
 ## StitchedS1BEffects ("snuffed", "dark", "gloom", "dim", "bright"). When present,
 ## the choice is available in preview() and claimable in choose() iff the
 ## opening snapshot candle matches that exact band.
+## `required_candle_bands` is an optional Array of one to five distinct lowercase
+## Strings drawn from CANDLE_BAND_NAMES. When present, the choice is available in
+## preview() and claimable in choose() iff the opening snapshot candle matches a band
+## in that set. An event choice cannot specify both `required_candle_band` and
+## `required_candle_bands`.
 ## `scraps`, `gold`, `part`, `hp` and
 ## `require_full_candle` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
@@ -288,14 +294,22 @@ func _project_candle(base_candle: int, delta: int) -> int:
 
 
 ## Shared candle-band admission gate for preview and commit when
-## `required_candle_band` is present on `stitched_effect`.
+## `required_candle_band` or `required_candle_bands` is present on `stitched_effect`.
 ## Compares the band name for the opening snapshot candle using
 ## StitchedS1BEffects.candle_band(base_candle).
 func _meets_candle_band(base_candle: int, parsed_effect: Dictionary) -> bool:
-	if not parsed_effect.get("has_required_candle_band", false):
+	var has_single: bool = bool(parsed_effect.get("has_required_candle_band", false))
+	var has_multi: bool = bool(parsed_effect.get("has_required_candle_bands", false))
+	if not has_single and not has_multi:
 		return true
 	var band: Dictionary = StitchedS1BEffects.candle_band(base_candle)
-	return String(band.get("name", "")) == String(parsed_effect.get("required_candle_band", ""))
+	var band_name: String = String(band.get("name", ""))
+	if has_single:
+		return band_name == String(parsed_effect.get("required_candle_band", ""))
+	if has_multi:
+		var bands: Array = parsed_effect.get("required_candle_bands", [])
+		return bands.has(band_name)
+	return true
 
 
 ## Shared full-wick affordability gate for preview and commit when
@@ -656,6 +670,9 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_require_full_candle: bool = effect.has("require_full_candle")
 	var has_min_fray: bool = effect.has("min_fray")
 	var has_required_candle_band: bool = effect.has("required_candle_band")
+	var has_required_candle_bands: bool = effect.has("required_candle_bands")
+	if has_required_candle_band and has_required_candle_bands:
+		return {"ok": false}
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
 		+ (1 if has_part else 0)
@@ -665,6 +682,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_require_full_candle else 0)
 		+ (1 if has_min_fray else 0)
 		+ (1 if has_required_candle_band else 0)
+		+ (1 if has_required_candle_bands else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -707,6 +725,25 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if not CANDLE_BAND_NAMES.has(band_name):
 			return {"ok": false}
 		required_candle_band = band_name
+	var required_candle_bands: Array = []
+	if has_required_candle_bands:
+		var raw_bands: Variant = effect.get("required_candle_bands")
+		if typeof(raw_bands) != TYPE_ARRAY:
+			return {"ok": false}
+		var bands_arr: Array = raw_bands
+		if bands_arr.is_empty() or bands_arr.size() > 5:
+			return {"ok": false}
+		var seen_bands: Dictionary = {}
+		for item in bands_arr:
+			if typeof(item) != TYPE_STRING:
+				return {"ok": false}
+			var band_str: String = item
+			if not CANDLE_BAND_NAMES.has(band_str):
+				return {"ok": false}
+			if seen_bands.has(band_str):
+				return {"ok": false}
+			seen_bands[band_str] = true
+			required_candle_bands.append(band_str)
 	var parsed := {
 		"ok": true,
 		"candle": candle_delta,
@@ -723,6 +760,8 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"has_min_fray": has_min_fray,
 		"has_required_candle_band": has_required_candle_band,
 		"required_candle_band": required_candle_band,
+		"has_required_candle_bands": has_required_candle_bands,
+		"required_candle_bands": required_candle_bands,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
