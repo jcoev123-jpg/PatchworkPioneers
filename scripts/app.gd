@@ -6,6 +6,10 @@ var _difficulty_completed_map: RunMap
 var heirloom_unlocked := false
 const PROFILE_VERSION := 1
 @export var difficulty_save_path := "user://quilt_difficulty.json"
+## S9d: what Wren's room remembers between nights. Only the running game's root writes it.
+@export var bedroom_save_path := "user://wren_room.json"
+var bedroom_record: Dictionary = {}
+var _bedroom_noted_run := 0
 
 
 func difficulty_state() -> Dictionary:
@@ -5038,8 +5042,32 @@ func _open_base() -> bool:
 	_present_base_difficulty(view)
 	view.difficulty_choice_requested.connect(_base_difficulty_choice.bind(weakref(view)))
 	view.back_requested.connect(_base_back.bind(weakref(view)))
+	view.present_bedroom(_bedroom_state())
 	title_view.hide()
 	return true
+
+
+func _bedroom_state() -> Dictionary:
+	if bedroom_record.is_empty():
+		bedroom_record = StitchedBedroomRecord.load_file(bedroom_save_path) \
+			if get_tree().current_scene == self else StitchedBedroomRecord.fresh()
+	return bedroom_record
+
+
+## Each finished run is one night in the room's record, counted once.
+func _note_bedroom_run(session: StitchedRunSession) -> void:
+	if session == null or _bedroom_noted_run == session.get_instance_id():
+		return
+	_bedroom_noted_run = session.get_instance_id()
+	bedroom_record = StitchedBedroomRecord.after_run(_bedroom_state(), session)
+	if get_tree().current_scene == self:
+		StitchedBedroomRecord.save_file(bedroom_save_path, bedroom_record)
+
+
+func _return_stitched_run_room() -> void:
+	_return_stitched_run_title()
+	if title_view.is_visible_in_tree():
+		_open_base()
 
 
 func _base_difficulty_choice(tier: int, source: WeakRef) -> void:
@@ -5737,6 +5765,7 @@ HP %d / %d  %s
 FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
 		card.add_child(recap)
 	if terminal:
+		_note_bedroom_run(session)
 		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 245))
 		terminal_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
 		var final_art := TextureRect.new()
@@ -5757,6 +5786,8 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		content.add_child(ending_actions)
 		_stitched_run_action(ending_actions, "Return to title", _return_stitched_run_title)
 		_stitched_run_action(ending_actions, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+		if StitchedBedroom.has_art():
+			_stitched_run_action(ending_actions, "Back to Wren's room", _return_stitched_run_room)
 		_stitched_run_keyboard_chain()
 		return
 	var choices_box: VBoxContainer

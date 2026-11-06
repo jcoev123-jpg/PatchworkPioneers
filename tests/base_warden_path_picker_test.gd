@@ -16,6 +16,7 @@ var back_count := 0
 
 
 func _initialize() -> void:
+	StitchedBedroom.enabled = false
 	_run.call_deferred()
 
 
