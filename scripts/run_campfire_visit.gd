@@ -25,6 +25,8 @@ const STITCHED_FRAY_MAX := 200
 const STITCHED_CANDLE_MAX := 100
 const MEND_HEAL_PERCENT := 30
 const TALES_FRAY_REDUCTION := 25
+## An Unravelled resolve persists until FRAY is strictly below this value.
+const RESOLVE_CLEAR_BELOW := 50
 const WICK_CANDLE_RESTORE := 50
 ## Opt-in Wren FEAR (STITCHED_DESIGN 9c): Tell Tales also soothes 15 FEAR.
 const FEAR_MAX := 100
@@ -244,7 +246,14 @@ func select(decision: Variant, expected_node_id: Variant,
 				hero["hp"] = mini(max_hp, int(hero["hp"]) + amount)
 		TELL_TALES:
 			for hero in updated:
-				hero["fray"] = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+				var reduced: int = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+				hero["fray"] = reduced
+				# An Unravelled trait ends once FRAY is strictly below 50 (exactly
+				# 50 keeps it). Only a present, known trait is cleared; Steadfast,
+				# empty, unknown and missing resolve stay as they were. No roll.
+				if reduced < RESOLVE_CLEAR_BELOW and hero.has("resolve") \
+						and str(hero["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS:
+					hero["resolve"] = ""
 			if _has_fear:
 				fear = maxi(0, fear - TALES_FEAR_RELIEF)
 		TRIM_THE_WICK:
