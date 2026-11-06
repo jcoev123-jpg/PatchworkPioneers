@@ -1507,6 +1507,72 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_swinging_crib_mobile",
+      "title": "The Swinging Crib Mobile",
+      "description": "A nursery mobile as wide as a roof turns above the doll-sized passage; four plump cloth horses sway from brass needle hooks while a button-eyed keeper knots the dangling strings.",
+      "choices": [
+        {
+          "id": "tie_horse_strings",
+          "text": "Spend 2 scraps to bind the loose horse strings (heal 8 HP, gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 8, "max_hp": 1 }
+        },
+        {
+          "id": "collect_horse_bells",
+          "text": "Unhook a jangling horse bell (lose 4 HP, gain 17 gold and 1 scrap)",
+          "outcome": { "gold": 17, "scraps": 1, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little horses circling in silence",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_midnight_chess_clock",
+      "title": "The Midnight Chess Clock",
+      "description": "Two enormous stitched chess-clock buttons lean across a felt game board; a stout oxblood watchmaker taps their dented brass springs beneath a dim candle.",
+      "choices": [
+        {
+          "id": "reset_clock_spring",
+          "text": "Pay 15 gold to strengthen a ticking heart spring (gain 2 max HP)",
+          "outcome": { "gold": -15, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "wind_broken_hour",
+          "text": "Give up 2 lasting max HP to wind the broken clock (gain 24 gold)",
+          "outcome": { "gold": 24, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let both brass clocks tick toward dawn",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_satin_dress_form",
+      "title": "The Satin Dress Form",
+      "description": "A giant padded dress form blocks the attic path, its velvet waist split at a huge zipper; a tiny silver-eyed seamkeeper offers spare stuffing from the open seam.",
+      "choices": [
+        {
+          "id": "patch_hollow_waist",
+          "text": "Pay 10 gold and 1 scrap for warm waist stuffing (heal 9 HP)",
+          "outcome": { "gold": -10, "scraps": -1, "hp": 9, "max_hp": 0 }
+        },
+        {
+          "id": "lend_waist_stuffing",
+          "text": "Lend the dress form a handful of your stuffing (lose 5 HP, gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Pull the satin curtain over the empty form",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
