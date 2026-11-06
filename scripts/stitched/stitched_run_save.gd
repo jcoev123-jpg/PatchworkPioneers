@@ -62,6 +62,10 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 		"enter":
 			return command.size() == 2 and command.get("node_id") is String and session.enter(command.node_id, session.snapshot())
 		"visit":
+			if command.get("id") == "replace":
+				var args: Variant = command.get("arguments")
+				if not args is Array or args.size() != 2 or not args[0] is String or not args[1] is String:
+					return false
 			return command.size() == 3 and command.get("id") is String and command.get("arguments") is Array \
 				and session.choose_visit(command.id, command.arguments, session.snapshot())
 		"settle":

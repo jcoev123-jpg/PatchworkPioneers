@@ -61,6 +61,7 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			result["base_acc"] = int(ability.get("acc", 0))
 			result["base_damage"] = authored_damage.duplicate(true)
 			result["base_crit"] = int(ability.get("crit", 0))
+			result["base_mark_damage"] = int(ability.get("mark_damage", 0))
 			result["base_effects"] = authored_effects.duplicate(true)
 			result["pass"] = false
 			return result

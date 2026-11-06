@@ -79,6 +79,7 @@ var _sealed: Dictionary = {}
 var _service: RefCounted
 var _actions: Array = []
 var _event_record: Dictionary = {}
+var _replacement_visit: RunStitchedSewingReplacement
 
 
 static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}) -> StitchedRunSession:
@@ -312,29 +313,43 @@ func _normalize_formation() -> void:
 		hero.position = hero.rank
 
 
-func _replacement(hero_id: String, lost_id: String) -> Dictionary:
-	var selected := _party_ids()
-	var index := selected.find(lost_id)
-	if index < 0 or hero_id in selected or not heroes[index].lost:
-		return {"ok": false}
-	selected[index] = hero_id
-	var config := starter_config(selected)
-	if config.is_empty():
-		return {"ok": false}
+func _replacement_candidates() -> Array:
+	var candidates: Array = []
 	var probe := StitchedRules.new()
 	probe._parts = catalog
-	for entry in config.heroes:
-		if entry.id == hero_id:
-			var built := probe._build_hero(entry, heroes[index].rank)
+	for hero_id in StitchedPartyAdmission.HERO_IDS:
+		if hero_id in _party_ids():
+			continue
+		var selected := _party_ids()
+		selected[0] = hero_id
+		var config := starter_config(selected)
+		if config.is_empty():
+			return []
+		for entry in config.heroes:
+			if entry.id != hero_id:
+				continue
+			var built := probe._build_hero(entry, 1)
 			if built.get("ok") != true:
-				return {"ok": false}
-			pockets.erase(lost_id)
-			pockets[hero_id] = []
-			heroes[index] = built.unit
-			heroes[index]["position"] = heroes[index].rank
-			heroes[index]["patches"] = []
-			return {"ok": true}
-	return {"ok": false}
+				return []
+			var candidate: Dictionary = built.unit
+			candidate.erase("rank")
+			candidate.erase("lost")
+			candidate["patches"] = []
+			candidates.append(candidate)
+	return candidates
+
+
+func _replacement(lost_id: String, candidate_id: String) -> Dictionary:
+	if _replacement_visit == null or pending.get("replaced", false):
+		return {"ok": false}
+	var source := _replacement_visit.read_state()
+	if source.get("party") != heroes or source.get("node_id") != pending.node_id:
+		return {"ok": false}
+	var receipt := _replacement_visit.replace(lost_id, candidate_id, pending.node_id, source)
+	if receipt.get("ok") != true or receipt.get("source_state") != source \
+			or receipt.get("state") != _replacement_visit.read_state():
+		return {"ok": false}
+	return receipt
 
 
 func visit_actions() -> Array:
@@ -349,6 +364,7 @@ func _open_visit(kind: String) -> bool:
 	pending.service = kind
 	_actions.clear()
 	_service = null
+	_replacement_visit = null
 	var id: String = pending.node_id
 	var roster := _roster()
 	match kind:
@@ -381,11 +397,15 @@ func _open_visit(kind: String) -> bool:
 					_offer("upgrade", "%s / Raise %s tier / %d scraps" % [hero.name, slot, SEWING_COST],
 						upgrade.read_state().get("ok") == true and not worn.torn and worn.tier < 3 and scraps >= SEWING_COST, [hero.id, slot])
 			_add_swaps(roster)
-			for hero in roster:
-				if hero.lost:
-					for replacement_id in StitchedPartyAdmission.HERO_IDS:
-						if not replacement_id in _party_ids():
-							_offer("replace", "Stitch %s into rank %d" % [replacement_id, hero.rank], true, [replacement_id, hero.id])
+			if not pending.get("replaced", false):
+				_replacement_visit = RunStitchedSewingReplacement.new(id, heroes, _replacement_candidates(), catalog)
+				var quote := _replacement_visit.quote()
+				if quote.get("ok") != true:
+					return false
+				for lost in quote.lost:
+					for candidate in quote.candidates:
+						_offer("replace", "Stitch %s into rank %d" % [candidate.name, lost.rank], true,
+							[candidate.candidate_id, lost.hero_id])
 			_offer("leave", "Leave Sewing Circle")
 		"Peddler":
 			_service = RunPeddlerVisit.open_stitched_candle(id, candle, gold, PEDDLER_PRICE)
@@ -498,7 +518,7 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 				"leave":
 					result = {"ok": true}
 				"replace":
-					result = _replacement(arguments[0], arguments[1])
+					result = _replacement(arguments[1], arguments[0])
 		"Peddler":
 			match action_id:
 				"buy_thimble_tonic":
@@ -574,6 +594,15 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 
 
 func _apply_receipt(result: Dictionary) -> void:
+	if result.get("action") == "replace":
+		# Accept the authenticated service's single changed slot, without replaying
+		# loss, moving gear, healing survivors or recomputing their state.
+		heroes[result.party_index] = result.hero_after.duplicate(true)
+		heroes[result.party_index]["position"] = result.rank
+		pockets.erase(result.lost_id)
+		pockets[result.candidate_id] = []
+		pending["replaced"] = true
+		return
 	if result.has("pockets_after") or result.has("pockets"):
 		gold = result.gold
 		pockets = result.get("pockets_after", result.get("pockets", {})).duplicate(true)

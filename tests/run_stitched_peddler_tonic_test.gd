@@ -17,6 +17,9 @@ func _initialize() -> void:
 	_spool_refusals()
 	_spool_invalid_selectors()
 	_spool_leave_and_determinism()
+	_starch_offer_and_purchase()
+	_starch_refusals()
+	_starch_leave_and_determinism()
 	for failure in failures:
 		printerr(failure)
 	print("run_stitched_peddler_tonic_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -395,7 +398,7 @@ func _spool_refusals() -> void:
 
 func _spool_invalid_selectors() -> void:
 	var bad: Array = []
-	for selector in ["", "Spare_Spool", " spare_spool", "spare_spool ", "fresh_stuffing", "starch", "dye", "pins",
+	for selector in ["", "Spare_Spool", " spare_spool", "spare_spool ", "fresh_stuffing", "dye", "pins",
 			"forged", "buy_spare_spool", "thimble tonic", null, 5, 1.5, true, ["spare_spool"], {"item": "spare_spool"}]:
 		bad.append(RunStitchedPeddlerTonic.open_stitched(NODE, _dolls(), _pockets(), 20, PRICE, selector))
 	_check(bad.size() >= 15, "invalid selector witnesses are non-vacuous")
@@ -449,3 +452,151 @@ func _spool_leave_and_determinism() -> void:
 	var after := randi()
 	seed(8080)
 	_check(after == randi(), "global RNG untouched by spool leave and replay")
+
+func _open_starch(gold: int = 20, pockets: Variant = null) -> RunStitchedPeddlerTonic:
+	var p: Variant = _pockets() if pockets == null else pockets
+	return RunStitchedPeddlerTonic.open_stitched(NODE, _dolls(), p, gold, PRICE, "starch")
+
+
+func _starch_offer_and_purchase() -> void:
+	seed(6262)
+	var visit := _open_starch()
+	_check(visit.is_valid() and visit.is_open(), "starch visit opens")
+	var state := visit.read_state()
+	_check(state.item == "starch" and state.price == PRICE and state.gold == 20 and state.node_id == NODE, "starch state shows item, price and wallet")
+	_check(state.eligible == ["a", "b"] and state.pockets == _pockets() and state.dolls == _dolls(), "starch state mirrors inputs")
+	var quote := visit.quote()
+	_check(quote.ok and quote.item == "starch" and quote.price == PRICE and quote.gold == 20 and quote.can_buy and quote.blocked == "", "starch quote advertises item and price")
+	_check(quote.eligible == ["a", "b"] and quote.choices == ["buy_starch", "leave"], "starch quote lists buy_starch and free leave")
+	var detached := visit.read_state()
+	detached.pockets.b.append("dye")
+	detached.dolls[0].rank = 9
+	var q := visit.quote()
+	q.choices.clear()
+	q.eligible.clear()
+	_check(visit.read_state() == state and visit.quote().choices == ["buy_starch", "leave"], "starch snapshots and quotes are detached")
+	var receipt := visit.buy("b", NODE, state)
+	_check(receipt.ok and receipt.decision == "buy_starch" and receipt.item == "starch", "starch buy succeeds")
+	_check(receipt.target_id == "b" and receipt.price == PRICE and receipt.charged_gold == PRICE, "starch receipt names target and exact charge")
+	_check(receipt.gold == 20 - PRICE, "starch wallet debited exactly once")
+	var expected := _pockets()
+	expected.b = ["starch"]
+	_check(receipt.pockets == expected, "exactly one starch appended to ONLY the chosen pocket")
+	for id in ["a", "b", "c", "d"]:
+		_check((receipt.pockets[id] as Array).size() == (_pockets()[id] as Array).size() + (1 if id == "b" else 0), "starch pocket size delta for " + id)
+	_check(receipt.dolls == _dolls(), "starch purchase leaves hero records unchanged")
+	_check(receipt.node_id == NODE and receipt.consumed and receipt.status == "used" and not visit.is_open() and visit.is_consumed(), "starch visit closes")
+	_check(visit.read_state().pockets == expected and visit.read_state().gold == 20 - PRICE, "starch state commits the purchase")
+	receipt.pockets.a.clear()
+	receipt.dolls[0].hp = -5
+	_check(visit.read_state().pockets == expected and visit.read_state().dolls == _dolls(), "starch receipt is detached")
+	# Existing items keep their order; the starch goes last.
+	var visit_a := _open_starch()
+	var receipt_a := visit_a.buy("a", NODE, visit_a.read_state())
+	_check(receipt_a.ok and receipt_a.pockets.a == ["thimble_tonic", "starch"], "starch appended after the existing item")
+	_check(receipt_a.pockets.c == ["pins", "spare_spool"], "other pockets keep items and order")
+	# Exact-price wallet spends to zero.
+	var exact := _open_starch(PRICE)
+	_check(exact.quote().can_buy and exact.buy("a", NODE, exact.read_state()).gold == 0, "exact wallet buys starch and spends to zero")
+	# A Hanging (HP 0, not LOST) doll may receive starch.
+	var hang := _pockets()
+	hang.c = []
+	var open_hang := _open_starch(20, hang)
+	var hang_receipt := open_hang.buy("c", NODE, open_hang.read_state())
+	_check(hang_receipt.ok and hang_receipt.pockets.c == ["starch"], "HP-0 non-LOST doll receives the starch")
+	# Consumed visit refuses repeats.
+	var committed := visit.read_state()
+	_check(not visit.buy("a", NODE, committed).ok and visit.read_state() == committed, "repeat starch buy refused")
+	_check(not visit.buy("b", NODE, state).ok and visit.read_state() == committed, "stale starch replay buy refused")
+	_check(not visit.leave(NODE, committed).ok and visit.read_state() == committed, "leave after starch buy refused")
+	_check(not visit.quote().ok and visit.quote().choices == [], "closed starch visit quotes nothing")
+	var after := randi()
+	seed(6262)
+	_check(after == randi(), "global RNG untouched by the starch quote and buy")
+
+
+func _starch_refusals() -> void:
+	var visit := _open_starch()
+	var before := visit.read_state()
+	_refuse(visit, visit.buy("c", NODE, before), before, "starch full pocket")
+	_refuse(visit, visit.buy("d", NODE, before), before, "starch LOST target")
+	_refuse(visit, visit.buy("zzz", NODE, before), before, "starch unknown target")
+	_refuse(visit, visit.buy("", NODE, before), before, "starch empty target")
+	_refuse(visit, visit.buy(null, NODE, before), before, "starch null target")
+	_refuse(visit, visit.buy("a", "other_node", before), before, "starch wrong node")
+	_refuse(visit, visit.buy("a", NODE, null), before, "starch null snapshot")
+	_refuse(visit, visit.buy("a", NODE, {}), before, "starch empty snapshot")
+	_refuse(visit, visit.buy("a", NODE, "state"), before, "starch non-dictionary snapshot")
+	var forged: Dictionary = before.duplicate(true)
+	forged.gold = 999
+	_refuse(visit, visit.buy("a", NODE, forged), before, "starch forged gold")
+	forged = before.duplicate(true)
+	forged.item = "thimble_tonic"
+	_refuse(visit, visit.buy("a", NODE, forged), before, "starch forged item")
+	forged = before.duplicate(true)
+	forged.pockets.a.append("dye")
+	_refuse(visit, visit.buy("a", NODE, forged), before, "starch forged pockets")
+	forged = before.duplicate(true)
+	forged.dolls[0].lost = true
+	_refuse(visit, visit.buy("a", NODE, forged), before, "starch forged lost flag")
+	forged = before.duplicate(true)
+	forged.status = "used"
+	_refuse(visit, visit.buy("a", NODE, forged), before, "starch forged status")
+	# Cross-offer: a tonic or spool snapshot never authorizes a starch purchase.
+	var tonic := _open()
+	var tonic_before := tonic.read_state()
+	_refuse(visit, visit.buy("a", NODE, tonic_before), before, "starch visit given a tonic snapshot")
+	var spool := _open_spool()
+	var spool_before := spool.read_state()
+	_refuse(visit, visit.buy("a", NODE, spool_before), before, "starch visit given a spool snapshot")
+	# And a starch snapshot does not authorize a tonic or spool buy.
+	_refuse(tonic, tonic.buy("a", NODE, before), tonic_before, "tonic visit given a starch snapshot")
+	_refuse(spool, spool.buy("a", NODE, before), spool_before, "spool visit given a starch snapshot")
+	# Refusals never spend the visit; a legal buy still works, and replay is refused.
+	var ok_receipt := visit.buy("a", NODE, before)
+	_check(ok_receipt.ok and ok_receipt.gold == 20 - PRICE and ok_receipt.decision == "buy_starch", "starch refusals leave the visit usable")
+	var committed := visit.read_state()
+	_check(not visit.buy("a", NODE, before).ok and visit.read_state() == committed, "stale starch replay refused")
+	# Unaffordable quote offers only Leave but still discloses the price.
+	var poor := _open_starch(PRICE - 1)
+	var poor_before := poor.read_state()
+	var pq := poor.quote()
+	_check(pq.ok and pq.item == "starch" and pq.price == PRICE and not pq.can_buy and pq.blocked == "not enough gold" and pq.choices == ["leave"], "unaffordable starch quote offers only Leave")
+	_refuse(poor, poor.buy("a", NODE, poor_before), poor_before, "starch insufficient funds")
+	_check(poor.leave(NODE, poor_before).ok, "poor starch visit can still leave free")
+	# Full pockets / only a LOST doll with space.
+	var full := {"a": ["pins", "dye"], "b": ["pins", "dye"], "c": ["pins", "dye"], "d": []}
+	var all_full := _open_starch(50, full)
+	var full_before := all_full.read_state()
+	var full_quote := all_full.quote()
+	_check(full_before.eligible == [] and not full_quote.can_buy and full_quote.blocked != "" and full_quote.choices == ["leave"], "starch full pockets offer only Leave")
+	_refuse(all_full, all_full.buy("d", NODE, full_before), full_before, "starch only LOST doll has space")
+	_refuse(all_full, all_full.buy("a", NODE, full_before), full_before, "starch all pockets full")
+
+
+func _starch_leave_and_determinism() -> void:
+	seed(7171)
+	var visit := _open_starch()
+	var before := visit.read_state()
+	_check(not visit.leave("other", before).ok and visit.is_open(), "starch leave with wrong node refused")
+	var stale: Dictionary = before.duplicate(true)
+	stale.gold = 1
+	_check(not visit.leave(NODE, stale).ok and visit.read_state() == before, "starch leave with stale snapshot refused")
+	var receipt := visit.leave(NODE, before)
+	_check(receipt.ok and receipt.decision == "leave" and receipt.charged_gold == 0 and receipt.gold == 20, "starch leave is free")
+	_check(receipt.item == "" and receipt.target_id == "" and receipt.pockets == _pockets() and receipt.dolls == _dolls(), "starch leave changes nothing")
+	_check(not visit.is_open() and visit.is_consumed(), "starch leave closes the visit")
+	var closed := visit.read_state()
+	_check(not visit.leave(NODE, closed).ok and not visit.buy("a", NODE, closed).ok, "closed starch visit refuses repeat decisions")
+	_check(visit.read_state() == closed and closed.pockets == _pockets() and closed.gold == 20, "closed starch state unchanged")
+	# Independent visits with identical inputs and choices replay identically.
+	var one := _open_starch()
+	var two := _open_starch()
+	_check(one.read_state() == two.read_state() and one.quote() == two.quote(), "equal starch visits start equal")
+	var r1 := one.buy("b", NODE, one.read_state())
+	var r2 := two.buy("b", NODE, two.read_state())
+	_check(r1.ok and r1 == r2, "equal starch visits produce equal full receipts")
+	_check(one.read_state() == two.read_state(), "equal starch visits end in equal snapshots")
+	var after := randi()
+	seed(7171)
+	_check(after == randi(), "global RNG untouched by starch leave and replay")
