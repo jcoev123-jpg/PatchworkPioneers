@@ -3,6 +3,8 @@ extends Control
 ## Isolated S8b presentation. Only StitchedWalkRules owns walk state and receipts.
 
 signal exit_requested
+## Hosted by a run: the Walk is over and the session has opened its node.
+signal walk_finished
 
 const ART_PATH := "res://data/walk/walk_view_art.json"
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
@@ -34,6 +36,22 @@ var shadow_label: Label
 var clue: Label
 var snip_picker: OptionButton
 var snip_button: Button
+## S8f: in a run every command goes through the session, which journals and saves it.
+var host: StitchedRunSession
+
+
+func attach(run: StitchedRunSession) -> bool:
+	if walk != null or run == null or run.phase != "walk" or run.walk == null:
+		return false
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(ART_PATH))
+	if not parsed is Dictionary or not validate_art(parsed):
+		return false
+	host = run
+	walk = run.walk
+	art = parsed
+	candle = run.candle
+	expected = walk.snapshot()
+	return true
 
 
 func begin(seed_number: int = PREVIEW_SEED) -> bool:
@@ -201,10 +219,16 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 	if walk == null:
 		return {"ok": false, "error": "not_started"}
 	var request := {"kind": kind, "actor": expected.viewpoint}
+	if kind == "forward" and walk.tug_unresolved():
+		request = {"kind": "tug", "actor": expected.viewpoint, "target": expected.tug.id, "choice": "yield"}
 	request.merge(extra, true)
-	var receipt := walk.act(request, expected if snapshot == null else snapshot)
+	var receipt := host.walk_act(request, host.snapshot()) if host != null \
+		else walk.act(request, expected if snapshot == null else snapshot)
 	receipts.append(receipt.duplicate(true))
-	expected = receipt.snapshot.duplicate(true)
+	if host != null and host.walk == null:
+		walk_finished.emit()
+		return receipt
+	expected = walk.snapshot() if host != null else receipt.snapshot.duplicate(true)
 	if is_node_ready():
 		refresh()
 		feedback.text = (kind.replace("_", " ").to_upper() + "  |  " + str(receipt.events)) if receipt.ok else receipt.error
@@ -319,6 +343,8 @@ func refresh() -> void:
 		pocket_buttons[index].text = str(pocket[index]).replace("_", " ").capitalize() if index < pocket.size() else "Empty pocket"
 		pocket_buttons[index].disabled = index >= pocket.size() or expected.phase != "walking"
 	forward_button.disabled = expected.phase != "walking"
+	forward_button.text = "LET IT TAKE ONE" if walk.tug_unresolved() else "FORWARD"
+	exit_button.visible = host == null
 	back_button.disabled = expected.phase != "walking"
 	if expected.phase == "complete":
 		feedback.text = "Walk complete. Back to title."

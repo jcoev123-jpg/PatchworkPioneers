@@ -38,6 +38,14 @@ static func restore(document: Variant) -> StitchedRunSession:
 	var candidate := StitchedRunSession.start(document.seed, document.picks, document.initial)
 	if candidate == null:
 		return null
+	# Pre-S8f saves have no Walk block and never walked.
+	var legacy_walk: bool = not document.state.has("walk")
+	if not legacy_walk:
+		var walk_state: Variant = document.state.walk
+		if not walk_state is Dictionary or not walk_state.get("enabled") is bool:
+			return null
+		if walk_state.enabled and not candidate.enable_walks():
+			return null
 	var legacy_pockets: bool = not document.state.has("pockets")
 	var legacy_fear: bool = not document.state.has("kid_fear")
 	# Pre-S9a saves have no battle "hand" block and so no hand actions to replay.
@@ -54,6 +62,8 @@ static func restore(document: Variant) -> StitchedRunSession:
 		if not _replay(candidate, command):
 			return null
 	var replayed := candidate.snapshot()
+	if legacy_walk:
+		replayed.erase("walk")
 	if legacy_pockets:
 		replayed.erase("pockets")
 	if legacy_fear:
@@ -80,6 +90,9 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 				and session.choose_visit(command.id, command.arguments, session.snapshot())
 		"settle":
 			return command.size() == 1 and session.settle_battle(session.battle)
+		"walk":
+			return command.size() == 2 and command.get("command") is Dictionary \
+				and session.walk_act(command.command, session.snapshot()).get("ok") == true
 		"battle":
 			if command.size() != 3 or session.phase != "battle" or session.battle == null:
 				return false

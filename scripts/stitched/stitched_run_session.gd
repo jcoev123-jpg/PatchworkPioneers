@@ -90,6 +90,12 @@ var _actions: Array = []
 var _event_record: Dictionary = {}
 var _replacement_visit: RunStitchedSewingReplacement
 var _kid_fear: StitchedKidFear
+## S8f: with walks on, every non-boss node is reached through a seeded Walk on the run RNG.
+## Its consequences wait in walk_carry until the next battle opens.
+var walks_enabled := false
+var walk: StitchedWalkRules
+var walk_carry: Array = []
+var walk_receipts: Array = []
 
 
 static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}) -> StitchedRunSession:
@@ -146,7 +152,9 @@ func snapshot() -> Dictionary:
 		"pending": pending.duplicate(true), "receipts": receipts.duplicate(true),
 		"map": map.export_state() if map != null else {},
 		"rng": rng.state if rng != null else 0,
-		"battle": battle.state_snapshot() if battle != null else {}}
+		"battle": battle.state_snapshot() if battle != null else {},
+		"walk": {"enabled": walks_enabled, "state": walk.snapshot() if walk != null else {},
+			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)}}
 
 
 func _seal() -> void:
@@ -172,7 +180,9 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 		return false
 	candle = maxi(0, candle - NODE_CANDLE_COST)
 	pending = {"node_id": node_id, "kind": node.type, "service": node.type, "steps": []}
-	if node.type in ["Fight", "Elite", "Boss"]:
+	if walks_enabled and node.type != "Boss" and _start_walk():
+		phase = "walk"
+	elif node.type in ["Fight", "Elite", "Boss"]:
 		if not _open_battle(node.type):
 			map.undo_choice(node_id, old_route)
 			rng.state = old_rng
@@ -195,6 +205,104 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 	_seal()
 	changed.emit()
 	return true
+
+
+## New runs opt in before their first step; a run never changes mode midway.
+func enable_walks() -> bool:
+	if phase != "map" or not journal.is_empty() or not is_consistent():
+		return false
+	walks_enabled = true
+	_seal()
+	return true
+
+
+## The Walk's corridor follows the house: floorboards, then walls, then the sewing basket.
+func walk_area() -> String:
+	var floor_number := map.get_current_floor()
+	return "floorboards" if floor_number <= 4 else "walls" if floor_number <= 8 else "sewing_basket"
+
+
+func _start_walk() -> bool:
+	var living := _living_roster()
+	if living.size() != 4:
+		return false   # the Walk needs the whole party; a short party goes straight in
+	var dolls: Array = []
+	var carried_pockets := {}
+	for hero in living:
+		dolls.append({"id": hero.id, "name": hero.name, "rank": hero.position, "hp": hero.hp, "max_hp": hero.max_hp,
+			"lost": false, "fray": int(hero.get("fray", 0)), "parts": hero.parts.duplicate(true)})
+		carried_pockets[hero.id] = pockets.get(hero.id, []).duplicate()
+	# The full set of horrors may be refused by authored data; fall back to fewer, never to a new draw.
+	for horrors in [[true, true, true, true], [true, true, true, false], [false, false, false, false]]:
+		walk = StitchedWalkRules.start(rng, walk_area(), dolls, carried_pockets, null,
+			horrors[0], horrors[1], horrors[2], horrors[3])
+		if walk != null:
+			return true
+	return false
+
+
+func walk_act(command: Dictionary, expected: Dictionary) -> Dictionary:
+	if phase != "walk" or walk == null or expected != snapshot() or not is_consistent():
+		return {"ok": false, "error": "stale_session", "events": []}
+	var receipt := walk.act(command, walk.snapshot())
+	if receipt.get("ok") != true:
+		return receipt
+	journal.append({"action": "walk", "command": command.duplicate(true)})
+	if walk.snapshot().phase == "complete" and not _finish_walk():
+		phase = "invalid"
+		return {"ok": false, "error": "walk_settle_failed", "events": []}
+	_seal()
+	changed.emit()
+	return receipt
+
+
+## Settle the finished Walk into the run: HP, pockets, torn parts and found parts now;
+## fray, the mimic, cut threads and the Machine's toll at the next battle.
+func _finish_walk() -> bool:
+	var state := walk.snapshot()
+	if state.whirr == 100:
+		var toll := walk.claim_machine_toll(state)
+		if toll.ok:
+			walk_carry.append({"kind": "machine", "extra_foes": toll.next_fight_extra_foes, "party_fray": toll.party_fray})
+			state = walk.snapshot()
+	var cut: Array = []
+	for effect in state.pending:
+		if effect.consumed:
+			continue
+		match effect.kind:
+			"mimic":
+				walk_carry.append({"kind": "mimic"})
+			"cut_thread":
+				walk_carry.append({"kind": "cut", "target": effect.target})
+				cut.append(effect.target)
+			"curio_part":
+				if satchel.size() < 6 and catalog.has(effect.effects.id):
+					satchel.append({"id": effect.effects.id, "slot": catalog[effect.effects.id].slot,
+						"tier": int(effect.effects.tier), "torn": false})
+	for doll in state.dolls:
+		for hero in heroes:
+			if hero.id != doll.id:
+				continue
+			hero.hp = mini(doll.hp, hero.max_hp)
+			for slot in hero.parts:
+				if doll.parts.get(slot) is Dictionary and doll.parts[slot].torn:
+					hero.parts[slot].torn = true
+			var gained: int = doll.fray - int(hero.get("fray", 0)) - (20 if doll.id in cut else 0)
+			if gained > 0:
+				walk_carry.append({"kind": "fray", "target": doll.id, "amount": gained})
+		pockets[doll.id] = state.pockets[doll.id].duplicate()
+	walk_receipts.append({"node_id": pending.node_id, "corridor": state.corridor.id, "whirr": state.whirr,
+		"pending": state.pending.duplicate(true)})
+	walk = null
+	var node_type: String = pending.kind
+	if node_type in ["Fight", "Elite"]:
+		if not _open_battle(node_type):
+			return false
+		phase = "battle"
+		_lose_strings_if_due()
+		return true
+	phase = "visit"
+	return _open_visit({"Rest": "Campfire", "Shop": "Peddler", "Treasure": "Event"}.get(node_type, node_type))
 
 
 func _hero_inputs() -> Array:
@@ -233,12 +341,43 @@ func _open_battle(kind: String) -> bool:
 			break
 		if id != chosen:
 			foes.append(StitchedEnemyCatalog.foe_for(enemies, id))
+	var hero_inputs := _hero_inputs()
+	var cuts := {}
+	var party_fray := 0
+	var fray_gains: Array = []
+	for carried in walk_carry:
+		match carried.kind:
+			"machine":
+				# The Machine's extra mouth is an ordinary foe picked in catalog order, so no draw is spent.
+				for id in enemies.order:
+					if foes.size() >= StitchedRules.MAX_FOES:
+						break
+					if enemies.enemies[id].tier == "normal" and not foes.any(func(foe: Dictionary): return foe.id == id):
+						foes.append(StitchedEnemyCatalog.foe_for(enemies, id))
+				party_fray += int(carried.party_fray)
+			"cut":
+				for index in hero_inputs.size():
+					if hero_inputs[index].id == carried.target and not hero_inputs[index].lost:
+						cuts[carried.target] = index + 1
+						hero_inputs[index].fray = int(hero_inputs[index].fray) + 20
+			"fray":
+				fray_gains.append(carried)
 	battle_config = {"mode": "stitched", "seed": seed_value, "run_rng": rng,
-		"heroes": _hero_inputs(), "foes": foes, "parts": catalog.values(), "candle": candle,
-		"title": "Floor %02d / %s" % [map.get_current_floor(), kind]}
+		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle,
+		"title": "Floor %02d / %s" % [map.get_current_floor(), kind],
+		"walk_mimic": walk_carry.any(func(carried: Dictionary): return carried.kind == "mimic"), "walk_cuts": cuts}
 	var candidate := RankedBattle.new()
 	if not candidate._setup(battle_config).is_empty():
 		return false
+	# Walk fray lands after setup so resolve and seam transitions follow the combat rules.
+	for carried in fray_gains:
+		if candidate._units.has(carried.target) and not candidate._units[carried.target].lost:
+			candidate._change_fray(candidate._units[carried.target], int(carried.amount), false)
+	if party_fray > 0:
+		for hero in hero_inputs:
+			if candidate._units.has(hero.id) and not candidate._units[hero.id].lost:
+				candidate._change_fray(candidate._units[hero.id], party_fray, false)
+	walk_carry.clear()
 	var opening_spares := candidate.satchel()
 	candidate._satchel = satchel.duplicate(true)
 	for spare in opening_spares:
