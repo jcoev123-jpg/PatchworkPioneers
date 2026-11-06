@@ -335,4 +335,23 @@ const SEEDS := [
 	314836, # v3_inkglass_puppet_barge
 	571898, # v3_threadmill_sewing_circle (outside previous bounded fallback)
 	1136184, # v3_tinker_thunder_spool_dock (outside previous bounded fallback)
+	# Genuine map/toll/rotation witnesses after the three doll-scale household
+	# roadside wallet stories (Moonlit Darning Egg, Velvet Curtain Pulley,
+	# Inkblack Hatpin Ladder) joined the sorted generic pool and shifted the
+	# authentic draw index. The first nine were reported by the bounded
+	# 1..499999 fallback on the failing run; the last three were re-derived
+	# beyond it with the same genuine map -> toll -> rotation oracle, and the
+	# live regression revalidates every seed.
+	181580, # v3_tinker_biscuit_tin_gear_lift
+	216328, # thimble_star_reading
+	353525, # v3_torn_parasol_caravan
+	379305, # v3_rosequilt_bridgekeeper
+	400997, # v3_mossveil_hollow_bridge
+	444342, # v3_bonecream_lantern_caravan
+	453532, # v3_seamstress_crimson_shadow_choir
+	470543, # v3_inky_needle_orchard
+	484443, # v3_copper_cicada_chapel
+	650850, # v3_tinker_spring_marionette (outside the bounded fallback)
+	858077, # v3_warden_pincushion_gate (outside the bounded fallback)
+	1082807, # v3_raincoat_bridge (outside the bounded fallback)
 ]
