@@ -404,6 +404,13 @@ func _open_visit(kind: String) -> bool:
 			for hero in roster:
 				_offer("buy_pins", "Pins / %s / %d gold" % [hero.name, quote.price],
 					quote.can_buy and hero.id in quote.eligible, [hero.id])
+			var tonic := RunStitchedPeddlerTonic.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
+			var tonic_quote := tonic.quote()
+			if tonic_quote.get("ok") != true:
+				return false
+			for hero in roster:
+				_offer("buy_thimble_tonic", "Thimble tonic / %s / %d gold" % [hero.name, tonic_quote.price],
+					tonic_quote.can_buy and hero.id in tonic_quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
@@ -494,6 +501,9 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					result = _replacement(arguments[0], arguments[1])
 		"Peddler":
 			match action_id:
+				"buy_thimble_tonic":
+					var visit := RunStitchedPeddlerTonic.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
+					result = visit.buy(arguments[0], id, visit.read_state())
 				"buy_pins":
 					var visit := RunStitchedPeddlerPins.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
 					result = visit.buy_pins(arguments[0], id, visit.read_state())
@@ -564,9 +574,9 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 
 
 func _apply_receipt(result: Dictionary) -> void:
-	if result.has("pockets_after"):
+	if result.has("pockets_after") or result.has("pockets"):
 		gold = result.gold
-		pockets = result.pockets_after.duplicate(true)
+		pockets = result.get("pockets_after", result.get("pockets", {})).duplicate(true)
 		return
 	var lost: Dictionary = {}
 	for hero in heroes:

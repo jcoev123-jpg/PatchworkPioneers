@@ -16,7 +16,9 @@ extends SceneTree
 ## The Needle Rain slice proves the alternative ARMS part is the only multi-target record in this
 ## kit: one real use_part("needle_rain", 1) turn showers the three living foes in ranks 1-3
 ## exactly once each, each struck foe resolves its own damage and Bleed, and a miss leaves no
-## Bleed. The seven other parts keep single-target receipts.
+## Bleed. The seven other parts keep single-target receipts. A second slice carries the Seamstress
+## back to hero rank 4 with two genuine Move turns and proves the same shower still works from the
+## rear rank, while enemy rank 4 stays outside the target mask.
 
 const PARTS_PATH := "res://data/parts/seamstress_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
@@ -123,7 +125,7 @@ const EXPECTED := {
 	"seamstress_needle_rain_needle": {
 		"name": "Needle Rain Needle", "slot": "arms", "stat_key": "dmg", "stat": [1, 2, 3],
 		"ability_id": "needle_rain", "ability_name": "Needle Rain", "kind": "ranged",
-		"launch": [1, 2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "attack2",
+		"launch": [1, 2, 3, 4], "target": [1, 2, 3], "target_side": "enemy", "pose": "attack2",
 		"multi": true,
 		"acc": 90,
 		"dmg": [[1, 2], [2, 3], [3, 4]],
@@ -191,6 +193,7 @@ func _initialize() -> void:
 	_test_live_starters()
 	_test_live_rejections()
 	_test_needle_rain_multi()
+	_test_needle_rain_rear_launch()
 	_test_needle_rain_rejections()
 	_test_rear_launch_masks()
 	_test_rear_rank_support()
@@ -292,10 +295,12 @@ func _test_catalog() -> void:
 			"AC1: %s is the starter wearable for the %s slot" % [starter, slot])
 		_check(by_id.has(alternate) and str(by_id[alternate]["slot"]) == slot,
 			"AC1: %s is the alternative wearable for the %s slot" % [alternate, slot])
-	# The one edited description really explains the rank 1-3 shower, damage and Bleed.
+	# The one edited description really explains the rank 1-3 shower from hero ranks 1-4, plus damage and Bleed.
 	var rain_text := str(by_id["seamstress_needle_rain_needle"]["text"]).to_lower()
-	_check(rain_text.contains("each living foe") and rain_text.contains("ranks 1-3"),
-		"AC1: the Needle Rain text names every living foe in ranks 1-3")
+	_check(rain_text.contains("each living foe") and rain_text.contains("enemy ranks 1-3"),
+		"AC1: the Needle Rain text names every living foe in enemy ranks 1-3")
+	_check(rain_text.contains("hero ranks 1-4"),
+		"AC1: the Needle Rain text names its new launch reach from hero ranks 1-4")
 	_check(rain_text.contains("damage") and rain_text.contains("bleed"),
 		"AC1: the Needle Rain text names its damage and its Bleed")
 	_check(not rain_text.contains("one foe") and not rain_text.contains("single"),
@@ -850,6 +855,194 @@ func _needle_miss_witness() -> Dictionary:
 	return {}
 
 
+## The rear hero rank 4 is a real launch rank now: the alternate needle seats its shower there.
+## A fixed seed wounds the rank-1 Warden and carries the Seamstress back through two genuine Move
+## turns; from rank 4 one Needle Rain action still showers each living foe in enemy ranks 1-3
+## exactly once, per tier. Enemy rank 4 stays outside the target mask.
+func _test_needle_rain_rear_launch() -> void:
+	for tier in [1, 2, 3]:
+		var label := "rank-4 Needle Rain tier %d" % tier
+		var witness := _needle_rear_witness(tier)
+		_check(not witness.is_empty(), "AC2: a fixed seed lands all three " + label + " needles")
+		if witness.is_empty():
+			continue
+		var battle: StitchedRules = witness["battle"]
+		var receipt: Dictionary = witness["receipt"]
+		var seat := battle.get_unit("seamstress")
+		_check(int(seat["rank"]) == MAX_RANK,
+			"AC2: " + label + " is cast by the Seamstress standing in hero rank 4")
+		_check(_worn_part_id(seat, "seamstress_needle_rain_needle") == "seamstress_needle_rain_needle",
+			"AC2: the rear battle really equips the Needle Rain Needle")
+		_check(str(receipt.get("part", "")) == "seamstress_needle_rain_needle"
+			and str(receipt.get("ability", "")) == "needle_rain"
+			and str(receipt.get("actor", "")) == "seamstress",
+			"AC2: " + label + " resolves as the equipped needle_rain action from rank 4")
+		var results: Array = receipt["results"]
+		_check(results.size() == 3,
+			"AC2: " + label + " yields one independent result per living foe")
+		var seen: Dictionary = {}
+		for result in results:
+			seen[str(result["target"])] = true
+			_check(str(result["target_side"]) == "foe"
+				and int(result["target_rank"]) == int(NEEDLE_FOE_RANKS.get(str(result["target"]), -1)),
+				"AC2: " + label + " hits its own foe at its shipped rank")
+			_check(result.has("roll") and bool(result.get("hit", false)),
+				"AC2: " + label + " rolls its own hit for " + str(result["target"]))
+		_check(seen.size() == 3 and seen.has("fray_scavenger")
+			and seen.has("scissor_crab") and seen.has("moth_scribe"),
+			"AC2: " + label + " receipts each of the three living foes exactly once")
+		var part: Dictionary = _catalog()["by_id"]["seamstress_needle_rain_needle"]
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var bonus := int(StitchedParts.stat_at_tier(part, tier).get("dmg", 0))
+		var low := int(ability["dmg"][0]) + bonus
+		var high := StitchedRules.crit_damage(int(ability["dmg"][1])) + bonus
+		var bleed := int(ability["effects"].get("bleed", 0))
+		for result in results:
+			var hit: Dictionary = result
+			var foe := battle.get_unit(str(hit["target"]))
+			var damage := int(hit["damage"])
+			_check(damage >= low and damage <= high,
+				"AC2: " + label + " deals its %d-%d band to %s" % [low, high, str(hit["target"])])
+			_check(int(hit["target_hp"]) == int(foe["max_hp"]) - damage,
+				"AC2: " + label + " drops " + str(hit["target"]) + " by exactly its dealt damage")
+			_check(_status_duration(hit.get("statuses", []), "bleed") == bleed,
+				"AC2: " + label + " reports its own Bleed %d on %s" % [bleed, str(hit["target"])])
+			_check(int(foe["statuses"].get("bleed", 0)) == bleed,
+				"AC2: " + label + " leaves a real Bleed %d on %s" % [bleed, str(hit["target"])])
+		_check(battle.current_actor_id() != "seamstress",
+			"AC2: " + label + " consumes exactly one Seamstress turn")
+		var replay_battle := _rear_needle_at(int(witness["seed"]), tier)
+		_check(replay_battle != null, "AC3: the " + label + " seed replays the same rear setup")
+		if replay_battle != null:
+			var replay := replay_battle.use_part("seamstress_needle_rain_needle", 1)
+			_check(replay == receipt
+				and replay_battle.state_snapshot() == battle.state_snapshot()
+				and replay_battle.rng_state() == battle.rng_state(),
+				"AC3: the same seed replays the identical " + label + " receipt, state and RNG")
+	# Launch legality was extended, target ranks were not.
+	var mask_part: Dictionary = _catalog()["by_id"]["seamstress_needle_rain_needle"]
+	for mask_tier in [1, 2, 3]:
+		var mask_ability := StitchedParts.ability_at_tier(mask_part, mask_tier)
+		var launch_mask := int(mask_ability["launch_mask"])
+		var target_mask := int(mask_ability["target_mask"])
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(launch_mask, rank),
+				"AC1: Needle Rain tier %d launches from hero rank %d" % [mask_tier, rank])
+		_check(target_mask == StitchedParts.rank_mask([1, 2, 3]),
+			"AC1: Needle Rain tier %d keeps the enemy target mask ranks 1-3" % mask_tier)
+		for rank in [1, 2, 3]:
+			_check(StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: Needle Rain tier %d still targets enemy rank %d" % [mask_tier, rank])
+		for rank in [0, 4, 5]:
+			_check(not StitchedParts.ranks_allowed(target_mask, rank),
+				"AC1: Needle Rain tier %d never targets rank %d" % [mask_tier, rank])
+	# A rear-rank shower can still miss: the missed needle deals nothing and leaves no Bleed,
+	# while the other needles of the same action still land from hero rank 4.
+	var mixed := _needle_rear_miss_witness()
+	_check(not mixed.is_empty(), "AC2: a fixed seed misses at least one needle from hero rank 4")
+	if not mixed.is_empty():
+		var mixed_battle: StitchedRules = mixed["battle"]
+		var mixed_receipt: Dictionary = mixed["receipt"]
+		var missed: Dictionary = mixed["missed"]
+		_check(not bool(missed.get("hit", false)) and int(missed.get("damage", -1)) == 0,
+			"AC2: a rank-4 needle miss deals no damage")
+		_check(not _has_status(missed.get("statuses", []), "bleed"),
+			"AC2: a rank-4 needle miss reports no Bleed status")
+		var missed_foe := mixed_battle.get_unit(str(missed["target"]))
+		_check(not missed_foe["statuses"].has("bleed")
+			and int(missed_foe["hp"]) == int(missed_foe["max_hp"]),
+			"AC2: a rank-4 needle miss leaves its foe at full HP with no Bleed")
+		var landed := 0
+		for result in mixed_receipt["results"]:
+			if bool(result.get("hit", false)):
+				landed += 1
+				_check(_status_duration(result.get("statuses", []), "bleed") == 3,
+					"AC2: each landed needle of the rank-4 mixed shower still Bleeds 3")
+		_check(mixed_receipt["results"].size() == 3 and landed >= 1 and landed <= 2,
+			"AC2: a rank-4 mixed shower resolves all three foes with at least one hit and one miss")
+
+
+## A fixed seed range yields a real rear-rank shower that both lands and misses.
+func _needle_rear_miss_witness() -> Dictionary:
+	for seed_value in range(1, 150):
+		var battle := _rear_needle_at(seed_value, 1)
+		if battle == null:
+			continue
+		var receipt := battle.use_part("seamstress_needle_rain_needle", 1)
+		if not bool(receipt.get("ok", false)) or receipt.get("results", []).size() != 3:
+			continue
+		var landed := 0
+		var missed: Dictionary = {}
+		for result in receipt["results"]:
+			if bool(result.get("hit", false)):
+				landed += 1
+			elif missed.is_empty():
+				missed = result
+		if landed == 0 or missed.is_empty():
+			continue
+		return {"battle": battle, "receipt": receipt, "missed": missed, "seed": seed_value}
+	return {}
+
+
+## Searches a fixed seed range for a rear-rank shower where all three needles land, so every
+## struck foe can be checked for its own tier damage and Bleed.
+func _needle_rear_witness(tier: int) -> Dictionary:
+	for seed_value in range(1, 150):
+		var battle := _rear_needle_at(seed_value, tier)
+		if battle == null:
+			continue
+		var receipt := battle.use_part("seamstress_needle_rain_needle", 1)
+		if not bool(receipt.get("ok", false)) or receipt.get("results", []).size() != 3:
+			continue
+		var all_hit := true
+		for result in receipt["results"]:
+			if not bool(result.get("hit", false)):
+				all_hit = false
+				break
+		if not all_hit:
+			continue
+		return {"battle": battle, "receipt": receipt, "seed": seed_value}
+	return {}
+
+
+## The same real setup _rear_support_witness uses, for one explicit seed: a foe hit wounds the
+## rank-1 Warden, two genuine Move turns carry the Seamstress 2 -> 3 -> 4, and play returns to
+## her scheduled turn in the rear rank with the three preview foes still alive and in place.
+func _rear_needle_at(seed_value: int, tier: int) -> StitchedRules:
+	var battle := _build_battle(seed_value, tier, NEEDLE_KIT, false)
+	if battle == null:
+		return null
+	if not _to(battle, "fray_scavenger"):
+		return null
+	var attack := battle.use_foe_ability("sack_swing", 1)
+	if not bool(attack.get("ok", false)) or attack.get("results", []).is_empty():
+		return null
+	if not bool(attack["results"][0].get("hit", false)):
+		return null
+	if str(attack["results"][0].get("target", "")) != "warden":
+		return null
+	var wounded := battle.get_unit("warden")
+	if int(wounded["hp"]) <= 0 or int(wounded["hp"]) >= int(wounded["max_hp"]):
+		return null
+	if not _to(battle, "seamstress") or int(battle.get_unit("seamstress")["rank"]) != 2:
+		return null
+	var first := battle.move(1)
+	if not bool(first.get("ok", false)) or int(first.get("to", 0)) != 3:
+		return null
+	if not _to(battle, "seamstress"):
+		return null
+	var second := battle.move(1)
+	if not bool(second.get("ok", false)) or int(second.get("to", 0)) != 4:
+		return null
+	if not _to(battle, "seamstress"):
+		return null
+	for foe_id in NEEDLE_FOE_RANKS:
+		var foe := battle.get_unit(str(foe_id))
+		if int(foe["hp"]) <= 0 or bool(foe["dead"]) or int(foe["rank"]) != int(NEEDLE_FOE_RANKS[foe_id]):
+			return null
+	return battle
+
+
 ## Every Needle Rain refusal leaves the battle, the acting turn and the seeded RNG untouched.
 func _test_needle_rain_rejections() -> void:
 	# The alternative is not equipped in the shipped starter kit, so it grants no action.
@@ -905,7 +1098,7 @@ func _test_needle_rain_rejections() -> void:
 		"AC3: Needle Rain is refused on a stale foe turn")
 	_check(stale_state == battle.state_snapshot() and stale_rng == battle.rng_state(),
 		"AC3: the stale-turn refusal preserved the complete state and RNG")
-	# Illegal launch: the rear hero rank 4 is outside Needle Rain's [1, 2, 3] launch ranks.
+	# The rear hero rank 4 is now a legal launch rank, but the enemy target mask still stops at 3.
 	var rear := _rear_support_witness(NEEDLE_KIT)
 	_check(not rear.is_empty(), "AC3: a fixed seed carries the needle Seamstress back to rank 4")
 	if rear.is_empty():
@@ -913,15 +1106,18 @@ func _test_needle_rain_rejections() -> void:
 	var rear_battle: StitchedRules = rear["battle"]
 	_check(int(rear_battle.get_unit("seamstress")["rank"]) == 4,
 		"AC3: the rear witness really stands in hero rank 4")
-	var rear_state := rear_battle.state_snapshot()
-	var rear_rng := rear_battle.rng_state()
-	var illegal := rear_battle.use_part("seamstress_needle_rain_needle", 1)
-	_check(not bool(illegal.get("ok", false))
-		and str(illegal.get("error", "")).contains("cannot launch from rank 4"),
-		"AC3: Needle Rain refuses to launch from the rear rank 4")
-	_check(rear_state == rear_battle.state_snapshot() and rear_rng == rear_battle.rng_state()
-		and rear_battle.current_actor_id() == "seamstress",
-		"AC3: the illegal launch preserved snapshot, turn and seeded RNG")
+	for bad_rank in [4, 0, 5]:
+		var rear_state := rear_battle.state_snapshot()
+		var rear_rng := rear_battle.rng_state()
+		var refused := rear_battle.use_part("seamstress_needle_rain_needle", bad_rank)
+		_check(not bool(refused.get("ok", false)),
+			"AC3: Needle Rain refuses the invalid target rank %d from hero rank 4" % bad_rank)
+		_check(rear_state == rear_battle.state_snapshot() and rear_rng == rear_battle.rng_state()
+			and rear_battle.current_actor_id() == "seamstress",
+			"AC3: the rear rank-%d refusal preserved snapshot, turn and seeded RNG" % bad_rank)
+	var absent_rank_four := rear_battle.use_part("seamstress_needle_rain_needle", 4)
+	_check(str(absent_rank_four.get("error", "")).contains("no legal target in rank 4"),
+		"AC3: enemy target rank 4 is refused from the rear even though the launch rank is legal")
 
 
 # ---------------------------------------------------------------- AC1/AC2: rear-rank launch masks
@@ -971,13 +1167,13 @@ func _test_rear_launch_masks() -> void:
 	# The one description that named the old reach now names ranks 2-4.
 	_check(str(catalog["by_id"]["seamstress_mending_knot_hat"]["text"]).contains("ranks 2-4"),
 		"AC1: the Mending Knot description names its new reach from ranks 2-4")
-	# The five untouched parts keep their exact authored launch ranks.
+	# The other five parts keep their exact authored launch ranks (Needle Rain only gained rank 4).
 	for part_id in ALL_PART_IDS:
 		if REAR_SUPPORT_CASES.has(part_id):
 			continue
 		_check(_int_list(catalog["by_id"][part_id]["ability"]["launch"])
 			== _int_list(EXPECTED[part_id]["launch"]),
-			"AC1: the untouched " + part_id + " keeps its authored launch ranks")
+			"AC1: the other " + part_id + " keeps its authored launch ranks")
 
 
 func _raw_launch_for(raw_parts: Variant, part_id: String) -> Array:
