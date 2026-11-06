@@ -887,6 +887,78 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_warden_black_umbrella_gate",
+      "title": "The Black Umbrella Gate",
+      "description": "A collapsed plum-black umbrella bars a doll-sized garden gate; the Warden braces its ribbed canopy with his huge patched shield while brass spokes catch the lantern glow.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["salvage_umbrella_ribs", "brace_parasol_latch"],
+      "choices": [
+        {
+          "id": "salvage_umbrella_ribs",
+          "text": "Gather loose umbrella ribs (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "brace_parasol_latch",
+          "text": "Spend 2 scraps bracing the parasol latch (earn 29 gold)",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Duck beneath the torn canopy",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_seamstress_mourning_veil_pulley",
+      "title": "The Mourning-Veil Pulley",
+      "description": "A bone-white mourning veil as broad as a sail hangs from a giant sewing-room pulley; the Seamstress threads her red needle through its torn hem in the plum lamplight.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["stitch_veil_rent", "buy_veil_cord"],
+      "choices": [
+        {
+          "id": "stitch_veil_rent",
+          "text": "Spend 1 scrap mending the long veil (earn 23 gold)",
+          "outcome": {"gold": 23, "scraps": -1}
+        },
+        {
+          "id": "buy_veil_cord",
+          "text": "Pay 16 gold for three coils of veil cord (+3 scraps)",
+          "outcome": {"gold": -16, "scraps": 3}
+        },
+        {
+          "id": "leave",
+          "text": "Let the long veil sway in the stairwell",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_heirloom_seed_envelope",
+      "title": "The Heirloom Seed Envelope",
+      "description": "A house-sized seed envelope leans against an attic skirting board; the Scarecrow's black crow taps its crimson stitched seal as dry straw spills from a torn corner.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["collect_seed_ties", "reseal_seed_envelope"],
+      "choices": [
+        {
+          "id": "collect_seed_ties",
+          "text": "Gather loose straw ties from the torn corner (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1}
+        },
+        {
+          "id": "reseal_seed_envelope",
+          "text": "Spend 2 scraps resealing the nursery packet (earn 27 gold)",
+          "outcome": {"gold": 27, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the seeds asleep beneath the red seal",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
