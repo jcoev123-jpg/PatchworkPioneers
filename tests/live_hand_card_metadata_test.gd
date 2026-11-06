@@ -1022,14 +1022,23 @@ func _validate_display(observed: Dictionary) -> void:
 		"energy/action controls remain visible and authoritative")
 
 
+func _tween_in_flight(binding: Dictionary) -> bool:
+	var entry_tween = binding.get("entry_tween")
+	var focus_tween = binding.get("motion_tween")
+	return (entry_tween is Tween and entry_tween.is_running()) \
+		or (focus_tween is Tween and focus_tween.is_running())
+
+
 func _refresh_preserves_everything(observed: Dictionary) -> void:
 	var before := _snapshot()
 	var panels := _panels()
 	var old_draws := {}
 	var original_rects := {}
+	var tweening_before := {}
 	for panel in panels:
 		old_draws[panel] = presenter._metadata._bindings[panel]["draw_count"]
 		original_rects[panel] = panel.get_global_rect()
+		tweening_before[panel] = _tween_in_flight(presenter._metadata._bindings[panel])
 	presenter._sync_battle()
 	presenter._sync_battle()
 	presenter._sync_battle()
@@ -1039,10 +1048,8 @@ func _refresh_preserves_everything(observed: Dictionary) -> void:
 		var binding: Dictionary = presenter._metadata._bindings.get(panel, {})
 		var state: Dictionary = presenter._metadata.motion_state(panel)
 		var draws_now: int = int(binding.get("draw_count", -1))
-		var entry_tween = binding.get("entry_tween")
-		var focus_tween = binding.get("motion_tween")
-		var in_flight: bool = (entry_tween is Tween and entry_tween.is_running()) \
-			or (focus_tween is Tween and focus_tween.is_running())
+		# A tween already running before the frames may finish during them (flaky 2026-11-06).
+		var in_flight: bool = tweening_before[panel] or _tween_in_flight(binding)
 		_check(not binding.is_empty() and draws_now >= int(old_draws[panel])
 			and (draws_now == int(old_draws[panel]) or in_flight),
 			"unchanged facts redraw only while an actual entry/focus tween is running")
