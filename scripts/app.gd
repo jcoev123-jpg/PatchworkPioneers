@@ -5484,12 +5484,19 @@ func _stitched_run_node_icon(button: Button, kind: String) -> void:
 	icon.name = "AuthoredNodeIcon"
 	icon.set_meta("art_path", path)
 	icon.texture = texture
-	icon.position = Vector2(9, 5)
-	icon.size = Vector2(44, 44)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(icon)
+	# Sized after it joins the button: set earlier, the texture's own size won and the stamp covered the label.
+	icon.position = Vector2(9, 5)
+	icon.size = Vector2(46, 46)
+	for face in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var skin := button.get_theme_stylebox(face)
+		if skin != null:
+			skin = skin.duplicate()
+			skin.content_margin_left = 64
+			button.add_theme_stylebox_override(face, skin)
 
 
 func _stitched_run_action(parent: Node, text: String, callback: Callable, enabled: bool = true) -> Button:
@@ -5720,8 +5727,13 @@ func _present_stitched_run() -> void:
 		var save := Button.new()
 		save.name = "SaveStitchedBattle"
 		save.text = "Save run"
-		save.position = Vector2(1149, 676)
+		save.position = Vector2(1149, 642)   # beside Continue; the old row hid Help & settings
 		save.size = Vector2(102, 29)
+		save.add_theme_font_size_override("font_size", 18)
+		save.add_theme_color_override("font_color", StitchedBattleScreen.PAPER)
+		save.add_theme_color_override("font_hover_color", StitchedBattleScreen.ACCENT)
+		save.add_theme_color_override("font_focus_color", StitchedBattleScreen.ACCENT)
+		StitchedBattleScreen.CHROME.style_button(save)
 		save.pressed.connect(func():
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
 				StitchedRunSave.write_file(stitched_save_path, session))
@@ -5795,7 +5807,7 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		for id in session.choices():
 			var node := session.map.get_node(id)
 			var button := _stitched_run_action(choices_box,
-				"      FLOOR %02d  /  %s  /  PATH %d" % [
+				"FLOOR %02d  /  %s  /  PATH %d" % [
 					node.floor, node.type, node.position + 1], func():
 				if stitched_run_session == session and session.enter(id, expected):
 					_present_stitched_run())

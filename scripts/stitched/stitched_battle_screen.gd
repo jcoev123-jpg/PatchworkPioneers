@@ -1216,21 +1216,51 @@ func _drive_foes() -> void:
 		_record(receipt)
 
 
+# The log names dolls and abilities as the player sees them; raw ids read as broken text.
+func _unit_name(unit_id: String) -> String:
+	var unit: Dictionary = battle.get_unit(unit_id) if battle != null else {}
+	return str(unit.get("name", unit_id.replace("_", " ").capitalize()))
+
+
+func _ability_name(unit_id: String, ability_id: String) -> String:
+	var found := _named_entry(battle.get_unit(unit_id) if battle != null else {}, ability_id)
+	return found if not found.is_empty() else ability_id.replace("_", " ").capitalize()
+
+
+func _named_entry(value: Variant, entry_id: String) -> String:
+	if value is Dictionary:
+		if str(value.get("id", "")) == entry_id and value.has("name"):
+			return str(value["name"])
+		for item in value.values():
+			var found := _named_entry(item, entry_id)
+			if not found.is_empty():
+				return found
+	elif value is Array:
+		for item in value:
+			var found := _named_entry(item, entry_id)
+			if not found.is_empty():
+				return found
+	return ""
+
+
 func _record(receipt: Dictionary) -> void:
 	last_receipt = receipt.duplicate(true)
 	receipts.append(last_receipt.duplicate(true))
 	var actor_id := str(receipt.get("actor", ""))
 	var action := str(receipt.get("action", ""))
-	var log := "%s · %s" % [actor_id.replace("_", " ").capitalize(), action.replace("_", " ").capitalize()]
+	var log := "%s · %s" % [_unit_name(actor_id), action.replace("_", " ").capitalize()]
 	if action == "hand":
 		log = "Wren · %s%s" % [_hand_action_name(str(receipt.get("hand_action", ""))),
-			" → " + actor_id.replace("_", " ").capitalize() if not actor_id.is_empty() else ""]
+			" → " + _unit_name(actor_id) if not actor_id.is_empty() else ""]
 		if bool(receipt.get("failed", false)):
 			log += "\nHis hands shook (roll %d): the action slipped." % int(receipt.get("roll", 0))
 	if action == "ability":
-		log += "\n" + str(receipt.get("ability", ""))
+		log += "\n" + _ability_name(actor_id, str(receipt.get("ability", "")))
 		for result in receipt.get("results", []):
-			log += "\n→ " + str(result.get("target", "")) + "  " + str(result.get("damage", result.get("hit", "")))
+			var outcome := "miss"
+			if bool(result.get("hit", true)):
+				outcome = "%d damage" % int(result["damage"]) if int(result.get("damage", 0)) > 0 else "hit"
+			log += "\n→ %s: %s" % [_unit_name(str(result.get("target", ""))), outcome]
 	# S9c: Wren speaks once for each doll he loses.
 	for hero in battle.get_heroes():
 		if bool(hero.get("lost", false)) and not _lost_seen.has(str(hero.id)):
