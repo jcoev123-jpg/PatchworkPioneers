@@ -143,7 +143,8 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 				_verify_base(intent, selected, ticket, "rank %d selected ability" % rank)
 		_check(ticket.foe_id == str(foe["id"]) and ticket.foe_rank == rank and
 			ticket.tooltip_text.contains(str(foe["name"])) and
-			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change"),
+			ticket.tooltip_text.contains("Current intent; may change if ranks or statuses change") and
+			ticket.get_tooltip(Vector2(10, 10)).is_empty(),
 			"foe rank %d names actual actor and provisionality" % rank)
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
 
@@ -224,21 +225,28 @@ func _verify_kind_fixtures(host: Control) -> void:
 
 func _caption_fits(label: Label) -> bool:
 	var font: Font = label.get_theme_font("font")
-	return font != null and "\n" not in label.text and label.clip_text and (
-		font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1,
-			label.get_theme_font_size("font_size")).x <= label.size.x + 0.5)
+	if font == null:
+		return false
+	var pixels := label.get_theme_font_size("font_size")
+	return "\n" not in label.text and label.clip_text and (
+		font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels).x <= label.size.x + 0.5
+		and font.get_height(pixels) <= label.size.y + 0.5)
 
 
 func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> void:
 	var sewn: Texture2D = load("res://assets/paper/ui/hud_name_plate.png")
 	_check(sewn != null and stage._foe_tickets.size() == 4
 		and stage._foe_ticket_labels.size() == 4 and stage._foe_ticket_target_labels.size() == 4,
-		"all mounted foe ranks reuse authored dark felt tickets with two caption rows")
+		"all four public foe-rank tickets retain authored NinePatch art and two separate labels")
 	var previous := Rect2()
+	var earlier_rectangles: Array[Rect2] = []
 	var header := Rect2(710, 105, 545, 30)
+	var ribbon := stage._turn_ribbon.get_global_rect()
+	var candle := stage._candle_meter.get_global_rect()
+	var tray := Rect2(12, 557, 1256, 155)
 	var painted_count := 0
 	for rank in range(1, 5):
-		var ticket: NinePatchRect = stage._foe_tickets[rank]
+		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[rank]
 		var rectangle := ticket.get_global_rect()
 		var puppet: Control = stage._puppets["foe_" + str(rank)]
 		var art: Rect2 = puppet.posed_actor_rect()
@@ -250,57 +258,68 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 			and ticket.self_modulate == Color("62464a")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
 			and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(667 + (rank - 1) * 150, 143)
-			and rectangle.size == Vector2(144, 62)
+			and rectangle.position == Vector2(664 + (rank - 1) * 150, 140)
+			and rectangle.size == Vector2(150, 76)
+			and rectangle.position.x >= 0 and rectangle.end.x <= 1280
+			and rectangle.position.y >= 136 and rectangle.end.y <= 220
 			and not rectangle.intersects(header)
+			and not rectangle.intersects(ribbon) and not rectangle.intersects(candle)
+			and not rectangle.intersects(tray)
 			and (rank == 1 or not rectangle.intersects(previous))
-			and rectangle.end.x <= 1280 and rectangle.end.y <= 220
 			and absf(rectangle.get_center().x - (puppet.global_position.x + puppet.size.x * 0.5)) < 2.0
 			and not rectangle.intersects(stage._foot_plates["foe_" + str(rank)].get_global_rect()),
-			"dark intent rank %d floats above painted figures and clear of caption/neighbor" % rank)
+			"rank %d has a centred 150x76 sewn ticket within overhead band and viewport, with no adjoining UI overlap" % rank)
 		if puppet.visible:
 			painted_count += 1
 			_check(not painted.intersects(rectangle) and rectangle.end.y <= painted.position.y
 				and painted.size.y >= 120.0 and painted.size.y <= 280.0
 				and painted.end.y <= 503.0
 				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
-				"rank %d ticket clears actual posed authored art, not obsolete Puppet Control top" % rank)
+				"rank %d ticket clears actual posed authored figure pixels, not obsolete puppet node bounds" % rank)
+		var glyph_rect := Rect2(glyph.position, glyph.size)
+		var ability_rect := Rect2(ability.position, ability.size)
+		var target_rect := Rect2(target.position, target.size)
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket
-			and ability.get_theme_font_size("font_size") >= 20
-			and target.get_theme_font_size("font_size") >= 15
-			and ability.size.x >= 96 and target.size.x >= 124
+			and ability != target and ability.clip_text and target.clip_text
+			and ability.get_theme_font_size("font_size") >= 24
+			and target.get_theme_font_size("font_size") >= 18
+			and ability.size.x >= 100 and target.size.x >= 132
 			and glyph.get_parent() == ticket and glyph.mouse_filter == Control.MOUSE_FILTER_IGNORE
-			and glyph.position.x >= 0 and glyph.position.y >= 0
-			and glyph.position.x + glyph.size.x <= ticket.size.x
-			and glyph.position.y + glyph.size.y <= target.position.y
-			and (not glyph.visible or not Rect2(glyph.position, glyph.size).intersects(
-				Rect2(ability.position, ability.size)))
-			and ability.position.x + ability.size.x <= ticket.size.x
-			and ability.position.y + ability.size.y <= target.position.y
-			and target.position.y + target.size.y <= ticket.size.y
+			and glyph.size.x >= 26 and glyph.size.y >= 26
+			and glyph_rect.position.x >= 0 and glyph_rect.position.y >= 0
+			and glyph_rect.end.x <= ticket.size.x and glyph_rect.end.y <= ticket.size.y
+			and not ability_rect.intersects(target_rect)
+			and (not glyph.visible or not glyph_rect.intersects(ability_rect))
+			and (not glyph.visible or not glyph_rect.intersects(target_rect))
+			and ability_rect.position.x >= 0 and ability_rect.end.x <= ticket.size.x
+			and ability_rect.position.y >= 0 and ability_rect.end.y <= ticket.size.y
+			and target_rect.position.x >= 0 and target_rect.end.x <= ticket.size.x
+			and target_rect.position.y >= 0 and target_rect.end.y <= ticket.size.y
 			and ability.get_theme_color("font_color") == StitchedFoeIntentPlate.BONE
 			and target.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
-			and _caption_fits(ability) and _caption_fits(target)
-			and (not glyph.visible or ability.get_theme_font_size("font_size") >= 20),
-			"icon-aware bone/amber two-row caption rank %d fits inside plate without obstruction" % rank)
+			and _caption_fits(ability) and _caption_fits(target),
+			"rank %d real Labels measure >=24/18px, pixel-fit in separate lines and avoid the genuine kind glyph" % rank)
+		for earlier in earlier_rectangles:
+			_check(not rectangle.intersects(earlier),
+				"foe rank %d has no pairwise ticket overlap across the entire 4-rank stage" % rank)
+		earlier_rectangles.append(rectangle)
 		previous = rectangle
 	_check(painted_count == expected_count,
-		"intent geometry inspects every actually painted foe, including newly occupied fourth rank")
+		"non-vacuous geometry checks every posed occupied foe, including the admitted fourth rank")
 	var detail := stage._intent_disclosure.get_global_rect()
 	_check(stage._intent_disclosure.self_modulate == Color("62464a")
 		and detail.position == Vector2(22, 140) and detail.end.y <= 220
 		and detail.end.x <= 660
 		and stage._intent_disclosure_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 		and stage._intent_disclosure_label.get_theme_color("font_color") == StitchedBattleScreen.PAPER,
-		"full dark disclosure stays in hero-side overhead air, not over a figure")
+		"full-length pointer/keyboard disclosure keeps its authored frame in hero-side overhead air")
 	for rank in range(1, 5):
 		var hero: Control = stage._puppets["hero_" + str(rank)]
 		var hero_rect: Rect2 = hero.posed_actor_rect()
 		_check(not Rect2(hero.global_position + hero_rect.position, hero_rect.size).intersects(detail),
 			"rank %d hero's actual painted bounds do not intersect intent disclosure" % rank)
 	_check(root.get_viewport().get_visible_rect().size == Vector2(1280, 720),
-		"headless 1280x720 Gothic viewport has the intended visual bounds")
-
+		"headless 1280x720 Gothic viewport has intended visual bounds")
 
 # Commit only an actual hero Pass through the live screen. The automatic foe
 # driver will resolve the imminent actor; compare its first receipt with the

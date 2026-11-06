@@ -405,7 +405,7 @@ func _build_foe_intent_tickets() -> void:
 	for rank in range(1, 5):
 		var ticket := StitchedFoeIntentPlate.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		ticket.position = Vector2(667 + (rank - 1) * 150, 143)
+		ticket.position = Vector2(664 + (rank - 1) * 150, 140)
 		add_child(ticket)
 		_foe_tickets[rank] = ticket
 		_foe_ticket_labels[rank] = ticket.primary
