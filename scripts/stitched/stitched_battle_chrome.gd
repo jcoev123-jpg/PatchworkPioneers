@@ -56,10 +56,17 @@ static func style_action_button(button: Button, icon_path: String) -> void:
 	# A non-interactive authored image beside the real Button text. This keeps
 	# the original mouse rect, pressed connection, focus and sewn style states.
 	style_button(button)
-	button.add_theme_font_size_override("font_size", 14)
+	button.add_theme_font_size_override("font_size", 16)
 	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
 	if not ResourceLoader.exists(icon_path, "Texture2D"):
 		return # Text-only fallback if the imported emblem is unavailable.
+	# Reserve a separate icon column in every visual state; centering text
+	# across the whole button lets long action labels paint over the emblem.
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var box := button.get_theme_stylebox(state).duplicate() as StyleBoxTexture
+		box.content_margin_left = 34.0
+		box.content_margin_right = 6.0
+		button.add_theme_stylebox_override(state, box)
 	var emblem := TextureRect.new()
 	emblem.name = "ActionEmblem"
 	emblem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
@@ -68,7 +75,7 @@ static func style_action_button(button: Button, icon_path: String) -> void:
 	emblem.focus_mode = Control.FOCUS_NONE
 	emblem.texture = load(icon_path) as Texture2D
 	button.add_child(emblem)
-	emblem.position = Vector2(9, 5)
+	emblem.position = Vector2(9, 6)
 	emblem.size = Vector2(19, 19)
 
 
@@ -116,8 +123,8 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 	frame.size = rectangle.size + Vector2(2, 2)
 	frame.patch_margin_left = 7
 	frame.patch_margin_right = 7
-	frame.patch_margin_top = 5
-	frame.patch_margin_bottom = 5
+	frame.patch_margin_top = 4
+	frame.patch_margin_bottom = 4
 	frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	parent.add_child(frame)
 	return meter
@@ -131,15 +138,15 @@ static func _fit_readout(readout: Label, caption: String) -> void:
 	readout.text = caption
 	readout.scale = Vector2.ONE
 	var face: Font = readout.get_theme_font("font")
-	var point_size := 13
+	var point_size := 15
 	var available := slot_width - 2.0
 	if face != null:
-		# Standard numerators stay at >=13px; only exceptional wide source
+		# Standard numerators stay at >=15px; only exceptional wide source
 		# values use smaller measured type, never omitted digits.
 		while point_size > 10 and face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x > available:
 			point_size -= 1
 	readout.add_theme_font_size_override("font_size", point_size)
-	readout.size = Vector2(slot_width, 14.0)
+	readout.size = Vector2(slot_width, 16.0)
 	if face != null:
 		var width := face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size).x
 		# If native Label insists on an extra-wide minimum for unusual data,
@@ -325,7 +332,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	var root := Control.new()
 	root.name = "RankMeters" + side.capitalize() + str(int(foot_x))
 	root.position = Vector2(foot_x, 530)
-	root.size = Vector2(170, 24)
+	root.size = Vector2(170, 25)
 	# PASS makes the complete, accurate HP/FRAY tooltip reachable by mouse
 	# without consuming the parent's rank-button input.
 	root.mouse_filter = Control.MOUSE_FILTER_PASS
@@ -338,7 +345,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	caption_font.spacing_top = -3
 	caption_font.spacing_bottom = -2
 	var is_hero := side == "hero"
-	var hp := _meter(root, "HPFill", Rect2(11, 15, 74 if is_hero else 148, 7),
+	var hp := _meter(root, "HPFill", Rect2(11, 17, 74 if is_hero else 148, 7),
 		Color("af655b"))
 	var hp_caption := Label.new()
 	hp_caption.name = "HPReadout"
@@ -348,17 +355,17 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	hp_caption.clip_text = false
 	hp_caption.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
 	hp_caption.add_theme_font_override("font", caption_font)
-	hp_caption.add_theme_font_size_override("font_size", 13)
+	hp_caption.add_theme_font_size_override("font_size", 15)
 	hp_caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hp_caption.add_theme_color_override("font_color", BONE)
 	hp_caption.add_theme_color_override("font_outline_color", Color("25181d"))
 	hp_caption.add_theme_constant_override("outline_size", 2)
 	hp_caption.z_index = 2
 	root.add_child(hp_caption)
-	hp_caption.size = Vector2(74 if is_hero else 149, 14)
+	hp_caption.size = Vector2(74 if is_hero else 149, 16)
 	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
-		var fray := _meter(root, "FrayFill", Rect2(90, 15, 69, 7), Color("d7a560"))
+		var fray := _meter(root, "FrayFill", Rect2(90, 17, 69, 7), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
 		caption.position = Vector2(87, 0)
@@ -367,14 +374,14 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 		caption.clip_text = false
 		caption.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
 		caption.add_theme_font_override("font", caption_font)
-		caption.add_theme_font_size_override("font_size", 13)
+		caption.add_theme_font_size_override("font_size", 15)
 		caption.add_theme_color_override("font_color", BONE)
 		caption.add_theme_color_override("font_outline_color", Color("25181d"))
 		caption.add_theme_constant_override("outline_size", 2)
 		caption.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		caption.z_index = 2
 		root.add_child(caption)
-		caption.size = Vector2(74, 14)
+		caption.size = Vector2(74, 16)
 		output["fray"] = fray
 		output["fray_text"] = caption
 	return output

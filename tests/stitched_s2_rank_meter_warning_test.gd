@@ -34,22 +34,22 @@ func _fit(label: Label, note: String, standard: bool = true) -> void:
 	var face: Font = label.get_theme_font("font")
 	var size_used := label.get_theme_font_size("font_size")
 	_check(label.has_theme_font_override("font") and face is FontVariation and (face as FontVariation).base_font == StitchedBattleChrome.RANK_FONT
-		and size_used >= (13 if standard else 10), note + " explicitly binds readable PatrickHand")
-	_check(label.size.y == 14.0 and label.position.y == 0.0
+		and size_used >= (15 if standard else 10), note + " explicitly binds readable PatrickHand")
+	_check(label.size.y == 16.0 and label.position.y == 0.0
 		and label.scale.y == 1.0 and not label.clip_text
 		and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
-		note + " remains in the fourteen-pixel caption band without clipping or vertical shrink")
+		note + " remains in the sixteen-pixel caption band without clipping or vertical shrink")
 	if face != null:
 		var measured := face.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size_used)
 		_check(measured.x * label.scale.x <= label.size.x - 1.0
-			and measured.y >= (13.0 if standard else 10.0) and measured.y <= 14.0 and label.scale.x > 0.0,
+			and measured.y >= (15.0 if standard else 10.0) and measured.y <= 16.0 and label.scale.x > 0.0,
 			"%s: measured face %.1fx%.1f fits %.1fpx horizontal slot and real-height type" % [
 				note, measured.x, measured.y, label.size.x])
 
 
 func _bounds(meters: Dictionary, note: String) -> void:
 	var surface: Control = meters["root"]
-	_check(surface.size == Vector2(170, 24), note + " retains the 170x24 rank envelope")
+	_check(surface.size == Vector2(170, 25), note + " retains the 170x25 rank envelope inside the footplate")
 	for child in surface.get_children():
 		if child is Control:
 			var control := child as Control
@@ -73,7 +73,7 @@ func _bounds(meters: Dictionary, note: String) -> void:
 				continue
 			_check(control.position.x >= 0.0 and control.position.y >= 0.0
 				and control.position.x + control.size.x * control.scale.x <= 170.0
-				and control.position.y + control.size.y * control.scale.y <= 24.0,
+				and control.position.y + control.size.y * control.scale.y <= surface.size.y,
 				"%s %s fits rank envelope: pos=%s size=%s" % [note, control.name, control.position, control.size])
 
 

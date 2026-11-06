@@ -234,13 +234,13 @@ func _build_screen() -> void:
 	_label("HEROES  ·  back 4 to front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
 	_label("FOES  ·  front 1 to back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_labels["hero"] = _label("", Rect2(27, 564, 202, 25), 18, ACCENT)
-	_labels["stats"] = _label("", Rect2(27, 590, 204, 86), 13)
+	_labels["stats"] = _label("", Rect2(27, 590, 204, 86), 15)
 	_labels["stats"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_labels["thread"] = _label("", Rect2(27, 679, 204, 24), 12, ERROR)
 	for index in range(4):
 		var slot: String = SLOTS[index]
 		var x := 260 + index * 188
-		_part_headings[slot] = _label("", Rect2(x, 559, 183, 22), 14, ACCENT)
+		_part_headings[slot] = _label("", Rect2(x, 560, 183, 21), 14, ACCENT)
 		_part_headings[slot].name = "WornHeading" + slot.capitalize()
 		_part_buttons[slot] = _button(slot.capitalize(), Rect2(x, 581, 152, 30),
 			func(): select_part(slot))
@@ -258,11 +258,11 @@ func _build_screen() -> void:
 	_labels["preview"] = _label("", Rect2(262, 613, 749, 26), 12, MUTED)
 	_labels["preview"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_labels["preview"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	_action_buttons["move_front"] = _button("Move front", Rect2(260, 642, 136, 29), func(): submit_move(-1))
-	_action_buttons["move_back"] = _button("Move back", Rect2(403, 642, 136, 29), func(): submit_move(1))
-	_action_buttons["re_tie"] = _button("Re-tie", Rect2(546, 642, 136, 29), func(): submit_re_tie())
-	_action_buttons["pass"] = _button("Pass turn", Rect2(689, 642, 150, 29), func(): submit_pass())
-	_action_buttons["retreat"] = _button("Retreat", Rect2(846, 642, 165, 29), func(): submit_retreat())
+	_action_buttons["move_front"] = _button("Move front", Rect2(260, 642, 150, 32), func(): submit_move(-1))
+	_action_buttons["move_back"] = _button("Move back", Rect2(418, 642, 150, 32), func(): submit_move(1))
+	_action_buttons["re_tie"] = _button("Re-tie", Rect2(576, 642, 126, 32), func(): submit_re_tie())
+	_action_buttons["pass"] = _button("Pass turn", Rect2(710, 642, 142, 32), func(): submit_pass())
+	_action_buttons["retreat"] = _button("Retreat", Rect2(860, 642, 151, 32), func(): submit_retreat())
 	for action_key in ["move_front", "move_back", "re_tie", "pass", "retreat"]:
 		var emblem: String = "move" if action_key.begins_with("move_") else (
 			"retie" if action_key == "re_tie" else action_key)
@@ -275,10 +275,12 @@ func _build_screen() -> void:
 		var hero_key := "hero_" + str(rank)
 		var foe_key := "foe_" + str(rank)
 		_target_buttons[hero_key] = _button("Ally %d" % rank,
-			Rect2(260 + index * 92, 675, 88, 29), func(): submit_target("hero", rank))
+			Rect2(260 + index * 94, 679, 88, 32), func(): submit_target("hero", rank))
+		_target_buttons[hero_key].add_theme_font_size_override("font_size", 16)
 		_bind_seat_signals(_target_buttons[hero_key], hero_key)
 		_target_buttons[foe_key] = _button("Foe %d" % rank,
-			Rect2(642 + index * 92, 675, 88, 29), func(): submit_target("foe", rank))
+			Rect2(642 + index * 94, 679, 88, 32), func(): submit_target("foe", rank))
+		_target_buttons[foe_key].add_theme_font_size_override("font_size", 16)
 		_bind_seat_signals(_target_buttons[foe_key], foe_key)
 	_labels["log"] = _label("Choose a sewn part or another turn action.", Rect2(1041, 567, 207, 104), 13, MUTED)
 	_labels["log"].autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -1114,13 +1116,13 @@ func _preview_text(actor: Dictionary, ability: Dictionary) -> String:
 			rank_labels.append(str(rank))
 	if rank_labels.is_empty():
 		return str(ability["name"]) + " · no legal targets"
-	return str(ability["name"]) + " · legal ranks " + ", ".join(rank_labels) + " · hover or focus a lit rank for its forecast."
+	return str(ability["name"]) + " · legal ranks " + ", ".join(rank_labels) + " · focus a lit rank for forecast"
 
 
 func _present_forecast() -> void:
 	if not _labels.has("preview") or battle == null:
 		return
-	var generic := "Select a legal part to see its range, hit chance and damage. No RNG spent."
+	var generic := "Pick a part, then a lit rank. ? inspects."
 	var acting := battle.get_unit(battle.current_actor_id())
 	var ability: Dictionary = {}
 	if battle.current_side() == "hero" and not battle.is_over() and not _selected_part.is_empty():
@@ -1546,6 +1548,7 @@ func _build_hand_actions() -> void:
 			func(): choose_hand_action(action_id))
 		button.name = "HandAction" + action_id.to_pascal_case()
 		CHROME.style_action_button(button, StitchedKidView.icon_path(action_id))
+		button.add_theme_font_size_override("font_size", 14)
 		var emblem := button.get_node_or_null("ActionEmblem")
 		if emblem != null:
 			emblem.position = Vector2(6, 5)

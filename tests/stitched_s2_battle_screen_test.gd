@@ -65,16 +65,16 @@ func _check_rank_font(label: Label, note: String) -> void:
 	var face: Font = label.get_theme_font("font")
 	var actual_size := label.get_theme_font_size("font_size")
 	_check(face is FontVariation and (face as FontVariation).base_font == StitchedBattleChrome.RANK_FONT and label.has_theme_font_override("font")
-		and actual_size >= 13 and label.size.y == 14.0 and label.scale.y == 1.0
+		and actual_size >= 15 and label.size.y == 16.0 and label.scale.y == 1.0
 		and not label.clip_text and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
-		note + " binds genuine 13px-or-larger font with an unscaled, unclipped caption slot")
+		note + " binds genuine 15px-or-larger font with an unscaled, unclipped caption slot")
 	if face != null:
 		var measured := face.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, actual_size)
 		_check(measured.x * label.scale.x <= label.size.x - 1.0
-			and measured.y >= 13.0 and measured.y <= 14.0
-			and label.get_global_rect().size.y == 14.0
-			and label.get_global_rect().end.y <= 544.0,
-			note + " has measured visible width/height inside the genuine y530..544 underfoot band")
+			and measured.y >= 15.0 and measured.y <= 16.0
+			and label.get_global_rect().size.y == 16.0
+			and label.get_global_rect().end.y <= 546.0,
+			note + " has measured visible width/height inside the genuine y530..546 underfoot band")
 
 
 func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
@@ -157,9 +157,9 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 				and duplicate.text.is_empty() and tag.focus_mode == Control.FOCUS_ALL
 				and tag.clip_text and not readout.clip_text
 				and tag.get_theme_font_size("font_size") >= 16
-				and readout.get_theme_font_size("font_size") >= 13
+				and readout.get_theme_font_size("font_size") >= 15
 				and name_rect.size.x >= 145.0 and meter_rect.size.x == 170.0
-				and name_rect.size.y >= 22.0 and meter_rect.size.y == 24.0
+				and name_rect.size.y >= 22.0 and meter_rect.size.y == 25.0
 				and foot.get_global_rect().encloses(name_rect)
 				and foot.get_global_rect().encloses(meter_rect)
 				and not name_rect.intersects(meter_rect)
@@ -290,7 +290,87 @@ func _verify_worn_layout(stage: StitchedBattleScreen) -> void:
 			"public mounted heading, ability, inspection and digest have separate bounds")
 
 
-func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Dictionary:
+func _verify_turn_surface(stage: StitchedBattleScreen) -> void:
+	var controls: Array[Control] = [stage._labels["hero"], stage._labels["stats"],
+		stage._labels["thread"], stage._labels["preview"]]
+	for group in [stage._part_buttons, stage._part_headings, stage._part_help_buttons, stage._target_buttons]:
+		for control in group.values():
+			controls.append(control)
+	for key in ["move_front", "move_back", "re_tie", "pass", "retreat"]:
+		var button: Button = stage._action_buttons[key]
+		controls.append(button)
+		var font := button.get_theme_font("font")
+		var points := button.get_theme_font_size("font_size")
+		var measured := font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, points)
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var box := button.get_theme_stylebox(state)
+			_check(points >= 16 and not button.clip_text and measured.y <= button.size.y
+				and measured.x + box.get_content_margin(SIDE_LEFT) + box.get_content_margin(SIDE_RIGHT) + 4 <= button.size.x,
+				"mounted %s label fits measured 16px text in %s state" % [key, state])
+		var emblem: Control = button.get_node("ActionEmblem")
+		_check(emblem.get_global_rect().end.x <= button.global_position.x + button.get_theme_stylebox("normal").get_content_margin(SIDE_LEFT),
+			"mounted action reserves an independent emblem column")
+		_check(not button.tooltip_text.is_empty() and button.focus_mode == Control.FOCUS_ALL,
+			"turn action keeps native keyboard control and complete contextual help")
+	_check(stage._target_buttons.size() == 8 and stage._part_help_buttons.size() == 4,
+		"non-vacuous surface has all eight targets and four inspections")
+	for key in stage._target_buttons:
+		var button: Button = stage._target_buttons[key]
+		var points := button.get_theme_font_size("font_size")
+		var measured := button.get_theme_font("font").get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, points)
+		_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL
+			and button.disabled == not stage.legal_targets().has(key) and not button.tooltip_text.is_empty()
+			and points >= 16 and measured.x + 8 <= button.size.x and measured.y <= button.size.y,
+			"visible rank %s retains truthful native availability and measured label" % key)
+	var stats: Label = stage._labels["stats"]
+	var stats_points := stats.get_theme_font_size("font_size")
+	var stats_font := stats.get_theme_font("font")
+	_check(stats_points >= 15 and stats.text.contains("HP") and stats.text.contains("Fray")
+		and stats_font.get_multiline_string_size(stats.text, HORIZONTAL_ALIGNMENT_LEFT, stats.size.x, stats_points).y <= stats.size.y,
+		"active actor HP/Fray and secondary stats fit measured readable text")
+	for line in stats.text.split("\n"):
+		_check(stats_font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, stats_points).x <= stats.size.x,
+			"active actor stat line fits without clipping")
+	var preview: Label = stage._labels["preview"]
+	_check(not preview.text.is_empty() and preview.get_line_count() <= 2,
+		"mounted surface has a short contextual cue")
+	for index in controls.size():
+		var control := controls[index]
+		_check(control.is_visible_in_tree() and Rect2(0, 560, 1280, 160).encloses(control.get_global_rect()),
+			"bottom control stays visible, below the stage and on screen")
+		for other_index in range(index + 1, controls.size()):
+			_check(not control.get_global_rect().intersects(controls[other_index].get_global_rect()),
+				"mounted bottom text and control rectangles stay separate")
+
+
+func _verify_native_inspection(stage: StitchedBattleScreen) -> void:
+	var before := stage.battle.state_snapshot()
+	var rng := stage.battle.rng_state()
+	var receipts := stage.receipts.duplicate(true)
+	for index in StitchedBattleScreen.SLOTS.size():
+		var slot: String = StitchedBattleScreen.SLOTS[index]
+		var help: Button = stage._part_help_buttons[slot]
+		_check(not help.disabled and help.is_visible_in_tree(), "real worn slot has accessible inspection")
+		if index % 2 == 0:
+			await _mouse_activate(help)
+		else:
+			await _keyboard_activate(help)
+		_check(stage._part_help_dialog.visible and stage._part_help_dialog.dialog_text == stage._part_cues[slot]["full"],
+			"native mouse/keyboard ? opens complete worn part disclosure")
+		stage._part_help_dialog.hide()
+		await process_frame
+	_check(stage.battle.state_snapshot() == before and stage.battle.rng_state() == rng and stage.receipts == receipts,
+		"all four native inspections preserve exact battle, RNG and receipts")
+	var blocked: Button = stage._action_buttons["re_tie"]
+	_check(blocked.disabled, "precondition: intact thread disables Re-tie")
+	await _mouse_activate(blocked)
+	await _keyboard_activate(blocked)
+	_check(stage.battle.state_snapshot() == before and stage.battle.rng_state() == rng and stage.receipts == receipts,
+		"native disabled turn action cannot spend state, RNG or receipts")
+	stage._action_buttons["pass"].grab_focus()
+
+
+func _choose_legal(stage: StitchedBattleScreen, through_figure: bool, target_mouse: bool = false) -> Dictionary:
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	if actor.is_empty() or stage.battle.current_side() != "hero":
 		return {}
@@ -313,12 +393,25 @@ func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Diction
 			continue
 		var parts: Dictionary = actor["parts"]
 		var before := stage.receipts.size()
+		var target: Button = stage._target_buttons[key]
+		target.grab_focus()
+		var seat := key.split("_")
+		var worn: Dictionary = parts[slot]
+		var ability := StitchedParts.ability_at_tier(stage.parts[str(worn["id"])], int(worn["tier"]))
+		var forecast := StitchedTargetForecast.for_rank(stage.battle, actor, ability, str(seat[0]), int(seat[1]))
+		_check(target.has_focus() and not forecast.is_empty() and stage._labels["preview"].text == forecast["text"]
+			and target.tooltip_text.contains(str(forecast["tooltip"]))
+			and stage.battle.state_snapshot() == pristine and stage.battle.rng_state() == rng and stage.receipts == receipts,
+			"native target focus reveals the exact legal-rank forecast without spending state or RNG")
 		if through_figure:
 			_check(stage._figure_hits[key].visible, "real lit figure has an enabled click surface")
 			_figure_click(stage, key)
 		else:
 			_check(not stage._target_buttons[key].disabled, "keyboard rank button enables only real legal target")
-			await _keyboard_activate(stage._target_buttons[key])
+			if target_mouse:
+				await _mouse_activate(stage._target_buttons[key])
+			else:
+				await _keyboard_activate(stage._target_buttons[key])
 		var receipt: Dictionary = stage.receipts[before] if stage.receipts.size() > before else {}
 		_check(bool(receipt.get("ok", false)), "legal figure or keyboard rank activation commits an authored ability")
 		_check(stage.receipts.size() > before and stage.receipts[before].get("actor") == actor["id"] and
@@ -796,6 +889,8 @@ func _run() -> void:
 		_verify_stage_art(stage)
 		_verify_fourth_foe(stage)
 		_verify_worn_layout(stage)
+		_verify_turn_surface(stage)
+		await _verify_native_inspection(stage)
 		_verify_turn_action_cues(stage)
 		_check(stage._unit_at("foe", 4).is_empty() and
 			stage._seat_buttons.has("foe_4") and not stage._puppets["foe_4"].visible,
@@ -938,6 +1033,8 @@ func _run() -> void:
 		_check(reopened != null and reopened != stage and reopened.battle.is_valid() and
 			reopened.battle.get_heroes().size() == 4, "re-entering after exit starts a fresh seeded Stitched session")
 		if reopened != null and reopened.battle.current_side() == "hero":
+			_check(not (await _choose_legal(reopened, false, true)).is_empty(),
+				"native mouse rank control commits a legal part on the reopened live screen")
 			var direction := -1 if reopened._can_move(-1) else 1
 			var move_before := reopened.receipts.size()
 			var move_button: Button = reopened._action_buttons["move_front" if direction == -1 else "move_back"]

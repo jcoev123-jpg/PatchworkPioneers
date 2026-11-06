@@ -39,15 +39,15 @@ func _verify_readout(label: Label, note: String) -> void:
 	var font: Font = label.get_theme_font("font")
 	var point_size := label.get_theme_font_size("font_size")
 	_check(font is FontVariation and (font as FontVariation).base_font == StitchedBattleChrome.RANK_FONT and label.has_theme_font_override("font")
-		and point_size >= 13 and label.size.y == 14.0 and label.scale.y == 1.0
+		and point_size >= 15 and label.size.y == 16.0 and label.scale.y == 1.0
 		and not label.clip_text and label.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING,
-		note + " has locally bound real 13px-or-larger lettering, no clipping or vertical shrink")
+		note + " has locally bound real 15px-or-larger lettering, no clipping or vertical shrink")
 	if font != null:
 		var measured := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, point_size)
 		_check(measured.x * label.scale.x <= label.size.x - 1.0
-			and measured.y >= 13.0 and measured.y <= 14.0
-			and label.get_global_rect().size.y == 14.0,
-			note + " measured font fits the existing fourteen-pixel global caption band")
+			and measured.y >= 15.0 and measured.y <= 16.0
+			and label.get_global_rect().size.y == 16.0,
+			note + " measured font fits the sixteen-pixel global caption band")
 
 
 func _fray_full(value: int) -> String:
@@ -95,13 +95,11 @@ func _verify_action_icons(screen: StitchedBattleScreen) -> void:
 	var keys := ["move_front", "move_back", "re_tie", "pass", "retreat"]
 	var names := ["Move front", "Move back", "Re-tie", "Pass turn", "Retreat"]
 	var art := ["move", "move", "retie", "pass", "retreat"]
-	# With the Gothic project Theme now installed globally, the action buttons
-	# keep their authored 29px height (Gothic's real themed minimum is smaller
-	# than the authored rect), so the hit band stays y642..671.
+	# The larger native hit bands reserve separate icon and readable text columns.
 	var expected := [
-		Rect2(260, 642, 136, 29), Rect2(403, 642, 136, 29),
-		Rect2(546, 642, 136, 29), Rect2(689, 642, 150, 29),
-		Rect2(846, 642, 165, 29),
+		Rect2(260, 642, 150, 32), Rect2(418, 642, 150, 32),
+		Rect2(576, 642, 126, 32), Rect2(710, 642, 142, 32),
+		Rect2(860, 642, 151, 32),
 	]
 	var preview: Rect2 = screen._labels["preview"].get_global_rect()
 	var figure: Rect2 = screen.get_node("SharedStitchedBackdrop").get_global_rect()
@@ -117,24 +115,24 @@ func _verify_action_icons(screen: StitchedBattleScreen) -> void:
 		var rect := button.get_global_rect()
 		_check(icon != null and icon.get_size() == Vector2(128, 128)
 			and emblem != null and emblem.texture == icon
-			and emblem.size == Vector2(19, 19) and emblem.position == Vector2(9, 5)
+			and emblem.size == Vector2(19, 19) and emblem.position == Vector2(9, 6)
 			and emblem.expand_mode == TextureRect.EXPAND_IGNORE_SIZE
 			and emblem.stretch_mode == TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			and emblem.mouse_filter == Control.MOUSE_FILTER_IGNORE
 			and emblem.focus_mode == Control.FOCUS_NONE
 			and button.focus_mode == Control.FOCUS_ALL and button.text == names[index]
-			and button.get_theme_font_size("font_size") == 14,
+			and button.get_theme_font_size("font_size") >= 16,
 			"%s mounts the 128px authored art in a non-interactive 19px button emblem" % key)
 		_check(rect == expected[index] and not rect.intersects(preview)
 			and not rect.intersects(figure) and rect.position.y >= 642
-			and rect.end.y < 675 and Rect2(0, 0, 1280, 720).encloses(rect),
-			"%s retains its existing mouse rectangle clear of stage, forecast and targets" % key)
+			and rect.end.y < 679 and Rect2(0, 0, 1280, 720).encloses(rect),
+			"%s has its larger mouse rectangle clear of stage, forecast and targets" % key)
 		for other in references:
 			_check(not rect.intersects(other), "%s cannot overlap any prior action or target" % key)
 		references.append(rect)
 		var font: Font = button.get_theme_font("font")
 		_check(font != null and font.get_string_size(button.text,
-			HORIZONTAL_ALIGNMENT_LEFT, -1, 14).x < rect.size.x - 38.0,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, button.get_theme_font_size("font_size")).x < rect.size.x - 40.0,
 			"%s has room for the authored emblem beside its unclipped readable text" % key)
 	var state := screen.battle.state_snapshot()
 	var rng := screen.battle.rng_state()
