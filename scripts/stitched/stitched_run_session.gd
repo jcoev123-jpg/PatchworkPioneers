@@ -757,6 +757,8 @@ func _open_event() -> bool:
 	var wallet := {"gold": gold, "scraps": scraps}
 	var id: String = pending.node_id
 	match _event_record.id:
+		RunStitchedMothSacrificeEvent.EVENT_ID:
+			_service = RunStitchedMothSacrificeEvent.open_stitched(id, satchel, scraps, catalog, _event_record)
 		RunStitchedEmberglassCampfireEvent.EVENT_ID:
 			_service = RunStitchedEmberglassCampfireEvent.new(_event_record.id, id, _roster(), candle, wallet)
 		RunStitchedBriarCampfireEvent.EVENT_ID:
@@ -770,6 +772,16 @@ func _open_event() -> bool:
 	var quote: Dictionary = _service.preview(_event_snapshot(), catalog) if _service is RunStitchedEventConsequence else _service.preview_choices()
 	if quote.get("ok") != true:
 		return false
+	if _service is RunStitchedMothSacrificeEvent:
+		for index in satchel.size():
+			var sacrifice: Dictionary = _service.preview_choices(index).choices[0]
+			_offer(sacrifice.choice_id, "%s / spare %d / %s" % [
+				sacrifice.text, index + 1, catalog[satchel[index].id].name], sacrifice.available, [index])
+		if satchel.is_empty():
+			_offer(quote.choices[0].choice_id, quote.choices[0].text + " / no spare parts", false)
+		for choice in quote.choices.slice(1):
+			_offer(choice.choice_id, choice.text, choice.available)
+		return true
 	for choice in quote.get("choices", []):
 		var text: String = choice.choice_id
 		for authored in _event_record.choices:
@@ -892,6 +904,23 @@ func _event_snapshot() -> Dictionary:
 
 
 func _choose_event(choice_id: String, arguments: Array) -> Dictionary:
+	if _service is RunStitchedMothSacrificeEvent:
+		var index: Variant = null
+		if choice_id == RunStitchedMothSacrificeEvent.CHOICE_SACRIFICE:
+			if arguments.size() != 1 or not arguments[0] is int:
+				return {"ok": false}
+			index = arguments[0]
+		elif not arguments.is_empty():
+			return {"ok": false}
+		var state: Dictionary = _service.read_state()
+		if state.get("satchel") != satchel or state.get("scraps") != scraps \
+				or state.get("node_id") != pending.node_id:
+			return {"ok": false}
+		var quote: Dictionary = _service.preview_choices(index)
+		for choice in quote.get("choices", []):
+			if choice.choice_id == choice_id and choice.available:
+				return _service.choose(choice_id, index, pending.node_id, state)
+		return {"ok": false}
 	if not _service is RunStitchedEventConsequence:
 		return _service.choose(choice_id, pending.node_id, _service.read_state())
 	match _event_record.get("actions", {}).get(choice_id, ""):

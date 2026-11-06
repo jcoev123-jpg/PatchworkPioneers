@@ -366,7 +366,25 @@ func _dye_immerse_outcomes() -> void:
 		return
 	var later_route: Array = app.run_map.get_route()
 	var later_deck: Array = app.run_deck.duplicate()
+	# Keep this wallet-specific continuation fixture on the required authored
+	# base stories. Catalog growth can otherwise select the separate debt parcel.
+	# The fixed map seed, real selector, roadside/hero packs and RNG stay intact.
+	var catalog_path: String = app.event_catalog_path
+	var wallet_catalog: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(catalog_path))
+	wallet_catalog.events = wallet_catalog.events.filter(func(event: Dictionary):
+		return event.id in RunM04EventRotation.REQUIRED_EVENT_IDS)
+	_check(RunM04EventRotation.new(wallet_catalog).is_catalog_valid(), "wallet continuation retains every required authored base story")
+	var fixture_path := OS.get_environment("TEMP").path_join("dye_vat_wallet_catalog_fixture.json")
+	var fixture_file := FileAccess.open(fixture_path, FileAccess.WRITE)
+	_check(fixture_file != null, "external wallet continuation catalog is writable")
+	if fixture_file == null:
+		return
+	fixture_file.store_string(JSON.stringify(wallet_catalog))
+	fixture_file.close()
+	app.event_catalog_path = fixture_path
 	await _click(later)
+	app.event_catalog_path = catalog_path
+	DirAccess.remove_absolute(fixture_path)
 	_check(app.dye_vat_panel == null and app.quiet_spool_panel == null and app.moth_panel == null
 		and app.run_map.get_route() == later_route + [fixture.path[4]] and app.route_view == null
 		and app.run_deck == later_deck and is_instance_valid(app.wallet_event_panel),
