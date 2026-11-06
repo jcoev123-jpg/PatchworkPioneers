@@ -450,6 +450,75 @@
         { "id": "pull_brass_pins", "text": "Pull the brass axle pins (lose 2 max HP; gain 26 gold)", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
         { "id": "leave", "text": "Leave the starwheel turning in the dark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_mothglass_projector",
+      "title": "The Mothglass Shadow Projector",
+      "description": "A house-high projector of smoky glass casts huge stitched moth shadows across plum curtains; the Lantern Monk lifts a warm pole lantern to steady its trembling bone-white lens.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "steady_mothglass_lens",
+          "text": "Pay 14 gold to warm the shadow lens (heal 8 HP)",
+          "outcome": { "gold": -14, "scraps": 0, "hp": 8, "max_hp": 0 }
+        },
+        {
+          "id": "gather_hot_glass_threads",
+          "text": "Salvage glowing mothglass thread (lose 5 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the moth shadows flutter behind the curtain",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_straw_orbitarium",
+      "title": "The Straw-Orbitarium",
+      "description": "A crooked toy planetarium spins on a pitchfork axle above black shingles; the Scarecrow's shoulder crow tugs loose a stitched star as a giant straw moon tilts toward the road.",
+      "required_hero": "scarecrow",
+      "choices": [
+        {
+          "id": "stitch_straw_moon",
+          "text": "Spend 2 scraps to bind a lasting moon seam (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "pluck_orbit_wires",
+          "text": "Pull the sharp orbit wires (lose 6 HP; earn 25 gold)",
+          "outcome": { "gold": 25, "scraps": 0, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the straw moon turning in the dark",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_domino_threshold",
+      "title": "The Domino Threshold",
+      "description": "Bone-cream fabric dominoes tower over a narrow hallway; the Button Golem's broad brass-button fists brace the first piece while oxblood cross-stitches pull taut along the falling line.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "bind_domino_brace",
+          "text": "Spend 2 scraps to stitch the button brace (heal 7 HP; gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 7, "max_hp": 1 }
+        },
+        {
+          "id": "pry_brass_button_pip",
+          "text": "Pry loose a brass button pip (lose 2 max HP; gain 27 gold)",
+          "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the dominoes stand in uneasy silence",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
