@@ -103,7 +103,7 @@ func _party(lost_index: int = 2) -> Array:
 			"max_hp": 30 + index,
 			"fray": 3 * index,
 			"statuses": {"weak": index},
-			"parts": gear[index],
+			"parts": {} if index == lost_index else gear[index],
 			"extra": {"nested": [index, "opaque"]},
 		})
 	return party
@@ -139,6 +139,12 @@ func _test_admission() -> void:
 		"string rank": func(p: Array, _c: Array) -> void: p[3]["rank"] = "4",
 		"non-boolean lost": func(p: Array, _c: Array) -> void: p[0]["lost"] = 0,
 		"missing lost": func(p: Array, _c: Array) -> void: p[0].erase("lost"),
+		"lost still equipped": func(p: Array, _c: Array) -> void: p[2]["parts"] = p[0]["parts"].duplicate(true),
+		"lost positive hp": func(p: Array, _c: Array) -> void: p[2]["hp"] = 1,
+		"lost missing hp": func(p: Array, _c: Array) -> void: p[2].erase("hp"),
+		"lost non-dictionary parts": func(p: Array, _c: Array) -> void: p[2]["parts"] = [],
+		"empty survivor": func(p: Array, _c: Array) -> void: p[0]["parts"] = {},
+		"invalid party hp": func(p: Array, _c: Array) -> void: p[0]["hp"] = true,
 		"unknown worn part": func(p: Array, _c: Array) -> void: p[0]["parts"]["head"]["id"] = "nope",
 		"worn part in wrong slot": func(p: Array, _c: Array) -> void: p[0]["parts"]["head"]["id"] = "warden_legs_rim_toss",
 		"worn part missing slot": func(p: Array, _c: Array) -> void: p[0]["parts"].erase("legs"),
@@ -358,6 +364,8 @@ func _test_closed_and_replay() -> void:
 	# Two LOST dolls: one visit still replaces only one.
 	var party := _party()
 	party[0]["lost"] = true
+	party[0]["hp"] = 0
+	party[0]["parts"] = {}
 	var two_lost := RunStitchedSewingReplacement.new(NODE, party, [_scarecrow(), _scarecrow_variant()], catalog)
 	_check(bool(two_lost.read_state()["ok"]), "party with two LOST dolls is admitted")
 	_check(two_lost.quote()["lost"].size() == 2 and two_lost.quote()["candidates"].size() == 2, "quote lists both LOST dolls and both candidates")

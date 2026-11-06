@@ -10,7 +10,8 @@ extends RefCounted
 ## through the existing loss path, so nothing is sent there again. It never touches RNG, candles, gold,
 ## scraps, satchel, patches, pockets, cards, map traversal or battle state.
 ##
-## Party record: {"id", "rank": 1-4 (distinct), "lost": bool, "parts": {slot: {"id","tier","torn"}}, ...opaque}
+## Party record: {"id", "rank": 1-4 (distinct), "lost": bool, "hp", "max_hp", "parts", ...opaque}.
+## Survivors wear four valid slots; LOST records have hp == 0 and parts == {}.
 ## Candidate template: {"id", "max_hp": int > 0, "hp": 1..max_hp, "parts": {four slots: tier 1, untorn,
 ## catalog slot and owner == candidate id}, ...opaque}; "rank" and "lost" are assigned by the service.
 ##
@@ -232,6 +233,16 @@ func _setup(node_id: Variant, party: Variant, candidates: Variant, catalog_by_id
 		seen_ranks[int(raw["rank"])] = true
 		if typeof(raw.get("lost")) != TYPE_BOOL:
 			return "doll %s needs a boolean lost flag" % hero_id
+		if typeof(raw.get("max_hp")) != TYPE_INT or int(raw["max_hp"]) <= 0 \
+				or typeof(raw.get("hp")) != TYPE_INT or int(raw["hp"]) < 0 or int(raw["hp"]) > int(raw["max_hp"]):
+			return "doll %s has invalid HP" % hero_id
+		# Loss already unpicked every part into the satchel. Only that exact empty,
+		# zero-HP state is legal; an empty survivor or an equipped LOST doll is not.
+		if _is_lost(raw):
+			if raw["hp"] != 0 or not raw.get("parts") is Dictionary or not raw["parts"].is_empty():
+				return "doll %s has invalid lost state" % hero_id
+			clean_party.append(raw.duplicate(true))
+			continue
 		var parts_error := _check_parts(raw.get("parts"), false, "")
 		if not parts_error.is_empty():
 			return "doll %s: %s" % [hero_id, parts_error]
