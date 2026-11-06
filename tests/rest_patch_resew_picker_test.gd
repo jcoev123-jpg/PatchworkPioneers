@@ -202,7 +202,7 @@ func _chip_face_checks() -> void:
 func _typography_checks() -> void:
 	var theme_path := str(ProjectSettings.get_setting("gui/theme/custom", ""))
 	var master: Theme = load(theme_path) if ResourceLoader.exists(theme_path) else null
-	_check(master != null and theme_path == "res://assets/fonts/patchwork_theme.tres",
+	_check(master != null and theme_path == "res://themes/gothic_theme.tres",
 		"project installs the master patchwork theme as its default")
 	if master == null:
 		return

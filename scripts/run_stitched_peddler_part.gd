@@ -202,8 +202,7 @@ func _offer_summary() -> Dictionary:
 		"tier": _offer_tier,
 		"torn": false,
 		"price": _price,
-		"ability": {"id": str(ability["id"]), "name": str(ability["name"]), "kind": str(ability["kind"]),
-			"dmg": ability.get("dmg", [0, 0]).duplicate(), "crit": int(ability.get("crit", 0))},
+		"ability": ability,
 		"stat": StitchedParts.stat_at_tier(entry, _offer_tier),
 		"text": str(entry["text"]),
 	}

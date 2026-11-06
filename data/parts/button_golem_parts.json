@@ -308,7 +308,8 @@
         "target": [
           1,
           2,
-          3
+          3,
+          4
         ],
         "target_side": "enemy",
         "multi": true,
@@ -343,7 +344,7 @@
           }
         }
       },
-      "text": "Scatter buttons across three foe ranks, once per target; each already-Marked target takes extra damage."
+      "text": "Scatter buttons across every occupied foe rank, once per target; each already-Marked target takes extra damage."
     },
     {
       "id": "button_golem_torso_eyelet_guard",

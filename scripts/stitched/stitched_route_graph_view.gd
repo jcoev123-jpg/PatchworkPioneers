@@ -1,10 +1,13 @@
 class_name StitchedRouteGraphView
 extends VBoxContainer
-## Passive projection of the session's already-generated map. Only the
-## right-page native Buttons can enter a stop; no graph item takes focus.
+## Projection of the session's generated map. Lit nodes request a route;
+## the mounted app alone authenticates and enters it.
 
 const NODE_ART := "res://assets/paper/ui/map_node_%s.png"
+signal route_requested(id: String)
+
 const FELT := "res://assets/paper/ui/panel_felt.png"
+const ROUTE_BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const BONE := Color("#efdfc0")
 const AMBER := Color("#ffe0a0")
 const VISITED := Color("#c6b6d9")
@@ -40,6 +43,7 @@ func present(map: RunMap, choices: Array[String]) -> void:
 	scroll.custom_minimum_size.y = 110
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.follow_focus = true
 	add_child(scroll)
 	var bands := VBoxContainer.new()
 	bands.name = "RouteGraphBands"
@@ -149,6 +153,8 @@ func _add_node(parent: HBoxContainer, record: Dictionary, route: Array[String], 
 	var state_label := _label("", 11, AMBER)
 	state_label.name = "GraphNodeState"
 	tile.add_child(state_label)
+	if status == "legal":
+		_add_activation(tile, id)
 
 	# Each authored directed edge has its own inert label and exact source /
 	# target IDs. In particular, crossed links are never inferred from layout.
@@ -169,6 +175,51 @@ func _add_node(parent: HBoxContainer, record: Dictionary, route: Array[String], 
 		labels.append(edge)
 	_edge_labels[id] = labels
 	_style_node(id)
+
+
+## Only an actual, mounted, enabled control may request entry. The view
+## never modifies the session; the app checks the page/snapshot/choice again.
+func _add_activation(tile: VBoxContainer, id: String) -> void:
+	var button := Button.new()
+	button.name = "GraphNodeActivate"
+	button.text = "ENTER"
+	button.set_meta("route_id", id)
+	button.set_meta("art_path", ROUTE_BUTTON_ART)
+	button.custom_minimum_size = Vector2(77, 25)
+	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	button.focus_mode = Control.FOCUS_ALL
+	button.add_theme_font_size_override("font_size", 12)
+	button.add_theme_color_override("font_color", BONE)
+	button.add_theme_color_override("font_hover_color", AMBER)
+	button.add_theme_color_override("font_focus_color", AMBER)
+	var texture := _texture(ROUTE_BUTTON_ART)
+	if texture != null:
+		for face in ["normal", "hover", "pressed", "focus"]:
+			var skin := StyleBoxTexture.new()
+			skin.texture = texture
+			skin.texture_margin_left = 12
+			skin.texture_margin_right = 12
+			skin.texture_margin_top = 12
+			skin.texture_margin_bottom = 12
+			if face == "focus" or face == "hover":
+				skin.modulate_color = Color("#f4c77b")
+			elif face == "pressed":
+				skin.modulate_color = Color("#bd997c")
+			button.add_theme_stylebox_override(face, skin)
+	tile.add_child(button)
+	button.mouse_entered.connect(func(): set_inspected_route(id))
+	button.mouse_exited.connect(func():
+		if not button.has_focus():
+			clear_inspected_route(id))
+	button.focus_entered.connect(func(): set_inspected_route(id))
+	button.focus_exited.connect(func():
+		if not button.is_hovered():
+			clear_inspected_route(id))
+	button.pressed.connect(func():
+		if legal_ids.has(id) and tile.get_meta("status") == "legal" \
+			and button.get_parent() == tile and button.is_visible_in_tree() \
+			and not button.disabled and is_visible_in_tree():
+			route_requested.emit(id))
 
 
 func _refresh_inspection() -> void:

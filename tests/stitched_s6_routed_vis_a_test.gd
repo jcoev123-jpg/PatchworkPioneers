@@ -134,7 +134,7 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 	var session: StitchedRunSession = app.stitched_run_session
 	var graph: StitchedRouteGraphView = book.graph_view
 	_check(graph != null and graph.get_parent() != null and graph.is_visible_in_tree(),
-		label + " embeds the live, passive atlas on the left page")
+		label + " embeds the live route atlas on the left page")
 	if graph == null:
 		return
 	var left := book.find_child("RouteOrVisitStory", true, false)
@@ -147,7 +147,7 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 	_check(graph.is_ancestor_of(scroll) and left.is_ancestor_of(graph)
 		and scroll != null and bands != null and preview != null
 		and scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
-		and graph.get_meta("floor_count") == floors.size() and floors.size() == 12,
+		and scroll.follow_focus and graph.get_meta("floor_count") == floors.size() and floors.size() == 12,
 		label + " nests all twelve authored bands in the left-page scroll")
 	if bands == null or preview == null:
 		return
@@ -187,6 +187,17 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 			var floor_label := tile.find_child("GraphNodeFloor", false, false) as Label
 			var path_label := tile.find_child("GraphNodePath", false, false) as Label
 			var state_label := tile.find_child("GraphNodeState", false, false) as Label
+			var activations := tile.find_children("GraphNodeActivate", "Button", false, false)
+			var activation := activations[0] as Button if activations.size() == 1 else null
+			_check(activations.size() == (1 if choices.has(id) else 0)
+				and (not choices.has(id) or (activation != null
+					and activation.get_meta("route_id", "") == id
+					and activation.get_meta("art_path", "") == "res://assets/paper/ui/reward_button.png"
+					and activation.focus_mode == Control.FOCUS_ALL and not activation.disabled
+					and activation.is_visible_in_tree()
+					and activation.get_theme_stylebox("normal") is StyleBoxTexture
+					and activation.get_theme_stylebox("focus") is StyleBoxTexture)),
+				label + " " + id + " has one real image-backed activation iff connected/legal")
 			_check(tile.get_meta("route_id") == id and tile.get_meta("node_kind") == record.type
 				and tile.get_meta("floor") == record.floor
 				and tile.get_meta("path") == record.position + 1
@@ -198,7 +209,7 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 				and tile.get_meta("status") == expected_status
 				and tile.focus_mode == Control.FOCUS_NONE
 				and tile.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-				label + " " + id + " has exact detached session truth and cannot admit")
+				label + " " + id + " has exact detached session truth in a passive tile shell")
 			_check(art != null and art.texture != null and art.get_meta("art_path", "").begins_with("res://assets/paper/ui/map_node_")
 				and kind != null and record.type.to_upper() in kind.text
 				and floor_label != null and "FLOOR %02d" % record.floor in floor_label.text
@@ -290,9 +301,225 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids", []) == []
 			and session.snapshot() == initial,
 			label + " keyboard focus exit clears preview without a game action")
+	for id in choices:
+		var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+		var activate := tile.get_node("GraphNodeActivate") as Button
+		var ticket: Button = app.stitched_run_buttons[choices.find(id)]
+		_check(ticket.get_node(ticket.focus_neighbor_left) == activate
+			and activate.get_node(activate.focus_neighbor_right) == ticket,
+			label + " keyboard Left/Right joins lit graph node and original ticket")
+		activate.mouse_entered.emit()
+		_check(graph.inspected_route_id == id and tile.get_meta("inspected")
+			and (tile.get_node("GraphNodeState") as Label).text == "FOCUSED"
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
+				== session.map.get_node(id).outgoing
+			and session.snapshot() == initial,
+			label + " graph pointer hover previews exact authored outgoing seams without spending")
+		activate.mouse_exited.emit()
+		_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
+			label + " graph pointer exit clears preview without changing the run")
+		activate.grab_focus()
+		await process_frame
+		_check(activate.has_focus() and graph.inspected_route_id == id
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
+				== session.map.get_node(id).outgoing and session.snapshot() == initial,
+			label + " graph keyboard focus traces real outgoing edges without drawing RNG")
+		activate.mouse_entered.emit()
+		activate.mouse_exited.emit()
+		_check(graph.inspected_route_id == id,
+			label + " graph mouse exit preserves keyboard focus inspection")
+		var save: Button = app.stitched_run_buttons[choices.size()]
+		save.grab_focus()
+		await process_frame
+		_check(graph.inspected_route_id.is_empty()
+			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids") == []
+			and session.snapshot() == initial,
+			label + " graph blur restores empty preview with no spend")
 	graph.set_inspected_route("invented")
 	_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
 		label + " nonexistent map focus cannot create a path or draw RNG")
+
+
+## S8f-enabled live app: graph admission is the same real entry used by tickets.
+func _graph_walk_and_rejections() -> void:
+	var witness := _seed_with_kind("Event")
+	_check(not witness.is_empty(), "graph Walk has a genuine non-boss opening witness")
+	if witness.is_empty():
+		return
+	root.size = Vector2i(1280, 720)
+	var app: Node = load("res://scenes/app.tscn").instantiate()
+	app.run_seed = witness.seed
+	root.add_child(app)
+	await process_frame
+	app.start_button.pressed.emit()
+	await process_frame
+	app.stitched_run_buttons[0].pressed.emit()
+	await process_frame
+	if is_instance_valid(app.stitched_run_intro):
+		var begin: Button = app.stitched_run_intro.find_child("WrenIntroBegin", true, false)
+		_check(begin != null, "graph Walk dismisses the real Wren intro")
+		if begin != null:
+			begin.pressed.emit()
+	var session: StitchedRunSession = app.stitched_run_session
+	_check(session != null and session.phase == "map" and session.walks_enabled,
+		"graph Walk is mounted in the live S8f-enabled New Run")
+	if session == null or session.phase != "map":
+		app.free()
+		return
+	_assert_book(app, "graph Walk opening")
+	await _exercise_graph_inspection(app, "graph Walk opening")
+	var book := app.stitched_run_panel.find_child("StitchedRouteBookView", true, false) as StitchedRouteBookView
+	var graph: StitchedRouteGraphView = book.graph_view
+	var id: String = witness.id
+	_check(session.choices().has(id) and session.map.get_node(id).type != "Boss",
+		"graph admission uses an actual connected, non-boss map ID")
+	var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
+	var button := tile.get_node("GraphNodeActivate") as Button
+	var before := session.snapshot()
+	var journal_before := session.journal.size()
+	_check(before.candle == 100 and journal_before == 0 and session.receipts.is_empty(),
+		"graph Walk begins with a fresh unspent candle, journal and receipts")
+	for floor in session.map.get_floors():
+		for record in floor:
+			if not session.choices().has(str(record.id)):
+				graph.route_requested.emit(str(record.id))
+				_check(session.snapshot() == before and session.journal.size() == journal_before,
+					"disconnected/visited/future node " + str(record.id) + " cannot request entry")
+	graph.route_requested.emit("forged")
+	_check(session.snapshot() == before and session.journal.size() == journal_before,
+		"forged ID via the public graph signal cannot spend or change RNG/ledger")
+	button.disabled = true
+	button.pressed.emit()
+	graph.route_requested.emit(id)
+	_check(session.snapshot() == before, "disabled graph button and signal reject even a legal ID")
+	button.disabled = false
+	button.hide()
+	button.pressed.emit()
+	graph.route_requested.emit(id)
+	_check(session.snapshot() == before, "hidden graph button and signal reject even a legal ID")
+	button.show()
+	button.grab_focus()
+	await process_frame
+	var graph_scroll := graph.find_child("RouteGraphScroll", true, false) as ScrollContainer
+	var pointer := button.get_global_rect().get_center()
+	_check(graph_scroll.get_global_rect().has_point(pointer)
+		and root.get_visible_rect().has_point(pointer),
+		"lit graph activation is fully reachable inside the mounted book's clipped scroll")
+	var motion := InputEventMouseMotion.new()
+	motion.position = pointer
+	root.push_input(motion, true)
+	await process_frame
+	for down in [true, false]:
+		var click := InputEventMouseButton.new()
+		click.position = pointer
+		click.button_index = MOUSE_BUTTON_LEFT
+		click.pressed = down
+		root.push_input(click, true)
+		await process_frame
+	_check(session.phase == "walk" and app.stitched_run_walk != null
+		and app.stitched_run_walk.host == session and session.map.get_route() == [id]
+		and session.map.get_current_node_id() == id
+		and session.candle == before.candle - 8
+		and session.journal.size() == journal_before + 1
+		and session.journal.back().action == "enter"
+		and session.journal.back().node_id == id and session.receipts.is_empty(),
+		"graph pointer enters exactly once, charges eight candle, journals once and mounts hosted Walk")
+	var entered := session.snapshot()
+	if is_instance_valid(button):
+		button.pressed.emit()
+	if is_instance_valid(graph):
+		graph.route_requested.emit(id)
+	_check(session.snapshot() == entered and session.journal.size() == journal_before + 1,
+		"stale graph control and signal after Walk transition cannot replay or draw RNG")
+	app.free()
+	await process_frame
+
+	# Keyboard Enter must activate a fresh native graph control, not a data hook.
+	var keyboard_app: Node = load("res://scenes/app.tscn").instantiate()
+	keyboard_app.run_seed = witness.seed
+	root.add_child(keyboard_app)
+	await process_frame
+	keyboard_app.start_button.pressed.emit()
+	await process_frame
+	keyboard_app.stitched_run_buttons[0].pressed.emit()
+	await process_frame
+	if is_instance_valid(keyboard_app.stitched_run_intro):
+		keyboard_app.stitched_run_intro.find_child("WrenIntroBegin", true, false).pressed.emit()
+	var keyboard_session: StitchedRunSession = keyboard_app.stitched_run_session
+	var keyboard_graph := keyboard_app.stitched_run_panel.find_child("StitchedRouteGraphView", true, false) as StitchedRouteGraphView
+	var keyboard_button := keyboard_graph.find_child("GraphNode_" + id, true, false).get_node("GraphNodeActivate") as Button
+	var keyboard_before := keyboard_session.snapshot()
+	var matching_ticket: Button = keyboard_app.stitched_run_buttons[keyboard_session.choices().find(id)]
+	matching_ticket.grab_focus()
+	await process_frame
+	var left_key := InputEventKey.new()
+	left_key.keycode = KEY_LEFT
+	left_key.pressed = true
+	Input.parse_input_event(left_key)
+	await process_frame
+	left_key.pressed = false
+	Input.parse_input_event(left_key)
+	await process_frame
+	_check(keyboard_button.has_focus(),
+		"Left arrow from a right-page legal ticket reaches its matching graph button")
+	if not keyboard_button.has_focus():
+		keyboard_button.grab_focus()
+	await process_frame
+	_check(keyboard_button.has_focus(), "native legal graph control receives keyboard focus in real app")
+	var key := InputEventKey.new()
+	key.keycode = KEY_ENTER
+	key.pressed = true
+	Input.parse_input_event(key)
+	await process_frame
+	key.pressed = false
+	Input.parse_input_event(key)
+	await process_frame
+	_check(keyboard_session.phase == "walk" and keyboard_session.map.get_route() == [id]
+		and keyboard_session.candle == keyboard_before.candle - 8
+		and keyboard_session.journal.size() == 1
+		and keyboard_app.stitched_run_walk != null,
+		"native graph Enter key opens exactly one authentic hosted Walk")
+	keyboard_app.free()
+	await process_frame
+
+	# A legitimate session option updates the sealed snapshot while the old
+	# map view is still mounted, proving the captured page guard rejects it.
+	var stale_app: Node = await _new_run(witness.seed)
+	var stale_session: StitchedRunSession = stale_app.stitched_run_session
+	var stale_graph := stale_app.stitched_run_panel.find_child("StitchedRouteGraphView", true, false) as StitchedRouteGraphView
+	var stale_button := stale_graph.find_child("GraphNode_" + id, true, false).get_node("GraphNodeActivate") as Button
+	var captured := stale_session.snapshot()
+	_check(stale_session.enable_walks() and stale_session.snapshot() != captured
+		and stale_session.phase == "map", "session Walk opt-in creates an authentic stale captured snapshot")
+	var changed := stale_session.snapshot()
+	stale_button.pressed.emit()
+	stale_graph.route_requested.emit(id)
+	_check(stale_session.snapshot() == changed and stale_session.map.get_route().is_empty()
+		and stale_session.journal.is_empty() and stale_session.receipts.is_empty(),
+		"stale expected map snapshot cannot admit or change RNG, candle, wallet or receipts")
+	stale_app.free()
+	await process_frame
+
+	# Right-page path remains fully equivalent on a separate live Walk run.
+	var ticket_app: Node = load("res://scenes/app.tscn").instantiate()
+	ticket_app.run_seed = witness.seed
+	root.add_child(ticket_app)
+	await process_frame
+	ticket_app.start_button.pressed.emit()
+	await process_frame
+	ticket_app.stitched_run_buttons[0].pressed.emit()
+	await process_frame
+	if is_instance_valid(ticket_app.stitched_run_intro):
+		ticket_app.stitched_run_intro.find_child("WrenIntroBegin", true, false).pressed.emit()
+	var ticket_session: StitchedRunSession = ticket_app.stitched_run_session
+	var ticket_before := ticket_session.snapshot()
+	ticket_app.stitched_run_buttons[ticket_session.choices().find(id)].pressed.emit()
+	_check(ticket_session.phase == "walk" and ticket_session.map.get_route() == [id]
+		and ticket_session.candle == ticket_before.candle - 8
+		and ticket_session.journal.size() == 1 and ticket_app.stitched_run_walk != null,
+		"untouched right-page ticket admits the identical canonical S8f Walk")
+	ticket_app.free()
+	await process_frame
 
 
 func _keyboard_route() -> void:
@@ -444,6 +671,7 @@ func _visit_kind(kind: String, expect_disabled: bool) -> void:
 		var returned := session.snapshot()
 		var next_ids := session.choices()
 		var old_page_buttons: Array[Button] = app.stitched_run_buttons.duplicate()
+		var old_graph: StitchedRouteGraphView = app.stitched_run_panel.find_child("StitchedRouteGraphView", true, false)
 		var save_path := "user://stitched_s6_route_book_" + kind + ".save"
 		app.stitched_save_path = save_path
 		old_page_buttons[next_ids.size()].pressed.emit()
@@ -461,6 +689,8 @@ func _visit_kind(kind: String, expect_disabled: bool) -> void:
 		# queued for deletion, while the new atlas uses independent controls.
 		for stale in old_page_buttons:
 			stale.pressed.emit()
+		if is_instance_valid(old_graph) and not next_ids.is_empty():
+			old_graph.route_requested.emit(next_ids[0])
 		_check(session.snapshot() == returned and app.stitched_run_session == restored
 			and restored.snapshot() == returned,
 			kind + " stale Save/Reload/route buttons cannot replay or consume RNG")
@@ -503,6 +733,7 @@ func _terminal(app: Node, mode: String) -> void:
 
 
 func _run() -> void:
+	await _graph_walk_and_rejections()
 	await _keyboard_route()
 	await _visit_kind("Event", false)
 	await _visit_kind("SewingCircle", true)

@@ -366,13 +366,15 @@
           "name": "Hauler Slam",
           "kind": "melee",
           "launch": [1, 2],
-          "target": [1],
+          "target": [1, 2],
           "target_side": "enemy",
           "multi": false,
           "acc": 84,
           "dmg": [5, 7],
           "crit": 0,
-          "effects": {},
+          "effects": {
+            "exposed": 2
+          },
           "self_move": 0,
           "move": "attack2"
         },
@@ -380,15 +382,16 @@
           "id": "chain_drag",
           "name": "Chain Drag",
           "kind": "debuff",
-          "launch": [1, 4],
-          "target": [1, 2],
+          "launch": [1, 2, 3, 4],
+          "target": [2, 3, 4],
           "target_side": "enemy",
           "multi": false,
           "acc": 88,
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
-            "push": 1
+            "pull": 1,
+            "fray": 4
           },
           "self_move": 0,
           "move": "skill"

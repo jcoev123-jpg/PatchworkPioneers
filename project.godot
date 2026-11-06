@@ -27,7 +27,7 @@ window/stretch/aspect="keep"
 
 [gui]
 
-theme/custom="res://assets/fonts/patchwork_theme.tres"
+theme/custom="res://themes/gothic_theme.tres"
 
 [rendering]
 

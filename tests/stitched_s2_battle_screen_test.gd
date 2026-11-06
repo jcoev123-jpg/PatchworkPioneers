@@ -762,10 +762,9 @@ func _run() -> void:
 	_check(not ProjectSettings.has_setting("patchwork/combat_mode"), "S2 needs no retired combat setting")
 	var configured_theme_path := str(ProjectSettings.get_setting("gui/theme/custom", ""))
 	var configured_theme := load(configured_theme_path) as Theme
-	_check(configured_theme_path == "res://assets/fonts/patchwork_theme.tres"
-		and configured_theme != null and configured_theme.default_font == StitchedBattleChrome.RANK_FONT
-		and configured_theme != load("res://themes/gothic_theme.tres"),
-		"precondition: ACTUAL project mounts patchwork theme, not rejected Gothic default")
+	_check(configured_theme_path == "res://themes/gothic_theme.tres"
+		and configured_theme != null and configured_theme.default_font == StitchedBattleChrome.RANK_FONT,
+		"precondition: ACTUAL project mounts the Gothic Patrick Hand default")
 	var config := StitchedBattleScreen.read_preview()
 	_check(str(config.get("mode", "")) == "stitched" and config.get("heroes", []).size() == 4 and
 		config.get("foes", []).size() == 3, "representative seed and real 4v3 inputs exist")

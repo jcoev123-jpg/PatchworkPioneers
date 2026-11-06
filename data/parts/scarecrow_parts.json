@@ -252,7 +252,8 @@
         "target": [
           1,
           2,
-          3
+          3,
+          4
         ],
         "target_side": "enemy",
         "multi": true,
@@ -287,7 +288,7 @@
           }
         }
       },
-      "text": "Call crows over the first three foe ranks; Weak and Mark each struck foe."
+      "text": "Call crows across foe ranks one to four; Weak and Mark each struck foe."
     },
     {
       "id": "scarecrow_arms_harvest_fright",

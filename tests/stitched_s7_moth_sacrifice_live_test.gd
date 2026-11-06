@@ -2,7 +2,9 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
-const RICH_SEED := 54376
+# Re-derived through the genuine map -> battle -> Peddler -> Event pipeline after the
+# merged roadside Event packs shifted the seeded selector.
+const RICH_SEED := 152239
 # The merged roadside Event packs shifted the seeded selector; this empty-satchel floor-1
 # witness still reaches the authored Moth with zero scraps.
 const POOR_SEED := 744

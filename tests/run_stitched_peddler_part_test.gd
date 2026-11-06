@@ -32,7 +32,8 @@ func _initialize() -> void:
 		_test_refusals_and_replay()
 		_test_offer_tiers()
 		_test_choice_availability()
-	_check(randi() == next_draw, "open, quote, buy, leave and refusals draw no global RNG")
+		_test_full_ability_quotes()
+	_check(randi()== next_draw, "open, quote, buy, leave and refusals draw no global RNG")
 	if failures.is_empty():
 		print("run_stitched_peddler_part_test: PASS (", checks, " checks)")
 	else:
@@ -507,3 +508,67 @@ func _test_offer_tiers() -> void:
 	state["offer"]["ability"]["dmg"][0] = 99
 	_check(_open_tier(2).read_state()["offer"]["ability"]["dmg"] == [5, 7] and catalog == before_catalog,
 		"tier projections never mutate the catalog or share state")
+
+
+## The quote and snapshot disclose the COMPLETE tier-resolved ability (equal to the real resolver's
+## output), for a Warden head part and a foreign owner:"any" Scissor Claw, detached from the service.
+func _test_full_ability_quotes() -> void:
+	var claw_id := "scissor_crab_claw_arm"
+	var foreign := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+	_check(bool(foreign.get("ok", false)) and foreign.get("by_id", {}).has(claw_id),
+		"the real foreign catalog loads and holds the Scissor Claw")
+	if not foreign.get("by_id", {}).has(claw_id):
+		return
+	var merged: Dictionary = catalog.duplicate(true)
+	merged[claw_id] = foreign["by_id"][claw_id].duplicate(true)
+	var merged_before: Dictionary = merged.duplicate(true)
+	var witnesses: Array = [
+		{"id": HEAD, "key": "weak", "amounts": [1, 2, 3], "dmg": [[3, 5], [5, 7], [6, 9]], "crit": [0, 0, 8]},
+		{"id": claw_id, "key": "bleed", "amounts": [2, 3, 4], "dmg": [[4, 7], [5, 8], [6, 9]], "crit": [0, 0, 0]},
+	]
+	for witness in witnesses:
+		var part_id := str(witness["id"])
+		for tier in [1, 2, 3]:
+			var label := part_id + " tier " + str(tier)
+			var visit := _open_tier(tier, 200, _spares(1), TIER_PRICE, NODE, part_id) if part_id == HEAD \
+				else RunStitchedPeddlerPart.open_stitched(NODE, 200, _spares(1), merged, part_id, TIER_PRICE, tier)
+			var expected: Dictionary = StitchedParts.ability_at_tier(merged[part_id], tier)
+			_check(visit.is_open() and not expected.is_empty(), "visit opens with a resolved ability: " + label)
+			var state_ability: Dictionary = visit.read_state().get("offer", {}).get("ability", {})
+			var quote_ability: Dictionary = visit.quote().get("offer", {}).get("ability", {})
+			_check(state_ability == expected and quote_ability == expected,
+				"read_state and quote carry the complete tier-resolved ability: " + label)
+			for field in ["launch", "target", "target_side", "multi", "acc", "effects", "self_move", "move"]:
+				_check(expected.has(field) and state_ability.has(field),
+					"the disclosed ability has " + field + ": " + label)
+			var idx: int = tier - 1
+			_check(state_ability.get("dmg") == witness["dmg"][idx] and state_ability.get("crit") == witness["crit"][idx]
+				and state_ability.get("effects", {}).get(str(witness["key"])) == witness["amounts"][idx]
+				and state_ability.get("launch") == [1, 2] and state_ability.get("target") == [1, 2]
+				and state_ability.get("target_side") == "enemy" and state_ability.get("acc") == 90,
+				"authored damage, crit, status and unchanged ranks show at: " + label)
+			# Mutating the returned nested arrays and effects drifts nothing.
+			var snap := visit.read_state()
+			state_ability["launch"].append(4)
+			state_ability["target"][0] = 4
+			state_ability["effects"]["bleed"] = 99
+			state_ability["effects"]["weak"] = 99
+			state_ability["dmg"][0] = 99
+			quote_ability["effects"].clear()
+			quote_ability["launch"].clear()
+			_check(visit.read_state() == snap and visit.quote().get("offer", {}).get("ability") == expected
+				and merged == merged_before, "mutating returned nested ability data drifts nothing: " + label)
+			var paid := visit.buy(NODE, snap)
+			_check(paid.get("ok") == true and paid.get("part") == {"id": part_id,
+				"slot": str(merged[part_id]["slot"]), "tier": tier, "torn": false}
+				and paid.get("state", {}).get("offer", {}).get("ability") == expected,
+				"buy still charges the quote and the receipt keeps the full ability: " + label)
+	# A forged partial ability projection is refused as a stale snapshot.
+	var guarded := _open_tier(2)
+	var forged: Dictionary = guarded.read_state().duplicate(true)
+	forged["offer"]["ability"]["effects"]["weak"] = 1
+	_reject(guarded, true, NODE, forged, "forged effect projection")
+	var short: Dictionary = guarded.read_state().duplicate(true)
+	short["offer"]["ability"].erase("launch")
+	_reject(guarded, true, NODE, short, "snapshot missing a rank field")
+	_check(guarded.buy(NODE, guarded.read_state()).get("ok") == true, "the exact snapshot still buys after forgeries")
