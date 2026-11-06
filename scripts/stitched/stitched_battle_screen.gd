@@ -46,6 +46,9 @@ var _part_help_dialog: AcceptDialog
 var _part_hover_slot := ""
 var _part_focus_slot := ""
 var _action_buttons: Dictionary = {}
+var _action_cues: Dictionary = {}
+var _action_hover_key := ""
+var _action_focus_key := ""
 var _utilities_open := false
 var _target_buttons: Dictionary = {}
 var _labels: Dictionary = {}
@@ -241,6 +244,13 @@ func _build_screen() -> void:
 	_action_buttons["re_tie"] = _button("Re-tie", Rect2(546, 642, 136, 29), func(): submit_re_tie())
 	_action_buttons["pass"] = _button("Pass turn", Rect2(689, 642, 150, 29), func(): submit_pass())
 	_action_buttons["retreat"] = _button("Retreat", Rect2(846, 642, 165, 29), func(): submit_retreat())
+	for action_key in ["move_front", "move_back", "re_tie", "pass", "retreat"]:
+		var emblem: String = "move" if action_key.begins_with("move_") else (
+			"retie" if action_key == "re_tie" else action_key)
+		var icon_path: String = "res://assets/paper/stitched/icons/action_" + emblem + ".png"
+		_action_buttons[action_key].name = "TurnAction" + action_key.to_pascal_case()
+		CHROME.style_action_button(_action_buttons[action_key], icon_path)
+		_bind_action_inspection(_action_buttons[action_key], action_key)
 	for index in range(4):
 		var rank := index + 1
 		var hero_key := "hero_" + str(rank)
@@ -734,11 +744,7 @@ func _refresh() -> void:
 	_update_figure_lights()
 	for key in _target_buttons:
 		_target_buttons[key].disabled = not _target_ranks.has(key)
-	_action_buttons["move_front"].disabled = not hero_turn or not _can_move(-1)
-	_action_buttons["move_back"].disabled = not hero_turn or not _can_move(1)
-	_action_buttons["re_tie"].disabled = not hero_turn or not cuts.has(str(acting.get("id", "")))
-	_action_buttons["pass"].disabled = not hero_turn
-	_action_buttons["retreat"].disabled = not hero_turn or battle.is_boss_encounter()
+	_refresh_action_cues(acting, hero_turn, cuts)
 	_labels["log"].text = _seat_detail_for(_inspected_seat) if not _inspected_seat.is_empty() else _default_log_text()
 	_labels["log"].tooltip_text = _labels["log"].text
 	_present_status_disclosure()
@@ -875,6 +881,82 @@ func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
 	return false
 
 
+func _bind_action_inspection(button: Button, key: String) -> void:
+	button.mouse_entered.connect(func(): _inspect_action(key, false, true))
+	button.mouse_exited.connect(func(): _inspect_action(key, false, false))
+	button.focus_entered.connect(func(): _inspect_action(key, true, true))
+	button.focus_exited.connect(func(): _inspect_action(key, true, false))
+
+
+func _inspect_action(key: String, focused: bool, entering: bool) -> void:
+	if focused:
+		if entering:
+			_action_focus_key = key
+		elif _action_focus_key == key:
+			_action_focus_key = ""
+	elif entering:
+		_action_hover_key = key
+	elif _action_hover_key == key:
+		_action_hover_key = ""
+	_present_forecast()
+
+
+func _action_turn_reason() -> String:
+	if battle == null or not battle.is_valid():
+		return "Unavailable — no active battle."
+	if battle.is_over():
+		return "Unavailable — battle ended (" + battle.outcome() + ")."
+	return "Unavailable — enemy turn; wait for your hero." if battle.current_side() != "hero" else ""
+
+
+func _refresh_action_cues(actor: Dictionary, hero_turn: bool, cuts: Dictionary) -> void:
+	var turn_lock := _action_turn_reason() if not hero_turn else ""
+	_action_cues.clear()
+	for key in ["move_front", "move_back"]:
+		var direction := -1 if key == "move_front" else 1
+		var dest := int(actor.get("rank", 0)) + direction
+		var label := "Move front" if direction == -1 else "Move back"
+		var legal := hero_turn and _can_move(direction)
+		var detail := ""
+		if not hero_turn:
+			detail = turn_lock
+		elif not legal:
+			# This is the SAME authoritative shift gate used by _can_move.
+			var gate: Dictionary = battle._shift_valid(actor, direction)
+			detail = "Unavailable — " + str(gate.get("reason", "movement blocked")) + "."
+		else:
+			var ally: Dictionary = _unit_at("hero", dest)
+			if ally.is_empty():
+				# The current StitchedRules.move explicitly permits vacated ranks.
+				detail = "Step to empty rank %d (no living ally to swap). Spends this hero's turn." % dest
+			else:
+				detail = "Swap R%d with adjacent %s at R%d. Spends this hero's turn." % [
+					int(actor["rank"]), str(ally.get("name", "ally")), dest]
+		_action_cues[key] = {"enabled": legal, "short": label + " — " + detail,
+			"full": label + "\n" + detail}
+	var snipped := hero_turn and cuts.has(str(actor.get("id", "")))
+	var re_tie := ("Re-tie this hero's snipped thread; restores movement and spends the turn."
+		if snipped else (turn_lock if not hero_turn else
+		"Unavailable — this hero's thread is intact; Re-tie needs a snipped thread."))
+	_action_cues["re_tie"] = {"enabled": snipped, "short": "Re-tie — " + re_tie,
+		"full": "Re-tie\n" + re_tie}
+	_action_cues["pass"] = {"enabled": hero_turn,
+		"short": "Pass — " + (turn_lock if not hero_turn else "spend this hero's turn without using a part."),
+		"full": "Pass turn\n" + (turn_lock if not hero_turn else
+			"Spend this hero's turn without using a sewn part.")}
+	var retreat_rules := "75% seeded success; success ends battle with no rewards and +15 fray for every hero. Failure spends this hero's turn."
+	var retreat_reason := (turn_lock if not hero_turn else
+		"Unavailable — no retreat in a boss encounter." if battle.is_boss_encounter() else
+		"Available — attempt to leave this non-boss fight.")
+	_action_cues["retreat"] = {"enabled": hero_turn and not battle.is_boss_encounter(),
+		"short": "Retreat — " + retreat_reason,
+		"full": "Retreat\n" + retreat_reason + "\n" + retreat_rules}
+	for key in _action_cues:
+		var button: Button = _action_buttons[key]
+		button.disabled = not bool(_action_cues[key]["enabled"])
+		button.tooltip_text = str(_action_cues[key]["full"])
+
+
 func _can_move(direction: int) -> bool:
 	if battle == null or battle.current_side() != "hero":
 		return false
@@ -916,8 +998,12 @@ func _present_forecast() -> void:
 	var inspected_slot := _part_inspected_slot()
 	var cue: Dictionary = _part_cues.get(inspected_slot, {})
 	# Lit-rank hit/damage is always more important than an ability's help digest.
-	_labels["preview"].text = str(forecast.get("text", cue.get("digest", generic)))
-	_labels["preview"].tooltip_text = str(forecast.get("tooltip", cue.get("full", "")))
+	var action_key := _action_focus_key if not _action_focus_key.is_empty() else _action_hover_key
+	var action_cue: Dictionary = _action_cues.get(action_key, {})
+	var action_digest := str(action_cue.get("short", generic)) if _selected_part.is_empty() else generic
+	var action_full := str(action_cue.get("full", "")) if _selected_part.is_empty() else ""
+	_labels["preview"].text = str(forecast.get("text", cue.get("digest", action_digest)))
+	_labels["preview"].tooltip_text = str(forecast.get("tooltip", cue.get("full", action_full)))
 	for key in _seat_buttons:
 		var detail := _seat_detail_for(key)
 		var tip := str(forecast.get("tooltip", "")) if key == _inspected_seat else ""
