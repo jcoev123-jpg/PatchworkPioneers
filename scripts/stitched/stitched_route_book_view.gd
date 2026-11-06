@@ -10,6 +10,7 @@ const AMBER := Color("#f6d78e")
 
 var visited_ids: Array[String] = []
 var legal_ids: Array[String] = []
+var graph_view: StitchedRouteGraphView
 
 
 func present(map: RunMap, choices: Array[String]) -> VBoxContainer:
@@ -25,21 +26,24 @@ func present(map: RunMap, choices: Array[String]) -> VBoxContainer:
 
 	var diary := _felt_page("RouteOrVisitStory", 409)
 	var tickets := _felt_page("LegalChoices", 675)
-	_heading(diary, "THE SEWN JOURNEY", 22, AMBER)
+	_heading(diary, "THE SEWN JOURNEY", 20, AMBER)
 	var current_id := map.get_current_node_id()
 	set_meta("current_id", current_id)
 	var current := map.get_node(current_id)
 	var here: Label
 	if current.is_empty():
-		here = _heading(diary, "AT THE FIRST SEAM  /  FLOOR 01 OF 12", 17, BONE)
+		here = _heading(diary, "AT THE FIRST SEAM  /  FLOOR 01 OF 12", 15, BONE)
 	else:
 		here = _heading(diary, "HERE  /  FLOOR %02d  /  %s  /  PATH %d" % [
-			current.floor, current.type, current.position + 1], 17, BONE)
+			current.floor, current.type, current.position + 1], 15, BONE)
 	here.name = "CurrentSeam"
-	_heading(diary, "VISITED STITCHES  /  IN JOURNEY ORDER", 16, AMBER)
+	graph_view = StitchedRouteGraphView.new()
+	diary.add_child(graph_view)
+	graph_view.present(map, choices)
+	_heading(diary, "VISITED STITCHES  /  IN JOURNEY ORDER", 14, AMBER)
 	var history_scroll := ScrollContainer.new()
 	history_scroll.name = "VisitedSeamScroll"
-	history_scroll.custom_minimum_size = Vector2(365, 204)
+	history_scroll.custom_minimum_size = Vector2(365, 48)
 	history_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	history_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	diary.add_child(history_scroll)
