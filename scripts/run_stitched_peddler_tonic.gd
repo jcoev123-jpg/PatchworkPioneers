@@ -3,8 +3,9 @@ extends RefCounted
 ## Scene-free Design v4 Stitched Peddler thimble-tonic service (S8f prerequisite, opt-in).
 ## The future map-stop wiring supplies the authentic node ID, the four dolls, the Walk
 ## pockets (Dictionary doll ID -> Array of item IDs), the wallet and an already-authorized
-## positive gold quote. This service sells exactly one thimble_tonic into ONE chosen
-## not-LOST doll's pocket (max two items) or accepts a free Leave, once.
+## positive gold quote. This service sells exactly one selected pocket item
+## (thimble_tonic, spare_spool or starch) into ONE chosen not-LOST doll's pocket
+## (max two items) or accepts a free Leave, once.
 ## It only places the item: it never heals, consumes the item, changes WHIRR, ranks or
 ## HP, rolls randomness, invents a price or samples stock. Everything it reads or
 ## returns is deeply detached. It is NOT wired into live play yet.
@@ -18,7 +19,10 @@ const THIMBLE_TONIC := "thimble_tonic"
 const BUY_THIMBLE_TONIC := "buy_thimble_tonic"
 const SPARE_SPOOL := "spare_spool"
 const BUY_SPARE_SPOOL := "buy_spare_spool"
-const OFFERS := ["thimble_tonic", "spare_spool"]
+const STARCH := "starch"
+const BUY_STARCH := "buy_starch"
+const OFFERS := ["thimble_tonic", "spare_spool", "starch"]
+const BUY_LABELS := {THIMBLE_TONIC: BUY_THIMBLE_TONIC, SPARE_SPOOL: BUY_SPARE_SPOOL, STARCH: BUY_STARCH}
 const LEAVE := "leave"
 const DOLL_COUNT := 4
 const MIN_RANK := 1
@@ -38,9 +42,10 @@ var _item: String = THIMBLE_TONIC
 ## Admitsa nonempty trimmed node ID, exactly four distinct dolls with unique ranks 1..4
 ## and boolean lost flags, one pocket Array (0..2 recognized items) per doll ID, a
 ## nonnegative integer wallet and a strictly positive integer quote. Else invalid/inert.
-## The optional trailing item selects the single offer: "thimble_tonic" (default) or
-## "spare_spool"; any other selector is inert (never recast as a tonic). The spool is only
-## placed in a pocket here; its thread repair happens when it is used in a later Walk.
+## The optional trailing item selects the single offer: "thimble_tonic" (default),
+## "spare_spool" or "starch"; any other selector is inert (never recast as a tonic). The
+## item is only placed in a pocket here; its later Walk effect (the spool's thread repair,
+## starch's next-fight Guard) happens when it is used in a later Walk.
 static func open_stitched(node_id: Variant, dolls: Variant, pockets: Variant, gold: Variant,
 		quoted_price: Variant, item: Variant = THIMBLE_TONIC) -> RunStitchedPeddlerTonic:
 	var visit := RunStitchedPeddlerTonic.new()
@@ -162,7 +167,7 @@ func read_state() -> Dictionary:
 	}
 
 
-## The open quote: the caller's exact price and the doll IDs that could receive the tonic
+## The open quote: the caller's exact price and the doll IDs that could receive the item
 ## are always disclosed; Buy is offered only when actionable. Leave is always offered
 ## while open. "can_buy"/"blocked" explain why. Advisory only: authority stays in buy().
 func quote() -> Dictionary:
@@ -190,10 +195,10 @@ func quote() -> Dictionary:
 
 
 func _buy_label() -> String:
-	return BUY_SPARE_SPOOL if _item == SPARE_SPOOL else BUY_THIMBLE_TONIC
+	return BUY_LABELS.get(_item, BUY_THIMBLE_TONIC)
 
 
-## Buys one thimble_tonic for one eligible doll: appends it to ONLY that pocket, charges the
+## Buys one of the selected offer item for one eligible doll: appends it to ONLY that pocket, charges the
 ## quoted gold exactly once and closes the visit. Any refusal changes nothing.
 func buy(doll_id: Variant, expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
 	if not _matches_open(expected_node_id, expected_snapshot):
