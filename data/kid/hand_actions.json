@@ -1,0 +1,32 @@
+{
+	"version": 1,
+	"note": "Design v4 section 9c: once per round, before any doll's turn, Wren may use ONE free hand action. At fear 50+ his hands shake and the attempt fails on a seeded 1..25 of 100; a failed attempt still spends the round's hand action.",
+	"actions": [
+		{
+			"id": "steady",
+			"name": "Steady",
+			"target": "doll",
+			"fray": -8,
+			"text": "Wren cups one doll in both hands until its stitching stops trembling: -8 fray."
+		},
+		{
+			"id": "shield_candle",
+			"name": "Shield the Candle",
+			"target": "none",
+			"text": "Wren curls a hand around the flame: this round the candle's darkness adds no fray."
+		},
+		{
+			"id": "hold_back",
+			"name": "Hold Back",
+			"target": "doll",
+			"text": "Wren pinches one doll's string tight: this round it cannot be moved, shoved or pulled."
+		},
+		{
+			"id": "lift",
+			"name": "Lift",
+			"target": "doll",
+			"direction": true,
+			"text": "Wren lifts one doll a single rank forward or back without spending its turn; never across a snipped thread."
+		}
+	]
+}

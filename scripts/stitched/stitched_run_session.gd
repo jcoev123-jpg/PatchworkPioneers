@@ -42,6 +42,14 @@ class RankedBattle extends StitchedRules:
 			return {"ok": false}
 		return _remember(super.retreat(), "retreat", [])
 
+	## S9a: Wren's fear always comes from the run, never from the caller.
+	func use_hand_action(action_id: String, target_id: String = "", direction: int = 0, _fear: int = 0) -> Dictionary:
+		if not _admitted():
+			return {"ok": false}
+		var session: StitchedRunSession = owner_session.get_ref()
+		return _remember(super.use_hand_action(action_id, target_id, direction, session.kid_fear()),
+			"use_hand_action", [action_id, target_id, direction])
+
 	func _remember(result: Dictionary, method: String, arguments: Array) -> Dictionary:
 		if result.get("ok") == true:
 			command_used.emit({"action": "battle", "method": method, "arguments": arguments})
@@ -126,6 +134,10 @@ static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Di
 	return session
 
 
+func kid_fear() -> int:
+	return _kid_fear.get_fear()
+
+
 func snapshot() -> Dictionary:
 	return {"phase": phase, "heroes": heroes.duplicate(true), "satchel": satchel.duplicate(true),
 		"patches": patches.duplicate(true), "pockets": pockets.duplicate(true),
@@ -168,6 +180,7 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 			pending.clear()
 			return false
 		phase = "battle"
+		_lose_strings_if_due()
 	else:
 		phase = "visit"
 		var kind: String = {"Rest": "Campfire", "Shop": "Peddler", "Treasure": "Event"}.get(node.type, node.type)
@@ -239,8 +252,18 @@ func _open_battle(kind: String) -> bool:
 
 func _record_battle(command: Dictionary) -> void:
 	journal.append(command.duplicate(true))
+	_lose_strings_if_due()
 	_seal()
 	changed.emit()
+
+
+## S9a fear 100: the first doll turn Wren meets skips itself and fear drops to 60. Runs
+## after every recorded command and when a battle opens, so a replay repeats it exactly.
+func _lose_strings_if_due() -> void:
+	if battle == null or battle.is_over() or not _kid_fear.has_pending_lost_strings() or battle.current_side() != "hero":
+		return
+	if bool(battle.skip_lost_strings_turn().get("ok", false)):
+		_kid_fear.consume_next_doll_turn()
 
 
 func settle_battle(expected_battle: StitchedRules) -> bool:
