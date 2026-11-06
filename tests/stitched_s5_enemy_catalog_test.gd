@@ -617,7 +617,7 @@ func _test_spool_kit(catalog: Dictionary) -> void:
 	# Adjacent elites retain independent stat, action-order and trophy contracts.
 	for neighbor in [
 		["needle_marshal", 28, 5, 6, 6, "needle_marshal_sash", ["marshal_prick", "marshal_volley", "iron_discipline"]],
-		["scissor_bailiff", 36, 4, 5, 8, "scissor_bailiff_shears", ["bailiff_snip", "seize_thread"]]]:
+		["scissor_bailiff", 36, 4, 5, 8, "scissor_bailiff_shears", ["bailiff_snip", "seize_thread", "bailiff_unpick"]]]:
 		var adjacent := StitchedEnemyCatalog.foe_for(catalog, neighbor[0])
 		var ids: Array = []
 		for ability in adjacent.get("abilities", []):

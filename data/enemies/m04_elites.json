@@ -290,6 +290,23 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "bailiff_unpick",
+          "name": "Unpick Verdict",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "tear": 1
+          },
+          "self_move": 0,
+          "move": "attack3"
         }
       ]
     }
