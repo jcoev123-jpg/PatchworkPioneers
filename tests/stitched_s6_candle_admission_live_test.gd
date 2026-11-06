@@ -121,7 +121,7 @@ func _neutral(app: Node) -> bool:
 func _offer(app: Node) -> LiveEventChoicePanel:
 	if not app.title_view.is_visible_in_tree():
 		return null
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	return app.stitched_event_panel
 
@@ -213,7 +213,8 @@ func _trace() -> Dictionary:
 	var app := _spawn()
 	await process_frame
 	_check(_neutral(app) and app.stitched_roadblock_candle == 100 \
-		and app.stitched_fight_button.is_visible_in_tree(),
+		and not app.stitched_fight_button.is_visible_in_tree()
+		and app.stitched_fight_button.disabled and app.start_button.is_visible_in_tree(),
 		"fresh real title begins with independent candle 100 and untouched run wallets")
 	var s2 := StitchedBattleScreen.read_preview()
 	_check(s2.get("candle") == 78 and app._stitched_floor_config().get("candle") == 78,

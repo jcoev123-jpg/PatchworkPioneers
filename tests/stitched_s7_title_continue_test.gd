@@ -15,7 +15,7 @@ func _physical(code: Key, reverse: bool = false) -> void:
 
 
 func _ring(app: Node, buttons: Array) -> void:
-	_check(buttons.size() >= 4, "nonempty mounted title ring")
+	_check(buttons.size() >= 3, "nonempty mounted title ring")
 	buttons[0].grab_focus()
 	for direction in [1, -1]:
 		for step in range(1, buttons.size() + 1):
@@ -23,8 +23,10 @@ func _ring(app: Node, buttons: Array) -> void:
 			var index := posmod(step * direction, buttons.size())
 			_check(root.gui_get_focus_owner() == buttons[index],
 				"physical Tab ring direction %d step %d" % [direction, step])
-	_check(not app.route_button.visible and app.route_button.disabled,
-		"retired route never enters live keyboard ring")
+	for button in [app.route_button, app.stitched_fight_button]:
+		_check(not button.visible and button.disabled and button.focus_mode == Control.FOCUS_NONE
+			and button.pressed.get_connections().is_empty() and not button.has_focus(),
+			"retired shortcut never enters live keyboard ring: " + button.text)
 
 
 func _run() -> void:
@@ -39,8 +41,13 @@ func _run() -> void:
 	await process_frame
 	var shell = app.get_node("PatchworkUIShell")
 	var actions: Array = [app.start_button, app.stitched_continue_button,
-		app.base_button, app.stitched_fight_button]
-	_check(shell._actions == actions, "shell binds exactly four default production actions")
+		app.base_button]
+	_check(shell._actions == actions, "shell binds exactly three default production actions")
+	var visible_actions: Array = []
+	for child in app.title_view.get_children():
+		if child is Button and child.is_visible_in_tree():
+			visible_actions.append(child)
+	_check(visible_actions == actions, "fresh mounted title exposes only the three real actions")
 	_check(not app.start_run_requested.is_connected(Callable(app, "_start_run"))
 		and not app.route_button.pressed.is_connected(Callable(app, "_open_route")),
 		"the old card start and route hooks have no production listeners")
@@ -67,6 +74,12 @@ func _run() -> void:
 			_check(button.get_theme_stylebox(state) == app.theme.get_stylebox(state, "Button"),
 				"inherited " + state + " style: " + button.text)
 	var carry := _carry(app)
+	for button in [app.route_button, app.stitched_fight_button]:
+		button.pressed.emit()
+	_check(app.stitched_event_panel == null and app.stitched_fight_view == null
+		and app.stitched_run_panel == null and app.title_view.is_visible_in_tree()
+		and _carry(app) == carry and _no_legacy_wallet(app),
+		"disabled shortcut signals have no authority, spend or RNG draw")
 	await _ring(app, actions)
 	_check(_carry(app) == carry and _no_legacy_wallet(app), "focus and display do not spend or draw")
 	app.stitched_continue_button.grab_focus()
@@ -86,6 +99,8 @@ func _run() -> void:
 	if is_instance_valid(app.base_screen):
 		app.base_screen.back_button.pressed.emit()
 	await process_frame
+	_check(app.base_button.has_focus() and app.title_view.is_visible_in_tree(),
+		"base Back restores a visible eligible title action")
 	app.start_button.grab_focus()
 	await _physical(KEY_SPACE)
 	_check(app.stitched_run_panel != null and app.stitched_run_session == null,
@@ -99,6 +114,9 @@ func _run() -> void:
 		"real four-doll New Run never mounts a card deck or legacy map")
 	if session != null:
 		var before := session.snapshot()
+		_check(session.heroes.size() == 4 and not session.choices().is_empty()
+			and app.stitched_event_panel == null and app._stitched_roadblock_win_count == 0,
+			"four-doll routed New Run needs no Roadblock receipt")
 		app.title_view.show()
 		await _ring(app, actions)
 		shell._process(1.25)
@@ -114,10 +132,38 @@ func _run() -> void:
 		_check(app.stitched_run_session != null and app.stitched_run_session.snapshot() == before
 			and not app.title_view.visible and app.stitched_run_panel != null,
 			"original Continue callback resumes exact saved state and RNG")
+		var restored: StitchedRunSession = app.stitched_run_session
+		var opening := ""
+		for id in restored.choices():
+			if restored.map.get_node(id).type == "Fight":
+				opening = id
+				break
+		_check(not opening.is_empty(), "restored real route has an authenticated opening Fight")
+		if not opening.is_empty():
+			var index := restored.choices().find(opening)
+			app.stitched_run_buttons[index].pressed.emit()
+			await process_frame
+			var routed: StitchedBattleScreen = app.stitched_run_battle
+			_check(routed != null and routed.battle == restored.battle
+				and app.stitched_event_panel == null and app.stitched_fight_view == null,
+				"actual player entry mounts the session's authenticated ranked combat")
+			if routed != null:
+				var result := _win(routed)
+				_check(result.acted > 0 and result.outcome == "victory",
+					"legal routed combat actions win the real opening")
+				routed._action_buttons["exit"].pressed.emit()
+				await process_frame
+				_check(restored.receipts.size() == 1 and restored.receipts[0].node_id == opening,
+					"real routed settlement records the exact admitted node")
 		app._return_stitched_run_title()
 		await process_frame
+		_check(app.start_button.has_focus(), "run return focuses live New Run")
+		for button in [app.route_button, app.stitched_fight_button]:
+			button.pressed.emit()
+		_check(app.stitched_run_session == null and app.stitched_event_panel == null
+			and app.title_view.is_visible_in_tree(), "stale shortcut signals remain inert on return")
 	var stage: StitchedBattleScreen = await _mount(app)
-	_check(stage != null, "original Roadblock callback mounts genuine fight")
+	_check(stage != null, "explicit Roadblock regression entry mounts genuine fight")
 	if stage != null:
 		var won := _win(stage)
 		_check(won.outcome == "victory" and won.acted > 0, "real legal actions earn victory")
@@ -133,11 +179,28 @@ func _run() -> void:
 				app.stitched_postevent_button, app.stitched_unpicker_button]:
 				if button.is_visible_in_tree() and not button.disabled:
 					earned.append(button)
-			_check(earned.size() > 4 and app._stitched_postvictory_stop_available,
+			_check(earned.size() > 3 and app._stitched_postvictory_stop_available,
 				"authentic victory and Circle Leave earn reachable stops")
+			_check(app.base_button.has_focus(), "Circle return skips the dormant Roadblock")
 			var earned_carry := _carry(app)
 			await _ring(app, earned)
 			_check(_carry(app) == earned_carry, "earned-stop traversal does not mutate receipts or resources")
+			app.stitched_peddler_button.pressed.emit()
+			await process_frame
+			_check(app.stitched_peddler_panel != null and app.stitched_peddler_visit != null,
+				"earned Peddler mounts an authentic service")
+			if app.stitched_peddler_panel != null:
+				app.stitched_peddler_panel.get_node("PeddlerLeave").pressed.emit()
+				await process_frame
+				await process_frame
+				var remaining := actions.duplicate()
+				for button in earned.slice(3):
+					if button.is_visible_in_tree() and not button.disabled:
+						remaining.append(button)
+				_check(not app._stitched_postvictory_stop_available and remaining == actions
+					and app.start_button.has_focus(),
+					"Peddler Leave consumes the stop and focuses eligible New Run")
+				await _ring(app, remaining)
 	app.free()
 	DirAccess.remove_absolute(TEST_SAVE)
 	await process_frame

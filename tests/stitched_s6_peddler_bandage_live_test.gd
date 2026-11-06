@@ -28,7 +28,7 @@ func _no_wallet(app: Node) -> bool:
 
 
 func _admit(app: Node) -> StitchedBattleScreen:
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var offer: LiveEventChoicePanel = app.stitched_event_panel
 	if offer == null or not offer.has_open_event() or offer.get_choice_buttons().size() != 3:
@@ -612,7 +612,7 @@ func _reselection_trace() -> void:
 		and receipt_before.get("ok") == true and not living_before.is_empty() \
 		and stop_before,
 		"the authentic Circle Leave alone seals the four earned IDs and their earned stop")
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
 	_check(picker != null and app._stitched_party_locked \
@@ -786,7 +786,7 @@ func _locked_roster_trace() -> void:
 	var satchel_before: Array = app.stitched_preview_satchel.duplicate(true)
 	var scraps_before: int = app.stitched_preview_scraps
 	var candle_before: int = app.stitched_roadblock_candle
-	app.stitched_fight_button.pressed.emit()
+	app._open_stitched_fight() # Explicit Roadblock regression entry.
 	await process_frame
 	var picker: LiveEventChoicePanel = app.stitched_event_panel
 	var container: Node = picker.find_child("StitchedPartyPicker", true, false) \

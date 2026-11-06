@@ -176,7 +176,7 @@ func _bind_title() -> void:
 	var app = get_parent()
 	_title = app.title_view
 	_label = app.title_label
-	_actions.assign([app.start_button, app.stitched_continue_button, app.base_button, app.stitched_fight_button])
+	_actions.assign([app.start_button, app.stitched_continue_button, app.base_button])
 	# App creates the full-screen ColorRect first. Draw after it, before title actions.
 	app.move_child(self, _title.get_index() - 1)
 	_label.theme_type_variation = "PatchTitle"
