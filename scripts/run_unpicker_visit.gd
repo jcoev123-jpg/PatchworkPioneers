@@ -224,6 +224,27 @@ func _calm_eligible(hero: Dictionary) -> bool:
     return int(hero["fray"]) > 0
 
 
+## True when a calm leaving this FRAY would clear the hero's present, known
+## Unravelled trait: strictly below RESOLVE_CLEAR_BELOW and a RESOLVE_TRAITS value.
+## Shared by calm_hero() and the quote preview so both always agree.
+func _calm_clears_resolve(hero: Dictionary, fray_after: int) -> bool:
+    return fray_after < RESOLVE_CLEAR_BELOW and hero.has("resolve") \
+            and str(hero["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS
+
+
+## Read-only preview of what the paid calm would do to one eligible hero.
+func _calm_outcome(hero: Dictionary) -> Dictionary:
+    var before: int = hero["fray"]
+    var after: int = maxi(0, before - CALM_AMOUNT)
+    return {
+        "hero_id": hero["id"],
+        "fray_before": before,
+        "fray_after": after,
+        "fray_relief": before - after,
+        "clears_unravelled": _calm_clears_resolve(hero, after),
+    }
+
+
 ## Exactly two available decisions; selecting the card is part of remove_card.
 func quote() -> Dictionary:
     if _stitched:
@@ -231,10 +252,12 @@ func quote() -> Dictionary:
         # Only name heroes the paid calm can actually help: the party must afford
         # the quote and the hero must have FRAY to remove. Held roster order.
         var hero_ids: Array = []
+        var calm_outcomes: Array = []
         if open and _gold >= _quoted_price:
             for hero in _heroes:
                 if _calm_eligible(hero):
                     hero_ids.append(hero["id"])
+                    calm_outcomes.append(_calm_outcome(hero))
         var choices: Array = []
         if open:
             if not hero_ids.is_empty():
@@ -249,6 +272,7 @@ func quote() -> Dictionary:
             "price": _quoted_price,
             "calm_amount": CALM_AMOUNT,
             "hero_ids": hero_ids,
+            "calm_outcomes": calm_outcomes,
             "choices": choices,
         }
         if _expanded:
@@ -349,8 +373,7 @@ func calm_hero(hero_id: Variant, expected_visit_id: Variant,
     # An Unravelled trait lasts until FRAY drops strictly below 50 (same threshold as
     # StitchedRules._change_fray). Only a present, known trait on this hero is cleared;
     # steadfast, empty and absent resolve are left exactly as they were. No resolve roll.
-    if after < RESOLVE_CLEAR_BELOW and _heroes[index].has("resolve") \
-            and str(_heroes[index]["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS:
+    if _calm_clears_resolve(_heroes[index], after):
         _heroes[index]["resolve"] = ""
     _gold -= _quoted_price
     _consumed = true

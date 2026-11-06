@@ -29,6 +29,8 @@ func _initialize() -> void:
     _test_stitched_quote_actionability()
     _test_stitched_unpick_spare()
     _test_stitched_lost_calm_eligibility()
+    _test_stitched_calm_outcome_projection()
+    _test_stitched_calm_outcome_availability()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -1272,3 +1274,165 @@ func _test_stitched_unpick_spare() -> void:
     var removal := cross.remove_card(STRIKE, cross_source["visit_id"], NODE, cross_source)
     _check(removal.get("ok") == false and cross.read_state() == cross_source,
             "no cross-mode card removal on an expanded visit")
+
+
+const ABSENT := "<absent>"
+const OUTCOME_KEYS := ["clears_unravelled", "fray_after", "fray_before", "fray_relief", "hero_id"]
+
+
+## Four heroes, all at `fray`, each carrying `resolve` (omitted entirely for ABSENT).
+func _o_heroes(fray: int, resolve: Variant) -> Array:
+    var heroes := _s_heroes([fray, fray, fray, fray])
+    if typeof(resolve) == TYPE_STRING and resolve == ABSENT:
+        return heroes
+    for hero in heroes:
+        hero["resolve"] = resolve
+    return heroes
+
+
+## Quote rows must match what a fresh, independently opened service's real calm
+## receipt does to the same doll: FRAY, relief, price and the resolve outcome.
+func _test_stitched_calm_outcome_projection() -> void:
+    var resolves: Array = []
+    resolves.append_array(StitchedS1BEffects.RESOLVE_TRAITS)
+    resolves.append_array(["", "steadfast", "not_a_trait", ABSENT])
+    var cleared_rows := 0
+    var kept_trait_rows := 0
+    var boundary_cleared := false
+    var boundary_kept := false
+    for fray in [1, 49, 50, 99, 100, 200]:
+        for resolve in resolves:
+            var tag := "fray %d resolve %s: " % [fray, str(resolve)]
+            var heroes := _o_heroes(fray, resolve)
+            var visit := _s_open(heroes.duplicate(true))
+            var quote := visit.quote()
+            var rows: Array = quote.get("calm_outcomes", [])
+            _check(rows.size() == 4 and quote["hero_ids"] == HERO_IDS, tag + "one row per eligible doll")
+            for i in rows.size():
+                var row: Dictionary = rows[i]
+                var keys: Array = row.keys()
+                keys.sort()
+                _check(keys == OUTCOME_KEYS and row["hero_id"] == HERO_IDS[i], tag + "exact row keys, roster order")
+                var fresh := _s_open(heroes.duplicate(true))
+                var snap := fresh.read_state()
+                var receipt := _s_calm(fresh, HERO_IDS[i], snap)
+                _check(receipt.get("ok") == true and receipt["calmed_hero_id"] == HERO_IDS[i], tag + "real calm succeeds")
+                _check(row["fray_before"] == receipt["fray_before"] and row["fray_after"] == receipt["fray_after"]
+                        and row["fray_before"] == fray and row["fray_after"] == maxi(0, fray - 50)
+                        and row["fray_relief"] == receipt["fray_before"] - receipt["fray_after"]
+                        and row["fray_relief"] == mini(fray, 50) and receipt["charged_gold"] == quote["price"],
+                        tag + "row mirrors real receipt FRAY, relief and price")
+                var had_trait: bool = heroes[i].has("resolve") and str(heroes[i]["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS
+                var after_resolve: Variant = receipt["heroes"][i].get("resolve")
+                var actually_cleared: bool = had_trait and after_resolve == ""
+                _check(row["clears_unravelled"] == actually_cleared, tag + "clears flag matches actual hero state")
+                if had_trait and not actually_cleared:
+                    _check(after_resolve == heroes[i]["resolve"], tag + "uncleared trait kept")
+                if i == 0:
+                    if row["clears_unravelled"]:
+                        cleared_rows += 1
+                    elif had_trait:
+                        kept_trait_rows += 1
+                    if had_trait and fray == 99:
+                        boundary_cleared = boundary_cleared or row["clears_unravelled"]
+                    if had_trait and fray == 100:
+                        boundary_kept = boundary_kept or not row["clears_unravelled"]
+    _check(cleared_rows > 0 and kept_trait_rows > 0 and boundary_cleared and boundary_kept,
+            "projection exercised both cleared and kept known traits at 99/100")
+    # Sharp boundary and low FRAY, explicit values.
+    var sharp: Dictionary = _s_open(_o_heroes(99, "frantic")).quote()["calm_outcomes"][0]
+    _check(sharp["fray_after"] == 49 and sharp["clears_unravelled"] == true, "FRAY 99 -> 49 clears Unravelled")
+    var edge: Dictionary = _s_open(_o_heroes(100, "frantic")).quote()["calm_outcomes"][0]
+    _check(edge["fray_after"] == 50 and edge["clears_unravelled"] == false, "FRAY 100 -> 50 does not clear")
+    var maxed: Dictionary = _s_open(_o_heroes(200, "frantic")).quote()["calm_outcomes"][0]
+    _check(maxed["fray_after"] == 150 and maxed["fray_relief"] == 50 and maxed["clears_unravelled"] == false,
+            "FRAY 200 -> 150 does not clear")
+    var low: Dictionary = _s_open(_o_heroes(1, "hollow")).quote()["calm_outcomes"][0]
+    _check(low["fray_before"] == 1 and low["fray_after"] == 0 and low["fray_relief"] == 1
+            and low["clears_unravelled"] == true, "FRAY 1 -> 0 reports relief 1 and clears a known trait")
+
+
+## Availability, exclusions, spare/Leave choices and quote purity.
+func _test_stitched_calm_outcome_availability() -> void:
+    # Mixed roster: positive FRAY, zero FRAY and LOST-with-FRAY.
+    var mixed := _l_heroes([99, 70, 0, 1], [1])
+    mixed[0]["resolve"] = "bitter"
+    var visit := _s_open(mixed, 100)
+    var source := visit.read_state()
+    var quote := visit.quote()
+    var rows: Array = quote["calm_outcomes"]
+    _check(quote["hero_ids"] == [HERO_IDS[0], HERO_IDS[3]] and rows.size() == 2
+            and rows[0]["hero_id"] == HERO_IDS[0] and rows[1]["hero_id"] == HERO_IDS[3],
+            "rows cover only non-LOST positive-FRAY dolls in roster order")
+    _check(rows[0]["fray_after"] == 49 and rows[0]["fray_relief"] == 50 and rows[0]["clears_unravelled"] == true
+            and rows[1]["fray_after"] == 0 and rows[1]["fray_relief"] == 1
+            and rows[1]["clears_unravelled"] == false, "no fictional full relief at low FRAY")
+    _check(quote["choices"] == ["calm_hero", "leave"] and quote["price"] == 75 and quote["calm_amount"] == 50
+            and quote["ok"] == true and quote["node_id"] == NODE and quote["visit_id"] == source["visit_id"],
+            "existing quote keys unchanged")
+    # Quoting is read-only: no RNG, no state change, detached rows.
+    seed(5521)
+    var next_draw := randi()
+    seed(5521)
+    var again := visit.quote()
+    _check(randi() == next_draw and again == quote and visit.read_state() == source and not visit.is_consumed(),
+            "quote draws no RNG and leaves the visit unchanged")
+    rows[0]["fray_after"] = 999
+    rows[0]["clears_unravelled"] = false
+    rows.clear()
+    var fresh_quote := visit.quote()
+    _check(fresh_quote == again and fresh_quote["calm_outcomes"].size() == 2
+            and fresh_quote["calm_outcomes"][0]["fray_after"] == 49 and visit.read_state() == source,
+            "mutating a returned row changes neither a new quote nor read_state")
+    # Wallet 74 vs 75, base and expanded.
+    for expanded in [false, true]:
+        var tag := "expanded " if expanded else "base "
+        var poor := _l_open(expanded, _l_heroes([99, 70, 0, 1], [1]), 74)
+        var poor_quote := poor.quote()
+        _check(poor_quote["calm_outcomes"] == [] and poor_quote["hero_ids"] == []
+                and poor_quote["choices"] == (["unpick_spare", "leave"] if expanded else ["leave"]),
+                tag + "wallet 74 offers no calm outcome")
+        var exact := _l_open(expanded, _l_heroes([99, 70, 0, 1], [1]), 75)
+        var exact_quote := exact.quote()
+        _check(exact_quote["calm_outcomes"].size() == 2 and exact_quote["hero_ids"] == [HERO_IDS[0], HERO_IDS[3]]
+                and exact_quote["choices"] == (["calm_hero", "unpick_spare", "leave"] if expanded
+                        else ["calm_hero", "leave"]), tag + "wallet 75 offers outcomes and choices")
+    # All dolls at zero FRAY or LOST: nothing purchasable.
+    var calm_none := _l_open(false, _l_heroes([0, 80, 0, 0], [1]))
+    _check(calm_none.quote()["calm_outcomes"] == [] and calm_none.quote()["choices"] == ["leave"],
+            "zero-FRAY and LOST dolls never get an outcome")
+    # Expanded: spare unpick and Leave receipts unaffected by having quoted.
+    var quoted_spare := _e_open(_e_spares())
+    var quoted_source := quoted_spare.read_state()
+    _check(quoted_spare.quote()["calm_outcomes"].size() == 3, "expanded quote carries outcomes")
+    var plain_spare := _e_open(_e_spares())
+    var spare_receipt := _e_unpick(quoted_spare, 1, quoted_source)
+    var plain_receipt := _e_unpick(plain_spare, 1, plain_spare.read_state())
+    _check(spare_receipt["ok"] == true and spare_receipt["credited_scraps"] == 2
+            and spare_receipt["charged_gold"] == 0 and spare_receipt["gold"] == 100,
+            "spare unpick still credits the quoted yield for no gold")
+    _same_stable_receipt(spare_receipt, plain_receipt, "quoted vs unquoted spare unpick")
+    var quoted_leave := _e_open(_e_spares())
+    var plain_leave := _e_open(_e_spares())
+    quoted_leave.quote()
+    var leave_receipt := quoted_leave.leave(quoted_leave.read_state()["visit_id"], NODE, quoted_leave.read_state())
+    var plain_leave_receipt := plain_leave.leave(plain_leave.read_state()["visit_id"], NODE, plain_leave.read_state())
+    _check(leave_receipt["ok"] == true and leave_receipt["charged_gold"] == 0, "Leave still free")
+    _same_stable_receipt(leave_receipt, plain_leave_receipt, "quoted vs unquoted Leave")
+    # Consumed and invalid visits yield no usable outcomes.
+    for consumed_quote in [spare_receipt, leave_receipt]:
+        _check(consumed_quote["ok"] == true, "decision receipt was successful")
+    var spent := quoted_leave.quote()
+    _check(spent["ok"] == false and spent["calm_outcomes"] == [] and spent["hero_ids"] == []
+            and spent["choices"] == [], "consumed visit has no outcomes")
+    var spent_spare := quoted_spare.quote()
+    _check(spent_spare["ok"] == false and spent_spare["calm_outcomes"] == [], "consumed unpick visit has no outcomes")
+    var invalid := RunUnpickerVisit.open_stitched(NODE, _s_heroes([70, 20, 200, 0]), 100, 0)
+    var invalid_quote := invalid.quote()
+    _check(not invalid.is_valid() and invalid_quote["ok"] == false and invalid_quote.get("calm_outcomes", []) == []
+            and invalid_quote["choices"] == [],
+            "invalid visit has no outcomes")
+    # Legacy card-removal quote keeps its exact shape.
+    var legacy_quote := _make_visit(_deck(), 175).quote()
+    _check(not legacy_quote.has("calm_outcomes") and legacy_quote["choices"] == ["remove_card", "leave"],
+            "legacy quote untouched")
