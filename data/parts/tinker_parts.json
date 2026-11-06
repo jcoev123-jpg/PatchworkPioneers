@@ -332,7 +332,8 @@
         "target": [
           1,
           2,
-          3
+          3,
+          4
         ],
         "target_side": "enemy",
         "multi": false,
