@@ -162,6 +162,7 @@
           "acc": 88,
           "dmg": [4, 5],
           "crit": 0,
+          "mark_damage": 3,
           "effects": {
             "weak": 1
           },
@@ -181,6 +182,23 @@
           "crit": 0,
           "effects": {
             "exposed": 2
+          },
+          "self_move": 0,
+          "move": "skill"
+        },
+        {
+          "id": "thread_tag",
+          "name": "Thread Tag",
+          "kind": "debuff",
+          "launch": [1, 2, 3, 4],
+          "target": [1, 2, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 90,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "mark": 3
           },
           "self_move": 0,
           "move": "skill"
