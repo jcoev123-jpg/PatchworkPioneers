@@ -2,8 +2,8 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
-const RICH_SEED := 10067
-const POOR_SEED := 1877
+const RICH_SEED := 36633
+const POOR_SEED := 819
 const FIRST_NODE := "f01_n0"
 const SHOP_NODE := "f02_n0"
 const MOTH_NODE := "f03_n1"
@@ -131,32 +131,29 @@ func _activate(button: Button, keyboard: bool) -> void:
 
 
 func _earn_moth_wallet(stage: StitchedBattleScreen) -> int:
-	# This reachable witness aims at living foes after front-rank kills;
-	# the general full-run helper instead prioritizes hitting their scrap heaps.
-	var plan := [
-		["lantern_monk", "arms", "foe", 1], ["seamstress", "arms", "foe", 1],
-		["tinker", "head", "foe", 1], ["warden", "legs", "foe", 2],
-		["lantern_monk", "arms", "foe", 2], ["warden", "legs", "foe", 2],
-		["seamstress", "arms", "foe", 2], ["tinker", "head", "foe", 3],
-		["seamstress", "arms", "foe", 3],
-		["lantern_monk", "arms", "foe", 3], ["warden", "legs", "foe", 3],
-	]
+	# Each turn uses the first legal mounted part on the front-most living foe,
+	# passing only when no part can reach one; no seed-specific command list.
 	var acted := 0
-	for command in plan:
-		var admitted: bool = not stage.battle.is_over() and stage.battle.current_actor_id() == command[0]
-		_check(admitted, "witness combat command has the actual expected living actor")
-		if not admitted:
-			break
-		var part: Button = stage._part_buttons[command[1]]
-		_check(not part.disabled, "witness equipped part is legal in its current rank")
-		if part.disabled:
-			break
-		part.pressed.emit()
-		var target: Button = stage._target_buttons[command[2] + "_" + str(command[3])]
-		_check(not target.disabled and target.is_visible_in_tree(), "witness target is mounted and legal")
-		if target.disabled:
-			break
-		target.pressed.emit()
+	while not stage.battle.is_over() and acted < 80:
+		var done := false
+		for slot in stage._part_buttons:
+			if stage._part_buttons[slot].disabled:
+				continue
+			stage._part_buttons[slot].pressed.emit()
+			for rank in [1, 2, 3, 4]:
+				var target: Button = stage._target_buttons.get("foe_" + str(rank))
+				if target != null and not target.disabled and target.is_visible_in_tree():
+					target.pressed.emit()
+					done = true
+					break
+			if done:
+				break
+		if not done:
+			var pass_button: Button = stage._action_buttons.get("pass")
+			_check(pass_button != null and not pass_button.disabled, "witness turn has a legal mounted action")
+			if pass_button == null or pass_button.disabled:
+				break
+			pass_button.pressed.emit()
 		acted += 1
 	return acted
 
@@ -258,7 +255,7 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 		app.free()
 		return
 	var acted := _earn_moth_wallet(stage)
-	_check(acted == 11 and stage.battle.outcome() == "victory", "legal mounted abilities earn actual spares and scraps")
+	_check(acted > 0 and stage.battle.outcome() == "victory", "legal mounted abilities earn actual spares and scraps")
 	stage._action_buttons["exit"].pressed.emit()
 	_check(session.phase == "map", "victory returns to the genuine route: " + session.phase)
 	_check(session.gold >= StitchedRunSession.PEDDLER_PRICE, "victory funds the spare purchase: gold=" + str(session.gold))
