@@ -197,6 +197,39 @@
         { "id": "surrender_wick_scraps", "text": "Surrender 3 scrap bundles for the clock guards' safe passage", "outcome": { "gold": 0, "scraps": -3 } },
         { "id": "leave", "text": "Wait outside the tower until the guards leave (Leave)", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_pincushion_observatory_gate",
+      "title": "The Pincushion Observatory",
+      "description": "Above the moonlit path, a colossal moss-plaid pincushion turns like an observatory dome; plump pin-helmet sentries peer through silver-needle telescopes and latch the brass stairgate.",
+      "fight_choice_id": "scatter_pin_watch",
+      "choices": [
+        { "id": "scatter_pin_watch", "text": "Scatter the needle sentries and take the stairgate (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_stargazer_token", "text": "Pay 15 gold for a brass stargazer token", "outcome": { "gold": -15, "scraps": 0 } },
+        { "id": "leave", "text": "Leave the telescope needles pointed at the dark", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_velvet_spool_lift_toll",
+      "title": "The Velvet Spool Lift",
+      "description": "A moon-sized oxblood spool winds a hanging lift between split floorboards; three round button-eyed porters knot its black rope across the only crossing.",
+      "fight_choice_id": "challenge_lift_porters",
+      "choices": [
+        { "id": "challenge_lift_porters", "text": "Challenge the spool porters at the lift (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_lift_bindings", "text": "Offer 2 scraps to bind the lift and cross quietly", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Follow the floorboard edge instead", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_silver_ruler_viaduct",
+      "title": "The Silver-Ruler Viaduct",
+      "description": "An enormous dressmaker's ruler bridges a gap in the toy road; squat bone-cream surveyor dolls brace its brass hinges with stitched measuring tapes.",
+      "fight_choice_id": "topple_ruler_barricade",
+      "choices": [
+        { "id": "topple_ruler_barricade", "text": "Topple the ruler barricade and face the surveyors (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "pay_measurement_seal", "text": "Pay 21 gold for a stamped crossing measure", "outcome": { "gold": -21, "scraps": 0 } },
+        { "id": "leave", "text": "Wait for the ruler bridge to fold shut", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
