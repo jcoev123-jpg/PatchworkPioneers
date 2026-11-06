@@ -448,12 +448,12 @@ func _present_status_disclosure() -> void:
 
 
 func _build_foe_intent_tickets() -> void:
-	# One presentation-only control per physical foe rank, centred at the
-	# accepted 150px intervals. Every ticket rebinds by authoritative foe ID.
+	# One presentation-only control per foe rank. _anchor_foe_tickets moves
+	# each below its own empty header air, directly over the bound painted art.
 	for rank in range(1, 5):
 		var ticket := StitchedFoeIntentPlate.new()
 		ticket.name = "FoeIntentRank%d" % rank
-		ticket.position = Vector2(664 + (rank - 1) * 150, 140)
+		ticket.position = Vector2(664 + (rank - 1) * 150, 140) # Until first painted-art bind.
 		add_child(ticket)
 		_foe_tickets[rank] = ticket
 		_foe_ticket_labels[rank] = ticket.primary
@@ -528,6 +528,61 @@ func _present_foe_intent_disclosure() -> void:
 		_foe_tickets[seat_rank].set_inspected(seat_rank == rank and _intent_disclosure.visible)
 
 
+# The stage art is parented to a clipped, focus-animated layer, so convert all
+# four corners of the ACTUALLY PAINTED pose back to this screen's local space.
+# Puppet node bounds include large transparent bands and cannot anchor a cue.
+func _foe_painted_rect(rank: int) -> Rect2:
+	var puppet: Control = _puppets.get("foe_" + str(rank))
+	if puppet == null or not puppet.visible:
+		return Rect2()
+	var art: Rect2 = puppet.posed_actor_rect()
+	if art.size.x <= 0.0 or art.size.y <= 0.0:
+		return Rect2()
+	var corners: Array[Vector2] = [art.position,
+		Vector2(art.end.x, art.position.y), art.end,
+		Vector2(art.position.x, art.end.y)]
+	var pose_to_screen: Transform2D = get_global_transform().affine_inverse() * puppet.get_global_transform()
+	var bounds := Rect2(pose_to_screen * corners[0], Vector2.ZERO)
+	for index in range(1, corners.size()):
+		bounds = bounds.expand(pose_to_screen * corners[index])
+	return bounds
+
+
+func _anchor_foe_tickets() -> void:
+	var painted: Dictionary = {}
+	for rank in range(1, 5):
+		painted[rank] = _foe_painted_rect(rank)
+	for rank in range(1, 5):
+		var ticket: StitchedFoeIntentPlate = _foe_tickets[rank]
+		if not ticket.visible:
+			continue
+		var actor: Rect2 = painted[rank]
+		if actor.size.x <= 0.0 or actor.size.y <= 0.0:
+			ticket.clear_intent()
+			_foe_intents.erase(rank)
+			continue
+		# A small horizontal lane tolerance keeps 148px sewn patches apart
+		# even while each painted pose sways within its 150px rank station.
+		var lane_left := 664.0 + float(rank - 1) * 150.0
+		var left := clampf(actor.get_center().x - ticket.size.x * 0.5,
+			lane_left, lane_left + 2.0)
+		var top := actor.position.y - ticket.size.y - 8.0
+		# If a neighboring taller foe leans under this patch, raise the
+		# patch above *those painted pixels* instead of covering their face.
+		var horizontal := Rect2(left, 0.0, ticket.size.x, 1.0)
+		for other_rank in range(1, 5):
+			if other_rank == rank:
+				continue
+			var neighbor: Rect2 = painted[other_rank]
+			if neighbor.size.x <= 0.0 or neighbor.size.y <= 0.0:
+				continue
+			if horizontal.end.x > neighbor.position.x and horizontal.position.x < neighbor.end.x:
+				top = minf(top, neighbor.position.y - ticket.size.y - 8.0)
+		# The public 1280x720 stage reserves y105..135 for the foe header
+		# and y505..555 for rank/HP footplates; don't occlude either.
+		ticket.position = Vector2(left, clampf(top, 142.0, 490.0 - ticket.size.y))
+
+
 func _refresh_foe_intents() -> void:
 	_foe_intents.clear()
 	for rank in range(1, 5):
@@ -543,6 +598,7 @@ func _refresh_foe_intents() -> void:
 			continue
 		_foe_intents[rank] = intent
 		ticket.present_intent(intent, rank)
+	_anchor_foe_tickets()
 	_present_foe_intent_disclosure()
 
 
@@ -1324,6 +1380,9 @@ func _advance_focus(delta: float) -> void:
 
 func _process(delta: float) -> void:
 	_advance_focus(delta)
+	# Animated lunges, bob and focus zoom move painted pixels between turns.
+	if battle != null and not _foe_tickets.is_empty():
+		_anchor_foe_tickets()
 
 
 func _exit_tree() -> void:

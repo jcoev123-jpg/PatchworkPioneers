@@ -63,12 +63,36 @@ func _fixed(screen: StitchedBattleScreen) -> Dictionary:
 			rects[str(group[key].get_instance_id())] = group[key].get_global_rect()
 	for meter in screen._rank_meters.values():
 		rects[str(meter["root"].get_instance_id())] = meter["root"].get_global_rect()
-	for ticket in screen._foe_tickets.values():
-		rects[str(ticket.get_instance_id())] = ticket.get_global_rect()
 	for control in [screen._turn_ribbon, screen._candle_meter,
 			screen._stage_art_view, screen._stage_backdrop]:
 		rects[str(control.get_instance_id())] = control.get_global_rect()
 	return rects
+
+
+
+# Only input/HUD mounts are fixed under camera focus. S7's new intent plaques
+# follow actual painted poses after each public refresh; verify that separate
+# live geometry contract instead of freezing their obsolete overhead positions.
+func _verify_intent_anchors(screen: StitchedBattleScreen, expected: int) -> void:
+	var visible_count := 0
+	for rank in range(1, 5):
+		var puppet: Control = screen._puppets["foe_" + str(rank)]
+		var ticket: StitchedFoeIntentPlate = screen._foe_tickets[rank]
+		if not puppet.visible:
+			_check(not ticket.visible, "vacated foe rank %d clears plaque" % rank)
+			continue
+		visible_count += 1
+		var art: Rect2 = puppet.posed_actor_rect()
+		var painted := Rect2(puppet.get_global_transform() * art.position, art.size)
+		var plaque := ticket.get_global_rect()
+		_check(art.size.x > 0.0 and ticket.visible
+			and absf(plaque.get_center().x - painted.get_center().x) <= 9.0
+			and painted.position.y - plaque.end.y >= 6.0
+			and painted.position.y - plaque.end.y <= 100.0
+			and plaque.size.y <= 68.0
+			and not plaque.intersects(screen._foot_plates["foe_" + str(rank)].get_global_rect()),
+			"foe rank %d has its own live painted anchor, free of the fixed footplate" % rank)
+	_check(visible_count == expected, "non-vacuous foe intent geometry count")
 
 
 func _camera_math(screen: StitchedBattleScreen, expected: float, message: String) -> void:
@@ -127,6 +151,7 @@ func _run() -> void:
 	var screen := _mount()
 	var backdrop = screen._stage_backdrop
 	var neutral := _fixed(screen)
+	_verify_intent_anchors(screen, 3)
 	_check(backdrop is ROSTER.StageBackdrop and backdrop.has_image()
 		and backdrop.stage_texture.resource_path == screen.stage_path()
 		and backdrop.get_global_rect() == Rect2(0, 60, 1280, 500)
@@ -210,6 +235,7 @@ func _run() -> void:
 	screen._refresh()
 	_check(screen.battle.get_foes().size() == 4 and screen._puppets["foe_4"].visible,
 		"AC1 fourth genuine foe can occupy reserved rank 4")
+	_verify_intent_anchors(screen, 4)
 	_check(backdrop.start_focus(screen._puppets["hero_1"], screen._puppets["foe_4"], false),
 		"AC2 shared visual camera accepts visible fourth-rank bound pawns")
 	var before_focus_4v4 := _frozen(screen)
@@ -250,6 +276,7 @@ func _run() -> void:
 		and not screen._puppets["foe_4"].visible,
 		"AC4 genuine 4v4 visual fixture restores original 4v3 authoritative battle")
 	screen._cancel_stage_focus()
+	_verify_intent_anchors(screen, 3)
 	_check(_fixed(screen) == neutral and backdrop.focus_zoom() == 1.0,
 		"AC3 all stationary geometry and neutral camera restore after attacks")
 	# Advance only through *accepted real hero Pass actions* so the existing

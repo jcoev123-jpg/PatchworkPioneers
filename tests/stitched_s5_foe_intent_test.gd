@@ -322,44 +322,60 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 	_check(sewn != null and stage._foe_tickets.size() == 4
 		and stage._foe_ticket_labels.size() == 4 and stage._foe_ticket_target_labels.size() == 4,
 		"all four public foe-rank tickets retain authored NinePatch art and two separate labels")
-	var previous := Rect2()
 	var earlier_rectangles: Array[Rect2] = []
 	var header := Rect2(710, 105, 545, 30)
 	var ribbon := stage._turn_ribbon.get_global_rect()
 	var candle := stage._candle_meter.get_global_rect()
 	var tray := Rect2(12, 557, 1256, 155)
 	var painted_count := 0
+	var figures: Dictionary = {}
+	for rank in range(1, 5):
+		var puppet: Control = stage._puppets["foe_" + str(rank)]
+		if not puppet.visible:
+			continue
+		# Independently measure each actual painted pose in screen coordinates,
+		# not the full-size transparent Puppet Control or production anchor cache.
+		var art: Rect2 = puppet.posed_actor_rect()
+		var painted := Rect2(puppet.get_global_transform() * art.position, art.size)
+		figures[rank] = painted
+		painted_count += 1
+		_check(art.size.x > 0 and art.size.y >= 120.0 and art.size.y <= 290.0
+			and painted.end.y <= 505.0 and painted.position.x >= 0.0
+			and painted.end.x <= 1280.0,
+			"rank %d really paints a fitted nonempty actor inside the live stage" % rank)
 	for rank in range(1, 5):
 		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[rank]
+		if not ticket.visible:
+			_check(not figures.has(rank) and ticket.foe_id.is_empty(),
+				"vacated rank %d has no orphaned visible intent" % rank)
+			continue
 		var rectangle := ticket.get_global_rect()
-		var puppet: Control = stage._puppets["foe_" + str(rank)]
-		var art: Rect2 = puppet.posed_actor_rect()
-		var painted := Rect2(puppet.global_position + art.position, art.size)
 		var ability: Label = stage._foe_ticket_labels[rank]
 		var target: Label = stage._foe_ticket_target_labels[rank]
 		var glyph: TextureRect = ticket.get_node("IntentGlyph")
+		var painted: Rect2 = figures.get(rank, Rect2())
+		_check(painted.size.x > 0.0 and painted.size.y > 0.0
+			and absf(rectangle.get_center().x - painted.get_center().x) <= 9.0
+			and painted.position.y - rectangle.end.y >= 6.0
+			and painted.position.y - rectangle.end.y <= 100.0,
+			"rank %d is tightly anchored just above its OWN actual painted figure" % rank)
 		_check(ticket.texture == sewn and stage._intent_disclosure.texture == sewn
 			and ticket.self_modulate == Color("62464a")
 			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
 			and ticket.focus_mode == Control.FOCUS_ALL
-			and rectangle.position == Vector2(664 + (rank - 1) * 150, 140)
-			and rectangle.size == Vector2(150, 76)
+			and rectangle.size.x >= 140 and rectangle.size.y <= 68
 			and rectangle.position.x >= 0 and rectangle.end.x <= 1280
-			and rectangle.position.y >= 136 and rectangle.end.y <= 220
+			and rectangle.position.y >= 140 and rectangle.end.y <= 505
 			and not rectangle.intersects(header)
 			and not rectangle.intersects(ribbon) and not rectangle.intersects(candle)
-			and not rectangle.intersects(tray)
-			and (rank == 1 or not rectangle.intersects(previous))
-			and absf(rectangle.get_center().x - (puppet.global_position.x + puppet.size.x * 0.5)) < 2.0
-			and not rectangle.intersects(stage._foot_plates["foe_" + str(rank)].get_global_rect()),
-			"rank %d has a centred 150x76 sewn ticket within overhead band and viewport, with no adjoining UI overlap" % rank)
-		if puppet.visible:
-			painted_count += 1
-			_check(not painted.intersects(rectangle) and rectangle.end.y <= painted.position.y
-				and painted.size.y >= 120.0 and painted.size.y <= 280.0
-				and painted.end.y <= 503.0
-				and painted.position.x >= 0.0 and painted.end.x <= 1280.0,
-				"rank %d ticket clears actual posed authored figure pixels, not obsolete puppet node bounds" % rank)
+			and not rectangle.intersects(tray),
+			"rank %d compact authored plaque stays in viewport, outside header, ribbon, candle and tray" % rank)
+		for other in range(1, 5):
+			_check(not rectangle.intersects(stage._foot_plates["foe_" + str(other)].get_global_rect()),
+				"foe rank %d never covers a neighboring rank or HP/FRAY footplate %d" % [rank, other])
+			if figures.has(other):
+				_check(not rectangle.intersects(figures[other]),
+					"foe rank %d does not occlude painted actor %d, including neighbors" % [rank, other])
 		var glyph_rect := Rect2(glyph.position, glyph.size)
 		var ability_rect := Rect2(ability.position, ability.size)
 		var target_rect := Rect2(target.position, target.size)
@@ -382,26 +398,25 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 			and ability.get_theme_color("font_color") == StitchedFoeIntentPlate.BONE
 			and target.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
 			and _caption_fits(ability) and _caption_fits(target),
-			"rank %d real Labels measure >=24/18px, pixel-fit in separate lines and avoid the genuine kind glyph" % rank)
+			"rank %d real 24/18px labels pixel-fit in separate rows without overlapping glyph" % rank)
 		for earlier in earlier_rectangles:
 			_check(not rectangle.intersects(earlier),
-				"foe rank %d has no pairwise ticket overlap across the entire 4-rank stage" % rank)
+				"foe rank %d has no pairwise plaque collision across four physical ranks" % rank)
 		earlier_rectangles.append(rectangle)
-		previous = rectangle
 	_check(painted_count == expected_count,
-		"non-vacuous geometry checks every posed occupied foe, including the admitted fourth rank")
+		"non-vacuous geometry checks every posed occupied foe, including admitted fourth rank")
 	var detail := stage._intent_disclosure.get_global_rect()
 	_check(stage._intent_disclosure.self_modulate == Color("62464a")
 		and detail.position == Vector2(22, 140) and detail.end.y <= 220
 		and detail.end.x <= 660
 		and stage._intent_disclosure_label.autowrap_mode == TextServer.AUTOWRAP_WORD_SMART
 		and stage._intent_disclosure_label.get_theme_color("font_color") == StitchedBattleScreen.PAPER,
-		"full-length pointer/keyboard disclosure keeps its authored frame in hero-side overhead air")
+		"full pointer/keyboard disclosure retains authored frame and hero-side air")
 	for rank in range(1, 5):
 		var hero: Control = stage._puppets["hero_" + str(rank)]
 		var hero_rect: Rect2 = hero.posed_actor_rect()
 		_check(not Rect2(hero.global_position + hero_rect.position, hero_rect.size).intersects(detail),
-			"rank %d hero's actual painted bounds do not intersect intent disclosure" % rank)
+			"rank %d hero painted bounds clear independent full disclosure" % rank)
 	_check(root.get_viewport().get_visible_rect().size == Vector2(1280, 720),
 		"headless 1280x720 Gothic viewport has intended visual bounds")
 
@@ -468,6 +483,21 @@ func _run() -> void:
 	_verify_tickets(stage)
 	_verify_kind_fixtures(host)
 	_check(not stage._foe_tickets[4].visible, "initial fourth foe rank is empty, not a ghost ability")
+	# Real pose changes re-anchor after an ordinary public refresh. Inspection
+	# remains read-only even while the painted bounds move within their lanes.
+	var idle_puppet: Control = stage._puppets["foe_1"]
+	var pose_before: Vector2 = stage._foe_tickets[1].position
+	var quiet_pose_state := battle.state_snapshot()
+	var quiet_pose_rng := battle.rng_state()
+	var quiet_pose_receipts := stage.receipts.duplicate(true)
+	idle_puppet.idle_phase += 1.35
+	stage._refresh()
+	_check(stage._foe_tickets[1].position.distance_to(pose_before) > 0.1,
+		"live painted idle pose causes a distinct plaque anchor without a fixed y band")
+	_check_geometry(stage)
+	_check(battle.state_snapshot() == quiet_pose_state
+		and battle.rng_state() == quiet_pose_rng and stage.receipts == quiet_pose_receipts,
+		"re-anchoring live posed pixels never spends turns, receipts or RNG")
 	# Model the public post-summon board state without advancing combat: all
 	# three original foes stay occupied while a distinct live fourth enters.
 	var fourth: Dictionary = battle._units[str(battle.get_foes()[2]["id"])].duplicate(true)
