@@ -743,6 +743,78 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_scarecrow_ash_chimney_crow_nest",
+      "title": "The Ash-Chimney Crow Nest",
+      "description": "A giant patched chimney rises from the floorboards; straw-paper crow nests fill its cracked flue while the Scarecrow's black companion taps a brass button inside the ash.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["send_crow_up_flue", "bind_cracked_damper"],
+      "choices": [
+        {
+          "id": "send_crow_up_flue",
+          "text": "Send the crow after loose flue thread (gain 2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "bind_cracked_damper",
+          "text": "Spend 2 scraps binding the damper (earn 28 gold)",
+          "outcome": {"gold": 28, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little nests undisturbed",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_midnight_postbox_spool",
+      "title": "The Midnight Postbox Spool",
+      "description": "A towering brass letter box leans among woollen hedge walls; the Yarn Ranger's knotted bolas hold its spring flap open as candlelit envelopes tremble inside.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["buy_moonpost_braid", "rewind_postbox_flap"],
+      "choices": [
+        {
+          "id": "buy_moonpost_braid",
+          "text": "Pay 18 gold for three bundles of moonpost braid (+3 scraps)",
+          "outcome": {"gold": -18, "scraps": 3}
+        },
+        {
+          "id": "rewind_postbox_flap",
+          "text": "Spend 1 scrap rewinding the spring flap (earn 23 gold)",
+          "outcome": {"gold": 23, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the sealed letters whisper to themselves",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_porcelain_button_scale",
+      "title": "The Porcelain Button Scale",
+      "description": "A cracked bone-cream dinner plate hangs as the pan of an immense button scale; only the Button Golem's broad stuffed fists can steady its tarnished brass weights.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["steady_brass_scale", "collect_cracked_scale_shanks"],
+      "choices": [
+        {
+          "id": "steady_brass_scale",
+          "text": "Spend 2 scraps steadying the heavy scale (earn 30 gold)",
+          "outcome": {"gold": 30, "scraps": -2}
+        },
+        {
+          "id": "collect_cracked_scale_shanks",
+          "text": "Gather fallen button shanks (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the porcelain pan settle in silence",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }

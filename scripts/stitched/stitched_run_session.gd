@@ -80,6 +80,7 @@ var _service: RefCounted
 var _actions: Array = []
 var _event_record: Dictionary = {}
 var _replacement_visit: RunStitchedSewingReplacement
+var _kid_fear: StitchedKidFear
 
 
 static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}) -> StitchedRunSession:
@@ -118,6 +119,7 @@ static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Di
 			return null
 		session.rng.state = initial.rng
 	session.phase = "map"
+	session._kid_fear = StitchedKidFear.new()
 	session._initial = {"map": session.map.export_state(), "rng": session.rng.state}
 	session._seal()
 	return session
@@ -127,6 +129,7 @@ func snapshot() -> Dictionary:
 	return {"phase": phase, "heroes": heroes.duplicate(true), "satchel": satchel.duplicate(true),
 		"patches": patches.duplicate(true), "pockets": pockets.duplicate(true),
 		"gold": gold, "scraps": scraps, "candle": candle,
+		"kid_fear": _kid_fear.state_snapshot(),
 		"pending": pending.duplicate(true), "receipts": receipts.duplicate(true),
 		"map": map.export_state() if map != null else {},
 		"rng": rng.state if rng != null else 0,
@@ -249,6 +252,8 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 		for previous in heroes:
 			if previous.id == hero.id:
 				hero["patches"] = previous.get("patches", []).duplicate()
+				if not previous.lost and hero.lost:
+					_kid_fear.apply_observed_event({"kind": "lost"})
 	heroes = ending
 	satchel = battle.satchel()
 	var reward := {"gold": 0, "scraps": 0, "parts": []}

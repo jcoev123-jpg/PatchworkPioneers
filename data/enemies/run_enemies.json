@@ -1458,7 +1458,7 @@
           "acc": 86,
           "dmg": [4, 6],
           "crit": 0,
-          "effects": {},
+          "effects": {"push": 1, "fray": 5},
           "self_move": 0,
           "move": "attack2"
         },

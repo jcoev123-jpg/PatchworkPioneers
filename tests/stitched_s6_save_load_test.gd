@@ -11,7 +11,7 @@ func _roundtrip(session: StitchedRunSession, label: String) -> StitchedRunSessio
 	_check(restored != null and restored != session and restored.snapshot() == before,
 		label + " restores exact map, RNG, heroes, ledgers and pending state")
 	_check(session.snapshot() == before, label + " is read-only for the source")
-	for key in ["gold", "candle", "rng", "phase", "heroes", "map", "pockets"]:
+	for key in ["gold", "candle", "rng", "phase", "heroes", "map", "pockets", "kid_fear"]:
 		var corrupt := document.duplicate(true)
 		corrupt.state[key] = "forged"
 		corrupt.digest = StitchedRunSave._digest(corrupt)
@@ -23,6 +23,7 @@ func _roundtrip(session: StitchedRunSession, label: String) -> StitchedRunSessio
 	var migrated := StitchedRunSave.restore(legacy)
 	_check(migrated != null and migrated.snapshot() == before,
 		label + " replays a pre-pocket save into four empty canonical pockets")
+	_fear_save_guards(session, label)
 	var forged_purchase := legacy.duplicate(true)
 	forged_purchase.journal.append({"action": "visit", "id": "buy_pins", "arguments": [session.heroes[0].id]})
 	forged_purchase.digest = StitchedRunSave._digest(forged_purchase)
@@ -40,6 +41,118 @@ func _roundtrip(session: StitchedRunSession, label: String) -> StitchedRunSessio
 	broken_graph.digest = StitchedRunSave._digest(broken_graph)
 	_check(StitchedRunSave.restore(broken_graph) == null, "malformed graph rejects atomically even with a valid digest")
 	return restored
+
+
+func _fear_save_guards(session: StitchedRunSession, label: String) -> void:
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	var document := StitchedRunSave.capture(session)
+	_check(document.version == 1, label + " retains VERSION=1")
+	for field in ["fear", "shake", "pending_lost_strings", "sequence"]:
+		var forged := document.duplicate(true)
+		var value: Variant = forged.state.kid_fear[field]
+		forged.state.kid_fear[field] = not value if value is bool else int(value) + 1
+		forged.digest = StitchedRunSave._digest(forged)
+		_check(StitchedRunSave.restore(forged) == null, label + " rejects rehashed fear service field " + field)
+	var incomplete := document.duplicate(true)
+	incomplete.state.kid_fear.erase("sequence")
+	incomplete.digest = StitchedRunSave._digest(incomplete)
+	_check(StitchedRunSave.restore(incomplete) == null, label + " present fear must match the entire service state")
+	var extra := document.duplicate(true)
+	extra.state.kid_fear["forged"] = 0
+	extra.digest = StitchedRunSave._digest(extra)
+	_check(StitchedRunSave.restore(extra) == null, label + " rejects additional fear fields")
+	for without_pockets in [false, true]:
+		var legacy_fear := document.duplicate(true)
+		legacy_fear.state.erase("kid_fear")
+		if without_pockets:
+			legacy_fear.state.erase("pockets")
+		legacy_fear.digest = StitchedRunSave._digest(legacy_fear)
+		var migrated := StitchedRunSave.restore(bytes_to_var(var_to_bytes(legacy_fear)))
+		_check(migrated != null and migrated.is_consistent() and migrated.snapshot() == before
+			and migrated.journal == journal and migrated.rng.state == session.rng.state,
+			label + " pre-fear save reconstructs complete canonical state and RNG, pockets absent=" + str(without_pockets))
+		var corrupt := legacy_fear.duplicate(true)
+		corrupt.state.gold += 1
+		corrupt.digest = StitchedRunSave._digest(corrupt)
+		_check(StitchedRunSave.restore(corrupt) == null, label + " legacy fear migration preserves other ledger validation")
+		var undigested := legacy_fear.duplicate(true)
+		undigested.journal.append({"action": "settle"})
+		_check(StitchedRunSave.restore(undigested) == null, label + " legacy migration retains original digest validation")
+		if without_pockets:
+			for purchase in ["buy_pins", "buy_thimble_tonic"]:
+				var smuggled := legacy_fear.duplicate(true)
+				smuggled.journal.append({"action": "visit", "id": purchase, "arguments": [session.heroes[0].id]})
+				smuggled.digest = StitchedRunSave._digest(smuggled)
+				_check(StitchedRunSave.restore(smuggled) == null, label + " pre-fear/pre-pocket save rejects " + purchase)
+	for command in [{"action": "settle"}, {"action": "kid_fear", "fear": 15}]:
+		var forged := document.duplicate(true)
+		forged.journal.append(command)
+		forged.digest = StitchedRunSave._digest(forged)
+		_check(StitchedRunSave.restore(forged) == null, label + " rejects unfinished, duplicate or forged fear command " + str(command))
+	_check(session.snapshot() == before and session.journal == journal,
+		label + " every rejected restore leaves the source state and journal unchanged")
+
+
+func _lost_save() -> void:
+	var app: Node = await _new_run(42)
+	var session: StitchedRunSession = app.stitched_run_session
+	if session == null:
+		app.free()
+		return
+	var fight_id := ""
+	for id in session.choices():
+		if session.map.get_node(id).type == "Fight":
+			fight_id = id
+	_check(not fight_id.is_empty() and _press_route(app, fight_id), "legacy loss regression mounts real combat")
+	var stage: StitchedBattleScreen = app.stitched_run_battle
+	if stage == null:
+		app.free()
+		return
+	for step in range(500):
+		if stage.battle.is_over() or stage.battle.get_heroes().any(func(hero: Dictionary): return hero.lost):
+			break
+		stage._action_buttons["pass"].pressed.emit()
+	var won := _win(stage)
+	_check(won.acted > 0 and stage.battle.outcome() == "victory"
+		and stage.battle.get_heroes().filter(func(hero: Dictionary): return hero.lost).size() == 1,
+		"legacy migration uses public turns with one actual LOST doll and a surviving victory")
+	stage._action_buttons["exit"].pressed.emit()
+	_check(session.phase == "map" and session.snapshot().kid_fear.fear == 15
+		and session.snapshot().kid_fear.sequence == 1, "loss save has nonzero authenticated service state")
+	_roundtrip(session, "real LOST settlement")
+	var shop_id := ""
+	for id in session.choices():
+		if session.map.get_node(id).type == "Shop":
+			shop_id = id
+	_check(not shop_id.is_empty() and _press_route(app, shop_id), "loss save reaches an actual pocket purchase offer")
+	var actions := session.visit_actions()
+	var purchased := false
+	for index in actions.size():
+		if actions[index].id == "buy_pins" and actions[index].enabled:
+			app.stitched_run_buttons[index].pressed.emit()
+			purchased = true
+			break
+	_check(purchased, "purchase-smuggling regression contains an accepted real purchase command")
+	var before := session.snapshot()
+	var document := StitchedRunSave.capture(session)
+	_check(not document.is_empty() and document.journal.back().id == "buy_pins",
+		"owned pocket item is authenticated by its genuine journal action")
+	var legacy := document.duplicate(true)
+	legacy.state.erase("kid_fear")
+	legacy.digest = StitchedRunSave._digest(legacy)
+	var migrated := StitchedRunSave.restore(legacy)
+	_check(migrated != null and migrated.snapshot() == before, "pre-fear save with a legitimate pocket purchase migrates exactly")
+	for without_fear in [false, true]:
+		var smuggled := document.duplicate(true)
+		smuggled.state.erase("pockets")
+		if without_fear:
+			smuggled.state.erase("kid_fear")
+		smuggled.digest = StitchedRunSave._digest(smuggled)
+		_check(StitchedRunSave.restore(smuggled) == null and session.snapshot() == before,
+			"pre-pocket document with a real purchased-item command fails closed, fear absent=" + str(without_fear))
+	app.free()
+	await process_frame
 
 
 func _run() -> void:
@@ -103,6 +216,7 @@ func _run() -> void:
 		_check(StitchedRunSave.restore(invalid) == null, "malformed save fails closed")
 	app.free()
 	await process_frame
+	await _lost_save()
 	for message in failures:
 		printerr(message)
 	print("stitched_s6_save_load_test: %d checks, %d failures" % [checks, failures.size()])
