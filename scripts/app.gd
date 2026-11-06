@@ -5624,6 +5624,7 @@ func _present_stitched_run() -> void:
 	var ledger := Label.new()
 	ledger.name = "RunLedger"
 	ledger.text = "CANDLE %d / 100     GOLD %d     SCRAPS %d     SATCHEL %d / 6" % [session.candle, session.gold, session.scraps, session.satchel.size()]
+	ledger.text += "     WREN FEAR %d / 100" % session.snapshot().kid_fear.fear
 	ledger.add_theme_font_size_override("font_size", 22)
 	ledger.add_theme_color_override("font_color", Color("#f6dda6"))
 	content.add_child(ledger)
