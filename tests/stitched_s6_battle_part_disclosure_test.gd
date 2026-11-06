@@ -29,7 +29,27 @@ func _actor_turn(stage: StitchedBattleScreen, id: String) -> bool:
 	return stage.battle.current_actor_id() == id
 
 
+func _activate(button: Button, keyboard: bool) -> void:
+	_check(button.is_visible_in_tree() and not button.disabled, "precondition: native control is visible and enabled")
+	if keyboard:
+		button.grab_focus()
+	for down in [true, false]:
+		if keyboard:
+			var key := InputEventKey.new()
+			key.keycode = KEY_ENTER
+			key.pressed = down
+			root.push_input(key, true)
+		else:
+			var click := InputEventMouseButton.new()
+			click.button_index = MOUSE_BUTTON_LEFT
+			click.position = button.get_global_rect().get_center()
+			click.pressed = down
+			root.push_input(click, true)
+	await process_frame
+
+
 func _assert_digest(stage: StitchedBattleScreen, slot: String, label: String) -> void:
+	_assert_projection(stage, slot, label)
 	var before := _view_state(stage)
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	var worn: Dictionary = actor.get("parts", {}).get(slot, {})
@@ -83,6 +103,68 @@ func _assert_digest(stage: StitchedBattleScreen, slot: String, label: String) ->
 	_check(_view_state(stage) == before, label + ": inspection preserves seeded state, RNG, receipts and selection")
 
 
+func _assert_projection(stage: StitchedBattleScreen, slot: String, label: String) -> void:
+	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
+	var worn: Dictionary = actor.get("parts", {}).get(slot, {})
+	var part: Dictionary = stage.parts.get(str(worn.get("id", "")), {})
+	var button: Button = stage._part_buttons[slot]
+	var heading: Label = stage._part_headings[slot]
+	var help: Button = stage._part_help_buttons[slot]
+	var expected := slot.to_upper()
+	if not part.is_empty() and str(part.get("slot", "")) == slot:
+		var tier := int(worn["tier"])
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		expected += " " + str(StitchedPartActionCues.ROMAN[tier])
+		if bool(worn.get("torn", false)):
+			expected += " · TORN"
+		_check(button.text == ability["name"], label + ": complete current-tier ability on real button")
+	else:
+		var missing := "Unfilled" if str(worn.get("id", "")).is_empty() else "Unknown part"
+		if not str(worn.get("id", "")).is_empty():
+			expected += " " + str(StitchedPartActionCues.ROMAN[int(worn["tier"])])
+		expected += " · " + missing.to_upper()
+		_check(button.disabled and button.text == missing, label + ": no usable borrowed ability for missing part")
+	_check(heading.text == expected, label + ": adjacent heading shows actual slot/tier/torn or missing state")
+	var cue: Dictionary = stage._part_cues[slot]
+	var original := StitchedPartActionCues.format_action(actor, slot, worn, stage.parts,
+		stage._valid_part(actor, worn), stage._part_lock_reason(actor, worn))
+	_check(cue == original and button.tooltip_text == original["full"] and
+		heading.tooltip_text == original["full"] and help.tooltip_text == "Inspect " + str(original["full"]),
+		label + ": complete cue title, digest and help remain unchanged")
+	var font := button.get_theme_font("font")
+	var font_size := button.get_theme_font_size("font_size")
+	var measured := font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size)
+	var style := button.get_theme_stylebox("normal")
+	_check(button.is_visible_in_tree() and heading.is_visible_in_tree() and font_size >= 14 and
+		button.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING and not button.clip_text and
+		measured.x + style.get_content_margin(SIDE_LEFT) + style.get_content_margin(SIDE_RIGHT) + 8 <= button.size.x and
+		font.get_height(font_size) <= button.size.y,
+		label + ": measured full ability fits readable font without clipping or ellipsis")
+	var heading_font := heading.get_theme_font("font")
+	var heading_size := heading.get_theme_font_size("font_size")
+	_check(heading_size >= 14 and heading_font.get_string_size(heading.text,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, heading_size).x <= heading.size.x and
+		heading_font.get_height(heading_size) <= heading.size.y and
+		heading.mouse_filter == Control.MOUSE_FILTER_IGNORE and heading.focus_mode == Control.FOCUS_NONE,
+		label + ": complete heading is readable and cannot intercept actions")
+	var controls: Array[Control] = [button, heading, help]
+	var obstacles: Array[Control] = [stage._labels["preview"], stage._part_disclosure]
+	for key in stage._action_buttons:
+		if stage._action_buttons[key].visible:
+			obstacles.append(stage._action_buttons[key])
+	for key in stage._target_buttons:
+		obstacles.append(stage._target_buttons[key])
+	for other in StitchedBattleScreen.SLOTS:
+		if other != slot:
+			obstacles.append_array([stage._part_buttons[other], stage._part_headings[other], stage._part_help_buttons[other]])
+	for control in controls:
+		_check(Rect2(0, 0, 1280, 720).encloses(control.get_global_rect()), label + ": worn control stays in viewport")
+		for other in controls + obstacles:
+			if control != other:
+				_check(not control.get_global_rect().intersects(other.get_global_rect()),
+					label + ": " + str(control.name) + " clears " + str(other.name) + " " + str(other.get_global_rect()))
+
+
 func _assert_cues(stage: StitchedBattleScreen, label: String) -> void:
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	_check(not actor.is_empty() and actor.get("side") == "hero", label + ": active hero exists")
@@ -100,11 +182,12 @@ func _assert_cues(stage: StitchedBattleScreen, label: String) -> void:
 		var stat := StitchedParts.stat_at_tier(part, tier)
 		var cue: Dictionary = stage._part_cues[slot]
 		var full := str(cue["full"])
-		var title := str(stage._part_buttons[slot].text)
-		_check(title == cue["title"] and title.contains(slot.to_upper()) and
+		var title := str(cue["title"])
+		_check(stage._part_headings[slot].text.begins_with(slot.to_upper() + " " + str(StitchedPartActionCues.ROMAN[tier])) and
+			stage._part_buttons[slot].text == ability["name"] and title.contains(slot.to_upper()) and
 			title.contains(str(part["name"])) and
 			title.contains(str(StitchedPartActionCues.ROMAN[tier])),
-			label + ": actual slot, full part name and roman stitch tier in " + slot)
+			label + ": heading and ability stay distinct while full title retains part identity in " + slot)
 		_check(full.contains("ID: " + id) and full.contains(str(ability["name"])) and
 			full.contains(str(ability["kind"])) and
 			full.contains(str(part["text"])) and
@@ -158,10 +241,11 @@ func _run() -> void:
 	await process_frame
 	_check(stage._part_help_buttons["head"].has_focus() and stage._part_disclosure.visible,
 		"keyboard focus exposes identical full disclosure")
-	stage._part_help_buttons["head"].pressed.emit()
+	await _activate(stage._part_help_buttons["head"], true)
 	_check(stage._part_help_dialog.dialog_text == stage._part_cues["head"]["full"],
 		"activate help shows full accessible text, not a combat action")
 	stage._part_help_dialog.hide()
+	await process_frame
 	stage._action_buttons["pass"].grab_focus()
 	stage._refresh()
 	_check(_view_state(stage) == quiet, "hover, keyboard help, dialog and refresh are entirely read-only")
@@ -196,7 +280,7 @@ func _run() -> void:
 		not str(stage._part_cues["arms"]["full"]).contains("Brace") and
 		not stage.select_part("arms"), "unfilled slot is truthful, inspectable and unselectable")
 	await _assert_digest(stage, "arms", "unfilled")
-	stage.battle._units["tinker"]["parts"]["arms"] = {"id": "nonexistent_part", "tier": 1, "torn": false}
+	stage.battle._units["tinker"]["parts"]["arms"] = {"id": "nonexistent_part", "tier": 2, "torn": false}
 	stage._refresh()
 	_check(stage._part_buttons["arms"].disabled and
 		str(stage._part_cues["arms"]["title"]).contains("Unknown worn part") and
@@ -332,7 +416,7 @@ func _run() -> void:
 			continue
 		var before := stage.receipts.size()
 		var button: Button = stage._part_buttons[slot]
-		button.pressed.emit()
+		await _activate(button, false)
 		if stage._selected_part != slot:
 			continue
 		for key in stage.legal_targets():
@@ -350,7 +434,7 @@ func _run() -> void:
 			var before_state := _view_state(stage)
 			stage._part_help_buttons[slot].mouse_exited.emit()
 			_check(_view_state(stage) == before_state, "hover on selected ability leaves selection intact")
-			stage._target_buttons[key].pressed.emit()
+			await _activate(stage._target_buttons[key], true)
 			_check(stage.receipts.size() > before and
 				stage.receipts[before]["action"] == "ability" and
 				stage.receipts[before]["actor"] == actor_id and

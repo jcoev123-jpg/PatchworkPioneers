@@ -38,6 +38,7 @@ var _rank_meters: Dictionary = {}
 var _status_disclosure: NinePatchRect
 var _status_disclosure_label: Label
 var _part_buttons: Dictionary = {}
+var _part_headings: Dictionary = {}
 var _part_help_buttons: Dictionary = {}
 var _part_cues: Dictionary = {}
 var _part_disclosure: NinePatchRect
@@ -220,16 +221,18 @@ func _build_screen() -> void:
 	_labels["stats"] = _label("", Rect2(27, 590, 204, 86), 13)
 	_labels["stats"].vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	_labels["thread"] = _label("", Rect2(27, 679, 204, 24), 12, ERROR)
-	_label("SEWN ABILITIES  ·  PICK A PART, THEN A LIT FIGURE", Rect2(259, 561, 758, 18), 14, ACCENT)
 	for index in range(4):
 		var slot: String = SLOTS[index]
 		var x := 260 + index * 188
+		_part_headings[slot] = _label("", Rect2(x, 559, 183, 22), 14, ACCENT)
+		_part_headings[slot].name = "WornHeading" + slot.capitalize()
 		_part_buttons[slot] = _button(slot.capitalize(), Rect2(x, 581, 152, 30),
 			func(): select_part(slot))
 		_part_buttons[slot].name = "Worn" + slot.capitalize()
-		_part_buttons[slot].add_theme_font_size_override("font_size", 12)
-		_part_buttons[slot].clip_text = true
-		_part_buttons[slot].text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+		_part_buttons[slot].add_theme_font_size_override("font_size", 16)
+		if _portrait_font != null:
+			_part_buttons[slot].add_theme_font_override("font", _portrait_font)
+		_part_buttons[slot].text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING
 		_part_help_buttons[slot] = _button("?", Rect2(x + 154, 581, 29, 30),
 			func(): _open_part_help(slot))
 		_part_help_buttons[slot].name = "Inspect" + slot.capitalize()
@@ -724,7 +727,25 @@ func _refresh() -> void:
 			slot, equipped, parts, can_use, reason)
 		_part_cues[slot] = cue
 		button.disabled = not can_use
-		button.text = str(cue["title"])
+		# Keep the complete cue identity/help intact; the button face is only the
+		# current equipped ability. Slot, tier and damage state have their own row.
+		var part: Dictionary = parts.get(str(equipped.get("id", "")), {})
+		var heading: String = slot.to_upper()
+		if not part.is_empty() and str(part.get("slot", "")) == slot:
+			var tier := int(equipped.get("tier", 1))
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			button.text = str(ability["name"])
+			heading += " " + str(StitchedPartActionCues.ROMAN.get(tier, str(tier)))
+			if bool(equipped.get("torn", false)):
+				heading += " · TORN"
+		else:
+			button.text = "Unfilled" if str(equipped.get("id", "")).is_empty() else "Unknown part"
+			if not str(equipped.get("id", "")).is_empty():
+				var tier := int(equipped.get("tier", 1))
+				heading += " " + str(StitchedPartActionCues.ROMAN.get(tier, str(tier)))
+			heading += " · " + button.text.to_upper()
+		_part_headings[slot].text = heading
+		_part_headings[slot].tooltip_text = str(cue["full"])
 		button.tooltip_text = str(cue["full"])
 		help.disabled = not hero_turn
 		help.tooltip_text = "Inspect " + str(cue["full"])

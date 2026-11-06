@@ -215,13 +215,47 @@ func _verify_fourth_foe(stage: StitchedBattleScreen) -> void:
 		"restoring 4v3 fixture removes fourth-rank figure and intent without RNG changes")
 
 
+func _verify_worn_layout(stage: StitchedBattleScreen) -> void:
+	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
+	_check(actor.get("side") == "hero" and stage._part_headings.size() == 4,
+		"precondition: public app mounts four headings for the active hero")
+	for slot in StitchedBattleScreen.SLOTS:
+		var worn: Dictionary = actor["parts"][slot]
+		var ability := StitchedParts.ability_at_tier(stage.parts[str(worn["id"])], int(worn["tier"]))
+		var button: Button = stage._part_buttons[slot]
+		var heading: Label = stage._part_headings[slot]
+		var font := button.get_theme_font("font")
+		var font_size := button.get_theme_font_size("font_size")
+		_check(button.text == ability["name"] and font_size >= 14 and
+			font.get_string_size(button.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 8 <= button.size.x and
+			font.get_height(font_size) <= button.size.y and not button.clip_text and
+			button.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING and
+			heading.text == slot.to_upper() + " " + str(StitchedPartActionCues.ROMAN[int(worn["tier"])]),
+			"public app theme retains complete readable worn ability and separate slot/tier")
+		_check(not heading.get_global_rect().intersects(button.get_global_rect()) and
+			not button.get_global_rect().intersects(stage._labels["preview"].get_global_rect()) and
+			not button.get_global_rect().intersects(stage._part_help_buttons[slot].get_global_rect()),
+			"public mounted heading, ability, inspection and digest have separate bounds")
+
+
 func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Dictionary:
 	var actor := stage.battle.get_unit(stage.battle.current_actor_id())
 	if actor.is_empty() or stage.battle.current_side() != "hero":
 		return {}
 	for slot in StitchedBattleScreen.SLOTS:
-		if not stage.select_part(slot):
+		var button: Button = stage._part_buttons[slot]
+		if button.disabled:
 			continue
+		var pristine := stage.battle.state_snapshot()
+		var rng := stage.battle.rng_state()
+		var receipts := stage.receipts.duplicate(true)
+		if through_figure:
+			await _mouse_activate(button)
+		else:
+			await _keyboard_activate(button)
+		_check(stage._selected_part == slot and stage.battle.state_snapshot() == pristine
+			and stage.battle.rng_state() == rng and stage.receipts == receipts,
+			"real mouse/keyboard worn ability selection changes only the selected slot")
 		var key := _rank_key(stage)
 		if key.is_empty():
 			continue
@@ -232,13 +266,17 @@ func _choose_legal(stage: StitchedBattleScreen, through_figure: bool) -> Diction
 			_figure_click(stage, key)
 		else:
 			_check(not stage._target_buttons[key].disabled, "keyboard rank button enables only real legal target")
-			stage._target_buttons[key].grab_focus()
-			stage._target_buttons[key].pressed.emit()
+			await _keyboard_activate(stage._target_buttons[key])
 		var receipt: Dictionary = stage.receipts[before] if stage.receipts.size() > before else {}
 		_check(bool(receipt.get("ok", false)), "legal figure or keyboard rank activation commits an authored ability")
 		_check(stage.receipts.size() > before and stage.receipts[before].get("actor") == actor["id"] and
 			stage.receipts[before].get("part") == parts[slot]["id"],
 			"part action delegates exactly once, with the real acting part and receipt")
+		var commits := 0
+		for entry in stage.receipts.slice(before):
+			if entry.get("action") == "ability" and entry.get("actor") == actor["id"]:
+				commits += 1
+		_check(commits == 1, "native worn and target activation dispatches the hero ability once")
 		return receipt
 	return {}
 
@@ -630,6 +668,7 @@ func _run() -> void:
 			"mounted stage is seeded 4v3 with 8 potential stage ranks")
 		_verify_stage_art(stage)
 		_verify_fourth_foe(stage)
+		_verify_worn_layout(stage)
 		_verify_turn_action_cues(stage)
 		_check(stage._unit_at("foe", 4).is_empty() and
 			stage._seat_buttons.has("foe_4") and not stage._puppets["foe_4"].visible,
@@ -751,7 +790,7 @@ func _run() -> void:
 		_check(stage.reduced_motion and stage._puppets["hero_1"].is_processing() == false,
 			"reduced motion suppresses puppet idle/attack tweens without changing combat")
 		_check(stage.battle.current_side() == "hero", "foe AI returns control to heroes using legal authored abilities or Pass")
-		_check(not _choose_legal(stage, repetition == 0).is_empty(),
+		_check(not (await _choose_legal(stage, repetition == 0)).is_empty(),
 			"real mounted part resolves through both figure click and keyboard rank activation")
 		var after := battle.state_snapshot()
 		_check(stage.receipts.size() > 1 and battle.rng_state() == int(after["rng_state"]),
