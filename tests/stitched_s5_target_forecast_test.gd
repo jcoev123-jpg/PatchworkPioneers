@@ -276,23 +276,174 @@ func _run() -> void:
 		var multi_rank := int(multi_actor["rank"])
 		var multi_ability := _ability(multi_stage, slot)
 		var authority: Array = multi_b._legal_targets(multi_actor, multi_ability, multi_rank)
-		var multi := StitchedTargetForecast.for_rank(multi_b, multi_actor, multi_ability, "hero", multi_rank)
-		_check(authority.size() >= 2 and multi.get("targets", []).size() == authority.size(),
-			"multi forecast lists every authoritative live allied target")
-		multi_stage._seat_buttons["hero_" + str(multi_rank)].mouse_entered.emit()
-		for target in authority:
-			_check(multi_stage._labels["preview"].text.contains(str(target["name"])),
-				"multi target preview includes actual ally %s" % target["name"])
-		_check(multi_stage._labels["preview"].text.contains("NO HIT ROLL")
-			and multi_stage._labels["preview"].text.contains("HEAL +7")
-			and not multi_stage._labels["preview"].text.contains("HIT %"),
-			"ally heal is a named support effect, never fake accuracy")
-		var multi_state := multi_b.state_snapshot()
-		var multi_rng := multi_b.rng_state()
-		multi_stage._refresh()
-		_check(multi_state == multi_b.state_snapshot() and multi_rng == multi_b.rng_state(),
-			"multi ally inspection is read only")
-		multi_stage._seat_buttons["hero_" + str(multi_rank)].mouse_exited.emit()
+		_check(authority.size() >= 3 and authority.size() == multi_b.get_heroes().size(),
+			"valid multi heal covers at least three distinct real allies, including the actor")
+		if authority.size() >= 3:
+			# Set three distinct, lawful recipients to full, partially injured and
+			# Hanging. Keep the current actor at full HP so its turn stays ordinary.
+			var full_id := str(multi_actor["id"])
+			var other_ids: Array[String] = []
+			for target in authority:
+				if str(target["id"]) != full_id:
+					other_ids.append(str(target["id"]))
+			_check(other_ids.size() >= 2, "two other lawful allies exist for injury and Hanging")
+			if other_ids.size() >= 2:
+				var partial_id := other_ids[0]
+				var hanging_id := other_ids[1]
+				for target in authority:
+					var live: Dictionary = multi_b._units[str(target["id"])]
+					live["hp"] = int(live["max_hp"])
+					live["hanging"] = false
+				multi_b._units[partial_id]["hp"] = int(multi_b._units[partial_id]["max_hp"]) - 3
+				multi_b._units[hanging_id]["hp"] = 0
+				multi_b._units[hanging_id]["hanging"] = true
+				# A temporarily low maximum is a legal current-state projection:
+				# prove the authored +7 is capped even when Hanging starts at 0 HP.
+				var hanging_unit: Dictionary = multi_b._units[hanging_id]
+				var original_max_hp := int(hanging_unit["max_hp"])
+				hanging_unit["max_hp"] = 4
+				multi_stage._refresh()
+				var capped_preview := StitchedTargetForecast.for_rank(
+					multi_b, multi_actor, multi_ability, "hero", multi_rank)
+				var capped_found := false
+				for row in capped_preview.get("targets", []):
+					if str(row["id"]) == hanging_id:
+						capped_found = int(row.get("heal_amount", -1)) == 4 \
+							and int(row.get("hp_after", -1)) == 4 \
+							and bool(row.get("hanging_before", false)) \
+							and not bool(row.get("hanging_after", true))
+				_check(capped_found and str(capped_preview.get("text", "")).contains("HEAL +7")
+					and str(capped_preview.get("text", "")).contains("+4 HP → 4/4"),
+					"0-HP Hanging doll with live max HP below authored +7 forecasts only capped +4")
+				_check(int(hanging_unit["hp"]) == 0 and bool(hanging_unit["hanging"]),
+					"capped read-only projection does not actually rescue the Hanging target")
+				hanging_unit["max_hp"] = original_max_hp
+				# A LOST doll is absent from the authoritative mask even if its
+				# remembered rank remains occupied in the units dictionary.
+				var lost_unit: Dictionary = multi_b._units[partial_id]
+				lost_unit["lost"] = true
+				multi_stage._refresh()
+				var lost_rank := int(lost_unit["rank"])
+				var lost_key := "hero_" + str(lost_rank)
+				_check(not multi_stage.legal_targets().has(lost_key)
+					and StitchedTargetForecast.for_rank(
+						multi_b, multi_actor, multi_ability, "hero", lost_rank).is_empty(),
+					"lost allied seat is inactionable and cannot receive invented healing")
+				lost_unit["lost"] = false
+				multi_stage._refresh()
+				var selected_key := "hero_" + str(multi_rank)
+				var multi_legal := multi_stage.legal_targets().duplicate(true)
+				var multi_state := multi_b.state_snapshot()
+				var multi_rng := multi_b.rng_state()
+				var multi_receipts := multi_stage.receipts.size()
+				var multi_round := multi_b.round_number()
+				var multi_part := multi_stage._selected_part
+				var multi_actor_id := multi_b.current_actor_id()
+				var global_heal_seed := 628173
+				seed(global_heal_seed)
+				var expected_global_heal := randi()
+				seed(global_heal_seed)
+				var multi := StitchedTargetForecast.for_rank(
+					multi_b, multi_actor, multi_ability, "hero", multi_rank)
+				_check(multi_legal.has(selected_key) and multi.get("targets", []).size() == authority.size()
+					and multi_part == slot, "multi forecast follows mounted selection and exact legal target membership")
+				multi_stage._seat_buttons[selected_key].mouse_entered.emit()
+				var concise: String = multi_stage._labels["preview"].text
+				var hover_detail: String = multi_stage._seat_buttons[selected_key].tooltip_text
+				_check(concise.contains("HEAL +7") and concise.contains("NO HIT ROLL")
+					and not concise.contains("HIT %") and not concise.contains("NON-CRIT 0"),
+					"compact healing preview retains authored effect, no-hit semantics, and no misleading attack metrics")
+				if multi.get("targets", []).size() == authority.size():
+					for i in range(authority.size()):
+						var ally: Dictionary = authority[i]
+						var row: Dictionary = multi["targets"][i]
+						var before := int(ally["hp"])
+						var maximum := int(ally["max_hp"])
+						var after := mini(maximum, before + 7)
+						var effective := after - before
+						var hanging_before := bool(ally["hanging"])
+						var hanging_after := hanging_before if after <= 0 else false
+						_check(row["id"] == ally["id"] and row["name"] == ally["name"]
+							and row["rank"] == ally["rank"] and row["side"] == "hero"
+							and int(row.get("heal_amount", -1)) == effective
+							and int(row.get("hp_before", -1)) == before
+							and int(row.get("hp_after", -1)) == after
+							and int(row.get("max_hp", -1)) == maximum
+							and row.get("hanging_before", null) == hanging_before
+							and row.get("hanging_after", null) == hanging_after
+							and not row.has("hit_chance"),
+							"rank %d %s has own exact detached capped HP and Hanging projection" % [ally["rank"], ally["name"]])
+						_check(concise.contains("R%d %s +%d HP → %d/%d" % [
+								int(ally["rank"]), str(ally["name"]), effective, after, maximum])
+							and hover_detail.contains("R%d %s" % [int(ally["rank"]), str(ally["name"])])
+							and hover_detail.contains("HP %d/%d → %d/%d · RESTORED +%d HP" % [
+								before, maximum, after, maximum, effective])
+							and hover_detail.contains("HANGING %s → %s" % [
+								"yes" if hanging_before else "no", "yes" if hanging_after else "no"]),
+							"live hover summary and complete tooltip name rank %d with before/after and Hanging" % ally["rank"])
+					_check(int(multi["targets"][0].get("heal_amount", -1)) >= 0,
+						"multi healing rows are typed nonnegative projections")
+					var by_id: Dictionary = {}
+					for row in multi["targets"]:
+						by_id[str(row["id"])] = row
+					_check(int(by_id[full_id]["heal_amount"]) == 0
+						and int(by_id[partial_id]["heal_amount"]) == 3
+						and int(by_id[hanging_id]["heal_amount"]) == mini(7, int(multi_b._units[hanging_id]["max_hp"]))
+						and bool(by_id[hanging_id]["hanging_before"])
+						and not bool(by_id[hanging_id]["hanging_after"])
+						and concise.contains("HANGING ENDS"),
+						"full, missing-three and zero-HP Hanging cases project 0, 3 and capped 7 restored HP")
+					_check(multi_stage._labels["preview"].get_visible_line_count() <= 3,
+						"four-ally healing summary fits the existing three-line 1280x720 preview")
+					multi_stage._seat_buttons[selected_key].mouse_exited.emit()
+					multi_stage._target_buttons[selected_key].grab_focus()
+					var focus_detail: String = multi_stage._target_buttons[selected_key].tooltip_text
+					_check(multi_stage._target_buttons[selected_key].has_focus()
+						and multi_stage._labels["preview"].text.contains("HEAL +7")
+						and focus_detail.contains("HANGING yes → no")
+						and focus_detail.contains("RESTORED +0 HP")
+						and focus_detail.contains("RESTORED +3 HP"),
+						"keyboard focus gives full untruncated per-ally healing tooltip")
+					multi_stage._action_buttons["pass"].grab_focus()
+					for target in authority:
+						if int(target["rank"]) != multi_rank:
+							var other_key := "hero_" + str(target["rank"])
+							multi_stage._seat_buttons[other_key].mouse_entered.emit()
+							_check(multi_stage._labels["preview"].text.contains("HEAL +7")
+								and multi_stage._labels["preview"].text.contains(str(target["name"])),
+								"inspecting different lawful ally rank preserves multi-heal details")
+							multi_stage._seat_buttons[other_key].mouse_exited.emit()
+					multi_stage._refresh()
+					_check(multi_b.state_snapshot() == multi_state and multi_b.rng_state() == multi_rng
+						and multi_b.current_actor_id() == multi_actor_id
+						and multi_b.round_number() == multi_round
+						and multi_stage._selected_part == multi_part
+						and multi_stage.legal_targets() == multi_legal
+						and multi_stage.receipts.size() == multi_receipts
+						and randi() == expected_global_heal,
+						"hover, focus, changing inspected ally and refresh preserve units, actor, masks, receipts and both RNGs")
+					# Submit this real mounted legal turn and match EACH status receipt
+					# to the prior projection; the only HP writes belong to use_part.
+					var healed_receipt := multi_stage.submit_target("hero", multi_rank)
+					_check(bool(healed_receipt.get("ok", false))
+						and healed_receipt.get("results", []).size() == authority.size()
+						and multi_stage.receipts.size() > multi_receipts,
+						"real legal multi-heal commits once through mounted StitchedRules action")
+					if healed_receipt.get("results", []).size() == authority.size():
+						for row in multi["targets"]:
+							var found_receipt: Dictionary = {}
+							for result in healed_receipt["results"]:
+								if str(result["target"]) == str(row["id"]):
+									found_receipt = result
+							var effect_amount := -1
+							for status in found_receipt.get("statuses", []):
+								if str(status.get("status", "")) == "heal":
+									effect_amount = int(status.get("amount", -1))
+							var healed := multi_b.get_unit(str(row["id"]))
+							_check(not found_receipt.is_empty() and effect_amount == int(row["heal_amount"])
+								and int(healed["hp"]) == int(row["hp_after"])
+								and bool(healed["hanging"]) == bool(row["hanging_after"]),
+								"actual heal receipt for %s equals prior effective forecast and post-commit HP" % row["name"])
 		multi_stage.free()
 	# A separate valid multi ENEMY attack must project each foe's unique hit and
 	# modifier-adjusted damage; an ally heal cannot prove that property.
