@@ -466,6 +466,16 @@ func _open_visit(kind: String) -> bool:
 			for hero in roster:
 				_offer("buy_fresh_stuffing", "Fresh stuffing / %s / %d gold" % [hero.name, stuffing_quote.price],
 					stuffing_quote.can_buy and hero.id in stuffing_quote.eligible, [hero.id])
+			var dye := RunStitchedPeddlerDye.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
+			var dye_state := dye.read_state()
+			if dye_state.get("ok") != true:
+				return false
+			var dye_quote := dye.quote()
+			if dye_quote.get("ok") != true:
+				return false
+			for hero in roster:
+				_offer("buy_dye", "Dye / %s / %d gold" % [hero.name, dye_quote.price],
+					dye_quote.can_buy and hero.id in dye_quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
@@ -556,6 +566,9 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					result = _replacement(arguments[1], arguments[0])
 		"Peddler":
 			match action_id:
+				"buy_dye":
+					var visit := RunStitchedPeddlerDye.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
+					result = visit.buy_dye(arguments[0], id, visit.read_state())
 				"buy_fresh_stuffing":
 					var visit := RunStitchedPeddlerFreshStuffing.open_stitched(id, _roster(), pockets, gold, PEDDLER_PRICE)
 					result = visit.buy_fresh_stuffing(arguments[0], id, visit.read_state())

@@ -44,7 +44,7 @@ static func restore(document: Variant) -> StitchedRunSession:
 		# Pre-pocket saves can replay their old actions, never a new purchase
 		# hidden by omitting its ownership ledger from the saved state.
 		if legacy_pockets and command is Dictionary and command.get("action") == "visit" \
-				and command.get("id") in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing"]:
+				and command.get("id") in ["buy_pins", "buy_thimble_tonic", "buy_fresh_stuffing", "buy_dye"]:
 			return null
 		if not _replay(candidate, command):
 			return null
