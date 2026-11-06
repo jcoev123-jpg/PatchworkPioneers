@@ -48,7 +48,7 @@ static func load_catalogs() -> Dictionary:
 ## Failure returns null and preserves the supplied RNG and all caller-owned inputs.
 static func start(random: RandomNumberGenerator, area: String, dolls: Array, pockets: Dictionary,
 		catalogs: Variant = null, enable_mimic: bool = false, enable_tug: bool = false,
-		enable_mannequins: bool = false) -> StitchedWalkRules:
+		enable_mannequins: bool = false, enable_stitches: bool = false) -> StitchedWalkRules:
 	if catalogs == null:
 		catalogs = load_catalogs()
 	if random == null or not catalogs is Dictionary or not validate_catalogs(catalogs) or not _valid_party(dolls, pockets):
@@ -120,6 +120,28 @@ static func start(random: RandomNumberGenerator, area: String, dolls: Array, poc
 		service._state.mannequins = {"id": authored.id, "name": authored.name,
 			"present": trial.randi_range(0, 1) == 1,
 			"step": trial.randi_range(0, int(corridor.steps) - 1), "stage": 0}
+		service._state.rng = trial.state
+	if enable_stitches:
+		var authored: Dictionary = RunStitchedCrawlingStitchesEvent.find_horror_by_id(catalogs.horrors, RunStitchedCrawlingStitchesEvent.HORROR_ID)
+		if authored.is_empty() or service._doll(authored.id) >= 0:
+			return null
+		var preview := RunStitchedCrawlingStitchesEvent.preview(authored, ranked[0])
+		if not bool(preview.get("ok", false)):
+			return null
+		var resolved: Dictionary
+		if bool(preview.get("eligible", false)):
+			var roll := trial.randi_range(1, 100)
+			resolved = RunStitchedCrawlingStitchesEvent.resolve(authored, ranked[0], roll)
+		else:
+			resolved = RunStitchedCrawlingStitchesEvent.resolve(authored, ranked[0])
+		if not bool(resolved.get("ok", false)):
+			return null
+		var stitches_state: Dictionary = resolved.duplicate(true)
+		stitches_state["id"] = authored.id
+		stitches_state["name"] = authored.name
+		service._state.stitches = stitches_state
+		if bool(stitches_state.get("wrong_turn", false)):
+			service._state.corridor.steps = int(service._state.corridor.steps) + int(stitches_state.get("extra_steps", 2))
 		service._state.rng = trial.state
 	random.state = trial.state
 	return service
@@ -384,6 +406,14 @@ func shadow_visible() -> bool:
 func tug_unresolved() -> bool:
 	return _state.has("tug") and _state.phase == "walking" \
 		and _state.step == _state.tug.step and not _state.tug.resolved
+
+
+func stitches_cue_visible() -> bool:
+	return _state.has("stitches") and _state.phase == "walking" and bool(_state.stitches.get("cue", false))
+
+
+func stitches_cue() -> bool:
+	return _state.has("stitches") and bool(_state.stitches.get("cue", false))
 
 
 func _tear_rear_part(events: Array) -> void:
