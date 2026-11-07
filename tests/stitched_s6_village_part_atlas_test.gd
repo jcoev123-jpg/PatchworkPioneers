@@ -298,9 +298,9 @@ func _run() -> void:
             "moth_swarm_wings", "felt_bulwark_button_shield"]:
         _source_witness(inspector, actual_ids[id])
     _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden",
-        "Pot Helm Bonk", "melee", "1, 2", "enemy", "1, 2", "Weak 1")
-    await _tier(inspector, "warden_head_pot_helm_bonk", 1, 90, "4-6", "Weak 1")
-    await _tier(inspector, "warden_head_pot_helm_bonk", 3, 95, "7-10", "Weak 1")
+        "Pot Helm Bonk", "melee", "1, 2", "enemy", "1, 2", "Weak 2")
+    await _tier(inspector, "warden_head_pot_helm_bonk", 1, 90, "4-6", "Weak 2")
+    await _tier(inspector, "warden_head_pot_helm_bonk", 3, 95, "7-10", "Weak 2")
     _witness(inspector, "scissor_crab_claw_arm", "Scissor Claw", "arms", "any",
         "Snip", "melee", "1, 2", "enemy", "1, 2", "Bleed 2")
     await _tier(inspector, "scissor_crab_claw_arm", 1, 90, "4-7", "Bleed 2")

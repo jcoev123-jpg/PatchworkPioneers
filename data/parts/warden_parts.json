@@ -30,7 +30,7 @@
         ],
         "crit": 0,
         "effects": {
-          "weak": 1
+          "weak": 2
         },
         "self_move": 0,
         "move": "attack"
@@ -85,7 +85,7 @@
         ],
         "crit": 0,
         "effects": {
-          "weak": 1
+          "weak": 2
         },
         "self_move": 0,
         "move": "attack2"
