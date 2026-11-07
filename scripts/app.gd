@@ -4164,15 +4164,46 @@ func _stitched_run_page(heading: String, page_kind: String = "picker") -> VBoxCo
 	content.name = "StitchedPageContent"
 	content.position = Vector2(28, 20)
 	content.size = Vector2(1152, 628)
+	if page_kind.begins_with("visit:"):
+		# A road stop stands in the corridor: the party fills the left, the stop's own page the right.
+		# Wide nine-slice margins keep the felt's inner stitching whole; the words sit inside it.
+		frame.patch_margin_left = 80
+		frame.patch_margin_top = 80
+		frame.patch_margin_right = 116
+		frame.patch_margin_bottom = 110
+		frame.position = Vector2(660, 12)
+		frame.size = Vector2(612, 640)
+		frame.modulate.a = 0.96
+		content.position = Vector2(88, 84)
+		content.size = Vector2(404, 446)
 	content.add_theme_constant_override("separation", 9)
 	frame.add_child(content)
 	var title := Label.new()
 	title.name = "StitchedPageHeading"
 	title.text = heading
-	title.add_theme_font_size_override("font_size", 30)
+	title.add_theme_font_size_override("font_size", 24 if page_kind.begins_with("visit:") else 30)
 	title.add_theme_color_override("font_color", Color("#f4e1b8"))
+	title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.add_child(title)
 	return content
+
+
+## The corridor behind a road stop: the walk's own area, the party standing at their ranks.
+func _stitched_visit_corridor(session: StitchedRunSession) -> StitchedCorridorStage:
+	var page := stitched_run_panel
+	var stage := StitchedCorridorStage.new()
+	page.add_child(stage)
+	page.move_child(stage, 1)   # over the flat picture, under the felt page
+	page.get_node("StitchedSceneArt").visible = false
+	stage.build(session.walk_area(), 2)
+	stage.fight_view(true)
+	stage.set_candle(str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name))
+	for hero in session.heroes:
+		if hero.lost:
+			continue
+		var art := _stitched_run_texture(str(STAGE_ROSTER.art_paths(str(hero.id)).get("idle", "")))
+		stage.place("hero_%d" % hero.rank, art, stage.fight_point("hero", hero.rank), StitchedCorridorFight.HERO_HEIGHT)
+	return stage
 
 
 ## PanelContainer uses authored felt as a true nine-slice, never code-drawn shapes.
@@ -4497,8 +4528,12 @@ func _present_stitched_run() -> void:
 	var heading := "THE CANDLE ENDURES / VICTORY" if session.phase == "victory" else \
 		"THE THREAD HAS FALLEN / DEFEAT" if session.phase == "defeat" else \
 		"THE STITCHED ROAD / FLOOR %02d OF 12" % (session.map.get_current_floor() + 1) if session.phase == "map" else \
-		"ROAD ENCOUNTER / %s" % str(session.pending.get("service", "Visit")).to_upper()
+		str(session.pending.get("title", session.pending.get("service", "Road stop"))).to_upper()
 	var content := _stitched_run_page(heading, page_kind)
+	if session.phase == "visit":
+		_stitched_visit_corridor(session)
+		_stitched_visit_page(session, content)
+		return
 	var ledger := Label.new()
 	ledger.name = "RunLedger"
 	ledger.text = "CANDLE %d / 100     GOLD %d     SCRAPS %d     SATCHEL %d / 6" % [session.candle, session.gold, session.scraps, session.satchel.size()]
@@ -4627,44 +4662,52 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 			button.focus_exited.connect(func():
 				if not button.is_hovered():
 					book.graph_view.clear_inspected_route(id))
-	else:
-		var atlas := HBoxContainer.new()
-		atlas.name = "RoutedStage"
-		atlas.add_theme_constant_override("separation", 12)
-		atlas.custom_minimum_size = Vector2(1120, 327)
-		atlas.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		content.add_child(atlas)
-		var left := _stitched_run_felt(atlas, "RouteOrVisitStory", Vector2(384, 328))
-		var right := _stitched_run_felt(atlas, "LegalChoices", Vector2(706, 328))
-		var title := str(session.pending.get("title", session.pending.get("service", "Road stop")))
-		_stitched_run_caption(left, title.to_upper(), 22)
-		var node := session.map.get_node(str(session.pending.get("node_id", "")))
-		if not node.is_empty():
-			_stitched_run_caption(left, "FLOOR %02d  /  %s  /  PATH %d" % [
-				node.floor, node.type, node.position + 1], 19)
-		_stitched_run_caption(left, "This is a real road visit. Lit patches are legal choices; dim patches are unavailable.", 18)
-		_stitched_run_caption(right, "CHOOSE YOUR NEXT STITCH", 22)
-		var scroll := ScrollContainer.new()
-		scroll.name = "RunActionScroll"
-		scroll.custom_minimum_size = Vector2(620, 267)
-		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		right.add_child(scroll)
-		choices_box = VBoxContainer.new()
-		choices_box.name = "PublicRouteDecisions"
-		choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		choices_box.add_theme_constant_override("separation", 8)
-		scroll.add_child(choices_box)
-		for action in session.visit_actions():
-			var button := _stitched_run_action(choices_box, str(action.text), func():
-				if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
-					_present_stitched_run(), action.enabled)
-			button.custom_minimum_size = Vector2(620, 48)
-			button.set_meta("action_id", action.id)
-			button.set_meta("action_arguments", action.arguments.duplicate(true))
-			button.tooltip_text = str(action.text) if action.enabled else "Unavailable: " + str(action.text)
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
 	content.add_child(navigation)
+	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
+	_stitched_run_keyboard_chain()
+
+
+## A road stop's felt page: the story, then its choices, then save. No ledger numbers; the
+## corridor behind already shows who stands and how bright the candle burns.
+func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -> void:
+	var expected := session.snapshot()
+	var story := _stitched_run_felt(content, "RouteOrVisitStory", Vector2(404, 0))
+	_stitched_run_caption(story, session.visit_story(), 18)
+	var choices := _stitched_run_felt(content, "LegalChoices", Vector2(404, 0))
+	# One felt page only: the story and choices sit straight on it, not on felt of their own.
+	for panel in [story.get_parent(), choices.get_parent()]:
+		panel.add_theme_stylebox_override("panel", StyleBoxEmpty.new())
+	choices.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
+	choices.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var scroll := ScrollContainer.new()
+	scroll.name = "RunActionScroll"
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	choices.add_child(scroll)
+	var choices_box := VBoxContainer.new()
+	choices_box.name = "PublicRouteDecisions"
+	choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	choices_box.add_theme_constant_override("separation", 6)
+	scroll.add_child(choices_box)
+	for action in session.visit_actions():
+		var button := _stitched_run_action(choices_box, str(action.text), func():
+			if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
+				_present_stitched_run(), action.enabled)
+		button.custom_minimum_size = Vector2(0, 44)
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		button.set_meta("action_id", action.id)
+		button.set_meta("action_arguments", action.arguments.duplicate(true))
+		button.tooltip_text = str(action.text) if action.enabled else "Unavailable: " + str(action.text)
+	# Save and reload wait in the dark strip under the corridor, off the stop's own page.
+	var navigation := HBoxContainer.new()
+	navigation.name = "RunNavigation"
+	navigation.position = Vector2(32, 656)
+	navigation.add_theme_constant_override("separation", 12)
+	stitched_run_panel.add_child(navigation)
 	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
 	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
