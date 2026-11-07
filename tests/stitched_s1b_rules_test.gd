@@ -17,6 +17,8 @@ func _initialize() -> void:
 	_test_enemy_effects()
 	_test_enemy_modifiers()
 	_test_reckless_guard()
+	_test_stun_clock()
+	_test_steadfast_turn_gate()
 	_test_mode_independence()
 	if failures.is_empty():
 		print("stitched_s1b_rules_test: PASS (", checks, " checks)")
@@ -560,3 +562,392 @@ func _test_mode_independence() -> void:
 			"AC4: S1b rejects forged explicit mode " + str(forged))
 		_check(run_rng.state == before, "AC4: rejected S1b mode cannot spend run RNG")
 	ProjectSettings.set_setting("patchwork/combat_mode", setting)
+
+
+# An accepted witness always goes through the public, seeded four-hero/three-foe
+# combat actions. Failed hits and turns skipped before observation are not counted.
+func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false, guard: bool = false, steadfast: bool = false) -> Dictionary:
+	var config := _config(seed_value)
+	var timed := {"stun": 1, "bleed": 2, "weak": 2, "exposed": 2}
+	if victim_side == "foe":
+		for part in config["parts"]:
+			if str(part["id"]) == "s1b_test_head":
+				part["ability"]["effects"] = timed.duplicate()
+				part["ability"]["dmg"] = [0, 0]
+		if lethal:
+			config["foes"][0]["max_hp"] = 2  # Direct hit is zero; Bleed-2 makes the heap.
+	else:
+		config["foes"][0]["abilities"][0]["effects"] = timed.duplicate()
+		config["foes"][0]["abilities"][0]["dmg"] = [0, 0]
+		if lethal:
+			config["heroes"][0]["hp"] = 2  # Carried HP, not an already-Hanging fixture.
+		if guard:
+			for part in config["parts"]:
+				if str(part["id"]) == "warden_arm_brace":
+					part["ability"]["effects"]["guard"] = 1
+	var built := StitchedRules.create(config)
+	if not bool(built["ok"]):
+		return {}
+	var b: StitchedRules = built["battle"]
+	if b.get_heroes().size() != 4 or b.get_foes().size() != 3:
+		return {}
+	if steadfast:
+		if victim_side != "hero" or guard:
+			return {}
+		# Resolve through the seeded public FRAY transaction, not planted state.
+		var resolved := b.apply_fray_event("warden", 100)
+		if str(resolved.get("transition", "")) != "steadfast":
+			return {}
+		for ally_id in ["seamstress", "tinker", "monk"]:
+			if not bool(b.apply_fray_event(ally_id, 13)["ok"]):
+				return {}
+	var victim_id := "foe_0" if victim_side == "foe" else ("seamstress" if guard else "warden")
+	var guard_receipt: Dictionary = {}
+	if guard:
+		if not _to(b, "seamstress"):
+			return {}
+		guard_receipt = b.use_part("warden_arm_brace", 1)
+		if not bool(guard_receipt.get("ok", false)):
+			return {}
+		var guarding := b.get_unit("seamstress")
+		if int(guarding["statuses"].get("guard", 0)) != 1 or str(guarding["guard_target"]) != "warden":
+			return {}
+	if not _to(b, "warden" if victim_side == "foe" else "foe_0"):
+		return {}
+	var attack: Dictionary = b.use_part("s1b_test_head", 1) if victim_side == "foe" else b.use_foe_ability("foe_hit", 2 if guard else 1)
+	if not bool(attack.get("ok", false)) or attack.get("results", []).is_empty():
+		return {}
+	var hit: Dictionary = attack["results"][0]
+	if not bool(hit.get("hit", false)) or str(hit.get("target", "")) != victim_id:
+		return {}
+	var before := b.get_unit(victim_id)
+	var fray_before: Dictionary = {}
+	if steadfast:
+		for hero in b.get_heroes():
+			fray_before[str(hero["id"])] = int(hero["fray"])
+	var statuses: Dictionary = before["statuses"]
+	for key in timed:
+		if int(statuses.get(key, 0)) != int(timed[key]):
+			return {}
+	if guard and int(statuses.get("guard", 0)) != 1:
+		return {}
+	if int(before["hp"]) <= 0:
+		return {}  # Direct lethal damage is not a Bleed-turn witness.
+	var pre_invalid := b.state_snapshot()
+	var rng_pre_invalid := b.rng_state()
+	var wrong: Dictionary = b.use_part("not_equipped_stun_probe", 1) if b.current_side() == "hero" else b.use_foe_ability("not_an_enemy_ability", 1)
+	var atomic := not bool(wrong.get("ok", false)) and b.state_snapshot() == pre_invalid and b.rng_state() == rng_pre_invalid
+	var actors: Array = []
+	var receipts: Array = []
+	var states: Array = [pre_invalid]
+	var orders: Array = [b.turn_order()]
+	var rngs: Array = [rng_pre_invalid]
+	var witnessed_skip := false
+	for _step in range(55):
+		if int(b.get_unit(victim_id)["statuses"].get("stun", 0)) == 0:
+			witnessed_skip = true
+			break
+		if b.is_over() or b.current_actor_id() == victim_id:
+			break
+		actors.append(b.current_actor_id())
+		var passing := b.pass_turn()
+		if not bool(passing.get("ok", false)):
+			break
+		receipts.append(passing)
+		states.append(b.state_snapshot())
+		orders.append(b.turn_order())
+		rngs.append(b.rng_state())
+	if not witnessed_skip or actors.is_empty() or victim_id in actors:
+		return {}
+	var after := b.get_unit(victim_id)
+	var trace := {
+		"seed": seed_value, "victim_side": victim_side, "lethal": lethal, "guard": guard,
+		"steadfast": steadfast, "fray_before": fray_before,
+		"guard_receipt": guard_receipt, "attack": attack, "wrong": wrong,
+		"actors": actors, "receipts": receipts, "states": states,
+		"orders": orders, "rng_states": rngs, "final_snapshot": b.state_snapshot(),
+		"final_rng": b.rng_state(),
+	}
+	return {
+		"battle": b, "before": before, "after": after, "atomic": atomic,
+		"fray_before": fray_before,
+		"trace": trace, "hit": hit, "actors": actors, "guard": guard_receipt,
+	}
+
+
+func _test_stun_clock() -> void:
+	# Both sides are actually struck and actually skipped in the real turn loop,
+	# with two independent seed witnesses and matching full receipts/RNG per side.
+	for side in ["hero", "foe"]:
+		var witnessed := 0
+		for seed_value in range(1, 110):
+			var sample := _stun_clock_case(seed_value, side)
+			if sample.is_empty():
+				continue
+			var again := _stun_clock_case(seed_value, side)
+			_check(not again.is_empty() and sample["trace"] == again.get("trace", {}),
+				"AC3: independent replay preserves %s receipts, snapshots, order and RNG at seed %d" % [side, seed_value])
+			_check(bool(sample["atomic"]), "AC3: invalid %s action is state/RNG-atomic" % side)
+			var before: Dictionary = sample["before"]
+			var after: Dictionary = sample["after"]
+			var active: Dictionary = after["statuses"]
+			_check(int(before["hp"]) > 2 and int(after["hp"]) == int(before["hp"]) - 2,
+				"AC1: stunned %s takes exactly first Bleed-2 HP loss" % side)
+			_check(int(active.get("bleed", 0)) == 1 and int(active.get("weak", 0)) == 1
+				and int(active.get("exposed", 0)) == 1 and int(active.get("stun", 0)) == 0,
+				"AC1: stunned %s consumes Stun and decrements all three timed clocks once" % side)
+			_check(int(active.get("stun_resist", 0)) == 1 and not bool(after["dead"])
+				and not bool(after["hanging"]),
+				"AC1/3: surviving %s gains fresh resistance after all other clocks" % side)
+			var scheduled := false
+			for order in sample["trace"]["orders"]:
+				if str(after["id"]) in order:
+					scheduled = true
+			_check(scheduled and not sample["actors"].is_empty() and not (str(after["id"]) in sample["actors"])
+				and str(sample["hit"]["target"]) == str(after["id"]),
+				"AC1: rolled order includes struck %s, but its Stunned action is skipped" % side)
+			witnessed += 1
+			if witnessed == 2:
+				break
+		_check(witnessed == 2, "AC1/3: two distinct seeded %s Stun/Bleed/timed-status witnesses" % side)
+
+	# Bleed, not direct attack damage, kills the stunned foe into exactly one heap;
+	# a Stun on the Hanging doll must not create a phantom resist or second tear.
+	for side in ["hero", "foe"]:
+		var witnessed := false
+		for seed_value in range(1, 110):
+			var sample := _stun_clock_case(seed_value, side, true)
+			if sample.is_empty():
+				continue
+			var b: StitchedRules = sample["battle"]
+			var before: Dictionary = sample["before"]
+			var after: Dictionary = sample["after"]
+			_check(bool(sample["atomic"]), "AC3: lethal %s witness also rejects invalid actions atomically" % side)
+			_check(int(before["hp"]) > 0 and int(after["hp"]) == 0
+				and int(before["statuses"].get("stun", 0)) == 1,
+				"AC2: %s entered the skipped turn alive and Stunned, then Bleed killed" % side)
+			_check(int(after["statuses"].get("stun_resist", 0)) == 0
+				and int(after["statuses"].get("stun", 0)) == 0,
+				"AC2: lethal %s Bleed leaves neither Stun nor phantom resistance" % side)
+			if side == "foe":
+				var heaps := b.get_heaps()
+				_check(bool(after["dead"]) and after["statuses"].is_empty(),
+					"AC2: lethal foe clears timed statuses and is dead")
+				_check(heaps.size() == 1 and str(heaps[0]["foe_id"]) == "foe_0"
+					and int(heaps[0]["hp"]) == StitchedRules.heap_hp_for(int(after["max_hp"])),
+					"AC2: lethal skipped foe leaves exactly one correctly sized heap")
+				_check(b.current_actor_id() != "foe_0",
+					"AC2: the Bleed-killed foe receives no phantom action")
+			else:
+				var torn := 0
+				for slot in ["head", "arms", "legs"]:
+					if bool(after["parts"][slot]["torn"]):
+						torn += 1
+				_check(bool(after["hanging"]) and not bool(after["lost"]) and torn == 1,
+					"AC2: lethal skipped hero enters Hanging with exactly one non-torso tear")
+				_check(int(b.get_unit("seamstress")["fray"]) == 8,
+					"AC2: a single Hanging entry frays an ally exactly once")
+				if _to(b, "warden"):
+					var later := b.get_unit("warden")
+					var later_torn := 0
+					for slot in ["head", "arms", "legs"]:
+						if bool(later["parts"][slot]["torn"]):
+							later_torn += 1
+					_check(bool(later["hanging"]) and later_torn == 1,
+						"AC2: later Hanging turn does not tear a second part")
+			var another := _stun_clock_case(seed_value, side, true)
+			_check(not another.is_empty() and sample["trace"] == another.get("trace", {}),
+				"AC3: lethal %s seeded receipt/snapshot/RNG replay is exact" % side)
+			witnessed = true
+			break
+		_check(witnessed, "AC2: nonvacuous lethal %s Bleed/Stun witness" % side)
+
+	var guard_seen := false
+	for seed_value in range(1, 110):
+		var guarded := _stun_clock_case(seed_value, "hero", false, true)
+		if guarded.is_empty():
+			continue
+		var prev: Dictionary = guarded["before"]
+		var now: Dictionary = guarded["after"]
+		_check(bool(guarded["guard"].get("ok", false))
+			and int(prev["statuses"].get("guard", 0)) == 1
+			and str(prev["guard_target"]) == "warden",
+			"AC2: real guard was active on seamstress before her Stunned turn")
+		_check(not now["statuses"].has("guard") and str(now["guard_target"]) == "",
+			"AC2: Guard countdown expires and clears its target on skipped turn")
+		_check(int(now["statuses"].get("stun_resist", 0)) == 1,
+			"AC1: expiring Guard does not suppress fresh Stun resistance")
+		guard_seen = true
+		break
+	_check(guard_seen, "AC2: nonvacuous landed enemy Stun on guarded hero")
+
+	# A second *landed* hit while resist stands is refused. Its clock then
+	# falls off at the foe's following start, not at the stunned start.
+	var refused_seen := false
+	for seed_value in range(1, 110):
+		var sample := _stun_clock_case(seed_value, "foe")
+		if sample.is_empty():
+			continue
+		var b: StitchedRules = sample["battle"]
+		var refused: Dictionary = {}
+		var resisted := false
+		for _step in range(55):
+			if b.is_over() or int(b.get_unit("foe_0")["statuses"].get("stun_resist", 0)) != 1:
+				break
+			if b.current_actor_id() in ["warden", "monk"]:
+				var attempt := b.use_part("s1b_test_head", 1)
+				if bool(attempt.get("ok", false)) and not attempt["results"].is_empty() and bool(attempt["results"][0].get("hit", false)):
+					refused = attempt
+					for effect in attempt["results"][0]["statuses"]:
+						if str(effect["status"]) == "stun" and bool(effect.get("refused", false)):
+							resisted = true
+					break
+			else:
+				if not bool(b.pass_turn()["ok"]):
+					break
+		if not resisted:
+			continue
+		_check(int(sample["after"]["statuses"].get("stun_resist", 0)) == 1
+			and str(refused["results"][0]["target"]) == "foe_0",
+			"AC3: the second landed Stun hits the same actively resistant foe")
+		_check(int(b.get_unit("foe_0")["statuses"].get("stun", 0)) == 0,
+			"AC3: resisted second hit does not reapply Stun")
+		var countdown_seen := int(b.get_unit("foe_0")["statuses"].get("stun_resist", 0)) == 0
+		for _step in range(55):
+			if countdown_seen or b.is_over():
+				break
+			if not bool(b.pass_turn()["ok"]):
+				break
+			countdown_seen = int(b.get_unit("foe_0")["statuses"].get("stun_resist", 0)) == 0
+		_check(countdown_seen, "AC3: resistance expires on foe's following start-of-turn")
+		refused_seen = true
+		break
+	_check(refused_seen, "AC3: a second landed Stun is nonvacuously refused by resistance")
+
+
+# All three gate paths use public turn actions, actual seeded Steadfast
+# resolution and genuine landed foe Stun/Bleed, never injected statuses.
+func _steadfast_action_case(seed_value: int, command: String) -> Dictionary:
+	var b := _battle(seed_value)
+	if b == null:
+		return {}
+	# A turn already entered at battle creation cannot retroactively grant relief.
+	if b.current_actor_id() == "warden":
+		if not bool(b.pass_turn().get("ok", false)):
+			return {}
+	var resolve_receipt := b.apply_fray_event("warden", 100)
+	if str(resolve_receipt.get("transition", "")) != "steadfast":
+		return {}
+	for ally_id in ["seamstress", "tinker", "monk"]:
+		var amount := 9 if ally_id == "seamstress" else (1 if ally_id == "tinker" else 2)
+		if not bool(b.apply_fray_event(ally_id, amount).get("ok", false)):
+			return {}
+	var before: Dictionary = {}
+	for hero in b.get_heroes():
+		before[str(hero["id"])] = int(hero["fray"])
+	if not _to(b, "warden"):
+		return {}
+	var entered: Dictionary = {}
+	for hero in b.get_heroes():
+		entered[str(hero["id"])] = int(hero["fray"])
+	var entry_snapshot := _snapshot(b)
+	var entry_rng := b.rng_state()
+	var receipt := b.pass_turn() if command == "pass" else b.use_part("s1b_test_head", 1)
+	if not bool(receipt.get("ok", false)):
+		return {}
+	if command == "ability" and (receipt.get("results", []).is_empty()
+			or not bool(receipt["results"][0].get("hit", false))):
+		return {}
+	var after: Dictionary = {}
+	for hero in b.get_heroes():
+		after[str(hero["id"])] = int(hero["fray"])
+	return {
+		"seed": seed_value, "command": command,
+		"resolve": resolve_receipt, "before": before, "entered": entered, "after": after,
+		"entry_snapshot": entry_snapshot, "entry_rng": entry_rng,
+		"receipt": receipt, "post_snapshot": _snapshot(b), "post_rng": b.rng_state(),
+	}
+
+
+func _test_steadfast_turn_gate() -> void:
+	for lethal in [false, true]:
+		var witnessed := false
+		for seed_value in range(1, 260):
+			var sample := _stun_clock_case(seed_value, "hero", lethal, false, true)
+			if sample.is_empty():
+				continue
+			var b: StitchedRules = sample["battle"]
+			var before: Dictionary = sample["before"]
+			var after: Dictionary = sample["after"]
+			var fray_before: Dictionary = sample["fray_before"]
+			_check(bool(sample["hit"].get("hit", false)) and str(sample["hit"]["target"]) == "warden"
+				and str(before["resolve"]) == "steadfast" and int(before["hp"]) > 0
+				and int(before["statuses"].get("stun", 0)) == 1 and bool(sample["atomic"]),
+				"AC1/2: seeded Steadfast resolve, real landed foe Stun and atomic refusal")
+			_check(int(fray_before.get("seamstress", 0)) > 2
+				and int(fray_before.get("tinker", 0)) > 0
+				and int(fray_before.get("monk", 0)) > 0,
+				"AC1/2: three positive wounded-ally baselines before the skipped turn")
+			for hero_id in ["warden", "seamstress", "tinker", "monk"]:
+				var expected := int(fray_before[hero_id])
+				if lethal and hero_id != "warden":
+					expected += 8
+				_check(int(b.get_unit(hero_id)["fray"]) == expected,
+					"AC2: Bleed/Hanging adds only eight ally FRAY, no relief " + hero_id
+					if lethal else "AC1: Stun skip never relieves " + hero_id)
+			_check(not (str(after["id"]) in sample["actors"])
+				and not bool(after["lost"]) and int(after["statuses"].get("stun", 0)) == 0,
+				"AC1/2: Steadfast actor was auto-skipped after consuming Stun")
+			if lethal:
+				var torn := 0
+				for slot in ["head", "arms", "legs"]:
+					if bool(after["parts"][slot]["torn"]):
+						torn += 1
+				_check(int(before["hp"]) == 2 and int(after["hp"]) == 0
+					and bool(after["hanging"]) and torn == 1
+					and int(after["statuses"].get("stun_resist", 0)) == 0,
+					"AC2: lethal Bleed Hangs with exactly one tear and no phantom resist")
+			else:
+				_check(int(after["hp"]) == int(before["hp"]) - 2
+					and int(after["statuses"].get("bleed", 0)) == 1
+					and int(after["statuses"].get("weak", 0)) == 1
+					and int(after["statuses"].get("exposed", 0)) == 1
+					and int(after["statuses"].get("stun_resist", 0)) == 1,
+					"AC1: Bleed, Weak, Exposed tick once and fresh Stun resist persists")
+			var again := _stun_clock_case(seed_value, "hero", lethal, false, true)
+			_check(not again.is_empty() and sample["trace"] == again.get("trace", {}),
+				"AC1/2: full seeded skipped/fatal snapshots, receipts, order and RNG replay")
+			witnessed = true
+			break
+		_check(witnessed, "AC1/2: nonvacuous seeded Steadfast " + ("fatal" if lethal else "Stun") + " witness")
+	for command in ["pass", "ability"]:
+		var witnessed := false
+		for seed_value in range(1, 260):
+			var sample := _steadfast_action_case(seed_value, command)
+			if sample.is_empty():
+				continue
+			var before: Dictionary = sample["before"]
+			var entered: Dictionary = sample["entered"]
+			var after: Dictionary = sample["after"]
+			_check(str(sample["resolve"]["transition"]) == "steadfast"
+				and int(before["seamstress"]) > 2
+				and int(before["tinker"]) == 1 and int(before["monk"]) == 2,
+				"AC3: seeded actionable Steadfast and positive/floor ally preconditions")
+			for hero_id in ["warden", "seamstress", "tinker", "monk"]:
+				_check(int(entered[hero_id]) == maxi(0, int(before[hero_id]) - 2),
+					"AC3: relief exactly once at actionable entry, floored " + hero_id)
+				if hero_id != "warden":
+					_check(int(after[hero_id]) == int(entered[hero_id]),
+						"AC3: " + command + " gives no second party relief to " + hero_id)
+			var attack_relief := 0
+			if command == "ability":
+				var hit: Dictionary = sample["receipt"]["results"][0]
+				attack_relief = int(hit.get("fray_relief", 0)) + int(hit.get("kill_fray_relief", 0))
+			_check(int(after["warden"]) == int(entered["warden"]) - attack_relief,
+				"AC3: " + command + " gives no second passive relief on acting Steadfast")
+			var again := _steadfast_action_case(seed_value, command)
+			_check(not again.is_empty() and sample == again,
+				"AC3: actionable " + command + " full snapshot, receipt and RNG replay")
+			witnessed = true
+			break
+		_check(witnessed, "AC3: nonvacuous seeded actionable Steadfast " + command)

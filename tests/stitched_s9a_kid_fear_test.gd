@@ -410,6 +410,62 @@ func _test_ac5_negative_atomicity_and_stale_guards() -> void:
 	_check(fear.get_fear() == 20, "AC5: fear unchanged after failed reset")
 	_check(int(reset_neg["sequence"]) == fear.get_sequence(), "AC5: failed reset returns equal sequence")
 
+
+	# Strict integer inputs: fractional, whole-valued floats and nonfinite
+	# payloads must be refused BEFORE any conversion (including at boundaries).
+	var refused_numbers: Array = [-0.5, 0.5, 1.0, 9.5, 10.0, 25.9, 50.0, 99.9, 100.0, 101.0, NAN, INF, -INF]
+	var caller_rng := RandomNumberGenerator.new()
+	caller_rng.seed = 616099
+	var rng_before := caller_rng.state
+	for invalid in refused_numbers:
+		var label := str(invalid)
+		var created := StitchedKidFear.create(invalid)
+		_check(not bool(created.get("ok", true)), "AC5: create rejects float %s" % label)
+		_check(int(created.get("sequence", -1)) == 0, "AC5: rejected create leaves initial sequence zero for %s" % label)
+		var direct := StitchedKidFear.new(invalid)
+		_check(not direct.is_valid(), "AC5: _init rejects float %s" % label)
+		_check(direct.state_snapshot() == {"fear": 0, "shake": false, "pending_lost_strings": false, "sequence": 0}, "AC5: invalid _init has no fear, queued turn or sequence for %s" % label)
+		_check(caller_rng.state == rng_before, "AC5: creation refusal leaves caller RNG unchanged for %s" % label)
+
+	# Repeat across neutral, shaking and already-queued states. An invalid
+	# input must neither consume Lose the Strings nor alter its snapshot.
+	for starting_fear in [20, 50, 100]:
+		var probe := StitchedKidFear.new(starting_fear)
+		_check(probe.is_valid() and probe.get_fear() == starting_fear, "AC5: refusal fixture constructed at %d" % starting_fear)
+		_check(probe.is_shaking() == (starting_fear >= 50), "AC5: fixture shake precondition at %d" % starting_fear)
+		_check(probe.has_pending_lost_strings() == (starting_fear == 100), "AC5: fixture pending precondition at %d" % starting_fear)
+		var before := probe.state_snapshot()
+		for invalid in refused_numbers:
+			var label := "%d / %s" % [starting_fear, str(invalid)]
+			_check_refusal_atomic(probe, probe.reset(invalid), before, caller_rng, rng_before, "reset " + label)
+			_check_refusal_atomic(probe, probe.check_hand_failure(invalid), before, caller_rng, rng_before, "hand roll " + label)
+			for fray_key in ["amount", "change", "gain", "fray", "fray_gain"]:
+				var fray_event := {"kind": "fray_gain"}
+				fray_event[fray_key] = invalid
+				_check_refusal_atomic(probe, probe.apply_observed_event(fray_event), before, caller_rng, rng_before, "fray %s %s" % [fray_key, label])
+			_check_refusal_atomic(probe, probe.apply_observed_event({"kind": "round", "candle": invalid}), before, caller_rng, rng_before, "round candle " + label)
+
+		# Integer bounds still fail closed; the valid endpoints remain legal.
+		for bad_event in [{"kind": "fray_gain", "amount": -1}, {"kind": "round", "candle": -1}, {"kind": "round", "candle": 101}]:
+			_check_refusal_atomic(probe, probe.apply_observed_event(bad_event), before, caller_rng, rng_before, "integer bounds at %d: %s" % [starting_fear, str(bad_event)])
+
+	# Defaults/null remain the allowed ways to start or clear FEAR.
+	for allowed in [0, 50, 100, null]:
+		var built_valid := StitchedKidFear.create(allowed)
+		_check(bool(built_valid.get("ok", false)), "AC5: create allows native integer/null %s" % str(allowed))
+		var constructed := StitchedKidFear.new(allowed)
+		_check(constructed.is_valid(), "AC5: _init allows native integer/null %s" % str(allowed))
+		var expected := 0 if allowed == null else int(allowed)
+		_check(constructed.get_fear() == expected and constructed.has_pending_lost_strings() == (expected == 100), "AC5: valid _init preserves fear and queue at %s" % str(allowed))
+		var reset_probe := StitchedKidFear.new(100)
+		var reset_ok := reset_probe.reset(allowed)
+		_check(bool(reset_ok.get("ok", false)) and reset_probe.get_fear() == expected, "AC5: reset accepts native integer/null %s" % str(allowed))
+		_check(reset_probe.get_sequence() == 1 and reset_probe.has_pending_lost_strings() == (expected == 100), "AC5: accepted reset updates sequence and queue at %s" % str(allowed))
+	_check(bool(StitchedKidFear.create().get("ok", false)), "AC5: default create is accepted")
+	var default_reset := StitchedKidFear.new(100)
+	_check(bool(default_reset.reset().get("ok", false)) and default_reset.get_fear() == 0 and not default_reset.has_pending_lost_strings(), "AC5: default reset clears queued fear")
+	_check(caller_rng.state == rng_before, "AC5: all strict input checks preserve caller RNG")
+
 	# 4. Stale expected snapshot guard.
 	var valid_snap := fear.state_snapshot()
 	# Apply a legal event to advance state and sequence.
@@ -454,3 +510,16 @@ func _test_ac5_negative_atomicity_and_stale_guards() -> void:
 	var caller_copy := caller_event.duplicate(true)
 	fear.apply_observed_event(caller_event)
 	_check(caller_event == caller_copy, "AC5: caller-owned dictionary not mutated by apply_observed_event")
+
+
+## Shared refusal contract: compare the actual reachable service, not a detached
+## test stand-in, including queue/shake/snapshot and the caller's RNG state.
+func _check_refusal_atomic(service: StitchedKidFear, receipt: Dictionary, before: Dictionary, caller_rng: RandomNumberGenerator, rng_before: int, label: String) -> void:
+	_check(not bool(receipt.get("ok", true)), "AC5: refuses " + label)
+	_check(int(receipt.get("sequence", -1)) == int(before["sequence"]), "AC5: refusal reports unchanged sequence " + label)
+	_check(service.get_sequence() == int(before["sequence"]), "AC5: sequence remains unchanged " + label)
+	_check(service.get_fear() == int(before["fear"]), "AC5: FEAR remains unchanged " + label)
+	_check(service.is_shaking() == bool(before["shake"]), "AC5: shake remains unchanged " + label)
+	_check(service.has_pending_lost_strings() == bool(before["pending_lost_strings"]), "AC5: pending interruption remains unchanged " + label)
+	_check(service.state_snapshot() == before, "AC5: entire state snapshot remains unchanged " + label)
+	_check(caller_rng.state == rng_before, "AC5: caller RNG state remains unchanged " + label)
