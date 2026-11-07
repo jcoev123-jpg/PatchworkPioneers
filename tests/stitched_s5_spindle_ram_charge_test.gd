@@ -13,7 +13,7 @@ const CHARGE := {
 const HURL := {
 	"id": "yarn_hurl", "name": "Yarn Hurl", "kind": "ranged",
 	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [2, 3], "crit": 0, "effects": {"tangled": 1},
+	"acc": 85, "dmg": [2, 3], "crit": 0, "effects": {"tangled": 2},
 	"self_move": 0, "move": "attack3",
 }
 
@@ -82,7 +82,7 @@ func _test_sources(catalog: Dictionary) -> void:
 	var expected := {"max_hp": 30, "speed": 4, "dodge": 3, "acc": 0, "prot": 6,
 		"is_boss": false, "turns_per_round": 1, "trophy": "spindle_ram_horn", "abilities": [CHARGE, HURL]}
 	_check(ram.get("stitched") == JSON.parse_string(JSON.stringify(expected)),
-		"AC1: exact authored profile, Horn Charge and unchanged Yarn Hurl")
+		"AC1: exact authored profile, Horn Charge and two-turn Yarn Hurl")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "spindle_ram")
 	_check(not foe.is_empty() and StitchedEnemyCatalog.trophy_for(catalog, "spindle_ram") == "spindle_ram_horn",
 		"AC1: canonical legal foe and trophy are available")

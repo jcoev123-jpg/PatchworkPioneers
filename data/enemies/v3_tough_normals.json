@@ -76,7 +76,7 @@
           "dmg": [2, 3],
           "crit": 0,
           "effects": {
-            "tangled": 1
+            "tangled": 2
           },
           "self_move": 0,
           "move": "attack3"
