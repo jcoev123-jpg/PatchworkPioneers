@@ -98,6 +98,7 @@ func _initialize() -> void:
 	_test_sack_glare_rank4_data()
 	_test_rank4_crows()
 	_test_rank4_crow_flock()
+	_test_crow_flock_tier1_weak_reply()
 	_test_sack_glare_rank4()
 	_test_rejections()
 	_test_replay()
@@ -474,8 +475,8 @@ func _test_leg_rank4_data() -> void:
 	for id in unchanged_launches:
 		_check(cat["by_id"][id]["ability"]["launch"] == unchanged_launches[id],
 			"AC1: five other Scarecrow parts keep their authored launch: " + id)
-	# The one data change: Crow Flock reaches enemy rank 4, while its launch, multi
-	# semantics, potency and pose stay exactly as authored.
+	# Crow Flock already reaches enemy rank 4; its launch, multi semantics and pose
+	# stay fixed while tier-I Weak alone now lasts through the foe's next strike.
 	var flock: Dictionary = cat["by_id"][ALTERNATES["head"]]
 	var flock_launch := [2, 3, 4]
 	var flock_launch_mask := StitchedParts.rank_mask(flock_launch)
@@ -525,13 +526,15 @@ func _test_leg_rank4_data() -> void:
 		for rank in [0, 5]:
 			_check(not StitchedParts.ranks_allowed(int(flock_ability["target_mask"]), rank),
 				"AC1: Crow Flock tier %d excludes enemy rank %d" % [flock_tier, rank])
-		_check(flock_ability["effects"] == {"weak": flock_tier, "mark": flock_tier},
+		var expected_weak := 2 if flock_tier < 3 else 3
+		var expected_mark: int = int(flock_tier)
+		_check(flock_ability["effects"] == {"weak": expected_weak, "mark": expected_mark},
 			"AC1: Crow Flock tier %d keeps Weak %d and Mark %d"
-				% [flock_tier, flock_tier, flock_tier])
+				% [flock_tier, expected_weak, expected_mark])
 		_check(StitchedParts.stat_at_tier(flock, flock_tier) == {"crit": 4},
 			"AC1: Crow Flock tier %d keeps its crit stat" % flock_tier)
 	_check(flock["ability"]["launch"] == flock_launch
-		and flock["ability"]["effects"] == {"weak": 1, "mark": 1},
+		and flock["ability"]["effects"] == {"weak": 2, "mark": 1},
 		"AC1: tier reads never replace Crow Flock's base launch or potency")
 	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
 	_check(full_mask == StitchedParts.ALL_RANKS_MASK,
@@ -1115,13 +1118,172 @@ func _test_rank4_crow_flock() -> void:
 		"AC2: a real seeded rank-4 Crow Flock Weakens and Marks every living foe at ranks 1, 2 and 4")
 
 
-## AC2/AC3, the task goal: the shipped 4v3 preview with only the existing Moth Scribe moved to
-## enemy rank 4 (rank 3 left empty). Scarecrow keeps his real rank-2 turn and casts tier-III
-## Sack Glare at rank 4: one Moth Scribe receipt, Weak 3 and Mark 3 in the receipt, no direct
-## damage, the other two foes untouched, the turn spent, and the same seed/action replays to an
-## identical receipt, snapshot and RNG. Tiers I/II refuse that same occupied rank 4, a tier-III
-## vacant rank 4 and a rank-4 hero launch refuse without spending anything, and a seeded miss
-## applies neither status.
+## AC2/AC3: genuine 4v3 Crow Flock tier-I cast, including a miss, followed by the
+## living Fray Scavenger's real Sack Swing. Two identical seeds are advanced through
+## the same turns; only Weak is erased in the control after its start-of-turn tick.
+## Return nothing unless the cast, landed attack and subsequent expiry all occurred.
+func _crow_flock_tier1_reply_trial(seed_value: int) -> Dictionary:
+	var weakened := _rank4_foe_battle(seed_value, ALTERNATES["head"], 1)
+	var control := _rank4_foe_battle(seed_value, ALTERNATES["head"], 1)
+	if weakened == null or control == null \
+		or not _to(weakened, "scarecrow") or not _to(control, "scarecrow"):
+		return {}
+	if weakened.state_snapshot() != control.state_snapshot() \
+		or weakened.current_actor_id() != "scarecrow":
+		return {}
+	var before := weakened.state_snapshot()
+	var original_foes: Dictionary = {}
+	var expected_ranks := {"fray_scavenger": 1, "scissor_crab": 2, "moth_scribe": 4}
+	if weakened.get_heroes().size() != 4 or weakened.get_foes().size() != 3 \
+		or int(weakened.get_unit("scarecrow").get("rank", -1)) != 2:
+		return {}
+	for id in ENEMY_IDS:
+		var foe := weakened.get_unit(id)
+		if foe.is_empty() or int(foe.get("hp", 0)) <= 0 \
+			or int(foe.get("rank", 0)) != int(expected_ranks[id]) \
+			or int(foe["statuses"].get("weak", 0)) != 0 \
+			or int(foe["statuses"].get("mark", 0)) != 0:
+			return {}
+		original_foes[id] = foe
+	var cast := weakened.use_part(ALTERNATES["head"], 4)
+	var control_cast := control.use_part(ALTERNATES["head"], 4)
+	var after_cast := weakened.state_snapshot()
+	if not bool(cast.get("ok", false)) or cast != control_cast \
+		or after_cast != control.state_snapshot() \
+		or weakened.rng_state() != control.rng_state() \
+		or cast.get("results", []).size() != 3 \
+		or str(cast.get("actor", "")) != "scarecrow" \
+		or str(cast.get("part", "")) != ALTERNATES["head"] \
+		or str(cast.get("ability", "")) != "scarecrow_head_crow_flock_move" \
+		or before == after_cast:
+		return {}
+	var received: Dictionary = {}
+	var landed_count := 0
+	var missed_count := 0
+	var scavenger_hit := false
+	for receipt in cast["results"]:
+		var id := str(receipt.get("target", ""))
+		if not original_foes.has(id) or received.has(id) \
+			or str(receipt.get("target_side", "")) != "foe" \
+			or int(receipt.get("target_rank", 0)) != int(expected_ranks[id]) \
+			or int(receipt.get("damage", -1)) != 0 \
+			or int(receipt.get("target_hp", -1)) != int(original_foes[id]["hp"]) \
+			or int(weakened.get_unit(id)["hp"]) != int(original_foes[id]["hp"]):
+			return {}
+		received[id] = true
+		var statuses: Array = receipt.get("statuses", [])
+		var foe_now: Dictionary = weakened.get_unit(id)
+		if bool(receipt.get("hit", false)):
+			landed_count += 1
+			if _status_amount(statuses, "weak") != 2 \
+				or _status_amount(statuses, "mark") != 1 \
+				or int(foe_now["statuses"].get("weak", 0)) < 1 \
+				or int(foe_now["statuses"].get("weak", 0)) > 2:
+				return {}
+			if id == "fray_scavenger":
+				scavenger_hit = true
+		else:
+			missed_count += 1
+			if not statuses.is_empty() or int(foe_now["statuses"].get("weak", 0)) != 0 \
+				or int(foe_now["statuses"].get("mark", 0)) != 0:
+				return {}
+	if received.size() != 3 or landed_count < 1 or missed_count < 1 \
+		or not scavenger_hit:
+		return {}
+	if not _to(weakened, "fray_scavenger") or not _to(control, "fray_scavenger"):
+		return {}
+	var attacking_foe := weakened.get_unit("fray_scavenger")
+	var hero_before := weakened.get_unit("scarecrow")
+	if int(attacking_foe.get("hp", 0)) <= 0 \
+		or int(attacking_foe["statuses"].get("weak", 0)) != 1 \
+		or int(hero_before.get("hp", 0)) <= 0 \
+		or hero_before != control.get_unit("scarecrow") \
+		or weakened.state_snapshot() != control.state_snapshot():
+		return {}
+	var rng_before := weakened.rng_state()
+	var expected_control := weakened.state_snapshot()
+	for unit in expected_control["units"]:
+		if str(unit["id"]) == "fray_scavenger":
+			unit["statuses"].erase("weak")
+	# Only this status is cleared, after the genuine start-of-turn countdown.
+	control._units["fray_scavenger"]["statuses"].erase("weak")
+	if control.state_snapshot() != expected_control \
+		or rng_before != control.rng_state():
+		return {}
+	var reduced := weakened.use_foe_ability("sack_swing", 2)
+	var normal := control.use_foe_ability("sack_swing", 2)
+	if not bool(reduced.get("ok", false)) or not bool(normal.get("ok", false)) \
+		or str(reduced.get("actor", "")) != "fray_scavenger" \
+		or str(normal.get("actor", "")) != "fray_scavenger" \
+		or reduced.get("results", []).size() != 1 or normal.get("results", []).size() != 1:
+		return {}
+	var weak_hit: Dictionary = reduced["results"][0]
+	var plain_hit: Dictionary = normal["results"][0]
+	if not bool(weak_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)) \
+		or str(weak_hit.get("target", "")) != "scarecrow" \
+		or str(plain_hit.get("target", "")) != "scarecrow" \
+		or int(weak_hit.get("roll", -1)) != int(plain_hit.get("roll", -2)) \
+		or bool(weak_hit.get("crit", false)) != bool(plain_hit.get("crit", false)) \
+		or int(weak_hit.get("damage", 0)) <= 0 \
+		or int(weak_hit["damage"]) >= int(plain_hit.get("damage", 0)) \
+		or int(weak_hit.get("target_hp", -1)) != int(hero_before["hp"]) - int(weak_hit["damage"]) \
+		or int(plain_hit.get("target_hp", -1)) != int(hero_before["hp"]) - int(plain_hit["damage"]) \
+		or int(weakened.get_unit("scarecrow")["hp"]) != int(weak_hit["target_hp"]) \
+		or int(control.get_unit("scarecrow")["hp"]) != int(plain_hit["target_hp"]) \
+		or weakened.rng_state() != control.rng_state():
+		return {}
+	var after_weak_reply := weakened.state_snapshot()
+	var after_plain_reply := control.state_snapshot()
+	if not _to(weakened, "fray_scavenger") or not _to(control, "fray_scavenger"):
+		return {}
+	if int(weakened.get_unit("fray_scavenger")["statuses"].get("weak", 0)) != 0 \
+		or weakened.get_unit("fray_scavenger")["statuses"].has("weak") \
+		or int(weakened.get_unit("fray_scavenger").get("hp", 0)) <= 0 \
+		or weakened.rng_state() != control.rng_state():
+		return {}
+	return {
+		"seed": seed_value, "cast": cast, "cast_state": after_cast,
+		"cast_rng": int(after_cast["rng_state"]), "before_attack_weak": 1,
+		"missed": missed_count, "landed": landed_count, "distinct": received.size(),
+		"weak_reply": reduced, "plain_reply": normal,
+		"weak_damage": int(weak_hit["damage"]), "normal_damage": int(plain_hit["damage"]),
+		"hero_hp_before": int(hero_before["hp"]),
+		"weak_hp_after": int(weak_hit["target_hp"]),
+		"plain_hp_after": int(plain_hit["target_hp"]),
+		"after_weak_reply": after_weak_reply, "after_plain_reply": after_plain_reply,
+		"expired": int(weakened.get_unit("fray_scavenger")["statuses"].get("weak", 0)),
+		"after_expiry": weakened.state_snapshot(), "after_expiry_rng": weakened.rng_state(),
+		"control_after_expiry": control.state_snapshot(), "control_rng": control.rng_state(),
+	}
+
+
+func _test_crow_flock_tier1_weak_reply() -> void:
+	var witness: Dictionary = {}
+	for seed_value in range(501500, 501900):
+		witness = _crow_flock_tier1_reply_trial(seed_value)
+		if not witness.is_empty():
+			break
+	_check(not witness.is_empty(),
+		"AC2/AC3: bounded fixed-seed tier-I Crow Flock lands on a living foe, misses another, and weakens its next real strike")
+	if witness.is_empty():
+		return
+	_check(int(witness["distinct"]) == 3 and int(witness["landed"]) > 0 \
+		and int(witness["missed"]) > 0,
+		"AC2/AC3: all three authentic living foes get one receipt, with both landed and missed targets")
+	_check(int(witness["before_attack_weak"]) == 1 and int(witness["expired"]) == 0,
+		"AC2: Weak 2 counts to 1 at the foe's next turn, then expires at the following turn without reapplication")
+	_check(int(witness["weak_damage"]) > 0 and int(witness["weak_damage"]) < int(witness["normal_damage"]) \
+		and int(witness["weak_hp_after"]) == int(witness["hero_hp_before"]) - int(witness["weak_damage"]) \
+		and int(witness["plain_hp_after"]) == int(witness["hero_hp_before"]) - int(witness["normal_damage"]),
+		"AC2: equal-seed landed Sack Swing uses Weak for less actual HP damage than the sole-Weak-cleared control")
+	var replay := _crow_flock_tier1_reply_trial(int(witness["seed"]))
+	_check(not replay.is_empty() and replay == witness,
+		"AC3: repeated seed and identical actions reproduce tier-I casts, misses, foe replies, state and RNG exactly")
+
+
+## AC2/AC3: the shipped 4v3 preview with only the existing Moth Scribe moved to
+## rank 4. Tier-III Sack Glare lands Weak 3/Mark 3; invalid launches, empty ranks,
+## a seeded miss, turn spending and identical-seed replay remain covered.
 func _test_sack_glare_rank4() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
