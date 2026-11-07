@@ -162,7 +162,82 @@ func _run() -> void:
 		and patch_service.read_state() == patch_before,
 		"insufficient earned gold fails without ownership/wallet drift")
 	_card_free_source_checks()
+	_coat_quote_checks()
 	_finish(app)
+
+
+## Every existing coat's authored max-HP bonus is disclosed by the real quote.
+func _coat_quote_checks() -> void:
+	var rows := {"quilted_coat": [100, 6], "padded_vest": [100, 4],
+		"double_quilt_coat": [100, 8], "scrap_lined_vest": [70, 3],
+		"wool_patch_cloak": [100, 5], "chain_stitched_coat": [100, 7],
+		"reinforced_patchcoat": [100, 9], "thick_felt_mantle": [130, 10]}
+	var authored: Dictionary = RunStitchedPeddlerStock._authored_patches()
+	var coat_defs := {}
+	for record in JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/m04_coat_patches.json")):
+		coat_defs[record.id] = record
+	var witnessed := 0
+	for id in rows:
+		var price: int = rows[id][0]
+		var bonus: int = rows[id][1]
+		_check(authored.get(id, -1) == price and coat_defs.has(id)
+			and int(coat_defs[id].max_hp_bonus) == bonus,
+			"authored price and bonus match the brief: " + id)
+		var offer := {"id": id, "price": price}
+		var rich := RunStitchedPeddlerStock.open_stitched("coat_" + id, price, [], offer)
+		var short := RunStitchedPeddlerStock.open_stitched("coat_" + id, price - 1, [], offer)
+		_check(rich.is_valid() and short.is_valid(), "authentic coat visits open: " + id)
+		if not rich.is_valid() or not short.is_valid():
+			continue
+		var quote_rich := rich.quote()
+		var quote_short := short.quote()
+		for q in [quote_rich, quote_short]:
+			_check(q.get("ok", false) and q.offer.id == id and q.offer.price == price
+				and q.offer.get("slot") == "COAT" and q.offer.get("max_hp_bonus") == bonus
+				and q.offer.get("effect_text") == "Equip: +%d max HP" % bonus,
+				"quote discloses slot, bonus and equip text: " + id)
+		_check(quote_rich.can_buy == true and quote_short.can_buy == false,
+			"can_buy unchanged at exact gold and one gold short: " + id)
+		_check(rich.read_state().offer == offer and short.read_state().offer == offer,
+			"read_state offer stays the bare id/price pair: " + id)
+		# Detached: editing the returned snapshots cannot change the visit.
+		quote_rich.offer["max_hp_bonus"] = 999
+		quote_rich.offer["id"] = "forged"
+		var state: Dictionary = rich.read_state()
+		state.offer["price"] = 1
+		state.owned.append("forged")
+		var again := rich.quote()
+		_check(again.offer.max_hp_bonus == bonus and again.offer.id == id
+			and again.offer.price == price and rich.read_state().offer == offer
+			and rich.read_state().owned.is_empty(),
+			"quote and read_state snapshots are deep-detached: " + id)
+		# Quoting short never buys, heals, equips or grants authority.
+		var short_before := short.read_state()
+		_check(not short.buy_patch(id, "coat_" + id, short_before).ok
+			and short.read_state() == short_before and short.quote().can_buy == false,
+			"one gold short stays refused with no spend: " + id)
+		witnessed += 1
+	_check(witnessed == rows.size(), "all eight coat quotes were exercised")
+	# One genuinely affordable purchase charges its price once and rejects replay.
+	var buy_offer := {"id": "thick_felt_mantle", "price": 130}
+	var service := RunStitchedPeddlerStock.open_stitched("coat_buy", 200, [], buy_offer)
+	var before := service.read_state()
+	var forged := before.duplicate(true)
+	forged["gold"] = 999
+	_check(service.is_valid() and not service.buy_patch("thick_felt_mantle", "coat_buy", forged).ok
+		and not service.buy_patch("thick_felt_mantle", "other", before).ok
+		and service.read_state() == before, "forged or wrong-node buy refuses without spend")
+	var receipt := service.buy_patch("thick_felt_mantle", "coat_buy", before)
+	_check(receipt.get("ok", false) and receipt.charged_gold == 130 and receipt.price == 130
+		and receipt.gold == 70 and receipt.ledger.gold == 70
+		and receipt.ledger.owned_patch_ids == ["thick_felt_mantle"]
+		and not receipt.has("max_hp_bonus") and not receipt.has("hp"),
+		"affordable coat charges its authored price once with the unchanged receipt")
+	var after := service.read_state()
+	_check(not service.buy_patch("thick_felt_mantle", "coat_buy", after).ok
+		and service.read_state() == after and not service.quote().get("ok", false),
+		"replayed purchase is refused and a consumed visit no longer quotes")
 
 
 ## Card-free Stitched patch price source, resolved through the real helper.

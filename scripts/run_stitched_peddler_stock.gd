@@ -161,7 +161,12 @@ func read_state() -> Dictionary:
 func quote() -> Dictionary:
 	if not _valid or _consumed:
 		return {"ok": false}
-	return {"ok": true, "offer": _offer.duplicate(true),
+	# Advisory, detached equip preview (slot, max_hp_bonus, effect_text) read from
+	# the authored COAT source through the Patch Stall's helpers. Quoting never
+	# changes _offer, gold, ownership or the one-buy latch.
+	var preview: Dictionary = _offer.duplicate(true)
+	RunPatchStallVisit._add_coat_preview(preview, RunPatchStallVisit._authored_coat_bonuses())
+	return {"ok": true, "offer": preview,
 		"can_buy": _gold >= int(_offer.price)}
 
 
