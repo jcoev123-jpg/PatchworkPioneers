@@ -50,6 +50,8 @@ func _initialize() -> void:
 	_test_swap_admission_and_quote()
 	_test_swap_exchanges_and_decisions()
 	_test_swap_refusals_and_isolation()
+	_test_exchange_worn_parts()
+	_test_exchange_worn_parts_refusals()
 	_test_fear_admission_and_shape()
 	_test_fear_tell_tales()
 	_test_fear_other_choices_and_swap()
@@ -1461,6 +1463,299 @@ func _test_swap_exchanges_and_decisions() -> void:
 		"Leave without a swap returns the unchanged gear and satchel")
 	_assert_swap_refused(leave_visit, "warden", "arms", 0, "camp_swl",
 		leave_visit.read_state()["swap_state"], "swap after Leave")
+
+
+const EW_NODE := "camp_ew"
+const EW_FEAR := 60
+
+
+## Four complete dolls; the rank-3 tinker is Hanging at 0 HP but not LOST.
+func _ew_party() -> Array:
+	var party := _swap_party()
+	party[2]["hanging"] = true
+	return party
+
+
+func _ew_visit(node: String = EW_NODE, party: Variant = null, fear: Variant = EW_FEAR) -> RunCampfireVisit:
+	var heroes: Array = party if typeof(party) == TYPE_ARRAY else _ew_party()
+	return RunCampfireVisit.open_stitched_with_satchel(node, heroes, 40, [], _swap_catalog(), fear)
+
+
+## The first two non-LOST wearers of ARMS whose worn part ids differ.
+func _ew_first_arms_wearers(heroes: Array) -> Array:
+	var picked: Array = []
+	for hero in heroes:
+		if hero.get("lost", false) == true:
+			continue
+		var arms: Dictionary = hero["parts"]["arms"]
+		var distinct := true
+		for other in picked:
+			if str(other["parts"]["arms"]["id"]) == str(arms["id"]):
+				distinct = false
+		if distinct:
+			picked.append(hero)
+		if picked.size() == 2:
+			break
+	return picked
+
+
+func _ew_worn_offers(quote: Dictionary, hero_id: String, slot: String) -> Array:
+	for hero_quote in quote.get("heroes", []):
+		if hero_quote["hero_id"] == hero_id:
+			for entry in hero_quote["slots"]:
+				if entry["slot"] == slot:
+					return entry["worn_offers"]
+	return []
+
+
+func _assert_exchange_refused(visit: RunCampfireVisit, hero_a: Variant, hero_b: Variant,
+		slot: Variant, node: Variant, expected: Variant, label: String) -> void:
+	var before := visit.read_state()
+	var result: Dictionary = visit.exchange_worn_parts(hero_a, hero_b, slot, node, expected)
+	_check(result.get("ok") == false and not result.has("heroes") and not result.has("satchel")
+		and not result.has("worn_after") and not str(result.get("error", "")).is_empty(),
+		label + ": typed exchange refusal")
+	_check(visit.read_state() == before, label + ": refused exchange changes nothing")
+
+
+func _test_exchange_worn_parts() -> void:
+	seed(881)
+	var expected_next := randi()
+	seed(881)
+	var base := _ew_party()
+	_check(base[2]["hp"] == 0 and base[2]["hanging"] == true and not base[2].has("lost"),
+		"fixture tinker is Hanging at 0 HP and not LOST")
+	var visit := _ew_visit()
+	var state0 := visit.read_state()
+	_check(state0.get("ok") == true and state0.get("satchel") == [] and state0.get("fear") == EW_FEAR
+		and state0.get("status") == "stitched_open",
+		"empty-satchel opted-in Campfire opens with optional FEAR")
+	var wearers := _ew_first_arms_wearers(state0["heroes"])
+	_check(wearers.size() == 2 and wearers[0]["id"] == "warden" and wearers[1]["id"] == "seamstress"
+		and wearers[0]["parts"]["arms"] == _worn(ARMS_SHIELD, 1)
+		and wearers[1]["parts"]["arms"] == _worn(ARMS_RIVET, 1),
+		"first two arms wearers carry the Shield Catch and Rivet Pummel records")
+	if wearers.size() != 2:
+		return
+	var id_a: String = wearers[0]["id"]
+	var id_b: String = wearers[1]["id"]
+	var quote0: Dictionary = state0["swap_quote"]
+	var offers0 := _ew_worn_offers(quote0, id_a, "arms")
+	_check(quote0.get("satchel_count") == 0 and offers0.size() >= 1 and offers0[0]["hero_id"] == id_b
+		and offers0[0]["part"]["id"] == ARMS_RIVET,
+		"quote lists the direct arms worn offer even with zero spares")
+	var entry_a: Dictionary = {}
+	for entry in quote0["heroes"][0]["slots"]:
+		if entry["slot"] == "arms":
+			entry_a = entry
+	_check(entry_a.get("can_swap") == true and entry_a.get("offers") == [],
+		"arms can swap through worn offers alone, with no satchel offers")
+	var held_before := visit.read_state()
+	# Full read_state authorises the exchange.
+	var first := visit.exchange_worn_parts(id_a, id_b, "arms", EW_NODE, state0)
+	_check(first.get("ok") == true and first.get("error") == "" and first.get("action") == "exchange_worn"
+		and first.get("node_id") == EW_NODE and first.get("hero_a_id") == id_a
+		and first.get("hero_b_id") == id_b and first.get("slot") == "arms",
+		"direct exchange commits and names node, heroes and slot")
+	_check(first.get("worn_before") == {id_a: _worn(ARMS_SHIELD, 1), id_b: _worn(ARMS_RIVET, 1)}
+		and first.get("worn_after") == {id_a: _worn(ARMS_RIVET, 1), id_b: _worn(ARMS_SHIELD, 1)},
+		"each wearer receives the other's exact record")
+	var expected := base.duplicate(true)
+	expected[0]["parts"]["arms"] = _worn(ARMS_RIVET, 1)
+	expected[1]["parts"]["arms"] = _worn(ARMS_SHIELD, 1)
+	var after1 := visit.read_state()
+	_check(first.get("heroes") == expected and after1.get("heroes") == expected
+		and first.get("satchel") == [] and after1.get("satchel") == []
+		and first.get("candle") == 40 and after1.get("candle") == 40
+		and first.get("fear") == EW_FEAR and after1.get("fear") == EW_FEAR
+		and after1.get("status") == "stitched_open",
+		"receipt and held roster change exactly two arms; satchel, candle and FEAR identical")
+	for i in range(4):
+		_check(after1["heroes"][i]["parts"]["head"] == base[i]["parts"]["head"]
+			and after1["heroes"][i]["parts"]["torso"] == base[i]["parts"]["torso"]
+			and after1["heroes"][i]["parts"]["legs"] == base[i]["parts"]["legs"],
+			"exchange leaves hero %d other slots alone" % i)
+		for field in ["hp", "max_hp", "fray", "block", "statuses", "metadata", "position", "passive", "id", "hanging"]:
+			_check(after1["heroes"][i].get(field) == base[i].get(field),
+				"exchange leaves hero %d field %s alone" % [i, field])
+	_check(first.get("swap_state") == after1.get("swap_state")
+		and after1["swap_state"]["version"] == state0["swap_state"]["version"] + 1
+		and after1["swap_state"]["heroes"] == expected
+		and after1.get("swap_quote") == visit.swap_quote()
+		and after1["swap_quote"]["state"] == after1["swap_state"],
+		"receipt, read_state, swap_state and refreshed quote agree")
+	var offers1 := _ew_worn_offers(after1["swap_quote"], id_a, "arms")
+	_check(offers1.size() >= 1 and offers1[0]["hero_id"] == id_b and offers1[0]["part"]["id"] == ARMS_SHIELD,
+		"refreshed quote shows the swapped arms")
+	# Detachment of everything returned or supplied.
+	var held_snapshot := visit.read_state()
+	first["heroes"][0]["parts"]["arms"]["id"] = "forged"
+	first["worn_after"][id_a]["tier"] = 3
+	first["swap_state"]["heroes"][1]["hp"] = 999
+	first["satchel"].append({"id": "x"})
+	state0["heroes"][0]["parts"]["arms"]["tier"] = 3
+	_check(visit.read_state() == held_snapshot,
+		"mutating the receipt or the caller's expected state cannot alter the held visit")
+	# Replay of the original state is refused, from either state shape.
+	_assert_exchange_refused(visit, id_a, id_b, "arms", EW_NODE, held_before, "replay of original full state")
+	_assert_exchange_refused(visit, id_a, id_b, "arms", EW_NODE, held_before["swap_state"],
+		"replay of original swap state")
+	# Second exchange needs the fresh state: Hanging (not LOST) tinker, distinct ids and tiers.
+	var fresh := visit.read_state()
+	var second := visit.exchange_worn_parts(id_a, "tinker", "arms", EW_NODE, fresh["swap_state"])
+	_check(second.get("ok") == true
+		and second.get("worn_before") == {id_a: _worn(ARMS_RIVET, 1), "tinker": _worn(ARMS_SHIELD, 2)}
+		and second.get("worn_after") == {id_a: _worn(ARMS_SHIELD, 2), "tinker": _worn(ARMS_RIVET, 1)},
+		"a Hanging 0-HP but not LOST doll can exchange, with a fresh nested swap_state")
+	expected[0]["parts"]["arms"] = _worn(ARMS_SHIELD, 2)
+	expected[2]["parts"]["arms"] = _worn(ARMS_RIVET, 1)
+	_check(visit.read_state()["heroes"] == expected and second.get("heroes") == expected
+		and visit.read_state()["heroes"][2]["hp"] == 0
+		and visit.read_state()["heroes"][2]["hanging"] == true,
+		"second exchange accumulates; Hanging witness keeps HP 0 and flag")
+	_assert_exchange_refused(visit, id_a, "tinker", "arms", EW_NODE, fresh, "replay of the previous full state")
+	# A different slot with the latest complete read_state.
+	var third := visit.exchange_worn_parts("seamstress", "tinker", "head", EW_NODE, visit.read_state())
+	_check(third.get("ok") == true and third.get("worn_after") == {"seamstress": _worn(HEAD_POT, 3),
+		"tinker": _worn(HEAD_RATTLE, 2)},
+		"a different slot exchanges using the latest complete read_state")
+	expected[1]["parts"]["head"] = _worn(HEAD_POT, 3)
+	expected[2]["parts"]["head"] = _worn(HEAD_RATTLE, 2)
+	# One recovery decision against the updated dolls, then exchanges close.
+	var latest := visit.read_state()
+	_check(latest["heroes"] == expected and latest["satchel"] == [], "three exchanges accumulate")
+	var mend := visit.select("mend", EW_NODE, latest["heroes"], 40, EW_FEAR)
+	_check(mend.get("ok") == true and mend.get("decision") == "mend" and mend.get("candle") == 40
+		and mend.get("fear") == EW_FEAR and mend.get("satchel") == [],
+		"Mend still works after exchanges")
+	for i in range(4):
+		_check(mend["heroes"][i]["parts"] == expected[i]["parts"],
+			"Mend keeps hero %d exchanged equipment" % i)
+	_check(mend["heroes"][2]["hp"] == 7 and mend["heroes"][2].get("hanging") == false,
+		"Mend heals the Hanging doll floor(30%) and ends Hanging")
+	var decided := visit.read_state()
+	_check(decided.get("status") == "stitched_decided" and decided["swap_quote"]["open"] == false,
+		"the decision closes the exchange opportunity")
+	_assert_exchange_refused(visit, id_a, id_b, "arms", EW_NODE, decided, "exchange after the decision (full)")
+	_assert_exchange_refused(visit, id_a, id_b, "arms", EW_NODE, decided["swap_state"],
+		"exchange after the decision (nested)")
+	# Leave also closes the visit after an exchange.
+	var leave_visit := _ew_visit("camp_ewl", null, null)
+	var leave_exchange := leave_visit.exchange_worn_parts("warden", "tinker", "torso", "camp_ewl",
+		leave_visit.read_state()["swap_state"])
+	_check(leave_exchange.get("ok") == true and not leave_exchange.has("fear")
+		and leave_exchange.get("worn_after") == {"warden": _worn(TORSO_IRON, 2), "tinker": _worn(TORSO_IRON, 1)},
+		"visit without FEAR exchanges and its receipt carries no fear")
+	var leave_latest := leave_visit.read_state()
+	var left := leave_visit.select("leave", "camp_ewl", leave_latest["heroes"], 40)
+	_check(left.get("ok") == true and left.get("heroes") == leave_latest["heroes"],
+		"Leave closes the visit with the exchanged gear")
+	_assert_exchange_refused(leave_visit, "warden", "tinker", "torso", "camp_ewl",
+		leave_visit.read_state(), "exchange after Leave")
+	# Non-empty satchel: exchanges and ordinary swaps interoperate on fresh states.
+	var spare_visit := _swap_visit("camp_ews")
+	var spare_exchange := spare_visit.exchange_worn_parts("warden", "seamstress", "arms", "camp_ews",
+		spare_visit.read_state()["swap_state"])
+	_check(spare_exchange.get("ok") == true and spare_exchange.get("satchel") == _swap_satchel()
+		and spare_visit.read_state()["satchel"] == _swap_satchel(),
+		"direct exchange leaves a non-empty satchel untouched")
+	var spare_swap := spare_visit.swap_part("warden", "arms", 0, "camp_ews", spare_exchange["swap_state"])
+	_check(spare_swap.get("ok") == true and spare_swap.get("worn_before") == _worn(ARMS_RIVET, 1)
+		and spare_swap.get("worn_after") == _worn(ARMS_RIVET, 2)
+		and spare_swap.get("satchel_after") == _spare(ARMS_RIVET, 1, "arms"),
+		"swap_part still works on the fresh state after an exchange")
+	var back := spare_visit.exchange_worn_parts("tinker", "warden", "arms", "camp_ews",
+		spare_visit.read_state()["swap_state"])
+	_check(back.get("ok") == true
+		and back.get("worn_after") == {"tinker": _worn(ARMS_RIVET, 2), "warden": _worn(ARMS_SHIELD, 2)},
+		"an exchange follows a satchel swap on the fresh state")
+	_check(randi() == expected_next, "exchanges, refusals and decisions draw no global RNG")
+
+
+func _test_exchange_worn_parts_refusals() -> void:
+	seed(882)
+	var expected_next := randi()
+	seed(882)
+	var visit := _ew_visit()
+	var state := visit.read_state()
+	var swap_state: Dictionary = state["swap_state"]
+	_assert_exchange_refused(visit, "warden", "warden", "arms", EW_NODE, state, "same hero")
+	_assert_exchange_refused(visit, "warden", "nobody", "arms", EW_NODE, state, "unknown second hero")
+	_assert_exchange_refused(visit, "nobody", "warden", "arms", EW_NODE, state, "unknown first hero")
+	_assert_exchange_refused(visit, 7, "warden", "arms", EW_NODE, state, "non-string first hero")
+	_assert_exchange_refused(visit, "warden", null, "arms", EW_NODE, state, "missing second hero")
+	for bad_slot in ["wings", "Arms", "", null, 3]:
+		_assert_exchange_refused(visit, "warden", "seamstress", bad_slot, EW_NODE, state,
+			"invalid slot " + str(bad_slot))
+	_assert_exchange_refused(visit, "warden", "button_golem", "arms", EW_NODE, state, "torn arms (second)")
+	_assert_exchange_refused(visit, "button_golem", "warden", "arms", EW_NODE, state, "torn arms (first)")
+	for bad_node in ["camp_other", " camp_ew", "camp_ew ", "", 42, null]:
+		_assert_exchange_refused(visit, "warden", "seamstress", "arms", bad_node, state,
+			"wrong node " + str(bad_node))
+		_assert_exchange_refused(visit, "warden", "seamstress", "arms", bad_node, swap_state,
+			"wrong node nested " + str(bad_node))
+	for bad_expected in [null, [], "state", 5, {}]:
+		_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, bad_expected,
+			"malformed expected state " + str(bad_expected))
+	var forged_candle := state.duplicate(true)
+	forged_candle["candle"] = 99
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_candle, "forged full candle")
+	var forged_fear := state.duplicate(true)
+	forged_fear["fear"] = 0
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_fear, "forged full FEAR")
+	var forged_hero := state.duplicate(true)
+	forged_hero["heroes"][1]["hp"] += 1
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_hero, "forged full hero")
+	var forged_nested := swap_state.duplicate(true)
+	forged_nested["version"] += 1
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_nested, "forged nested version")
+	var forged_parts := swap_state.duplicate(true)
+	forged_parts["heroes"][0]["parts"]["arms"]["tier"] = 3
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_parts, "forged nested parts")
+	var forged_swap_in_full := state.duplicate(true)
+	forged_swap_in_full["swap_state"]["version"] += 1
+	_assert_exchange_refused(visit, "warden", "seamstress", "arms", EW_NODE, forged_swap_in_full,
+		"forged swap_state inside a full state")
+	# A LOST wearer cannot exchange.
+	var lost_party := _ew_party()
+	lost_party[1]["lost"] = true
+	var lost_visit := _ew_visit("camp_ewx", lost_party)
+	_check(lost_visit.read_state().get("ok") == true, "fixture with a LOST doll opens")
+	_assert_exchange_refused(lost_visit, "warden", "seamstress", "arms", "camp_ewx",
+		lost_visit.read_state(), "LOST second wearer")
+	_assert_exchange_refused(lost_visit, "seamstress", "warden", "arms", "camp_ewx",
+		lost_visit.read_state()["swap_state"], "LOST first wearer")
+	var lost_ok := lost_visit.exchange_worn_parts("warden", "tinker", "arms", "camp_ewx",
+		lost_visit.read_state())
+	_check(lost_ok.get("ok") == true and lost_ok["heroes"][1]["parts"]["arms"] == _worn(ARMS_RIVET, 1),
+		"living dolls still exchange beside a LOST doll, which keeps its gear")
+	# Non-opt-in, legacy, invalid and decided visits.
+	var plain := RunCampfireVisit.new("camp_plain", _stitched_party([35, 18, 0, 48], [30, 25, 10, 200]),
+		"stitched", 40)
+	_assert_exchange_refused(plain, "warden", "seamstress", "arms", "camp_plain", plain.read_state(),
+		"non-opt-in plain Stitched Campfire")
+	_assert_exchange_refused(plain, "warden", "seamstress", "arms", "camp_plain", {}, "plain Campfire, empty state")
+	var legacy := RunCampfireVisit.new("camp_legacy", _party([35, 18, 0]))
+	_assert_exchange_refused(legacy, "warden", "seamstress", "arms", "camp_legacy", legacy.read_state(),
+		"legacy three-hero Campfire")
+	var invalid := RunCampfireVisit.new()
+	_check(invalid.exchange_worn_parts("warden", "seamstress", "arms", "camp", {})
+		== {"ok": false, "error": "no open part-swap opportunity"}, "invalid visit cannot exchange")
+	var decided_visit := _ew_visit("camp_ewd")
+	var decided_receipt := decided_visit.select("leave", "camp_ewd", decided_visit.read_state()["heroes"],
+		40, EW_FEAR)
+	_check(decided_receipt.get("ok") == true, "decided fixture is decided")
+	_assert_exchange_refused(decided_visit, "warden", "seamstress", "arms", "camp_ewd",
+		decided_visit.read_state(), "already decided Campfire (full)")
+	_assert_exchange_refused(decided_visit, "warden", "seamstress", "arms", "camp_ewd",
+		decided_visit.read_state()["swap_state"], "already decided Campfire (nested)")
+	# Every refusal left the first visit able to exchange, and the held party equals the fixture.
+	_check(visit.read_state()["heroes"] == _ew_party() and visit.read_state()["satchel"] == []
+		and visit.read_state()["candle"] == 40 and visit.read_state()["fear"] == EW_FEAR,
+		"refusals spent no gear, satchel, candle or FEAR")
+	var ok := visit.exchange_worn_parts("warden", "seamstress", "arms", EW_NODE, state)
+	_check(ok.get("ok") == true, "the original state still authorises a legal exchange after refusals")
+	_check(randi() == expected_next, "refusals draw no global RNG")
 
 
 func _test_swap_refusals_and_isolation() -> void:
