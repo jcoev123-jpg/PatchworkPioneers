@@ -7,6 +7,8 @@ const THREAD := Color("998053")
 const TITLE_BACKDROP := "res://assets/paper/backgrounds/title.png"
 ## Stuffed-fabric wordmark drawn in place of the title text; the live label keeps its text.
 const TITLE_LOGO := "res://assets/paper/ui/title_logo.png"
+## Color is applied only when painting; the owner-supplied PNG is untouched.
+const LOGO_TINT := Color("c9b7a4")
 ## Widest the wordmark may grow, centred on the title banner.
 const LOGO_MAX_WIDTH := 760.0
 ## Small periodic presentation drift; independent of both gameplay and global RNG.
@@ -336,6 +338,6 @@ func _draw() -> void:
 	if logo.has_area():
 		var motion := logo_motion()
 		draw_set_transform(logo.get_center() + motion["offset"], motion["rotation"], Vector2.ONE)
-		draw_texture_rect(_logo, Rect2(-logo.size * 0.5, logo.size), false)
+		draw_texture_rect(_logo, Rect2(-logo.size * 0.5, logo.size), false, LOGO_TINT)
 		# Reset the CanvasItem draw state so later decorations never inherit the sway.
 		draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)

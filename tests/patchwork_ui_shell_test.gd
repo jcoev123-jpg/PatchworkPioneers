@@ -178,6 +178,8 @@ func _run() -> void:
 		previous_action = hit
 		fixed_actions.append(hit)
 	_check(logo_art != null and logo_art.resource_path == shell.TITLE_LOGO
+		and shell.LOGO_TINT.r < 1.0 and shell.LOGO_TINT.g < 1.0
+		and shell.LOGO_TINT.b < 1.0 and shell.LOGO_TINT.a == 1.0
 		and logo_box.has_area() and shell.is_processing() and app.start_button.has_focus(),
 		"authored live title wordmark is mounted and drives presentation processing")
 	var elapsed_at_boot: float = shell._logo_elapsed
@@ -315,8 +317,10 @@ func _run() -> void:
 		var room_skin := app.base_button.get_theme_stylebox(state) as StyleBoxTexture
 		var start_skin := app.start_button.get_theme_stylebox(state) as StyleBoxTexture
 		_check(room_skin != null and start_skin != null and room_skin.texture != null
-			and room_skin.texture == start_skin.texture and room_skin.modulate_color == start_skin.modulate_color,
-			"third title action shares the authored sewn button treatment: " + state)
+			and room_skin.texture == start_skin.texture
+			and (room_skin.modulate_color == start_skin.modulate_color if state == "focus"
+				else room_skin.modulate_color != start_skin.modulate_color),
+			"primary and secondary title actions share art but have distinct fabric states: " + state)
 	_check(shell._actions == [app.start_button, app.stitched_continue_button, app.base_button],
 		"shell styles exactly the three live title actions")
 	for button in [app.stitched_fight_button]:

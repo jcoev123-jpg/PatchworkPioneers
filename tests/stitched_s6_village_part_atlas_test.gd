@@ -4,6 +4,10 @@ extends SceneTree
 const VILLAGE := preload("res://scenes/base_screen.tscn")
 const WARDEN := "res://data/parts/warden_parts.json"
 const FOES := "res://data/parts/enemy_parts.json"
+const SEAMSTRESS := "res://data/parts/seamstress_parts.json"
+const TINKER := "res://data/parts/tinker_parts.json"
+const YARN_RANGER := "res://data/parts/yarn_ranger_parts.json"
+const SOURCES := [WARDEN, SEAMSTRESS, TINKER, YARN_RANGER, FOES]
 
 var failures: Array[String] = []
 var checks := 0
@@ -98,6 +102,54 @@ func _witness(inspector: StitchedPartInspector, id: String, name: String,
         "ability, legal launch/target ranks and effects come from real part: " + id)
 
 
+## Expectations are computed from the independently validated on-disk record,
+## not copied numeric values or duplicated rows.
+func _source_witness(inspector: StitchedPartInspector, part: Dictionary) -> void:
+    var id := str(part["id"])
+    var slot := str(part["slot"])
+    var owner := str(part["owner"])
+    var ability: Dictionary = StitchedParts.ability_at_tier(part, 1)
+    _check(inspector.part_ids_in_slot(slot).has(id) and inspector.select_part(id),
+        "mounted inspector includes authentic source-backed part " + id)
+    _check(inspector.selected_part_id == id and inspector.active_slot == slot
+        and _line(inspector, "PartName") == str(part["name"])
+        and _line(inspector, "PartMeta").contains("OWNER: " + owner)
+        and _line(inspector, "PartMeta").contains("ID: " + id)
+        and _line(inspector, "AbilityLine").contains("ABILITY: " + str(ability["name"]))
+        and _line(inspector, "RanksLine").contains("TARGET: " + str(ability["target_side"]).to_upper()),
+        "name, ID, owner, slot and ability match validated source for " + id)
+
+
+func _source_tier(inspector: StitchedPartInspector, part: Dictionary, tier: int) -> void:
+    var ability := StitchedParts.ability_at_tier(part, tier)
+    var stat := StitchedParts.stat_at_tier(part, tier)
+    var id := str(part["id"])
+    await _click(inspector.get_node("DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1]) as Button)
+    _check(inspector.selected_part_id == id and inspector.selected_tier == tier
+        and _line(inspector, "NumbersLine").contains("ACC: %d%%" % int(ability["acc"]))
+        and _line(inspector, "NumbersLine").contains("DAMAGE: %d-%d" % [
+            int(ability["dmg"][0]), int(ability["dmg"][1])])
+        and _line(inspector, "RanksLine").contains("LAUNCH: " + _ranks(ability["launch"]))
+        and _line(inspector, "RanksLine").contains("RANKS " + _ranks(ability["target"]))
+        and _line(inspector, "MovementLine").contains("POSE: " + str(ability["move"])),
+        "tier %d numbers/ranks/pose are authored for %s" % [tier, id])
+    for key in stat:
+        _check(_line(inspector, "StatLine").contains(
+            "%s +%d" % [str(key).to_upper().replace("_", " "), int(stat[key])]),
+            "tier %d stat %s comes from source %s" % [tier, str(key), id])
+    for key in ability["effects"]:
+        _check(_line(inspector, "EffectsLine").contains(
+            "%s %d" % [str(key).capitalize(), int(ability["effects"][key])]),
+            "tier %d effect %s comes from source %s" % [tier, str(key), id])
+
+
+func _ranks(ranks: Array) -> String:
+    var values: Array[String] = []
+    for rank in ranks:
+        values.append(str(rank))
+    return ", ".join(values)
+
+
 func _tier(inspector: StitchedPartInspector, id: String, tier: int,
         accuracy: int, damage: String, effect: String) -> void:
     var button: Button = inspector.get_node(
@@ -115,22 +167,25 @@ func _tier(inspector: StitchedPartInspector, id: String, tier: int,
 
 func _run() -> void:
     root.size = Vector2i(1280, 720)
-    var before_warden := FileAccess.get_file_as_string(WARDEN)
-    var before_foes := FileAccess.get_file_as_string(FOES)
-    var source_warden := StitchedParts.load_catalog(WARDEN)
-    var source_foes := StitchedParts.load_catalog(FOES)
-    _check(not before_warden.is_empty() and not before_foes.is_empty()
-        and bool(source_warden.get("ok", false)) and bool(source_foes.get("ok", false)),
-        "both independent real JSON catalogs validate as whole parts files")
-    if not bool(source_warden.get("ok", false)) or not bool(source_foes.get("ok", false)):
-        _finish()
-        return
+    var originals: Dictionary = {}
     var actual_ids: Dictionary = {}
-    for source in [source_warden, source_foes]:
-        for part in source["parts"]:
+    var sources: Dictionary = {}
+    for path in SOURCES:
+        var contents := FileAccess.get_file_as_string(path)
+        var parsed := StitchedParts.load_catalog(path)
+        _check(not contents.is_empty() and bool(parsed.get("ok", false)),
+            "independent authored catalog validates: " + path)
+        if contents.is_empty() or not bool(parsed.get("ok", false)):
+            _finish()
+            return
+        originals[path] = contents
+        sources[path] = parsed
+        for part in parsed["parts"]:
             actual_ids[str(part["id"])] = part
-    for id in ["warden_head_pot_helm_bonk", "scissor_crab_claw_arm",
-            "moth_swarm_wings", "felt_bulwark_button_shield"]:
+    for id in ["warden_head_pot_helm_bonk", "seamstress_mending_knot_hat",
+            "tinker_head_cog_shot", "yarn_ranger_head_needle_nock",
+            "scissor_crab_claw_arm", "moth_swarm_wings",
+            "felt_bulwark_button_shield"]:
         _check(actual_ids.has(id), "validated source actually contains witness " + id)
     view = VILLAGE.instantiate() as BaseScreen
     root.add_child(view)
@@ -191,6 +246,57 @@ func _run() -> void:
         and guide.get_children().filter(func(node: Node) -> bool:
             return node is StitchedPartInspector).size() == 1,
         "nested modal stays blocked, labelled reference-only and singly mounted")
+    var owner_filter := inspector.get_node("CatalogPanel/OwnerFilter") as OptionButton
+    _check(owner_filter != null and owner_filter.get_item_count() == 6
+        and owner_filter.get_item_text(0) == "All"
+        and owner_filter.get_item_text(4) == "Yarn Ranger"
+        and owner_filter.get_item_text(5) == "Spoils"
+        and owner_filter.focus_mode == Control.FOCUS_ALL
+        and root.get_visible_rect().encloses(owner_filter.get_global_rect()),
+        "real Gothic owner filter exposes six groups inside 1280x720")
+    _check(guide.catalog_paths == SOURCES and inspector.selected_owner == "all",
+        "live guide loads five independent files and defaults to All")
+    var all_head := inspector.part_ids_in_slot("head")
+    for pair in [
+            ["seamstress", "seamstress_mending_knot_hat", 2],
+            ["tinker", "tinker_head_cog_shot", 3],
+            ["yarn_ranger", "yarn_ranger_head_needle_nock", 2]]:
+        var owner_id: String = pair[0]
+        var part_id: String = pair[1]
+        var group_index := StitchedPartInspector.OWNERS.find(owner_id)
+        owner_filter.select(group_index)
+        owner_filter.item_selected.emit(group_index)
+        _check(inspector.selected_owner == owner_id
+            and inspector.active_slot == "head"
+            and inspector.visible_part_ids_in_slot("head").has(part_id)
+            and inspector.part_ids_in_slot("head") == all_head,
+            "owner selection filters only visible rows, retaining full HEAD index: " + owner_id)
+        var rows: VBoxContainer = inspector.get_node("CatalogPanel/PartScroll/PartRows")
+        _check(rows.get_child_count() == inspector.visible_part_ids_in_slot("head").size()
+            and not rows.get_children().is_empty(),
+            "owner " + owner_id + " has real clickable rows")
+        _source_witness(inspector, actual_ids[part_id])
+        await _source_tier(inspector, actual_ids[part_id], int(pair[2]))
+        _check(not inspector.select_part("scissor_crab_claw_arm")
+            and not inspector.select_owner("imaginary_hero")
+            and inspector.selected_part_id == part_id,
+            "hidden foreign part and invalid owner cannot change " + owner_id)
+        _check(inspector.select_slot("arms")
+            and inspector.active_slot == "arms"
+            and not inspector.visible_part_ids_in_slot("arms").is_empty()
+            and inspector.selected_tier == 1,
+            "switching owner " + owner_id + " into ARMS selects a real tier-I part")
+        _check(inspector.select_slot("head") and inspector.select_part(part_id),
+            "returning to HEAD recovers the selected owner's authored part")
+    _check(inspector.select_owner("warden") and inspector.select_part("warden_head_pot_helm_bonk"),
+        "Warden group remains browseable")
+    _check(inspector.select_owner("any") and inspector.select_part("scissor_crab_claw_arm"),
+        "Spoils owner group browses actual foe parts")
+    _check(inspector.select_owner("all") and inspector.visible_part_ids_in_slot("head") == all_head,
+        "All restores the same alphabetical full-catalog HEAD rows")
+    for id in ["warden_head_pot_helm_bonk", "scissor_crab_claw_arm",
+            "moth_swarm_wings", "felt_bulwark_button_shield"]:
+        _source_witness(inspector, actual_ids[id])
     _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden",
         "Pot Helm Bonk", "melee", "1, 2", "enemy", "1, 2", "Weak 1")
     await _tier(inspector, "warden_head_pot_helm_bonk", 1, 90, "4-6", "Weak 1")
@@ -220,8 +326,14 @@ func _run() -> void:
 
     (inspector.get_node("CloseButton") as Button).grab_focus()
     await _key(KEY_TAB)
+    _check(root.gui_get_focus_owner() == inspector.get_node("CatalogPanel/OwnerFilter"),
+        "Tab from inspector Close reaches the theme-aware owner selector")
+    await _key(KEY_TAB)
     _check(root.gui_get_focus_owner() == inspector.get_node("CatalogPanel/SlotHead"),
-        "Tab from inspector Close moves into genuine inspector, never underlying guide")
+        "Tab from owner reaches first genuine slot, not the underlying guide")
+    await _key(KEY_TAB, true)
+    _check(root.gui_get_focus_owner() == inspector.get_node("CatalogPanel/OwnerFilter"),
+        "Shift-Tab from Head reaches Owner filter")
     await _key(KEY_TAB, true)
     _check(root.gui_get_focus_owner() == inspector.get_node("CloseButton"),
         "Shift-Tab stays in inspector focus loop")
@@ -273,7 +385,7 @@ func _run() -> void:
         "second Escape closes guide and returns focus to real village")
     await _click(entry)
     _check(guide.is_open(), "guide reopens for fail-closed retry")
-    guide.catalog_paths[1] = "res://data/parts/missing_atlas_catalog.json"
+    guide.catalog_paths[4] = "res://data/parts/missing_atlas_catalog.json"
     await _click(guide.atlas_button)
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and inspector.part_ids_in_slot("head").is_empty()
@@ -282,12 +394,35 @@ func _run() -> void:
         and guide.atlas_status.text.contains("UNAVAILABLE")
         and root.gui_get_focus_owner() != inspector.get_node("CloseButton"),
         "missing second catalog rejects whole atlas without stale rows, stats or focus")
-    guide.catalog_paths[1] = FOES
+    guide.catalog_paths[4] = FOES
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree() and inspector.select_part("moth_swarm_wings")
         and guide.get_children().filter(func(node: Node) -> bool:
             return node is StitchedPartInspector).size() == 1,
         "valid retry after a failed read restores authentic catalog exactly once")
+    await _key(KEY_ESCAPE)
+    _check(not inspector.visible and inspector.selected_part_id.is_empty(),
+        "valid foe retry can close without retaining parts")
+    guide.catalog_paths[1] = "res://data/parts/missing_seamstress_atlas.json"
+    await _click(guide.atlas_button)
+    _check(not inspector.visible and inspector.selected_part_id.is_empty()
+        and inspector.selected_owner == "all"
+        and inspector.part_ids_in_slot("head").is_empty()
+        and inspector.visible_part_ids_in_slot("head").is_empty()
+        and (inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
+        and _line(inspector, "NumbersLine").is_empty()
+        and owner_filter.disabled
+        and root.gui_get_focus_owner() != owner_filter
+        and guide.atlas_status.text.contains("UNAVAILABLE"),
+        "missing new hero source fails whole atlas closed with no stale owner, row or focus")
+    guide.catalog_paths[1] = SEAMSTRESS
+    await _click(guide.atlas_button)
+    _check(inspector.is_visible_in_tree()
+        and inspector.select_part("seamstress_mending_knot_hat")
+        and inspector.selected_owner == "all"
+        and guide.get_children().filter(func(node: Node) -> bool:
+            return node is StitchedPartInspector).size() == 1,
+        "new hero catalog restores on retry without duplicate inspector")
     view.hide()
     await _frames()
     _check(not guide.is_open() and not guide.visible and not inspector.visible
@@ -301,7 +436,7 @@ func _run() -> void:
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree(), "nested atlas still works after parent hide/show")
     view._on_field_guide_close_requested()
-    guide.catalog_paths[1] = "res://missing-direct-parts-catalog.json"
+    guide.catalog_paths[4] = "res://missing-direct-parts-catalog.json"
     await _click(view.parts_button)
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and inspector.part_ids_in_slot("head").is_empty()
@@ -312,7 +447,7 @@ func _run() -> void:
     await _key(KEY_ESCAPE)
     _check(view.parts_button.has_focus() and not view.parts_button.disabled,
         "failed direct doorway restores Parts focus")
-    guide.catalog_paths[1] = FOES
+    guide.catalog_paths[4] = FOES
     await _click(view.parts_button)
     _check(inspector.is_visible_in_tree() and inspector.select_part("scissor_crab_claw_arm"),
         "direct house recovers authentic foe inspection after invalid source")
@@ -320,9 +455,10 @@ func _run() -> void:
     _check(not guide.is_open() and not inspector.visible and entry.disabled
         and not view.has_open_village() and inspector.selected_part_id.is_empty(),
         "parent close clears nested panel, guard, selection and village entry")
-    _check(before_warden == FileAccess.get_file_as_string(WARDEN)
-        and before_foes == FileAccess.get_file_as_string(FOES),
-        "both authored JSON files remain byte-for-byte unchanged")
+    var sources_unchanged := true
+    for path in SOURCES:
+        sources_unchanged = sources_unchanged and originals[path] == FileAccess.get_file_as_string(path)
+    _check(sources_unchanged, "all five authored JSON files remain byte-for-byte unchanged")
     _check(_state()[0] == "Gold 27  ·  Scraps 6" and calls["back"] == 0
         and calls["set_out"] == 0 and calls["path"] == 0 and calls["tinker"] == 0
         and calls["warden"] == 0 and calls["difficulty"] == 0,

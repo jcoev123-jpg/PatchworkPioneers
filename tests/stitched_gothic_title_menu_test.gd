@@ -67,6 +67,28 @@ func _run() -> void:
 	await process_frame
 	var ordinary: Array = [app.start_button, app.stitched_continue_button, app.base_button]
 	await _menu_layout(app, ordinary)
+	_check([app.start_button.text, app.stitched_continue_button.text, app.base_button.text] ==
+		["New Run", "Continue Run", "Wren's Room"],
+		"all three live title labels have consistent title case")
+	for face in ["normal", "hover", "pressed"]:
+		var primary := app.start_button.get_theme_stylebox(face) as StyleBoxTexture
+		var secondary := app.stitched_continue_button.get_theme_stylebox(face) as StyleBoxTexture
+		var bedroom := app.base_button.get_theme_stylebox(face) as StyleBoxTexture
+		_check(primary != null and secondary != null and bedroom != null
+			and primary.texture == secondary.texture and secondary.texture == bedroom.texture
+			and primary.modulate_color != secondary.modulate_color
+			and secondary.modulate_color == bedroom.modulate_color,
+			"primary oxblood and secondary umber nine-slice diverge only at title: " + face)
+	var shell := app.get_node("PatchworkUIShell")
+	var source_logo_sha := FileAccess.get_sha256(ProjectSettings.globalize_path(shell.TITLE_LOGO))
+	_check(shell.LOGO_TINT.r < 1.0 and shell.LOGO_TINT.g < 1.0
+		and shell.LOGO_TINT.b < 1.0 and shell.LOGO_TINT.a == 1.0
+		and shell._logo != null and shell.logo_rect().has_area(),
+		"readable wordmark gets its darkening tint only while the live shell paints it")
+	await process_frame
+	_check(source_logo_sha != "" and source_logo_sha ==
+		FileAccess.get_sha256(ProjectSettings.globalize_path(shell.TITLE_LOGO)),
+		"title logo source image bytes are unchanged by paint-time tint")
 	_check(app.start_button.has_focus(), "ordinary boot focuses New Run")
 	var carry := _carry(app)
 	await _ring(app, ordinary)

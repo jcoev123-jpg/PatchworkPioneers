@@ -299,7 +299,7 @@ func _build_title() -> void:
 	var resume := Button.new()
 	stitched_continue_button = resume
 	resume.name = "ContinueStitchedRun"
-	resume.text = "Continue run"
+	resume.text = "Continue Run"
 	resume.custom_minimum_size = Vector2(240, 56)
 	resume.pressed.connect(func():
 		if title_view.is_visible_in_tree() and stitched_run_session == null:
@@ -307,7 +307,7 @@ func _build_title() -> void:
 	box.add_child(resume)
 	base_button = Button.new()
 	# S9d: the base is Wren's bedroom whenever its painting ships; the village name only names the fallback.
-	base_button.text = "Wren's room" if StitchedBedroom.has_art() else "Quilt village"
+	base_button.text = "Wren's Room" if StitchedBedroom.has_art() else "Quilt Village"
 	base_button.custom_minimum_size = Vector2(240, 56)
 	base_button.tooltip_text = "Go back to Wren's bedroom" if StitchedBedroom.has_art() else "Visit the Quilt village"
 	base_button.pressed.connect(_open_base)
@@ -383,9 +383,14 @@ func _style_stitched_title_action(button: Button) -> void:
 			for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
 				felt.set_texture_margin(side, 14)
 				felt.set_content_margin(side, 20 if side in [SIDE_LEFT, SIDE_RIGHT] else 6)
-			felt.modulate_color = {"normal": Color("564044"), "hover": Color("775158"),
-				"pressed": Color("39282f"), "disabled": Color("363239"),
-				"focus": Color("ffce82")}[face]
+			var primary := button == start_button
+			var faces := {"normal": Color("66383f"), "hover": Color("80505b"),
+				"pressed": Color("44252b"), "disabled": Color("3e3235"),
+				"focus": Color("ffce82")} if primary else {
+				"normal": Color("4a372f"), "hover": Color("665044"),
+				"pressed": Color("302820"), "disabled": Color("332f2c"),
+				"focus": Color("ffce82")}
+			felt.modulate_color = faces[face]
 			if face == "focus":
 				# Only the bright stitched rim overlays the current button face.
 				felt.draw_center = false

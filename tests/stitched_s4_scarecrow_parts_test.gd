@@ -24,8 +24,9 @@ const IDS := [
 const ENEMY_IDS := ["fray_scavenger", "scissor_crab", "moth_scribe"]
 const OTHER_HERO_IDS := ["warden", "tinker", "lantern_monk"]
 ## The two shoulder-crow legs attacks: base authored values, and the tier II/III overrides.
-## Both may launch from hero rank 4; only Crow Peck reaches enemy rank 4, while Crow Dive
-## keeps its authored enemy ranks 1-3. Every other value here must stay untouched.
+## Both may launch from hero rank 4. Crow Peck reaches enemy rank 4 at every tier; Crow Dive
+## reaches enemy ranks 1-3 at tier I and all four enemy ranks once upgraded to tier II/III.
+## Every other value here must stay untouched.
 const CROW_LEGS := {
 	"scarecrow_legs_crow_dive": {
 		"name": "Crow Dive",
@@ -38,8 +39,8 @@ const CROW_LEGS := {
 		"effects": {},
 		"move": "attack2",
 		"mark_damage": 3,
-		"tier2": {"dmg": [4, 7], "mark_damage": 4, "effects": {}},
-		"tier3": {"dmg": [6, 9], "mark_damage": 6, "effects": {}},
+		"tier2": {"dmg": [4, 7], "mark_damage": 4, "effects": {}, "target": [1, 2, 3, 4]},
+		"tier3": {"dmg": [6, 9], "mark_damage": 6, "effects": {}, "target": [1, 2, 3, 4]},
 	},
 	"scarecrow_legs_crow_peck": {
 		"name": "Crow Peck",
@@ -213,6 +214,22 @@ func _test_catalog() -> void:
 	_check(int(cat["by_id"][STARTERS["legs"]]["ability"]["mark_damage"]) > 0
 		and int(cat["by_id"][ALTERNATES["legs"]]["ability"]["mark_damage"]) > 0,
 		"AC1: crow moves use implemented mark_damage, not ignore_block")
+	var crow_dive: Dictionary = cat["by_id"][STARTERS["legs"]]
+	var dive_tier1 := StitchedParts.ability_at_tier(crow_dive, 1)
+	_check(dive_tier1["target"] == [1, 2, 3]
+		and dive_tier1["launch"] == [1, 2, 3, 4]
+		and not StitchedParts.ranks_allowed(int(dive_tier1["target_mask"]), 4)
+		and not StitchedParts.ranks_allowed(int(dive_tier1["target_mask"]), 0)
+		and not StitchedParts.ranks_allowed(int(dive_tier1["target_mask"]), 5),
+		"AC1: Crow Dive tier I targets enemy ranks 1-3 and never 0, 4 or 5")
+	for dive_tier in [2, 3]:
+		var dive := StitchedParts.ability_at_tier(crow_dive, dive_tier)
+		_check(dive["target"] == [1, 2, 3, 4]
+			and int(dive["target_mask"]) == StitchedParts.ALL_RANKS_MASK
+			and StitchedParts.ranks_allowed(int(dive["target_mask"]), 4)
+			and not StitchedParts.ranks_allowed(int(dive["target_mask"]), 0)
+			and not StitchedParts.ranks_allowed(int(dive["target_mask"]), 5),
+			"AC1: Crow Dive tier %d reaches enemy rank 4 but never 0 or 5" % dive_tier)
 	_check(cat["by_id"][ALTERNATES["torso"]]["ability"]["effects"].has("duration"),
 		"AC1: Straw Wrap has paired duration for temporary Dodge")
 	var invalid_dodge: Dictionary = cat["by_id"][ALTERNATES["torso"]].duplicate(true)
@@ -410,9 +427,10 @@ func _test_mark_damage() -> void:
 
 
 ## AC1/AC3 data contract: both crow legs abilities may launch from allied ranks 1-4 at every
-## tier; Crow Peck reaches enemy rank 4 while Crow Dive still targets enemy ranks 1-3 only.
-## Crow Flock's alternate head launches from hero ranks 2-4 and now reaches all four enemy
-## ranks. Every other authored value stays unchanged.
+## tier. Crow Peck reaches enemy rank 4 at every tier while Crow Dive reaches it only from
+## stitch tier II onward; tier I keeps its authored enemy ranks 1-3. Crow Flock's alternate
+## head launches from hero ranks 2-4 and reaches all four enemy ranks. Every other authored
+## value stays unchanged.
 func _test_leg_rank4_data() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -513,6 +531,10 @@ func _test_leg_rank4_data() -> void:
 			"AC1: " + id + " base target matches its authored enemy ranks")
 		for tier in [1, 2, 3]:
 			var ability := StitchedParts.ability_at_tier(part, tier)
+			var tier_ranks: Array = target_ranks
+			if tier > 1 and spec["tier" + str(tier)].has("target"):
+				tier_ranks = spec["tier" + str(tier)]["target"]
+			var tier_mask := StitchedParts.rank_mask(tier_ranks)
 			_check(ability["launch"] == [1, 2, 3, 4] and int(ability["launch_mask"]) == full_mask,
 				"AC1: %s tier %d keeps the base launch array with rank 4" % [id, tier])
 			for rank in [1, 2, 3, 4]:
@@ -521,11 +543,11 @@ func _test_leg_rank4_data() -> void:
 			_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 0)
 				and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 5),
 				"AC1: %s tier %d launch mask excludes ranks 0 and 5" % [id, tier])
-			_check(ability["target"] == target_ranks and int(ability["target_mask"]) == target_mask,
+			_check(ability["target"] == tier_ranks and int(ability["target_mask"]) == tier_mask,
 				"AC1: %s tier %d resolves its authored enemy target ranks" % [id, tier])
 			for rank in [1, 2, 3, 4]:
 				_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), rank)
-					== (rank in target_ranks),
+					== (rank in tier_ranks),
 					"AC1: %s tier %d enemy target rank %d matches its authored mask" % [id, tier, rank])
 			_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 0)
 				and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 5),
@@ -534,9 +556,18 @@ func _test_leg_rank4_data() -> void:
 				_check(ability["target"] == [1, 2, 3, 4]
 					and int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK,
 					"AC1: Crow Peck tier %d resolves all four enemy ranks" % tier)
+			elif tier == 1:
+				_check(ability["target"] == [1, 2, 3] and tier_mask == StitchedParts.rank_mask([1, 2, 3])
+					and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
+					"AC1: Crow Dive tier I still targets enemy ranks 1-3 only")
 			else:
-				_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
-					"AC3: Crow Dive tier %d still excludes enemy rank 4" % tier)
+				_check(ability["target"] == [1, 2, 3, 4]
+					and int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK
+					and StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
+					"AC1: Crow Dive tier %d reaches enemy rank 4" % tier)
+		_check(str(cat["by_id"][STARTERS["legs"]]["text"])
+			== "Send the shoulder crow at enemy ranks 1-3; marked foes take extra damage. Upgraded, it reaches rank 4.",
+			"AC1: Crow Dive text states tier-I front-three reach and upgraded rear reach")
 		for tier in [2, 3]:
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			var tier_spec: Dictionary = spec["tier" + str(tier)]
@@ -591,7 +622,8 @@ func _rank4_foe_battle(
 
 ## AC2/AC3: each crow legs ability fires from Scarecrow's real rank-4 turn against the real
 ## rank-1 foe. A vacant enemy rank 4 still rejects for both; with the existing Moth Scribe
-## moved there, Crow Peck lands while Crow Dive keeps refusing rank 4.
+## moved there, Crow Peck lands at every tier while Crow Dive lands only once upgraded to
+## tiers II/III.
 func _test_rank4_crows() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -728,6 +760,107 @@ func _test_rank4_crows() -> void:
 		_check(not replayed.is_empty() and replayed == replay_cast
 			and replay.state_snapshot() == replay_snapshot and replay.rng_state() == replay_rng,
 			"AC2: same rank-4 input and seed replay identical receipt, snapshot and RNG")
+
+	# AC1/AC2, the task goal: upgraded Crow Dive reaches the occupied rear rank. Tier I must
+	# still refuse that same real rank-4 target; tiers II and III each resolve exactly one
+	# genuine hit on the living Moth Scribe. The empty rear rank on the unaltered preview
+	# fails closed at every tier, and a landed tier-II/III seed replays from a fresh fixture.
+	var crow_dive: Dictionary = cat["by_id"][STARTERS["legs"]]
+	var dive_tier1 := StitchedParts.ability_at_tier(crow_dive, 1)
+	_check(dive_tier1["target"] == [1, 2, 3]
+		and not StitchedParts.ranks_allowed(int(dive_tier1["target_mask"]), 4),
+		"AC1: Crow Dive tier I target rank 4 is still illegal")
+	var tier_one_setup := _rank4_foe_battle(501600, STARTERS["legs"], 1)
+	_check(tier_one_setup != null, "AC2: genuine occupied-rank-4 Crow Dive tier-I battle builds")
+	if tier_one_setup != null:
+		var tier_one_foes: Array = tier_one_setup.get_foes()
+		_check(tier_one_foes.size() == 3
+			and int(tier_one_setup.get_unit("moth_scribe")["rank"]) == 4
+			and int(tier_one_setup.get_unit("fray_scavenger")["rank"]) == 1
+			and int(tier_one_setup.get_unit("scissor_crab")["rank"]) == 2
+			and tier_one_foes.all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: Crow Dive witness keeps three real foes with only the Moth Scribe at rank 4")
+		if _to(tier_one_setup, "scarecrow"):
+			_reject_without_spend(tier_one_setup, STARTERS["legs"], 4,
+				"Crow Dive tier I rejects the occupied enemy rank 4")
+		else:
+			_check(false, "AC2: Crow Dive tier-I rejection receives a real Scarecrow turn")
+	# An empty enemy rank 4 on the unaltered preview still fails closed, even once the tier-II
+	# and tier-III target masks allow rank 4.
+	for tier in [1, 2, 3]:
+		var empty := _battle(STARTERS["legs"], tier, 501610 + tier)
+		_check(empty != null, "AC2: unaltered three-foe preview builds for Crow Dive tier %d" % tier)
+		if empty == null:
+			continue
+		_check(empty.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+			"AC2: unaltered preview leaves enemy rank 4 genuinely empty at tier %d" % tier)
+		if _to(empty, "scarecrow"):
+			_reject_without_spend(empty, STARTERS["legs"], 4,
+				"Crow Dive tier %d rejects the empty enemy rank 4" % tier)
+		else:
+			_check(false, "AC2: empty-rank-4 Crow Dive tier %d receives a real turn" % tier)
+	for tier in [2, 3]:
+		var dive_ability := StitchedParts.ability_at_tier(crow_dive, tier)
+		_check(dive_ability["target"] == [1, 2, 3, 4]
+			and StitchedParts.ranks_allowed(int(dive_ability["target_mask"]), 4),
+			"AC1: Crow Dive tier %d target mask permits enemy rank 4" % tier)
+		var witnessed := false
+		var landed := false
+		var accepted_seed := -1
+		var accepted_cast: Dictionary = {}
+		var accepted_snapshot: Dictionary = {}
+		var accepted_rng := -1
+		for seed_value in range(501620 + (tier - 2) * 120, 501740 + (tier - 2) * 120):
+			var b := _rank4_foe_battle(seed_value, STARTERS["legs"], tier)
+			if b == null or not _to(b, "scarecrow"):
+				continue
+			var before := b.state_snapshot()
+			var scribe_before := b.get_unit("moth_scribe")
+			var cast := b.use_part(STARTERS["legs"], 4)
+			if not bool(cast.get("ok", false)):
+				continue
+			var receipts: Array = cast.get("results", [])
+			if receipts.size() != 1:
+				continue
+			var hit: Dictionary = receipts[0]
+			if str(hit.get("target", "")) != "moth_scribe" or int(hit.get("target_rank", 0)) != 4:
+				continue
+			if str(hit.get("target_side", "")) != "foe" or int(scribe_before.get("hp", 0)) <= 0:
+				continue
+			if not witnessed:
+				witnessed = true
+				var after := b.state_snapshot()
+				_check(str(cast.get("action", "")) == "ability"
+					and str(cast.get("actor", "")) == "scarecrow"
+					and str(cast.get("part", "")) == STARTERS["legs"]
+					and str(cast.get("ability", "")) == str(dive_ability["id"]),
+					"AC2: Crow Dive tier %d executes as the real equipped Scarecrow legs" % tier)
+				_check(b.get_foes().size() == 3
+					and b.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+					"AC2: Crow Dive tier %d keeps exactly three foes and no rank-3 phantom" % tier)
+				_check(int(after["round"]) != int(before["round"])
+					or int(after["turn_index"]) != int(before["turn_index"]),
+					"AC2: Crow Dive tier %d spends Scarecrow's real turn" % tier)
+			if bool(hit.get("hit", false)) and int(hit.get("damage", 0)) > 0 \
+				and int(b.get_unit("moth_scribe")["hp"]) < int(scribe_before["hp"]):
+				landed = true
+				accepted_seed = seed_value
+				accepted_cast = cast.duplicate(true)
+				accepted_snapshot = b.state_snapshot()
+				accepted_rng = b.rng_state()
+			if witnessed and landed:
+				break
+		_check(witnessed, "AC2: bounded fixed-seed Crow Dive tier %d rank-4 cast witness" % tier)
+		_check(landed, "AC2: bounded fixed-seed Crow Dive tier %d damages the living rank-4 foe" % tier)
+		if accepted_seed >= 0:
+			var replay := _rank4_foe_battle(accepted_seed, STARTERS["legs"], tier)
+			var replayed := {}
+			if replay != null and _to(replay, "scarecrow"):
+				replayed = replay.use_part(STARTERS["legs"], 4)
+			_check(not replayed.is_empty() and replayed == accepted_cast
+				and replay.state_snapshot() == accepted_snapshot
+				and replay.rng_state() == accepted_rng,
+				"AC2: Crow Dive tier %d replays the same receipt, snapshot and RNG" % tier)
 
 
 ## AC2, the task goal: the real three-foe S2 preview with only the already-present Moth Scribe

@@ -37,7 +37,13 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) \
 				or not battle._self_move_gate(actor, ability).is_empty():
 			continue
-		for rank in range(1, 5):
+		# A pulling strike reels the deepest reachable doll forward, so it scans the
+		# back rank first. Everything else keeps the nearest-legal-rank order.
+		var scan_ranks: Array[int] = [1, 2, 3, 4]
+		if str(ability.get("target_side", "")) == "enemy" \
+				and int(ability.get("effects", {}).get("pull", 0)) == 1:
+			scan_ranks = [4, 3, 2, 1]
+		for rank in scan_ranks:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
 				continue

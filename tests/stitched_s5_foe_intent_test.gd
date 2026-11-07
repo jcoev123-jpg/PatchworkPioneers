@@ -2,6 +2,7 @@ extends SceneTree
 ## Mounted StitchedS5 foe-choice projection, using the SAME S2 public battle and live stage.
 var checks := 0
 var failures: Array[String] = []
+var _pull_catalog: Dictionary = {}
 
 
 func _initialize() -> void:
@@ -29,6 +30,7 @@ func _mount(config: Dictionary = {}) -> Dictionary:
 
 # Independent statement of the PRE-EXTRACTION live priority, not an echo of
 # the production helper: same wraparound ability loop and first legal rank.
+# A pulling enemy-target action alone scans the back rank first instead.
 func _old_priority(battle: StitchedRules, actor: Dictionary) -> Dictionary:
 	var abilities: Array = actor.get("abilities", [])
 	var offset := (battle.round_number() - 1) % maxi(1, abilities.size())
@@ -36,7 +38,10 @@ func _old_priority(battle: StitchedRules, actor: Dictionary) -> Dictionary:
 		var ability: Dictionary = abilities[(offset + step) % abilities.size()]
 		if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) or not battle._self_move_gate(actor, ability).is_empty():
 			continue
-		for rank in range(1, 5):
+		var scan_ranks: Array[int] = [1, 2, 3, 4]
+		if str(ability.get("target_side", "")) == "enemy" and int(ability.get("effects", {}).get("pull", 0)) == 1:
+			scan_ranks = [4, 3, 2, 1]
+		for rank in scan_ranks:
 			var targets := battle._legal_targets(actor, ability, rank)
 			if not targets.is_empty():
 				var affected: Array[int] = []
@@ -48,6 +53,93 @@ func _old_priority(battle: StitchedRules, actor: Dictionary) -> Dictionary:
 					"target_side": str(targets[0]["side"]), "affected_ranks": affected,
 					"multi": bool(ability["multi"]), "ability_kind": str(ability.get("kind", ""))}
 	return {"pass": true}
+
+
+# ---------------------------------------------------------------- compact pull fixture
+
+func _to(battle: StitchedRules, actor_id: String, minimum_round: int = 1) -> bool:
+	for step in range(80):
+		if battle.is_over():
+			return false
+		if battle.current_actor_id() == actor_id and battle.round_number() >= minimum_round:
+			return true
+		if not bool(battle.pass_turn().get("ok", false)):
+			return false
+	return false
+
+
+func _hero_id_at(battle: StitchedRules, rank: int) -> String:
+	for hero in battle.get_heroes():
+		if int(hero["rank"]) == rank:
+			return str(hero["id"])
+	return ""
+
+
+func _pull_config() -> Dictionary:
+	var config: Dictionary = StitchedBattleScreen.read_preview()
+	config["seed"] = 11
+	config["candle"] = 100
+	config["parts"].append_array(_pull_catalog["parts"].duplicate(true))
+	config["foes"] = [
+		StitchedEnemyCatalog.foe_for(_pull_catalog, "spool_snarekeeper"),
+		StitchedEnemyCatalog.foe_for(_pull_catalog, "ragling"),
+	]
+	return config
+
+
+func _pull_battle() -> StitchedRules:
+	var built := StitchedRules.create(_pull_config())
+	_check(bool(built.get("ok", false)), "compact pull fixture builds a real 4v2 battle")
+	return built["battle"] if bool(built.get("ok", false)) else null
+
+
+func _test_pull_fixture() -> void:
+	_pull_catalog = StitchedEnemyCatalog.load_catalog()
+	_check(bool(_pull_catalog.get("ok", false)), "compact pull fixture loads the real enemy catalog")
+	if not bool(_pull_catalog.get("ok", false)):
+		return
+	var battle := _pull_battle()
+	if battle == null:
+		return
+	var snake := "spool_snarekeeper"
+	_check(_to(battle, snake), "compact pull fixture reaches the Snarekeeper's first turn")
+	var opening := StitchedFoeIntent.choose(battle, battle.get_unit(snake))
+	_check(str(opening.get("ability_id", "")) == "snare_lash"
+		and int(opening.get("target_rank", 0)) == 1 and opening.get("affected_ranks") == [1],
+		"non-pull Snare Lash keeps the original nearest-legal rank-1 order")
+	_check(_to(battle, snake, 2), "compact pull fixture reaches round two's Snarekeeper turn")
+	var state := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var expected := _old_priority(battle, battle.get_unit(snake))
+	var choice := StitchedFoeIntent.choose(battle, battle.get_unit(snake))
+	_check(str(choice.get("ability_id", "")) == "spool_snare"
+		and int(choice.get("target_rank", 0)) == 4 and choice.get("affected_ranks") == [4]
+		and str(choice.get("target_side", "")) == "hero"
+		and str(choice.get("ability_kind", "")) == "debuff"
+		and not bool(choice.get("multi", true))
+		and int(choice.get("base_acc", -1)) == 90
+		and choice.get("base_damage") == [0, 0]
+		and choice.get("base_effects") == {"pull": 1, "fray": 6},
+		"Spool Snare hunts the deepest living rank 4 first")
+	_check(choice.get("ability_id") == expected.get("ability_id")
+		and int(choice.get("target_rank", 0)) == int(expected.get("target_rank", 0))
+		and choice.get("affected_ranks") == expected.get("affected_ranks"),
+		"independent pull-first comparator matches the real chooser")
+	_check(battle.state_snapshot() == state and battle.rng_state() == rng,
+		"pull intent projection never mutates state or consumes RNG")
+	var fallback := _pull_battle()
+	if fallback != null and _to(fallback, snake, 2):
+		fallback._units[_hero_id_at(fallback, 4)]["lost"] = true
+		fallback._units[_hero_id_at(fallback, 3)]["lost"] = true
+		var near := StitchedFoeIntent.choose(fallback, fallback.get_unit(snake))
+		_check(str(near.get("ability_id", "")) == "spool_snare"
+			and int(near.get("target_rank", 0)) == 2 and near.get("affected_ranks") == [2],
+			"lost rank 4 and 3 fall back to the next deepest legal rank 2, not a phantom")
+		fallback._units[_hero_id_at(fallback, 2)]["lost"] = true
+		var next := StitchedFoeIntent.choose(fallback, fallback.get_unit(snake))
+		_check(str(next.get("ability_id", "")) == "snare_lash"
+			and int(next.get("target_rank", 0)) == 1 and next.get("affected_ranks") == [1],
+			"no legal pull target falls through to the normal next-ability rank-1 order")
 
 
 func _kind_texture(kind: String) -> Texture2D:
@@ -806,6 +898,7 @@ func _run() -> void:
 		and multi_stage._foe_tickets[1].tooltip_text.contains("BASE DMG 0–0"),
 		"mounted legal multi-foe buff names exact allied ranks without a fictitious attack")
 	multi_host.free()
+	_test_pull_fixture()
 	_finish()
 
 
