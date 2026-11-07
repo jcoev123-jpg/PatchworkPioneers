@@ -4607,9 +4607,7 @@ func _present_stitched_run() -> void:
 		recap.add_theme_font_size_override("font_size", 17)
 		recap.add_theme_color_override("font_color", Color("#e7d6b3"))
 		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
-		recap.text = "R%d / %s
-HP %d / %d  %s
-FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
+		recap.text = "R%d / %s\nHP %d / %d  %s\nFRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
 		card.add_child(recap)
 	if terminal:
 		_note_bedroom_run(session)
