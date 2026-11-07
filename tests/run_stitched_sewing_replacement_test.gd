@@ -215,6 +215,7 @@ func _test_quote() -> void:
 	for slot in STARTERS:
 		_check(str(offer["parts"][slot]["id"]) == STARTERS[slot] and int(offer["parts"][slot]["tier"]) == 1 and not bool(offer["parts"][slot]["torn"]) and str(offer["parts"][slot]["owner"]) == "scarecrow", "offer exposes starter " + slot)
 	_check(bool(quote["leave"]["available"]) and str(quote["leave"]["action"]) == "leave", "quote lists Leave")
+	_test_quote_projection(service, offer)
 	var state_before := _snap(service.read_state())
 	quote["candidates"][0]["parts"]["head"]["id"] = "tampered"
 	quote["state"]["party"][0]["id"] = "tampered"
@@ -237,6 +238,79 @@ func _test_quote() -> void:
 	var refused_healthy := no_lost.replace("doll_a", "scarecrow", NODE, no_lost.read_state())
 	_check(not bool(refused_healthy["ok"]), "a healthy doll cannot be replaced")
 	_check(bool(no_lost.read_state()["open"]) and int(no_lost.read_state()["version"]) == 0, "refused requests leave the visit open")
+
+
+func _ints(values: Variant) -> Array:
+	var result: Array = []
+	if values is Array:
+		for value in values:
+			result.append(int(value))
+	return result
+
+
+## The quote shows each starter's real, catalog-resolved ability, stat and text (read-only, detached).
+func _test_quote_projection(service: RunStitchedSewingReplacement, offer: Dictionary) -> void:
+	var catalog_before := _snap(catalog)
+	var state_before := _snap(service.read_state())
+	_check(offer["parts"].size() == 4, "offer lists all four slots")
+	for slot in STARTERS:
+		var record: Dictionary = catalog[STARTERS[slot]]
+		var part: Dictionary = offer["parts"][slot]
+		_check(_snap(part["ability"]) == _snap(StitchedParts.ability_at_tier(record, 1)), "offer ability equals catalog tier-1 ability: " + slot)
+		_check(_snap(part["stat"]) == _snap(StitchedParts.stat_at_tier(record, 1)), "offer stat equals catalog tier-1 stat: " + slot)
+		_check(str(part["text"]) == str(record["text"]) and not str(part["text"]).is_empty(), "offer text equals authored text: " + slot)
+		_check(part["ability"] is Dictionary and not part["ability"].is_empty() and part["stat"] is Dictionary and not part["stat"].is_empty(), "offer ability and stat are non-empty: " + slot)
+	var head: Dictionary = offer["parts"]["head"]["ability"]
+	_check(str(head["kind"]) == "debuff" and int(head["effects"]["weak"]) == 1 and int(head["effects"]["mark"]) == 2, "HEAD Sack Glare Weak 1 and Mark 2")
+	_check(_ints(head["launch"]) == [1, 2, 3] and _ints(head["target"]) == [1, 2, 3] and str(head["target_side"]) == "enemy", "HEAD launch and enemy target ranks 1-3")
+	_check(int(head["acc"]) == 92 and _ints(head["dmg"]) == [0, 0], "HEAD ACC 92, no damage")
+	_check(int(offer["parts"]["head"]["stat"]["acc"]) == 4, "HEAD stat acc +4")
+	var arms: Dictionary = offer["parts"]["arms"]["ability"]
+	_check(str(arms["kind"]) == "melee" and int(arms["effects"]["bleed"]) == 1 and _ints(arms["dmg"]) == [4, 6], "ARMS Fork Jab Bleed 1, damage 4-6")
+	_check(_ints(arms["launch"]) == [1, 2] and _ints(arms["target"]) == [1, 2] and int(arms["acc"]) == 93, "ARMS ranks 1-2, ACC 93")
+	_check(int(offer["parts"]["arms"]["stat"]["dmg"]) == 1, "ARMS stat dmg +1")
+	var torso: Dictionary = offer["parts"]["torso"]["ability"]
+	_check(str(torso["kind"]) == "guard" and int(torso["effects"]["guard"]) == 2, "TORSO Straw Padding Guard 2")
+	_check(str(torso["target_side"]) == "ally" and _ints(torso["target"]) == [1, 2, 3, 4] and _ints(torso["launch"]) == [1, 2, 3], "TORSO ally reach 1-4, launch 1-3")
+	var torso_stat: Dictionary = offer["parts"]["torso"]["stat"]
+	_check(int(torso_stat["max_hp"]) == 6 and int(torso_stat["prot"]) == 3, "TORSO stat max_hp 6 and prot 3")
+	_check(int(offer["max_hp"]) == 34 and int(offer["hp"]) == 34, "torso stat is not added to the candidate's HP")
+	var legs: Dictionary = offer["parts"]["legs"]["ability"]
+	_check(str(legs["kind"]) == "ranged" and int(legs["mark_damage"]) == 3 and _ints(legs["dmg"]) == [3, 5], "LEGS Crow Dive mark_damage 3, damage 3-5")
+	_check(_ints(legs["launch"]) == [1, 2, 3, 4] and _ints(legs["target"]) == [1, 2, 3] and int(legs["acc"]) == 91, "LEGS launch 1-4, target 1-3, ACC 91")
+	_check(int(offer["parts"]["legs"]["stat"]["speed"]) == 2, "LEGS stat speed +2")
+
+	# Mutating every nested copy in a returned quote cannot reach the visit, the catalog or later quotes.
+	var quote := service.quote()
+	var mutable: Dictionary = quote["candidates"][0]
+	for slot in STARTERS:
+		var part: Dictionary = mutable["parts"][slot]
+		part["ability"]["effects"]["tampered"] = 99
+		part["ability"]["target"].append(9)
+		part["ability"]["launch"].clear()
+		part["ability"]["dmg"][0] = 999
+		part["ability"]["name"] = "tampered"
+		part["stat"]["tampered"] = 99
+		part["stat"].erase("acc")
+		part["text"] = "tampered"
+	_check(_snap(service.read_state()) == state_before, "mutating a quoted ability, stat and text does not reach the visit")
+	_check(_snap(catalog) == catalog_before, "mutating a quoted ability, stat and text does not reach the catalog")
+	var again: Dictionary = service.quote()["candidates"][0]
+	for slot in STARTERS:
+		var record: Dictionary = catalog[STARTERS[slot]]
+		_check(_snap(again["parts"][slot]["ability"]) == _snap(StitchedParts.ability_at_tier(record, 1)), "a later quote ability is untouched: " + slot)
+		_check(_snap(again["parts"][slot]["stat"]) == _snap(StitchedParts.stat_at_tier(record, 1)) and str(again["parts"][slot]["text"]) == str(record["text"]), "a later quote stat and text are untouched: " + slot)
+	_check(_snap(service.quote()["state"]) == state_before, "a later quote state is untouched")
+	var copied := service.read_state()
+	copied["candidates"][0]["parts"]["head"]["tampered"] = true
+	_check(_snap(service.read_state()) == state_before, "mutating a copied state does not reach the visit")
+	_check(_snap(service.quote()["candidates"][0]) == _snap(again), "repeated quotes are identical")
+
+	# A left visit offers no candidates.
+	var left_service := _service()
+	_check(bool(left_service.leave(NODE, left_service.read_state())["ok"]), "visit is left")
+	var left_quote := left_service.quote()
+	_check(left_quote["candidates"].is_empty() and not bool(left_quote["can_replace"]), "left visit quotes no candidates")
 
 
 func _test_replace_receipt() -> void:
