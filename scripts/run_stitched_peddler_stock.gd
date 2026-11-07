@@ -45,8 +45,39 @@ static func _valid_price(value: Variant) -> bool:
 		and value == floor(value) and value <= 2147483647.0)
 
 
+## Card-free Patch Stall stock: three distinct {"id", "price"} rows drawn from the
+## Stitched-only authored patch source through the shared weighted sampler. Every
+## input is validated before the RNG is touched; rare records are explicitly []
+## and the Heirloom gate false so only this coat-only catalog is ever stocked.
+## One or two unowned patches stay buyable and the rows are completed with
+## truthful already-owned entries (the visit marks those SOLD). Never mutates the
+## caller's owned IDs and never invents a price.
+static func sample_stitched_patch_stall_offers(rng: Variant, owned_patch_ids: Variant) -> Dictionary:
+	if not rng is RandomNumberGenerator or not owned_patch_ids is Array:
+		return {"ok": false}
+	var owned := {}
+	for id in owned_patch_ids:
+		if not id is String or id.strip_edges().is_empty() or owned.has(id):
+			return {"ok": false}
+		owned[id] = true
+	var prices := _authored_patches()
+	if prices.is_empty():
+		return {"ok": false}
+	var candidates: Array = []
+	var any_unowned := false
+	var ids: Array = prices.keys()
+	ids.sort()
+	for id in ids:
+		candidates.append({"id": id, "price": int(prices[id])})
+		any_unowned = any_unowned or not owned.has(id)
+	if not any_unowned:
+		return {"ok": false}
+	return RunShopPurchases.sample_patch_stall_offers(rng, candidates,
+		owned_patch_ids.duplicate(true), [], false)
+
+
 ## Preflight both catalogs BEFORE drawing from the caller's canonical RNG.
-## A late visit with every ordinary patch owned still sells the enemy part.
+## A late visitwith every ordinary patch owned still sells the enemy part.
 static func sample(rng: RandomNumberGenerator, catalog: Dictionary,
 		owned_patches: Array, part_price: int) -> Dictionary:
 	if rng == null or catalog.is_empty() or part_price <= 0:
