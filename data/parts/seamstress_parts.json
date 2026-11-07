@@ -188,9 +188,9 @@
       },
       "tiers": {
         "2": {"stat": {"speed": 2}, "ability": {"effects": {"tangled": 2}}},
-        "3": {"stat": {"speed": 3}, "ability": {"effects": {"tangled": 3}}}
+        "3": {"stat": {"speed": 3}, "ability": {"effects": {"tangled": 3}, "target": [1, 2, 3, 4]}}
       },
-      "text": "Loop trailing thread around one foe in ranks 1-3: Tangled 1."
+      "text": "Loop trailing thread around one foe in ranks 1-3 for Tangled 2; at stitch tier III reach rank 4 with Tangled 3."
     },
     {
       "id": "seamstress_bobbin_snag_spools",
