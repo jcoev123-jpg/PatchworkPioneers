@@ -354,6 +354,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 		var id: String = choices[index]
 		var button: Button = app.stitched_run_buttons[index]
 		button.mouse_entered.emit()
+		var hovered_preview := (graph.find_child("RouteGraphPreview", true, false) as Label).text
 		_check(graph.inspected_route_id == id
 			and graph.find_child("GraphNode_" + id, true, false).get_meta("inspected")
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
@@ -371,6 +372,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 		button.grab_focus()
 		await process_frame
 		_check(button.has_focus() and graph.inspected_route_id == id
+			and (graph.find_child("RouteGraphPreview", true, false) as Label).text == hovered_preview
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
 				== session.map.get_node(id).outgoing
 			and session.snapshot() == initial,
@@ -396,6 +398,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and activate.get_node(activate.focus_neighbor_right) == ticket,
 			label + " keyboard Left/Right joins lit graph node and original ticket")
 		activate.mouse_entered.emit()
+		var hovered_graph_preview := (graph.find_child("RouteGraphPreview", true, false) as Label).text
 		_check(graph.inspected_route_id == id and tile.get_meta("inspected")
 			and (tile.get_node("GraphNodeState") as Label).text == "FOCUSED"
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
@@ -409,6 +412,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 		activate.grab_focus()
 		await process_frame
 		_check(activate.has_focus() and graph.inspected_route_id == id
+			and (graph.find_child("RouteGraphPreview", true, false) as Label).text == hovered_graph_preview
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
 				== session.map.get_node(id).outgoing and session.snapshot() == initial,
 			label + " graph keyboard focus traces real outgoing edges without drawing RNG")
@@ -511,14 +515,25 @@ func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRun
 		lead = hint
 	else:
 		_check(hint.is_empty(), label + " " + str(node.type) + " gains no Campfire hint")
-	_check(("LIT F%02d P%d" % [node.floor, node.position + 1]) in text,
-		label + " preview keeps the inspected floor and path")
+	_check(("LIT F%02d P%d: %s" % [node.floor, node.position + 1, node.type]) in text,
+		label + " preview keeps the inspected real type, floor and path")
+	var destinations: Array = []
+	var previous_at := -1
 	for target in node.outgoing:
 		var seam: Dictionary = session.map.get_node(str(target))
-		_check(("F%02d P%d" % [seam.floor, seam.position + 1]) in text,
-			label + " preview keeps outgoing seam " + str(target))
-	_check(preview.get_meta("preview_ids", []) == node.outgoing,
-		label + " preview_ids stay the exact outgoing IDs")
+		_check(not seam.is_empty(), label + " resolves source-backed destination " + str(target))
+		if seam.is_empty():
+			continue
+		destinations.append({"id": str(target), "type": str(seam.type),
+			"floor": int(seam.floor), "path": int(seam.position) + 1})
+		var line := "F%02d P%d: %s" % [seam.floor, seam.position + 1, seam.type]
+		var at := text.find(line)
+		_check(at > previous_at, label + " previews ordered real destination " + str(target))
+		previous_at = at
+	_check(preview.get_meta("preview_ids", []) == node.outgoing
+		and preview.get_meta("preview_destinations", []) == destinations
+		and ("FINAL SEAM" in text) == node.outgoing.is_empty(),
+		label + " visible next-stop names and IDs match only the real directed links")
 	if lead.is_empty():
 		_check(str(preview.get_meta("stop_purpose", "x")) == "",
 			label + " " + str(node.type) + " gains no stop purpose")
@@ -546,7 +561,8 @@ func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRun
 	var scroll := graph.find_child("RouteGraphScroll", true, false) as Control
 	_check(scroll != null and scroll.get_global_rect().size.y >= 100
 		and preview.get_theme_font_size("font_size") >= 16
-		and preview.get_line_count() <= (5 if kind == "Campfire" else 2)
+		and preview.get_line_count() > 0
+		and preview.get_visible_line_count() == preview.get_line_count()
 		and preview.get_global_rect().position.x >= graph.get_global_rect().position.x - 1
 		and preview.get_global_rect().end.x <= graph.get_global_rect().end.x + 1
 		and preview.get_global_rect().end.y <= (graph.get_global_rect().end.y + 1),
