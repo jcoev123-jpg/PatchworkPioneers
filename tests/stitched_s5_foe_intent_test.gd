@@ -267,6 +267,114 @@ func _verify_tickets(stage: StitchedBattleScreen) -> void:
 	_check(found >= 2, "non-vacuous: mounted battle has at least two visible living foe tickets")
 
 
+# Exercise the actual live preview's Fray Scavenger against the canonical enemy
+# catalog, rather than inventing a Sack Swing projection for a detached label.
+func _verify_sack_swing_live(stage: StitchedBattleScreen) -> void:
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	var canonical := StitchedEnemyCatalog.foe_for(catalog, "fray_scavenger")
+	_check(bool(catalog.get("ok", false)) and not canonical.is_empty()
+		and not canonical.get("abilities", []).is_empty(),
+		"precondition: canonical Fray Scavenger and authored Sack Swing are loaded")
+	if canonical.is_empty() or canonical.get("abilities", []).is_empty():
+		return
+	var actor: Dictionary = stage.battle._units.get("fray_scavenger", {})
+	_check(not actor.is_empty(), "precondition: mounted real Fray Scavenger is alive")
+	if actor.is_empty():
+		return
+	var rank := int(actor["rank"])
+	_check(rank >= 1 and rank <= 4 and stage._foe_intents.has(rank),
+		"precondition: actual Scavenger has a legal occupied foe rank and projected intent")
+	if rank < 1 or rank > 4 or not stage._foe_intents.has(rank):
+		return
+	var ticket: StitchedFoeIntentPlate = stage._foe_tickets[rank]
+	var title: Label = ticket.primary
+	var target: Label = ticket.secondary
+	var projected: Dictionary = stage._foe_intents[rank]
+	var authored: Dictionary = canonical["abilities"][0]
+	_check(str(authored.get("id", "")) == "sack_swing"
+		and str(authored.get("name", "")) == "Sack Swing"
+		and str(actor["abilities"][0]["id"]) == str(authored["id"])
+		and str(actor["abilities"][0]["name"]) == str(authored["name"])
+		and str(projected.get("ability_id", "")) == "sack_swing"
+		and str(projected.get("ability_name", "")) == str(authored["name"]),
+		"real live chooser projects the canonical authored Sack Swing, not a made-up fixture")
+	var font: Font = title.get_theme_font("font")
+	_check(font != null and title.size.x == 100.0 and title.size.y == 29.0
+		and ticket.size == Vector2(140, 58) and ticket.texture == StitchedFoeIntentPlate.PLATE_TEXTURE
+		and ticket.glyph.visible and ticket.glyph.texture == _kind_texture("melee"),
+		"precondition: genuine 140px textured plate retains its glyph-aware 100px heading row")
+	if font == null:
+		return
+	var expected_size := 24
+	while expected_size > 16 and font.get_string_size(
+			"SACK SWING", HORIZONTAL_ALIGNMENT_LEFT, -1, expected_size).x > title.size.x:
+		expected_size -= 1
+	var pixels := title.get_theme_font_size("font_size")
+	var glyph_rect := Rect2(ticket.glyph.position, ticket.glyph.size)
+	var title_rect := Rect2(title.position, title.size)
+	var target_rect := Rect2(target.position, target.size)
+	_check(font.get_string_size("SACK SWING", HORIZONTAL_ALIGNMENT_LEFT, -1, 24).x > title.size.x
+		and font.get_string_size("SACK SWING", HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x <= title.size.x
+		and title.text == "SACK SWING" and pixels == expected_size
+		and pixels >= 16 and pixels < 24 and _caption_fits(title)
+		and not glyph_rect.intersects(title_rect) and not title_rect.intersects(target_rect)
+		and not glyph_rect.intersects(target_rect),
+		"canonical Sack Swing renders completely at independently measured 16-23px without row collisions")
+	_check(projected.get("target_side", "") == "hero"
+		and int(projected.get("target_rank", 0)) == 1
+		and projected.get("affected_ranks", []) == [1]
+		and target.text.begins_with("HERO RANK 1") and _caption_fits(target)
+		and ticket.tooltip_text.contains("Sack Swing")
+		and ticket.tooltip_text.contains("Target: HERO rank 1")
+		and ticket.tooltip_text.contains("fray +4"),
+		"live Sack Swing retains exact legal hero rank and authored effect disclosure")
+	var snapshot := stage.battle.state_snapshot()
+	var rng := stage.battle.rng_state()
+	var receipts := stage.receipts.duplicate(true)
+	var original_name := str(actor["abilities"][0]["name"])
+	actor["abilities"][0]["name"] = "Pin"
+	stage._refresh()
+	_check(title.text == "PIN" and title.get_theme_font_size("font_size") == 24
+		and ticket.glyph.visible and target.text.begins_with("HERO RANK 1"),
+		"short name starts at the full-size 24px heading with the correct attack and target")
+	actor["abilities"][0]["name"] = original_name
+	stage._refresh()
+	_check(title.text == "SACK SWING" and title.get_theme_font_size("font_size") == expected_size
+		and _caption_fits(title), "short-to-long refresh recalculates the full ordinary heading")
+	var huge := "An Impossibly Long Sack Swing of Moonlit Thread and Rusty Needles"
+	actor["abilities"][0]["name"] = huge
+	stage._refresh()
+	_check(title.get_theme_font_size("font_size") == 16 and title.text.ends_with("…")
+		and _caption_fits(title) and ticket.tooltip_text.contains(huge)
+		and ticket.tooltip_text.contains("Target: HERO rank 1")
+		and ticket.tooltip_text.contains("BASE DMG 4–7")
+		and ticket.tooltip_text.contains("fray +4"),
+		"overlong authored heading ellipsizes only at 16px while retaining full ability, target and effects")
+	ticket.mouse_entered.emit()
+	_check(stage._intent_disclosure.visible
+		and stage._intent_disclosure_label.text == ticket.tooltip_text
+		and stage._intent_disclosure_label.text.contains(huge),
+		"live hover disclosure reveals the complete overlong ability and base effects")
+	ticket.mouse_exited.emit()
+	ticket.grab_focus()
+	_check(ticket.has_focus() and stage._intent_disclosure.visible
+		and stage._intent_disclosure_label.text.contains(huge),
+		"keyboard focus shows identical full overlong authored disclosure")
+	stage._action_buttons["pass"].grab_focus()
+	actor["abilities"][0]["name"] = "Pin"
+	stage._refresh()
+	_check(title.text == "PIN" and title.get_theme_font_size("font_size") == 24
+		and not stage._intent_disclosure.visible and ticket.tooltip_text.contains("Pin")
+		and not ticket.tooltip_text.contains(huge),
+		"long-to-short resets 24px and does not retain stale name or disclosure")
+	actor["abilities"][0]["name"] = original_name
+	stage._refresh()
+	_check(title.text == "SACK SWING" and title.get_theme_font_size("font_size") == expected_size
+		and snapshot == stage.battle.state_snapshot()
+		and rng == stage.battle.rng_state() and receipts == stage.receipts,
+		"all real intent name, hover, focus and refresh transitions leave state, RNG and receipts untouched")
+
+
 func _verify_kind_fixtures(host: Control) -> void:
 	# The genuine opening three foes do not exercise every authored kind. Mount
 	# one additional REAL ticket, transition it through every icon category,
@@ -384,7 +492,9 @@ func _verify_kind_fixtures(host: Control) -> void:
 		ticket.present_intent(intent, 1)
 		_check(ticket.visible and ticket.ability_kind.is_empty()
 			and ticket.glyph.texture == null and not ticket.glyph.visible
-			and ticket.primary.text == state.to_upper() and ticket.secondary.text == "NO ACTION"
+			and ticket.primary.text == state.to_upper()
+			and ticket.primary.get_theme_font_size("font_size") == 24
+			and ticket.secondary.text == "NO ACTION"
 			and not ticket.tooltip_text.contains("Target:")
 			and not ticket.tooltip_text.contains("Kind:")
 			and not ticket.tooltip_text.contains("BASE")
@@ -394,6 +504,7 @@ func _verify_kind_fixtures(host: Control) -> void:
 	_check(not ticket.visible and ticket.foe_id.is_empty() and ticket.foe_rank == 0
 		and ticket.ability_kind.is_empty() and ticket.glyph.texture == null
 		and not ticket.glyph.visible and ticket.primary.text.is_empty()
+		and ticket.primary.get_theme_font_size("font_size") == 24
 		and ticket.secondary.text.is_empty() and ticket.tooltip_text.is_empty(),
 		"clear_intent wipes the mounted glyph, kind, label, target and disclosure")
 	ticket.free()
@@ -473,7 +584,8 @@ func _check_geometry(stage: StitchedBattleScreen, expected_count: int = 3) -> vo
 		var target_rect := Rect2(target.position, target.size)
 		_check(ability.get_parent() == ticket and target.get_parent() == ticket
 			and ability != target and ability.clip_text and target.clip_text
-			and ability.get_theme_font_size("font_size") >= 24
+			and ability.get_theme_font_size("font_size") >= 16
+			and ability.get_theme_font_size("font_size") <= 24
 			and target.get_theme_font_size("font_size") >= 18
 			and ability.size.x >= 100 and target.size.x >= 132
 			and glyph.get_parent() == ticket and glyph.mouse_filter == Control.MOUSE_FILTER_IGNORE
@@ -573,6 +685,7 @@ func _run() -> void:
 		and battle.current_side() == "hero", "seeded 4v3 screen mounted in Gothic theme with a hero turn")
 	_check_geometry(stage)
 	_verify_tickets(stage)
+	_verify_sack_swing_live(stage)
 	_verify_kind_fixtures(host)
 	_check(not stage._foe_tickets[4].visible, "initial fourth foe rank is empty, not a ghost ability")
 	# Real pose changes re-anchor after an ordinary public refresh. Inspection
@@ -793,7 +906,8 @@ func _run() -> void:
 	actor["abilities"][1]["launch_mask"] = 1 << 4
 	stage._refresh()
 	_check(bool(stage._foe_intents[sample_rank]["pass"])
-		and stage._foe_tickets[sample_rank].get_node("IntentText").text.contains("PASS")
+		and stage._foe_tickets[sample_rank].get_node("IntentText").text == "PASS"
+		and stage._foe_tickets[sample_rank].primary.get_theme_font_size("font_size") == 24
 		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:")
 		and str(stage._foe_intents[sample_rank]["ability_kind"]) == ""
 		and stage._foe_tickets[sample_rank].glyph.texture == null
@@ -806,7 +920,8 @@ func _run() -> void:
 	actor["statuses"]["stun"] = 1
 	stage._refresh()
 	_check(bool(stage._foe_intents[sample_rank]["stun"])
-		and stage._foe_tickets[sample_rank].get_node("IntentText").text.contains("STUN")
+		and stage._foe_tickets[sample_rank].get_node("IntentText").text == "STUN"
+		and stage._foe_tickets[sample_rank].primary.get_theme_font_size("font_size") == 24
 		and not stage._foe_tickets[sample_rank].tooltip_text.contains("Target:")
 		and str(stage._foe_intents[sample_rank]["ability_kind"]) == ""
 		and stage._foe_tickets[sample_rank].glyph.texture == null
