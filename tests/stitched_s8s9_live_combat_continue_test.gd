@@ -129,7 +129,7 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(SAVE_PATH)
 	DirAccess.remove_absolute(SAVE_PATH + ".tmp")
-	var app := _app(21)
+	var app := _app(24)
 	await process_frame
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
@@ -143,8 +143,8 @@ func _run() -> void:
 		return
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
-	_check(session != null and session.seed_value == 21 and session.heroes.size() == 4 and session.walks_enabled,
-		"seed 21 uses four selected dolls and Walk travel")
+	_check(session != null and session.seed_value == 24 and session.heroes.size() == 4 and session.walks_enabled,
+		"seed 24 uses four selected dolls and Walk travel")
 	if session == null:
 		_finish(app)
 		return

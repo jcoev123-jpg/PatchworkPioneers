@@ -860,6 +860,10 @@ func _test_live_stats() -> void:
 				for key in stat:
 					totals[str(key)] = int(totals[str(key)]) + int(stat[key])
 			var hero := battle.get_unit("rag_duelist")
+			# S13: matching patch threads add their small hidden bonus on top of the parts.
+			var hidden := StitchedSewnPatches.hidden_bonus("rag_duelist", hero["parts"], hero.get("patch_wear", {}))
+			for key in hidden:
+				totals[str(key)] = int(totals[str(key)]) + int(hidden[key])
 			var tag := "%s tier %d" % [part_id, tier]
 			_check(int(hero["acc"]) == DUELIST_ACC + int(totals["acc"]),
 				"AC3: " + tag + " reaches live ACC")

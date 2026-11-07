@@ -1639,6 +1639,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_shadow_stitch_zoetrope",
+      "title": "The Shadow-Stitch Zoetrope",
+      "description": "An enormous brass zoetrope turns by itself on the floorboards; each slit shows four rag dolls marching under a thread-red moon while its button-eyed keeper grips the broken crank.",
+      "choices": [
+        {
+          "id": "buy_shadow_frames",
+          "text": "Pay 19 gold for three bundles of frame-thread (+3 scraps)",
+          "outcome": { "gold": -19, "scraps": 3 }
+        },
+        {
+          "id": "retie_spinning_axle",
+          "text": "Spend 2 scraps to retie the turning axle (earn 31 gold)",
+          "outcome": { "gold": 31, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the fourth shadow finish its lonely circuit",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_hushglass_kaleidoscope",
+      "title": "The Hushglass Kaleidoscope",
+      "description": "A fractured kaleidoscope as long as a bedpost leans over a black stairwell; its round plum-cloth keeper shows the party's stitched faces in shards that blink out of turn.",
+      "choices": [
+        {
+          "id": "buy_lens_hem",
+          "text": "Pay 14 gold for two bundles of lens-binding thread (+2 scraps)",
+          "outcome": { "gold": -14, "scraps": 2 }
+        },
+        {
+          "id": "patch_shattered_eye",
+          "text": "Spend 1 scrap patching the broken eyepiece (earn 18 gold)",
+          "outcome": { "gold": 18, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the blinking fragments in the stairwell",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_crooked_sewing_compass",
+      "title": "The Crooked Sewing Compass",
+      "description": "An ivory sewing compass lies on a quilt-map as large as the floor; its needle follows the party's loose thread instead of north while a slate-blue survey doll holds its hinge shut.",
+      "choices": [
+        {
+          "id": "buy_direction_thread",
+          "text": "Pay 22 gold for three bundles of survey thread (+3 scraps)",
+          "outcome": { "gold": -22, "scraps": 3 }
+        },
+        {
+          "id": "repair_wandering_needle",
+          "text": "Spend 3 scraps binding the wandering needle (earn 42 gold)",
+          "outcome": { "gold": 42, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Step away before the compass points after you",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

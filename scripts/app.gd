@@ -8,6 +8,12 @@ const PROFILE_VERSION := 1
 @export var bedroom_save_path := "user://wren_room.json"
 var bedroom_record: Dictionary = {}
 var _bedroom_noted_run := 0
+## S12: where the between-runs gift profile lives; tests point this elsewhere. Empty means the
+## real profile, read and written only while the app is the running scene.
+@export var wren_gifts_profile_path := ""
+var _wren_gift_pick: Control
+## Run session id -> the gifts that run opened for later nights (recorded once per run).
+var _wren_gifts_opened: Dictionary = {}
 
 
 func difficulty_state() -> Dictionary:
@@ -4373,6 +4379,9 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 		if selected_set != draft_set:
 			return
 		var session := StitchedRunSession.start(run_seed, stitched_run_draft)
+		var gift_profile := _wren_gifts_profile()
+		if session != null and not gift_profile.is_empty():
+			session.set_gift_pool(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(gift_profile)))
 		if session == null or (stitched_walks and not session.enable_walks()):
 			return
 		stitched_run_session = session
@@ -4579,6 +4588,7 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 		card.add_child(recap)
 	if terminal:
 		_note_bedroom_run(session)
+		var opened := _note_wren_gifts(session)
 		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 245))
 		terminal_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
 		var final_art := TextureRect.new()
@@ -4595,6 +4605,13 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 				session.map.get_current_floor(), session.receipts.size()], 22)
 		_stitched_run_caption(terminal_panel,
 			"All four doll records remain above with their exact HP, fray and losses. The ledger is sealed.", 18)
+		if not opened.is_empty():
+			var names: Array = []
+			for id in opened:
+				names.append(str(StitchedWrenGifts.gift(id).get("name", id)))
+			var news := _stitched_run_caption(terminal_panel,
+				"New gifts may find Wren on later nights: %s." % ", ".join(names), 18)
+			news.name = "WrenGiftsOpened"
 		var ending_actions := HBoxContainer.new()
 		content.add_child(ending_actions)
 		_stitched_run_action(ending_actions, "Return to title", _return_stitched_run_title)
@@ -4668,6 +4685,155 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
 	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
+	if session.phase == "map" and not session.gift_offer.is_empty():
+		_show_wren_gift_pick(session)
+
+
+func _wren_gifts_profile() -> String:
+	if not wren_gifts_profile_path.is_empty():
+		return wren_gifts_profile_path
+	return StitchedWrenGifts.PROFILE_PATH if is_inside_tree() and get_tree().current_scene == self else ""
+
+
+## S12: a finished run opens new gifts for later runs; recorded once per run session.
+func _note_wren_gifts(session: StitchedRunSession) -> Array:
+	var key := session.get_instance_id()
+	if not _wren_gifts_opened.has(key):
+		var profile := _wren_gifts_profile()
+		_wren_gifts_opened[key] = [] if profile.is_empty() else StitchedWrenGifts.record_progress(
+			session.map.get_current_floor(), session.phase == "victory", profile)
+	return _wren_gifts_opened[key]
+
+
+## S12: the 1-of-3 gift pick over the map: three hand pictures, each with its name and what it
+## does. With all four slots full, taking one then asks which old gift to let go. No numbers.
+func _show_wren_gift_pick(session: StitchedRunSession, chosen: String = "") -> void:
+	if is_instance_valid(_wren_gift_pick):
+		_wren_gift_pick.get_parent().remove_child(_wren_gift_pick)
+		_wren_gift_pick.queue_free()
+	_wren_gift_pick = null
+	if not is_instance_valid(stitched_run_panel) or session.gift_offer.is_empty():
+		return
+	var expected := session.snapshot()
+	var veil := Control.new()
+	veil.name = "WrenGiftPick"
+	veil.size = Vector2(1280, 720)
+	veil.mouse_filter = Control.MOUSE_FILTER_STOP
+	stitched_run_panel.add_child(veil)
+	_wren_gift_pick = veil
+	var room := TextureRect.new()
+	room.name = "WrenGiftRoom"
+	room.texture = _stitched_run_texture("res://assets/paper/kid/kid_view_bedroom.png")
+	room.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	room.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	room.size = veil.size
+	room.modulate = Color(0.32, 0.27, 0.32, 0.94)
+	room.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	veil.add_child(room)
+	var strip := NinePatchRect.new()
+	strip.name = "WrenGiftStrip"
+	strip.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
+	# Wide nine-slice margins keep the felt's inner stitching whole; the words sit inside it.
+	strip.patch_margin_left = 80
+	strip.patch_margin_top = 80
+	strip.patch_margin_right = 116
+	strip.patch_margin_bottom = 110
+	var full := not chosen.is_empty()
+	var shown: Array = session.gift_slots if full else session.gift_offer
+	strip.size = Vector2(1240, 690)
+	strip.position = Vector2(20, 12)
+	strip.modulate.a = 0.96
+	veil.add_child(strip)
+	var content := VBoxContainer.new()
+	content.name = "WrenGiftText"
+	content.position = Vector2(92, 86)
+	content.size = Vector2(1020, 470)
+	content.add_theme_constant_override("separation", 12)
+	strip.add_child(content)
+	_stitched_run_caption(content, "WREN'S HANDS ARE FULL" if full else "WREN FINDS SOMETHING NEW", 26).name = "WrenGiftHeading"
+	_stitched_run_caption(content, ("Let one of these go to make room for %s." % _wren_gift_name(chosen)) if full
+		else "He may keep one in his hands for the rest of the night.", 18)
+	var row := HBoxContainer.new()
+	row.name = "WrenGiftCards"
+	row.add_theme_constant_override("separation", 20)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	content.add_child(row)
+	var take := func(gift_id: String, swap_out: String):
+		if stitched_run_session == session and _wren_gift_pick == veil \
+				and session.choose_gift(gift_id, swap_out, expected):
+			_present_stitched_run()
+	var buttons: Array = []
+	for id in shown:
+		var card := VBoxContainer.new()
+		card.name = "WrenGift_" + str(id)
+		card.custom_minimum_size = Vector2(240, 0)
+		card.add_theme_constant_override("separation", 6)
+		row.add_child(card)
+		var hand := TextureRect.new()
+		hand.name = "WrenGiftHand"
+		hand.set_meta("art_path", StitchedWrenGifts.icon_path(id))
+		hand.texture = _stitched_run_texture(StitchedWrenGifts.icon_path(id))
+		hand.custom_minimum_size = Vector2(240, 130)
+		hand.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		hand.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		hand.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		card.add_child(hand)
+		var entry := StitchedWrenGifts.gift(id)
+		var title := _stitched_run_caption(card, _wren_gift_name(id), 22)
+		title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		var kind := str(entry.get("rarity", "common"))
+		if kind != "common" or bool(entry.get("once_per_fight", false)):
+			var marks: Array = []
+			if kind != "common":
+				marks.append("a rare find" if kind == "rare" else "uncommon")
+			if bool(entry.get("once_per_fight", false)):
+				marks.append("once a fight")
+			var mark := _stitched_run_caption(card, " / ".join(marks), 15)
+			mark.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			mark.add_theme_color_override("font_color", Color("#e9b873") if kind == "rare" else Color("#c9b393"))
+		var text := _stitched_run_caption(card, str(entry.get("text", "")), 16)
+		text.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var gift_id: String = id
+		var button: Button
+		if full:
+			button = _stitched_run_action(card, "Let it go", func(): take.call(chosen, gift_id))
+		else:
+			button = _stitched_run_action(card, "Take it", func():
+				if session.gift_slots.size() < StitchedWrenGifts.SLOTS:
+					take.call(gift_id, "")
+				else:
+					_show_wren_gift_pick(session, gift_id))
+		button.name = "WrenGiftTake"
+		button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		buttons.append(button)
+	var footer := HBoxContainer.new()
+	footer.alignment = BoxContainer.ALIGNMENT_END
+	content.add_child(footer)
+	var leave := _stitched_run_action(footer, "Keep my hands" if full else "Leave them", func():
+		if full:
+			_show_wren_gift_pick(session)
+		else:
+			take.call("", ""))
+	leave.name = "WrenGiftLeave"
+	buttons.append(leave)
+	# The veil blocks the mouse; keyboard focus circles its own buttons only.
+	for index in buttons.size():
+		var button: Button = buttons[index]
+		stitched_run_buttons.erase(button)
+		var after: Button = buttons[(index + 1) % buttons.size()]
+		var before: Button = buttons[(index - 1 + buttons.size()) % buttons.size()]
+		button.focus_next = button.get_path_to(after)
+		button.focus_previous = button.get_path_to(before)
+		button.focus_neighbor_right = button.get_path_to(after)
+		button.focus_neighbor_left = button.get_path_to(before)
+		button.focus_neighbor_top = button.get_path_to(button)
+		button.focus_neighbor_bottom = button.get_path_to(leave if button != leave else buttons[0])
+	buttons[0].grab_focus()
+
+
+func _wren_gift_name(id: String) -> String:
+	return str(StitchedWrenGifts.gift(id).get("name", id.capitalize()))
 
 
 ## A road stop's felt page: the story, then its choices, then save. No ledger numbers; the
@@ -4721,6 +4887,28 @@ func _sync_stitched_run_exit() -> void:
 		stage._action_buttons["exit"].disabled = not session.battle.is_over()
 
 
+## After validation only: retire all prior run surfaces before publishing a successor.
+## Detaching now stops queued-for-deletion controls from intercepting new input.
+func _retire_stitched_run_views() -> void:
+	if is_instance_valid(stitched_run_intro):
+		var intro_parent := stitched_run_intro.get_parent()
+		if intro_parent != null:
+			intro_parent.remove_child(stitched_run_intro)
+		stitched_run_intro.queue_free()
+	stitched_run_intro = null
+	if is_instance_valid(stitched_run_walk):
+		if stitched_run_walk.get_parent() == self:
+			remove_child(stitched_run_walk)
+		stitched_run_walk.queue_free()
+	stitched_run_walk = null
+	if is_instance_valid(stitched_run_battle):
+		if stitched_run_battle.get_parent() == self:
+			remove_child(stitched_run_battle)
+		stitched_run_battle.queue_free()
+	stitched_run_battle = null
+	_clear_stitched_run_panel()  # Invalidate obsolete run-page callbacks/epoch.
+
+
 func load_stitched_run(path: String) -> bool:
 	if deck != null or run_map != null or is_instance_valid(base_screen) \
 		or is_instance_valid(stitched_fight_view) or stitched_event_gate != null:
@@ -4729,10 +4917,7 @@ func load_stitched_run(path: String) -> bool:
 	if restored == null:
 		return false
 	# Publish only after the entire save has replayed and matched its state.
-	if is_instance_valid(stitched_run_battle):
-		remove_child(stitched_run_battle)
-		stitched_run_battle.queue_free()
-	stitched_run_battle = null
+	_retire_stitched_run_views()
 	stitched_run_session = restored
 	title_view.hide()
 	_present_stitched_run()

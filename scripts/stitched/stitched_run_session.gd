@@ -105,6 +105,13 @@ var walk_carry: Array = []
 var walk_receipts: Array = []
 ## Debug-build playtest cheats only (scripts/debug/playtest_cheats.gd); empty in real play.
 var cheat_event_id := ""
+## S12 Wren's gifts: what sits in his (at most four) hand slots this run, the gifts this run
+## may offer (set once by the app from the between-runs profile), the 1-of-3 offer waiting on
+## the map (empty when none) and how many offers this run has drawn.
+var gift_slots: Array = StitchedWrenGifts.basics()
+var gift_pool: Array = StitchedWrenGifts.pool_for({})
+var gift_offer: Array = []
+var gift_offers_made := 0
 ## Tests pin the drawn Event record for every session, so save/replay meets it too; the draw
 ## still spends its seeded roll. Empty in real play.
 static var pinned_event_id := ""
@@ -166,7 +173,9 @@ func snapshot() -> Dictionary:
 		"rng": rng.state if rng != null else 0,
 		"battle": battle.state_snapshot() if battle != null else {},
 		"walk": {"enabled": walks_enabled, "state": walk.snapshot() if walk != null else {},
-			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)}}
+			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)},
+		"gifts": {"slots": gift_slots.duplicate(), "pool": gift_pool.duplicate(),
+			"offer": gift_offer.duplicate(), "made": gift_offers_made}}
 
 
 func _seal() -> void:
@@ -213,6 +222,8 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 			pending.clear()
 			phase = "map"
 			return false
+	# Walking on past a gift offer leaves it behind.
+	gift_offer.clear()
 	journal.append({"action": "enter", "node_id": node_id})
 	_seal()
 	changed.emit()
@@ -226,6 +237,46 @@ func enable_walks() -> bool:
 	walks_enabled = true
 	_seal()
 	return true
+
+
+## S12: the app sets which gifts this run may offer, before the first step.
+func set_gift_pool(ids: Array) -> bool:
+	if phase != "map" or not journal.is_empty() or not is_consistent() or not StitchedWrenGifts.valid_pool(ids):
+		return false
+	gift_pool = ids.duplicate()
+	_seal()
+	return true
+
+
+## S12: take one of the offered gifts (swap_out names the slot gift it replaces once all four
+## slots are full) or leave them all with gift_id "". Kept for this run only.
+func choose_gift(gift_id: String, swap_out: String, expected: Dictionary) -> bool:
+	if phase != "map" or gift_offer.is_empty() or expected != snapshot() or not is_consistent():
+		return false
+	if not gift_id.is_empty():
+		if not gift_id in gift_offer:
+			return false
+		if gift_slots.size() < StitchedWrenGifts.SLOTS:
+			if not swap_out.is_empty():
+				return false
+			gift_slots.append(gift_id)
+		else:
+			var index := gift_slots.find(swap_out)
+			if index < 0:
+				return false
+			gift_slots[index] = gift_id
+	elif not swap_out.is_empty():
+		return false
+	gift_offer.clear()
+	journal.append({"action": "gift", "id": gift_id, "swap": swap_out})
+	_seal()
+	changed.emit()
+	return true
+
+
+func _offer_gifts(elite: bool) -> void:
+	gift_offer = StitchedWrenGifts.draw_offer(seed_value, gift_offers_made, gift_pool, gift_slots, elite)
+	gift_offers_made += 1
 
 
 ## The Walk's corridor follows the house: floorboards, then walls, then the sewing basket.
@@ -414,7 +465,7 @@ func _open_battle(kind: String) -> bool:
 			"fray":
 				fray_gains.append(carried)
 	battle_config = {"mode": "stitched", "seed": seed_value, "run_rng": rng,
-		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle,
+		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle, "gifts": gift_slots.duplicate(),
 		"title": "Floor %02d / %s" % [map.get_current_floor(), kind],
 		"walk_mimic": walk_carry.any(func(carried: Dictionary): return carried.kind == "mimic"), "walk_cuts": cuts}
 	var candidate := RankedBattle.new()
@@ -428,6 +479,11 @@ func _open_battle(kind: String) -> bool:
 		for hero in hero_inputs:
 			if candidate._units.has(hero.id) and not candidate._units[hero.id].lost:
 				candidate._change_fray(candidate._units[hero.id], party_fray, false)
+	# S13: a foe's patch outside the doll's favoured slot never sits right.
+	for hero in hero_inputs:
+		var ill := StitchedSewnPatches.ill_fitting_fray(hero.id, hero.get("parts", {}))
+		if ill > 0 and candidate._units.has(hero.id) and not candidate._units[hero.id].lost:
+			candidate._change_fray(candidate._units[hero.id], ill, false)
 	walk_carry.clear()
 	var opening_spares := candidate.satchel()
 	candidate._satchel = satchel.duplicate(true)
@@ -466,6 +522,9 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 		for previous in heroes:
 			if previous.id == hero.id:
 				hero["patches"] = previous.get("patches", []).duplicate()
+				# S13: every patch a standing doll wore through the fight sits a little better.
+				hero["patch_wear"] = {} if hero.lost else StitchedSewnPatches.wear_after_fight(
+					hero.get("parts", {}), previous.get("patch_wear", {}))
 				if not previous.lost and hero.lost:
 					_kid_fear.apply_observed_event({"kind": "lost"})
 	heroes = ending
@@ -496,6 +555,8 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 	_normalize_formation()
 	receipts.append({"node_id": pending.node_id, "kind": pending.kind, "outcome": outcome, "reward": reward})
 	phase = "defeat" if outcome == "defeat" else "victory" if pending.kind == "Boss" and outcome == "victory" else "map"
+	if phase == "map" and outcome == "victory":
+		_offer_gifts(pending.kind == "Elite")
 	pending.clear()
 	battle = null
 	battle_config.clear()
@@ -640,6 +701,7 @@ func _open_visit(kind: String) -> bool:
 					_offer("upgrade", "%s / Raise %s tier / %d scraps" % [hero.name, slot, SEWING_COST],
 						upgrade.read_state().get("ok") == true and not worn.torn and worn.tier < 3 and scraps >= SEWING_COST, [hero.id, slot])
 			_add_swaps(roster)
+			_add_double_stitches(roster)
 			if not pending.get("replaced", false):
 				_replacement_visit = RunStitchedSewingReplacement.new(id, heroes, _replacement_candidates(), catalog)
 				var quote := _replacement_visit.quote()
@@ -781,6 +843,38 @@ func _add_swaps(roster: Array) -> void:
 				not hero.parts[spare.slot].torn, [hero.id, spare.slot, index])
 
 
+## S13: a spare that matches a worn patch can be double-stitched over it, one tier higher
+## than the better of the two; the spare is used up. Free, but only at a Sewing Circle.
+func _add_double_stitches(roster: Array) -> void:
+	for hero in roster:
+		if hero.lost:
+			continue
+		for index in satchel.size():
+			var spare: Dictionary = satchel[index]
+			var worn: Dictionary = hero.parts.get(spare.slot, {})
+			if str(worn.get("id", "")) == str(spare.id) and not bool(worn.get("torn", false)) 					and int(worn.get("tier", StitchedParts.MAX_TIER)) < StitchedParts.MAX_TIER:
+				_offer("double_stitch", "%s / Double-stitch %s" % [hero.name, str(catalog.get(spare.id, {}).get("name", spare.id))],
+					true, [hero.id, spare.slot, index])
+
+
+func _double_stitch(hero_id: String, slot: String, index: int) -> Dictionary:
+	if index < 0 or index >= satchel.size():
+		return {"ok": false}
+	var spare: Dictionary = satchel[index]
+	for hero in heroes:
+		if hero.id != hero_id or hero.lost or not hero.parts.has(slot):
+			continue
+		var worn: Dictionary = hero.parts[slot]
+		if str(worn.id) != str(spare.id) or worn.torn or int(worn.tier) >= StitchedParts.MAX_TIER:
+			return {"ok": false}
+		var changed: Dictionary = hero.duplicate(true)
+		changed.parts[slot].tier = mini(StitchedParts.MAX_TIER, maxi(int(worn.tier), int(spare.tier)) + 1)
+		var left := satchel.duplicate(true)
+		left.remove_at(index)
+		return {"ok": true, "action": "double_stitch", "heroes": [changed], "satchel": left}
+	return {"ok": false}
+
+
 func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> bool:
 	if phase != "visit" or not is_consistent() or expected != snapshot():
 		return false
@@ -821,6 +915,8 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 				"upgrade":
 					var visit := RunStitchedSewingUpgrade.new(id, _living_roster(), scraps, SEWING_COST, catalog)
 					result = visit.upgrade(arguments[0], arguments[1], id, visit.read_state())
+				"double_stitch":
+					result = _double_stitch(arguments[0], arguments[1], arguments[2])
 				"leave":
 					result = {"ok": true}
 				"replace":
@@ -908,7 +1004,7 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	if kind == "Campfire" and action_id == "swap":
 		pending["swapped"] = true
 	journal.append({"action": "visit", "id": action_id, "arguments": arguments.duplicate(true)})
-	if action_id == "swap" or (kind == "SewingCircle" and action_id in ["mend", "upgrade", "replace"]):
+	if action_id == "swap" or (kind == "SewingCircle" and action_id in ["mend", "upgrade", "replace", "double_stitch"]):
 		_open_visit(kind)
 	elif not result.get("service_request", {}).is_empty():
 		_open_visit(result.service_request.stop_type)
@@ -919,6 +1015,8 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 		_service = null
 		_actions.clear()
 		phase = "map"
+		if kind == "Event":
+			_offer_gifts(false)
 	var alive := false
 	for hero in heroes:
 		alive = alive or not hero.lost

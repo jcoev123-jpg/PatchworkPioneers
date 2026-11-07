@@ -49,6 +49,8 @@ const WALK_MIMIC_ID := "extra_thread_shadow"
 const COUNTDOWN_KEYS := [
 	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "stun_resist", "guard",
 ]
+## S12 Brush Off wipes these from one doll.
+const GIFT_CLEARS := ["bleed", "tangled", "weak", "exposed"]
 
 var _parts: Dictionary = {}
 var _units: Dictionary = {}
@@ -73,6 +75,12 @@ var _hand_round := 0
 var _shield_round := 0
 var _held: Dictionary = {}
 var _hand_receipts: Array = []
+## S12 Wren's gifts: the (at most four) gifts in his slots this fight, once-per-fight gifts
+## already spent, doll id -> round its eyes are covered, and whether the nightlight is on.
+var _gifts: Array = StitchedKidHandActions.IDS.duplicate()
+var _gifts_spent: Array = []
+var _covered: Dictionary = {}
+var _nightlight := false
 
 
 ## Builds a stitched battle from authored data:
@@ -306,6 +314,10 @@ func state_snapshot() -> Dictionary:
 			"shield_round": _shield_round,
 			"held": _held.duplicate(true),
 			"receipts": _hand_receipts.duplicate(true),
+			"gifts": _gifts.duplicate(),
+			"spent": _gifts_spent.duplicate(),
+			"covered": _covered.duplicate(true),
+			"nightlight": _nightlight,
 		},
 	}
 
@@ -325,43 +337,108 @@ func is_held(hero_id: String) -> bool:
 
 
 func candle_shielded() -> bool:
-	return _shield_round == _round
+	return _shield_round == _round or _nightlight
 
 
-## Why a hand action would be refused right now ("" when legal); changes nothing.
+func gift_slots() -> Array:
+	return _gifts.duplicate()
+
+
+func gift_spent(gift_id: String) -> bool:
+	return gift_id in _gifts_spent
+
+
+func eyes_covered(hero_id: String) -> bool:
+	return _covered.has(hero_id) and int(_covered[hero_id]) == _round
+
+
+## Why a hand action would be refused right now ("" when legal); changes nothing. A doll
+## gift takes a hero id, a foe gift a living foe id, and the rest no target; only Lift takes
+## a direction.
 func hand_action_check(action_id: String, target_id: String, direction: int) -> String:
 	var gate := _require_side_turn("hand", "hero")
 	if not gate.is_empty():
 		return str(gate["error"])
 	if _hand_round == _round:
 		return "Wren's hand action is spent this round"
-	if not action_id in StitchedKidHandActions.IDS:
+	var entry := StitchedWrenGifts.gift(action_id)
+	if entry.is_empty() or not action_id in _gifts:
 		return "unknown hand action " + action_id
-	if action_id == "shield_candle":
-		return "" if target_id.is_empty() else "Shield the Candle takes no doll"
+	if action_id in _gifts_spent:
+		return str(entry["name"]) + " is spent for this fight"
+	if direction != 0 and action_id != "lift":
+		return "only Lift takes a direction"
+	match str(entry["target"]):
+		"none":
+			if not target_id.is_empty():
+				return str(entry["name"]) + " takes no doll"
+			if action_id == "blow_candle" and _candle >= 100:
+				return "the candle already burns full"
+			if action_id == "nightlight" and _nightlight:
+				return "the nightlight is already on"
+			return ""
+		"foe":
+			var foe: Dictionary = _units.get(target_id, {})
+			if foe.is_empty() or str(foe["side"]) != "foe" or not _can_act(foe):
+				return "pick one of the foes"
+			return _foe_gift_check(action_id, foe)
 	var hero: Dictionary = _units.get(target_id, {})
 	if hero.is_empty() or str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return "pick one of Wren's dolls"
-	if action_id == "lift":
-		var plan := _shift_valid(hero, direction)
-		if not bool(plan["ok"]):
-			return "Lift is blocked: " + str(plan["reason"])
-	elif direction != 0:
-		return "only Lift takes a direction"
+	match action_id:
+		"lift":
+			var plan := _shift_valid(hero, direction)
+			if not bool(plan["ok"]):
+				return "Lift is blocked: " + str(plan["reason"])
+		"hug":
+			if bool(hero["hanging"]) or int(hero["hp"]) <= 0 or int(hero["hp"]) >= int(hero["max_hp"]):
+				return "that doll needs no hug"
+		"knot":
+			if not _thread_cuts.has(target_id):
+				return "that doll's string is whole"
+		"brush_off":
+			var clings := false
+			for key in GIFT_CLEARS:
+				clings = clings or int(hero["statuses"].get(key, 0)) > 0
+			if not clings:
+				return "nothing clings to that doll"
+		"quick_stitch":
+			if _torn_slot(hero).is_empty():
+				return "that doll has no torn part"
+		"cover_eyes":
+			if eyes_covered(target_id):
+				return "that doll's eyes are already covered"
+		"whisper":
+			if bool(hero["hanging"]):
+				return "that doll cannot take another turn"
 	return ""
 
 
-## S9a: Wren's one free hand action for the round, taken during a doll's turn before it acts.
-## fear is his current fear; at StitchedKidFear.SHAKE_THRESHOLD+ one seeded 1..100 roll is
-## drawn and 1..25 fails (the action is still spent). Validates before any draw; never
-## advances the turn.
+func _foe_gift_check(action_id: String, foe: Dictionary) -> String:
+	match action_id:
+		"snip_string":
+			if int(foe["statuses"].get("stun", 0)) > 0 or int(foe["statuses"].get("stun_resist", 0)) > 0:
+				return "that foe's strings are already slack"
+		"tug", "shove":
+			var plan := _gift_shift_valid(foe, -1 if action_id == "tug" else 1)
+			if not bool(plan["ok"]):
+				return "that foe cannot be moved: " + str(plan["reason"])
+	return ""
+
+
+func _torn_slot(hero: Dictionary) -> String:
+	for slot in StitchedParts.SLOTS:
+		if hero["parts"].has(slot) and bool(hero["parts"][slot].get("torn", false)):
+			return slot
+	return ""
+
 func use_hand_action(action_id: String, target_id: String = "", direction: int = 0, fear: int = 0) -> Dictionary:
 	var refusal := hand_action_check(action_id, target_id, direction)
 	if not refusal.is_empty():
 		return _reject("hand", target_id, refusal)
-	var book := StitchedKidHandActions.catalog()
+	var book := StitchedWrenGifts.catalog()
 	if not bool(book.get("ok", false)):
-		return _reject("hand", target_id, str(book.get("error", "hand actions missing")))
+		return _reject("hand", target_id, str(book.get("error", "gifts missing")))
 	var receipt := {
 		"ok": true,
 		"action": "hand",
@@ -374,6 +451,8 @@ func use_hand_action(action_id: String, target_id: String = "", direction: int =
 		"failed": false,
 	}
 	_hand_round = _round
+	if bool(book.by_id[action_id].get("once_per_fight", false)):
+		_gifts_spent.append(action_id)
 	if fear >= StitchedKidFear.SHAKE_THRESHOLD:
 		receipt["roll"] = _rng.randi_range(1, 100)
 		receipt["failed"] = int(receipt["roll"]) <= StitchedKidFear.HAND_FAILURE_CHANCE_PERCENT
@@ -387,8 +466,72 @@ func use_hand_action(action_id: String, target_id: String = "", direction: int =
 				_held[target_id] = _round
 			"lift":
 				receipt["effect"] = _shift(_units[target_id], direction)
+			_:
+				receipt["effect"] = _resolve_gift(action_id, book.by_id[action_id], target_id)
 	_hand_receipts.append(receipt.duplicate(true))
+	_battle_finished()
 	return receipt
+
+
+## S12: one gift's effect, already checked legal. Never spends the doll's turn; may end the fight.
+func _resolve_gift(action_id: String, entry: Dictionary, target_id: String) -> Dictionary:
+	var unit: Dictionary = _units.get(target_id, {})
+	var turns := int(entry.get("turns", 3))
+	match action_id:
+		"snip_string":
+			unit["statuses"]["stun"] = 1
+			return {"status": "stun"}
+		"tip_over":
+			unit["statuses"]["stun"] = maxi(1, int(unit["statuses"].get("stun", 0)))
+			var fell: Dictionary = _shift(unit, 1) if bool(_shift_valid(unit, 1)["ok"]) else {}
+			return {"status": "stun", "move": fell}
+		"tug":
+			return _gift_shift(unit, -1)
+		"shove":
+			return _gift_shift(unit, 1)
+		"flick_button":
+			var hit := {"damage": int(entry.get("damage", 4))}
+			_damage_target(unit, int(hit["damage"]), hit)
+			return hit
+		"pinch", "point", "tangle_thread":
+			var key: String = {"pinch": "weak", "point": "exposed", "tangle_thread": "tangled"}[action_id]
+			unit["statuses"][key] = maxi(int(unit["statuses"].get(key, 0)), turns)
+			return {"status": key, "duration": turns}
+		"blow_candle":
+			var lit := _candle
+			_candle = clampi(_candle + int(entry.get("candle", 10)), 0, 100)
+			return {"before": lit, "after": _candle}
+		"nightlight":
+			_nightlight = true
+			return {"nightlight": true}
+		"hug":
+			var hp := int(unit["hp"])
+			unit["hp"] = mini(int(unit["max_hp"]), hp + int(entry.get("heal", 6)))
+			return {"before": hp, "after": int(unit["hp"])}
+		"cover_eyes":
+			_covered[target_id] = _round
+			return {"covered": true}
+		"knot":
+			_thread_cuts.erase(target_id)
+			return {"knotted": true}
+		"brush_off":
+			for key in GIFT_CLEARS:
+				unit["statuses"].erase(key)
+			return {"cleared": GIFT_CLEARS.duplicate()}
+		"quick_stitch":
+			var slot := _torn_slot(unit)
+			unit["parts"][slot]["torn"] = false
+			_recompute_stats(unit)
+			return {"mended": slot}
+		"lullaby":
+			for hero in _units_of_side("hero"):
+				if not bool(hero["lost"]):
+					_change_fray(hero, int(entry.get("fray", -6)), false)
+			return {"calmed": true}
+		"whisper":
+			_order.insert(_turn_index + 1, target_id)
+			return {"again": true}
+	return {}
 
 
 ## S9a fear 100, LOSING THE STRINGS: the doll whose turn it is loses it without acting.
@@ -695,6 +838,13 @@ func _setup(config: Dictionary) -> String:
 	var foes: Variant = config.get("foes")
 	if not foes is Array or foes.size() < MIN_FOES or foes.size() > MAX_FOES:
 		return "stitched mode starts with two or three foes, never four"
+	var gifts: Variant = config.get("gifts", StitchedKidHandActions.IDS)
+	if not gifts is Array or gifts.is_empty() or gifts.size() > StitchedWrenGifts.SLOTS:
+		return "Wren carries one to four gifts"
+	for id in gifts:
+		if not id is String or not StitchedWrenGifts.is_gift(id) or gifts.count(id) != 1:
+			return "unknown or repeated gift " + str(id)
+	_gifts = gifts.duplicate()
 	var mimic: Variant = config.get("walk_mimic", false)
 	var cuts: Variant = config.get("walk_cuts", {})
 	if not mimic is bool or not cuts is Dictionary:
@@ -891,6 +1041,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"miss_streak": 0,
 		"guard_target": "",
 		"dodge_buff": {},
+		# S13: how many fights each worn patch has sat on this doll (the run session keeps it).
+		"patch_wear": (entry.get("patch_wear") as Dictionary).duplicate(true) if entry.get("patch_wear") is Dictionary else {},
 	}
 	_recompute_stats(unit)
 	# Optional carry is in actual HP after worn-part modifiers, never base HP.
@@ -1049,6 +1201,11 @@ func _recompute_stats(unit: Dictionary) -> void:
 		var stat := StitchedParts.stat_at_tier(_parts[worn["id"]], int(worn["tier"]))
 		for key in stat:
 			totals[key] = int(totals.get(key, 0)) + int(stat[key])
+	# S13: thread sets and broken-in patches sit better, a hidden bonus the player never reads.
+	if str(unit.get("side", "")) == "hero":
+		var hidden := StitchedSewnPatches.hidden_bonus(str(unit["id"]), parts, unit.get("patch_wear", {}))
+		for key in hidden:
+			totals[key] = int(totals.get(key, 0)) + int(hidden[key])
 	unit["acc"] = int(unit["base_acc"]) + int(totals["acc"])
 	unit["crit"] = int(totals["crit"])
 	# Arms grant damage: the equipped parts' dmg stat is a flat bonus on every direct attack.
@@ -1615,6 +1772,37 @@ func _shift(unit: Dictionary, direction: int) -> Dictionary:
 	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
 
 
+## Wren's Tug and Shove move a foe one rank by hand: unlike a foe's own step, it trades places
+## with the foe in the way. A tangled foe on either end, or a scrap heap, blocks it.
+func _gift_shift_valid(foe: Dictionary, direction: int) -> Dictionary:
+	var destination := int(foe["rank"]) + direction
+	if destination < MIN_RANK or destination > MAX_RANK:
+		return {"ok": false, "reason": "there is no rank %d" % destination}
+	if int(foe["statuses"].get("tangled", 0)) > 0:
+		return {"ok": false, "reason": "tangled units cannot move"}
+	var other := _foe_at(destination)
+	if other.is_empty() and not _heap_at(destination).is_empty():
+		return {"ok": false, "reason": "a scrap heap is in the way"}
+	if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
+		return {"ok": false, "reason": "the foe in the way is tangled"}
+	return {"ok": true, "reason": "", "destination": destination}
+
+
+func _gift_shift(foe: Dictionary, direction: int) -> Dictionary:
+	var plan := _gift_shift_valid(foe, direction)
+	if not plan["ok"]:
+		return {"ok": false, "reason": str(plan["reason"])}
+	var destination := int(plan["destination"])
+	var from := int(foe["rank"])
+	var other := _foe_at(destination)
+	var swapped := ""
+	if not other.is_empty():
+		other["rank"] = from
+		swapped = str(other["id"])
+	foe["rank"] = destination
+	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
+
+
 func _guardian_for(target: Dictionary) -> Dictionary:
 	if str(target["side"]) != "hero" or str(target.get("resolve", "")) == "reckless":
 		return {}
@@ -1801,6 +1989,8 @@ func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
 	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle and not candle_shielded() else amount
+	if applied > 0 and eyes_covered(str(hero["id"])):
+		applied = 0
 	hero["fray"] = clampi(before + applied, 0, FRAY_MAX)
 	var transition := ""
 	if int(hero["fray"]) >= FRAY_MAX:

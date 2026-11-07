@@ -53,6 +53,7 @@ var candle_icon: TextureRect
 var ribbon: StitchedTurnOrderRibbon
 var portrait: TextureRect
 var actor_name: Label
+var thread_knot: TextureRect
 var health_bar: TextureProgressBar
 var health_text: Label
 var fray_bar: TextureProgressBar
@@ -367,6 +368,15 @@ func _build_bar() -> void:
 	actor_name = _label("", Rect2(158, BAR_TOP + 10, 300, 32), 28, AMBER)
 	actor_name.name = "ActorName"
 	add_child(actor_name)
+	# S13: a small thread knot by the name when two or more patches share a thread.
+	thread_knot = TextureRect.new()
+	thread_knot.name = "ThreadKnot"
+	thread_knot.position = Vector2(426, BAR_TOP + 6)
+	thread_knot.size = Vector2(40, 40)
+	thread_knot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thread_knot.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	thread_knot.mouse_filter = Control.MOUSE_FILTER_PASS
+	add_child(thread_knot)
 	add_child(_label("HEALTH", Rect2(158, BAR_TOP + 48, 80, 24), 17))
 	health_bar = _bar(Rect2(236, BAR_TOP + 50, 230, 22), BLOOD)
 	health_bar.name = "ActorHealth"
@@ -393,6 +403,16 @@ func _build_bar() -> void:
 		button.mouse_exited.connect(func(): _shade_parts())
 		button.focus_entered.connect(func(): _shade_parts())
 		button.focus_exited.connect(func(): _shade_parts())
+		# S13: the part shows as the cloth patch sewn on that limb; its border tells the tier.
+		for layer in ["Patch", "Border", "Frayed"]:
+			var art := TextureRect.new()
+			art.name = layer
+			art.position = Vector2(14, 14)
+			art.size = Vector2(86, 86)
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			button.add_child(art)
 		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 26, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 		slot_label.name = "Slot"
 		button.add_child(slot_label)
@@ -413,13 +433,13 @@ func _build_bar() -> void:
 
 
 func _build_hands() -> void:
-	var book: Dictionary = StitchedKidHandActions.catalog().get("by_id", {})
-	for index in StitchedKidHandActions.IDS.size():
-		var action_id: String = StitchedKidHandActions.IDS[index]
-		var entry: Dictionary = book.get(action_id, {})
+	var slots := engine.hand_slots()
+	for index in slots.size():
+		var action_id: String = slots[index]
+		var entry := StitchedWrenGifts.gift(action_id)
 		var button := TextureButton.new()
 		button.name = "Hand_" + action_id
-		button.texture_normal = _texture("res://assets/paper/kid/hand_%s.png" % action_id)
+		button.texture_normal = _texture(StitchedWrenGifts.icon_path(action_id))
 		button.ignore_texture_size = true
 		button.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
 		button.position = Vector2(1132 + (index % 2) * 60, BAR_TOP + 8 + (index / 2) * 58)
@@ -515,7 +535,7 @@ func choose_part(slot: String) -> Dictionary:
 
 
 func click_figure(side: String, rank: int) -> Dictionary:
-	if engine._selected_part.is_empty() and not engine._hand_pending in ["steady", "hold_back", "lift"]:
+	if engine._selected_part.is_empty() and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
 		log_label.text = "Pick a body part first."
 		return {"ok": false, "error": "no part chosen"}
 	return _act(engine.submit_target(side, rank))
@@ -613,6 +633,12 @@ func _refresh_bar() -> void:
 	health_bar.value = float(shown.get("hp", 0))
 	health_text.text = "%d / %d" % [int(shown.get("hp", 0)), int(shown.get("max_hp", 0))] if not shown.is_empty() else ""
 	fray_bar.value = float(shown.get("fray", 0))
+	var worn_parts: Dictionary = shown.get("parts", {})
+	var knot := StitchedSewnPatches.set_thread(worn_parts) if hero_turn else ""
+	thread_knot.texture = _texture(StitchedSewnPatches.knot_path(knot)) if not knot.is_empty() else null
+	thread_knot.visible = not knot.is_empty()
+	thread_knot.tooltip_text = ("Whole cloth: every patch is sewn with one thread." if StitchedSewnPatches.whole_cloth(worn_parts)
+		else "Matching thread: some of these patches sit well together.") if not knot.is_empty() else ""
 	fray_bar.tint_progress = BLOOD if int(shown.get("fray", 0)) >= 100 else FRAY
 	for slot in part_buttons:
 		var button: TextureButton = part_buttons[slot]
@@ -620,9 +646,21 @@ func _refresh_bar() -> void:
 		var part: Dictionary = engine.parts.get(str(equipped.get("id", "")), {})
 		var move_label: Label = button.get_node("Move")
 		move_label.text = ""
+		var torn := bool(equipped.get("torn", false))
+		var patch: TextureRect = button.get_node("Patch")
+		patch.texture = _texture(StitchedSewnPatches.icon_path(str(part.get("id", "")), slot)) if not part.is_empty() else null
+		patch.modulate = Color(0.5, 0.47, 0.47, 0.8) if torn else Color.WHITE
+		(button.get_node("Border") as TextureRect).texture = _texture(
+			StitchedSewnPatches.border_path(int(equipped.get("tier", 1)))) if not part.is_empty() and not torn else null
+		(button.get_node("Frayed") as TextureRect).texture = _texture(StitchedSewnPatches.ART + "frayed.png") if torn else null
+		# With a patch picture the slot word steps aside and the move name sits along the hem.
+		var pictured := patch.texture != null
+		(button.get_node("Slot") as Label).visible = not pictured
+		move_label.position = Vector2(8, 80) if pictured else Vector2(16, 54)
+		move_label.size = Vector2(98, 30) if pictured else Vector2(82, 36)
 		if not part.is_empty():
 			move_label.text = str(StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))).get("name", ""))
-			if bool(equipped.get("torn", false)):
+			if torn:
 				move_label.text = "torn"
 		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
 		button.tooltip_text = str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
@@ -635,7 +673,7 @@ func _refresh_bar() -> void:
 	more_buttons.re_tie.disabled = not cut
 	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
 	for action_id in hand_buttons:
-		hand_buttons[action_id].disabled = not hand_open
+		hand_buttons[action_id].disabled = not hand_open or battle.gift_spent(action_id)
 		hand_buttons[action_id].visible = not battle.is_over()
 	more_button.disabled = battle.is_over()
 	if battle.is_over():
@@ -651,7 +689,8 @@ func _refresh_bar() -> void:
 		if not line.begins_with("Round "):
 			shown_lines.append(line.replace("→ ", ""))
 	if not engine._hand_pending.is_empty():
-		log_label.text = "Wren reaches out: pick one of the dolls."
+		var at_foe := StitchedBattleScreen.hand_target_side(engine._hand_pending.get_slice(":", 0)) == "foe"
+		log_label.text = "Wren reaches out: pick one of the foes." if at_foe else "Wren reaches out: pick one of the dolls."
 	elif not engine._selected_part.is_empty():
 		log_label.text = "Pick a target."
 	else:
@@ -674,7 +713,7 @@ func _shade_parts() -> void:
 		var tone := Color.WHITE
 		if hand.disabled:
 			tone = Color(0.45, 0.42, 0.42, 0.85)
-		elif engine._hand_pending.begins_with(action_id):
+		elif engine._hand_pending.get_slice(":", 0) == action_id:
 			tone = Color(1.35, 1.12, 0.75)
 		elif hand.is_hovered() or hand.has_focus():
 			tone = Color(1.18, 1.08, 0.95)
@@ -852,12 +891,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	var slots := {KEY_1: "head", KEY_2: "arms", KEY_3: "torso", KEY_4: "legs"}
-	var hands := {KEY_Q: "steady", KEY_W: "shield_candle", KEY_E: "hold_back", KEY_R: "lift"}
+	var hand_keys := [KEY_Q, KEY_W, KEY_E, KEY_R]
+	var carried := engine.hand_slots()
 	if slots.has(event.keycode):
 		choose_part(slots[event.keycode])
-	elif hands.has(event.keycode):
-		if not hand_buttons[hands[event.keycode]].disabled:
-			_act(engine.choose_hand_action(hands[event.keycode]))
+	elif event.keycode in hand_keys and hand_keys.find(event.keycode) < carried.size():
+		var gift_id: String = carried[hand_keys.find(event.keycode)]
+		if hand_buttons.has(gift_id) and not hand_buttons[gift_id].disabled:
+			_act(engine.choose_hand_action(gift_id))
 	elif event.keycode == KEY_ESCAPE:
 		if more_panel.visible:
 			set_more_open(false)

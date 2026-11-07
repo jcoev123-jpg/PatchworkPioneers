@@ -322,7 +322,7 @@
           "acc": 85,
           "dmg": [6, 8],
           "crit": 0,
-          "effects": {},
+          "effects": {"tangled": 2},
           "self_move": 0,
           "move": "attack3"
         },
