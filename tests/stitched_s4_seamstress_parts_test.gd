@@ -204,7 +204,7 @@ const EXPECTED := {
 		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
-			{"mark": 1, "tangled": 2},
+			{"mark": 2, "tangled": 2},
 			{"mark": 2, "tangled": 2},
 			{"mark": 3, "tangled": 2},
 		],
@@ -226,6 +226,7 @@ func _initialize() -> void:
 	_test_live_rejections()
 	_test_needle_rain_multi()
 	_test_needle_rain_mark_bonus()
+	_test_bobbin_needle_followup()
 	_test_needle_rain_rear_launch()
 	_test_needle_rain_rejections()
 	_test_rear_launch_masks()
@@ -471,6 +472,11 @@ func _test_tiers() -> void:
 			if part_id == "seamstress_tether_loop_spools" and tier == 2:
 				_check(_int_dict(part["tiers"]["2"]["ability"]["effects"]) == {"tangled": 2},
 					"AC3: tier-II Tether explicitly retains Tangled 2 while its speed stat rises")
+			elif part_id == "seamstress_bobbin_snag_spools" and tier == 2:
+				_check(_int_dict(part["tiers"]["2"]["ability"]["effects"])
+					== {"mark": 2, "tangled": 2}
+					and int(part["tiers"]["2"]["stat"]["dodge"]) == 4,
+					"AC3: tier-II Bobbin explicitly retains Mark 2/Tangled 2 while Dodge rises to 4")
 			else:
 				_check(dmg != previous_damage or effects != previous_effects,
 					"AC3: %s tier %d really overrides its own damage or effects" % [part_id, tier])
@@ -917,7 +923,7 @@ func _test_snare_timelines() -> void:
 		for tier in [1, 2, 3]:
 			var label := "%s tier %d" % [part_id, tier]
 			var expected_tangled := 3 if part_id == "seamstress_tether_loop_spools" and tier == 3 else 2
-			var expected_mark: int = tier if part_id == "seamstress_bobbin_snag_spools" else 0
+			var expected_mark: int = (maxi(2, tier) if part_id == "seamstress_bobbin_snag_spools" else 0)
 			var witness := _snare_witness(part_id, tier, true)
 			_check(not witness.is_empty(), "AC1/2: a real seeded four-hero battle lands " + label)
 			if witness.is_empty():
@@ -1340,6 +1346,221 @@ func _test_needle_rain_multi() -> void:
 					"AC2: each landed needle of a mixed shower still Bleeds 3")
 		_check(mixed.size() == 3 and landed >= 1 and landed <= 2,
 			"AC2: a mixed shower still resolves all three foes with at least one hit and one miss")
+
+
+## AC2: Bobbin's tier-I Mark lasts through its target's first natural turn start, so the
+## real follow-up Needle Rain can still claim the existing +2 bonus. Both live battles wear
+## the authentic alternative arms AND legs; only the control's already-ticked Mark is erased.
+func _test_bobbin_needle_followup() -> void:
+	var witness := _bobbin_needle_witness()
+	_check(not witness.is_empty(),
+		"AC2: bounded seeds produce landed tier-I Bobbin, foe turn-start, and three-hit Needle Rain")
+	if witness.is_empty():
+		return
+	var marked: StitchedRules = witness["marked"]
+	var clean: StitchedRules = witness["clean"]
+	var bobbin: Dictionary = witness["bobbin"]
+	var marked_rain: Dictionary = witness["marked_rain"]
+	var clean_rain: Dictionary = witness["clean_rain"]
+	_check(marked.get_heroes().size() == 4 and marked.get_foes().size() == 3
+		and clean.get_heroes().size() == 4 and clean.get_foes().size() == 3,
+		"AC2: both seeded battles retain four real heroes and three real foes")
+	_check(_worn_part_id(marked.get_unit("seamstress"), "seamstress_bobbin_snag_spools")
+			== "seamstress_bobbin_snag_spools"
+		and _worn_part_id(marked.get_unit("seamstress"), "seamstress_needle_rain_needle")
+			== "seamstress_needle_rain_needle"
+		and int(marked.get_unit("seamstress")["rank"]) == 2
+		and int(marked.get_unit("moth_scribe")["rank"]) == 3
+		and int(marked.get_unit("moth_scribe")["prot"]) == 0,
+		"AC2: the real alternate arms/legs launch at ranks 2/3 against the unarmoured rank-3 foe")
+	var snag_result: Dictionary = bobbin["results"][0]
+	_check(bool(bobbin.get("ok", false)) and str(bobbin.get("ability", "")) == "bobbin_snag"
+		and str(snag_result.get("target", "")) == "moth_scribe"
+		and str(snag_result.get("target_side", "")) == "foe"
+		and bool(snag_result.get("hit", false)) and snag_result.has("roll")
+		and int(snag_result["roll"]) <= int(snag_result["hit_chance"])
+		and _status_duration(snag_result.get("statuses", []), "mark") == 2
+		and _status_duration(snag_result.get("statuses", []), "tangled") == 2,
+		"AC2: real tier-I Bobbin receipts its landed Mark 2 and Tangled 2")
+	_check(int(witness["first_mark"]) == 1 and int(witness["first_tangled"]) == 1
+		and int(witness["pre_rain_mark"]) == 1 and int(witness["pre_rain_clean"]) == 0,
+		"AC2: its actual first foe start ticks Mark 2 to 1; only the control loses Mark")
+	_check(bool(marked_rain.get("ok", false)) and bool(clean_rain.get("ok", false))
+		and str(marked_rain.get("ability", "")) == "needle_rain"
+		and str(clean_rain.get("ability", "")) == "needle_rain"
+		and str(marked_rain.get("part", "")) == "seamstress_needle_rain_needle"
+		and str(clean_rain.get("part", "")) == "seamstress_needle_rain_needle"
+		and marked_rain["results"].size() == 3 and clean_rain["results"].size() == 3,
+		"AC2: both legal multi-target showers spend a real Seamstress turn and receipt all foes")
+	var results := _results_by_target(marked_rain, clean_rain)
+	_check(results.size() == 3 and results.has("moth_scribe")
+		and results.has("fray_scavenger") and results.has("scissor_crab"),
+		"AC2: both showers resolve each of the three shipped foes exactly once")
+	if results.size() != 3:
+		return
+	for target in results:
+		var both: Dictionary = results[target]
+		var extra: Dictionary = both["marked"]
+		var baseline: Dictionary = both["clean"]
+		_check(bool(extra.get("hit", false)) and bool(baseline.get("hit", false))
+			and bool(extra.get("crit", false)) == bool(baseline.get("crit", false)),
+			"AC2: both same-seed copies land the same Needle Rain hit and crit on " + str(target))
+		_check(_status_duration(extra.get("statuses", []), "bleed") == 3
+			and _status_duration(baseline.get("statuses", []), "bleed") == 3,
+			"AC2: both showers apply the original tier-I Bleed 3 on " + str(target))
+		if str(target) == "moth_scribe":
+			_check(int(extra["damage"]) == int(baseline["damage"]) + 2
+				and int(extra["target_hp"]) == int(baseline["target_hp"]) - 2
+				and int(marked.get_unit(str(target))["hp"])
+					== int(clean.get_unit(str(target))["hp"]) - 2,
+				"AC2: Mark 1 after the foe tick causes exactly +2 direct Needle Rain damage and HP loss")
+			_check(extra.get("statuses", []) == baseline.get("statuses", [])
+				and int(marked.get_unit(str(target))["statuses"].get("mark", 0)) == 1
+				and not clean.get_unit(str(target))["statuses"].has("mark"),
+				"AC2: Needle Rain applies identical Bleed, neither refreshes nor consumes Bobbin Mark")
+		else:
+			_check(extra == baseline
+				and marked.get_unit(str(target)) == clean.get_unit(str(target)),
+				"AC2: unmarked " + str(target) + " has identical entire receipt and outcome")
+	_check(marked.rng_state() == clean.rng_state()
+		and marked.current_actor_id() == clean.current_actor_id()
+		and marked.current_actor_id() != "seamstress",
+		"AC2: the Mark-only control consumes identical RNG and exactly one real shower turn")
+	var second_marked := _to(marked, "moth_scribe")
+	var second_clean := _to(clean, "moth_scribe")
+	_check(second_marked and second_clean
+		and marked.current_actor_id() == "moth_scribe"
+		and clean.current_actor_id() == "moth_scribe"
+		and not marked.get_unit("moth_scribe")["statuses"].has("mark")
+		and not clean.get_unit("moth_scribe")["statuses"].has("mark"),
+		"AC2: with no reapplication, Bobbin Mark expires on the foe's second natural start")
+	_check(marked.rng_state() == clean.rng_state(),
+		"AC2: advancing to expiry does not diverge same-seed RNG")
+	var replay := _bobbin_needle_at(int(witness["seed"]))
+	_check(not replay.is_empty()
+		and replay["bobbin"] == bobbin
+		and replay["clean_rain"] == clean_rain
+		and replay["marked_rain"] == marked_rain,
+		"AC3: the same seed reproduces both real Bobbin and Needle Rain receipts")
+	if not replay.is_empty():
+		var replay_marked: StitchedRules = replay["marked"]
+		var replay_clean: StitchedRules = replay["clean"]
+		var replay_ticked := _to(replay_marked, "moth_scribe") and _to(replay_clean, "moth_scribe")
+		_check(replay_ticked
+			and replay_marked.state_snapshot() == marked.state_snapshot()
+			and replay_clean.state_snapshot() == clean.state_snapshot()
+			and replay_marked.rng_state() == marked.rng_state()
+			and replay_clean.rng_state() == clean.rng_state(),
+			"AC3: both paired combats replay all turns, expiry, complete state and RNG")
+
+
+func _bobbin_needle_witness() -> Dictionary:
+	for seed_value in range(1, 200):
+		var pair := _bobbin_needle_at(seed_value)
+		if pair.is_empty():
+			continue
+		var results := _results_by_target(pair["marked_rain"], pair["clean_rain"])
+		if results.size() != 3:
+			continue
+		var all_landed := true
+		for target in results:
+			if not bool(results[target]["marked"].get("hit", false)) \
+					or not bool(results[target]["clean"].get("hit", false)):
+				all_landed = false
+				break
+		if all_landed:
+			return pair
+	return {}
+
+
+## Natural turn-start and legal use_part actions are identical in both copies. Clearing only
+## Mark AFTER its first foe tick isolates the +2 bonus without touching RNG or protection.
+func _bobbin_needle_at(seed_value: int) -> Dictionary:
+	var kit := NEEDLE_KIT.duplicate(true)
+	kit["legs"] = "seamstress_bobbin_snag_spools"
+	var marked := _build_battle(seed_value, 1, kit, false)
+	var clean := _build_battle(seed_value, 1, kit, false)
+	if marked == null or clean == null or marked.state_snapshot() != clean.state_snapshot():
+		return {}
+	if not _to(marked, "seamstress") or not _to(clean, "seamstress"):
+		return {}
+	if marked.state_snapshot() != clean.state_snapshot() or marked.rng_state() != clean.rng_state():
+		return {}
+	if marked.get_foes().size() != 3 or marked.get_heroes().size() != 4:
+		return {}
+	if _worn_part_id(marked.get_unit("seamstress"), "seamstress_needle_rain_needle") \
+			!= "seamstress_needle_rain_needle":
+		return {}
+	if _worn_part_id(marked.get_unit("seamstress"), "seamstress_bobbin_snag_spools") \
+			!= "seamstress_bobbin_snag_spools":
+		return {}
+	if int(marked.get_unit("seamstress")["rank"]) != 2 \
+			or int(marked.get_unit("moth_scribe")["rank"]) != 3 \
+			or int(marked.get_unit("moth_scribe")["prot"]) != 0:
+		return {}
+	var bobbin := marked.use_part("seamstress_bobbin_snag_spools", 3)
+	var bobbin_control := clean.use_part("seamstress_bobbin_snag_spools", 3)
+	if bobbin != bobbin_control or not bool(bobbin.get("ok", false)) \
+			or bobbin.get("results", []).size() != 1 \
+			or not bool(bobbin["results"][0].get("hit", false)):
+		return {}
+	if int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 2 \
+			or int(clean.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 2 \
+			or int(marked.get_unit("moth_scribe")["statuses"].get("tangled", 0)) != 2:
+		return {}
+	if not _to(marked, "moth_scribe") or not _to(clean, "moth_scribe"):
+		return {}
+	var first_mark := int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0))
+	var first_tangled := int(marked.get_unit("moth_scribe")["statuses"].get("tangled", 0))
+	if first_mark != 1 or first_tangled != 1 \
+			or first_mark != int(clean.get_unit("moth_scribe")["statuses"].get("mark", 0)) \
+			or marked.state_snapshot() != clean.state_snapshot() \
+			or marked.rng_state() != clean.rng_state():
+		return {}
+	clean._units["moth_scribe"]["statuses"].erase("mark")
+	if not _to(marked, "seamstress") or not _to(clean, "seamstress"):
+		return {}
+	var pre_rain_mark := int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0))
+	var pre_rain_clean := int(clean.get_unit("moth_scribe")["statuses"].get("mark", 0))
+	if pre_rain_mark != 1 or pre_rain_clean != 0 \
+			or marked.rng_state() != clean.rng_state():
+		return {}
+	if marked.get_unit("moth_scribe")["hp"] != clean.get_unit("moth_scribe")["hp"] \
+			or marked.get_unit("moth_scribe")["statuses"].get("tangled", 0) \
+				!= clean.get_unit("moth_scribe")["statuses"].get("tangled", 0):
+		return {}
+	for other_id in ["fray_scavenger", "scissor_crab"]:
+		if marked.get_unit(other_id) != clean.get_unit(other_id):
+			return {}
+	var marked_rain := marked.use_part("seamstress_needle_rain_needle", 1)
+	var clean_rain := clean.use_part("seamstress_needle_rain_needle", 1)
+	if not bool(marked_rain.get("ok", false)) or not bool(clean_rain.get("ok", false)) \
+			or marked_rain.get("results", []).size() != 3 \
+			or clean_rain.get("results", []).size() != 3:
+		return {}
+	var results := _results_by_target(marked_rain, clean_rain)
+	if results.size() != 3 or not results.has("moth_scribe"):
+		return {}
+	var marked_hit: Dictionary = results["moth_scribe"]["marked"]
+	var clean_hit: Dictionary = results["moth_scribe"]["clean"]
+	if not bool(marked_hit.get("hit", false)) or not bool(clean_hit.get("hit", false)) \
+			or int(marked_hit["damage"]) != int(clean_hit["damage"]) + 2 \
+			or int(marked_hit["target_hp"]) != int(clean_hit["target_hp"]) - 2 \
+			or marked.rng_state() != clean.rng_state() \
+			or not _shower_unticked(marked, marked_rain["results"]) \
+			or not _shower_unticked(clean, clean_rain["results"]):
+		return {}
+	for other_id in ["fray_scavenger", "scissor_crab"]:
+		if not results.has(other_id) \
+				or results[other_id]["marked"] != results[other_id]["clean"] \
+				or marked.get_unit(other_id) != clean.get_unit(other_id):
+			return {}
+	return {
+		"seed": seed_value, "marked": marked, "clean": clean,
+		"bobbin": bobbin, "marked_rain": marked_rain, "clean_rain": clean_rain,
+		"first_mark": first_mark, "first_tangled": first_tangled,
+		"pre_rain_mark": pre_rain_mark, "pre_rain_clean": pre_rain_clean,
+	}
 
 
 # ---------------------------------------------------------------- AC2: Mark bonus on struck foes
