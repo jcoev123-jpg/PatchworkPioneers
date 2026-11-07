@@ -38,6 +38,8 @@ func _initialize() -> void:
 	_test_overload_back_rank()
 	_test_heal_and_guard()
 	_test_mark_overload()
+	_test_gear_brace_catalog()
+	_test_gear_brace_rank_four()
 	_test_invalid_actions_and_equipment()
 	_test_replay()
 	for message in failures:
@@ -196,8 +198,9 @@ func _test_catalog() -> void:
 			and int(tier_ward_stat.get("prot", 0)) == [4, 5, 7][tier - 1]
 			and int(tier_ward["effects"].get("thorns", 0)) == [2, 3, 4][tier - 1],
 			"AC1: tier %d Casing Ward keeps its authored HP/PROT/Thorns ladder" % tier)
-	# AC1: only the two named base launches grow to hero rank 4; every other authored launch,
-	# every tier and every named ability number stays exactly as shipped.
+	# AC1: only the two named base launches grow to hero rank 4, and Gear Brace's tier-III
+	# override is the one tier that also reaches rank 4; every other authored launch, every tier
+	# and every named ability number stays exactly as shipped.
 	var expected_launches := {
 		"tinker_head_cog_shot": [2, 3, 4],
 		"tinker_arms_scrap_bomb": [3, 4],
@@ -225,8 +228,14 @@ func _test_catalog() -> void:
 			"AC1: base launch and derived mask are exactly authored for " + id)
 		for tier in [1, 2, 3]:
 			var tier_ability := StitchedParts.ability_at_tier(authored, tier)
-			_check(tier_ability["launch"] == expected and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(expected),
-				"AC1: tier %d keeps the base launch mask of %s" % [tier, id])
+			# Local exception, not a global rule: Gear Brace alone gains hero rank 4 at tier III.
+			var tier_launch: Array = expected
+			var tier_note := "keeps the base launch mask of "
+			if id == "tinker_torso_gear_brace" and tier == 3:
+				tier_launch = [1, 2, 3, 4]
+				tier_note = "reaches hero rank 4 instead of the base launch mask of "
+			_check(tier_ability["launch"] == tier_launch and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(tier_launch),
+				"AC1: tier %d %s%s" % [tier, tier_note, id])
 	for id in expected_targets:
 		var expected_target: Array = expected_targets[id]
 		var authored_target: Dictionary = accepted["by_id"][id]
@@ -1627,6 +1636,494 @@ func _test_heal_and_guard() -> void:
 	_check(healed, "AC2: genuine foe wound then Tinker Tune Up restores HP and grants temporary Dodge")
 	_check(guarded, "AC2: live foe attack on protected Warden is intercepted by Tinker's Gear Brace")
 	_check(thorned, "AC2: live foe hit on Tinker's Casing Ward triggers Thorns retaliation")
+
+
+## AC1: the shipped Tinker catalog's Gear Brace at all three stitch tiers. Only its tier-III
+## override adds hero rank 4 to the launch ranks; the base ability, tier I and tier II stay at
+## hero ranks 1-3, and the target, numbers, pose and torso stats keep their authored values.
+## Casing Ward remains a separate self Thorns torso option and every other record is unchanged.
+func _test_gear_brace_catalog() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)), "AC1: StitchedParts.load_catalog accepts the revised Gear Brace catalog")
+	if not bool(accepted.get("ok", false)):
+		return
+	var part_id := "tinker_torso_gear_brace"
+	_check(accepted["by_id"].has(part_id), "AC1: Gear Brace is present in the Tinker catalog")
+	if not accepted["by_id"].has(part_id):
+		return
+	var part: Dictionary = accepted["by_id"][part_id]
+	_check(str(part["name"]) == "Gear Brace" and str(part["slot"]) == "torso"
+		and str(part["owner"]) == "tinker" and part["stat"] == {"max_hp": 5, "prot": 5},
+		"AC1: Gear Brace stays Tinker's named torso part with its authored base stat")
+	var gear_text := "Guard one living ally in ranks one through four, taking the hits aimed at it for 2 turns at stitch tier I, 3 at tier II and 4 at tier III; tiers I and II cast from hero ranks one through three, tier III also from rank four."
+	_check(str(part["text"]) == gear_text,
+		"AC1: Gear Brace carries its revised, truthful rules text")
+	var lowered := str(part["text"]).to_lower()
+	_check(lowered.contains("ranks one through three") and lowered.contains("rank four")
+		and lowered.contains("2 turns") and lowered.contains("3 at tier ii")
+		and lowered.contains("4 at tier iii")
+		and not lowered.contains("card") and not lowered.contains("block"),
+		"AC1: Gear Brace's text explains both launch reaches and the 2/3/4 Guard ladder without a card cost or Block")
+	_check(str(part["ability"]["id"]) == "tinker_gear_brace_move"
+		and str(part["ability"]["name"]) == "Gear Brace"
+		and str(part["ability"]["kind"]) == "guard"
+		and str(part["ability"]["target_side"]) == "ally"
+		and not bool(part["ability"]["multi"])
+		and int(part["ability"]["crit"]) == 0 and int(part["ability"]["mark_damage"]) == 0
+		and str(part["ability"]["move"]) == "guard",
+		"AC1: base Gear Brace stays Tinker's single-ally guard ability in the guard pose")
+	_check(part["ability"]["launch"] == [1, 2, 3]
+		and int(part["ability"]["launch_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+		and part["ability"]["target"] == [1, 2, 3, 4]
+		and int(part["ability"]["target_mask"]) == StitchedParts.ALL_RANKS_MASK
+		and int(part["ability"]["effects"]["guard"]) == 2,
+		"AC1: base Gear Brace launches from hero ranks 1-3 and Guards one ally in ranks 1-4 for 2")
+	var expected_launch := [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]]
+	var expected_guard := [2, 3, 4]
+	var expected_hp := [5, 7, 9]
+	var expected_prot := [5, 6, 8]
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
+			"AC1: tier %d Gear Brace resolves to a valid ability" % tier)
+		_check(ability["launch"] == expected_launch[tier - 1]
+			and int(ability["launch_mask"]) == StitchedParts.rank_mask(expected_launch[tier - 1]),
+			"AC1: tier %d Gear Brace resolves launch %s with the derived mask"
+				% [tier, str(expected_launch[tier - 1])])
+		_check(ability["target"] == [1, 2, 3, 4] and int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK,
+			"AC1: tier %d Gear Brace still targets one ally in ranks 1-4" % tier)
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), rank),
+				"AC1: tier %d Gear Brace reaches ally rank %d" % [tier, rank])
+		_check(StitchedParts.ranks_allowed(int(ability["launch_mask"]), 4) == (tier == 3)
+			and StitchedParts.ranks_allowed(int(ability["launch_mask"]), 1)
+			and StitchedParts.ranks_allowed(int(ability["launch_mask"]), 2)
+			and StitchedParts.ranks_allowed(int(ability["launch_mask"]), 3),
+			"AC1: tier %d Gear Brace launches from hero ranks 1-3%s" % [tier, " and 4" if tier == 3 else " only"])
+		_check(int(ability["acc"]) == 100 and ability["dmg"] == [0, 0]
+			and int(ability["crit"]) == 0 and int(ability["mark_damage"]) == 0
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "guard"
+			and str(ability["kind"]) == "guard" and str(ability["target_side"]) == "ally"
+			and not bool(ability["multi"])
+			and ability["effects"] == {"guard": expected_guard[tier - 1]},
+			"AC1: tier %d Gear Brace keeps ACC 100, zero damage, no self move, Guard %d and its pose"
+				% [tier, expected_guard[tier - 1]])
+		var stat := StitchedParts.stat_at_tier(part, tier)
+		_check(int(stat.get("max_hp", 0)) == expected_hp[tier - 1]
+			and int(stat.get("prot", 0)) == expected_prot[tier - 1] and stat.size() == 2,
+			"AC1: tier %d Gear Brace keeps torso max_hp %d and prot %d"
+				% [tier, expected_hp[tier - 1], expected_prot[tier - 1]])
+	# The tier reads never rewrite the frozen base ability kept in memory.
+	_check(part["ability"]["launch"] == [1, 2, 3]
+		and int(part["ability"]["launch_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+		and int(part["ability"]["effects"]["guard"]) == 2,
+		"AC1: tier reads leave Gear Brace's base launch and Guard 2 untouched in memory")
+	_check(part["tiers"]["3"]["ability"]["launch"] == [1, 2, 3, 4]
+		and part["tiers"]["3"]["ability"]["effects"] == {"guard": 4},
+		"AC1: the tier-III override adds only the rank-4 launch beside its Guard 4")
+	# Only Gear Brace tier III changes launch ranks through a tier override; every other part
+	# keeps its exact base launch and derived mask at every stitch tier.
+	var launch_changes := 0
+	for other_id in ALL_IDS:
+		var other: Dictionary = accepted["by_id"][other_id]
+		for tier in [1, 2, 3]:
+			var other_ability := StitchedParts.ability_at_tier(other, tier)
+			_check(bool(StitchedParts.validate_ability(other_ability).get("ok", false)),
+				"AC1: %s still resolves a legal tier-%d ability" % [other_id, tier])
+			if other_ability["launch"] != other["ability"]["launch"]:
+				launch_changes += 1
+				_check(other_id == part_id and tier == 3,
+					"AC1: only tier-III Gear Brace changes launch ranks through a tier override")
+			elif other_id != part_id:
+				_check(other_ability["launch"] == other["ability"]["launch"]
+					and int(other_ability["launch_mask"]) == int(other["ability"]["launch_mask"]),
+					"AC1: unchanged %s keeps its exact base launch at tier %d" % [other_id, tier])
+	_check(launch_changes == 1,
+		"AC1: exactly one tier override changes launch ranks in the whole Tinker catalog")
+	# The new override is validated like every other authored rank list: rank 5 fails closed.
+	var bad_launch: Dictionary = part.duplicate(true)
+	bad_launch["tiers"]["3"]["ability"]["launch"] = [1, 2, 3, 5]
+	_check(not bool(StitchedParts.validate_part(bad_launch).get("ok", false)),
+		"AC3: a tier-III Gear Brace override with rank 5 still fails validation")
+	var duplicate_rank: Dictionary = part.duplicate(true)
+	duplicate_rank["tiers"]["3"]["ability"]["launch"] = [1, 2, 3, 3]
+	_check(not bool(StitchedParts.validate_part(duplicate_rank).get("ok", false)),
+		"AC3: a tier-III Gear Brace override repeating a launch rank still fails validation")
+
+
+## The shipped S2 preview with genuine four heroes and three foes where Tinker really wears the
+## alternate Gear Brace torso at the requested tier plus Spare Screws legs at tier I. The
+## preview file itself is never edited; only Tinker's equipped IDs change, and only the torso
+## may be swapped for another part or flagged torn for the fail-closed checks.
+func _gear_brace_battle(
+	tier: int, seed_value: int, torso_id: String = "", torn_torso: bool = false
+) -> StitchedRules:
+	var config := _config(ALTERNATES["torso"], tier, seed_value)
+	if config.is_empty():
+		return null
+	if not torso_id.is_empty():
+		config["heroes"][2]["parts"]["torso"] = {"id": torso_id, "tier": tier}
+	config["heroes"][2]["parts"]["legs"] = {"id": ALTERNATES["legs"], "tier": 1}
+	if torn_torso:
+		config["heroes"][2]["parts"]["torso"]["torn"] = true
+	var result := StitchedRules.create(config)
+	if not bool(result.get("ok", false)):
+		return null
+	return result["battle"] as StitchedRules
+
+
+## A genuine Spare Screws action walks rank-3 Tinker behind the rank-4 Lantern Monk and then
+## advances to her next scheduled turn, so the caller really stands there alive in rank 4.
+func _gear_brace_to_back_rank(battle: StitchedRules) -> Dictionary:
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 3:
+		return {}
+	var swap := battle.use_part(ALTERNATES["legs"], 3)
+	if not bool(swap.get("ok", false)) \
+			or str(swap.get("actor", "")) != "tinker" \
+			or str(swap.get("part", "")) != ALTERNATES["legs"] \
+			or str(swap.get("ability", "")) != "tinker_spare_screws_move":
+		return {}
+	if not bool(swap.get("self_move", {}).get("ok", false)) or int(swap["self_move"].get("to", 0)) != 4:
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) != 4 or int(battle.get_unit("lantern_monk")["rank"]) != 3:
+		return {}
+	if battle.current_actor_id() == "tinker" or not _to(battle, "tinker") or battle.is_over():
+		return {}
+	var tinker := battle.get_unit("tinker")
+	if int(tinker.get("rank", 0)) != 4 or bool(tinker.get("lost", false)) or int(tinker.get("hp", 0)) <= 0:
+		return {}
+	return {"swap": swap}
+
+
+## AC2 witness: authentic 4v3 preview, tier-III Gear Brace plus Spare Screws. Tinker's own Spare
+## Screws swaps her into hero rank 4; on her next genuine turn the rank-4 Guard refuses illegal
+## ally ranks without a spend, then Guards the living rank-1 Warden for Guard 4, spends exactly
+## one turn, and a real Fray Scavenger sack_swing is redirected onto her.
+func _gear_brace_rank_four_witness(seed_value: int) -> Dictionary:
+	var battle := _gear_brace_battle(3, seed_value)
+	var walked := _gear_brace_to_back_rank(battle)
+	if walked.is_empty():
+		return {}
+	var torso: Dictionary = battle.get_unit("tinker")["parts"]["torso"]
+	if str(torso.get("id", "")) != ALTERNATES["torso"] or int(torso.get("tier", 0)) != 3:
+		return {}
+	var warden := battle.get_unit("warden")
+	if warden.is_empty() or int(warden.get("rank", 0)) != 1 \
+			or bool(warden.get("lost", true)) or int(warden.get("hp", 0)) <= 0:
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	var refusals: Array = []
+	for target_rank in [0, 5]:
+		refusals.append(battle.use_part(ALTERNATES["torso"], target_rank))
+	var after_refusals := battle.state_snapshot()
+	var actor_after_refusals := battle.current_actor_id()
+	var cast := battle.use_part(ALTERNATES["torso"], 1)
+	if not bool(cast.get("ok", false)) or str(cast.get("target", "")) != "warden":
+		return {}
+	var after := battle.state_snapshot()
+	var rng_after := battle.rng_state()
+	var tinker_after_cast := battle.get_unit("tinker")
+	var off_turn := battle.use_part(ALTERNATES["torso"], 1)
+	var after_off_turn := battle.state_snapshot()
+	var rng_after_off_turn := battle.rng_state()
+	var actor_after_off_turn := battle.current_actor_id()
+	# A naturally scheduled living Fray Scavenger swing at the guarded rank 1 must name Tinker.
+	if int(battle.get_unit("tinker")["statuses"].get("guard", 0)) <= 0 or not _to(battle, "fray_scavenger"):
+		return {}
+	var scavenger := battle.get_unit("fray_scavenger")
+	if scavenger.is_empty() or bool(scavenger.get("dead", true)) or int(scavenger.get("hp", 0)) <= 0:
+		return {}
+	var warden_before_strike := int(battle.get_unit("warden")["hp"])
+	var tinker_before_strike := int(battle.get_unit("tinker")["hp"])
+	var strike := battle.use_foe_ability("sack_swing", 1)
+	if not bool(strike.get("ok", false)) or strike.get("results", []).size() != 1:
+		return {}
+	if str(strike["results"][0].get("guarded_by", "")) != "tinker":
+		return {}
+	return {
+		"battle": battle,
+		"swap": walked["swap"],
+		"warden_before": warden,
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"refusals": refusals,
+		"after_refusals": after_refusals,
+		"actor_after_refusals": actor_after_refusals,
+		"cast": cast,
+		"after": after,
+		"rng_after": rng_after,
+		"tinker_after_cast": tinker_after_cast,
+		"off_turn": off_turn,
+		"after_off_turn": after_off_turn,
+		"rng_after_off_turn": rng_after_off_turn,
+		"actor_after_off_turn": actor_after_off_turn,
+		"warden_before_strike": warden_before_strike,
+		"tinker_before_strike": tinker_before_strike,
+		"strike": strike,
+	}
+
+
+## AC3 witness: the same authentic rank-4 setup with tier-I or tier-II Gear Brace. The cast must
+## be refused for its launch rank before the actor, snapshot or seeded RNG can change.
+func _gear_brace_rank_four_refusal_witness(tier: int, seed_value: int) -> Dictionary:
+	var battle := _gear_brace_battle(tier, seed_value)
+	var walked := _gear_brace_to_back_rank(battle)
+	if walked.is_empty():
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	var cast := battle.use_part(ALTERNATES["torso"], 1)
+	return {
+		"battle": battle,
+		"swap": walked["swap"],
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"cast": cast,
+		"after": battle.state_snapshot(),
+		"actor_after": battle.current_actor_id(),
+	}
+
+
+## AC3 witness: a real rank-4 Tinker whose torso slot holds another part or a torn Gear Brace.
+## The Guard call must fail closed before any state, turn or RNG change.
+func _gear_brace_equipment_refusal_witness(
+	torso_id: String, torn_torso: bool, seed_value: int
+) -> Dictionary:
+	var battle := _gear_brace_battle(3, seed_value, torso_id, torn_torso)
+	var walked := _gear_brace_to_back_rank(battle)
+	if walked.is_empty():
+		return {}
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var refusal := battle.use_part(ALTERNATES["torso"], 1)
+	return {
+		"battle": battle,
+		"before": before,
+		"rng": rng,
+		"refusal": refusal,
+		"after": battle.state_snapshot(),
+		"actor": battle.current_actor_id(),
+	}
+
+
+## AC3 witness: the authentic rank-4 tier-III setup with one controlled state counterfactual in
+## test memory only (like the existing Mark-erase twins): the living rank-1 Warden is marked
+## lost. The Guard must refuse that empty ally rank and can never reach the living Fray
+## Scavenger that holds enemy rank 1.
+func _gear_brace_lost_ally_witness(seed_value: int) -> Dictionary:
+	var battle := _gear_brace_battle(3, seed_value)
+	var walked := _gear_brace_to_back_rank(battle)
+	if walked.is_empty():
+		return {}
+	var warden := battle.get_unit("warden")
+	if warden.is_empty() or int(warden.get("rank", 0)) != 1 or bool(warden.get("lost", false)):
+		return {}
+	var scavenger := battle.get_unit("fray_scavenger")
+	if scavenger.is_empty() or int(scavenger.get("rank", 0)) != 1 \
+			or bool(scavenger.get("dead", true)) or int(scavenger.get("hp", 0)) <= 0:
+		return {}
+	battle._units["warden"]["lost"] = true
+	battle._units["warden"]["hp"] = 0
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var refusal := battle.use_part(ALTERNATES["torso"], 1)
+	return {
+		"battle": battle,
+		"swap": walked["swap"],
+		"before": before,
+		"rng": rng,
+		"refusal": refusal,
+		"after": battle.state_snapshot(),
+		"actor": battle.current_actor_id(),
+		"scavenger_before": scavenger,
+		"scavenger_after": battle.get_unit("fray_scavenger"),
+	}
+
+
+## AC2/AC3: tier-III Gear Brace legally Guards from real hero rank 4 after a genuine Spare
+## Screws swap, is intercepted onto Tinker by a living foe's sack_swing, and replays exactly.
+## Tiers I and II refuse that same rank-4 launch, and the tier-III attempts at an empty ally
+## rank, the off-turn repeat, a torn torso and an unequipped torso all fail closed.
+func _test_gear_brace_rank_four() -> void:
+	var witness: Dictionary = {}
+	var witness_seed := 0
+	for seed_value in range(502000, 502080):
+		witness = _gear_brace_rank_four_witness(seed_value)
+		if not witness.is_empty():
+			witness_seed = seed_value
+			break
+	_check(not witness.is_empty(),
+		"AC2: real seeded rank-4 tier-III Gear Brace witness exists in the shipped 4v3 preview")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var swap: Dictionary = witness["swap"]
+	var cast: Dictionary = witness["cast"]
+	var before: Dictionary = witness["before"]
+	var after: Dictionary = witness["after"]
+	_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
+		and str(battle.get_unit("tinker")["parts"]["torso"]["id"]) == ALTERNATES["torso"]
+		and int(battle.get_unit("tinker")["parts"]["torso"]["tier"]) == 3
+		and str(battle.get_unit("tinker")["parts"]["legs"]["id"]) == ALTERNATES["legs"],
+		"AC2: the witness keeps four real heroes, three foes and Tinker wearing Gear Brace plus Spare Screws")
+	_check(str(swap.get("actor", "")) == "tinker" and str(swap.get("part", "")) == ALTERNATES["legs"]
+		and str(swap.get("ability", "")) == "tinker_spare_screws_move"
+		and int(swap["self_move"].get("from", 0)) == 3 and int(swap["self_move"].get("to", 0)) == 4
+		and str(swap["self_move"].get("swapped", "")) == "lantern_monk"
+		and int(battle.get_unit("tinker")["rank"]) == 4 and int(battle.get_unit("lantern_monk")["rank"]) == 3,
+		"AC2: a legal Spare Screws action really swaps rank-3 Tinker behind the rank-4 Lantern Monk")
+	var refusals: Array = witness["refusals"]
+	var errors: Array[String] = []
+	var all_refused := refusals.size() == 2
+	for refusal in refusals:
+		all_refused = all_refused and not bool(refusal.get("ok", false))
+		errors.append(str(refusal.get("error", "")))
+	_check(all_refused and errors[0].contains("rank 0") and errors[1].contains("rank 5"),
+		"AC3: tier-III Gear Brace refuses ally ranks 0 and 5 before any spend")
+	_check(witness["before"] == witness["after_refusals"]
+		and int(witness["rng"]) == int(witness["after_refusals"].get("rng_state", -1))
+		and str(witness["actor_after_refusals"]) == "tinker",
+		"AC3: those refused ally ranks change no state, spend no turn and draw no seeded RNG")
+	_check(str(cast.get("action", "")) == "ability" and str(cast.get("actor", "")) == "tinker"
+		and str(cast.get("part", "")) == ALTERNATES["torso"]
+		and str(cast.get("ability", "")) == "tinker_gear_brace_move"
+		and str(cast.get("target", "")) == "warden" and not cast.has("self_move"),
+		"AC2: tier-III Gear Brace casts from hero rank 4 as Tinker's own equipped torso action on Warden")
+	var results: Array = cast.get("results", [])
+	_check(results.size() == 1 and str(results[0].get("target", "")) == "warden"
+		and str(results[0].get("target_side", "")) == "hero"
+		and int(results[0].get("target_rank", 0)) == 1 and bool(results[0].get("hit", false)),
+		"AC2: exactly one ally receipt names the living rank-1 Warden, never a foe")
+	var guard_receipt := -1
+	var guard_names := ""
+	if not results.is_empty():
+		for status in results[0].get("statuses", []):
+			if str(status.get("status", "")) == "guard":
+				guard_receipt = int(status.get("duration", 0))
+				guard_names = str(status.get("guards", ""))
+	_check(guard_receipt == 4 and guard_names == "warden",
+		"AC2: the cast receipt carries the tier-III Guard 4 on the protected Warden")
+	var tinker_after_cast: Dictionary = witness["tinker_after_cast"]
+	_check(str(tinker_after_cast.get("guard_target", "")) == "warden"
+		and int(tinker_after_cast.get("statuses", {}).get("guard", 0)) == 4,
+		"AC2: the real Tinker holds guard_target Warden and exactly Guard 4 right after the cast")
+	var tinker_after := battle.get_unit("tinker")
+	_check(str(tinker_after.get("guard_target", "")) == "warden"
+		and int(tinker_after.get("statuses", {}).get("guard", 0)) >= 1,
+		"AC2: the Guard is still live on the real Tinker when the foe attacks, so it is turn-based")
+	var warden_after := battle.get_unit("warden")
+	_check(int(warden_after.get("hp", -1)) == int(witness["warden_before"].get("hp", 0)),
+		"AC2: guarding costs the Warden no HP")
+	var advanced_once := (int(after.get("round", -1)) == int(before.get("round", -2))
+			and int(after.get("turn_index", -1)) == int(before.get("turn_index", -2)) + 1) \
+		or int(after.get("round", -1)) == int(before.get("round", -2)) + 1
+	_check(str(witness["actor_before"]) == "tinker" and battle.current_actor_id() != "tinker"
+		and advanced_once and before != after,
+		"AC2: the rank-4 Guard spends exactly one scheduled Tinker turn and changes real battle state")
+	_check(not bool(witness["off_turn"].get("ok", false))
+		and witness["after"] == witness["after_off_turn"]
+		and int(witness["rng_after"]) == int(witness["after_off_turn"].get("rng_state", -1))
+		and str(witness["actor_after_off_turn"]) != "tinker",
+		"AC3: an off-turn repeat after the spent Guard refuses without any further change")
+	var strike: Dictionary = witness["strike"]
+	var hit: Dictionary = strike["results"][0]
+	_check(str(strike.get("actor", "")) == "fray_scavenger" and str(strike.get("ability", "")) == "sack_swing",
+		"AC2: a real living Fray Scavenger swings sack_swing while the Guard stands")
+	_check(str(hit.get("guarded_by", "")) == "tinker" and str(hit.get("target", "")) == "tinker"
+		and int(hit.get("target_rank", 0)) == 4,
+		"AC2: the aimed sack_swing at Warden is redirected onto the rank-4 guardian Tinker")
+	_check(int(battle.get_unit("warden")["hp"]) == int(witness["warden_before_strike"]),
+		"AC2: the Warden takes none of the redirected blow")
+	if bool(hit.get("hit", false)):
+		_check(int(witness["tinker_before_strike"]) - int(hit.get("target_hp", -1)) == int(hit.get("damage", 0)),
+			"AC2: the redirected hit lands its receipted damage on Tinker's real HP")
+	var replay := _gear_brace_rank_four_witness(witness_seed)
+	_check(not replay.is_empty() and replay["swap"] == swap and replay["cast"] == cast
+		and replay["strike"] == strike and replay["before"] == witness["before"]
+		and replay["after_refusals"] == witness["after_refusals"]
+		and replay["after"] == witness["after"] and replay["after_off_turn"] == witness["after_off_turn"]
+		and int(replay["rng_after_off_turn"]) == int(witness["rng_after_off_turn"])
+		and int(replay["after"].get("rng_state", -1)) == int(witness["after"].get("rng_state", -2)),
+		"AC3: same seed and action schedule replay the receipt, state snapshots and exact RNG")
+	for tier in [1, 2]:
+		var refusal_witness: Dictionary = {}
+		for seed_value in range(502000, 502040):
+			refusal_witness = _gear_brace_rank_four_refusal_witness(tier, seed_value)
+			if not refusal_witness.is_empty():
+				break
+		_check(not refusal_witness.is_empty(),
+			"AC3: real seeded rank-4 tier-%d Gear Brace refusal witness exists" % tier)
+		if refusal_witness.is_empty():
+			continue
+		var refusal_battle: StitchedRules = refusal_witness["battle"]
+		var refused: Dictionary = refusal_witness["cast"]
+		_check(int(refusal_battle.get_unit("tinker")["rank"]) == 4
+			and str(refusal_battle.get_unit("tinker")["parts"]["torso"]["id"]) == ALTERNATES["torso"]
+			and int(refusal_battle.get_unit("tinker")["parts"]["torso"]["tier"]) == tier,
+			"AC3: tier-%d Tinker really stands in hero rank 4 wearing Gear Brace" % tier)
+		_check(not bool(refused.get("ok", false)) and str(refused.get("error", "")).contains("rank 4"),
+			"AC3: tier-%d Gear Brace refuses the rank-4 launch itself (error names rank 4)" % tier)
+		_check(refusal_witness["before"] == refusal_witness["after"]
+			and int(refusal_witness["rng"]) == int(refusal_witness["after"].get("rng_state", -1))
+			and str(refusal_witness["actor_after"]) == "tinker"
+			and str(refusal_witness["actor_before"]) == "tinker",
+			"AC3: tier-%d refused rank-4 cast changes no snapshot, actor or seeded RNG" % tier)
+	var lost: Dictionary = {}
+	for seed_value in range(502000, 502040):
+		lost = _gear_brace_lost_ally_witness(seed_value)
+		if not lost.is_empty():
+			break
+	_check(not lost.is_empty(), "AC3: real seeded rank-4 tier-III witness with an empty ally rank exists")
+	if not lost.is_empty():
+		var lost_battle: StitchedRules = lost["battle"]
+		var lost_refusal: Dictionary = lost["refusal"]
+		_check(int(lost_battle.get_unit("tinker")["rank"]) == 4
+			and bool(lost_battle.get_unit("warden").get("lost", false)),
+			"AC3: the rank-4 Tinker faces a genuinely emptied ally rank 1")
+		_check(not bool(lost_refusal.get("ok", false))
+			and str(lost_refusal.get("error", "")).contains("no legal target in rank 1"),
+			"AC3: tier-III Gear Brace refuses the dead ally's rank 1 for lack of a living ally")
+		_check(lost["before"] == lost["after"]
+			and int(lost["rng"]) == int(lost["after"].get("rng_state", -1))
+			and str(lost["actor"]) == "tinker",
+			"AC3: the empty-ally refusal changes no state, spend or seeded RNG")
+		_check(int(lost["scavenger_after"].get("hp", -1)) == int(lost["scavenger_before"].get("hp", -2))
+			and int(lost["scavenger_after"].get("rank", 0)) == 1
+			and not bool(lost["scavenger_after"].get("dead", true)),
+			"AC3: the ally-side Guard never reaches across the line to the living rank-1 foe")
+	var bare: Dictionary = {}
+	for seed_value in range(502000, 502020):
+		bare = _gear_brace_equipment_refusal_witness(STARTERS["torso"], false, seed_value)
+		if not bare.is_empty():
+			break
+	_check(not bare.is_empty(), "AC3: the unequipped-torso witness reaches a real rank-4 Tinker turn")
+	if not bare.is_empty():
+		_check(not bool(bare["refusal"].get("ok", false))
+			and str(bare["refusal"].get("error", "")).contains("not equipped")
+			and bare["before"] == bare["after"]
+			and int(bare["rng"]) == int(bare["after"].get("rng_state", -1))
+			and str(bare["actor"]) == "tinker",
+			"AC3: gear brace refuses from rank 4 while its torso slot holds Casing Ward, with no spend")
+	var torn: Dictionary = {}
+	for seed_value in range(502000, 502020):
+		torn = _gear_brace_equipment_refusal_witness("", true, seed_value)
+		if not torn.is_empty():
+			break
+	_check(not torn.is_empty(), "AC3: the torn-torso witness reaches a real rank-4 Tinker turn")
+	if not torn.is_empty():
+		_check(not bool(torn["refusal"].get("ok", false))
+			and str(torn["refusal"].get("error", "")).contains("torn")
+			and torn["before"] == torn["after"]
+			and int(torn["rng"]) == int(torn["after"].get("rng_state", -1))
+			and str(torn["actor"]) == "tinker",
+			"AC3: a torn Gear Brace refuses from rank 4 without state, turn or RNG change")
 
 
 ## AC2 witness: the real shipped preview with only the existing Moth Scribe moved to enemy
