@@ -296,6 +296,75 @@
         { "id": "offer_strainer_stitches", "text": "Offer 3 scraps to lash the strainer safely in place", "outcome": { "gold": 0, "scraps": -3 } },
         { "id": "leave", "text": "Back away from the swinging silver mesh", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_blackvelvet_jackbox_picket",
+      "title": "The Black-Velvet Jackbox",
+      "description": "A huge velvet jack-in-the-box trembles beside the floorboard road. A squat jester doll peers from its hinged lid while button-eyed watch dolls hold a black thread across the way.",
+      "fight_choice_id": "challenge_jackbox_watch",
+      "choices": [
+        {
+          "id": "challenge_jackbox_watch",
+          "text": "Lift the sprung lid and face the watch dolls (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "buy_silent_spring_pass",
+          "text": "Pay 19 gold for a silent-spring passage tag",
+          "outcome": {"gold": -19, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Retreat before the velvet lid rattles again (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_moonmarble_gutter_crossing",
+      "title": "The Moon-Marble Gutter",
+      "description": "A glass marble as big as a cottage seals a gutter between the skirting boards. Three fat stitched porters brace its silver cradle, their tiny lanterns multiplying in its cloudy heart.",
+      "fight_choice_id": "scatter_marble_porters",
+      "choices": [
+        {
+          "id": "scatter_marble_porters",
+          "text": "Shove the marble cradle and fight the porters (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "bind_marble_cradle",
+          "text": "Spend 2 scraps to lash the cradle open for passage",
+          "outcome": {"gold": 0, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Follow the darker seam around the gutter (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_amber_hairbrush_barricade",
+      "title": "The Amber Hairbrush Barricade",
+      "description": "An enormous hairbrush lies bristles-up like a thorny palisade. Two round spool-armoured sentries watch from its bone handle, beneath a single amber flame caught among the stiff threads.",
+      "fight_choice_id": "break_bristle_watch",
+      "choices": [
+        {
+          "id": "break_bristle_watch",
+          "text": "Pull down the brush palisade and fight its sentries (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "buy_brushgate_token",
+          "text": "Pay 16 gold for a brass-bristled crossing token",
+          "outcome": {"gold": -16, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Circle back beneath the silent floorboard (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
