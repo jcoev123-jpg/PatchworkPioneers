@@ -1,0 +1,61 @@
+{
+  "idle_delay": 9.0,
+  "repeat_delay": 13.0,
+  "show_time": 4.5,
+  "contexts": {
+    "idle": [
+      "Keep the candle low. Things here like the light.",
+      "I can hear Wren breathing. Slow. Good.",
+      "This floor goes on longer than it should.",
+      "My stitches itch. Is it the damp, or is it something watching?",
+      "Whatever we do, we do not stop for long.",
+      "Someone sewed these walls shut a long time ago."
+    ],
+    "hurt": [
+      "I'm coming apart at the seam. Mend me when you can.",
+      "Don't wait for me. Wait, no. Do wait for me.",
+      "My stuffing is showing. That isn't good, is it?"
+    ],
+    "dark": [
+      "I can't see your face anymore.",
+      "The candle. Please. The candle.",
+      "If something touches my hand, tell me it's you."
+    ],
+    "shadow": [
+      "Count the footsteps. Go on, count them.",
+      "Who keeps humming behind me?",
+      "I thought we were four."
+    ],
+    "tug": [
+      "Something has my thread. It's pulling.",
+      "Give it something before it takes something."
+    ],
+    "whirr": [
+      "That whirring is getting closer.",
+      "A needle going up and down, somewhere ahead. Fast."
+    ],
+    "mannequins": [
+      "They moved. I didn't see them move, but they moved.",
+      "Don't look at their faces. They haven't got any."
+    ],
+    "wren": [
+      "Wren is scared. I can feel the floor shaking.",
+      "Hush now, Wren. We're still here."
+    ],
+    "curio": [
+      "Well? Are we touching it or not?",
+      "I don't trust anything left out on purpose.",
+      "Whoever left this wanted it found."
+    ]
+  },
+  "dolls": {
+    "warden": ["Stay behind me. That's what I'm stuffed for."],
+    "seamstress": ["Every tear can be mended. Almost every tear."],
+    "tinker": ["Hear that ticking? Not me. Not this time."],
+    "scarecrow": ["I've frightened worse than this. I think."],
+    "rag_duelist": ["If it bleeds thread, I can cut it."],
+    "yarn_ranger": ["I've marked the way back. Mostly."],
+    "lantern_monk": ["Light is borrowed. Spend it carefully."],
+    "button_golem": ["Buttons hold. Buttons always hold."]
+  }
+}
