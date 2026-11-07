@@ -88,6 +88,7 @@ func clear_intent() -> void:
 	if primary != null:
 		primary.position.x = 4
 		primary.size.x = 132
+		primary.add_theme_font_size_override("font_size", 24)
 		primary.text = ""
 	if secondary != null:
 		secondary.text = ""
@@ -169,6 +170,8 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 		glyph.visible = glyph.texture != null and not foe_id.is_empty()
 	primary.position.x = 36 if glyph != null and glyph.visible else 4
 	primary.size.x = 100 if glyph != null and glyph.visible else 132
+	# A previous long name must never shrink a later short intent or PASS/STUN.
+	primary.add_theme_font_size_override("font_size", 24)
 	primary.text = _fit_caption(heading, primary)
 	secondary.text = target
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
@@ -213,6 +216,12 @@ func _fit_caption(value: String, label: Label) -> String:
 	var full := value.replace("\n", " ").replace("\r", " ").strip_edges().to_upper()
 	var font := label.get_theme_font("font")
 	var font_size := label.get_theme_font_size("font_size")
+	# Measure the actual uppercase heading in the glyph-aware label width.
+	# Shrink to 16px before considering an ellipsis; preserve the full tooltip.
+	while font != null and font_size > 16 and font.get_string_size(
+			full, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x > label.size.x:
+		font_size -= 1
+		label.add_theme_font_size_override("font_size", font_size)
 	if font == null or font.get_string_size(full, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x <= label.size.x:
 		return full
 	var shortened := full
