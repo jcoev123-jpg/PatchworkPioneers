@@ -23,6 +23,8 @@ func _init() -> void:
 	_test_ac3_trade_and_leave_claims()
 	_test_ac3_rejections_and_fail_closed()
 	_test_ac3_admission_validation_failures()
+	_test_ac1_ac2_wren_fear_actionability_and_settlement()
+	_test_ac3_wren_fear_validation_and_forgery()
 
 	_check(rng.state == rng_state_before, "Overall: Seeded RNG state must remain completely untouched")
 	_finish()
@@ -477,3 +479,174 @@ func _test_ac3_admission_validation_failures() -> void:
 	for bad_w in [{"gold": -1, "scraps": 0}, {"gold": 0, "scraps": -1}, {"gold": 0}, {"gold": 0, "scraps": 0, "gems": 5}, null, 12]:
 		var ev_bad_w := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, valid_heroes, valid_candle, bad_w)
 		_check(not ev_bad_w.is_valid(), "AC3: Rejected invalid wallet: " + str(bad_w))
+
+
+# AC1 & AC2: Wren Fear positive actionability, exact single settlement (-1 scrap) and isolation.
+func _test_ac1_ac2_wren_fear_actionability_and_settlement() -> void:
+	var full_party := _standard_party(0, 0) # 4 living heroes, full HP, fray 0
+
+	# 1. Default fear 0 (and explicit fear 0) with full HP, fray 0, candle 100: paid choice unavailable
+	var ev_fear0_default := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 100, {"gold": 0, "scraps": 1})
+	_check(ev_fear0_default.is_valid(), "AC1: Event valid with default fear 0")
+	_check(ev_fear0_default.get_wren_fear() == 0, "AC1: Default wren_fear is 0")
+	_check(not ev_fear0_default.can_tell_tales(), "AC1: Tell Tales cannot help with fear 0 and zero fray")
+	_check(not ev_fear0_default.has_useful_recovery(), "AC1: No useful recovery at fear 0 full HP zero fray candle 100")
+	var preview_fear0 := ev_fear0_default.preview_choices()
+	var paid_fear0 := _find_choice(preview_fear0.get("choices", []), "light_the_embers")
+	_check(bool(paid_fear0.get("affordable", false)), "AC1: Paid choice affordable at 1 scrap")
+	_check(not bool(paid_fear0.get("available", false)), "AC1: Paid choice unavailable with fear 0")
+	_check(not bool(paid_fear0.get("actionable", false)), "AC1: Paid choice not actionable with fear 0")
+	_check(paid_fear0.get("service_request", {}) == {}, "AC1: No service request offered with fear 0")
+
+	var ev_fear0_explicit := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, full_party, 100, {"gold": 0, "scraps": 1}, null, 0)
+	_check(ev_fear0_explicit.get_wren_fear() == 0, "AC1: Explicit fear 0 accepted")
+	_check(not ev_fear0_explicit.has_useful_recovery(), "AC1: Explicit fear 0 has no useful recovery")
+
+	# 2. Positive Wren fear boundaries (fear 1, 15, 60) activate Tell Tales recovery
+	for test_fear: int in [1, 15, 60]:
+		var ev_pos_fear := RunStitchedEmberglassCampfireEvent.new(
+			NODE, EMBER_ID, full_party, 100, {"gold": 0, "scraps": 1}, null, test_fear
+		)
+		_check(ev_pos_fear.is_valid(), "AC1: Event valid with fear %d" % test_fear)
+		_check(ev_pos_fear.get_wren_fear() == test_fear, "AC1: get_wren_fear() returns %d" % test_fear)
+		_check(ev_pos_fear.read_state().get("wren_fear") == test_fear, "AC1: read_state() shows wren_fear %d" % test_fear)
+		_check(ev_pos_fear.can_tell_tales(), "AC1: can_tell_tales() true for fear %d" % test_fear)
+		_check(ev_pos_fear.has_useful_recovery(), "AC1: has_useful_recovery() true for fear %d" % test_fear)
+		_check(ev_pos_fear.has_useful_remedy(), "AC1: has_useful_remedy() true for fear %d" % test_fear)
+		var preview_pos := ev_pos_fear.preview_choices()
+		var paid_pos := _find_choice(preview_pos.get("choices", []), "light_the_embers")
+		_check(bool(paid_pos.get("affordable", false)), "AC1: Paid choice affordable with fear %d" % test_fear)
+		_check(bool(paid_pos.get("available", false)), "AC1: Paid choice available with fear %d" % test_fear)
+		_check(bool(paid_pos.get("actionable", false)), "AC1: Paid choice actionable with fear %d" % test_fear)
+		_check(paid_pos.get("service_request", {}).get("stop_type") == "Campfire",
+			"AC1: Offers Campfire service request with fear %d" % test_fear)
+
+	# 3. Underfunded fear-positive refusal: fear 60 with 0 scraps -> unavailable / unaffordable
+	var ev_underfunded := RunStitchedEmberglassCampfireEvent.new(
+		NODE, EMBER_ID, full_party, 100, {"gold": 10, "scraps": 0}, null, 60
+	)
+	_check(ev_underfunded.is_valid(), "AC1: Underfunded fear 60 event is valid")
+	_check(ev_underfunded.has_useful_recovery(), "AC1: Useful recovery exists from fear 60")
+	var preview_under := ev_underfunded.preview_choices()
+	var paid_under := _find_choice(preview_under.get("choices", []), "light_the_embers")
+	_check(not bool(paid_under.get("affordable", false)), "AC1: Paid choice unaffordable with 0 scraps despite fear 60")
+	_check(not bool(paid_under.get("available", false)), "AC1: Paid choice unavailable when unaffordable despite fear 60")
+	_check(not bool(paid_under.get("actionable", false)), "AC1: Paid choice not actionable when unaffordable")
+	_check(paid_under.get("service_request", {}) == {}, "AC1: No service request offered when underfunded")
+
+	# Attempting to claim underfunded paid choice fails closed
+	var res_under_claim := ev_underfunded.choose("light_the_embers", NODE, ev_underfunded.read_state())
+	_check(not bool(res_under_claim.get("ok", false)), "AC1: Claim underfunded paid choice fails")
+	_check(ev_underfunded.is_open(), "AC1: Event remains open after underfunded paid choice refusal")
+	_check(ev_underfunded.get_wallet() == {"gold": 10, "scraps": 0}, "AC1: Wallet unchanged after underfunded refusal")
+
+	# 4. Exact fear-only paid claim settlement, isolation and downstream StitchedKidFear Tell Tales witness
+	var caller_party := full_party.duplicate(true)
+	var caller_wallet := {"gold": 25, "scraps": 3}
+	var caller_candle := 100
+	var initial_fear := 60
+
+	var ev_settle := RunStitchedEmberglassCampfireEvent.new(
+		NODE, EMBER_ID, caller_party, caller_candle, caller_wallet, null, initial_fear
+	)
+	var state_before := ev_settle.read_state()
+	_check(state_before.get("wren_fear") == 60, "AC2: State before claim has wren_fear 60")
+	_check(state_before.get("wallet") == {"gold": 25, "scraps": 3}, "AC2: State before claim matches wallet")
+
+	var receipt := ev_settle.choose("light_the_embers", NODE, state_before)
+	_check(bool(receipt.get("ok", false)), "AC2: Fear-only paid claim succeeds")
+	_check(receipt.get("choice_id") == "light_the_embers", "AC2: Receipt choice_id is light_the_embers")
+	_check(receipt.get("event_id") == EMBER_ID, "AC2: Receipt event_id is Emberglass")
+	_check(receipt.get("wallet") == {"gold": 25, "scraps": 2}, "AC2: Exactly 1 scrap debited (gold: 25, scraps: 2)")
+	_check(receipt.get("service_request") == {"stop_type": "Campfire"},
+		"AC2: Receipt returns only Campfire service_request")
+
+	# Event adapter invariants after claim: fear untouched, closed, claimed once
+	_check(ev_settle.is_claimed(), "AC2: Event claimed after settlement")
+	_check(not ev_settle.is_open(), "AC2: Event closed after settlement")
+	_check(ev_settle.get_wren_fear() == initial_fear,
+		"AC2: Event adapter wren_fear untouched by claim (remains %d)" % initial_fear)
+	var state_after: Dictionary = receipt.get("state", {})
+	_check(state_after.get("wren_fear") == initial_fear,
+		"AC2: State after claim preserves wren_fear untouched (remains %d)" % initial_fear)
+	_check(state_after.get("candle") == caller_candle, "AC2: Candle untouched by adapter (remains 100)")
+	_check(state_after.get("heroes") == full_party, "AC2: Heroes untouched by adapter")
+	_check(caller_party == full_party, "AC2: Caller party untouched")
+	_check(caller_wallet == {"gold": 25, "scraps": 3}, "AC2: Caller wallet untouched")
+
+	# Second claim fails (single-claim latch)
+	var second_claim := ev_settle.choose("light_the_embers", NODE, state_after)
+	_check(not bool(second_claim.get("ok", false)), "AC2: Replay of fear-only paid claim refused")
+
+	# 5. Downstream separate StitchedKidFear object witnesses exact -15 Tell Tales effect
+	# Fear 60 -> 45
+	var kid_fear_60 := StitchedKidFear.new(60)
+	_check(kid_fear_60.is_valid(), "AC2: StitchedKidFear instantiated at fear 60")
+	var tell_tales_res_60 := kid_fear_60.apply_event({"kind": "tell_tales"})
+	_check(bool(tell_tales_res_60.get("ok", false)), "AC2: StitchedKidFear accepts tell_tales event")
+	_check(tell_tales_res_60.get("delta") == -15, "AC2: tell_tales delta is -15")
+	_check(tell_tales_res_60.get("before_fear") == 60, "AC2: before_fear was 60")
+	_check(tell_tales_res_60.get("after_fear") == 45, "AC2: after_fear is 45 (60 - 15)")
+	_check(kid_fear_60.get_fear() == 45, "AC2: Kid fear meter is now 45")
+
+	# Fear 10 -> 0 (lower bound zero)
+	var kid_fear_10 := StitchedKidFear.new(10)
+	var tell_tales_res_10 := kid_fear_10.apply_event({"kind": "tell_tales"})
+	_check(bool(tell_tales_res_10.get("ok", false)), "AC2: StitchedKidFear accepts tell_tales event for fear 10")
+	_check(tell_tales_res_10.get("before_fear") == 10, "AC2: before_fear was 10")
+	_check(tell_tales_res_10.get("after_fear") == 0, "AC2: after_fear is 0 (10 - 15 clamped to 0)")
+	_check(kid_fear_10.get_fear() == 0, "AC2: Kid fear meter clamped at 0")
+
+
+# AC3: Forgery fail-closed and fear admission boundaries.
+func _test_ac3_wren_fear_validation_and_forgery() -> void:
+	var full_party := _standard_party(0, 0)
+	var valid_wallet := {"gold": 10, "scraps": 1}
+
+	# 1. Forged wren_fear in expected state check fails
+	var ev_forgery := RunStitchedEmberglassCampfireEvent.new(
+		NODE, EMBER_ID, full_party, 100, valid_wallet, null, 15
+	)
+	var real_state := ev_forgery.read_state()
+	_check(real_state.get("wren_fear") == 15, "AC3: Real state has wren_fear 15")
+
+	var forged_fear_state := real_state.duplicate(true)
+	forged_fear_state["wren_fear"] = 0 # forged fear
+	var res_forged := ev_forgery.choose("light_the_embers", NODE, forged_fear_state)
+	_check(not bool(res_forged.get("ok", false)), "AC3: Forged wren_fear in state rejected")
+	_check(res_forged.get("error") == "stale or forged state",
+		"AC3: Forged wren_fear yields 'stale or forged state'")
+	_check(ev_forgery.is_open(), "AC3: Event remains open after forged state rejection")
+	_check(ev_forgery.get_wallet() == valid_wallet, "AC3: Wallet untouched after forged state rejection")
+
+	# 2. Malformed / invalid Wren fear values rejected at admission
+	# Boundaries: -1, 101, fractional floats, strings, null, non-numerics
+	for bad_fear: Variant in [-1, 101, 15.5, 0.5, -0.1, "15", "fear", null, true, false, {}]:
+		var ev_bad := RunStitchedEmberglassCampfireEvent.new(
+			NODE, EMBER_ID, full_party, 100, valid_wallet, null, bad_fear
+		)
+		_check(not ev_bad.is_valid(), "AC3: Rejected invalid wren_fear: " + str(bad_fear))
+		_check(not ev_bad.is_open(), "AC3: Closed for invalid wren_fear: " + str(bad_fear))
+		_check(not ev_bad.get_error().is_empty(), "AC3: Nonempty error for invalid wren_fear: " + str(bad_fear))
+
+	# Whole float accepted and converted to native int
+	var ev_float_whole := RunStitchedEmberglassCampfireEvent.new(
+		NODE, EMBER_ID, full_party, 100, valid_wallet, null, 20.0
+	)
+	_check(ev_float_whole.is_valid(), "AC3: Whole float 20.0 accepted")
+	_check(ev_float_whole.get_wren_fear() == 20, "AC3: Whole float stored as int 20")
+	_check(typeof(ev_float_whole.read_state()["wren_fear"]) == TYPE_INT, "AC3: read_state has native integer")
+
+	# Factory open() method accepts 7 arguments preserving argument 6 as catalog
+	var ev_open_factory := RunStitchedEmberglassCampfireEvent.open(
+		NODE, EMBER_ID, full_party, 100, valid_wallet, null, 30
+	)
+	_check(ev_open_factory.is_valid(), "AC3: open() factory works with 7 arguments")
+	_check(ev_open_factory.get_wren_fear() == 30, "AC3: open() factory passes wren_fear 30")
+
+	# Factory open() with default fear 0
+	var ev_open_default := RunStitchedEmberglassCampfireEvent.open(
+		NODE, EMBER_ID, full_party, 100, valid_wallet
+	)
+	_check(ev_open_default.is_valid(), "AC3: open() factory works with 5 arguments")
+	_check(ev_open_default.get_wren_fear() == 0, "AC3: open() factory defaults fear to 0")

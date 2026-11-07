@@ -959,6 +959,42 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_seamstress_splintered_parlour_fan",
+      "title": "The Splintered Parlour Fan",
+      "description": "A room-high folding fan blocks the doll-sized parlour path. The Seamstress raises her giant silver needle, drawing one red thread through its split velvet binding.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["mend_fan_ribs", "collect_fan_thread"],
+      "choices": [
+        {"id": "mend_fan_ribs", "text": "Spend 2 scraps rejoining the great fan ribs (earn 28 gold)", "outcome": {"gold": 28, "scraps": -2}},
+        {"id": "collect_fan_thread", "text": "Wind the loose crimson binding into two bundles (+2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+        {"id": "leave", "text": "Pass beneath the fan's broken velvet folds", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_stair_runner_ravine",
+      "title": "The Stair-Runner Ravine",
+      "description": "A moss-green stair carpet has fallen into a steep doll-scale ravine. The Yarn Ranger's oversized bow and wool bolas catch a fraying tassel above the drop.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["gather_runner_knots", "retie_runner_edge"],
+      "choices": [
+        {"id": "gather_runner_knots", "text": "Reel in two useful tassel knots (+2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+        {"id": "retie_runner_edge", "text": "Spend 1 scrap fastening the carpet ledge (earn 24 gold)", "outcome": {"gold": 24, "scraps": -1}},
+        {"id": "leave", "text": "Follow the skirting board away from the drop", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_button_golem_heart_locket_lift",
+      "title": "The Heart-Locket Lift",
+      "description": "A giant oxblood velvet heart locket hangs above a narrow floorboard crossing. The Button Golem wedges its round brass-button fists beneath the clasp while a tiny courier taps from inside.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["lift_locket_clasp", "buy_locket_rivets"],
+      "choices": [
+        {"id": "lift_locket_clasp", "text": "Raise the heavy clasp and free the courier (earn 23 gold)", "outcome": {"gold": 23, "scraps": 0}},
+        {"id": "buy_locket_rivets", "text": "Pay 18 gold for three loose brass fittings (+3 scraps)", "outcome": {"gold": -18, "scraps": 3}},
+        {"id": "leave", "text": "Let the locked heart hang in the dark", "outcome": {"gold": 0, "scraps": 0}}
+      ]
     }
   ]
 }

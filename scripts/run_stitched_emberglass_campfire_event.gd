@@ -48,6 +48,7 @@ var _service_kind: String = ""
 var _heroes: Array = []
 var _candle: int = 0
 var _wallet: Dictionary = {}
+var _wren_fear: int = 0
 
 var _gate: RunV3ServiceWaystationEventGate = null
 var _open: bool = false
@@ -63,7 +64,8 @@ func _init(
 	arg3: Variant = null,
 	arg4: Variant = null,
 	arg5: Variant = null,
-	arg6: Variant = null
+	arg6: Variant = null,
+	arg7: Variant = 0
 ) -> void:
 	var event_target: Variant = null
 	var node_id: Variant = null
@@ -71,6 +73,7 @@ func _init(
 	var candle: Variant = arg4
 	var wallet: Variant = arg5
 	var catalog_data: Variant = arg6
+	var wren_fear: Variant = arg7
 
 	# Disambiguate arg1 / arg2: supports (event_target, node_id, ...) or (node_id, event_target, ...)
 	if _is_likely_event_target(arg1) and not _is_likely_event_target(arg2):
@@ -96,7 +99,7 @@ func _init(
 		candle = wallet
 		wallet = temp
 
-	_error = _setup(node_id, event_target, heroes, candle, wallet, catalog_data)
+	_error = _setup(node_id, event_target, heroes, candle, wallet, catalog_data, wren_fear)
 	if not _error.is_empty():
 		_open = false
 		_valid = false
@@ -111,7 +114,8 @@ static func open(
 	heroes: Variant,
 	candle: Variant,
 	wallet: Variant,
-	catalog_data: Variant = null
+	catalog_data: Variant = null,
+	wren_fear: Variant = 0
 ) -> RunStitchedEmberglassCampfireEvent:
 	return RunStitchedEmberglassCampfireEvent.new(
 		node_id,
@@ -119,7 +123,8 @@ static func open(
 		heroes,
 		candle,
 		wallet,
-		catalog_data
+		catalog_data,
+		wren_fear
 	)
 
 
@@ -163,6 +168,14 @@ func get_candle() -> int:
 	return _candle
 
 
+func get_wren_fear() -> int:
+	return _wren_fear
+
+
+func get_fear() -> int:
+	return _wren_fear
+
+
 func get_wallet() -> Dictionary:
 	return _wallet.duplicate(true)
 
@@ -196,6 +209,8 @@ func can_mend() -> bool:
 
 
 func can_tell_tales() -> bool:
+	if _wren_fear > 0:
+		return true
 	for hero_raw: Variant in _heroes:
 		if not (hero_raw is Dictionary):
 			continue
@@ -234,6 +249,7 @@ func read_state() -> Dictionary:
 		"wallet": _wallet.duplicate(true),
 		"heroes": _heroes.duplicate(true),
 		"candle": _candle,
+		"wren_fear": _wren_fear,
 	}
 
 
@@ -413,7 +429,8 @@ func _setup(
 	heroes: Variant,
 	candle: Variant,
 	wallet: Variant,
-	catalog_data: Variant
+	catalog_data: Variant,
+	wren_fear: Variant
 ) -> String:
 	# 1. Node ID
 	if typeof(node_id) != TYPE_STRING or str(node_id).strip_edges().is_empty() or str(node_id) != str(node_id).strip_edges():
@@ -570,6 +587,21 @@ func _setup(
 		return "party must cover all ranks 1..%d" % HERO_COUNT
 
 	_heroes = clean_heroes
+
+	# 6. Wren Fear (0..100)
+	if wren_fear == null:
+		return "wren fear is required"
+	var fear_ok := typeof(wren_fear) == TYPE_INT
+	if typeof(wren_fear) == TYPE_FLOAT:
+		var f_float := float(wren_fear)
+		fear_ok = is_finite(f_float) and f_float == floorf(f_float)
+	if not fear_ok:
+		return "wren fear must be an integer"
+	var fear_val := int(wren_fear)
+	if fear_val < 0 or fear_val > 100:
+		return "wren fear must be between 0 and 100"
+	_wren_fear = fear_val
+
 	return ""
 
 

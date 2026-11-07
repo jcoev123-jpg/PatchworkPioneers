@@ -53,6 +53,7 @@ const HEAD_SPECS := {
 		"stat": {"acc": 3},
 		"target": [1, 2, 3],
 		"dmg": [[4, 6], [5, 8], [7, 10]],
+		"mark_damage": [0, 0, 0],
 		"effects": [{"exposed": 1}, {"exposed": 1}, {"exposed": 2}],
 	},
 	"yarn_ranger_head_needle_arrow": {
@@ -60,6 +61,7 @@ const HEAD_SPECS := {
 		"stat": {"crit": 3},
 		"target": [1, 2, 3, 4],
 		"dmg": [[5, 7], [7, 9], [9, 11]],
+		"mark_damage": [2, 3, 4],
 		"effects": [{"mark": 1}, {"mark": 2}, {"mark": 3}],
 	},
 }
@@ -109,6 +111,7 @@ func _initialize() -> void:
 	_test_each_tier()
 	_test_rank_four_head_launch()
 	_test_needle_arrow_rank_four_target()
+	_test_needle_arrow_premarked_bonus()
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
 	_test_rank_four_snare_net_launch()
@@ -322,6 +325,9 @@ func _test_head_launch_tiers() -> void:
 				and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
 				"AC4: tier %d %s keeps its authored stat, ranged single-target attack, no self move and attack2 pose"
 					% [tier, head_id])
+			_check(int(ability.get("mark_damage", -1)) == int(spec["mark_damage"][tier - 1]),
+				"AC1: tier %d %s carries the authored mark_damage %d"
+					% [tier, head_id, int(spec["mark_damage"][tier - 1])])
 
 
 ## Wool Bolas keeps its single-target authored numbers at every tier while its launch mask
@@ -898,6 +904,203 @@ func _test_needle_arrow_rank_four_target() -> void:
 		_reject_without_spend(unequipped, arrow, 4, "unequipped Needle Arrow")
 
 
+## Both siblings are copies of the same seeded three-foe battle, brought to the Ranger's real
+## scheduled turn without acting. Only the marked twin's rank-four Moth Scribe receives a
+## controlled starting Mark; setting a status draws no RNG, so both shots resolve from the same
+## seeded position.
+func _arrow_marked_pair(seed_value: int) -> Dictionary:
+	var marked := _rank_four_foe_battle(ALTERNATES["head"], 2, seed_value)
+	var plain := _rank_four_foe_battle(ALTERNATES["head"], 2, seed_value)
+	if marked == null or plain == null:
+		return {}
+	if not _to(marked, "yarn_ranger") or not _to(plain, "yarn_ranger"):
+		return {}
+	if marked.current_actor_id() != "yarn_ranger" or plain.current_actor_id() != "yarn_ranger":
+		return {}
+	if not marked.get_unit("moth_scribe").has("statuses"):
+		return {}
+	marked._units["moth_scribe"]["statuses"]["mark"] = 1
+	return {"marked": marked, "plain": plain}
+
+
+## Fires the equipped tier-II Needle Arrow at enemy rank four in both twins and returns their
+## receipts plus the resulting authoritative state and RNG position.
+func _arrow_marked_signature(seed_value: int) -> Dictionary:
+	var pair := _arrow_marked_pair(seed_value)
+	if pair.is_empty():
+		return {}
+	var marked: StitchedRules = pair["marked"]
+	var plain: StitchedRules = pair["plain"]
+	var marked_receipt := marked.use_part(ALTERNATES["head"], 4)
+	var plain_receipt := plain.use_part(ALTERNATES["head"], 4)
+	var marked_results: Array = marked_receipt.get("results", [])
+	var plain_results: Array = plain_receipt.get("results", [])
+	if marked_results.size() != 1 or plain_results.size() != 1:
+		return {}
+	return {
+		"marked_receipt": marked_receipt,
+		"plain_receipt": plain_receipt,
+		"marked_results": marked_results,
+		"plain_results": plain_results,
+		"marked_state": marked.state_snapshot(),
+		"plain_state": plain.state_snapshot(),
+		"marked_rng": marked.rng_state(),
+		"plain_rng": plain.rng_state(),
+	}
+
+
+## The task goal: Needle Arrow's authored mark_damage punishes a foe that already carries Mark.
+## A bounded seed window finds one real paired rank-four hit at tier II; the marked and clean
+## twins then prove exactly +3 damage, identical seeded rolls, exact target HP, one spent turn
+## and the clean foe's original Mark 2 applied only after that damage.
+func _test_needle_arrow_premarked_bonus() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var arrow := ALTERNATES["head"]
+	var tier := 2
+	var expected_mark := int(HEAD_SPECS[arrow]["effects"][tier - 1]["mark"])
+	var bonus := int(HEAD_SPECS[arrow]["mark_damage"][tier - 1])
+	var witness_seed := -1
+	for seed_value in range(507040, 507136):
+		var signature := _arrow_marked_signature(seed_value)
+		if signature.is_empty():
+			continue
+		var marked_result: Dictionary = signature["marked_results"][0]
+		var plain_result: Dictionary = signature["plain_results"][0]
+		if not bool(marked_result.get("hit", false)) \
+				or not bool(plain_result.get("hit", false)) \
+				or int(marked_result.get("damage", 0)) <= 0 \
+				or int(plain_result.get("damage", 0)) <= 0 \
+				or str(marked_result.get("target", "")) != "moth_scribe" \
+				or str(plain_result.get("target", "")) != "moth_scribe" \
+				or int(marked_result.get("target_rank", 0)) != 4 \
+				or int(plain_result.get("target_rank", 0)) != 4:
+			continue
+		witness_seed = seed_value
+		break
+	_check(witness_seed >= 0,
+		"AC2: a bounded real seed witnesses paired tier-II Needle Arrow hits on the rank-four foe")
+	if witness_seed < 0:
+		return
+	print("AC2 Needle Arrow pre-Marked bonus tier II witness seed %d" % witness_seed)
+
+	var pair := _arrow_marked_pair(witness_seed)
+	if pair.is_empty():
+		_check(false, "AC2: the witness seed rebuilds a marked/clean Needle Arrow pair")
+		return
+	var marked: StitchedRules = pair["marked"]
+	var plain: StitchedRules = pair["plain"]
+	var marked_ranger := marked.get_unit("yarn_ranger")
+	var plain_ranger := plain.get_unit("yarn_ranger")
+	var marked_foe := marked.get_unit("moth_scribe")
+	var plain_foe := plain.get_unit("moth_scribe")
+	_check(int(marked_ranger["rank"]) == 3 and int(plain_ranger["rank"]) == 3
+		and str(marked_ranger["parts"]["head"]["id"]) == arrow
+		and str(plain_ranger["parts"]["head"]["id"]) == arrow,
+		"AC2: both real Ranger witnesses wear tier-II Needle Arrow at hero rank three")
+	_check(int(marked_foe["rank"]) == 4 and int(plain_foe["rank"]) == 4
+		and int(marked_foe["hp"]) > 0 and int(marked_foe["hp"]) == int(plain_foe["hp"])
+		and int(marked_foe["prot"]) == 0 and int(plain_foe["prot"]) == 0,
+		"AC2: both legal rank-four targets start alive at the same HP with zero PROT")
+	for status in ["weak", "exposed", "tangled"]:
+		_check(int(marked_foe["statuses"].get(status, 0)) == 0
+			and int(plain_foe["statuses"].get(status, 0)) == 0
+			and int(marked_ranger["statuses"].get(status, 0)) == 0
+			and int(plain_ranger["statuses"].get(status, 0)) == 0,
+			"AC2: no " + status + " distorts the paired comparison")
+	_check(int(marked_foe["statuses"].get("mark", 0)) == 1
+		and int(plain_foe["statuses"].get("mark", 0)) == 0,
+		"AC2: only the marked witness's foe carries Mark before the shot")
+	_check(marked.rng_state() == plain.rng_state(),
+		"AC2: both shots start from the identical seeded RNG position")
+	var ability := StitchedParts.ability_at_tier(cat["by_id"][arrow], tier)
+	_check(int(ability.get("mark_damage", 0)) == bonus and bonus == 3,
+		"AC1: the equipped tier-II Needle Arrow ability carries mark_damage 3")
+	var marked_before := marked.state_snapshot()
+	var plain_before := plain.state_snapshot()
+	var start_hp := int(marked_foe["hp"])
+
+	var marked_receipt := marked.use_part(arrow, 4)
+	var plain_receipt := plain.use_part(arrow, 4)
+	var marked_results: Array = marked_receipt.get("results", [])
+	var plain_results: Array = plain_receipt.get("results", [])
+	_check(bool(marked_receipt.get("ok", false)) and bool(plain_receipt.get("ok", false))
+		and str(marked_receipt.get("action", "")) == "ability"
+		and str(plain_receipt.get("action", "")) == "ability"
+		and str(marked_receipt.get("part", "")) == arrow
+		and str(plain_receipt.get("part", "")) == arrow
+		and str(marked_receipt.get("ability", "")) == "yarn_ranger_head_needle_arrow_move"
+		and str(plain_receipt.get("ability", "")) == "yarn_ranger_head_needle_arrow_move"
+		and marked_results.size() == 1 and plain_results.size() == 1,
+		"AC2: both real tier-II shots resolve one legal receipt: %s%s"
+			% [str(marked_receipt.get("error", "")), str(plain_receipt.get("error", ""))])
+	if marked_results.size() != 1 or plain_results.size() != 1:
+		return
+	var marked_hit: Dictionary = marked_results[0]
+	var plain_hit: Dictionary = plain_results[0]
+	_check(str(marked_hit.get("target", "")) == "moth_scribe"
+		and str(plain_hit.get("target", "")) == "moth_scribe"
+		and str(marked_hit.get("target_side", "")) == "foe"
+		and str(plain_hit.get("target_side", "")) == "foe"
+		and int(marked_hit.get("target_rank", 0)) == 4
+		and int(plain_hit.get("target_rank", 0)) == 4,
+		"AC2: each shot is a true single-target receipt on the rank-four foe")
+	_check(bool(marked_hit.get("hit", false)) and bool(plain_hit.get("hit", false))
+		and int(marked_hit.get("roll", 0)) == int(plain_hit.get("roll", 0))
+		and int(marked_hit.get("hit_chance", 0)) == int(plain_hit.get("hit_chance", 0))
+		and bool(marked_hit.get("crit", false)) == bool(plain_hit.get("crit", false)),
+		"AC2: the paired shots share identical seeded hit and crit decisions")
+	var marked_damage := int(marked_hit.get("damage", -1))
+	var plain_damage := int(plain_hit.get("damage", -1))
+	_check(marked_damage == plain_damage + bonus,
+		"AC2: the already-Marked foe takes exactly +%d direct damage" % bonus)
+	_check(marked_damage == StitchedRules.damage_after_modifiers(
+		plain_damage, {}, {}, true, bonus, 0),
+		"AC2: the Mark bonus is added before Weak/Exposed/Tangled/PROT, exactly matching the resolver")
+	var arms_bonus := int(plain_ranger.get("dmg_bonus", 0))
+	var crit_high := StitchedRules.crit_damage(int(ability["dmg"][1])) + arms_bonus
+	_check((not bool(plain_hit.get("crit", false))
+			and plain_damage >= int(ability["dmg"][0]) + arms_bonus
+			and plain_damage <= int(ability["dmg"][1]) + arms_bonus)
+		or (bool(plain_hit.get("crit", false)) and plain_damage == crit_high),
+		"AC3: the clean shot keeps the authored tier-II damage and gains no self-Mark bonus")
+	_check(int(marked_hit.get("target_hp", -1)) == start_hp - marked_damage
+		and int(plain_hit.get("target_hp", -1)) == start_hp - plain_damage
+		and int(marked.get_unit("moth_scribe")["hp"]) == start_hp - marked_damage
+		and int(plain.get_unit("moth_scribe")["hp"]) == start_hp - plain_damage,
+		"AC2: the target receipt and authoritative HP reflect each shot exactly")
+	_check(plain_hit.get("statuses", []).any(func(s): return str(s.get("status", "")) == "mark" \
+			and int(s.get("duration", 0)) == expected_mark)
+		and int(plain.get_unit("moth_scribe")["statuses"].get("mark", 0)) == expected_mark,
+		"AC3: the clean foe gains only its original Mark %d after that damage" % expected_mark)
+	_check(marked_hit.get("statuses", []).any(func(s): return str(s.get("status", "")) == "mark" \
+			and int(s.get("duration", 0)) == expected_mark)
+		and int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0)) == expected_mark,
+		"AC2: the already-Marked foe ends with the authored Mark %d as well" % expected_mark)
+	var untouched := true
+	for foe_id in ["fray_scavenger", "scissor_crab"]:
+		for battle in [marked, plain]:
+			var foe: Dictionary = battle.get_unit(foe_id)
+			if foe.is_empty() or int(foe["hp"]) != int(foe["max_hp"]) \
+					or not foe["statuses"].is_empty():
+				untouched = false
+	_check(untouched, "AC2: the paired shots damage and Mark no other foe")
+	var marked_after := marked.state_snapshot()
+	var plain_after := plain.state_snapshot()
+	_check((int(marked_after["round"]) > int(marked_before["round"])
+			or int(marked_after["turn_index"]) > int(marked_before["turn_index"]))
+		and (int(plain_after["round"]) > int(plain_before["round"])
+			or int(plain_after["turn_index"]) > int(plain_before["turn_index"]))
+		and marked.current_actor_id() != "yarn_ranger"
+		and plain.current_actor_id() != "yarn_ranger",
+		"AC2: each shot consumes exactly one Ranger turn")
+	var first := _arrow_marked_signature(witness_seed)
+	var second := _arrow_marked_signature(witness_seed)
+	_check(not first.is_empty() and first == second,
+		"AC4: equal seed, kit, foe ranks and Mark precondition replay identical receipts, HP, turn and RNG")
+
+
 ## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four
 ## wearing her own starter Wool Bolas in the arms slot. A genuine seeded miss is a legal shot.
 func _test_rank_four_bolas_launch() -> void:
@@ -1256,8 +1459,11 @@ func _test_catalog() -> void:
 			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
 			and int(ability["acc"]) == 93 and int(ability["crit"]) == 0
 			and ability["dmg"] == spec["dmg"][0] and ability["effects"] == spec["effects"][0]
+			and int(ability["mark_damage"]) == int(spec["mark_damage"][0])
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
 			"AC1: %s keeps every authored value and its own target ranks" % head_id)
+	_check(str(cat["by_id"][ALTERNATES["head"]]["text"]).contains("ALREADY-Marked foe harder"),
+		"AC1: Needle Arrow's rules text says it hits an ALREADY-Marked foe harder")
 	for other_id in UNCHANGED_PARTS:
 		var other: Dictionary = cat["by_id"][other_id]
 		var expected: Dictionary = UNCHANGED_PARTS[other_id]
@@ -1270,6 +1476,7 @@ func _test_catalog() -> void:
 			and other_ability["dmg"] == expected["dmg"]
 			and other_ability["effects"] == expected["effects"]
 			and str(other_ability["move"]) == str(expected["move"])
+			and int(other_ability.get("mark_damage", 0)) == 0
 			and other["stat"] == expected["stat"],
 			"AC1: %s keeps its authored launch, targets, numbers and stat" % other_id)
 	for slot in counts:
