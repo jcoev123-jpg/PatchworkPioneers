@@ -21,6 +21,37 @@ func _reject(stage: StitchedWalkScreen, kind: String, extra: Dictionary, stale: 
 	_check(stage.walk.snapshot() == before and receipt.snapshot == before, "rejection preserves HP, pockets, ranks, WHIRR, pending and RNG")
 
 
+## Exercise the real mounted buttons; their reveal is free and focuses a
+## non-disabled action, while every original rule oracle remains independent.
+func _open_drawer(stage: StitchedWalkScreen) -> void:
+	var before := stage.walk.snapshot()
+	var receipt_count := stage.receipts.size()
+	_check(not stage.drawer_open and stage.drawer_toggle.is_visible_in_tree(), "drawer can reopen only from a visible, quiet toggle")
+	stage.drawer_toggle.pressed.emit()
+	_check(stage.drawer_open and stage.drawer_toggle.text == "CLOSE DRAWER", "same toggle reveals the drawer")
+	var first_eligible: Button
+	for button in stage.switch_buttons + stage.pocket_buttons:
+		_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL, "all four switches and both pockets reveal")
+		if first_eligible == null and not button.disabled:
+			first_eligible = button
+	_check(first_eligible != null and first_eligible.has_focus(), "drawer opening focuses first eligible action")
+	_check(stage.walk.snapshot() == before and stage.receipts.size() == receipt_count, "opening costs no state, RNG or receipt")
+
+
+func _closed_drawer(stage: StitchedWalkScreen) -> void:
+	_check(not stage.drawer_open, "drawer collapsed")
+	for button in stage.switch_buttons + stage.pocket_buttons:
+		_check(not button.visible and not button.has_focus() and button.focus_mode == Control.FOCUS_NONE, "hidden secondary action cannot retain focus")
+
+
+func _hidden_signals_are_inert(stage: StitchedWalkScreen) -> void:
+	var before := stage.walk.snapshot()
+	var receipt_count := stage.receipts.size()
+	for button in stage.switch_buttons + stage.pocket_buttons:
+		button.pressed.emit()
+	_check(stage.walk.snapshot() == before and stage.receipts.size() == receipt_count, "six hidden pressed signals bypass neither rules nor receipt guard")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var art: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(StitchedWalkScreen.ART_PATH))
@@ -45,14 +76,52 @@ func _run() -> void:
 		random.seed = StitchedWalkScreen.PREVIEW_SEED
 		var oracle := StitchedWalkRules.start(random, "walls", stage.expected.dolls, stage.expected.pockets, null, true)
 		_check(oracle != null and oracle.snapshot() == stage.expected, "screen opts into seeded mimic scheduling")
-		_check(stage.stage != null and stage.stage.get_rect() == StitchedWalkScreen.VIEW and stage.switch_buttons.size() == 4, "full-screen 3D corridor and rank controls")
+		_check(stage.stage != null and stage.stage.get_rect() == StitchedWalkScreen.VIEW and stage.switch_buttons.size() == 4 and stage.pocket_buttons.size() == 2, "full-screen 3D corridor and six original secondary controls")
+		for index in 4:
+			_check(stage.switch_buttons[index].position == Vector2(24, 474 + 54 * index), "all switch buttons retain left column coordinates")
+		for index in 2:
+			_check(stage.pocket_buttons[index].position == Vector2(1010, 582 + 56 * index), "both pocket controls retain right column coordinates")
 		_check(stage.stage.corridor.get_child_count() == 6 and stage.stage.steps == int(stage.expected.corridor.steps), "corridor built for this walk")
 		for surface in stage.stage.corridor.get_children():
 			_check((surface as MeshInstance3D).mesh.material.albedo_texture != null, "every corridor surface is an authored picture")
 		_check(stage.stage.camera.rotation.y == 0.0 and not stage.stage.looking_back, "the borrowed eye faces ahead")
-		for button in [stage.forward_button, stage.back_button, stage.exit_button] + stage.switch_buttons + stage.pocket_buttons:
-			_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "mouse and keyboard controls remain inside viewport")
-			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "image-backed gothic control")
+		_check(stage.drawer_toggle.position == Vector2(24, 414) and stage.drawer_toggle.size.y <= 52.0, "quiet drawer toggle is left of central horror panel")
+		for button in [stage.forward_button, stage.back_button, stage.exit_button, stage.drawer_toggle]:
+			_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "primary mouse and keyboard controls remain in viewport")
+			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "image-backed gothic primary control")
+		for button in stage.switch_buttons + stage.pocket_buttons:
+			_check(not button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_NONE and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "quiet mount hides secondary controls at their original side positions")
+			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "six secondary controls retain image-backed states")
+		_closed_drawer(stage)
+		_hidden_signals_are_inert(stage)
+		var free_state := stage.walk.snapshot()
+		var free_receipts := stage.receipts.size()
+		_open_drawer(stage)
+		var blocked_before := stage.walk.snapshot()
+		var blocked_count := stage.receipts.size()
+		stage.switch_buttons[0].pressed.emit()
+		_check(stage.walk.snapshot() == blocked_before and stage.receipts.size() == blocked_count, "revealed but disabled current-doll switch is not a transaction")
+		stage.drawer_toggle.pressed.emit()
+		_closed_drawer(stage)
+		_check(stage.drawer_toggle.has_focus() and stage.walk.snapshot() == free_state and stage.receipts.size() == free_receipts, "toggle dismissal restores focus without rule transaction")
+		_open_drawer(stage)
+		var esc := InputEventKey.new()
+		esc.keycode = KEY_ESCAPE
+		esc.pressed = true
+		Input.parse_input_event(esc)
+		await process_frame
+		_closed_drawer(stage)
+		_check(stage.drawer_toggle.has_focus() and stage.walk.snapshot() == free_state and stage.receipts.size() == free_receipts, "Escape dismissal restores toggle focus with exact snapshot and receipts")
+		stage.drawer_toggle.grab_focus()
+		var accept := InputEventKey.new()
+		accept.keycode = KEY_ENTER
+		accept.pressed = true
+		Input.parse_input_event(accept)
+		await process_frame
+		_check(stage.drawer_open, "keyboard activation opens focusable drawer toggle")
+		stage.drawer_toggle.pressed.emit()
+		_closed_drawer(stage)
+		_check(stage.walk.snapshot() == free_state and stage.receipts.size() == free_receipts, "keyboard opening and closing leave RNG and receipts unchanged")
 		_check(stage.eye_profile == "cracked" and stage.eye_overlay.visible and stage.eye_overlay.texture != null, "lead head selects visible cracked treatment")
 		var ranks: Array = stage.expected.dolls.map(func(doll): return [doll.id, doll.rank])
 		var stale := stage.expected.duplicate(true)
@@ -79,9 +148,14 @@ func _run() -> void:
 		_reject(stage, "look_back", {"actor": "invalid"})
 		_reject(stage, "use_item", {"slot": 3, "target": stage.expected.viewpoint})
 		for index in range(1, 4):
+			_open_drawer(stage)
 			var actor: String = oracle.snapshot().viewpoint
 			var target: String = stage.expected.dolls[index].id
+			var former_whirr: int = stage.expected.whirr
+			var former_count: int = stage.receipts.size()
 			stage.switch_buttons[index].pressed.emit()
+			_closed_drawer(stage)
+			_check(stage.receipts.size() == former_count + 1 and stage.expected.whirr == former_whirr + 5, "accepted switch has exactly one +5 WHIRR receipt")
 			receipt = oracle.act({"kind": "switch", "actor": actor, "target": target}, oracle.snapshot())
 			_check(stage.receipts.back() == receipt and stage.expected.viewpoint == target and not stage.expected.looking_back, "mounted SWITCH delegates exact receipt")
 			_check(stage.eye_profile == ["cracked", "glass", "one_eye", "ears"][index], "head-part ID changes eye profile")
@@ -91,26 +165,57 @@ func _run() -> void:
 				_check(stage.eye_overlay.size.x == expected_width, "one eye uses full authored overlay or half-view fallback")
 		_check(stage.expected.dolls.map(func(doll): return [doll.id, doll.rank]) == ranks, "all switching preserves ranks")
 		_check(stage.pocket_buttons[0].disabled and stage.pocket_buttons[0].text == "Empty pocket", "empty pocket disabled on real doll")
+		_open_drawer(stage)
+		var empty_state := stage.walk.snapshot()
+		var empty_count := stage.receipts.size()
+		stage.pocket_buttons[0].pressed.emit()
+		_check(stage.walk.snapshot() == empty_state and stage.receipts.size() == empty_count and stage.drawer_open, "disabled empty pocket is inert and stays revealed")
+		stage.drawer_toggle.pressed.emit()
+		_closed_drawer(stage)
 		_reject(stage, "use_item", {"slot": 0, "target": stage.expected.viewpoint})
+		_open_drawer(stage)
 		stage.switch_buttons[0].pressed.emit()
+		_closed_drawer(stage)
 		oracle.act({"kind": "switch", "actor": oracle.snapshot().viewpoint, "target": stage.expected.dolls[0].id}, oracle.snapshot())
 		for slot in [0, 0]:
+			_open_drawer(stage)
 			var actor: String = oracle.snapshot().viewpoint
 			var mend: String = stage.pocket_target(str(stage.expected.pockets[actor][slot]))
+			var prior_whirr: int = stage.expected.whirr
+			var prior_count: int = stage.receipts.size()
 			stage.pocket_buttons[slot].pressed.emit()
+			_closed_drawer(stage)
+			_check(stage.receipts.size() == prior_count + 1, "accepted pocket produces exactly one receipt")
+			_check(stage.expected.whirr - prior_whirr == (15 if stage.expected.pockets[actor].size() == 0 else 5), "ordinary pocket and fresh stuffing retain authored WHIRR costs")
 			receipt = oracle.act({"kind": "use_item", "actor": actor, "slot": slot, "target": mend}, oracle.snapshot())
 			_check(receipt.ok and stage.receipts.back() == receipt and receipt.events[0].kind == "heal", "mounted healing pockets reflect exact HP and WHIRR receipts")
 		_check(stage.pocket_buttons[0].disabled and stage.expected.pockets[stage.expected.viewpoint].is_empty(), "consumed items leave empty pockets")
+		_open_drawer(stage)
+		var forward_count := stage.receipts.size()
 		stage.forward_button.pressed.emit()
+		_closed_drawer(stage)
+		_check(stage.receipts.size() == forward_count + 1 and stage.expected.step == 1, "accepted forward step closes drawer after one receipt")
 		receipt = oracle.act({"kind": "forward", "actor": oracle.snapshot().viewpoint}, oracle.snapshot())
 		_check(stage.receipts.back() == receipt and stage.travel != null and stage.travel.is_running(), "ordinary forward creates travel tween after exact S8a action")
 		stage.set_reduced_motion(true)
+		_check(not stage.drawer_open and stage.drawer_toggle.is_visible_in_tree(), "reduced motion preserves quiet drawer")
 		_check(stage.travel == null and not stage.stage.moving() and stage.stage.camera.position == Vector3(0, StitchedCorridorStage.EYE, stage.stage.eye_z(stage.expected.step)), "reduced motion immediately finishes travel geometry")
 		while stage.expected.phase == "walking":
 			stage.forward_button.pressed.emit()
 			receipt = oracle.act({"kind": "forward", "actor": oracle.snapshot().viewpoint}, oracle.snapshot())
 			_check(stage.receipts.back() == receipt and stage.travel == null, "reduced forward immediate and authoritative")
 		_check(stage.forward_button.disabled and stage.back_button.disabled, "finished walk disables movement")
+		_closed_drawer(stage)
+		_check(not stage.drawer_toggle.visible and not stage.drawer_toggle.has_focus(), "completed walk has no hidden drawer toggle focused")
+		var ended_snapshot := stage.walk.snapshot()
+		var ended_count := stage.receipts.size()
+		stage.forward_button.pressed.emit()
+		stage.back_button.pressed.emit()
+		_check(stage.walk.snapshot() == ended_snapshot and stage.receipts.size() == ended_count,
+			"wrong-phase forward and look-back controls cannot create an extra transaction")
+		_hidden_signals_are_inert(stage)
+		stage.drawer_toggle.pressed.emit()
+		_check(not stage.drawer_open, "completed walk refuses stale toggle activation")
 		_reject(stage, "forward", {})
 		_check(stage.expected.pending == oracle.snapshot().pending and stage.expected.pending.size() == (1 if stage.expected.shadow.present else 0)
 			and stage.expected.rng == random.state, "only unresolved mimic deferred, with no action RNG draws")
@@ -128,6 +233,7 @@ func _run() -> void:
 	_check(neutral.eye_profile == "neutral" and not neutral.eye_overlay.visible, "unknown head metadata safely neutral")
 	neutral.free()
 	await _public_mount()
+	await _host_tug_mount()
 	await _mimic_mounts()
 	await _deferred_items()
 	var source := FileAccess.get_file_as_string("res://scripts/stitched/walk/stitched_walk_screen.gd")
@@ -159,6 +265,83 @@ func _public_mount() -> void:
 	app.free()
 
 
+func _host_tug_mount() -> void:
+	var app = load("res://scenes/app.tscn").instantiate()
+	app.run_seed = 42
+	root.add_child(app)
+	await process_frame
+	app.start_button.pressed.emit()
+	await process_frame
+	app.stitched_run_buttons[0].pressed.emit()
+	await process_frame
+	var pick := -1
+	var choices: Array = app.stitched_run_session.choices()
+	for index in choices.size():
+		if app.stitched_run_session.map.get_node(choices[index]).type != "Boss":
+			pick = index
+			break
+	_check(pick >= 0, "real New Run offers non-boss route")
+	if pick < 0:
+		app.free()
+		return
+	app.stitched_run_buttons[pick].pressed.emit()
+	await process_frame
+	var stage: StitchedWalkScreen = app.stitched_run_walk
+	_check(stage != null and stage.host == app.stitched_run_session and stage.walk != null, "live route mounts authoritative walk with session")
+	if stage == null:
+		app.free()
+		return
+	_check(stage.expected.has("tug"), "live session has real scheduled tug")
+	if not stage.expected.has("tug"):
+		app.free()
+		return
+	stage.set_reduced_motion(true)
+	var tug_step: int = int(stage.expected.tug.step)
+	while stage.expected.step < tug_step and stage.expected.phase == "walking":
+		stage.forward_button.pressed.emit()
+	_check(stage.walk.tug_unresolved() and stage.event_panel.visible and stage.forward_button.text == "LET IT TAKE ONE",
+		"real hosted tug shows its required yield action at scheduled step")
+	var held: Array = stage.expected.pockets[stage.expected.viewpoint]
+	var item_choices := int("pins" in held) + int("spare_spool" in held)
+	_check(stage.event_buttons.size() == item_choices, "genuine tug offers only the carried pin or spool alternatives")
+	var before := stage.host.snapshot()
+	var journal_count := stage.host.journal.size()
+	_open_drawer(stage)
+	stage.refresh()
+	_check(stage.drawer_open and stage.event_panel.visible and stage.host.snapshot() == before and stage.host.journal.size() == journal_count,
+		"real hosted tug keeps event visible and journal unchanged on drawer refresh")
+	var esc := InputEventKey.new()
+	esc.keycode = KEY_ESCAPE
+	esc.pressed = true
+	Input.parse_input_event(esc)
+	await process_frame
+	_closed_drawer(stage)
+	_check(stage.drawer_toggle.has_focus() and stage.host.snapshot() == before and stage.host.journal.size() == journal_count,
+		"hosted Escape closes drawer without a run journal entry")
+	_open_drawer(stage)
+	for button in stage.event_buttons:
+		_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL and not button.disabled, "tug answer remains keyboard and mouse accessible")
+	stage.back_button.pressed.emit()
+	_check(stage.drawer_open and not stage.event_panel.visible, "looking back hides only tug panel, not open drawer")
+	var switch_index := -1
+	for index in stage.switch_buttons.size():
+		if not stage.switch_buttons[index].disabled:
+			switch_index = index
+			break
+	_check(switch_index >= 0, "a real eligible doll can restore forward sight")
+	if switch_index >= 0:
+		stage.switch_buttons[switch_index].pressed.emit()
+		_closed_drawer(stage)
+		_check(not stage.expected.looking_back and stage.event_panel.visible, "switch returns to tug panel without obscuring it")
+		_open_drawer(stage)
+	var before_tug_step := int(stage.expected.step)
+	var before_tug_count := stage.receipts.size()
+	stage.forward_button.pressed.emit()
+	_check(stage.receipts.size() == before_tug_count + 1 and stage.receipts.back().ok and not stage.walk.tug_unresolved()
+		and int(stage.expected.step) == before_tug_step and stage.drawer_open, "actual tug resolution does not collapse drawer before a step transition")
+	app.free()
+
+
 func _mimic_mounts() -> void:
 	var witnesses := {true: 0, false: 0}
 	for seed_number in range(16):
@@ -185,7 +368,9 @@ func _mimic_mounts() -> void:
 				if doll.id == stage.expected.shadow.disguise:
 					_check(stage.figure_labels[shadow_id].text.begins_with(doll.name), "extra doll uses the disguised doll name")
 			for index in [1, 2, 3]:
+				_open_drawer(stage)
 				stage.switch_buttons[index].pressed.emit()
+				_closed_drawer(stage)
 				stage.back_button.pressed.emit()
 				_check(stage.clue.visible and not stage.clue.text.is_empty(), "all eye profiles retain readable clue")
 				if index == 1:
@@ -225,23 +410,51 @@ func _deferred_items() -> void:
 	await process_frame
 	stage.set_reduced_motion(true)
 	var pristine_dolls: Array = stage.expected.dolls.duplicate(true)
+	_open_drawer(stage)
 	stage.switch_buttons[1].pressed.emit()
+	_closed_drawer(stage)
 	for item in ["starch", "dye"]:
+		_open_drawer(stage)
 		stage.pocket_buttons[0].pressed.emit()
+		_closed_drawer(stage)
 		var receipt: Dictionary = stage.receipts.back()
 		_check(receipt.ok and receipt.snapshot.pending.back().kind == item and not receipt.snapshot.pending.back().consumed, "mounted deferred item queues truthful pending receipt " + item)
+	_open_drawer(stage)
 	stage.switch_buttons[2].pressed.emit()
+	_closed_drawer(stage)
 	_reject(stage, "use_item", {"slot": 0, "target": stage.expected.viewpoint})
 	while stage.expected.step < curio_step:
 		stage.forward_button.pressed.emit()
 	var curio := stage.current_curio()
 	_check(not curio.is_empty() and stage.pocket_target("pins") == curio.instance, "pins go to the curio in the way")
 	_check(stage.event_panel.visible and stage.event_buttons.size() >= 2 and stage.stage.figure_nodes.has("curio"), "the curio stands in the corridor with its choices")
+	for control in stage.event_buttons:
+		_check(control.is_visible_in_tree() and not control.disabled and control.get_theme_stylebox("normal") is StyleBoxTexture, "curio choices stay reachable and sewn")
+	_open_drawer(stage)
+	var with_curio := stage.walk.snapshot()
+	var with_curio_receipts := stage.receipts.size()
+	stage.refresh()
+	_check(stage.drawer_open and stage.event_panel.visible and stage.walk.snapshot() == with_curio and stage.receipts.size() == with_curio_receipts, "unresolved curio refresh never auto-closes pockets")
+	_reject(stage, "switch", {"target": "LOST"})
+	_check(stage.drawer_open, "rejected curio command leaves drawer open")
 	stage.pocket_buttons[0].pressed.emit()
+	_closed_drawer(stage)
+	_check(stage.event_panel.visible, "pocket use leaves unresolved curio choices visible")
 	_check(stage.receipts.back().ok and stage.expected.pending.back().kind == "pins" and not stage.expected.pending.back().consumed, "mounted pins queues current-instance effect")
+	_open_drawer(stage)
 	stage.pocket_buttons[0].pressed.emit()
+	_closed_drawer(stage)
 	_check(stage.receipts.back().ok and stage.expected.pending.back().kind == "spare_spool", "mounted spare spool queues receipt")
 	_check(stage.expected.pending.size() == 4 and stage.expected.dolls == pristine_dolls and stage.expected.whirr == 30, "deferred items never resolve horrors, HP, ranks or fray")
 	for pending in stage.expected.pending:
 		_check(not pending.consumed, "pending effects left for later stages")
+	var choice_count := stage.receipts.size()
+	var old_event_button := stage.event_buttons[0]
+	old_event_button.pressed.emit()
+	_check(stage.receipts.size() == choice_count + 1 and stage.receipts.back().ok
+		and stage.current_curio().is_empty() and not stage.event_panel.visible, "real event choice remains clickable after drawer and pocket use")
+	var event_complete_snapshot := stage.walk.snapshot()
+	old_event_button.pressed.emit()
+	_check(stage.receipts.size() == choice_count + 1 and stage.walk.snapshot() == event_complete_snapshot,
+		"stale event button cannot generate second receipt after curio resolves")
 	stage.free()
