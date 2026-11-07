@@ -232,7 +232,9 @@ func preview_choices() -> Dictionary:
 		elif projected_max < MIN_VITAL_MAX_HP:
 			max_hp_ok = false
 
-		var available: bool = gold_ok and scraps_ok and max_hp_ok
+		var wasted_heal: bool = is_pure_paid_heal_at_full_hp(gold_delta, scraps_delta, hp_delta, max_hp_delta, protagonist)
+
+		var available: bool = gold_ok and scraps_ok and max_hp_ok and not wasted_heal
 		var blocked := ""
 		if not gold_ok:
 			blocked = "insufficient gold"
@@ -240,6 +242,8 @@ func preview_choices() -> Dictionary:
 			blocked = "insufficient scraps"
 		elif not max_hp_ok:
 			blocked = "max HP reduction below floor %d" % MIN_VITAL_MAX_HP
+		elif wasted_heal:
+			blocked = "target hero already at full HP"
 
 		var proj_gold: int = _wallet["gold"] + gold_delta if available else _wallet["gold"]
 		var proj_scraps: int = _wallet["scraps"] + scraps_delta if available else _wallet["scraps"]
@@ -369,6 +373,10 @@ func choose(
 		return _fail("integer overflow on max HP credit")
 	if projected_max < MIN_VITAL_MAX_HP:
 		return _fail("max HP reduction below vitality floor %d (current %d, delta %d, result %d)" % [MIN_VITAL_MAX_HP, protagonist_max_hp, max_hp_delta, projected_max])
+
+	# Pure paid heal at full HP
+	if is_pure_paid_heal_at_full_hp(gold_delta, scraps_delta, hp_delta, max_hp_delta, protagonist):
+		return _fail("target hero already at full HP")
 
 	# Commit and latch exactly once
 	var before_state: Dictionary = (exp_state as Dictionary).duplicate(true)
@@ -673,3 +681,56 @@ static func _same_value(a: Variant, b: Variant) -> bool:
 				return false
 		return true
 	return a == b
+
+
+## Pure paid HP heal at full HP predicate:
+## hp_delta > 0 AND max_hp_delta == 0 AND gold_delta <= 0 AND scraps_delta <= 0
+## AND (gold_delta < 0 OR scraps_delta < 0) AND recipient.hp == recipient.max_hp
+static func is_pure_paid_heal_at_full_hp(
+	gold_delta: Variant,
+	scraps_delta: Variant,
+	hp_delta: Variant = null,
+	max_hp_delta: Variant = null,
+	recipient: Variant = null
+) -> bool:
+	var g: int = 0
+	var s: int = 0
+	var h: int = 0
+	var m: int = 0
+	var rec: Dictionary = {}
+	if gold_delta is Dictionary and scraps_delta is Dictionary:
+		var outcome: Dictionary = gold_delta
+		rec = scraps_delta
+		g = int(outcome.get("gold", 0))
+		s = int(outcome.get("scraps", 0))
+		h = int(outcome.get("hp", 0))
+		m = int(outcome.get("max_hp", 0))
+	else:
+		g = int(gold_delta)
+		s = int(scraps_delta)
+		h = int(hp_delta)
+		m = int(max_hp_delta)
+		if recipient is Dictionary:
+			rec = recipient
+	if rec.is_empty():
+		return false
+	var hero_hp: int = int(rec.get("hp", 0))
+	var hero_max_hp: int = int(rec.get("max_hp", 0))
+	return (
+		h > 0
+		and m == 0
+		and g <= 0
+		and s <= 0
+		and (g < 0 or s < 0)
+		and hero_hp == hero_max_hp
+	)
+
+
+static func is_wasted_paid_heal(
+	gold_delta: Variant,
+	scraps_delta: Variant,
+	hp_delta: Variant = null,
+	max_hp_delta: Variant = null,
+	recipient: Variant = null
+) -> bool:
+	return is_pure_paid_heal_at_full_hp(gold_delta, scraps_delta, hp_delta, max_hp_delta, recipient)
