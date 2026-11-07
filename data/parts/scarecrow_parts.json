@@ -358,6 +358,12 @@
         },
         "3": {
           "ability": {
+            "target": [
+              1,
+              2,
+              3,
+              4
+            ],
             "dmg": [
               4,
               7
@@ -368,7 +374,7 @@
           }
         }
       },
-      "text": "Strike the first three foes with a terrifying crow harvest, leaving Weak."
+      "text": "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, leaving Weak on hits; at stitch tier III it also reaches rank 4."
     },
     {
       "id": "scarecrow_torso_straw_wrap",

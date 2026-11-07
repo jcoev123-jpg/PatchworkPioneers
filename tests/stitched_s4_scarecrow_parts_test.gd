@@ -57,9 +57,10 @@ const CROW_LEGS := {
 		"tier3": {"dmg": [7, 10], "mark_damage": 7, "effects": {"mark": 3}},
 	},
 }
-## Seven of the eight Scarecrow parts must keep their authored records; the only data change
-## is the tier-III Sack Glare target override. Crow Dive, Crow Peck and Crow Flock are pinned
-## by CROW_LEGS and _test_leg_rank4_data, so this table pins the remaining five siblings.
+## Seven of the eight Scarecrow parts must keep their authored base records; the only data
+## changes are the tier-III target overrides on Sack Glare and Harvest Fright. Crow Dive, Crow
+## Peck and Crow Flock are pinned by CROW_LEGS and _test_leg_rank4_data, so this table pins the
+## remaining siblings.
 const SIBLING_PARTS := {
 	"scarecrow_arms_fork_jab": {
 		"slot": "arms", "stat": {"dmg": 1}, "launch": [1, 2], "target": [1, 2],
@@ -84,6 +85,8 @@ const SIBLING_PARTS := {
 }
 const SACK_GLARE_TEXT := "A sack-faced glare Weakens and Marks a foe in enemy ranks 1-3; " \
 	+ "at stitch tier III it reaches rank 4."
+const HARVEST_FRIGHT_TEXT := "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, " \
+	+ "leaving Weak on hits; at stitch tier III it also reaches rank 4."
 var failures: Array[String] = []
 var checks := 0
 
@@ -102,6 +105,8 @@ func _initialize() -> void:
 	_test_crow_flock_tier1_weak_reply()
 	_test_sack_glare_tier1_weak_reply()
 	_test_sack_glare_rank4()
+	_test_harvest_fright_rank4_data()
+	_test_harvest_fright_rank4()
 	_test_rejections()
 	_test_replay()
 	for failure in failures:
@@ -1575,6 +1580,263 @@ func _test_sack_glare_rank4() -> void:
 			_check(int(miss_after["round"]) != int(miss_before["round"])
 				or int(miss_after["turn_index"]) != int(miss_before["turn_index"]),
 				"AC3: the legal but missing cast still spends Scarecrow's turn")
+
+
+## AC1, the task goal: only the authored stitch tier-III override widens the alternate arms
+## crow sweep to the rear enemy rank 4. Tiers I and II keep enemy ranks 1-3, and launch, pose,
+## accuracy, crit, self_move and the damage/Weak ladder stay exactly as authored.
+func _test_harvest_fright_rank4_data() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][ALTERNATES["arms"]]
+	var base: Dictionary = part["ability"]
+	_check(str(part["name"]) == "Harvest Fright" and str(part["slot"]) == "arms"
+		and str(part["owner"]) == "scarecrow" and part["stat"] == {"dmg": 2},
+		"AC1: Harvest Fright keeps its arms slot, owner and dmg +2 stat")
+	_check(str(base["id"]) == "scarecrow_arms_harvest_fright_move"
+		and str(base["name"]) == "Harvest Fright" and str(base["kind"]) == "ranged"
+		and str(base["target_side"]) == "enemy" and bool(base["multi"])
+		and int(base["acc"]) == 88 and base["dmg"] == [2, 4] and int(base["crit"]) == 0
+		and base["effects"] == {"weak": 2} and int(base["self_move"]) == 0
+		and str(base["move"]) == "attack2",
+		"AC1: Harvest Fright keeps its multi enemy ranged ability, ACC and attack2 pose")
+	var front_mask := StitchedParts.rank_mask([1, 2, 3])
+	_check(front_mask != StitchedParts.ALL_RANKS_MASK,
+		"AC1: enemy ranks 1-3 form a mask that excludes rank 4")
+	_check(base["target"] == [1, 2, 3] and int(base["target_mask"]) == front_mask
+		and not StitchedParts.ranks_allowed(int(base["target_mask"]), 4),
+		"AC1: Harvest Fright base target stays enemy ranks 1-3")
+	var expected_dmg := {1: [2, 4], 2: [3, 5], 3: [4, 7]}
+	var expected_weak := {1: 2, 2: 3, 3: 4}
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
+			"AC1: Harvest Fright tier %d resolves as a validated ability" % tier)
+		_check(ability["launch"] == [1, 2, 3] and int(ability["launch_mask"]) == front_mask
+			and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 4),
+			"AC1: Harvest Fright tier %d still launches from hero ranks 1-3" % tier)
+		_check(ability["dmg"] == expected_dmg[tier]
+			and ability["effects"] == {"weak": expected_weak[tier]},
+			"AC1: Harvest Fright tier %d keeps its authored damage and Weak" % tier)
+		_check(str(ability["target_side"]) == "enemy" and bool(ability["multi"])
+			and str(ability["move"]) == "attack2" and int(ability["acc"]) == 88
+			and int(ability["crit"]) == 0 and int(ability["self_move"]) == 0,
+			"AC1: Harvest Fright tier %d keeps its multi enemy shape, ACC, crit and pose" % tier)
+		var expected_ranks: Array = [1, 2, 3] if tier < 3 else [1, 2, 3, 4]
+		var expected_mask := StitchedParts.rank_mask(expected_ranks)
+		_check(ability["target"] == expected_ranks
+			and int(ability["target_mask"]) == expected_mask
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 1)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 2)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 3)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 4) == (tier == 3)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 0)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 5),
+			"AC1: Harvest Fright tier %d targets %s and never rank 0 or 5"
+				% [tier, str(expected_ranks)])
+		if tier == 3:
+			_check(int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK,
+				"AC1: tier-III Harvest Fright uses the full enemy rank mask")
+	# The loaded catalog normalises each tier into a full merged ability, so the authored
+	# override shape is checked against the raw JSON: only tier III gains a target list.
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	var raw_part: Dictionary = {}
+	if raw is Dictionary and raw.get("parts") is Array:
+		for entry in raw["parts"]:
+			if entry is Dictionary and str(entry.get("id", "")) == ALTERNATES["arms"]:
+				raw_part = entry
+	_check(not raw_part.is_empty(), "AC1: the raw Harvest Fright JSON entry is readable")
+	if not raw_part.is_empty():
+		var raw_tiers: Dictionary = raw_part.get("tiers", {})
+		var raw_tier2: Dictionary = raw_tiers.get("2", {}).get("ability", {})
+		var raw_tier3: Dictionary = raw_tiers.get("3", {}).get("ability", {})
+		_check(_int_ranks(raw_part["ability"]["target"]) == [1, 2, 3],
+			"AC1: the authored Harvest Fright base ability keeps enemy ranks 1-3")
+		_check(not raw_tier2.has("target")
+			and _int_ranks(raw_tier2.get("dmg")) == [3, 5]
+			and _int_effects(raw_tier2.get("effects")) == {"weak": 3}
+			and raw_tier2.keys().size() == 2,
+			"AC1: the authored tier-II override only raises damage and Weak")
+		_check(_int_ranks(raw_tier3.get("target")) == [1, 2, 3, 4]
+			and _int_ranks(raw_tier3.get("dmg")) == [4, 7]
+			and _int_effects(raw_tier3.get("effects")) == {"weak": 4}
+			and raw_tier3.keys().size() == 3,
+			"AC1: the authored tier-III override adds only the enemy rank 1-4 target list")
+	_check(str(part["text"]) == HARVEST_FRIGHT_TEXT,
+		"AC1: Harvest Fright text states its front-three reach and the tier-III rank-four reach")
+	var text := str(part["text"]).to_lower()
+	_check(text.contains("tier iii") and text.contains("rank 4")
+		and text.contains("ranks 1-3") and text.contains("on hits"),
+		"AC1: Harvest Fright text credits rank 4 only to tier III and Weak only to landed hits")
+
+
+## AC2/AC3, the task goal: the real three-foe S2 preview with only the already-present Moth
+## Scribe moved to occupied foe rank 4 (its old rank 3 left vacant). Scarecrow keeps his real
+## rank-2 slot wearing the alternate arms. Tiers I and II cannot select rank 4 and their legal
+## front cast leaves the rear Moth Scribe untouched; tier III aimed at rank 4 resolves one
+## receipt for each living rank 1, 2 and 4 and, on a bounded seed, lands damaging Weak 4 on the
+## Moth Scribe. Illegal ranks and a rank-4 launch fail closed without spending anything.
+func _test_harvest_fright_rank4() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var ability := StitchedParts.ability_at_tier(cat["by_id"][ALTERNATES["arms"]], 3)
+	_check(bool(StitchedParts.validate_ability(ability).get("ok", false))
+		and ability["target"] == [1, 2, 3, 4],
+		"AC1: the equipped tier-III Harvest Fright reaches enemy rank 4")
+	var setup := _rank4_foe_battle(501950, ALTERNATES["arms"], 3)
+	_check(setup != null, "AC2: genuine occupied-rank-4 Harvest Fright battle builds")
+	if setup != null:
+		var heroes: Array = setup.get_heroes()
+		var foes: Array = setup.get_foes()
+		_check(heroes.size() == 4 and foes.size() == 3,
+			"AC2: Harvest Fright witness keeps four real heroes and the three S2 foes")
+		var scarecrow := setup.get_unit("scarecrow")
+		_check(int(scarecrow.get("rank", -1)) == 2
+			and str(scarecrow.get("parts", {}).get("arms", {}).get("id", "")) == ALTERNATES["arms"]
+			and int(scarecrow.get("parts", {}).get("arms", {}).get("tier", 0)) == 3,
+			"AC2: Scarecrow keeps his real rank 2 wearing tier-III Harvest Fright")
+		_check(int(setup.get_unit("moth_scribe")["rank"]) == 4
+			and int(setup.get_unit("fray_scavenger")["rank"]) == 1
+			and int(setup.get_unit("scissor_crab")["rank"]) == 2,
+			"AC2: only the existing Moth Scribe moves to occupied enemy rank 4")
+		_check(foes.all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: the Moth Scribe's former enemy rank 3 stays vacant")
+		for id in ENEMY_IDS:
+			_check(not setup.get_unit(id).is_empty(), "AC2: actual shipped foe retained: " + id)
+	# Tiers I and II keep the authored front-three reach: the occupied rear rank refuses with no
+	# turn, state or RNG spend, and a legal rank-1 cast strikes only the living ranks 1 and 2.
+	for tier in [1, 2]:
+		var front := _rank4_foe_battle(501951 + tier, ALTERNATES["arms"], tier)
+		_check(front != null, "AC3: genuine occupied-rank-4 tier-%d Harvest Fright builds" % tier)
+		if front == null:
+			continue
+		_check(int(front.get_unit("moth_scribe")["rank"]) == 4
+			and int(front.get_unit("scarecrow")["rank"]) == 2,
+			"AC3: tier-%d witness keeps a real rank-4 foe and a rank-2 Scarecrow" % tier)
+		if not _to(front, "scarecrow"):
+			_check(false, "AC3: Harvest Fright tier-%d rejection receives a real Scarecrow turn" % tier)
+			continue
+		var rear_before := front.get_unit("moth_scribe").duplicate(true)
+		_reject_without_spend(front, ALTERNATES["arms"], 4,
+			"Harvest Fright tier %d rejects the occupied enemy rank 4" % tier)
+		var before := front.state_snapshot()
+		var cast := front.use_part(ALTERNATES["arms"], 1)
+		var receipts: Array = cast.get("results", [])
+		var ranks: Array = []
+		for receipt in receipts:
+			ranks.append(int(receipt.get("target_rank", 0)))
+		_check(bool(cast.get("ok", false)) and receipts.size() == 2 and ranks == [1, 2],
+			"AC3: tier-%d Harvest Fright aimed at rank 1 strikes only the real foes in ranks 1 and 2"
+				% tier)
+		_check(front.get_unit("moth_scribe")["hp"] == rear_before["hp"]
+			and front.get_unit("moth_scribe")["statuses"] == rear_before["statuses"],
+			"AC3: tier-%d Harvest Fright leaves the occupied rear foe untouched" % tier)
+		var after := front.state_snapshot()
+		_check(int(after["round"]) != int(before["round"])
+			or int(after["turn_index"]) != int(before["turn_index"]),
+			"AC3: the legal tier-%d front cast spends Scarecrow's genuine turn" % tier)
+	# A real tier-III Scarecrow turn refuses out-of-range ranks 0 and 5 atomically, then the
+	# accepted rank-4 cast ends the turn so every repeat is off turn.
+	var near := _rank4_foe_battle(501959, ALTERNATES["arms"], 3)
+	if near == null or not _to(near, "scarecrow"):
+		_check(false, "AC3: tier-III Harvest Fright rejection witness receives a real turn")
+	else:
+		for bad_rank in [0, 5]:
+			_reject_without_spend(near, ALTERNATES["arms"], bad_rank,
+				"Harvest Fright rejects enemy rank %d" % bad_rank)
+		var near_cast := near.use_part(ALTERNATES["arms"], 4)
+		_check(bool(near_cast.get("ok", false)) and near_cast.get("results", []).size() == 3,
+			"AC3: the accepted tier-III rank-4 aim still resolves its three living foes")
+		_reject_without_spend(near, ALTERNATES["arms"], 4,
+			"replayed Harvest Fright after the turn is spent")
+	var witnessed := false
+	var landed := false
+	var witness_seed := -1
+	var witness_cast: Dictionary = {}
+	var witness_snapshot: Dictionary = {}
+	var witness_rng := -1
+	for seed_value in range(501960, 502060):
+		var b := _rank4_foe_battle(seed_value, ALTERNATES["arms"], 3)
+		if b == null or not _to(b, "scarecrow"):
+			continue
+		if str(b.get_unit("scarecrow")["parts"]["arms"]["id"]) != ALTERNATES["arms"]:
+			continue
+		var before := b.state_snapshot()
+		var scribe_before := b.get_unit("moth_scribe")
+		var cast := b.use_part(ALTERNATES["arms"], 4)
+		var after := b.state_snapshot()
+		var receipts: Array = cast.get("results", [])
+		if not bool(cast.get("ok", false)) or receipts.size() != 3:
+			continue
+		var ranks: Array = []
+		var targets: Dictionary = {}
+		var sides_ok := true
+		for receipt in receipts:
+			ranks.append(int(receipt.get("target_rank", 0)))
+			targets[str(receipt.get("target", ""))] = true
+			sides_ok = sides_ok and str(receipt.get("target_side", "")) == "foe"
+		if not sides_ok or ranks != [1, 2, 4] or targets.size() != 3 \
+			or not targets.has("fray_scavenger") or not targets.has("scissor_crab") \
+			or not targets.has("moth_scribe"):
+			continue
+		if not witnessed:
+			witnessed = true
+			_check(str(cast.get("action", "")) == "ability"
+				and str(cast.get("actor", "")) == "scarecrow"
+				and str(cast.get("part", "")) == ALTERNATES["arms"]
+				and str(cast.get("ability", "")) == str(ability["id"]),
+				"AC2: tier-III Harvest Fright runs as the equipped Scarecrow arms (seed %d)"
+					% seed_value)
+			_check(receipts.size() == 3 and ranks == [1, 2, 4]
+				and b.get_foes().size() == 3
+				and b.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+				"AC2: one distinct foe receipt each at enemy ranks 1, 2 and 4, never rank 3 (seed %d)"
+					% seed_value)
+			_check(int(after["round"]) != int(before["round"])
+				or int(after["turn_index"]) != int(before["turn_index"]),
+				"AC2: the legal rank-4 cast spends Scarecrow's genuine turn (seed %d)" % seed_value)
+		for receipt in receipts:
+			if str(receipt.get("target", "")) != "moth_scribe":
+				continue
+			if bool(receipt.get("hit", false)) and int(receipt.get("damage", 0)) > 0 \
+				and _status_amount(receipt.get("statuses", []), "weak") == 4 \
+				and int(b.get_unit("moth_scribe")["hp"]) < int(scribe_before["hp"]) \
+				and int(b.get_unit("moth_scribe")["statuses"].get("weak", 0)) > 0:
+				landed = true
+				witness_seed = seed_value
+				witness_cast = cast.duplicate(true)
+				witness_snapshot = after
+				witness_rng = b.rng_state()
+		if witnessed and landed:
+			break
+	_check(witnessed,
+		"AC2: a bounded real seed sweeps tier-III Harvest Fright across living ranks 1, 2 and 4")
+	_check(landed,
+		"AC2: a bounded real seed lands damaging Weak 4 on the rear Moth Scribe")
+	if witness_seed >= 0:
+		var replay := _rank4_foe_battle(witness_seed, ALTERNATES["arms"], 3)
+		var replayed := {}
+		if replay != null and _to(replay, "scarecrow"):
+			replayed = replay.use_part(ALTERNATES["arms"], 4)
+		_check(not replayed.is_empty() and replayed == witness_cast
+			and replay.state_snapshot() == witness_snapshot
+			and replay.rng_state() == witness_rng,
+			"AC2: same seed and rank-4 aim replay receipt, snapshot and RNG exactly")
+	# The widened reach never widens the launch ranks: the same tier-III ability cannot launch
+	# from an in-memory hero rank 4, and that refusal spends no turn, state or RNG.
+	var vanguard := _rank4_battle(ALTERNATES["arms"], 3, 502061)
+	_check(vanguard != null, "AC3: genuine rank-4 Scarecrow battle builds for Harvest Fright")
+	if vanguard != null:
+		_check(int(vanguard.get_unit("scarecrow")["rank"]) == 4
+			and str(vanguard.get_unit("scarecrow")["parts"]["arms"]["id"]) == ALTERNATES["arms"],
+			"AC3: the rank-4 launch witness really stands in hero rank 4 with Harvest Fright")
+		if _to(vanguard, "scarecrow"):
+			_reject_without_spend(vanguard, ALTERNATES["arms"], 1,
+				"tier-III Harvest Fright cannot launch from hero rank 4")
+		else:
+			_check(false, "AC3: rank-4 launch gate receives an actual scheduled turn")
 
 
 ## Raw JSON numbers parse as floats, so authored override values are compared as ints.
