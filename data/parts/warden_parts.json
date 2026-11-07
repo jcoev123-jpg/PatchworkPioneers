@@ -111,11 +111,16 @@
             "crit": 8,
             "effects": {
               "weak": 3
-            }
+            },
+            "target": [
+              1,
+              2,
+              3
+            ]
           }
         }
       },
-      "text": "Rattle a nearby foe into Weakness."
+      "text": "Rattle a nearby foe into Weakness; at tier III the clang reaches enemy rank 3."
     },
     {
       "id": "warden_arms_shield_catch",
