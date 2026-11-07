@@ -20,6 +20,7 @@ func _initialize() -> void:
 	_test_purchase_and_leave()
 	_test_refusals()
 	_test_lost_and_hanging()
+	_test_bleed_outcomes()
 	_check(randi() == next_draw,
 		"bandage open, quote, buys, Leaves and every refusal draw no global RNG")
 	if failures.is_empty():
@@ -464,3 +465,122 @@ func _test_lost_and_hanging() -> void:
 			and hang_after[0] == hang_before[0] and hang_after[2] == hang_before[2]
 			and hang_after[3] == hang_before[3],
 			"the HANGING hero keeps HP, fray, rank, lost flag and parts; peers unchanged")
+
+
+func _row(hero_id: String, amount: int) -> Dictionary:
+	return {"hero_id": hero_id, "bleed_before": amount, "bleed_removed": amount,
+		"bleed_after": 0}
+
+
+## The open quote forecasts each eligible doll's whole Bleed cure, read-only.
+func _test_bleed_outcomes() -> void:
+	var both: Array = [_row("rag_duelist", 3), _row("warden", 1)]
+	# Affordable: exactly two rows in roster order, existing fields unchanged.
+	var rich := _open(120, PRICE)
+	var quote := rich.quote()
+	_check(quote.get("bleed_outcomes") is Array and quote["bleed_outcomes"].size() == 2,
+		"an affordable open quote reports exactly two Bleed rows")
+	_check(quote.get("bleed_outcomes") == both,
+		"rows are rag_duelist 3=>0 then warden 1=>0 in roster order")
+	_check(quote.get("eligible") == ["rag_duelist", "warden"]
+		and quote.get("choices") == ["buy_bandage", "leave"]
+		and quote.get("price") == PRICE and quote.get("can_buy") == true
+		and quote.get("blocked") == "",
+		"the forecast leaves eligible IDs, decisions and price exact")
+	for row in quote.get("bleed_outcomes", []):
+		_check(row.keys() == ["hero_id", "bleed_before", "bleed_removed", "bleed_after"]
+			and typeof(row["bleed_before"]) == TYPE_INT and row["bleed_after"] == 0
+			and row["bleed_removed"] == row["bleed_before"],
+			"each row has exactly the four keys with integer counts")
+	# Short wallet: the same informative rows, but Buy stays unavailable.
+	var poor_quote := _open(39, PRICE).quote()
+	_check(poor_quote.get("bleed_outcomes") == both
+		and poor_quote.get("can_buy") == false
+		and poor_quote.get("blocked") == "not enough gold"
+		and poor_quote.get("choices") == ["leave"]
+		and poor_quote.get("eligible") == ["rag_duelist", "warden"],
+		"a short wallet keeps the truthful rows, blocks Buy and offers only Leave")
+	# Clean roster, and a roster whose only bleeder is LOST: empty and Leave-only.
+	var clean := _party()
+	clean[0]["statuses"] = {"weak": 1}
+	clean[1]["statuses"] = {}
+	var clean_quote := _open_party(120, PRICE, clean).quote()
+	_check(clean_quote.get("bleed_outcomes") is Array
+		and clean_quote["bleed_outcomes"].is_empty()
+		and clean_quote.get("choices") == ["leave"]
+		and clean_quote.get("blocked") == "no bleeding heroes",
+		"a clean roster reports no rows and only Leave")
+	var only_lost := _party()
+	only_lost[0]["lost"] = true
+	only_lost[1]["statuses"] = {}
+	var lost_quote := _open_party(120, PRICE, only_lost).quote()
+	_check(lost_quote.get("bleed_outcomes") is Array
+		and lost_quote["bleed_outcomes"].is_empty()
+		and lost_quote.get("choices") == ["leave"],
+		"a LOST-only bleeder reports no rows and only Leave")
+	var one_lost := _party()
+	one_lost[0]["lost"] = true
+	var one_lost_quote := _open_party(120, PRICE, one_lost).quote()
+	_check(one_lost_quote.get("bleed_outcomes") == [_row("warden", 1)],
+		"a LOST bleeder is omitted while the living bleeder is forecast")
+	# Negative, zero, float, string and bool Bleed never appear.
+	var invalid_bleed := _party()
+	invalid_bleed[0]["statuses"] = {"bleed": 0}
+	invalid_bleed[1]["statuses"] = {"bleed": -2}
+	invalid_bleed[2]["statuses"] = {"bleed": 1.5}
+	invalid_bleed[3]["statuses"] = {"bleed": "3"}
+	var invalid_quote := _open_party(120, PRICE, invalid_bleed).quote()
+	_check(invalid_quote.get("bleed_outcomes") == []
+		and invalid_quote.get("choices") == ["leave"],
+		"zero, negative, float and string Bleed produce no rows")
+	var bool_bleed := _party()
+	bool_bleed[0]["statuses"] = {"bleed": true}
+	bool_bleed[1]["statuses"] = {}
+	_check(_open_party(120, PRICE, bool_bleed).quote().get("bleed_outcomes") == [],
+		"a boolean Bleed produces no row")
+	# Mixed roster: only the truly bleeding doll, even when unaffordable.
+	var mixed := invalid_bleed.duplicate(true)
+	mixed[2]["statuses"] = {"bleed": 2}
+	_check(_open_party(PRICE - 1, PRICE, mixed).quote().get("bleed_outcomes")
+		== [_row("seamstress", 2)],
+		"a mixed roster forecasts only the valid positive integer Bleed")
+	# Closed and invalid visits publish no projection or buy offer.
+	var closed := _open(120, PRICE)
+	closed.leave(NODE, closed.read_state())
+	var closed_quote := closed.quote()
+	_check(closed_quote.get("ok", true) == false and not closed_quote.has("bleed_outcomes")
+		and not closed_quote.has("can_buy")
+		and closed_quote.get("choices", ["x"]).is_empty(),
+		"a consumed visit exposes no projection and no buy offer")
+	var invalid_quote_closed := _open(120, 0).quote()
+	_check(invalid_quote_closed.get("ok", true) == false
+		and not invalid_quote_closed.has("bleed_outcomes")
+		and invalid_quote_closed.get("choices", ["x"]).is_empty(),
+		"an invalid visit exposes no projection and no buy offer")
+	# Mutating the returned rows cannot change the service or the next quote.
+	var party := _party()
+	var visit := _open_party(120, PRICE, party)
+	var state_before := visit.read_state()
+	var quote_before := visit.quote()
+	var mutable := visit.quote()
+	mutable["bleed_outcomes"][0]["bleed_removed"] = 99
+	mutable["bleed_outcomes"][0]["hero_id"] = "forged"
+	mutable["bleed_outcomes"].append(_row("tinker", 5))
+	mutable["bleed_outcomes"].clear()
+	_check(visit.quote() == quote_before and visit.read_state() == state_before
+		and visit.quote()["bleed_outcomes"] == both,
+		"mutating returned rows leaves a fresh quote and read_state unchanged")
+	_check(party == _party() and visit.is_open(),
+		"quoting never changes the caller's source heroes or the open visit")
+	# A real legal bandage still charges once and cures only the chosen doll.
+	var paid := visit.choose_bandage("rag_duelist", NODE, visit.read_state())
+	_check(paid.get("ok") == true and paid.get("charged_gold") == PRICE
+		and paid.get("gold") == 120 - PRICE and visit.is_consumed()
+		and paid["heroes"][0]["statuses"] == {"weak": 1}
+		and paid["heroes"][1]["statuses"] == {"bleed": 1},
+		"a lawful buy charges 40 once, drops Bleed, keeps Weak and the warden's Bleed")
+	var after_quote := visit.quote()
+	_check(after_quote.get("ok", true) == false and not after_quote.has("bleed_outcomes")
+		and visit.choose_bandage("warden", NODE, visit.read_state()).get("ok", true) == false
+		and visit.read_state()["gold"] == 120 - PRICE,
+		"the consumed visit publishes no projection and refuses a replayed buy")
