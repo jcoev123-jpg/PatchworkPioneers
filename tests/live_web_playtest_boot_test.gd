@@ -1,5 +1,4 @@
 extends SceneTree
-const LEGACY_ENTRY := preload("res://tests/legacy_card_app_fixture.gd")
 
 const BOOT := preload("res://scripts/live_web_playtest_boot.gd")
 var failures: Array[String] = []
@@ -22,12 +21,6 @@ func _snapshot(app) -> Array:
 		is_instance_valid(app.party_picker), is_instance_valid(app.stitched_run_panel),
 		app.stitched_run_draft.duplicate(), app.stitched_run_session != null,
 		app.title_view.is_visible_in_tree()])
-	if app.run_map != null:
-		state.append([app.run_map.get_floors(), app.run_map.get_route(), app.run_rng.state, app.act_outcome.get_state()])
-	if app.deck != null:
-		state.append([app.encounter_id, app.party.get_heroes(), app.enemies.get_enemies(),
-			app.deck.hand.duplicate(), app.deck.draw_pile.duplicate(), app.deck.discard_pile.duplicate(),
-			app.deck.turn_active, app.battle_result.get_outcome(), app.fight_reward_offers.duplicate(true)])
 	return state
 
 
@@ -77,41 +70,31 @@ func _run() -> void:
 	boot.walk_view.exit_button.pressed.emit()
 	await process_frame
 	app.free()
-	# Both parts of the explicit fixture opt-in are required, before any mutation.
-	for preparation in ["none", "start_only", "route_only", "both"]:
-		app = load("res://scenes/app.tscn").instantiate()
-		root.add_child(app)
-		await process_frame
-		if preparation == "start_only":
-			LEGACY_ENTRY.start_button(app)
-		elif preparation == "route_only":
-			LEGACY_ENTRY.route_button(app)
-		elif preparation == "both":
-			LEGACY_ENTRY.prepare(app)
-		pristine = _snapshot(app)
-		seed(114116)
-		expected_global = randi()
-		seed(114116)
-		for screen in LEGACY_ENTRY.LEGACY_SCREENS:
-			if screen in BOOT.PUBLIC_SCREENS:
-				continue
-			_check(not await boot.enter_preview(app, screen), "unprepared legacy preview refused: " + preparation + ": " + screen)
-			_check(_snapshot(app) == pristine and app.run_rng == null and app.run_map == null
-				and app.deck == null and not boot.preview_ready and not boot._busy,
-				"legacy refusal preserves state, RNG, title and readiness: " + screen)
-		_check(randi() == expected_global, "legacy refusal consumes no global RNG: " + preparation)
-		if preparation == "none":
-			app.start_button.pressed.emit()
-			_check(is_instance_valid(app.stitched_run_panel) and app.stitched_run_session == null
-				and app.stitched_run_draft.size() == 4 and app.run_rng == null and app.deck == null,
-				"ordinary New Run still opens the four-pick Stitched chooser after refused previews")
-			_check(not app.stitched_run_buttons.is_empty(), "Stitched chooser mounts Set out")
-			if not app.stitched_run_buttons.is_empty():
-				app.stitched_run_buttons[0].pressed.emit()
-				_check(app.stitched_run_session != null and app.stitched_run_session.heroes.size() == 4
-					and app.stitched_run_session.is_consistent() and app.run_map == null and app.deck == null,
-					"real Set out starts a consistent four-doll Stitched run")
-		app.free()
+	# Retired card screens are refused before any mutation.
+	app = load("res://scenes/app.tscn").instantiate()
+	root.add_child(app)
+	await process_frame
+	pristine = _snapshot(app)
+	seed(114116)
+	expected_global = randi()
+	seed(114116)
+	for screen in ["map", "battle", "reward", "shop", "rest", "event", "results"]:
+		_check(not await boot.enter_preview(app, screen), "retired card preview refused: " + screen)
+		_check(_snapshot(app) == pristine and app.run_rng == null and app.run_map == null
+			and app.deck == null and not boot.preview_ready and not boot._busy,
+			"card refusal preserves state, RNG, title and readiness: " + screen)
+	_check(randi() == expected_global, "card refusal consumes no global RNG")
+	app.start_button.pressed.emit()
+	_check(is_instance_valid(app.stitched_run_panel) and app.stitched_run_session == null
+		and app.stitched_run_draft.size() == 4 and app.run_rng == null and app.deck == null,
+		"ordinary New Run still opens the four-pick Stitched chooser after refused previews")
+	_check(not app.stitched_run_buttons.is_empty(), "Stitched chooser mounts Set out")
+	if not app.stitched_run_buttons.is_empty():
+		app.stitched_run_buttons[0].pressed.emit()
+		_check(app.stitched_run_session != null and app.stitched_run_session.heroes.size() == 4
+			and app.stitched_run_session.is_consistent() and app.run_map == null and app.deck == null,
+			"real Set out starts a consistent four-doll Stitched run")
+	app.free()
 	for screen in BOOT.SCREENS:
 		var replay: Array = []
 		for repeat in range(2):
@@ -128,10 +111,8 @@ func _run() -> void:
 			seed(114115)
 			expected_global = randi()
 			seed(114115)
-			if not public_screen:
-				LEGACY_ENTRY.prepare(app)
 			var opening_globals := _snapshot(app)
-			_check(await boot.enter_preview(app, parsed if public_screen else screen), "preview succeeds: " + screen)
+			_check(await boot.enter_preview(app, parsed), "preview succeeds: " + screen)
 			_check(boot.preview_ready and Engine.get_process_frames() >= frames + 2, "ready follows two frames: " + screen)
 			_check(boot._expected_view(app, screen), "matching mounted live view: " + screen)
 			_check(randi() == expected_global, "preview preserves global RNG: " + screen)
@@ -175,10 +156,10 @@ func _run() -> void:
 			else:
 				_check(snapshot == replay, "independent deterministic model replay: " + screen)
 			if screen == "base":
-				_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "base") and _snapshot(app) == snapshot,
+				_check(not await boot.enter_preview(app, "base") and _snapshot(app) == snapshot,
 					"already-open village preview cannot be re-entered")
 			if screen not in ["title", "base"]:
-				_check(not await boot.enter_preview(LEGACY_ENTRY.prepare(app), "battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
+				_check(not await boot.enter_preview(app, "stitched_battle") and _snapshot(app) == snapshot, "active run reentry rejected without spending")
 				if screen in ["stitched_battle", "stitched_walk"]:
 					boot.exit_stitched_preview(app)
 					_check(boot.stitched_view == null and boot.walk_view == null and app.title_view.is_visible_in_tree() and not boot.preview_ready, "stitched preview unmounts and restores title")
