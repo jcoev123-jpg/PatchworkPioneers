@@ -235,6 +235,16 @@ func _fixtures() -> Dictionary:
 	# previous seed and the no-fallback gate; mounted settlement/replay checks
 	# below still authenticate the selected record and exact RNG state.
 	hints.append_array([216328, 308609, 438189, 443215, 677232, 1037087])
+	# Genuine map/toll/rotation witnesses after the three Stitched roadside
+	# doll-scale bargains (Pepper-Mill Stairwell, Nutcracker Ward, Sugar-Tongs
+	# Span) joined the sorted generic pool and moved the authentic draw index.
+	# The first ten were reported by the bounded fallback on the failing run;
+	# v3_inkblack_unpicker_van was re-derived beyond the bounded 499999-seed
+	# fallback through the real map -> toll -> rotation pipeline. The real
+	# oracle below revalidates every candidate; none is pinned by index
+	# or position.
+	hints.append_array([70158, 153854, 177815, 218084, 243383, 361296,
+		378866, 407988, 434966, 449050, 1216996])
 	for candidate_index in range(hints.size() + 499999):
 		var value: int
 		if candidate_index < hints.size():

@@ -1203,6 +1203,11 @@ func _auction_fixture() -> Dictionary:
 	hints.push_front(2431350)
 	# Genuine six-Event Auction witness after Threadmill changed the sorted lottery.
 	hints.push_front(8405118)
+	# Genuine strict six-Event map/toll/Auction witness after the three Stitched
+	# roadside doll-scale bargains (Pepper-Mill Stairwell, Nutcracker Ward,
+	# Sugar-Tongs Span) grew the sorted eligible pool; re-derived beyond the
+	# exhausted 1..200000 range through the same real oracle.
+	hints.push_front(7380695)
 	hints.append_array(range(1, 200000))
 	for value in hints:
 		var rng := RandomNumberGenerator.new()

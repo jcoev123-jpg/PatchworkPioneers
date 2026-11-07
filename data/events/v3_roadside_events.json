@@ -1485,6 +1485,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_pepper_mill_stairwell",
+      "title": "The Pepper-Mill Stairwell",
+      "description": "A towering brass pepper mill stands open on a candlelit landing, its stepped grinder spiralling upward like a stairwell; a plump button-eyed miller doll winds the great crank, raining amber peppercorn dust onto the dolls below.",
+      "choices": [
+        {
+          "id": "buy_copper_grind",
+          "text": "Pay 18 gold for three bundles of copper-ground thread (+3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "oil_crank_spindle",
+          "text": "Spend 1 scrap oiling the crank spindle (earn 21 gold)",
+          "outcome": { "gold": 21, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the pepper mill to its slow grinding",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_nutcracker_ward",
+      "title": "The Nutcracker Ward",
+      "description": "A wardrobe-tall oxblood nutcracker doll stands sentry over a shelf of splinted ragdoll patients, cracking candle-warm walnuts with its brass jaws onto a moss-velvet counter.",
+      "choices": [
+        {
+          "id": "salvage_shell_stitch",
+          "text": "Gather two shells of walnut stitching (+2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "brace_nutcracker_jaws",
+          "text": "Spend 2 scraps bracing the nutcracker's aching jaws (earn 29 gold)",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the ward to its quiet cracking",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_sugar_tongs_span",
+      "title": "The Sugar-Tongs Span",
+      "description": "Two silver sugar tongs lie clasped tip to tip across a dark gap between table ledges, forming a narrow span; a round button-eyed sweetkeeper tests their cold hinge by amber candlelight.",
+      "choices": [
+        {
+          "id": "gather_tong_thread",
+          "text": "Gather a loose thread from the tongs' silver hinge (+1 scrap)",
+          "outcome": { "gold": 0, "scraps": 1 }
+        },
+        {
+          "id": "buy_pincer_bindings",
+          "text": "Pay 14 gold for two bundles of pincer binding (+2 scraps)",
+          "outcome": { "gold": -14, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the sugar-tong span to its cold shadow",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
