@@ -53,6 +53,13 @@ var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
 var _beats: Tween
+## Left alone on a turn, a doll speaks over its head (S10 barks, fight lines).
+var barks := StitchedWalkBarks.new()
+var bark_label: Label
+var bark_timer: Timer
+var bark_count := 0
+var last_bark: Dictionary = {}
+var _bark_fade: Tween
 
 
 ## Mounts the corridor view over a ready battle screen and tucks the classic chrome away.
@@ -89,6 +96,7 @@ func _ready() -> void:
 	_build_top()
 	_build_bar()
 	_build_more()
+	_build_bark()
 	_seen_receipts = engine.receipts.size()
 	refresh()
 
@@ -556,6 +564,80 @@ func _place_overlays() -> void:
 		hits[key].visible = rect.size.x > 0.0
 
 
+func _build_bark() -> void:
+	bark_label = _label("", Rect2(0, 0, 380, 60), 21, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+	bark_label.name = "DollBark"
+	bark_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bark_label.hide()
+	add_child(bark_label)
+	bark_timer = Timer.new()
+	bark_timer.one_shot = true
+	bark_timer.timeout.connect(_on_bark_timer)
+	add_child(bark_timer)
+	_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+
+
+## Waiting on the player's turn is the only time the dolls fill the silence.
+func _arm_barks(delay: float) -> void:
+	if bark_timer == null or not bark_timer.is_inside_tree():
+		return
+	if battle == null or battle.is_over() or battle.current_side() != "hero":
+		bark_timer.stop()
+		return
+	bark_timer.start(delay)
+
+
+func _on_bark_timer() -> void:
+	bark()
+	_arm_barks(float(barks.data.get("repeat_delay", 13.0)))
+
+
+## One standing doll says a line chosen from how the fight is going. Returns the pick.
+func bark() -> Dictionary:
+	if battle == null or battle.is_over():
+		return {}
+	var said := barks.pick_fight(battle, bark_count, str(last_bark.get("line", "")))
+	if said.is_empty():
+		return said
+	bark_count += 1
+	last_bark = said
+	bark_label.text = "\"%s\"" % said.line
+	var rect := stage.screen_rect("hero_" + str(said.rank))
+	var head := Vector2(rect.get_center().x, rect.position.y) if rect.size.x > 0.0 else Vector2(320, 200)
+	bark_label.position = Vector2(clampf(head.x - bark_label.size.x / 2.0, 8.0, 1272.0 - bark_label.size.x),
+		maxf(132.0, head.y - bark_label.size.y - 4.0))
+	bark_label.show()
+	if _bark_fade != null:
+		_bark_fade.kill()
+	var hold := float(barks.data.get("show_time", 4.5))
+	_bark_fade = create_tween()
+	if engine._motion_is_reduced():
+		bark_label.modulate.a = 1.0
+		_bark_fade.tween_interval(hold)
+	else:
+		bark_label.modulate.a = 0.0
+		_bark_fade.tween_property(bark_label, "modulate:a", 1.0, 0.4)
+		_bark_fade.tween_interval(hold)
+		_bark_fade.tween_property(bark_label, "modulate:a", 0.0, 0.8)
+	_bark_fade.tween_callback(bark_label.hide)
+	return said
+
+
+## The player is back: the doll stops mid-sentence and the wait starts over.
+func hush() -> void:
+	if _bark_fade != null:
+		_bark_fade.kill()
+		_bark_fade = null
+	if bark_label != null:
+		bark_label.hide()
+	_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+
+
+func _input(event: InputEvent) -> void:
+	if event is InputEventKey or event is InputEventMouseButton:
+		hush()
+
+
 func _state_signature() -> String:
 	return "%d|%s|%s|%s|%s|%d" % [engine.receipts.size(), engine._selected_part, engine._hand_pending,
 		battle.current_actor_id(), battle.outcome(), battle.candle()]
@@ -567,8 +649,10 @@ func _process(_delta: float) -> void:
 	if engine.receipts.size() != _seen_receipts:
 		refresh()
 		_play_new_receipts()
+		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 	elif _state_signature() != _signature:
 		refresh()
+		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 	_place_overlays()
 
 

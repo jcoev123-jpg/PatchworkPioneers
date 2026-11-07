@@ -57,6 +57,25 @@ func _run() -> void:
 				_check(not (label.text.to_lower().contains(word) and label.text.to_lower().contains(":")),
 					"no readout for " + word + ": " + label.text)
 	_check(not fight.continue_button.visible, "Continue waits for the fight to end")
+	# Left alone on a turn, a standing doll speaks over its own head.
+	for kind in ["fight_idle", "fight_hurt", "fight_dark", "fight_boss", "fight_winning", "fight_losing"]:
+		_check(not fight.barks.data.contexts.get(kind, []).is_empty(), "fight lines for " + kind)
+	_check(not fight.bark_label.visible and (fight.bark_timer.is_stopped() == (screen.battle.current_side() != "hero")),
+		"the dolls start quiet with the wait armed on the player's turn")
+	var said := fight.bark()
+	_check(not said.is_empty() and fight.bark_label.visible and fight.bark_label.text.contains(said.line)
+		and said.side == "hero" and str(screen.battle.get_unit(said.speaker).get("side", "")) == "hero",
+		"a doll in the party speaks a fight line: " + str(said))
+	_check(fight.bark_label.position.y >= 132.0 and fight.bark_label.position.y + fight.bark_label.size.y < StitchedCorridorFight.BAR_TOP,
+		"the line sits between the turn strip and the bar")
+	var again := StitchedWalkBarks.new().pick_fight(screen.battle, 0)
+	_check(again.line == said.line and again.speaker == said.speaker, "the same turn picks the same first line")
+	var second := fight.bark()
+	_check(second.line != said.line or fight.barks.data.contexts[second.context].size() == 1, "no fight line twice in a row")
+	fight.hush()
+	_check(not fight.bark_label.visible, "the player's touch hushes the doll")
+	_check(StitchedWalkBarks.fight_context(screen.battle) in ["fight_idle", "fight_boss", "fight_losing", "fight_dark"],
+		"a fresh fight is not called hurt or won: " + StitchedWalkBarks.fight_context(screen.battle))
 	# Play the whole fight through the corridor view only.
 	var acted := 0
 	var guard := 0
@@ -86,6 +105,7 @@ func _run() -> void:
 	await process_frame
 	_check(fight._seen_receipts == screen.receipts.size(), "every action reaches the corridor view %d/%d" % [fight._seen_receipts, screen.receipts.size()])
 	_check(fight.continue_button.visible and fight.outcome_label.visible, "Continue appears at the end")
+	_check(fight.bark_timer.is_stopped() and fight.bark().is_empty(), "the dolls fall quiet once the fight is over")
 	var exited := [false]
 	screen.exit_requested.connect(func(): exited[0] = true)
 	fight.finish()
