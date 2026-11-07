@@ -27,8 +27,12 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_buttonhole_tiers()
 	_test_all_tiers()
 	_test_mark_bonus()
+	_test_buttonhole_snag()
+	_test_buttonhole_mark_bonus()
+	_test_buttonhole_miss()
 	_test_volley()
 	_test_volley_rank_four()
 	_test_volley_mark_bonus()
@@ -247,6 +251,16 @@ func _test_all_tiers() -> void:
 							_check(receipt["statuses"].any(func(s): return str(s.get("status", "")) == status)
 								and int(b.get_unit(target_id)["statuses"].get(status, 0)) > 0,
 								"AC2: native hostile status receipt and persistent real-foe state " + status)
+							if id == ALTERNATES["head"]:
+								var expected_mark := int(ability["effects"].get("mark", 0))
+								if expected_mark > 0:
+									_check(receipt["statuses"].any(func(s): return str(s.get("status", "")) == "mark")
+										and int(b.get_unit(target_id)["statuses"].get("mark", 0)) > 0,
+										"AC2: upgraded Buttonhole Snag also applies a persistent Mark")
+								else:
+									_check(not receipt["statuses"].any(func(s): return str(s.get("status", "")) == "mark")
+										and not b.get_unit(target_id)["statuses"].has("mark"),
+										"AC2: tier-I Buttonhole Snag never adds Mark")
 					elif id == ALTERNATES["torso"]:
 						_check(str(b.get_unit("button_golem")["guard_target"]) == "warden"
 							and receipt["statuses"].any(func(s): return str(s.get("status", "")) == "guard"),
@@ -297,6 +311,288 @@ func _test_mark_bonus() -> void:
 			if witnessed:
 				break
 	_check(witnessed, "AC2: matched seeded real Marked fist hit exceeds otherwise identical unmarked hit")
+
+
+## AC1: Buttonhole Snag's authored ladder is Tangled 2, then Tangled 3 + Mark 2, then
+## Tangled 4 + Mark 3. Tier overrides replace the whole effects dictionary, so both keys
+## must be present together above tier I.
+func _test_buttonhole_tiers() -> void:
+	var c := _catalog()
+	if not bool(c.get("ok", false)) or not c["by_id"].has(ALTERNATES["head"]):
+		_check(false, "AC1: Buttonhole Snag catalog available for tier inspection")
+		return
+	var part: Dictionary = c["by_id"][ALTERNATES["head"]]
+	_check(str(part["id"]) == "button_golem_head_buttonhole_snag"
+		and str(part["slot"]) == "head" and str(part["owner"]) == "button_golem"
+		and StitchedParts.stat_at_tier(part, 1) == {"crit": 4},
+		"AC1: Buttonhole Snag keeps its id, head slot, owner and crit stat")
+	var rows := [
+		{"tier": 1, "dmg": [2, 4], "tangled": 2, "mark": 0},
+		{"tier": 2, "dmg": [3, 5], "tangled": 3, "mark": 2},
+		{"tier": 3, "dmg": [4, 7], "tangled": 4, "mark": 3},
+	]
+	for row in rows:
+		var tier := int(row["tier"])
+		var at := StitchedParts.ability_at_tier(part, tier)
+		_check(str(at["id"]) == "button_golem_head_buttonhole_snag_move"
+			and str(at["kind"]) == "debuff" and str(at["target_side"]) == "enemy"
+			and bool(at["multi"]) == false and at["launch"] == [1, 2]
+			and at["target"] == [1, 2, 3] and int(at["acc"]) == 93
+			and at["dmg"] == row["dmg"] and int(at["crit"]) == 0
+			and int(at["self_move"]) == 0 and str(at["move"]) == "skill"
+			and int(at["launch_mask"]) == StitchedParts.rank_mask([1, 2])
+			and int(at["target_mask"]) == StitchedParts.rank_mask([1, 2, 3]),
+			"AC1: Buttonhole Snag tier %d keeps its authored ability" % tier)
+		_check(int(at["effects"].get("tangled", 0)) == int(row["tangled"]),
+			"AC1: Buttonhole Snag tier %d applies Tangled %d" % [tier, int(row["tangled"])])
+		_check(int(at["effects"].get("mark", 0)) == int(row["mark"]),
+			"AC1: Buttonhole Snag tier %d applies Mark %d" % [tier, int(row["mark"])])
+		if int(row["mark"]) == 0:
+			_check(not at["effects"].has("mark"), "AC1: tier-I Buttonhole Snag never adds Mark")
+		_check(bool(StitchedParts.validate_ability(at).get("ok", false)),
+			"AC1: Buttonhole Snag tier %d ability validates" % tier)
+	var text := str(part["text"]).to_lower()
+	_check(text.contains("tangled") and text.contains("mark"),
+		"AC1: Buttonhole Snag text names Tangled and the higher-tier Mark")
+	var heads: Array = []
+	for p in c["parts"]:
+		if str(p["slot"]) == "head":
+			heads.append(str(p["id"]))
+	_check(heads.has(STARTERS["head"]) and heads.has(ALTERNATES["head"]),
+		"AC1: both authored head-slot choices stay intact")
+	_check(not bool(StitchedParts.validate_part({"id": "button_golem_head_bad"}).get("ok", false)),
+		"AC3: a malformed part still fails catalog validation")
+
+
+## AC2/AC3: a real seeded preview battle with the upgraded alternate head applies both
+## Tangled and Mark in one hostile receipt, persists both, and spends exactly one turn.
+func _test_buttonhole_snag() -> void:
+	var rows := [
+		{"tier": 1, "tangled": 2, "mark": 0},
+		{"tier": 2, "tangled": 3, "mark": 2},
+		{"tier": 3, "tangled": 4, "mark": 3},
+	]
+	for row in rows:
+		var tier := int(row["tier"])
+		var witnessed := false
+		for seed_value in range(503950, 504010):
+			var b := _battle(ALTERNATES["head"], tier, seed_value)
+			if b == null or not _to(b, "button_golem"):
+				continue
+			var rank := _occupied_rank(b, [1, 2, 3])
+			if rank == 0:
+				continue
+			var target_before := _foe_in_rank(b, rank)
+			var hp_before := int(target_before["hp"])
+			var before := b.state_snapshot()
+			var rng_before := b.rng_state()
+			var cast := b.use_part(ALTERNATES["head"], rank)
+			if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 1:
+				continue
+			var result: Dictionary = cast["results"][0]
+			if not bool(result.get("hit", false)):
+				continue
+			var target_id := str(result["target"])
+			# If the target is the very next actor, its start-of-turn tick already reduced both
+			# counters; seek a witness whose persistence can be read at the authored amount.
+			if b.current_actor_id() == target_id:
+				continue
+			var foe := b.get_unit(target_id)
+			_check(str(cast.get("actor", "")) == "button_golem"
+				and str(cast.get("part", "")) == ALTERNATES["head"]
+				and str(cast.get("ability", "")) == "button_golem_head_buttonhole_snag_move",
+				"AC2: tier %d live Buttonhole Snag runs as the equipped Golem head" % tier)
+			_check(str(result["target_side"]) == "foe" and int(result["target_rank"]) == rank
+				and target_id in ["fray_scavenger", "scissor_crab", "moth_scribe"],
+				"AC2: tier %d receipts exactly one real foe in the chosen rank" % tier)
+			var expected_statuses := 1 if int(row["mark"]) == 0 else 2
+			_check(result["statuses"].size() == expected_statuses
+				and _status_value(result["statuses"], "tangled") == int(row["tangled"]),
+				"AC2: tier %d receipt reports its applied Tangled" % tier)
+			if int(row["mark"]) > 0:
+				_check(_status_value(result["statuses"], "mark") == int(row["mark"]),
+					"AC2: tier %d receipt reports its added Mark" % tier)
+			else:
+				_check(_status_value(result["statuses"], "mark") == -1,
+					"AC2: tier-I receipt reports no Mark")
+			_check(int(foe["statuses"].get("tangled", 0)) == int(row["tangled"]),
+				"AC2: tier %d persists Tangled %d on the hit foe" % [tier, int(row["tangled"])])
+			if int(row["mark"]) > 0:
+				_check(int(foe["statuses"].get("mark", 0)) == int(row["mark"]),
+					"AC2: tier %d persists Mark %d on the same foe" % [tier, int(row["mark"])])
+			else:
+				_check(not foe["statuses"].has("mark"),
+					"AC2: tier-I Buttonhole Snag persists no Mark")
+			_check(int(result.get("target_hp", -1)) == int(foe["hp"])
+				and int(foe["hp"]) == hp_before - int(result.get("damage", 0)),
+				"AC2: tier %d damage receipt matches the real foe aftermath" % tier)
+			_check(_spent_one_turn(before, b.state_snapshot())
+				and b.current_actor_id() != "button_golem" and rng_before != b.rng_state(),
+				"AC2: tier %d accepted Snag spends exactly one turn and seeded RNG" % tier)
+			witnessed = true
+			var replay := _battle(ALTERNATES["head"], tier, seed_value)
+			if replay != null and _to(replay, "button_golem"):
+				var replay_rank := _occupied_rank(replay, [1, 2, 3])
+				var replay_cast := replay.use_part(ALTERNATES["head"], replay_rank)
+				_check(replay_cast == cast and replay.state_snapshot() == b.state_snapshot()
+					and replay.rng_state() == b.rng_state(),
+					"AC2: tier %d equal-seed replay reproduces the receipt, state and RNG" % tier)
+			else:
+				_check(false, "AC2: tier %d equal-seed replay reaches the Golem turn" % tier)
+			break
+		_check(witnessed, "AC2: tier %d Snag lands a real seeded hit in the bounded range" % tier)
+	# The upgraded ability still fails closed when its worn part is torn.
+	var torn_cfg := _config(ALTERNATES["head"], 3, 504011)
+	if not torn_cfg.is_empty():
+		torn_cfg["heroes"][1]["parts"]["head"]["torn"] = true
+		var torn_built := StitchedRules.create(torn_cfg)
+		_check(bool(torn_built.get("ok", false)), "AC3: torn upgraded Snag equipment builds before its cast")
+		if bool(torn_built.get("ok", false)):
+			var torn: StitchedRules = torn_built["battle"]
+			if _to(torn, "button_golem"):
+				_reject(torn, ALTERNATES["head"], 1, "torn upgraded Buttonhole Snag")
+			else:
+				_check(false, "AC3: torn upgraded Snag reaches the Golem turn")
+
+
+## AC3: after the upgraded Snag hit, the existing Button Fist converts the Mark into its
+## native pre-PROT bonus. The control removes only the target's Mark; every other state and
+## the seeded RNG stay identical up to the strike.
+func _test_buttonhole_mark_bonus() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(STARTERS["arms"]):
+		_check(false, "AC2: Button Fist catalog available for the Snag Mark follow-up")
+		return
+	for tier in [2, 3]:
+		var fist := StitchedParts.ability_at_tier(catalog["by_id"][STARTERS["arms"]], tier)
+		var bonus := int(fist.get("mark_damage", 0))
+		var witnessed := false
+		for seed_value in range(504100, 504180):
+			var marked := _battle(ALTERNATES["head"], tier, seed_value)
+			var plain := _battle(ALTERNATES["head"], tier, seed_value)
+			if marked == null or plain == null:
+				continue
+			if not _to(marked, "button_golem") or not _to(plain, "button_golem"):
+				continue
+			# Button Fist only reaches ranks 1-2, so the Snag target must be there too.
+			var rank := _occupied_rank(marked, [1, 2])
+			if rank == 0 or rank != _occupied_rank(plain, [1, 2]):
+				continue
+			var marked_cast := marked.use_part(ALTERNATES["head"], rank)
+			var plain_cast := plain.use_part(ALTERNATES["head"], rank)
+			if marked_cast != plain_cast or not bool(marked_cast.get("ok", false)):
+				continue
+			var results: Array = marked_cast.get("results", [])
+			if results.size() != 1 or not bool(results[0].get("hit", false)):
+				continue
+			var target_id := str(results[0]["target"])
+			var marked_foe := marked.get_unit(target_id)
+			var plain_foe := plain.get_unit(target_id)
+			if int(marked_foe["statuses"].get("mark", 0)) <= 0 \
+				or int(marked_foe["statuses"].get("tangled", 0)) <= 0 \
+				or int(plain_foe["statuses"].get("tangled", 0)) != int(marked_foe["statuses"].get("tangled", 0)):
+				continue
+			var marked_after_hit := marked.state_snapshot()
+			var plain_after_hit := plain.state_snapshot()
+			# The two siblings differ only by the Mark we are about to remove from the control.
+			if _snapshot_without_status(marked_after_hit, target_id, "mark") \
+				!= _snapshot_without_status(plain_after_hit, target_id, "mark"):
+				continue
+			plain._units[target_id]["statuses"].erase("mark")
+			if plain._units[target_id]["statuses"].has("mark"):
+				continue
+			if not _to(marked, "button_golem") or not _to(plain, "button_golem"):
+				continue
+			var strike_rank := int(marked.get_unit(target_id)["rank"])
+			if strike_rank < 1 or strike_rank > 2 or int(marked.get_unit(target_id)["hp"]) <= 0:
+				continue
+			if marked.current_actor_id() != "button_golem" or plain.current_actor_id() != "button_golem":
+				continue
+			var marked_statuses: Dictionary = marked.get_unit(target_id)["statuses"]
+			var plain_statuses: Dictionary = plain.get_unit(target_id)["statuses"]
+			if int(marked_statuses.get("mark", 0)) <= 0 or plain_statuses.has("mark"):
+				continue
+			if int(marked_statuses.get("tangled", 0)) <= 0 \
+				or int(marked_statuses.get("tangled", 0)) != int(plain_statuses.get("tangled", 0)):
+				continue
+			var hp_before := int(marked.get_unit(target_id)["hp"])
+			if hp_before != int(plain.get_unit(target_id)["hp"]):
+				continue
+			if marked.rng_state() != plain.rng_state():
+				continue
+			# The strike setup differs only in the target's Mark.
+			if _snapshot_without_status(marked.state_snapshot(), target_id, "mark") != plain.state_snapshot():
+				continue
+			var boosted := marked.use_part(STARTERS["arms"], strike_rank)
+			var base := plain.use_part(STARTERS["arms"], strike_rank)
+			if not bool(boosted.get("ok", false)) or not bool(base.get("ok", false)):
+				continue
+			if boosted.get("results", []).size() != 1 or base.get("results", []).size() != 1:
+				continue
+			var marked_hit: Dictionary = boosted["results"][0]
+			var plain_hit: Dictionary = base["results"][0]
+			if str(marked_hit["target"]) != target_id or str(plain_hit["target"]) != target_id:
+				continue
+			if not bool(marked_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)):
+				continue
+			if bool(marked_hit.get("crit", false)) or bool(plain_hit.get("crit", false)):
+				continue
+			var marked_damage := int(marked_hit["damage"])
+			var plain_damage := int(plain_hit["damage"])
+			if marked_damage <= plain_damage:
+				continue
+			var prot := int(marked.get_unit(target_id).get("prot", 0))
+			if not _mark_bonus_through_protection(plain_damage, marked_damage, prot, bonus):
+				continue
+			_check(bonus > 0 and marked_damage > plain_damage
+				and _mark_bonus_through_protection(plain_damage, marked_damage, prot, bonus),
+				"AC3: tier %d Marked Button Fist exceeds the unmarked hit by the native +%d before PROT" % [tier, bonus])
+			_check(int(marked.get_unit(target_id)["hp"]) == hp_before - marked_damage
+				and int(plain.get_unit(target_id)["hp"]) == hp_before - plain_damage,
+				"AC3: tier %d final foe HP reflects each matched fist receipt" % tier)
+			_check(marked.rng_state() == plain.rng_state(),
+				"AC3: tier %d matched strike keeps identical seeded RNG" % tier)
+			_check(int(marked.get_unit(target_id)["statuses"].get("mark", 0)) > 0
+				and not plain.get_unit(target_id)["statuses"].has("mark"),
+				"AC3: tier %d only the control lost its Mark" % tier)
+			witnessed = true
+			break
+		_check(witnessed, "AC3: tier %d witnesses a real Marked Button Fist follow-up" % tier)
+
+
+## AC3: a genuine missed Snag still spends the turn and its seeded roll but changes neither
+## Tangled nor Mark on the target.
+func _test_buttonhole_miss() -> void:
+	var witnessed := false
+	for seed_value in range(504200, 504400):
+		var b := _battle(ALTERNATES["head"], 3, seed_value)
+		if b == null or not _to(b, "button_golem"):
+			continue
+		var rank := _occupied_rank(b, [1, 2, 3])
+		if rank == 0:
+			continue
+		var target_before := _foe_in_rank(b, rank)
+		var before := b.state_snapshot()
+		var rng_before := b.rng_state()
+		var cast := b.use_part(ALTERNATES["head"], rank)
+		if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 1:
+			continue
+		var result: Dictionary = cast["results"][0]
+		if bool(result.get("hit", true)):
+			continue
+		var target_id := str(result["target"])
+		var foe := b.get_unit(target_id)
+		witnessed = (int(result.get("damage", -1)) == 0
+			and result.get("statuses", []).is_empty()
+			and int(foe["statuses"].get("tangled", 0)) == 0
+			and not foe["statuses"].has("mark")
+			and int(foe["hp"]) == int(target_before["hp"])
+			and _spent_one_turn(before, b.state_snapshot())
+			and b.current_actor_id() != "button_golem"
+			and rng_before != b.rng_state())
+		if witnessed:
+			break
+	_check(witnessed, "AC3: a genuine upgraded Snag miss applies neither Tangled nor Mark but still spends the turn and RNG")
 
 
 func _test_volley() -> void:
@@ -579,6 +875,43 @@ func _test_volley_catalog(c: Dictionary) -> void:
 		and int(StitchedParts.ability_at_tier(fist, 2)["mark_damage"]) == 5
 		and int(StitchedParts.ability_at_tier(fist, 3)["mark_damage"]) == 7,
 		"AC1: Button Fist keeps its Mark bonus 3/5/7")
+
+
+func _foe_in_rank(b: StitchedRules, rank: int) -> Dictionary:
+	for foe in b.get_foes():
+		if int(foe["rank"]) == rank and not bool(foe["dead"]) and int(foe["hp"]) > 0:
+			return foe
+	return {}
+
+
+func _occupied_rank(b: StitchedRules, ranks: Array) -> int:
+	for rank in ranks:
+		if not _foe_in_rank(b, int(rank)).is_empty():
+			return int(rank)
+	return 0
+
+
+func _status_value(statuses: Array, key: String) -> int:
+	for status in statuses:
+		if str(status.get("status", "")) == key:
+			return int(status.get("duration", status.get("amount", -1)))
+	return -1
+
+
+func _spent_one_turn(before: Dictionary, after: Dictionary) -> bool:
+	var round_delta := int(after.get("round", 0)) - int(before.get("round", 0))
+	if round_delta == 0:
+		return int(after.get("turn_index", -1)) == int(before.get("turn_index", -2)) + 1
+	return round_delta == 1 and int(after.get("turn_index", -1)) >= 0
+
+
+func _snapshot_without_status(snapshot: Dictionary, unit_id: String, status: String) -> Dictionary:
+	var copy := snapshot.duplicate(true)
+	for unit in copy["units"]:
+		if str(unit["id"]) == unit_id:
+			unit["statuses"].erase(status)
+			break
+	return copy
 
 
 func _receipt_for(results: Array, target_id: String) -> Dictionary:
