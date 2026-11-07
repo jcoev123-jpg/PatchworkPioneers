@@ -70,6 +70,8 @@ var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
 var _beats: Tween
+var _focus_actor_id := ""
+var _focus_target_ids: Array[String] = []
 ## Left alone on a turn, a doll speaks over its head (S10 barks, fight lines).
 var barks := StitchedWalkBarks.new()
 var bark_label: Label
@@ -967,6 +969,20 @@ func _state_signature() -> String:
 func _process(_delta: float) -> void:
 	if battle == null or engine == null:
 		return
+	# Toggles, a dying actor and the end of combat may interrupt an active shot.
+	# The camera and figures must not keep an old pose into the next turn.
+	if engine._motion_is_reduced() or battle.is_over():
+		if (_beats != null and _beats.is_running()) or stage.fight_focus_active():
+			_cancel_beats()
+	elif stage.fight_focus_active():
+		var actor_present := not _live_receipt_key(_focus_actor_id).is_empty()
+		var targets_present := false
+		for id in _focus_target_ids:
+			if not _live_receipt_key(id).is_empty():
+				targets_present = true
+				break
+		if not actor_present or not targets_present:
+			stage.cancel_fight_focus()
 	if engine.receipts.size() != _seen_receipts:
 		refresh()
 		_play_new_receipts()
@@ -987,35 +1003,145 @@ static func _simple_detail(detail: String) -> String:
 	return plain.replace("STATUS: none", "").strip_edges()
 
 
+## A key is valid only when the receipt's real unit still occupies that rank.
+## A heap or a later replacement at the same rank is NOT the struck unit.
+func _live_receipt_key(unit_id: String) -> String:
+	var unit := battle.get_unit(unit_id)
+	if unit.is_empty() or bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+		return ""
+	var side := str(unit.get("side", ""))
+	var rank := int(unit.get("rank", 0))
+	if not side in ["hero", "foe"] or rank < 1 or rank > 4:
+		return ""
+	if str(engine._unit_at(side, rank).get("id", "")) != unit_id:
+		return ""
+	var key := "%s_%d" % [side, rank]
+	var figure: Sprite3D = stage.figure_nodes.get(key)
+	return key if figure != null and figure.visible and figure.texture != null else ""
+
+
+## Called by the genuine receipt tween, never by selection, hover or refresh.
+func _begin_receipt_focus(receipt: Dictionary) -> void:
+	_focus_actor_id = ""
+	_focus_target_ids.clear()
+	if engine._motion_is_reduced() or battle.is_over() or not engine._damage_capable_receipt(receipt):
+		return
+	var actor_id := str(receipt.get("actor", ""))
+	var attacker_key := _live_receipt_key(actor_id)
+	if attacker_key.is_empty():
+		return
+	var keys: Array[String] = [attacker_key]
+	for result in receipt.get("results", []):
+		var target_id := str(result.get("target", ""))
+		var target_key := _live_receipt_key(target_id)
+		if not target_key.is_empty() and target_key != attacker_key and not keys.has(target_key):
+			keys.append(target_key)
+			_focus_target_ids.append(target_id)
+	if keys.size() < 2:
+		return
+	if stage.start_fight_focus(keys, BEAT_TIME + 0.08):
+		_focus_actor_id = actor_id
+
+
+func _cancel_beats() -> void:
+	if _beats != null:
+		_beats.kill()
+		_beats = null
+	stage.cancel_fight_focus()
+	_focus_actor_id = ""
+	_focus_target_ids.clear()
+	if is_inside_tree():
+		refresh()
+
+
+func _exit_tree() -> void:
+	if _beats != null:
+		_beats.kill()
+		_beats = null
+	if stage != null:
+		stage.cancel_fight_focus()
+
+
+## The same authored move-pose lookup as the retained battle driver.
+## A pose changes only a Sprite3D texture; the projected silhouette stays at
+## the figure's existing height and the original idle art returns at beat end.
+func _receipt_pose_texture(actor_id: String, ability_id: String) -> Texture2D:
+	var actor := battle.get_unit(actor_id)
+	if actor.is_empty():
+		return null
+	var move := "attack"
+	var side := str(actor.get("side", ""))
+	if side == "hero":
+		for worn in actor.get("parts", {}).values():
+			var definition: Dictionary = engine.parts.get(str(worn.get("id", "")), {})
+			if definition.is_empty():
+				continue
+			var ability := StitchedParts.ability_at_tier(definition, int(worn.get("tier", 1)))
+			if str(ability.get("id", "")) == ability_id:
+				move = str(ability.get("move", "attack"))
+				break
+	else:
+		for ability in actor.get("abilities", []):
+			if str(ability.get("id", "")) == ability_id:
+				move = str(ability.get("move", "attack"))
+				break
+	var group := "heroes" if side == "hero" else "enemies"
+	var authored: Dictionary = engine._pose_manifest.get(group, {}).get(actor_id, {}).get(move, {})
+	var art_path := str(authored.get("art", ""))
+	if not art_path.is_empty():
+		var texture := _texture(art_path)
+		if texture != null:
+			return texture
+	return _texture(str(StitchedBattleScreen.ROSTER.art_paths(actor_id).get("attack", "")))
+
+
+func _set_receipt_pose(actor_id: String, ability_id: String, attack_pose: bool) -> void:
+	var key := _live_receipt_key(actor_id)
+	if key.is_empty():
+		return
+	var figure: Sprite3D = stage.figure_nodes[key]
+	var texture := _receipt_pose_texture(actor_id, ability_id) if attack_pose else _figure_art(actor_id)
+	if texture == null or figure.texture == null:
+		return
+	var height := figure.pixel_size * float(figure.texture.get_height())
+	figure.texture = texture
+	figure.pixel_size = height / float(texture.get_height())
+
+
 func _play_new_receipts() -> void:
 	var fresh := engine.receipts.slice(_seen_receipts)
 	_seen_receipts = engine.receipts.size()
-	if engine._motion_is_reduced() or fresh.is_empty():
+	if engine._motion_is_reduced() or battle.is_over():
+		_cancel_beats()
 		return
-	if _beats != null:
-		_beats.kill()
-		refresh()
-	_beats = create_tween()
+	if fresh.is_empty():
+		return
+	if _beats != null or stage.fight_focus_active():
+		_cancel_beats()
+	_beats = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 	for receipt in fresh:
-		if str(receipt.get("action", "")) != "ability":
+		if str(receipt.get("action", "")) != "ability" or not bool(receipt.get("ok", false)):
 			continue
-		var actor := battle.get_unit(str(receipt.get("actor", "")))
-		var key := str(actor.get("side", "")) + "_" + str(actor.get("rank", 0))
-		var figure: Sprite3D = stage.figure_nodes.get(key)
-		if figure == null or not figure.visible:
+		var actor_id := str(receipt.get("actor", ""))
+		var key := _live_receipt_key(actor_id)
+		if key.is_empty():
 			continue
+		var actor := battle.get_unit(actor_id)
+		var figure: Sprite3D = stage.figure_nodes[key]
 		var home := figure.position
 		var toward := -1.0 if str(actor.side) == "hero" else 1.0
+		_beats.tween_callback(Callable(self, "_begin_receipt_focus").bind(receipt.duplicate(true)))
+		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), true))
 		_beats.tween_property(figure, "position:z", home.z + toward * LUNGE, BEAT_TIME * 0.4) \
 			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		for result in receipt.get("results", []):
-			var target := battle.get_unit(str(result.get("target", "")))
-			var target_key := str(target.get("side", "")) + "_" + str(target.get("rank", 0))
+			var target_key := _live_receipt_key(str(result.get("target", "")))
 			var struck: Sprite3D = stage.figure_nodes.get(target_key)
-			if struck != null and struck != figure and struck.visible and bool(result.get("hit", true)):
+			if struck != null and struck != figure and bool(result.get("hit", true)):
 				_beats.parallel().tween_property(struck, "modulate", Color(1.8, 0.55, 0.5), BEAT_TIME * 0.3)
 		_beats.tween_property(figure, "position:z", home.z, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
+		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
 	_beats.tween_callback(_shade_figures)
 
 

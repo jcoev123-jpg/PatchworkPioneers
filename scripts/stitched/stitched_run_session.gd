@@ -826,21 +826,25 @@ func _open_visit(kind: String) -> bool:
 		"PatchStall":
 			# Cache the sampled stock in the pending node, including across reload.
 			if not pending.has("stock"):
-				var authored: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
-				if not authored is Dictionary:
-					return false
-				var sampled := RunShopPurchases.sample_patch_stall_offers(rng, authored.get("trinkets"), patches)
+				var sampled := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng, patches)
 				if sampled.get("ok") != true:
 					return false
 				pending.stock = sampled.offers
 			_service = RunPatchStallVisit.open_stitched(id, _party_ids(), patches, gold, pending.stock)
 			if not _service.is_valid():
 				return false
+			# Every row's availability comes from the service quote, never a second rule here.
 			for offer in _service.quote().get("offers", []):
+				var price := int(offer.price)
+				var status := "%d gold" % price
+				if str(offer.get("blocked", "")) == "already owned":
+					status = "SOLD / %d gold" % price
+				elif not bool(offer.get("can_buy", false)):
+					status = "%d gold / need %d more gold" % [price, maxi(0, price - gold)]
 				for hero in roster:
 					for slot in range(2):
-						_offer("buy_patch", "%s / %s / slot %d / %d gold" % [str(offer.id).capitalize(), hero.name, slot + 1, offer.price],
-							not hero.lost and gold >= offer.price, [offer.id, hero.id, slot])
+						_offer("buy_patch", "%s / %s / slot %d / %s" % [str(offer.id).capitalize(), hero.name, slot + 1, status],
+							bool(offer.get("can_buy", false)) and not hero.lost, [offer.id, hero.id, slot])
 			_offer("leave", "Leave Patch Stall")
 		_:
 			return false

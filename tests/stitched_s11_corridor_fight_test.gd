@@ -204,6 +204,175 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 		and battle.hand_action_open(), "all detached fixtures restore the genuine 4v3 battle, RNG and hand")
 
 
+## Repeat the same genuinely mounted offensive action with and without motion.
+## Every identity, target and receipt comes from the live engine/UI.
+func _camera_sample(reduced: bool) -> Dictionary:
+	var screen := StitchedBattleScreen.new()
+	_check(screen.begin(StitchedBattleScreen.read_preview()), "camera precondition: actual seeded preview starts")
+	screen.reduced_motion = reduced
+	root.add_child(screen)
+	await process_frame
+	var fight := StitchedCorridorFight.attach(screen, "walls")
+	_check(fight != null and fight.engine == screen and fight.battle == screen.battle,
+		"camera precondition: real corridor attaches to 4v3 rules")
+	await process_frame
+	var stage := fight.stage
+	var baseline := stage.camera.transform
+	var baseline_fov := stage.camera.fov
+	var initial_state := screen.battle.state_snapshot()
+	var initial_rng := screen.battle.rng_state()
+	var initial_receipts := screen.receipts.duplicate(true)
+	var actor := screen.battle.get_unit(screen.battle.current_actor_id())
+	var picked_slot := ""
+	for slot in StitchedBattleScreen.SLOTS:
+		if fight.part_buttons[slot].disabled:
+			continue
+		var worn: Dictionary = actor.get("parts", {}).get(slot, {})
+		var part: Dictionary = screen.parts.get(str(worn.get("id", "")), {})
+		if part.is_empty():
+			continue
+		var ability := StitchedParts.ability_at_tier(part, int(worn.get("tier", 1)))
+		var damage: Variant = ability.get("dmg", [])
+		if str(ability.get("target_side", "")) != "enemy" or not (damage is Array) or damage.size() != 2 or int(damage[1]) <= 0:
+			continue
+		var choices := 0
+		for rank in range(1, 5):
+			if not screen.battle._legal_targets(actor, ability, rank).is_empty():
+				choices += 1
+		if choices >= 2:
+			picked_slot = slot
+			break
+	_check(not actor.is_empty() and screen.battle.get_heroes().size() == 4
+		and screen.battle.get_foes().size() == 3 and not picked_slot.is_empty(),
+		"camera precondition: 4v3 real units and multi-choice legal offensive part")
+	if picked_slot.is_empty():
+		screen.free()
+		return {}
+	fight.refresh()
+	fight._hover("foe_1", true)
+	fight._hover("foe_1", false)
+	fight.intent_tickets[1].mouse_entered.emit()
+	fight.intent_tickets[1].mouse_exited.emit()
+	var no_choice := fight.click_figure("foe", 4)
+	await process_frame
+	_check(not bool(no_choice.get("ok", false)) and stage.camera.transform == baseline
+		and is_equal_approx(stage.camera.fov, baseline_fov)
+		and screen.battle.state_snapshot() == initial_state and screen.battle.rng_state() == initial_rng
+		and screen.receipts == initial_receipts and not stage.fight_focus_active(),
+		"hover/inspect/refresh and a rejected cast neither spend nor zoom")
+	var pending := fight.choose_part(picked_slot)
+	_check(str(pending.get("pending", "")) == picked_slot and not screen.legal_targets().is_empty(),
+		"camera precondition: selected authored attack waits at the actual target gate")
+	var illegal := fight.click_figure("hero", 4)
+	await process_frame
+	_check(not bool(illegal.get("ok", false)) and screen.battle.state_snapshot() == initial_state
+		and screen.battle.rng_state() == initial_rng and screen.receipts == initial_receipts
+		and stage.camera.transform == baseline and not stage.fight_focus_active(),
+		"illegal hero target with an attack pending is fail-closed and cannot focus")
+	var target_key := str(screen.legal_targets().keys()[0])
+	var attacker_key := "hero_%d" % int(actor.get("rank", 0))
+	_check(fight.hits[target_key].visible and fight.hits[attacker_key].visible,
+		"camera precondition: offensive attacker and authentic legal target have live 3D hit projections")
+	fight.hits[target_key].pressed.emit()
+	_check(screen.receipts.size() > initial_receipts.size()
+		and bool(screen.receipts[initial_receipts.size()].get("ok", false))
+		and screen.receipts[initial_receipts.size()].get("action", "") == "ability",
+		"committed attack passes through the mounted corridor hit button and produces a real receipt")
+	# Headless process frames can be extremely short; sample at the real beat peak.
+	await create_timer(0.17).timeout
+	var lowest_fov := minf(baseline_fov, stage.camera.fov)
+	var pose_path := str(StitchedBattleScreen.ROSTER.art_paths(str(actor.get("id", ""))).get("attack", ""))
+	if not reduced and ResourceLoader.exists(pose_path, "Texture2D"):
+		_check(stage.figure_nodes[attacker_key].texture == load(pose_path),
+			"live corridor attacker holds its shipped authored attack silhouette during focus")
+	var projected := false
+	var focused := false
+	for frame in range(36):
+		await process_frame
+		lowest_fov = minf(lowest_fov, stage.camera.fov)
+		if stage.fight_focus_active():
+			focused = true
+		if stage.camera.fov < baseline_fov - 0.15:
+			var rect_a := stage.screen_rect(attacker_key)
+			var rect_b := stage.screen_rect(target_key)
+			if rect_a.size.x > 0.0 and rect_b.size.x > 0.0:
+				var a: Button = fight.hits[attacker_key]
+				var b: Button = fight.hits[target_key]
+				projected = a.visible and b.visible and a.position.distance_to(rect_a.position) < 2.0
+				projected = projected and b.position.distance_to(rect_b.position) < 2.0
+				projected = projected and a.size.distance_to(rect_a.size) < 2.0
+				projected = projected and b.size.distance_to(rect_b.size) < 2.0
+				projected = projected and rect_a.position.x > 0.0 and rect_b.end.x < 1280.0
+				projected = projected and rect_a.position.y > 105.0 and rect_b.end.y < StitchedCorridorFight.BAR_TOP
+				if projected:
+					break
+	if reduced:
+		_check(not focused and is_equal_approx(lowest_fov, baseline_fov) and not stage.fight_focus_active(),
+			"reduced motion leaves the live corridor camera unzoomed")
+	else:
+		_check(focused and lowest_fov < baseline_fov - 2.0 and projected,
+			"committed offensive receipt eases toward both visible figures with exact projected hit regions (active=%s, min_fov=%.2f, projected=%s, actor=%s, target=%s)" % [str(focused), lowest_fov, str(projected), attacker_key, target_key])
+	# The rest of the synchronous receipts (including automatic foe attacks)
+	# may queue multiple beats. All must restore the original side-on pose.
+	var ability_beats := 0
+	for receipt in screen.receipts:
+		if receipt.get("action", "") == "ability":
+			ability_beats += 1
+	await create_timer(float(ability_beats) * 0.4 + 0.5).timeout
+	_check(stage.camera.transform == baseline and is_equal_approx(stage.camera.fov, baseline_fov)
+		and not stage.fight_focus_active(),
+		"queued receipts restore the exact original camera transform and FOV")
+	if stage.figure_nodes.has(attacker_key) and stage.figure_nodes[attacker_key].visible:
+		_check(stage.figure_nodes[attacker_key].texture == fight._figure_art(str(actor.get("id", ""))),
+			"after the authored pose beat, the real 3D attacker returns to its original picture")
+	var first_result := {
+		"snapshot": screen.battle.state_snapshot(),
+		"rng": screen.battle.rng_state(),
+		"receipts": screen.receipts.duplicate(true),
+		"targets": screen.legal_targets(),
+	}
+	# A second genuine UI action cannot inherit the previous focus.
+	var before_second := screen.receipts.size()
+	if not screen.battle.is_over() and screen.battle.current_side() == "hero":
+		var did_second := false
+		for slot in StitchedBattleScreen.SLOTS:
+			if fight.part_buttons[slot].disabled:
+				continue
+			var selected := fight.choose_part(slot)
+			if selected.get("pending", "") == slot:
+				var targets := screen.legal_targets()
+				if not targets.is_empty():
+					var key := str(targets.keys()[0])
+					fight.hits[key].pressed.emit()
+			if screen.receipts.size() > before_second:
+				did_second = true
+				break
+		if not did_second:
+			fight.more_buttons.pass.pressed.emit()
+		_check(screen.receipts.size() > before_second,
+			"second real corridor control commits another receipt")
+	await process_frame
+	if reduced:
+		_check(stage.camera.transform == baseline and is_equal_approx(stage.camera.fov, baseline_fov),
+			"second receipt never animates in reduced-motion mode")
+	elif screen.receipts.size() > before_second and not screen.battle.is_over():
+		# Teardown during an active second beat must not retain a tween.
+		_check(stage.camera.is_inside_tree(), "second receipt still uses the original mounted camera")
+	var result := {
+		"first": first_result,
+		"snapshot": screen.battle.state_snapshot(),
+		"rng": screen.battle.rng_state(),
+		"receipts": screen.receipts.duplicate(true),
+		"targets": screen.legal_targets(),
+	}
+	fight.queue_free()
+	await process_frame
+	_check(not is_instance_valid(fight) or not fight.is_inside_tree(),
+		"teardown removes the stage and its in-flight camera tween")
+	screen.free()
+	return result
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var screen := StitchedBattleScreen.new()
@@ -343,6 +512,15 @@ STATUS: none"))
 	var extra := fight.add_more("save", "Save run", func(): pass)
 	_check(extra.get_parent() == fight.more_grid, "the host can add choices behind More")
 	screen.free()
+	var normal: Dictionary = await _camera_sample(false)
+	var reduced: Dictionary = await _camera_sample(true)
+	_check(not normal.is_empty() and not reduced.is_empty(),
+		"both genuine 4v3 camera-mode samples completed")
+	if not normal.is_empty() and not reduced.is_empty():
+		_check(normal.first == reduced.first and normal.snapshot == reduced.snapshot
+			and normal.rng == reduced.rng and normal.receipts == reduced.receipts
+			and normal.targets == reduced.targets,
+			"normal/reduced seeded corridor actions produce identical rules, receipts, targets and RNG")
 	for failure in failures:
 		printerr(failure)
 	print("stitched_s11_corridor_fight_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")

@@ -74,7 +74,7 @@ const EXPECTED := {
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 95,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
-		"effects": [{"exposed": 1}, {"exposed": 2, "mark": 1}, {"exposed": 3, "mark": 2}],
+		"effects": [{"exposed": 2}, {"exposed": 2, "mark": 1}, {"exposed": 3, "mark": 2}],
 		"self_move": [0, 0, 0],
 	},
 	"rag_duelist_head_tattered_snare": {
@@ -195,6 +195,7 @@ func _initialize() -> void:
 	_test_dodge()
 	_test_cape_slip_rank_four()
 	_test_status_ticks()
+	_test_feint_followup_window()
 	_test_snare_weak_reply()
 	_test_lunge_mark_payoff()
 	_test_live_rejections()
@@ -395,11 +396,13 @@ func _test_tiers() -> void:
 					continue
 				var last := int(previous_effects.get(key, 0))
 				var now := int(effects[key])
-				# Snare tier III retains the new tier-II Weak 2; all other effects still grow.
+				# Snare Weak and tier-II Feather Feint Exposed keep their authored plateaus; other effects grow.
 				var snare_weak_plateau: bool = part_id == "rag_duelist_head_tattered_snare" \
 					and str(key) == "weak" and tier == 3 and last == 2 and now == 2
-				_check(now > last or snare_weak_plateau,
-					"AC1: %s %s grows at its next tier or keeps the authored Snare Weak 2 plateau" % [part_id, str(key)])
+				var feint_exposed_plateau: bool = part_id == "rag_duelist_head_feather_feint" \
+					and str(key) == "exposed" and tier == 2 and last == 2 and now == 2
+				_check(now > last or snare_weak_plateau or feint_exposed_plateau,
+					"AC1: %s %s grows or preserves its authored tier-II/III plateau" % [part_id, str(key)])
 			_check(dmg != previous_dmg or effects != previous_effects,
 				"AC1: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_dmg = dmg
@@ -1509,8 +1512,11 @@ func _test_status_ticks() -> void:
 	## Feather Feint: tier I only Exposes the foe; tiers II and III also Mark that same seam, so a
 	## later mark_damage follow-up can find it. Both counters tick down one on that foe's real turn.
 	var feint_id := str(STARTER_PARTS["head"])
+	var feint_text := str(_catalog()["by_id"][feint_id]["text"])
+	_check(feint_text == "Feint from ranks 1-2 at one foe in ranks 1-3: Exposed 2 at stitch tiers I-II, Exposed 3 at tier III. Tiers II-III also Mark its seam for follow-up.",
+		"AC1: Feather Feint text names its two-turn tier-I/II window, tier-III depth and Mark-only upgrades")
 	var feint_ladder := [
-		{"exposed": 1, "mark": 0},
+		{"exposed": 2, "mark": 0},
 		{"exposed": 2, "mark": 1},
 		{"exposed": 3, "mark": 2},
 	]
@@ -1593,6 +1599,145 @@ func _test_status_ticks() -> void:
 		_check(miss_battle.current_actor_id() != OWNER,
 			"AC3: the missed Feint still spends the Duelist's action")
 
+
+
+# ---------------------------------------------------------------- AC2: tier-I Feather Feint opens a real follow-up window
+
+## Two genuine equal-seed battles cast the same equipped Feint, then advance through the
+## Fray Scavenger's first turn-start tick. Removing Exposed from only the control immediately
+## before the next scheduled Needle Prick isolates the damage modifier from rolls and tempo.
+func _test_feint_followup_window() -> void:
+	var feint_id := str(STARTER_PARTS["head"])
+	var prick_id := str(ALTERNATE_PARTS["arms"])
+	var witness: Dictionary = {}
+	for seed_value in range(1, 240):
+		var battle := _build_battle(seed_value, 1, _kit_for(prick_id), 0, false)
+		var control := _build_battle(seed_value, 1, _kit_for(prick_id), 0, false)
+		if battle == null or control == null or not _to(battle, OWNER) or not _to(control, OWNER):
+			continue
+		var initial_equal := battle.state_snapshot() == control.state_snapshot() \
+			and battle.rng_state() == control.rng_state()
+		var hp_before_feint := int(battle.get_unit(FRAY_SCAVENGER)["hp"])
+		var feint := battle.use_part(feint_id, 1)
+		var control_feint := control.use_part(feint_id, 1)
+		if not bool(feint.get("ok", false)) or feint.get("results", []).size() != 1 \
+			or not bool(feint["results"][0].get("hit", false)):
+			continue
+		var after_feint_equal := feint == control_feint \
+			and battle.state_snapshot() == control.state_snapshot() \
+			and battle.rng_state() == control.rng_state()
+		var landed_foe := battle.get_unit(FRAY_SCAVENGER)
+		var landed_exposed := int(landed_foe["statuses"].get("exposed", 0))
+		var landed_mark := int(landed_foe["statuses"].get("mark", 0))
+		if not _to(battle, FRAY_SCAVENGER) or not _to(control, FRAY_SCAVENGER):
+			continue
+		var first_tick := int(battle.get_unit(FRAY_SCAVENGER)["statuses"].get("exposed", 0))
+		if not _to(battle, OWNER) or not _to(control, OWNER):
+			continue
+		var at_followup_equal := battle.state_snapshot() == control.state_snapshot() \
+			and battle.rng_state() == control.rng_state()
+		var at_followup_exposed := int(battle.get_unit(FRAY_SCAVENGER)["statuses"].get("exposed", 0))
+		var before_hp := int(battle.get_unit(FRAY_SCAVENGER)["hp"])
+		var rng_before := battle.rng_state()
+		control._units[FRAY_SCAVENGER]["statuses"].erase("exposed")
+		var normalized := battle.state_snapshot()
+		for unit in normalized["units"]:
+			if str(unit.get("id", "")) == FRAY_SCAVENGER:
+				unit["statuses"].erase("exposed")
+		var only_exposed_diff := normalized == control.state_snapshot() \
+			and control.rng_state() == rng_before
+		var control_exposed := int(control.get_unit(FRAY_SCAVENGER)["statuses"].get("exposed", 0))
+		var prick := battle.use_part(prick_id, 1)
+		var plain := control.use_part(prick_id, 1)
+		if not bool(prick.get("ok", false)) or not bool(plain.get("ok", false)) \
+			or prick.get("results", []).size() != 1 or plain.get("results", []).size() != 1 \
+			or not bool(prick["results"][0].get("hit", false)) \
+			or not bool(plain["results"][0].get("hit", false)) \
+			or int(battle.get_unit(FRAY_SCAVENGER)["hp"]) <= 2:
+			continue
+		witness = {
+			"seed": seed_value, "battle": battle, "control": control,
+			"initial_equal": initial_equal, "after_feint_equal": after_feint_equal,
+			"at_followup_equal": at_followup_equal, "only_exposed_diff": only_exposed_diff,
+			"feint": feint, "hp_before_feint": hp_before_feint,
+			"landed_exposed": landed_exposed, "landed_mark": landed_mark,
+			"first_tick": first_tick, "at_followup_exposed": at_followup_exposed,
+			"control_exposed": control_exposed, "before_hp": before_hp,
+			"rng_before": rng_before, "prick": prick, "plain": plain,
+		}
+		break
+	_check(not witness.is_empty(),
+		"AC2: a fixed seed lands tier-I Feint and both legal post-foe-turn Needle Prick hits on the living rank-1 Fray Scavenger")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var control: StitchedRules = witness["control"]
+	var feint: Dictionary = witness["feint"]
+	var feint_result: Dictionary = feint["results"][0]
+	var prick: Dictionary = witness["prick"]
+	var plain: Dictionary = witness["plain"]
+	var hit: Dictionary = prick["results"][0]
+	var plain_hit: Dictionary = plain["results"][0]
+	var foe := battle.get_unit(FRAY_SCAVENGER)
+	var control_foe := control.get_unit(FRAY_SCAVENGER)
+	var damage := int(hit.get("damage", 0))
+	var base_damage := int(plain_hit.get("damage", 0))
+	_check(bool(witness["initial_equal"]) and bool(witness["after_feint_equal"])
+		and bool(witness["at_followup_equal"]) and bool(witness["only_exposed_diff"]),
+		"AC2: equal-seed real battle states/RNG match through the first foe turn; only Exposed is removed in the control")
+	_check(str(feint.get("part", "")) == feint_id and str(feint.get("actor", "")) == OWNER
+		and str(feint_result.get("target", "")) == FRAY_SCAVENGER
+		and int(feint_result.get("target_rank", 0)) == 1
+		and bool(feint_result.get("hit", false)) and int(feint_result.get("damage", -1)) == 0,
+		"AC2: equipped tier-I Feather Feint lands a zero-damage hit on the actual rank-1 Fray Scavenger")
+	_check(int(witness["landed_exposed"]) == 2 and int(witness["landed_mark"]) == 0
+		and _status_value(feint_result.get("statuses", []), "exposed") == 2
+		and _status_value(feint_result.get("statuses", []), "mark") == -1
+		and int(witness["hp_before_feint"]) == int(witness["before_hp"]),
+		"AC2: that Feint leaves exactly Exposed 2, no Mark and no lost foe HP")
+	_check(int(witness["first_tick"]) == 1 and int(witness["at_followup_exposed"]) == 1
+		and int(witness["control_exposed"]) == 0,
+		"AC2: its first real foe start ticks Exposed 2 to 1, preserved for the next Duelist turn but removed in the control")
+	_check(str(prick.get("part", "")) == prick_id and str(plain.get("part", "")) == prick_id
+		and str(prick.get("actor", "")) == OWNER and str(plain.get("actor", "")) == OWNER
+		and str(foe["id"]) == FRAY_SCAVENGER and int(foe["rank"]) == 1
+		and str(battle.get_unit(OWNER)["parts"]["arms"]["id"]) == prick_id
+		and int(battle.get_unit(OWNER)["parts"]["arms"]["tier"]) == 1,
+		"AC2: the legal follow-up really uses equipped tier-I Needle Prick against the same rank-1 foe")
+	_check(bool(hit["hit"]) and bool(plain_hit["hit"]) and hit.get("roll") == plain_hit.get("roll")
+		and bool(hit.get("crit", false)) == bool(plain_hit.get("crit", false))
+		and battle.rng_state() == control.rng_state(),
+		"AC2: both landed follow-ups use identical hit rolls, crit outcomes and post-action RNG")
+	var normalized_reply := prick.duplicate(true)
+	normalized_reply["results"][0]["damage"] = base_damage
+	normalized_reply["results"][0]["target_hp"] = int(plain_hit["target_hp"])
+	_check(normalized_reply == plain,
+		"AC2: the follow-up receipts differ only in damage and target HP, not hit, status or side effects")
+	_check(base_damage > 0 and damage > base_damage,
+		"AC2: the surviving Exposed 1 strictly boosts the matched legal Needle Prick damage")
+	_check(int(hit["target_hp"]) == int(witness["before_hp"]) - damage
+		and int(plain_hit["target_hp"]) == int(witness["before_hp"]) - base_damage,
+		"AC2: at impact, each real foe HP drops by only its own reported Needle Prick damage")
+	# Resolving Needle Prick can advance directly into the foe\'s next turn and tick Bleed/Exposed
+	# before use_part returns. Otherwise the tick occurs below while advancing to that turn.
+	var second_tick_already_entered := battle.current_actor_id() == FRAY_SCAVENGER
+	_check(second_tick_already_entered == (control.current_actor_id() == FRAY_SCAVENGER),
+		"AC2: the two equal-seed battles have the same next scheduled foe turn")
+	_check(int(foe["hp"]) == int(control_foe["hp"]) - (damage - base_damage)
+		and int(foe["statuses"].get("exposed", 0)) == (0 if second_tick_already_entered else 1)
+		and int(foe["statuses"].get("bleed", 0)) == (1 if second_tick_already_entered else 2)
+		and int(control_foe["statuses"].get("bleed", 0)) == (1 if second_tick_already_entered else 2)
+		and not control_foe["statuses"].has("exposed")
+		and _status_value(hit.get("statuses", []), "bleed") == 2
+		and _status_value(plain_hit.get("statuses", []), "bleed") == 2,
+		"AC2: matched HP difference and Bleed side effects survive the legal action; Exposed is never refreshed")
+	var reached_second_tick := _to(battle, FRAY_SCAVENGER)
+	_check(reached_second_tick,
+		"AC2: the living Fray Scavenger reaches its natural second start-of-turn after the follow-up")
+	if reached_second_tick:
+		_check(not battle.get_unit(FRAY_SCAVENGER)["statuses"].has("exposed")
+			and int(battle.get_unit(FRAY_SCAVENGER)["statuses"].get("exposed", 0)) == 0,
+			"AC2: unrefreshed Feather Feint Exposed expires naturally on the foe's second turn")
 
 # ---------------------------------------------------------------- AC2/AC3: Feather Feint -> Lunge Mark payoff
 
