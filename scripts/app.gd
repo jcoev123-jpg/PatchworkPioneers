@@ -4478,6 +4478,12 @@ func _present_stitched_run() -> void:
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
 				StitchedRunSave.write_file(stitched_save_path, session))
 		stage.add_child(save)
+		# S11: the fight plays in the corridor the walk stopped in; the classic screen stays as the engine.
+		var corridor := StitchedCorridorFight.attach(stage, session.walk_area())
+		if corridor != null:
+			corridor.add_more("save", "Save run", func():
+				if stitched_run_session == session and stitched_run_battle == stage:
+					StitchedRunSave.write_file(stitched_save_path, session))
 		return
 	var terminal := session.phase in ["victory", "defeat"]
 	var page_kind := session.phase

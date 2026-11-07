@@ -27,6 +27,14 @@ const BANDS := {
 const TRAIL_X := [0.0, -0.75, 0.75, 0.0]
 const STEP_TIME := 0.5
 const TURN_TIME := 0.35
+## S11 fights stay in the corridor: the eye steps out through the near wall and looks across it.
+const FIGHT_EYE := Vector2(4.2, 1.05)
+const FIGHT_FOV := 40.0
+const FIGHT_PITCH := -4.0
+const FIGHT_FOG := 0.6
+const WALK_FOV := 70.0
+const WALK_LIGHT := Vector3(0.35, -0.25, -0.35)
+const FIGHT_LIGHT := Vector3(0.0, 0.4, -2.3)
 
 var viewport: SubViewport
 var world: Node3D
@@ -44,6 +52,7 @@ var looking_back := false
 var band := "bright"
 var dim := 1.0
 var walk_tween: Tween
+var fighting := false
 
 
 func _init() -> void:
@@ -73,14 +82,14 @@ func _init() -> void:
 	world.add_child(surroundings)
 	camera = Camera3D.new()
 	camera.name = "DollEye"
-	camera.fov = 70.0
+	camera.fov = WALK_FOV
 	camera.near = 0.05
 	camera.far = 60.0
 	camera.position = Vector3(0, EYE, 0)
 	world.add_child(camera)
 	candle_light = OmniLight3D.new()
 	candle_light.name = "Candle"
-	candle_light.position = Vector3(0.35, -0.25, -0.35)
+	candle_light.position = WALK_LIGHT
 	candle_light.light_color = Color(1.0, 0.7, 0.4)
 	candle_light.omni_attenuation = 1.8
 	camera.add_child(candle_light)
@@ -213,7 +222,7 @@ func stop() -> void:
 
 func set_candle(band_name: String) -> void:
 	band = band_name if BANDS.has(band_name) else "dim"
-	environment.fog_density = BANDS[band][2]
+	environment.fog_density = BANDS[band][2] * (FIGHT_FOG if fighting else 1.0)
 	candle_light.omni_range = BANDS[band][1]
 	set_dim(dim)
 
@@ -275,3 +284,50 @@ func screen_point(id: String) -> Variant:
 		return null
 	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 else Vector2.ONE
 	return camera.unproject_position(feet) * scale_factor
+
+
+## Turns the corridor into a fight: the party stands on the left, the foes on the right,
+## seen side-on through the cut-away near wall (its back face is never drawn).
+func fight_view(on: bool = true) -> void:
+	fighting = on
+	stop()
+	if on:
+		camera.fov = FIGHT_FOV
+		camera.position = Vector3(FIGHT_EYE.x, FIGHT_EYE.y, fight_z() + 0.3)
+		camera.rotation = Vector3(deg_to_rad(FIGHT_PITCH), PI / 2, 0)
+		candle_light.position = FIGHT_LIGHT
+	else:
+		camera.fov = WALK_FOV
+		candle_light.position = WALK_LIGHT
+		go_to(step, false)
+		turn(looking_back, false)
+	set_candle(band)
+
+
+## Where the fight stands: a little ahead of the step the walk stopped on.
+func fight_z() -> float:
+	return eye_z(step) - SEGMENT * 0.5
+
+
+## A rank's spot in the fight; rank 1 of each side stands nearest the middle.
+func fight_point(side: String, rank: int) -> Vector3:
+	var index := clampi(rank, 1, 4) - 1
+	var depth := -0.15 if index % 2 == 1 else 0.1
+	if side == "hero":
+		return Vector3(depth, 0, fight_z() + 0.5 + index * 0.8)
+	return Vector3(depth, 0, fight_z() - 0.5 - index * 0.85)
+
+
+## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.
+func screen_rect(id: String) -> Rect2:
+	var figure: Sprite3D = figure_nodes.get(id)
+	if figure == null or not figure.visible or figure.texture == null or not is_inside_tree():
+		return Rect2()
+	var half := Vector2(figure.texture.get_width(), figure.texture.get_height()) * figure.pixel_size / 2.0
+	var across := camera.global_transform.basis.x
+	var top := figure.global_position + Vector3.UP * half.y - across * half.x
+	var bottom := figure.global_position - Vector3.UP * half.y + across * half.x
+	if camera.is_position_behind(top) or camera.is_position_behind(bottom):
+		return Rect2()
+	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 else Vector2.ONE
+	return Rect2(camera.unproject_position(top) * scale_factor, Vector2.ZERO) 		.expand(camera.unproject_position(bottom) * scale_factor)
