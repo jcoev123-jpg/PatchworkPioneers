@@ -7,6 +7,7 @@ signal exit_requested
 
 const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
+const HISTORY := preload("res://scripts/stitched/stitched_battle_history.gd")
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
 const SCRAP_TEXTURE: Texture2D = preload("res://assets/paper/stitched/icons/scrap_heap.png")
 const SLOTS := ["head", "arms", "torso", "legs"]
@@ -29,6 +30,17 @@ var parts: Dictionary = {}
 var reduced_motion := false
 var receipts: Array[Dictionary] = []
 var last_receipt: Dictionary = {}
+var _history_entries: Array[Dictionary] = []
+var _history_omitted := 0
+var _history_overlay: Control
+var _history_scroll: ScrollContainer
+var _history_list: VBoxContainer
+var _history_older_label: Label
+var _history_close_button: Button
+var _history_button: Button
+var _history_open := false
+var _history_focus_restore: Control
+var _history_focus_modes: Dictionary = {}
 var _selected_part := ""
 var _target_ranks: Dictionary = {}
 var _seat_buttons: Dictionary = {}
@@ -231,6 +243,10 @@ func _build_screen() -> void:
 	_candle_meter.size = Vector2(340, 33)
 	add_child(_candle_meter)
 	_labels["candle"] = _candle_meter.headline
+	_history_button = _button("HISTORY", Rect2(572, 100, 136, 32), _open_history)
+	_history_button.name = "BattleHistoryButton"
+	_history_button.z_index = 20
+	_history_button.tooltip_text = "Review the latest eight committed battle actions"
 	_label("HEROES  ·  back 4 to front 1", Rect2(25, 105, 530, 30), 17, ACCENT)
 	_label("FOES  ·  front 1 to back 4", Rect2(710, 105, 545, 30), 17, ACCENT, HORIZONTAL_ALIGNMENT_RIGHT)
 	_labels["hero"] = _label("", Rect2(27, 564, 202, 25), 18, ACCENT)
@@ -325,12 +341,176 @@ func _build_screen() -> void:
 			_seat(side, rank, centre - 85.0)
 	_build_foe_intent_tickets()
 	_build_status_disclosure()
+	_build_history_overlay()
 	# Pose manifest is optional: it only selects authored pixels, never a game action.
 	var pose_file := FileAccess.open(LiveMovePoseCatalog.MANIFEST_PATH, FileAccess.READ)
 	if pose_file != null:
 		var data: Variant = JSON.parse_string(pose_file.get_as_text())
 		if data is Dictionary:
 			_pose_manifest = data
+
+
+
+## History is a passive, modal canvas over the genuine S2 controls. All paper
+## comes from authored nine-slice textures; nothing is painted procedurally.
+func _build_history_overlay() -> void:
+	_history_overlay = Control.new()
+	_history_overlay.name = "BattleHistoryOverlay"
+	_history_overlay.z_index = 40
+	_history_overlay.position = Vector2.ZERO
+	_history_overlay.size = Vector2(1280, 720)
+	_history_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+	_history_overlay.visible = false
+	add_child(_history_overlay)
+
+	var felt := NinePatchRect.new()
+	felt.name = "HistoryFeltPanel"
+	felt.texture = load("res://assets/paper/ui/panel_felt.png") as Texture2D
+	felt.position = Vector2(214, 92)
+	felt.size = Vector2(852, 538)
+	felt.patch_margin_left = 18
+	felt.patch_margin_right = 18
+	felt.patch_margin_top = 14
+	felt.patch_margin_bottom = 14
+	felt.self_modulate = Color("d6bdba")
+	felt.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_history_overlay.add_child(felt)
+
+	var heading := Label.new()
+	heading.name = "HistoryHeading"
+	heading.text = "HISTORY  /  LAST EIGHT ACTIONS"
+	heading.position = Vector2(250, 114)
+	heading.size = Vector2(520, 36)
+	heading.add_theme_font_size_override("font_size", 26)
+	heading.add_theme_color_override("font_color", ACCENT)
+	heading.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_history_overlay.add_child(heading)
+
+	_history_close_button = Button.new()
+	_history_close_button.name = "HistoryClose"
+	_history_close_button.text = "Close"
+	_history_close_button.position = Vector2(900, 115)
+	_history_close_button.size = Vector2(124, 34)
+	_history_close_button.focus_mode = Control.FOCUS_ALL
+	_history_close_button.add_theme_font_size_override("font_size", 18)
+	CHROME.style_button(_history_close_button)
+	_history_close_button.pressed.connect(_close_history)
+	_history_overlay.add_child(_history_close_button)
+
+	_history_older_label = Label.new()
+	_history_older_label.name = "HistoryOlderCount"
+	_history_older_label.position = Vector2(251, 151)
+	_history_older_label.size = Vector2(752, 28)
+	_history_older_label.add_theme_font_size_override("font_size", 16)
+	_history_older_label.add_theme_color_override("font_color", MUTED)
+	_history_older_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_history_overlay.add_child(_history_older_label)
+
+	_history_scroll = ScrollContainer.new()
+	_history_scroll.name = "HistoryScroll"
+	_history_scroll.position = Vector2(249, 186)
+	_history_scroll.size = Vector2(783, 414)
+	_history_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_history_scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_AUTO
+	_history_scroll.mouse_filter = Control.MOUSE_FILTER_STOP
+	_history_overlay.add_child(_history_scroll)
+
+	_history_list = VBoxContainer.new()
+	_history_list.name = "HistoryRows"
+	_history_list.custom_minimum_size.x = 752
+	_history_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_history_list.add_theme_constant_override("separation", 8)
+	_history_scroll.add_child(_history_list)
+	_refresh_history()
+
+
+func _refresh_history() -> void:
+	if _history_list == null:
+		return
+	for node in _history_list.get_children():
+		_history_list.remove_child(node)
+		node.queue_free()
+	_history_older_label.text = ("%d earlier accepted actions omitted" % _history_omitted
+		if _history_omitted > 0 else "All accepted actions shown · oldest first")
+	if _history_entries.is_empty():
+		var empty := Label.new()
+		empty.name = "HistoryEmpty"
+		empty.text = "No actions recorded yet."
+		empty.add_theme_font_size_override("font_size", 19)
+		empty.add_theme_color_override("font_color", PAPER)
+		_history_list.add_child(empty)
+		return
+	for index in range(_history_entries.size()):
+		var row: Dictionary = _history_entries[index]
+		var caption := "%d.  %s" % [_history_omitted + index + 1, str(row["text"])]
+		var panel := NinePatchRect.new()
+		panel.name = "HistoryRow%d" % index
+		panel.texture = load("res://assets/paper/ui/panel_felt.png") as Texture2D
+		panel.patch_margin_left = 18
+		panel.patch_margin_right = 18
+		panel.patch_margin_top = 14
+		panel.patch_margin_bottom = 14
+		panel.self_modulate = Color("9c858f")
+		panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_history_list.add_child(panel)
+		var label := Label.new()
+		label.name = "HistoryText"
+		label.text = caption
+		label.position = Vector2(15, 11)
+		label.size = Vector2(709, 45)
+		label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		label.clip_text = false
+		label.add_theme_font_size_override("font_size", 17)
+		label.add_theme_color_override("font_color", PAPER)
+		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		label.tooltip_text = str(row["text"])
+		panel.tooltip_text = str(row["text"])
+		panel.add_child(label)
+		var font: Font = label.get_theme_font("font")
+		var needed := float(caption.count("\n") + 1) * 23.0
+		if font != null:
+			needed = font.get_multiline_string_size(caption,
+				HORIZONTAL_ALIGNMENT_LEFT, label.size.x, 17).y
+		var height := maxf(65.0, needed + 28.0)
+		panel.custom_minimum_size = Vector2(748, height)
+		label.size.y = height - 18.0
+
+
+func _open_history() -> void:
+	if _history_open or _history_overlay == null:
+		return
+	_history_focus_restore = get_viewport().gui_get_focus_owner()
+	_history_focus_modes.clear()
+	# Do not leave a keyboard path to an attack underneath the overlay.
+	for item in find_children("*", "Control", true, false):
+		var control := item as Control
+		if control == _history_overlay or _history_overlay.is_ancestor_of(control):
+			continue
+		if control.focus_mode != Control.FOCUS_NONE:
+			_history_focus_modes[control] = control.focus_mode
+			control.focus_mode = Control.FOCUS_NONE
+	_history_open = true
+	_history_overlay.show()
+	_history_scroll.scroll_vertical = 0
+	_history_close_button.grab_focus()
+
+
+func _close_history() -> void:
+	if not _history_open:
+		return
+	_history_overlay.hide()
+	_history_open = false
+	for control in _history_focus_modes:
+		if is_instance_valid(control):
+			control.focus_mode = _history_focus_modes[control]
+	_history_focus_modes.clear()
+	var restore := _history_focus_restore
+	_history_focus_restore = null
+	if is_instance_valid(restore) and restore.is_visible_in_tree() \
+			and restore.focus_mode != Control.FOCUS_NONE:
+		restore.grab_focus()
+	else:
+		_history_button.grab_focus()
 
 
 func _set_utilities_open(value: bool, restore_focus: bool = true) -> void:
@@ -1280,7 +1460,16 @@ func _unit_name(unit_id: String) -> String:
 
 
 func _ability_name(unit_id: String, ability_id: String) -> String:
-	var found := _named_entry(battle.get_unit(unit_id) if battle != null else {}, ability_id)
+	var actor: Dictionary = battle.get_unit(unit_id) if battle != null else {}
+	if str(actor.get("side", "")) == "hero":
+		for worn in actor.get("parts", {}).values():
+			var part: Dictionary = parts.get(str(worn.get("id", "")), {})
+			if part.is_empty():
+				continue
+			var ability: Dictionary = StitchedParts.ability_at_tier(part, int(worn.get("tier", 1)))
+			if str(ability.get("id", "")) == ability_id:
+				return str(ability.get("name", ability_id))
+	var found := _named_entry(actor, ability_id)
 	return found if not found.is_empty() else ability_id.replace("_", " ").capitalize()
 
 
@@ -1303,7 +1492,25 @@ func _named_entry(value: Variant, entry_id: String) -> String:
 func _record(receipt: Dictionary) -> void:
 	last_receipt = receipt.duplicate(true)
 	receipts.append(last_receipt.duplicate(true))
+	# Snapshot presentation names NOW, before later deaths, swaps or rank reuse.
+	var names: Dictionary = {}
+	for result in receipt.get("results", []):
+		var target_id := str(result.get("target", ""))
+		names[target_id] = _unit_name(target_id)
+	var swapped := str(receipt.get("swapped", ""))
+	if not swapped.is_empty():
+		names[swapped] = _unit_name(swapped)
 	var actor_id := str(receipt.get("actor", ""))
+	var ability_id := str(receipt.get("ability", ""))
+	var entry: Dictionary = HISTORY.entry(receipt, _unit_name(actor_id),
+		_ability_name(actor_id, ability_id) if not ability_id.is_empty() else "",
+		names, _hand_action_name(str(receipt.get("hand_action", ""))))
+	if not entry.is_empty():
+		_history_entries.append(entry)
+		var window: Dictionary = HISTORY.newest(_history_entries)
+		_history_entries = window["rows"]
+		_history_omitted += int(window["omitted"])
+		_refresh_history()
 	var action := str(receipt.get("action", ""))
 	var log := "%s · %s" % [_unit_name(actor_id), action.replace("_", " ").capitalize()]
 	if action == "hand":
@@ -1517,6 +1724,10 @@ func set_reduced_motion(value: bool) -> void:
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		if _history_open:
+			_close_history()
+			get_viewport().set_input_as_handled()
+			return
 		if _utilities_open:
 			_set_utilities_open(false)
 			get_viewport().set_input_as_handled()
