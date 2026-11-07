@@ -295,6 +295,72 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_bonecream_clothespin_turnpike",
+      "title": "The Bone-Cream Clothespin Turnpike",
+      "description": "Two enormous bone-cream clothes pegs brace a thread bridge across the skirting board; a round button-eyed toll keeper counts tarnished brass washers beneath one amber lantern.",
+      "choices": [
+        {
+          "id": "buy_bridge_thread",
+          "text": "Pay 18 gold for two bridge-thread bundles (+2 scraps)",
+          "outcome": {"gold": -18, "scraps": 2}
+        },
+        {
+          "id": "mend_peg_spring",
+          "text": "Spend 2 scraps fixing the worn peg spring (earn 27 gold)",
+          "outcome": {"gold": 27, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the clothes-peg bridge creaking in the dark",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_amber_eggcup_wharf",
+      "title": "The Amber Eggcup Wharf",
+      "description": "A cracked porcelain eggcup shelters tiny quilt-wrapped ferry dolls beside a puddle as wide as a lake; a patched sail glows around their candle.",
+      "choices": [
+        {
+          "id": "purchase_eggcup_seams",
+          "text": "Pay 27 gold for three stitched sail seams (+3 scraps)",
+          "outcome": {"gold": -27, "scraps": 3}
+        },
+        {
+          "id": "sell_sail_scraps",
+          "text": "Trade 1 scrap of sail cloth for 13 gold",
+          "outcome": {"gold": 13, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Let the ferry rock in its porcelain harbour",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_rust_funnel_forge",
+      "title": "The Rust-Funnel Forge",
+      "description": "A tin funnel as tall as a bell tower leans against dark wallpaper, spilling warm copper light onto a plump soot-felt doll who stitches its torn throat.",
+      "choices": [
+        {
+          "id": "buy_funnel_lining",
+          "text": "Pay 34 gold for four strips of funnel lining (+4 scraps)",
+          "outcome": {"gold": -34, "scraps": 4}
+        },
+        {
+          "id": "sew_funnel_throat",
+          "text": "Spend 3 scraps patching the funnel throat (earn 38 gold)",
+          "outcome": {"gold": 38, "scraps": -3}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little forge beneath the dark wallpaper",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }

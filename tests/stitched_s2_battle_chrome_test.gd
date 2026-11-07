@@ -75,9 +75,12 @@ func _verify_styles(screen: StitchedBattleScreen) -> void:
 	var states := ["normal", "hover", "pressed", "disabled", "focus"]
 	for button in buttons:
 		var sewn := true
+		# The 170px footplate deliberately uses the existing darker authored
+		# name image; action/target chrome keeps its original reward-button art.
+		var expected_art := StitchedBattleChrome.NAME_PLATE if button.name.begins_with("RankPlate") else button_art
 		for state in states:
 			var style := button.get_theme_stylebox(state)
-			if not style is StyleBoxTexture or style.texture != button_art:
+			if not style is StyleBoxTexture or style.texture != expected_art:
 				sewn = false
 		_check(sewn and button.focus_mode == Control.FOCUS_ALL and button.text != "",
 			"%s has authored all-state button chrome, identity and keyboard focus" % button.name)

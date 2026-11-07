@@ -2,10 +2,11 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
-# Re-derived again through the genuine map -> battle -> Peddler -> Event pipeline after
-# the roadside/hero Event pool grew and shifted the seeded selector (the old seed met
-# v3_snowquilt_waystation). The mounted run now earns a drop and a purchase, then meets the Moth.
-const RICH_SEED := 282486
+# Re-derived through the genuine map -> battle -> Peddler -> Event pipeline after the
+# roadside/hero Event pool grew again and shifted the seeded selector (282486 now met
+# quilting_bee). This seed's mounted run wins f01_n1 with a real drop and one scrap,
+# buys a distinct second spare at the f02_n1 Peddler, and reaches the Moth on f03_n1.
+const RICH_SEED := 588735
 # The merged roadside Event packs shifted the seeded selector; this empty-satchel floor-1
 # witness still reaches the authored Moth with zero scraps.
 const POOR_SEED := 744

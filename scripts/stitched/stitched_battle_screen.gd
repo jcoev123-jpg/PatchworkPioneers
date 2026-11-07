@@ -402,9 +402,7 @@ func _seat(side: String, rank: int, x: float) -> void:
 		func(): submit_target(side, rank))
 	tag.name = "RankPlate" + side.capitalize() + str(rank)
 	tag.flat = false
-	tag.add_theme_font_size_override("font_size", 16)
-	tag.clip_text = true
-	tag.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	CHROME.style_rank_plate(tag)
 	_bind_seat_signals(tag, key)
 	_seat_buttons[key] = tag
 	# Only heap-only ranks need a separate second-row label. Living ranks
@@ -825,7 +823,8 @@ func _refresh() -> void:
 			# RankMeters owns the only occupied HP/fray row. Preserve the same
 			# label solely for the heap HP readout; an empty rank paints nothing.
 			_labels[key].visible = unit.is_empty() and not heap.is_empty()
-			button.text = "R%d  %s" % [rank, str(unit.get("name", "Scrap heap" if not heap.is_empty() else "—"))]
+			CHROME.present_rank_name(button, rank,
+				str(unit.get("name", "Scrap heap" if not heap.is_empty() else "—")))
 			button.tooltip_text = status_detail(side, rank)
 			_labels[key].text = "SCRAP %d HP" % int(heap.get("hp", 0)) if not heap.is_empty() and unit.is_empty() else ""
 	_refresh_foe_intents()
