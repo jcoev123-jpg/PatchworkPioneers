@@ -51,7 +51,8 @@
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
-            "fray": 5
+            "fray": 5,
+            "snip": 1
           },
           "self_move": 0,
           "move": "skill"
