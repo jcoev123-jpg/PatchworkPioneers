@@ -4537,7 +4537,7 @@ func _present_stitched_run() -> void:
 	var heading := "THE CANDLE ENDURES / VICTORY" if session.phase == "victory" else \
 		"THE THREAD HAS FALLEN / DEFEAT" if session.phase == "defeat" else \
 		"THE STITCHED ROAD / FLOOR %02d OF 12" % (session.map.get_current_floor() + 1) if session.phase == "map" else \
-		str(session.pending.get("title", session.pending.get("service", "Road stop"))).to_upper()
+		str(session.pending.get("title", str(session.pending.get("service", "Road stop")).capitalize())).to_upper()
 	var content := _stitched_run_page(heading, page_kind)
 	if session.phase == "visit":
 		_stitched_visit_corridor(session)
@@ -4868,6 +4868,13 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 		button.set_meta("action_id", action.id)
 		button.set_meta("action_arguments", action.arguments.duplicate(true))
 		button.tooltip_text = str(action.text) if action.enabled else "Unavailable: " + str(action.text)
+		# S13: a choice about a part shows that part's sewn patch beside its words.
+		var part := session.visit_action_part(action)
+		if not part.is_empty():
+			button.icon = _stitched_run_texture(StitchedSewnPatches.icon_path(part.id, part.slot))
+			button.expand_icon = true
+			button.add_theme_constant_override("icon_max_width", 44)
+			button.custom_minimum_size = Vector2(0, 64)
 	# Save and reload wait in the dark strip under the corridor, off the stop's own page.
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
