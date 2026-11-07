@@ -27,6 +27,22 @@ func _supply_controls(app: Node) -> void:
 			count += 1
 			var enabled: bool = not hero.lost and session.pockets[hero.id].size() < 2 and session.gold >= 10
 			var label := "Starch" if action_id == "buy_starch" else "Spare spool"
+			var text := button.text
+			var effect_ok: bool
+			if action_id == "buy_starch":
+				effect_ok = "Guard next fight" in text and "THREAD" not in text and "TUG" not in text
+			else:
+				effect_ok = "snipped THREAD" in text and "TUG" in text and "Guard" not in text
+			_check(effect_ok and hero.name in text and label in text,
+				"%s label for %s names its own later-use effect and doll" % [label, hero.id])
+			var other := "Spare spool" if action_id == "buy_starch" else "Starch"
+			_check(other not in text, "%s label for %s does not name the other supply" % [label, hero.id])
+			var listed := ""
+			for action in session.visit_actions():
+				if action.id == action_id and action.arguments == [hero.id]:
+					listed = str(action.text)
+			_check(not listed.is_empty() and listed == text and "10 gold" in listed,
+				"mounted %s button shows the session's quoted 10-gold action text for %s" % [label, hero.id])
 			_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL
 				and button.disabled == not enabled and "10 gold" in button.text and label in button.text,
 				"visible 10-gold %s choice reflects lost/full/wallet for %s" % [label, hero.id])
