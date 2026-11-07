@@ -1031,6 +1031,78 @@
         {"id": "collect_shaker_screws", "text": "Recover two tiny screws from the saltcellar rim (+2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
         {"id": "leave", "text": "Let the shaker rattle in the dark", "outcome": {"gold": 0, "scraps": 0}}
       ]
+    },
+    {
+      "id": "v3_warden_ironing_board_barricade",
+      "title": "The Ironing-Board Barricade",
+      "description": "An enormous collapsed ironing board wedges across the candlelit hall, its black iron legs grinding against floorboards. The Warden braces his round slate patch shield beneath its falling hinge while small doll couriers wait on the far side.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["brace_iron_hinge", "salvage_board_tacks"],
+      "choices": [
+        { "id": "brace_iron_hinge",
+          "text": "Spend 2 scraps bracing the great iron hinge (earn 29 gold)",
+          "outcome": {"gold": 29, "scraps": -2} },
+        { "id": "salvage_board_tacks",
+          "text": "Gather two useful brass tacks from the board (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2} },
+        { "id": "leave",
+          "text": "Leave the couriers waiting beside the creaking hinge",
+          "outcome": {"gold": 0, "scraps": 0} }
+      ]
+    },
+    {
+      "id": "v3_seamstress_silver_needle_threader",
+      "title": "The Silver Needle Threader",
+      "description": "A wire-loop needle threader hangs like a silver doorway between two velvet curtains. The Seamstress lifts her giant needle and guides scarlet thread through its trembling eye as a small patchmaker watches from behind the folds.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["repair_threader_loop", "buy_eyeloop_wire"],
+      "choices": [
+        { "id": "repair_threader_loop",
+          "text": "Spend 1 scrap mending the bent wire loop (earn 23 gold)",
+          "outcome": {"gold": 23, "scraps": -1} },
+        { "id": "buy_eyeloop_wire",
+          "text": "Pay 15 gold for three coils of fine threader wire (+3 scraps)",
+          "outcome": {"gold": -15, "scraps": 3} },
+        { "id": "leave",
+          "text": "Let the silver doorway sway in the draft",
+          "outcome": {"gold": 0, "scraps": 0} }
+      ]
+    },
+    {
+      "id": "v3_tinker_watering_can_engine",
+      "title": "The Watering-Can Engine",
+      "description": "A vast midnight-teal watering can leaks warm copper drops into a doll-sized greenhouse lane. The Tinker crouches beneath its dented spout, goggles bright as her scrap backpack's little gears catch the falling drops.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["seal_can_spout", "gather_spout_springs"],
+      "choices": [
+        { "id": "seal_can_spout",
+          "text": "Spend 2 scraps sealing the spout's gears (earn 31 gold)",
+          "outcome": {"gold": 31, "scraps": -2} },
+        { "id": "gather_spout_springs",
+          "text": "Collect a spare spring from the watering-can rim (+1 scrap)",
+          "outcome": {"gold": 0, "scraps": 1} },
+        { "id": "leave",
+          "text": "Pass under the dripping spout without disturbing it",
+          "outcome": {"gold": 0, "scraps": 0} }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_coal_scuttle_roost",
+      "title": "The Coal-Scuttle Roost",
+      "description": "A house-sized coal scuttle lies open beside the skirting board, its iron mouth dark as a cave. The Scarecrow's black crow taps at loose brass rivets while his pitchfork props up a sackcloth nest above the ash.",
+      "required_hero": "scarecrow",
+      "hero_choice_ids": ["lift_scuttle_latch", "gather_ash_thread"],
+      "choices": [
+        { "id": "lift_scuttle_latch",
+          "text": "Spend 1 scrap lifting the iron latch for the nest (earn 25 gold)",
+          "outcome": {"gold": 25, "scraps": -1} },
+        { "id": "gather_ash_thread",
+          "text": "Wind two clean strands from the ash-dusted nest (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2} },
+        { "id": "leave",
+          "text": "Leave the crow watching the coal-dark mouth",
+          "outcome": {"gold": 0, "scraps": 0} }
+      ]
     }
   ]
 }
