@@ -995,6 +995,42 @@
         {"id": "buy_locket_rivets", "text": "Pay 18 gold for three loose brass fittings (+3 scraps)", "outcome": {"gold": -18, "scraps": 3}},
         {"id": "leave", "text": "Let the locked heart hang in the dark", "outcome": {"gold": 0, "scraps": 0}}
       ]
+    },
+    {
+      "id": "v3_lantern_monk_porcelain_teacup_vigil",
+      "title": "The Porcelain Teacup Vigil",
+      "description": "A chipped bone-porcelain teacup stands taller than the dolls in a moonlit pantry. The Lantern Monk lifts his moth-ringed lamp through the handle while little felt pilgrims shelter beneath the saucer.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_saucer_pilgrims", "buy_wick_braids"],
+      "choices": [
+        {"id": "guide_saucer_pilgrims", "text": "Guide the saucer pilgrims by lanternlight (earn 20 gold)", "outcome": {"gold": 20, "scraps": 0}},
+        {"id": "buy_wick_braids", "text": "Pay 18 gold for three braided wick bundles (+3 scraps)", "outcome": {"gold": -18, "scraps": 3}},
+        {"id": "leave", "text": "Leave the cup shining in the pantry", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_ivory_comb_balcony",
+      "title": "The Ivory Comb Balcony",
+      "description": "An ivory comb bridges a crack between ancient floorboards, its teeth dropping into shadow. The Rag Duelist hooks a red velvet cape on one prong and tests the gap with a needle rapier.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["mend_comb_balcony", "gather_cape_tassels"],
+      "choices": [
+        {"id": "mend_comb_balcony", "text": "Spend 2 scraps binding the comb's broken teeth (earn 27 gold)", "outcome": {"gold": 27, "scraps": -2}},
+        {"id": "gather_cape_tassels", "text": "Collect loose velvet tassels from the comb (+2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+        {"id": "leave", "text": "Step away from the ivory teeth", "outcome": {"gold": 0, "scraps": 0}}
+      ]
+    },
+    {
+      "id": "v3_tinker_copper_saltcellar",
+      "title": "The Copper Saltcellar",
+      "description": "A copper saltcellar as high as a watchtower blocks the abandoned dining-room road. The Tinker peers through crooked brass goggles at a jammed clockwork shaker and its scattered screws.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["clear_saltcellar_gears", "collect_shaker_screws"],
+      "choices": [
+        {"id": "clear_saltcellar_gears", "text": "Spend 1 scrap clearing the shaker's gears (earn 25 gold)", "outcome": {"gold": 25, "scraps": -1}},
+        {"id": "collect_shaker_screws", "text": "Recover two tiny screws from the saltcellar rim (+2 scraps)", "outcome": {"gold": 0, "scraps": 2}},
+        {"id": "leave", "text": "Let the shaker rattle in the dark", "outcome": {"gold": 0, "scraps": 0}}
+      ]
     }
   ]
 }

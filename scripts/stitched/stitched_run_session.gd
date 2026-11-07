@@ -698,10 +698,15 @@ func _open_visit(kind: String) -> bool:
 			_service = RunUnpickerVisit.open_stitched(id, roster, gold, CALM_PRICE, satchel, scraps, UNPICK_YIELD)
 			if not _service.is_valid():
 				return false
-			for hero_id in _service.quote().get("hero_ids", []):
-				_offer("calm", "Calm %s / %d gold" % [_hero_name(hero_id), CALM_PRICE], true, [hero_id])
-			for index in satchel.size():
-				_offer("unpick", "Unpick %s / +%d scraps" % [satchel[index].id, UNPICK_YIELD], true, [index])
+			# Labels only read the service's own quote: its relief rows and tiered spares.
+			var unpicker_quote: Dictionary = _service.quote()
+			for outcome in unpicker_quote.get("calm_outcomes", []):
+				_offer("calm", "Calm %s / -%d FRAY / %d gold" % [
+					_hero_name(str(outcome.hero_id)), int(outcome.fray_relief), CALM_PRICE], true, [outcome.hero_id])
+			for spare in unpicker_quote.get("spares", []):
+				var spare_name: String = str(catalog[spare.id].name) if catalog.has(spare.id) else str(spare.id)
+				_offer("unpick", "Unpick %s (Tier %s) / +%d scraps" % [
+					spare_name, ["I", "II", "III"][clampi(int(spare.tier), 1, 3) - 1], UNPICK_YIELD], true, [spare.index])
 			_offer("leave", "Leave Unpicker")
 		"Event":
 			return _open_event()

@@ -22,6 +22,11 @@ extends SceneTree
 ## shared preview file is untouched. A second slice carries the Seamstress back to hero rank 4
 ## with two genuine Move turns and proves the same shower still reaches the rank-4 foe from the
 ## rear rank without ever striking the ally standing in hero rank 4.
+##
+## The Mark slice pairs two equal-seed tier-II showers that differ only by an in-memory existing
+## Mark 2 on the shipped rank-3 Moth Scribe: the already-marked foe loses exactly three more HP,
+## the two unmarked foes take identical damage and Bleed 4, the pre-existing Mark survives and
+## the shower never applies a new Mark.
 
 const PARTS_PATH := "res://data/parts/seamstress_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
@@ -32,7 +37,7 @@ const MIN_RANK := 1
 const MAX_RANK := 4
 const REQUIRED_ABILITY_FIELDS := [
 	"id", "name", "kind", "launch", "target", "target_side", "multi", "acc", "dmg",
-	"crit", "effects", "self_move", "move",
+	"crit", "mark_damage", "effects", "self_move", "move",
 ]
 ## Retired card-system keys that must never appear as a Stitched part effect.
 const RETIRED_CARD_KEYS := [
@@ -108,6 +113,7 @@ const EXPECTED := {
 		"launch": [2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "skill",
 		"multi": false,
 		"acc": 100,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [{"heal": 4}, {"heal": 6}, {"heal": 8}],
 	},
@@ -117,6 +123,7 @@ const EXPECTED := {
 		"launch": [1, 2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"multi": false,
 		"acc": 90,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
 			{"bleed": 2, "weak": 1},
@@ -130,6 +137,7 @@ const EXPECTED := {
 		"launch": [1, 2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "attack",
 		"multi": false,
 		"acc": 90,
+		"mark": [0, 0, 0],
 		"dmg": [[2, 3], [3, 4], [4, 5]],
 		"effects": [{"bleed": 2}, {"bleed": 3}, {"bleed": 4}],
 	},
@@ -139,6 +147,7 @@ const EXPECTED := {
 		"launch": [1, 2, 3, 4], "target": [1, 2, 3, 4], "target_side": "enemy", "pose": "attack2",
 		"multi": true,
 		"acc": 90,
+		"mark": [2, 3, 4],
 		"dmg": [[1, 2], [2, 3], [3, 4]],
 		"effects": [{"bleed": 3}, {"bleed": 4}, {"bleed": 5}],
 	},
@@ -148,6 +157,7 @@ const EXPECTED := {
 		"launch": [1, 2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
 		"multi": false,
 		"acc": 100,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
 			{"guard": 2, "heal": 2},
@@ -161,6 +171,7 @@ const EXPECTED := {
 		"launch": [2, 3, 4], "target": [1, 2, 3, 4], "target_side": "ally", "pose": "guard",
 		"multi": false,
 		"acc": 100,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
 			{"heal": 3, "guard": 1},
@@ -174,6 +185,7 @@ const EXPECTED := {
 		"launch": [2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"multi": false,
 		"acc": 90,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
 	},
@@ -183,6 +195,7 @@ const EXPECTED := {
 		"launch": [2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"multi": false,
 		"acc": 90,
+		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
 			{"mark": 1, "tangled": 1},
@@ -204,6 +217,7 @@ func _initialize() -> void:
 	_test_live_starters()
 	_test_live_rejections()
 	_test_needle_rain_multi()
+	_test_needle_rain_mark_bonus()
 	_test_needle_rain_rear_launch()
 	_test_needle_rain_rejections()
 	_test_rear_launch_masks()
@@ -284,6 +298,8 @@ func _test_catalog() -> void:
 		_check(str(ability["kind"]) == str(spec["kind"]), "AC1: " + part_id + " uses the ability kind " + str(spec["kind"]))
 		_check(str(ability["target_side"]) == str(spec["target_side"]), "AC1: " + part_id + " targets the " + str(spec["target_side"]) + " side")
 		_check(int(ability["acc"]) == int(spec["acc"]), "AC1: " + part_id + " keeps its authored ACC")
+		_check(int(ability["mark_damage"]) == int(spec["mark"][0]),
+			"AC1: " + part_id + " authors its tier-I mark_damage " + str(spec["mark"][0]))
 		_check(_int_list(ability["launch"]) == _int_list(spec["launch"]), "AC1: " + part_id + " launches from its authored ranks")
 		_check(_int_list(ability["target"]) == _int_list(spec["target"]), "AC1: " + part_id + " aims at its authored target ranks")
 		names[str(part["name"])] = true
@@ -322,6 +338,8 @@ func _test_catalog() -> void:
 		"AC1: the Needle Rain text names its damage and its Bleed")
 	_check(not rain_text.contains("one foe") and not rain_text.contains("single"),
 		"AC1: the Needle Rain text no longer claims a single foe")
+	_check(rain_text.contains("already marked") and rain_text.contains("bonus damage"),
+		"AC1: the Needle Rain text names its bonus against an already-Marked foe")
 	var raw: Variant = _read_json(PARTS_PATH)
 	if raw is Dictionary:
 		var document: Dictionary = raw
@@ -329,6 +347,30 @@ func _test_catalog() -> void:
 		var raw_parts: Variant = document.get("parts")
 		_check(raw_parts is Array and raw_parts.size() == ALL_PART_IDS.size(),
 			"AC1: the authored parts array holds exactly the eight named wearables")
+		if raw_parts is Array:
+			var raw_needle := _raw_part_for(raw_parts, "seamstress_needle_rain_needle")
+			_check(not raw_needle.is_empty(), "AC1: the raw JSON authors the Needle Rain Needle record")
+			if not raw_needle.is_empty():
+				var raw_ability: Dictionary = raw_needle.get("ability", {})
+				_check(int(raw_ability.get("mark_damage", -1)) == 2,
+					"AC1: the authored Needle Rain base mark_damage is 2")
+				var raw_tiers: Dictionary = raw_needle.get("tiers", {})
+				var raw_tier_two: Dictionary = raw_tiers.get("2", {})
+				var raw_tier_three: Dictionary = raw_tiers.get("3", {})
+				var raw_tier_two_ability: Dictionary = raw_tier_two.get("ability", {})
+				var raw_tier_three_ability: Dictionary = raw_tier_three.get("ability", {})
+				_check(int(raw_tier_two_ability.get("mark_damage", -1)) == 3,
+					"AC1: the authored Needle Rain tier-II mark_damage override is 3")
+				_check(int(raw_tier_three_ability.get("mark_damage", -1)) == 4,
+					"AC1: the authored Needle Rain tier-III mark_damage override is 4")
+			for other_id in ALL_PART_IDS:
+				if other_id == "seamstress_needle_rain_needle":
+					continue
+				var other_raw := _raw_part_for(raw_parts, other_id)
+				var other_ability: Dictionary = other_raw.get("ability", {})
+				_check(not other_ability.has("mark_damage")
+					or int(other_ability.get("mark_damage", -1)) == 0,
+					"AC1: the authored " + other_id + " carries no mark bonus of its own")
 	else:
 		_check(false, "AC1: the parts file parses as a JSON object")
 
@@ -386,6 +428,8 @@ func _test_tiers() -> void:
 					"%s: rank %d target legality" % [tag, rank])
 			_check(_int_list(ability["dmg"]) == _int_list(spec["dmg"][tier - 1]),
 				"AC3: " + tag + " damage range " + str(spec["dmg"][tier - 1]))
+			_check(int(ability["mark_damage"]) == int(spec["mark"][tier - 1]),
+				"AC3: " + tag + " mark_damage " + str(spec["mark"][tier - 1]))
 			_check(_int_dict(ability["effects"]) == _int_dict(spec["effects"][tier - 1]),
 				"AC3: " + tag + " effects " + str(spec["effects"][tier - 1]))
 			for key in ability["effects"]:
@@ -851,6 +895,224 @@ func _test_needle_rain_multi() -> void:
 					"AC2: each landed needle of a mixed shower still Bleeds 3")
 		_check(mixed.size() == 3 and landed >= 1 and landed <= 2,
 			"AC2: a mixed shower still resolves all three foes with at least one hit and one miss")
+
+
+# ---------------------------------------------------------------- AC2: Mark bonus on struck foes
+
+## One real tier-II Needle Rain cast in two equal-seed battles: the clean copy leaves Moth Scribe
+## unmarked, while a detached in-memory copy gives the same living Moth Scribe an existing Mark 2
+## just before the cast. Every seeded hit and crit decision is shared, so only the mark bonus may
+## differ: the marked rank-3 Moth Scribe loses exactly three more HP, the two unmarked foes take
+## identical damage, every landed foe still gains Bleed 4 and the pre-existing Mark is untouched.
+func _test_needle_rain_mark_bonus() -> void:
+	var witness := _needle_mark_witness()
+	_check(not witness.is_empty(),
+		"AC2: a bounded seed gives a paired tier-II Needle Rain where all three needles land")
+	if witness.is_empty():
+		return
+	var clean: StitchedRules = witness["clean"]
+	var marked: StitchedRules = witness["marked"]
+	var clean_receipt: Dictionary = witness["clean_receipt"]
+	var marked_receipt: Dictionary = witness["marked_receipt"]
+	var clean_foe_before: Dictionary = witness["clean_foe_before"]
+	var marked_foe_before: Dictionary = witness["marked_foe_before"]
+	_check(bool(clean_receipt.get("ok", false)) and bool(marked_receipt.get("ok", false)),
+		"AC2: both paired casts resolve as real use_part actions")
+	_check(str(clean_receipt.get("part", "")) == "seamstress_needle_rain_needle"
+		and str(marked_receipt.get("part", "")) == "seamstress_needle_rain_needle"
+		and str(clean_receipt.get("ability", "")) == "needle_rain"
+		and str(marked_receipt.get("ability", "")) == "needle_rain",
+		"AC2: both receipts name the equipped tier-II needle_rain action")
+	# Real preconditions: three shipped foes, Moth Scribe alive at rank 3 with PROT 0.
+	_check(clean.get_foes().size() == 3 and marked.get_foes().size() == 3,
+		"AC2: the paired battles keep exactly the three shipped foes")
+	for foe_id in NEEDLE_FOE_RANKS:
+		_check(int(clean.get_unit(str(foe_id))["rank"]) == int(NEEDLE_FOE_RANKS[foe_id]),
+			"AC2: the clean battle keeps the shipped rank of " + str(foe_id))
+		_check(int(marked.get_unit(str(foe_id))["rank"]) == int(NEEDLE_FOE_RANKS[foe_id]),
+			"AC2: the marked battle keeps the shipped rank of " + str(foe_id))
+	var moth := clean.get_unit("moth_scribe")
+	_check(int(moth["rank"]) == 3 and int(moth["hp"]) > 0 and int(moth["prot"]) == 0
+		and int(moth["max_hp"]) == 19 and int(moth["dodge"]) == 12,
+		"AC2: Moth Scribe is alive at enemy rank 3 with 19 HP, 12 DODGE and PROT 0")
+	# The only deliberate difference is the already-present Mark 2 on the marked copy.
+	_check(not clean_foe_before["statuses"].has("mark"),
+		"AC2: the clean Moth Scribe starts with no Mark")
+	_check(int(marked_foe_before["statuses"].get("mark", 0)) == 2,
+		"AC2: the paired copy gives Moth Scribe an existing Mark 2 before the cast")
+	_check(int(clean_foe_before["hp"]) == int(marked_foe_before["hp"]),
+		"AC2: both Moth Scribes start the cast at the same HP")
+	var results := _results_by_target(marked_receipt, clean_receipt)
+	_check(not results.is_empty(),
+		"AC2: both receipts resolve the same three targets exactly once")
+	if results.is_empty():
+		return
+	_check(marked_receipt["results"].size() == 3 and clean_receipt["results"].size() == 3,
+		"AC2: each cast yields exactly one result per living foe")
+	for target in results:
+		var hits: Dictionary = results[target]
+		var clean_hit: Dictionary = hits["clean"]
+		var marked_hit: Dictionary = hits["marked"]
+		_check(bool(clean_hit.get("hit", false)) and bool(marked_hit.get("hit", false)),
+			"AC2: " + str(target) + " is struck in both paired casts")
+		_check(bool(clean_hit.get("crit", false)) == bool(marked_hit.get("crit", false)),
+			"AC2: " + str(target) + " shares the same crit decision in both casts")
+		if str(target) == "moth_scribe":
+			_check(int(marked_hit["damage"]) == int(clean_hit["damage"]) + 3,
+				"AC2: the already-Marked Moth Scribe takes exactly three more damage")
+			_check(int(marked_hit["target_hp"]) == int(clean_hit["target_hp"]) - 3
+				and int(marked.get_unit("moth_scribe")["hp"])
+					== int(clean.get_unit("moth_scribe")["hp"]) - 3,
+				"AC2: the already-Marked Moth Scribe loses exactly three more real HP")
+		else:
+			_check(int(marked_hit["damage"]) == int(clean_hit["damage"])
+				and int(marked.get_unit(str(target))["hp"]) == int(clean.get_unit(str(target))["hp"]),
+				"AC2: the unmarked " + str(target) + " takes identical damage in both casts")
+		_check(_status_duration(clean_hit.get("statuses", []), "bleed") == 4
+			and _status_duration(marked_hit.get("statuses", []), "bleed") == 4,
+			"AC2: " + str(target) + " reports Bleed 4 in both casts")
+		_check(int(clean.get_unit(str(target))["statuses"].get("bleed", 0)) == 4
+			and int(marked.get_unit(str(target))["statuses"].get("bleed", 0)) == 4,
+			"AC2: " + str(target) + " really carries Bleed 4 in both casts")
+	# Mark is never consumed by the shower and never applied by it.
+	_check(int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0)) == 2,
+		"AC2: the pre-existing Mark 2 survives the shower unchanged")
+	_check(not clean.get_unit("moth_scribe")["statuses"].has("mark"),
+		"AC2: Needle Rain never adds Mark to the clean Moth Scribe")
+	for foe_id in ["fray_scavenger", "scissor_crab"]:
+		_check(not clean.get_unit(str(foe_id))["statuses"].has("mark")
+			and not marked.get_unit(str(foe_id))["statuses"].has("mark"),
+			"AC2: Needle Rain never adds Mark to an unmarked " + str(foe_id))
+	# One action, one Seamstress turn, the same next actor in both copies.
+	_check(clean.current_actor_id() == marked.current_actor_id()
+		and clean.current_actor_id() != "seamstress",
+		"AC2: one shower spends only the Seamstress turn in both copies")
+	_check(int(clean.state_snapshot()["turn_index"]) == int(witness["turn_before"]) + 1
+		and int(marked.state_snapshot()["turn_index"]) == int(witness["turn_before"]) + 1,
+		"AC2: each cast advances the shared turn pointer by exactly one")
+	# Full determinism: the same seed reproduces both casts, receipts, state and RNG.
+	var replay := _needle_mark_at(int(witness["seed"]))
+	_check(not replay.is_empty()
+		and replay["clean_receipt"] == clean_receipt
+		and replay["marked_receipt"] == marked_receipt
+		and replay["clean"].state_snapshot() == clean.state_snapshot()
+		and replay["marked"].state_snapshot() == marked.state_snapshot()
+		and replay["clean"].rng_state() == clean.rng_state()
+		and replay["marked"].rng_state() == marked.rng_state(),
+		"AC4: the same seed replays both paired receipts, state and RNG exactly")
+
+
+## Searches a fixed small seed range for the paired tier-II witness.
+func _needle_mark_witness() -> Dictionary:
+	for seed_value in range(1, 200):
+		var pair := _needle_mark_at(seed_value)
+		if pair.is_empty():
+			continue
+		var clean_receipt: Dictionary = pair["clean_receipt"]
+		var marked_receipt: Dictionary = pair["marked_receipt"]
+		if not bool(clean_receipt.get("ok", false)) or not bool(marked_receipt.get("ok", false)):
+			continue
+		if clean_receipt.get("results", []).size() != 3 \
+				or marked_receipt.get("results", []).size() != 3:
+			continue
+		var results := _results_by_target(marked_receipt, clean_receipt)
+		if results.size() != 3:
+			continue
+		var matched := true
+		for target in results:
+			var hits: Dictionary = results[target]
+			var clean_hit: Dictionary = hits["clean"]
+			var marked_hit: Dictionary = hits["marked"]
+			if not bool(clean_hit.get("hit", false)) or not bool(marked_hit.get("hit", false)):
+				matched = false
+				break
+			if bool(clean_hit.get("crit", false)) != bool(marked_hit.get("crit", false)):
+				matched = false
+				break
+			if str(target) == "moth_scribe":
+				if int(marked_hit["damage"]) != int(clean_hit["damage"]) + 3:
+					matched = false
+					break
+			elif int(marked_hit["damage"]) != int(clean_hit["damage"]):
+				matched = false
+				break
+			if _status_duration(clean_hit.get("statuses", []), "bleed") != 4 \
+					or _status_duration(marked_hit.get("statuses", []), "bleed") != 4:
+				matched = false
+				break
+		if not matched:
+			continue
+		var clean: StitchedRules = pair["clean"]
+		var marked: StitchedRules = pair["marked"]
+		if not _shower_unticked(clean, clean_receipt["results"]):
+			continue
+		if not _shower_unticked(marked, marked_receipt["results"]):
+			continue
+		if int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 2:
+			continue
+		if clean.get_unit("moth_scribe")["statuses"].has("mark"):
+			continue
+		return {
+			"seed": seed_value,
+			"clean": clean,
+			"marked": marked,
+			"clean_receipt": clean_receipt,
+			"marked_receipt": marked_receipt,
+			"clean_foe_before": pair["clean_foe_before"],
+			"marked_foe_before": pair["marked_foe_before"],
+			"turn_before": pair["turn_before"],
+		}
+	return {}
+
+
+## Builds two equal-seed tier-II Needle Rain battles, differs only by an in-memory existing Mark 2
+## on the shipped rank-3 Moth Scribe, and casts one real shower in each.
+func _needle_mark_at(seed_value: int) -> Dictionary:
+	var clean := _build_battle(seed_value, 2, NEEDLE_KIT, false)
+	var marked := _build_battle(seed_value, 2, NEEDLE_KIT, false)
+	if clean == null or marked == null:
+		return {}
+	# Same seed, same equipment, same foe ranks/HP and the same actor/RNG position before the cast.
+	if clean.state_snapshot() != marked.state_snapshot():
+		return {}
+	if not _to(clean, "seamstress") or not _to(marked, "seamstress"):
+		return {}
+	if clean.state_snapshot() != marked.state_snapshot():
+		return {}
+	if int(clean.get_unit("moth_scribe")["rank"]) != 3:
+		return {}
+	var clean_foe_before := clean.get_unit("moth_scribe")
+	# The one deliberate difference: an existing Mark 2 in this battle's own memory only.
+	marked._units["moth_scribe"]["statuses"]["mark"] = 2
+	var marked_foe_before := marked.get_unit("moth_scribe")
+	var turn_before := int(clean.state_snapshot()["turn_index"])
+	var clean_receipt := clean.use_part("seamstress_needle_rain_needle", 1)
+	var marked_receipt := marked.use_part("seamstress_needle_rain_needle", 1)
+	return {
+		"clean": clean,
+		"marked": marked,
+		"clean_receipt": clean_receipt,
+		"marked_receipt": marked_receipt,
+		"clean_foe_before": clean_foe_before,
+		"marked_foe_before": marked_foe_before,
+		"turn_before": turn_before,
+	}
+
+
+## Indexes two three-foe receipts by target id, keeping each copy's own result.
+func _results_by_target(marked_receipt: Dictionary, clean_receipt: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for result in clean_receipt.get("results", []):
+		out[str(result["target"])] = {"clean": result}
+	for result in marked_receipt.get("results", []):
+		var target := str(result["target"])
+		if not out.has(target):
+			return {}
+		out[target]["marked"] = result
+	for target in out:
+		if not out[target].has("marked"):
+			return {}
+	return out
 
 
 ## A fixed small seed range yields a real shower where all three living foes are hit, with the
@@ -1334,6 +1596,15 @@ func _test_rear_launch_masks() -> void:
 		_check(_int_list(catalog["by_id"][part_id]["ability"]["launch"])
 			== _int_list(EXPECTED[part_id]["launch"]),
 			"AC1: the other " + part_id + " keeps its authored launch ranks")
+
+
+func _raw_part_for(raw_parts: Variant, part_id: String) -> Dictionary:
+	if not raw_parts is Array:
+		return {}
+	for entry in raw_parts:
+		if entry is Dictionary and str(entry.get("id", "")) == part_id:
+			return entry
+	return {}
 
 
 func _raw_launch_for(raw_parts: Variant, part_id: String) -> Array:

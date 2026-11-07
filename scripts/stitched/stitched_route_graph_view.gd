@@ -11,7 +11,7 @@ const ROUTE_BUTTON_ART := "res://assets/paper/ui/reward_button.png"
 const BONE := Color("#efdfc0")
 const AMBER := Color("#ffe0a0")
 const VISITED := Color("#c6b6d9")
-const FUTURE := Color("#968681")
+const FUTURE := Color("#b6a9a0")
 
 var inspected_route_id := ""
 var legal_ids: Array[String] = []
@@ -24,7 +24,7 @@ func present(map: RunMap, choices: Array[String]) -> void:
 	name = "StitchedRouteGraphView"
 	size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	size_flags_vertical = Control.SIZE_EXPAND_FILL
-	custom_minimum_size.y = 154
+	custom_minimum_size.y = 166
 	add_theme_constant_override("separation", 3)
 	legal_ids = choices.duplicate()
 	var route := map.get_route()
@@ -35,15 +35,17 @@ func present(map: RunMap, choices: Array[String]) -> void:
 	set_meta("legal_ids", legal_ids.duplicate())
 	set_meta("current_id", current_id)
 
-	var heading := _label("TWELVE FLOORS  /  BRANCH ATLAS", 14, AMBER)
+	var heading := _label("TWELVE FLOORS  /  BRANCH ATLAS", 16, AMBER)
 	heading.name = "GraphTitle"
 	add_child(heading)
 	var scroll := ScrollContainer.new()
 	scroll.name = "RouteGraphScroll"
-	scroll.custom_minimum_size.y = 110
+	scroll.custom_minimum_size.y = 102
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.follow_focus = true
+	scroll.focus_mode = Control.FOCUS_ALL
+	scroll.gui_input.connect(_on_graph_scroll_input.bind(scroll))
 	add_child(scroll)
 	var bands := VBoxContainer.new()
 	bands.name = "RouteGraphBands"
@@ -58,24 +60,43 @@ func present(map: RunMap, choices: Array[String]) -> void:
 		band.set_meta("floor", index + 1)
 		band.set_meta("node_ids", floor_nodes.map(func(record: Dictionary): return str(record.id)))
 		band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		band.add_theme_constant_override("separation", 2)
+		band.add_theme_constant_override("separation", 4)
 		bands.add_child(band)
 		var floor_heading := _label("FLOOR %02d%s" % [index + 1,
-			"  /  FINAL SEAM" if index == floors.size() - 1 else ""], 12, BONE)
+			"  /  FINAL SEAM" if index == floors.size() - 1 else ""], 14, BONE)
 		band.add_child(floor_heading)
 		var row := HBoxContainer.new()
 		row.name = "GraphFloorPaths"
 		row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		row.add_theme_constant_override("separation", 3)
+		row.add_theme_constant_override("separation", 2)
 		band.add_child(row)
 		for record in floor_nodes:
 			_add_node(row, record, route, current_id)
-	_preview = _label("FOCUS A LIT TICKET TO TRACE ITS NEXT SEAMS", 13, BONE)
+	_preview = _label("FOCUS A LIT TICKET TO TRACE ITS NEXT SEAMS", 16, BONE)
 	_preview.name = "RouteGraphPreview"
 	_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_preview.custom_minimum_size.y = 44
 	_preview.set_meta("preview_ids", [])
 	add_child(_preview)
 	_refresh_inspection()
+
+
+## Scroll the whole authored atlas; never page the underlying run or admit a node.
+func _on_graph_scroll_input(event: InputEvent, scroll: ScrollContainer) -> void:
+	if event is InputEventKey and event.pressed and scroll.has_focus():
+		if event.keycode == KEY_PAGEDOWN:
+			scroll.scroll_vertical += maxi(48, int(scroll.size.y) - 16)
+			scroll.accept_event()
+		elif event.keycode == KEY_PAGEUP:
+			scroll.scroll_vertical -= maxi(48, int(scroll.size.y) - 16)
+			scroll.accept_event()
+	elif event is InputEventMouseButton and event.pressed:
+		if event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			scroll.scroll_vertical += 56
+			scroll.accept_event()
+		elif event.button_index == MOUSE_BUTTON_WHEEL_UP:
+			scroll.scroll_vertical -= 56
+			scroll.accept_event()
 
 
 func set_inspected_route(id: String) -> void:
@@ -134,23 +155,23 @@ func _add_node(parent: HBoxContainer, record: Dictionary, route: Array[String], 
 	icon.name = "GraphNodeIcon"
 	icon.set_meta("art_path", icon_path)
 	icon.texture = art
-	icon.custom_minimum_size = Vector2(25, 25)
+	icon.custom_minimum_size = Vector2(28, 28)
 	icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tile.add_child(icon)
 
-	var caption := _label(kind.to_upper(), 12, BONE)
+	var caption := _label(kind.to_upper(), 14, BONE)
 	caption.name = "GraphNodeKind"
 	caption.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tile.add_child(caption)
-	var path_label := _label("FLOOR %02d" % record.floor, 11, BONE)
+	var path_label := _label("FLOOR %02d" % record.floor, 14, BONE)
 	path_label.name = "GraphNodeFloor"
 	tile.add_child(path_label)
-	var position_label := _label("PATH %d" % (int(record.position) + 1), 11, BONE)
+	var position_label := _label("PATH %d" % (int(record.position) + 1), 14, BONE)
 	position_label.name = "GraphNodePath"
 	tile.add_child(position_label)
-	var state_label := _label("", 11, AMBER)
+	var state_label := _label("", 14, AMBER)
 	state_label.name = "GraphNodeState"
 	tile.add_child(state_label)
 	if status == "legal":
@@ -166,7 +187,8 @@ func _add_node(parent: HBoxContainer, record: Dictionary, route: Array[String], 
 	tile.add_child(exits)
 	var labels: Array[Label] = []
 	for target in record.outgoing:
-		var edge := _label("›%d" % (_path_of_id(str(target))), 11, FUTURE)
+		var edge := _label("→ F%02d P%d" % [
+			_floor_of_id(str(target)), _path_of_id(str(target))], 14, FUTURE)
 		edge.name = "GraphEdge_" + str(target)
 		edge.set_meta("source_id", id)
 		edge.set_meta("target_id", str(target))
@@ -185,10 +207,10 @@ func _add_activation(tile: VBoxContainer, id: String) -> void:
 	button.text = "ENTER"
 	button.set_meta("route_id", id)
 	button.set_meta("art_path", ROUTE_BUTTON_ART)
-	button.custom_minimum_size = Vector2(77, 25)
+	button.custom_minimum_size = Vector2(81, 34)
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.focus_mode = Control.FOCUS_ALL
-	button.add_theme_font_size_override("font_size", 12)
+	button.add_theme_font_size_override("font_size", 16)
 	button.add_theme_color_override("font_color", BONE)
 	button.add_theme_color_override("font_hover_color", AMBER)
 	button.add_theme_color_override("font_focus_color", AMBER)
@@ -211,15 +233,27 @@ func _add_activation(tile: VBoxContainer, id: String) -> void:
 	button.mouse_exited.connect(func():
 		if not button.has_focus():
 			clear_inspected_route(id))
-	button.focus_entered.connect(func(): set_inspected_route(id))
+	button.focus_entered.connect(func():
+		set_inspected_route(id)
+		var scroll := get_node("RouteGraphScroll") as ScrollContainer
+		scroll.call_deferred("ensure_control_visible", button))
 	button.focus_exited.connect(func():
 		if not button.is_hovered():
 			clear_inspected_route(id))
+	button.gui_input.connect(_on_activation_input.bind(button, id))
 	button.pressed.connect(func():
 		if legal_ids.has(id) and tile.get_meta("status") == "legal" \
 			and button.get_parent() == tile and button.is_visible_in_tree() \
 			and not button.disabled and is_visible_in_tree():
 			route_requested.emit(id))
+
+
+## Escape cancels a focused preview without requesting or spending a route.
+func _on_activation_input(event: InputEvent, button: Button, id: String) -> void:
+	if event is InputEventKey and event.pressed and event.keycode == KEY_ESCAPE:
+		clear_inspected_route(id)
+		button.release_focus()
+		button.accept_event()
 
 
 func _refresh_inspection() -> void:
@@ -231,9 +265,9 @@ func _refresh_inspection() -> void:
 	if not inspected_route_id.is_empty() and _nodes.has(inspected_route_id):
 		exits = _nodes[inspected_route_id].get_meta("outgoing", []).duplicate(true)
 		var node: Control = _nodes[inspected_route_id]
-		_preview.text = "LIT FLOOR %02d / PATH %d  →  %s" % [
+		_preview.text = "LIT F%02d P%d  →  %s" % [
 			node.get_meta("floor"), node.get_meta("path"),
-			" / ".join(exits.map(func(target): return "F%02d PATH %d" % [
+			" / ".join(exits.map(func(target): return "F%02d P%d" % [
 				_floor_of_id(str(target)), _path_of_id(str(target))]))
 			if not exits.is_empty() else "FINAL SEAM"]
 		_preview.add_theme_color_override("font_color", AMBER)
@@ -249,17 +283,17 @@ func _style_node(id: String) -> void:
 	var inspected := id == inspected_route_id
 	tile.set_meta("inspected", inspected)
 	var ink := FUTURE
-	var state := "AHEAD"
+	var state := "FUTURE"
 	match status:
 		"visited":
 			ink = VISITED
-			state = "SEWN"
+			state = "VISITED"
 		"current":
 			ink = Color("#fff0d2")
-			state = "PINNED"
+			state = "CURRENT"
 		"legal":
 			ink = AMBER
-			state = "LIT"
+			state = "LEGAL"
 	if inspected:
 		ink = Color("#fff3cd")
 		state = "FOCUSED"
