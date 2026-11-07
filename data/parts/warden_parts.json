@@ -400,11 +400,17 @@
             ],
             "effects": {
               "mark": 2
-            }
+            },
+            "target": [
+              1,
+              2,
+              3,
+              4
+            ]
           }
         }
       },
-      "text": "Hurl a shield rim at a foe up to rank 3, dealing ranged damage and leaving Mark 2 for a follow-up."
+      "text": "Tiers I and II hurl the rim at enemy ranks 1-3; at tier III the throw reaches enemy rank 4. A hit leaves Mark 2 for a follow-up."
     },
     {
       "id": "warden_legs_shield_toss",
