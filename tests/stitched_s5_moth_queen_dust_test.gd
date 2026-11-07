@@ -12,7 +12,7 @@ const DUST := {
 const DIVE := {
 	"id": "queen_dive", "name": "Pin Crown Dive", "kind": "melee",
 	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2},
+	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2, "snip": 1},
 	"self_move": 0, "move": "attack3",
 }
 const DEVOUR := {
@@ -116,7 +116,7 @@ func _test_source(catalog: Dictionary) -> void:
 	for ability in foe.get("abilities", []):
 		if str(ability["id"]) == "queen_dive":
 			loaded_dive = ability
-	_check(not loaded_dive.is_empty() and loaded_dive.get("effects") == {"tangled": 2}
+	_check(not loaded_dive.is_empty() and loaded_dive.get("effects") == {"tangled": 2, "snip": 1}
 		and loaded_dive.get("launch") == [1, 3] and loaded_dive.get("target") == [1]
 		and loaded_dive.get("multi") == false, "AC1: loaded single-front Dive alone carries Tangled 2")
 	for boss_id in ["patchwork_behemoth", "sewing_machine_colossus"]:
@@ -513,13 +513,13 @@ func _test_dive_intent(catalog: Dictionary) -> void:
 				and intent.get("multi") == false
 				and intent.get("base_acc") == 85
 				and intent.get("base_damage") == [6, 8]
-				and intent.get("base_effects") == {"tangled": 2}
+				and intent.get("base_effects") == {"tangled": 2, "snip": 1}
 				and not intent.get("pass", true),
 				"AC3: rotated intent discloses single front rank, unchanged numbers and Tangled 2")
 			projections.append(intent.duplicate(true))
 			intent["base_effects"]["tangled"] = 9
 			_check(StitchedFoeIntent.choose(b, b.get_unit("moth_queen"))
-				.get("base_effects") == {"tangled": 2}
+				.get("base_effects") == {"tangled": 2, "snip": 1}
 				and snapshot == b.state_snapshot() and rng == b.rng_state(),
 				"AC3: editing a projected Tangled status cannot modify the real kit or RNG")
 		_check(projections.size() == 2 and projections[0] == projections[1],

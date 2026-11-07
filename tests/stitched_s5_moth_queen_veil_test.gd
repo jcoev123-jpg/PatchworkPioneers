@@ -17,7 +17,7 @@ const DUST := {
 const DIVE := {
 	"id": "queen_dive", "name": "Pin Crown Dive", "kind": "melee",
 	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2},
+	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2, "snip": 1},
 	"self_move": 0, "move": "attack3",
 }
 const DEVOUR := {
