@@ -105,6 +105,13 @@ var walk_carry: Array = []
 var walk_receipts: Array = []
 ## Debug-build playtest cheats only (scripts/debug/playtest_cheats.gd); empty in real play.
 var cheat_event_id := ""
+## S12 Wren's gifts: what sits in his (at most four) hand slots this run, the gifts this run
+## may offer (set once by the app from the between-runs profile), the 1-of-3 offer waiting on
+## the map (empty when none) and how many offers this run has drawn.
+var gift_slots: Array = StitchedWrenGifts.basics()
+var gift_pool: Array = StitchedWrenGifts.pool_for({})
+var gift_offer: Array = []
+var gift_offers_made := 0
 ## Tests pin the drawn Event record for every session, so save/replay meets it too; the draw
 ## still spends its seeded roll. Empty in real play.
 static var pinned_event_id := ""
@@ -166,7 +173,9 @@ func snapshot() -> Dictionary:
 		"rng": rng.state if rng != null else 0,
 		"battle": battle.state_snapshot() if battle != null else {},
 		"walk": {"enabled": walks_enabled, "state": walk.snapshot() if walk != null else {},
-			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)}}
+			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)},
+		"gifts": {"slots": gift_slots.duplicate(), "pool": gift_pool.duplicate(),
+			"offer": gift_offer.duplicate(), "made": gift_offers_made}}
 
 
 func _seal() -> void:
@@ -213,6 +222,8 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 			pending.clear()
 			phase = "map"
 			return false
+	# Walking on past a gift offer leaves it behind.
+	gift_offer.clear()
 	journal.append({"action": "enter", "node_id": node_id})
 	_seal()
 	changed.emit()
@@ -226,6 +237,46 @@ func enable_walks() -> bool:
 	walks_enabled = true
 	_seal()
 	return true
+
+
+## S12: the app sets which gifts this run may offer, before the first step.
+func set_gift_pool(ids: Array) -> bool:
+	if phase != "map" or not journal.is_empty() or not is_consistent() or not StitchedWrenGifts.valid_pool(ids):
+		return false
+	gift_pool = ids.duplicate()
+	_seal()
+	return true
+
+
+## S12: take one of the offered gifts (swap_out names the slot gift it replaces once all four
+## slots are full) or leave them all with gift_id "". Kept for this run only.
+func choose_gift(gift_id: String, swap_out: String, expected: Dictionary) -> bool:
+	if phase != "map" or gift_offer.is_empty() or expected != snapshot() or not is_consistent():
+		return false
+	if not gift_id.is_empty():
+		if not gift_id in gift_offer:
+			return false
+		if gift_slots.size() < StitchedWrenGifts.SLOTS:
+			if not swap_out.is_empty():
+				return false
+			gift_slots.append(gift_id)
+		else:
+			var index := gift_slots.find(swap_out)
+			if index < 0:
+				return false
+			gift_slots[index] = gift_id
+	elif not swap_out.is_empty():
+		return false
+	gift_offer.clear()
+	journal.append({"action": "gift", "id": gift_id, "swap": swap_out})
+	_seal()
+	changed.emit()
+	return true
+
+
+func _offer_gifts(elite: bool) -> void:
+	gift_offer = StitchedWrenGifts.draw_offer(seed_value, gift_offers_made, gift_pool, gift_slots, elite)
+	gift_offers_made += 1
 
 
 ## The Walk's corridor follows the house: floorboards, then walls, then the sewing basket.
@@ -414,7 +465,7 @@ func _open_battle(kind: String) -> bool:
 			"fray":
 				fray_gains.append(carried)
 	battle_config = {"mode": "stitched", "seed": seed_value, "run_rng": rng,
-		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle,
+		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle, "gifts": gift_slots.duplicate(),
 		"title": "Floor %02d / %s" % [map.get_current_floor(), kind],
 		"walk_mimic": walk_carry.any(func(carried: Dictionary): return carried.kind == "mimic"), "walk_cuts": cuts}
 	var candidate := RankedBattle.new()
@@ -496,6 +547,8 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 	_normalize_formation()
 	receipts.append({"node_id": pending.node_id, "kind": pending.kind, "outcome": outcome, "reward": reward})
 	phase = "defeat" if outcome == "defeat" else "victory" if pending.kind == "Boss" and outcome == "victory" else "map"
+	if phase == "map" and outcome == "victory":
+		_offer_gifts(pending.kind == "Elite")
 	pending.clear()
 	battle = null
 	battle_config.clear()
@@ -919,6 +972,8 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 		_service = null
 		_actions.clear()
 		phase = "map"
+		if kind == "Event":
+			_offer_gifts(false)
 	var alive := false
 	for hero in heroes:
 		alive = alive or not hero.lost

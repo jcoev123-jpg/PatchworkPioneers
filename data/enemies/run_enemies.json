@@ -501,6 +501,7 @@
           "acc": 88,
           "dmg": [3, 5],
           "crit": 0,
+          "mark_damage": 3,
           "effects": {
             "fray": 6
           },
@@ -512,14 +513,15 @@
           "name": "Dust Scrawl",
           "kind": "debuff",
           "launch": [2, 3, 4],
-          "target": [1, 2, 3, 4],
+          "target": [2, 3, 4],
           "target_side": "enemy",
           "multi": false,
           "acc": 88,
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
-            "weak": 1
+            "weak": 1,
+            "mark": 3
           },
           "self_move": 0,
           "move": "skill"

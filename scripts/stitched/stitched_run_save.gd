@@ -46,6 +46,16 @@ static func restore(document: Variant) -> StitchedRunSession:
 			return null
 		if walk_state.enabled and not candidate.enable_walks():
 			return null
+	# Pre-S12 saves carry no gifts: they keep the four basic hands and are never offered more.
+	var legacy_gifts: bool = not document.state.has("gifts")
+	if legacy_gifts:
+		candidate.gift_pool = []
+		candidate._seal()
+	else:
+		var gift_state: Variant = document.state.gifts
+		if not gift_state is Dictionary or not gift_state.get("pool") is Array \
+				or not candidate.set_gift_pool(gift_state.pool):
+			return null
 	var legacy_pockets: bool = not document.state.has("pockets")
 	var legacy_fear: bool = not document.state.has("kid_fear")
 	# Pre-S9a saves have no battle "hand" block and so no hand actions to replay.
@@ -71,6 +81,11 @@ static func restore(document: Variant) -> StitchedRunSession:
 		replayed.erase("kid_fear")
 	if legacy_hand and replayed.get("battle") is Dictionary:
 		replayed.battle.erase("hand")
+	if legacy_gifts:
+		replayed.erase("gifts")
+		if replayed.get("battle") is Dictionary and replayed.battle.get("hand") is Dictionary:
+			for key in ["gifts", "spent", "covered", "nightlight"]:
+				replayed.battle.hand.erase(key)
 	if candidate.journal != document.journal or replayed != document.state:
 		return null
 	return candidate
@@ -91,6 +106,9 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 				and session.choose_visit(command.id, command.arguments, session.snapshot())
 		"settle":
 			return command.size() == 1 and session.settle_battle(session.battle)
+		"gift":
+			return command.size() == 3 and command.get("id") is String and command.get("swap") is String \
+				and session.choose_gift(command.id, command.swap, session.snapshot())
 		"walk":
 			return command.size() == 2 and command.get("command") is Dictionary \
 				and session.walk_act(command.command, session.snapshot()).get("ok") == true
