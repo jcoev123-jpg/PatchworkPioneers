@@ -305,6 +305,18 @@ func _run() -> void:
 
 
 ## Fresh public title and village actions cannot expose the retired three-card route.
+func _picker_has_authored_tiles(boxes: Array) -> bool:
+	if boxes.size() != StitchedPartyAdmission.HERO_IDS.size():
+		return false
+	var seen: Array = []
+	for box in boxes:
+		seen.append(box.get_meta("hero_id"))
+	for id in StitchedPartyAdmission.HERO_IDS:
+		if seen.count(id) != 1:
+			return false
+	return true
+
+
 func _exercise_village_entry() -> void:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -325,8 +337,8 @@ func _exercise_village_entry() -> void:
 	if app.stitched_run_panel == null:
 		app.free()
 		return
-	var boxes: Array = app.stitched_run_panel.find_children("*", "CheckButton", true, false)
-	_check(boxes.size() == 8 and app.stitched_run_session == null,
+	var boxes: Array = app.stitched_run_panel.find_children("HeroTile_*", "Button", true, false)
+	_check(_picker_has_authored_tiles(boxes) and app.stitched_run_session == null,
 		"village admission presents eight real identities before any run allocation")
 	app.stitched_run_buttons[1].pressed.emit()
 	_check(village.is_visible_in_tree() and village.has_open_village()
@@ -358,8 +370,8 @@ func _exercise_picker() -> void:
 	root.add_child(app)
 	await process_frame
 	app.start_button.pressed.emit()
-	var boxes: Array = app.stitched_run_panel.find_children("*", "CheckButton", true, false)
-	_check(boxes.size() == 8, "New Run exposes the eight authored hero controls")
+	var boxes: Array = app.stitched_run_panel.find_children("HeroTile_*", "Button", true, false)
+	_check(_picker_has_authored_tiles(boxes), "New Run exposes the eight authored hero controls")
 	var confirm: Button = app.stitched_run_buttons[0]
 	for box in boxes:
 		if box.get_meta("hero_id") == "warden":
@@ -372,7 +384,7 @@ func _exercise_picker() -> void:
 	_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree(),
 		"cancelled picker callbacks cannot start an old draft")
 	app.start_button.pressed.emit()
-	boxes = app.stitched_run_panel.find_children("*", "CheckButton", true, false)
+	boxes = app.stitched_run_panel.find_children("HeroTile_*", "Button", true, false)
 	var alternate := ["button_golem", "scarecrow", "yarn_ranger", "rag_duelist"]
 	for box in boxes:
 		box.button_pressed = box.get_meta("hero_id") in alternate

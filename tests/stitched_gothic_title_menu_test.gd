@@ -107,7 +107,7 @@ func _run() -> void:
 		and app.stitched_run_session == null and app.stitched_run_draft.size() == 4,
 		"mouse New Run mounts the real four-doll draft without a run")
 	if app.stitched_run_panel != null:
-		var choices: Array = app.stitched_run_panel.find_children("*", "CheckButton", true, false)
+		var choices: Array = app.stitched_run_panel.find_children("HeroTile_*", "Button", true, false)
 		_check(not choices.is_empty() and choices.filter(func(choice): return choice.button_pressed).size() == 4,
 			"mounted picker has four selected dolls")
 		app.stitched_run_buttons[1].grab_focus()
