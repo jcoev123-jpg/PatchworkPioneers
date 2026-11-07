@@ -89,3 +89,58 @@ func pick(state: Dictionary, walk: StitchedWalkRules, band: String, fear: int, c
 	if lines.size() > 1 and str(lines[index]) == last_line:
 		index = (index + 1) % lines.size()
 	return {"speaker": str(speaker.id), "name": str(speaker.name), "line": str(lines[index]), "context": kind}
+
+
+## What the dolls worry about while the player sits on a fight turn, most pressing first.
+static func fight_context(battle: StitchedRules) -> String:
+	var heroes := _standing(battle.get_heroes())
+	var foes := _standing(battle.get_foes())
+	if str(battle.candle_band().get("name", "")) in ["dark", "snuffed"]:
+		return "fight_dark"
+	if not _worst(heroes).is_empty():
+		return "fight_hurt"
+	if battle.is_boss_encounter():
+		return "fight_boss"
+	if foes.size() == 1 and heroes.size() >= 2:
+		return "fight_winning"
+	if heroes.size() < foes.size():
+		return "fight_losing"
+	return "fight_idle"
+
+
+static func _standing(units: Array) -> Array:
+	return units.filter(func(unit: Dictionary) -> bool:
+		return not bool(unit.get("dead", false)) and not bool(unit.get("lost", false)) and int(unit.get("hp", 0)) > 0)
+
+
+static func _worst(units: Array) -> Dictionary:
+	var worst := {}
+	for unit in units:
+		if float(unit.hp) >= float(unit.max_hp) * HURT_SHARE:
+			continue
+		if worst.is_empty() or float(unit.hp) / unit.max_hp < float(worst.hp) / worst.max_hp:
+			worst = unit
+	return worst
+
+
+## One fight line: {speaker (unit id), name, line, context}. Seeded from the fight's turn, never its RNG.
+func pick_fight(battle: StitchedRules, count: int, last_line: String = "") -> Dictionary:
+	var kind := fight_context(battle)
+	var heroes := _standing(battle.get_heroes())
+	if heroes.is_empty():
+		return {}
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash([battle.current_actor_id(), battle.turn_order().size(), count])
+	var speaker := _worst(heroes) if kind == "fight_hurt" else {}
+	if speaker.is_empty():
+		speaker = heroes[rng.randi_range(0, heroes.size() - 1)]
+	var lines: Array = data.get("contexts", {}).get(kind, [])
+	if lines.is_empty():
+		lines = data.get("contexts", {}).get("fight_idle", [])
+	if lines.is_empty():
+		return {}
+	var index := rng.randi_range(0, lines.size() - 1)
+	if lines.size() > 1 and str(lines[index]) == last_line:
+		index = (index + 1) % lines.size()
+	return {"speaker": str(speaker.id), "name": str(speaker.get("name", "")), "line": str(lines[index]), "context": kind,
+		"side": "hero", "rank": int(speaker.rank)}

@@ -46,16 +46,64 @@
       "Well? Are we touching it or not?",
       "I don't trust anything left out on purpose.",
       "Whoever left this wanted it found."
+    ],
+    "fight_idle": [
+      "Well? Someone pick a part and swing it.",
+      "They are waiting too. I don't like that they're waiting.",
+      "Mind the seams. Theirs, I mean. Rip them.",
+      "Steady. Wren is watching us.",
+      "One stitch at a time. That's how you unpick anything."
+    ],
+    "fight_hurt": [
+      "I'm coming loose. Finish this quick.",
+      "Another hit like that and I'm just stuffing.",
+      "Don't look at my seam. Look at them."
+    ],
+    "fight_dark": [
+      "I can't see which one is which anymore.",
+      "Keep the candle up or we're swinging at shadows.",
+      "Something in the dark is closer than the others."
+    ],
+    "fight_boss": [
+      "That one is bigger than the door it came through.",
+      "Aim for whatever holds it together.",
+      "Don't let it get between us and Wren."
+    ],
+    "fight_winning": [
+      "They're fraying. Keep pulling.",
+      "Nearly done. Don't get careless now.",
+      "Last one. Make it quick."
+    ],
+    "fight_losing": [
+      "We're coming apart here.",
+      "If we have to run, we run together.",
+      "Hold the line. Hold it for Wren."
     ]
   },
   "dolls": {
-    "warden": ["Stay behind me. That's what I'm stuffed for."],
-    "seamstress": ["Every tear can be mended. Almost every tear."],
-    "tinker": ["Hear that ticking? Not me. Not this time."],
-    "scarecrow": ["I've frightened worse than this. I think."],
-    "rag_duelist": ["If it bleeds thread, I can cut it."],
-    "yarn_ranger": ["I've marked the way back. Mostly."],
-    "lantern_monk": ["Light is borrowed. Spend it carefully."],
-    "button_golem": ["Buttons hold. Buttons always hold."]
+    "warden": [
+      "Stay behind me. That's what I'm stuffed for."
+    ],
+    "seamstress": [
+      "Every tear can be mended. Almost every tear."
+    ],
+    "tinker": [
+      "Hear that ticking? Not me. Not this time."
+    ],
+    "scarecrow": [
+      "I've frightened worse than this. I think."
+    ],
+    "rag_duelist": [
+      "If it bleeds thread, I can cut it."
+    ],
+    "yarn_ranger": [
+      "I've marked the way back. Mostly."
+    ],
+    "lantern_monk": [
+      "Light is borrowed. Spend it carefully."
+    ],
+    "button_golem": [
+      "Buttons hold. Buttons always hold."
+    ]
   }
 }
