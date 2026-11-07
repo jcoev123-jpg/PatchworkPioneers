@@ -53,6 +53,9 @@ var band := "bright"
 var dim := 1.0
 var walk_tween: Tween
 var fighting := false
+## The exact side-on camera to restore after each receipt (no rules state).
+var _fight_home := Transform3D.IDENTITY
+var _focus_tween: Tween
 
 
 func _init() -> void:
@@ -289,12 +292,14 @@ func screen_point(id: String) -> Variant:
 ## Turns the corridor into a fight: the party stands on the left, the foes on the right,
 ## seen side-on through the cut-away near wall (its back face is never drawn).
 func fight_view(on: bool = true) -> void:
+	cancel_fight_focus()
 	fighting = on
 	stop()
 	if on:
 		camera.fov = FIGHT_FOV
 		camera.position = Vector3(FIGHT_EYE.x, FIGHT_EYE.y, fight_z() + 0.3)
 		camera.rotation = Vector3(deg_to_rad(FIGHT_PITCH), PI / 2, 0)
+		_fight_home = camera.transform
 		candle_light.position = FIGHT_LIGHT
 	else:
 		camera.fov = WALK_FOV
@@ -331,3 +336,76 @@ func screen_rect(id: String) -> Rect2:
 		return Rect2()
 	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 else Vector2.ONE
 	return Rect2(camera.unproject_position(top) * scale_factor, Vector2.ZERO) 		.expand(camera.unproject_position(bottom) * scale_factor)
+
+
+## A single authored-figure camera beat. Keys are live occupied seats supplied by the
+## receipt presenter; never derive them from an assumed rank or an attack cursor.
+## The camera is only borrowed: it always returns to the exact fight transform.
+func start_fight_focus(keys: Array[String], duration: float = 0.4) -> bool:
+	if not fighting or not is_inside_tree() or keys.size() < 2:
+		return false
+	cancel_fight_focus()
+	var anchors: Array[Sprite3D] = []
+	var left := INF
+	var right := -INF
+	for key in keys:
+		var figure: Sprite3D = figure_nodes.get(key)
+		if figure == null or not figure.visible or figure.texture == null:
+			continue
+		if camera.is_position_behind(figure.global_position):
+			continue
+		anchors.append(figure)
+		left = minf(left, figure.global_position.z)
+		right = maxf(right, figure.global_position.z)
+	if anchors.size() < 2:
+		return false
+	var aim := _fight_home.origin
+	aim.z = clampf((left + right) * 0.5, _fight_home.origin.z - 1.0, _fight_home.origin.z + 1.0)
+	# Prefer 1.3x apparent scale; widen only when the actual pictured group
+	# would leave the play area. Controls remain outside the camera viewport.
+	var chosen := FIGHT_FOV
+	var safe := Rect2(size.x * 0.02, size.y * 0.15, size.x * 0.96, size.y * 0.62)
+	camera.position = aim
+	for candidate in [31.5, 33.0, 35.0, 37.0, 39.0]:
+		camera.fov = candidate
+		var within := true
+		for key in keys:
+			var rect := screen_rect(key)
+			if rect.size.x <= 0.0 or not safe.encloses(rect):
+				within = false
+				break
+		if within:
+			chosen = candidate
+			break
+	camera.transform = _fight_home
+	camera.fov = FIGHT_FOV
+	if chosen >= FIGHT_FOV:
+		return false
+	var ease_in := duration * 0.32
+	var ease_out := duration * 0.44
+	_focus_tween = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	_focus_tween.tween_property(camera, "position", aim, ease_in).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_focus_tween.parallel().tween_property(camera, "fov", chosen, ease_in).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_focus_tween.tween_interval(duration - ease_in - ease_out)
+	_focus_tween.tween_property(camera, "position", _fight_home.origin, ease_out).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_focus_tween.parallel().tween_property(camera, "fov", FIGHT_FOV, ease_out).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_focus_tween.finished.connect(func(): _focus_tween = null)
+	return true
+
+
+func fight_focus_active() -> bool:
+	return _focus_tween != null and _focus_tween.is_running()
+
+
+## Used on a replaced receipt, motion-toggle, fight exit and stage teardown.
+func cancel_fight_focus() -> void:
+	if _focus_tween != null:
+		_focus_tween.kill()
+		_focus_tween = null
+	if fighting:
+		camera.transform = _fight_home
+		camera.fov = FIGHT_FOV
+
+
+func _exit_tree() -> void:
+	cancel_fight_focus()
