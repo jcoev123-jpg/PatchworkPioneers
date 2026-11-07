@@ -113,7 +113,7 @@ const SIBLING_EXPECTED := {
 		"dmg": [[5, 8], [6, 10], [8, 12]],
 		"acc": [90, 90, 90],
 		"crit": [0, 0, 0],
-		"effects": [{"mark": 1}, {"mark": 1}, {"mark": 2}],
+		"effects": [{"mark": 2}, {"mark": 2}, {"mark": 2}],
 	},
 	"warden_legs_shield_toss": {
 		"slot": "legs",

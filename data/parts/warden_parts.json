@@ -378,7 +378,7 @@
         ],
         "crit": 0,
         "effects": {
-          "mark": 1
+          "mark": 2
         },
         "self_move": 0,
         "move": "attack2"
@@ -404,7 +404,7 @@
           }
         }
       },
-      "text": "Throw the shield rim as an independent ranged hit; mark the impact. No Block is spent."
+      "text": "Hurl a shield rim at a foe up to rank 3, dealing ranged damage and leaving Mark 2 for a follow-up."
     },
     {
       "id": "warden_legs_shield_toss",
