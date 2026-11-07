@@ -9,7 +9,7 @@ extends RefCounted
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
 ##      "min_fray": 1..200, "required_candle_band": "bright"|...,
-##      "required_candle_bands": ["dark", "snuffed"]|...}
+##      "required_candle_bands": ["dark", "snuffed"]|..., "fear": int}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -32,7 +32,7 @@ extends RefCounted
 ## preview() and claimable in choose() iff the opening snapshot candle matches a band
 ## in that set. An event choice cannot specify both `required_candle_band` and
 ## `required_candle_bands`.
-## `scraps`, `gold`, `part`, `hp`,
+## `scraps`, `gold`, `part`, `hp`, `fear`,
 ## `require_full_candle` and `require_candle_room` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
 ## present, `require_full_candle` must be native boolean `true` on a strictly
@@ -50,22 +50,27 @@ extends RefCounted
 ## exposing `part` and projected `satchel_count` (`+1`) on that choice's preview
 ## entry and receipt. When present, `hp` is a signed integral delta exposing
 ## `hp_delta` and raw per-hero `hp` intents (`{}` when `hp == 0`) on that
-## choice's preview entry and successful receipt.
+## choice's preview entry and successful receipt. When present, `fear` is a signed
+## native integer delta exposing `fear_delta` and projected Wren `fear` clamped 0..100
+## on that choice's preview entry and successful receipt.
 ##
 ## The caller supplies a detached snapshot
 ##     {"candle": int, "party": [{"id": String, "fray": int[, "lost": bool]}, ...],
-##      "scraps": int, "gold": int, "satchel_count": int}
+##      "scraps": int, "gold": int, "satchel_count": int, "wren_fear": int}
 ## with candle 0..100, one to four distinct canonical heroes at fray 0..200
 ## (with optional native bool lost; absence means false),
 ## an optional native int `scraps >= 0`, an optional native int `gold >= 0`,
-## and an optional native int `satchel_count` in 0..6. Scrap-bearing and
+## an optional native int `satchel_count` in 0..6, and an optional native int
+## `wren_fear` in 0..100. Scrap-bearing and
 ## gold-bearing choices require valid snapshot `scraps` / `gold` balances that
 ## stay within `0..MAX_INT` after the delta; part-bearing choices require a
-## validated parts catalog containing `part.id` and a snapshot `satchel_count < 6`.
+## validated parts catalog containing `part.id` and a snapshot `satchel_count < 6`;
+## fear-bearing choices require a snapshot with a valid native int `wren_fear` in 0..100.
 ## Missing, insufficient or full capacity makes only that choice unavailable
 ## while legal alternatives on the same Event remain available.
 ##
 ## This service only projects and reports intents: candle is clamped 0..100,
+## Wren fear is clamped 0..100,
 ## scraps and gold are projected without negative balances or 64-bit overflow,
 ## spare satchel count increments by 1 up to 6, and fray/HP deltas stay raw and signed.
 ## The authoritative S1b/S6 Stitched rules (resolve check at 100, seam tears at
@@ -88,6 +93,8 @@ const MIN_PARTY_SIZE := 1
 const MAX_PARTY_SIZE := 4
 const SATCHEL_MIN := 0
 const SATCHEL_MAX := 6
+const WREN_FEAR_MIN := StitchedKidFear.FEAR_MIN
+const WREN_FEAR_MAX := StitchedKidFear.FEAR_MAX
 const PART_TIER_MIN := StitchedParts.MIN_TIER
 const PART_TIER_MAX := StitchedParts.MAX_TIER
 const TARGET_PARTY := "party"
@@ -202,8 +209,9 @@ func preview(snapshot: Variant, catalog: Variant = null) -> Dictionary:
 ## (plus `"scraps_delta": int, "scraps": int` when a scrap-bearing choice
 ## succeeds, `"gold_delta": int, "gold": int` when a gold-bearing choice
 ## succeeds, `"part": {"id": String, "tier": int}, "satchel_count": int`
-## when a part-bearing choice succeeds, and `"hp_delta": int, "hp": Dictionary`
-## when an HP-bearing choice succeeds), where a success carries the exact
+## when a part-bearing choice succeeds, `"hp_delta": int, "hp": Dictionary`
+## when an HP-bearing choice succeeds, and `"fear_delta": int, "fear": int`
+## when a fear-bearing choice succeeds), where a success carries the exact
 ## projected values from preview() and a rejection carries the established 7-key
 ## refusal (the unchanged base candle for a valid snapshot, else 0) without
 ## consuming the claim or touching the caller's snapshot or catalog.
@@ -264,6 +272,13 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 			return _rejection(base_candle)
 		projected_gold = int(gold_projection["gold"])
 	var has_hp: bool = parsed_effect.get("has_hp", false)
+	var has_fear: bool = parsed_effect.get("has_fear", false)
+	var projected_fear := 0
+	if has_fear:
+		var fear_projection: Dictionary = _project_fear(base_state, int(parsed_effect["fear"]))
+		if not fear_projection.get("ok", false):
+			return _rejection(base_candle)
+		projected_fear = int(fear_projection["fear"])
 	var claim: Dictionary = _choice.choose(target_id)
 	if not claim.get("ok", false):
 		return _rejection(base_candle)
@@ -288,6 +303,9 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if has_hp:
 		receipt["hp_delta"] = int(parsed_effect["hp"])
 		receipt["hp"] = _hp_intents(base_state, parsed_effect)
+	if has_fear:
+		receipt["fear_delta"] = int(parsed_effect["fear"])
+		receipt["fear"] = projected_fear
 	_claimed_choice_id = target_id
 	_claimed_snapshot = base_state.duplicate(true)
 	_claimed_receipt = receipt.duplicate(true)
@@ -339,7 +357,11 @@ func post_settlement_fear_observations(
 
 	# Verify key fields match claimed receipt
 	if not _claimed_receipt.is_empty():
-		for key in ["event_id", "choice_id", "target", "hero_id", "candle", "fray"]:
+		var check_keys := ["event_id", "choice_id", "target", "hero_id", "candle", "fray"]
+		if _claimed_receipt.has("fear"):
+			check_keys.append("fear")
+			check_keys.append("fear_delta")
+		for key in check_keys:
 			if receipt_dict.get(key) != _claimed_receipt.get(key):
 				return empty_result
 
@@ -659,6 +681,28 @@ func _project_satchel_count(base_state: Dictionary) -> Dictionary:
 	return {"ok": true, "satchel_count": count + 1}
 
 
+## Shared Wren-fear projection for preview and commit: requires a snapshot with
+## a valid native int wren_fear (0..100), clamping the result to 0..100.
+func _project_fear(base_state: Dictionary, delta: int) -> Dictionary:
+	if not bool(base_state.get("wren_fear_valid", false)):
+		return {"ok": false}
+	var base_fear: int = int(base_state["wren_fear"])
+	var projected: int = _project_wren_fear(base_fear, delta)
+	return {"ok": true, "fear": projected}
+
+
+func _project_wren_fear(base_fear: int, delta: int) -> int:
+	if delta > 0:
+		if delta > WREN_FEAR_MAX - base_fear:
+			return WREN_FEAR_MAX
+		return base_fear + delta
+	if delta < 0:
+		if delta < -base_fear:
+			return WREN_FEAR_MIN
+		return base_fear + delta
+	return base_fear
+
+
 func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dictionary) -> Dictionary:
 	var entry := {
 		"choice_id": "",
@@ -680,6 +724,7 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	var has_part: bool = parsed_effect.get("has_part", false)
 	var has_gold: bool = parsed_effect.get("has_gold", false)
 	var has_hp: bool = parsed_effect.get("has_hp", false)
+	var has_fear: bool = parsed_effect.get("has_fear", false)
 	entry["target"] = parsed_effect["target"]
 	entry["hero_id"] = parsed_effect["hero_id"]
 	entry["candle_delta"] = parsed_effect["candle"]
@@ -696,6 +741,9 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if has_hp:
 		entry["hp_delta"] = parsed_effect["hp"]
 		entry["hp"] = {}
+	if has_fear:
+		entry["fear_delta"] = parsed_effect["fear"]
+		entry["fear"] = base_state.get("wren_fear")
 	if not _has_eligible_recipients(base_state, parsed_effect):
 		# The named hero is not in this party: readable deltas, no projection.
 		return entry
@@ -725,6 +773,12 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		if not gold_projection.get("ok", false):
 			return entry
 		projected_gold = int(gold_projection["gold"])
+	var projected_fear := 0
+	if has_fear:
+		var fear_projection: Dictionary = _project_fear(base_state, int(parsed_effect["fear"]))
+		if not fear_projection.get("ok", false):
+			return entry
+		projected_fear = int(fear_projection["fear"])
 	entry["available"] = true
 	entry["candle"] = _project_candle(int(base_state["candle"]), int(parsed_effect["candle"]))
 	entry["fray"] = _fray_intents(base_state, parsed_effect)
@@ -736,6 +790,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["gold"] = projected_gold
 	if has_hp:
 		entry["hp"] = _hp_intents(base_state, parsed_effect)
+	if has_fear:
+		entry["fear"] = projected_fear
 	return entry
 
 
@@ -808,9 +864,10 @@ func _is_hidden_by_required_hero(choice: Variant, base_state: Dictionary, catalo
 	return not _party_has_hero(base_state, String(parsed_effect["required_hero"]))
 
 
-## Strict snapshot parse: {"candle", "party"} plus optional "scraps", "gold"
-## and/or "satchel_count"; candle 0..100; optional native int scraps >= 0;
+## Strict snapshot parse: {"candle", "party"} plus optional "scraps", "gold",
+## "satchel_count" and/or "wren_fear"; candle 0..100; optional native int scraps >= 0;
 ## optional native int gold >= 0; optional native int satchel_count 0..6;
+## optional native int wren_fear 0..100;
 ## one to four distinct canonical heroes, each either exactly {"id", "fray"}
 ## or exactly {"id", "fray", "lost": bool} with fray 0..200. Absence of lost
 ## means false. Returns a rebuilt detached copy, never the caller's dictionaries.
@@ -823,11 +880,13 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 	var has_scraps: bool = record.has("scraps")
 	var has_satchel_count: bool = record.has("satchel_count")
 	var has_gold: bool = record.has("gold")
+	var has_wren_fear: bool = record.has("wren_fear")
 	var expected_size: int = (
 		2
 		+ (1 if has_scraps else 0)
 		+ (1 if has_satchel_count else 0)
 		+ (1 if has_gold else 0)
+		+ (1 if has_wren_fear else 0)
 	)
 	if record.size() != expected_size:
 		return {"ok": false}
@@ -855,6 +914,24 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 		gold_int = int(raw_gold)
 		if gold_int < 0:
 			return {"ok": false}
+	var wren_fear_val: Variant = null
+	var wren_fear_valid: bool = false
+	if has_wren_fear:
+		var raw_wren_fear: Variant = record.get("wren_fear")
+		if typeof(raw_wren_fear) == TYPE_INT:
+			var wf_int: int = int(raw_wren_fear)
+			if wf_int >= WREN_FEAR_MIN and wf_int <= WREN_FEAR_MAX:
+				wren_fear_val = wf_int
+				wren_fear_valid = true
+			else:
+				wren_fear_val = wf_int
+				wren_fear_valid = false
+		else:
+			if typeof(raw_wren_fear) == TYPE_DICTIONARY or typeof(raw_wren_fear) == TYPE_ARRAY:
+				wren_fear_val = (raw_wren_fear as Variant).duplicate(true)
+			else:
+				wren_fear_val = raw_wren_fear
+			wren_fear_valid = false
 	var candle_read: Dictionary = _read_signed_int(record.get("candle"))
 	if not candle_read.get("ok", false):
 		return {"ok": false}
@@ -903,6 +980,9 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 		parsed_snapshot["satchel_count"] = satchel_count_int
 	if has_gold:
 		parsed_snapshot["gold"] = gold_int
+	if has_wren_fear:
+		parsed_snapshot["wren_fear"] = wren_fear_val
+		parsed_snapshot["wren_fear_valid"] = wren_fear_valid
 	return {"ok": true, "snapshot": parsed_snapshot}
 
 
@@ -941,6 +1021,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_min_fray: bool = effect.has("min_fray")
 	var has_required_candle_band: bool = effect.has("required_candle_band")
 	var has_required_candle_bands: bool = effect.has("required_candle_bands")
+	var has_fear: bool = effect.has("fear")
 	if has_required_candle_band and has_required_candle_bands:
 		return {"ok": false}
 	if has_require_full_candle and has_require_candle_room:
@@ -956,6 +1037,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_min_fray else 0)
 		+ (1 if has_required_candle_band else 0)
 		+ (1 if has_required_candle_bands else 0)
+		+ (1 if has_fear else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -1042,6 +1124,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"required_candle_band": required_candle_band,
 		"has_required_candle_bands": has_required_candle_bands,
 		"required_candle_bands": required_candle_bands,
+		"has_fear": has_fear,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
@@ -1063,6 +1146,11 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if not hp_read.get("ok", false):
 			return {"ok": false}
 		parsed["hp"] = int(hp_read["value"])
+	if has_fear:
+		var raw_fear: Variant = effect.get("fear")
+		if typeof(raw_fear) != TYPE_INT:
+			return {"ok": false}
+		parsed["fear"] = int(raw_fear)
 	if has_min_fray:
 		var raw_min_fray: Variant = effect.get("min_fray")
 		if typeof(raw_min_fray) != TYPE_INT:
