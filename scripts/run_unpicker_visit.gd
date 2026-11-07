@@ -278,14 +278,28 @@ func quote() -> Dictionary:
         if _expanded:
             var spares: Array = []
             var indices: Array = []
+            # Read-only forecast of unpick_spare(i): derived from the same held satchel,
+            # scraps and caller-quoted yield the real unpick uses. Fresh values per quote.
+            var unpick_outcomes: Array = []
             if open:
                 for i in _satchel.size():
                     var spare: Dictionary = _satchel[i]
                     indices.append(i)
                     spares.append({"index": i, "id": spare["id"], "slot": spare["slot"],
                             "tier": spare["tier"], "torn": spare["torn"]})
+                    var satchel_after := _satchel.size() - 1
+                    unpick_outcomes.append({
+                        "index": i,
+                        "part_id": spare["id"],
+                        "scraps_before": _scraps,
+                        "scraps_gained": _scrap_yield,
+                        "scraps_after": _scraps + _scrap_yield,
+                        "satchel_count_after": satchel_after,
+                        "satchel_slots_free_after": SATCHEL_MAX - satchel_after,
+                    })
             quoted["spare_indices"] = indices
             quoted["spares"] = spares
+            quoted["unpick_outcomes"] = unpick_outcomes
             quoted["scrap_yield"] = _scrap_yield
             quoted["scraps"] = _scraps
         return quoted
