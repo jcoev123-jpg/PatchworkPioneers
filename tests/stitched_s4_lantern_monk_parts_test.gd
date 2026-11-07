@@ -67,7 +67,7 @@ const FROZEN_TIERS := {
 	},
 	"lantern_monk_legs_pole_shelter": {
 		"2": {"effects": {"guard": 3}},
-		"3": {"effects": {"guard": 4}},
+		"3": {"effects": {"guard": 4}, "launch": [1, 2, 3, 4]},
 	},
 	"lantern_monk_arms_snuff_flame": {
 		"2": {"dmg": [4, 6], "effects": {"blind": 1, "exposed": 2}},
@@ -114,6 +114,9 @@ func _initialize() -> void:
 	_test_rank4_moth_shroud(2, 501600, 40, 14, "tier II")
 	_test_rank4_moth_shroud(3, 501640, 40, 18, "tier III")
 	_test_moth_shroud_rejections()
+	_test_pole_shelter_rear_launch()
+	_test_rank4_pole_shelter()
+	_test_pole_shelter_rejections()
 	_test_rank2_moth_cloud_replay()
 	_test_guard_and_shroud()
 	_test_rejection_no_spend()
@@ -136,10 +139,15 @@ func _catalog() -> Dictionary:
 
 
 ## Moth Wink may launch from all four hero ranks; Wick Spark and Moth Shroud may launch from
-## hero rank 4 but not rank 1. Every other frozen part stays limited to its authored ranks.
-## Used for the base ability and every stitch tier's inherited mask.
-func _rank4_launch_contract(id: String, mask: int) -> bool:
+## hero rank 4 but not rank 1. Pole Shelter reaches hero rank 4 only through its authored
+## tier-III launch override: its base, tier I and tier II lists stay frozen at ranks 1-3.
+## Every other frozen part stays limited to its authored ranks. Used for the base ability and
+## every stitch tier's effective mask.
+func _rank4_launch_contract(id: String, mask: int, tier: int = 1) -> bool:
 	if id == STARTERS["head"]:
+		return StitchedParts.ranks_allowed(mask, 1) and StitchedParts.ranks_allowed(mask, 2) \
+			and StitchedParts.ranks_allowed(mask, 3) and StitchedParts.ranks_allowed(mask, 4)
+	if id == STARTERS["legs"] and tier == 3:
 		return StitchedParts.ranks_allowed(mask, 1) and StitchedParts.ranks_allowed(mask, 2) \
 			and StitchedParts.ranks_allowed(mask, 3) and StitchedParts.ranks_allowed(mask, 4)
 	if id == STARTERS["arms"] or id == ALTERNATES["legs"]:
@@ -341,7 +349,8 @@ func _test_lamplight_wash_launch() -> void:
 		and int(ability["effects"]["heal"]) == 2,
 		"AC3: tier reads never replace Lamplight Wash's base ability in memory")
 	# The six other untouched parts stay byte-for-byte equivalent in rules terms, including
-	# their base and tier II/III launch masks: only Wick Spark and Moth Shroud gain rank 4.
+	# their base launch masks: Wick Spark and Moth Shroud gain rank 4, and Pole Shelter gains
+	# it only at tier III through its authored launch override (base and tier II stay 1-3).
 	for id in FROZEN_PARTS:
 		var frozen: Dictionary = FROZEN_PARTS[id]
 		var other: Dictionary = cat["by_id"][id]
@@ -368,19 +377,23 @@ func _test_lamplight_wash_launch() -> void:
 				"effects": frozen["effects"],
 				"self_move": 0,
 			}
+			var expected_launch: Array = frozen["launch"]
 			if tier > 1:
 				var overrides: Dictionary = FROZEN_TIERS[id][str(tier)]
 				for key in overrides:
 					expected[key] = overrides[key]
+				if overrides.has("launch"):
+					expected_launch = overrides["launch"]
 			_check(int(tier_ability["acc"]) == int(expected["acc"])
 				and tier_ability["dmg"] == expected["dmg"]
 				and tier_ability["effects"] == expected["effects"]
 				and int(tier_ability["self_move"]) == int(expected["self_move"]),
 				"AC1: frozen %s tier %d keeps its authored override values" % [id, tier])
-			_check(tier_ability["launch"] == frozen["launch"]
-				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(frozen["launch"])
-				and _rank4_launch_contract(id, int(tier_ability["launch_mask"])),
-				"AC1: only Moth Wink, Wick Spark and Moth Shroud tier %d gain rank-4 launch: %s" % [tier, id])
+			_check(tier_ability["launch"] == expected_launch
+				and int(tier_ability["launch_mask"]) == StitchedParts.rank_mask(expected_launch)
+				and _rank4_launch_contract(id, int(tier_ability["launch_mask"]), tier),
+				"AC1: rank-4 launch stays gated by the authored mask at base and each tier: %s tier %d"
+					% [id, tier])
 			_check(tier_ability["target"] == frozen["target"]
 				and int(tier_ability["target_mask"]) == StitchedParts.rank_mask(frozen["target"])
 				and str(tier_ability["target_side"]) == str(frozen["side"])
@@ -1473,6 +1486,251 @@ func _test_moth_shroud_rejections() -> void:
 	wrong_target["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(wrong_target).get("ok", false)),
 		"AC3: copied Moth Shroud with ally rank 5 still fails validation")
+
+
+## AC1: Pole Shelter's authored base launch stays [1,2,3] for tiers I/II, and only the tier-III
+## ability override adds hero rank 4. Every tier keeps the same ally target list, single-target
+## Guard amount, ACC/damage/crit fields and legs stat, so the rear-rank entitlement is data only.
+func _test_pole_shelter_rear_launch() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog with tier-III Pole Shelter rear launch validates")
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][STARTERS["legs"]]
+	var base_launch := [1, 2, 3]
+	var rear_launch := [1, 2, 3, 4]
+	var base_mask := StitchedParts.rank_mask(base_launch)
+	var full_mask := StitchedParts.rank_mask(rear_launch)
+	var target_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	_check(full_mask == StitchedParts.ALL_RANKS_MASK and base_mask != full_mask
+		and not StitchedParts.ranks_allowed(base_mask, 4),
+		"AC1: Pole Shelter's base/tier-I mask excludes rank 4 while ranks 1-4 form the full mask")
+	_check(str(part["id"]) == "lantern_monk_legs_pole_shelter"
+		and str(part["name"]) == "Pole Shelter" and str(part["slot"]) == "legs"
+		and str(part["owner"]) == "lantern_monk"
+		and str(part["ability"]["id"]) == "lantern_monk_legs_pole_shelter_move"
+		and part["stat"] == {"speed": 1, "dodge": 3},
+		"AC1: Pole Shelter keeps its id, name, legs slot, owner, ability id and +1 SPEED/+3 DODGE stat")
+	_check(str(part["text"]) == "Plant the lantern pole to Guard one ally for two turns, taking its blows.",
+		"AC1: Pole Shelter keeps its authored short rules text")
+	var expected_guard := {1: 2, 2: 3, 3: 4}
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var valid := StitchedParts.validate_ability(ability)
+		_check(bool(valid.get("ok", false)), "AC1: Pole Shelter tier %d ability validates" % tier)
+		if not bool(valid.get("ok", false)):
+			continue
+		var checked: Dictionary = valid["ability"]
+		var expected_launch: Array = rear_launch if tier == 3 else base_launch
+		var expected_mask: int = full_mask if tier == 3 else base_mask
+		_check(checked["launch"] == expected_launch
+			and int(checked["launch_mask"]) == expected_mask,
+			"AC1: Pole Shelter tier %d launches from exactly %s" % [tier, str(expected_launch)])
+		for rank in [1, 2, 3]:
+			_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank),
+				"AC1: Pole Shelter tier %d may launch from hero rank %d" % [tier, rank])
+		_check(StitchedParts.ranks_allowed(int(checked["launch_mask"]), 4) == (tier == 3),
+			"AC1: Pole Shelter tier %d %s launch from hero rank 4"
+				% [tier, "may" if tier == 3 else "may not"])
+		for rank in [0, 5]:
+			_check(not StitchedParts.ranks_allowed(int(checked["launch_mask"]), rank)
+				and not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Pole Shelter tier %d never allows rank %d" % [tier, rank])
+		_check(checked["target"] == [1, 2, 3, 4] and int(checked["target_mask"]) == target_mask
+			and str(checked["target_side"]) == "ally" and not bool(checked["multi"]),
+			"AC1: Pole Shelter tier %d still Guards one ally in ranks 1-4" % tier)
+		for rank in [1, 2, 3, 4]:
+			_check(StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
+				"AC1: Pole Shelter tier %d reaches ally rank %d" % [tier, rank])
+		_check(str(checked["kind"]) == "guard" and checked["dmg"] == [0, 0]
+			and int(checked["acc"]) == 100 and int(checked["crit"]) == 0
+			and int(checked["mark_damage"]) == 0 and int(checked["self_move"]) == 0
+			and str(checked["move"]) == "guard"
+			and int(checked["effects"].get("guard", 0)) == int(expected_guard[tier]),
+			"AC1: Pole Shelter tier %d keeps ACC 100, no damage/crit, Guard %d and its guard pose"
+				% [tier, int(expected_guard[tier])])
+		_check(StitchedParts.stat_at_tier(part, tier) == {"speed": 1, "dodge": 3},
+			"AC1: Pole Shelter tier %d keeps its authored legs stat" % tier)
+	_check(part["ability"]["launch"] == base_launch
+		and int(part["ability"]["launch_mask"]) == base_mask
+		and part["ability"]["target"] == [1, 2, 3, 4]
+		and int(part["ability"]["effects"]["guard"]) == 2,
+		"AC1: tier reads never replace Pole Shelter's frozen base ability in memory")
+	var bad_launch: Dictionary = part.duplicate(true)
+	bad_launch["tiers"]["3"]["ability"]["launch"] = [1, 2, 3, 5]
+	_check(not bool(StitchedParts.validate_part(bad_launch).get("ok", false)),
+		"AC3: a tier-III Pole Shelter override with rank 5 still fails validation")
+
+
+## One real seeded S2 preview fight with tier-III Pole Shelter equipped on the rank-4 Monk:
+## advance to his scheduled turn, Guard the living rank-1 Warden, then advance to the real
+## Fray Scavenger turn and swing at rank 1. Returns the genuine receipts and snapshots so the
+## caller can demand an authentic interception and repeat the whole sequence on the same seed.
+func _rank4_pole_shelter_trace(seed_value: int) -> Dictionary:
+	var b := _battle(STARTERS["legs"], 3, seed_value, true)
+	if b == null:
+		return {}
+	if int(b.get_unit("lantern_monk").get("rank", -1)) != 4:
+		return {}
+	var legs: Dictionary = b.get_unit("lantern_monk").get("parts", {}).get("legs", {})
+	if str(legs.get("id", "")) != STARTERS["legs"] or int(legs.get("tier", 0)) != 3:
+		return {}
+	var warden := b.get_unit("warden")
+	if warden.is_empty() or int(warden.get("rank", -1)) != 1 \
+			or bool(warden.get("lost", false)) or int(warden["hp"]) <= 0:
+		return {}
+	if not _to(b, "lantern_monk"):
+		return {}
+	var before_guard := b.state_snapshot()
+	var guard := b.use_part(STARTERS["legs"], 1)
+	if not bool(guard.get("ok", false)):
+		return {}
+	var monk := b.get_unit("lantern_monk")
+	var monk_rank := int(monk["rank"])
+	var guard_status := int(monk["statuses"].get("guard", 0))
+	var guard_target := str(monk.get("guard_target", ""))
+	if guard_target != "warden":
+		return {}
+	var after_guard := b.state_snapshot()
+	if not _to(b, "fray_scavenger"):
+		return {}
+	var warden_now := b.get_unit("warden")
+	if warden_now.is_empty() or int(warden_now.get("rank", -1)) != 1 \
+			or bool(warden_now.get("lost", false)) or int(warden_now["hp"]) <= 0:
+		return {}
+	var scavenger := b.get_unit("fray_scavenger")
+	if scavenger.is_empty() or bool(scavenger.get("dead", false)) or int(scavenger["hp"]) <= 0:
+		return {}
+	var warden_before := int(warden_now["hp"])
+	var monk_before := int(b.get_unit("lantern_monk")["hp"])
+	var strike := b.use_foe_ability("sack_swing", 1)
+	return {
+		"battle": b,
+		"guard": guard,
+		"strike": strike,
+		"before_guard": before_guard,
+		"after_guard": after_guard,
+		"warden_before": warden_before,
+		"monk_before": monk_before,
+		"monk_rank": monk_rank,
+		"guard_status": guard_status,
+		"guard_target": guard_target,
+		"after": b.state_snapshot(),
+		"rng": b.rng_state(),
+	}
+
+
+## AC2: a real seeded S2 4v3 fight in the shipped preview order (Lantern Monk in hero rank 4)
+## with tier-III Pole Shelter actually equipped. The Monk's scheduled turn Guards the living
+## rank-1 Warden and spends exactly one turn. On the Fray Scavenger's real next turn a genuine
+## sack_swing at rank 1 is redirected to the Monk: the receipt names the guardian and the
+## Warden takes none of that blow. The same seed and actions replay receipts, state and RNG.
+func _test_rank4_pole_shelter() -> void:
+	var witnessed := false
+	for seed_value in range(500840, 500880):
+		var trace := _rank4_pole_shelter_trace(seed_value)
+		if trace.is_empty():
+			continue
+		var guard: Dictionary = trace["guard"]
+		var strike: Dictionary = trace["strike"]
+		var receipts: Array = strike.get("results", [])
+		if not bool(strike.get("ok", false)) or receipts.size() != 1:
+			continue
+		var receipt: Dictionary = receipts[0]
+		if not bool(receipt.get("hit", false)) \
+				or str(receipt.get("guarded_by", "")) != "lantern_monk":
+			continue
+		if str(receipt.get("target", "")) != "lantern_monk" \
+				or str(receipt.get("target_side", "")) != "hero" \
+				or int(receipt.get("target_rank", -1)) != 4:
+			continue
+		witnessed = true
+		var b: StitchedRules = trace["battle"]
+		_check(str(guard.get("action", "")) == "ability"
+			and str(guard.get("actor", "")) == "lantern_monk"
+			and str(guard.get("part", "")) == STARTERS["legs"]
+			and str(guard.get("ability", "")) == "lantern_monk_legs_pole_shelter_move",
+			"AC2: hero rank 4 tier-III Pole Shelter runs as the equipped Monk legs part (seed %d)"
+				% seed_value)
+		_check(int(trace["monk_rank"]) == 4 and int(trace["guard_status"]) == 4
+			and str(trace["guard_target"]) == "warden",
+			"AC2: the cast assigns living Warden at ally rank 1 with Guard 4 (seed %d)" % seed_value)
+		var after_guard: Dictionary = trace["after_guard"]
+		var before_guard: Dictionary = trace["before_guard"]
+		var advanced_once := (int(after_guard["round"]) == int(before_guard["round"])
+				and int(after_guard["turn_index"]) == int(before_guard["turn_index"]) + 1) \
+			or int(after_guard["round"]) == int(before_guard["round"]) + 1
+		_check(advanced_once and after_guard != before_guard,
+			"AC2: the rank-4 Guard spends exactly one Monk turn and changes real battle state (seed %d)"
+				% seed_value)
+		_check(str(strike.get("action", "")) == "ability"
+			and str(strike.get("actor", "")) == "fray_scavenger"
+			and str(strike.get("ability", "")) == "sack_swing",
+			"AC2: the Fray Scavenger's real sack_swing aims at rank 1 (seed %d)" % seed_value)
+		_check(int(receipt.get("damage", -1))
+				== int(trace["monk_before"]) - int(receipt.get("target_hp", -2)),
+			"AC2: the authentic hit's damage lands on the guardian's real HP (seed %d)" % seed_value)
+		_check(int(b.get_unit("warden")["hp"]) == int(trace["warden_before"])
+			and int(b.get_unit("warden")["rank"]) == 1
+			and not bool(b.get_unit("warden")["lost"]),
+			"AC2: the Warden takes none of the redirected blow and keeps rank 1 (seed %d)" % seed_value)
+		var replay := _rank4_pole_shelter_trace(seed_value)
+		_check(not replay.is_empty() and replay["guard"] == guard and replay["strike"] == strike
+			and replay["after"] == trace["after"] and int(replay["rng"]) == int(trace["rng"]),
+			"AC2: same-seed real Guard-follow-up replay matches receipts, final state and RNG (seed %d)"
+				% seed_value)
+		break
+	_check(witnessed,
+		"AC2: a real seeded rank-4 tier-III Pole Shelter Guards Warden and intercepts sack_swing")
+
+
+## AC3: tier I/II Pole Shelter stays illegal from hero rank 4, and the new tier-III rank-4
+## entitlement still fails closed for out-of-range ally ranks, unequipped, torn and stale
+## actions. Every refusal leaves the actor, snapshot and seeded RNG untouched.
+func _test_pole_shelter_rejections() -> void:
+	for tier in [1, 2]:
+		var b := _battle(STARTERS["legs"], tier, 500760 + tier, true)
+		if b == null or not _to(b, "lantern_monk"):
+			_check(false, "AC3: tier %d Pole Shelter rank-4 witness receives a real scheduled turn" % tier)
+			continue
+		_check(int(b.get_unit("lantern_monk")["rank"]) == 4
+			and str(b.get_unit("lantern_monk")["parts"]["legs"]["id"]) == STARTERS["legs"]
+			and int(b.get_unit("lantern_monk")["parts"]["legs"].get("tier", 0)) == tier,
+			"AC3: tier %d Pole Shelter witness really stands in hero rank 4" % tier)
+		_reject_without_spend(b, STARTERS["legs"], 1,
+			"Pole Shelter tier %d forbidden from hero rank 4" % tier)
+	var legal := _battle(STARTERS["legs"], 3, 500763, true)
+	if legal == null or not _to(legal, "lantern_monk"):
+		_check(false, "AC3: tier-III Pole Shelter rejection witness receives a real scheduled turn")
+	else:
+		_check(int(legal.get_unit("lantern_monk")["rank"]) == 4
+			and str(legal.get_unit("lantern_monk")["parts"]["legs"]["id"]) == STARTERS["legs"],
+			"AC3: tier-III rejection witness really stands in hero rank 4 with Pole Shelter")
+		_reject_without_spend(legal, STARTERS["legs"], 0, "Pole Shelter out-of-range ally rank 0")
+		_reject_without_spend(legal, STARTERS["legs"], 5, "Pole Shelter out-of-range ally rank 5")
+		var cast := legal.use_part(STARTERS["legs"], 1)
+		_check(bool(cast.get("ok", false))
+			and str(legal.get_unit("lantern_monk")["guard_target"]) == "warden",
+			"AC3: the same rank-4 Monk legally Guards the rank-1 Warden once")
+		_reject_without_spend(legal, STARTERS["legs"], 1, "stale off-turn tier-III Pole Shelter")
+	var other := _battle(ALTERNATES["legs"], 3, 500764, true)
+	if other == null or not _to(other, "lantern_monk"):
+		_check(false, "AC3: unequipped Pole Shelter witness receives a real scheduled turn")
+	else:
+		_check(str(other.get_unit("lantern_monk")["parts"]["legs"]["id"]) == ALTERNATES["legs"],
+			"AC3: the unequipped witness really has Moth Shroud in the legs slot")
+		_reject_without_spend(other, STARTERS["legs"], 1, "unequipped tier-III Pole Shelter")
+	var torn_config := _config(STARTERS["legs"], 3, 500765, true)
+	torn_config["heroes"][3]["parts"]["legs"] = {"id": STARTERS["legs"], "tier": 3, "torn": true}
+	var torn_created := StitchedRules.create(torn_config)
+	_check(bool(torn_created.get("ok", false)),
+		"AC3: a real torn tier-III Pole Shelter enters a rank-4 battle")
+	if bool(torn_created.get("ok", false)):
+		var torn: StitchedRules = torn_created["battle"]
+		if _to(torn, "lantern_monk"):
+			_reject_without_spend(torn, STARTERS["legs"], 1, "torn tier-III Pole Shelter")
+		else:
+			_check(false, "AC3: torn tier-III Pole Shelter witness receives a real turn")
 
 
 ## Rank 2 stays a legal launch rank after the data change, and the identical seed and action
