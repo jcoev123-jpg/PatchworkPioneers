@@ -32,7 +32,7 @@
         ],
         "crit": 0,
         "effects": {
-          "exposed": 1
+          "exposed": 2
         },
         "self_move": 0,
         "move": "attack2"
@@ -53,7 +53,7 @@
               10
             ],
             "effects": {
-              "exposed": 2
+              "exposed": 3
             }
           }
         }
