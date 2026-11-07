@@ -96,7 +96,9 @@
         ],
         "crit": 0,
         "mark_damage": 0,
-        "effects": {},
+        "effects": {
+          "exposed": 1
+        },
         "self_move": 0,
         "move": "attack2"
       },
@@ -120,7 +122,7 @@
           }
         }
       },
-      "text": "Scatter scrap across every living foe in ranks one through three; never a fourth starting foe."
+      "text": "Scatter scrap across every living foe in ranks one through three; each landed shot leaves that foe Exposed 1 for one turn, and no scrap ever reaches a fourth rank."
     },
     {
       "id": "tinker_torso_casing_ward",
