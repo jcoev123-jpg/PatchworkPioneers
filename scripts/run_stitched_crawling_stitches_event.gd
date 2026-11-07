@@ -14,6 +14,8 @@ const LEAD_RANK := 1
 const FRAY_MIN := 0
 const FRAY_MAX := 200
 const FRAY_CUE_THRESHOLD := 100
+const FRAY_UNRAVELLED_ACTIVE_MIN := 50
+const FRAY_UNRAVELLED_MIN := 50
 
 const WRONG_TURN_EXTRA_STEPS := 2
 const WRONG_TURN_CHANCE_PERCENT := 25
@@ -110,7 +112,7 @@ static func preview(horror: Variant, lead: Variant) -> Dictionary:
 	var resolve_str := str(lead_dict.get("resolve", "")) if lead_dict.has("resolve") and lead_dict.get("resolve") != null else ""
 	var cue: bool = (fray >= FRAY_CUE_THRESHOLD)
 	var unravelled: bool = is_unravelled(resolve_str)
-	var eligible: bool = cue and unravelled
+	var eligible: bool = unravelled and (fray >= FRAY_UNRAVELLED_ACTIVE_MIN)
 
 	return {
 		"ok": true,
@@ -144,7 +146,7 @@ static func resolve(horror: Variant, lead: Variant, roll: Variant = null) -> Dic
 	var resolve_str := str(lead_dict.get("resolve", "")) if lead_dict.has("resolve") and lead_dict.get("resolve") != null else ""
 	var cue: bool = (fray >= FRAY_CUE_THRESHOLD)
 	var unravelled: bool = is_unravelled(resolve_str)
-	var eligible: bool = cue and unravelled
+	var eligible: bool = unravelled and (fray >= FRAY_UNRAVELLED_ACTIVE_MIN)
 
 	if eligible:
 		if roll == null:
