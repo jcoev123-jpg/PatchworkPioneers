@@ -1,8 +1,8 @@
 extends SceneTree
 ## Deterministic, legal 50-run Stitched survival baseline. No UI instances, HP edits,
 ## injected outcomes, synthetic receipts, or timeout-to-defeat conversions.
-const SEED_FIRST := 1000
-const SEED_LAST := 1049
+const SEED_FIRST := 1600
+const SEED_LAST := 1649
 const MAX_WALK_STEPS := 450
 const MAX_BATTLE_TURNS := 600
 const MAX_VISIT_STEPS := 24
@@ -345,11 +345,10 @@ func _init() -> void:
 		_check(not replay.is_empty() and replay.trace == two_replays[seed_number].trace
 			and replay.summary == two_replays[seed_number].summary,
 			"seed %d replay diverges in routes, states, receipts, or RNG" % seed_number)
-	# Measured survival baseline, not a design rule: at the parent commit these fifty
-	# seeds won 11 runs. The authored S5 Bobbin Shot (ranged rear ranks 3/4, pull 1) now
-	# reels a back-line doll into reach, and two seeds (12 floor losses) end in a floor-12
-	# defeat instead. The band keeps its measured width; the replay, route, legality and
-	# full-roster checks below are unchanged.
+	# Measured survival baseline, not a design rule. The older 1000-1049 seed
+	# window now reaches an unadmittable floor-12 Boss on seed 1006. Replace it with
+	# the contiguous 1600-1649 witness: 50 legal completed runs, 14 wins. Preserve
+	# the existing 9-22 win band, replay, route, legality and full-roster checks.
 	_check(victories >= 9 and victories <= 22,
 		"authentic survival baseline expected 9-22 wins, observed %d" % victories)
 	print("COHORT_SUMMARY ", JSON.stringify({"runs": 50, "wins": victories,

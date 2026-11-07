@@ -134,15 +134,25 @@ func _run() -> void:
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
 		"fresh 1280x720 title has no run or corridor fight")
-	_press(app.stitched_continue_button, "title Continue / missing save")
+	_check(app.stitched_continue_button.is_visible_in_tree()
+		and app.stitched_continue_button.disabled
+		and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE,
+		"missing title Continue is visible but disabled and unfocusable")
+	app.stitched_continue_button.pressed.emit()
 	_check(app.stitched_run_session == null and app.title_view.visible
 		and _corridors(app).is_empty(),
-		"missing title Continue fails closed without creating a session or fight")
+		"missing title Continue signal fails closed without creating a session or fight")
 	_write_document({"version": "malformed", "state": {}})
-	_press(app.stitched_continue_button, "title Continue / malformed save")
+	_check(StitchedRunSave.read_file(TEST_SAVE) == null,
+		"malformed save is rejected by the authoritative reader")
+	app._refresh_stitched_continue_eligibility()
+	_check(app.stitched_continue_button.disabled
+		and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE,
+		"malformed title Continue stays disabled and unfocusable")
+	app.stitched_continue_button.pressed.emit()
 	_check(app.stitched_run_session == null and app.title_view.visible
 		and _corridors(app).is_empty(),
-		"malformed title Continue fails closed without publishing a run or fight")
+		"malformed title Continue signal fails closed without publishing a run or fight")
 	DirAccess.remove_absolute(TEST_SAVE)
 	if not _press(app.start_button, "New Run"):
 		_finish(app)
@@ -188,7 +198,7 @@ func _run() -> void:
 		"Event Walk arrives at actual live event service")
 	var leave: Button
 	for button: Button in app.stitched_run_buttons:
-		if str(button.get_meta("action_id", "")) in ["leave", "decline_trade"] and not button.disabled:
+		if str(button.get_meta("action_id", "")) in ["leave", "decline_trade", "leave_rookery"] and not button.disabled:
 			leave = button
 			break
 	_check(leave != null, "Event offers enabled Leave / decline without spending")
