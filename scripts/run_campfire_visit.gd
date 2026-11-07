@@ -158,6 +158,56 @@ func swap_part(hero_id: Variant, slot: Variant, satchel_index: Variant,
 	return swap_receipt
 
 
+## One optional direct exchange of the intact same-slot worn parts of two
+## different living dolls before the single recovery decision. Works with an
+## empty satchel and has no price, tier change, movement, healing or RNG draw.
+## expected_state follows swap_part's convention (latest swap_state or the
+## complete latest read_state()). RunStitchedSewingSwap.exchange_worn remains
+## the only authority for legality; this only gates and reconciles the result.
+func exchange_worn_parts(hero_a_id: Variant, hero_b_id: Variant, slot: Variant,
+		expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	if _swap == null or _status != STITCHED_OPEN:
+		return _swap_rejected("no open part-swap opportunity")
+	if not _valid_node_id(expected_node_id) or expected_node_id != _node_id:
+		return _swap_rejected("wrong node")
+	if typeof(expected_state) != TYPE_DICTIONARY:
+		return _swap_rejected("expected state must be a dictionary")
+	var swap_expected: Variant = expected_state
+	if expected_state.has("swap_state"):
+		if JSON.stringify(expected_state, "", true) != JSON.stringify(read_state(), "", true):
+			return _swap_rejected("stale or forged state")
+		swap_expected = expected_state["swap_state"]
+	var result: Dictionary = _swap.exchange_worn(hero_a_id, hero_b_id, slot, expected_node_id, swap_expected)
+	if result.get("ok") != true:
+		return _swap_rejected(str(result.get("error", "exchange refused")))
+	# Reconcile both changed dolls' gear records; every other field is kept.
+	var changed: Array = result.get("changed_heroes", [])
+	for changed_hero in changed:
+		for index in range(_heroes.size()):
+			if str(_heroes[index]["id"]) == str(changed_hero["id"]):
+				_heroes[index]["parts"] = changed_hero["parts"].duplicate(true)
+	_satchel = result["satchel"].duplicate(true)
+	_swap_state = result["state"].duplicate(true)
+	var exchange_receipt := {
+		"ok": true,
+		"error": "",
+		"action": "exchange_worn",
+		"node_id": _node_id,
+		"hero_a_id": str(hero_a_id),
+		"hero_b_id": str(hero_b_id),
+		"slot": str(slot),
+		"worn_before": result["worn_before"].duplicate(true),
+		"worn_after": result["worn_after"].duplicate(true),
+		"heroes": _heroes.duplicate(true),
+		"satchel": _satchel.duplicate(true),
+		"candle": _candle,
+		"swap_state": _swap_state.duplicate(true),
+	}
+	if _has_fear:
+		exchange_receipt["fear"] = _fear
+	return exchange_receipt
+
+
 func _swap_rejected(message: String) -> Dictionary:
 	return {"ok": false, "error": message}
 
