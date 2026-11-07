@@ -237,14 +237,97 @@ func _check_scarce(unowned: Array, label: String) -> void:
 
 
 func _check_all_owned() -> void:
-	var owned: Array = COATS.keys()
+	var prices := _source_prices()
+	var owned: Array = prices.keys()
+	owned.sort()
+	_check(owned.size() >= 3, "exhausted fixture owns at least three authored IDs")
+	for id in COATS:
+		_check(owned.has(id), "exhausted fixture owns named coat %s" % id)
+	var blocked := _foreign_ids()
 	var snapshot := owned.duplicate(true)
 	var rng := _rng(99)
 	var before := rng.state
 	var result := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng, owned)
-	_check(result == {"ok": false}, "all authored patches owned: no-offer refusal")
-	_check(rng.state == before, "all-owned refusal does not advance the RNG")
-	_check(owned == snapshot, "all-owned refusal does not mutate owned IDs")
+	_check(result.get("ok") == true and result.get("offers") is Array,
+		"all authored patches owned: SOLD-only stock is offered")
+	_check(rng.state == before, "all-owned stock does not advance the RNG")
+	_check(owned == snapshot, "all-owned stock does not mutate owned IDs")
+	if result.get("ok") != true:
+		return
+	var offers: Array = result.offers
+	_check(offers.size() == 3, "all-owned stock has three rows")
+	var seen := {}
+	for offer in offers:
+		_check(offer is Dictionary and offer.size() == 2 and offer.get("id") is String
+				and typeof(offer.get("price")) == TYPE_INT, "all-owned row is a strict id/price pair")
+		if not offer is Dictionary or not offer.get("id") is String:
+			continue
+		_check(prices.has(offer.id) and offer.price == prices[offer.id] and offer.price > 0,
+			"all-owned row %s keeps its authored price" % offer.id)
+		_check(owned.has(offer.id), "all-owned row %s is genuinely owned" % offer.id)
+		_check(not blocked.has(offer.id), "all-owned row %s is not card-era/rare/Heirloom" % offer.id)
+		_check(not seen.has(offer.id), "all-owned rows are distinct")
+		seen[offer.id] = true
+	_check(seen.size() == 3, "all-owned rows are three distinct IDs")
+
+	var rng_b := _rng(99)
+	var again := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng_b, owned.duplicate(true))
+	_check(again == result and rng_b.state == before, "all-owned stock repeats identically with no RNG use")
+	var reversed := owned.duplicate(true)
+	reversed.reverse()
+	_check(RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(5), reversed) == result,
+		"all-owned stock is independent of ownership order and seed")
+
+	# One-unowned control: still the shared sampler, still drawing RNG, buyable + SOLD fillers.
+	var one_owned := owned.duplicate(true)
+	var open_id: String = one_owned.pop_back()
+	var rng_c := _rng(99)
+	var before_c := rng_c.state
+	var one := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng_c, one_owned)
+	_check(one.get("ok") == true and _ids(one.offers).count(open_id) == 1,
+		"one unowned patch is still offered buyable")
+	_check(rng_c.state != before_c, "one-unowned sampling still consumes the RNG")
+
+	for gold in [250, 0]:
+		var visit := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, gold, offers)
+		_check(visit.is_valid(), "all-owned visit opens at %d gold" % gold)
+		if not visit.is_valid():
+			continue
+		var state := visit.read_state()
+		var quote := visit.quote()
+		_check(quote.offers.size() == 3 and quote.decisions == ["leave"],
+			"all-owned quote at %d gold shows three rows and only Leave" % gold)
+		for row in quote.offers:
+			_check(row.sold == true and row.can_buy == false and row.blocked == "already owned",
+				"all-owned row %s is SOLD and blocked at %d gold" % [row.id, gold])
+		for row in quote.offers:
+			var refused := visit.buy_patch(row.id, state.visit_id, state.node_id, state.snapshot)
+			_check(refused.get("ok") != true, "owned %s buy refused at %d gold" % [row.id, gold])
+			_check(visit.read_state() == state and visit.quote() == quote and not visit.is_consumed(),
+				"refused owned buy leaves the %d-gold visit unchanged" % gold)
+		var first_id: String = offers[0].id
+		var bad_snapshot: Dictionary = state.snapshot.duplicate(true)
+		bad_snapshot.gold = gold + 1
+		_check(visit.leave("stale_visit", state.node_id, state.snapshot).get("ok") != true
+			and visit.leave(state.visit_id, "other_node", state.snapshot).get("ok") != true
+			and visit.leave(state.visit_id, state.node_id, bad_snapshot).get("ok") != true
+			and visit.leave(state.visit_id, state.node_id, null).get("ok") != true,
+			"stale, wrong-node and wrong-snapshot Leave refused at %d gold" % gold)
+		_check(visit.read_state() == state and not visit.is_consumed(),
+			"refused Leave attempts keep the %d-gold visit open" % gold)
+		var left := visit.leave(state.visit_id, state.node_id, state.snapshot)
+		_check(left.get("ok") == true and left.get("decision") == "leave",
+			"authenticated Leave succeeds at %d gold" % gold)
+		if left.get("ok") == true:
+			_check(left.ledger.gold == gold and left.ledger.owned_patch_ids == owned
+				and left.ledger.party_ids == PARTY, "Leave keeps wallet %d and ownership unchanged" % gold)
+		_check(visit.is_consumed(), "Leave closes the %d-gold visit" % gold)
+		_check(visit.leave(state.visit_id, state.node_id, state.snapshot).get("ok") != true
+			and visit.buy_patch(first_id, state.visit_id, state.node_id, state.snapshot).get("ok") != true,
+			"replayed Leave and buy refused at %d gold" % gold)
+		_check(visit.quote().offers == [] and visit.quote().decisions == [],
+			"closed all-owned visit advertises nothing at %d gold" % gold)
+		_check(owned == snapshot, "all-owned visit left caller's owned IDs untouched")
 
 
 func _check_bad_inputs() -> void:

@@ -71,7 +71,13 @@ static func sample_stitched_patch_stall_offers(rng: Variant, owned_patch_ids: Va
 		candidates.append({"id": id, "price": int(prices[id])})
 		any_unowned = any_unowned or not owned.has(id)
 	if not any_unowned:
-		return {"ok": false}
+		# Exhausted ordinary stock: offer the first three validated authored rows
+		# (sorted IDs, authored prices). Every one is genuinely owned, so the visit
+		# marks them SOLD and advertises only Leave. No RNG draw, nothing buyable;
+		# the generic sampler intentionally refuses zero unowned and is not called.
+		if candidates.size() < 3:
+			return {"ok": false}
+		return {"ok": true, "offers": candidates.slice(0, 3)}
 	return RunShopPurchases.sample_patch_stall_offers(rng, candidates,
 		owned_patch_ids.duplicate(true), [], false)
 
