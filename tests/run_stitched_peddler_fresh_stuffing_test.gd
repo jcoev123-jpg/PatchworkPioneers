@@ -9,6 +9,8 @@ const MODE := "stitched"
 ## Sample fixture quote ONLY; the game owns no fresh-stuffing price yet.
 const SAMPLE_QUOTE := 13
 const ITEM := "fresh_stuffing"
+## Exact advisory text the open quote must carry (explanation, never authority).
+const EFFECT := "Use during the Walk: heal 35% HP; costs 15 WHIRR (5 to use plus 10 extra)."
 
 var failures: Array[String] = []
 var checks := 0
@@ -238,6 +240,21 @@ func _assert_quote(visit: RunStitchedPeddlerFreshStuffing, gold: int, choices: A
 		and quote.get("node_id") == NODE and quote.get("mode") == MODE,
 		label + ": choices, can_buy, blocked, price and eligible IDs are honest")
 	_check(quote.get("choices").has("leave"), label + ": free Leave is always offered")
+	var text: Variant = quote.get("effect_text")
+	_check(typeof(text) == TYPE_STRING and text == EFFECT
+		and RunStitchedPeddlerFreshStuffing.EFFECT_TEXT == EFFECT,
+		label + ": exactly one constant effect_text on the open quote")
+	_check(str(text).contains("Walk") and str(text).contains("35% HP")
+		and str(text).contains("15 WHIRR") and str(text).contains("10 extra")
+		and str(text).contains("5 to use"),
+		label + ": effect_text names Walk use, 35% HP, 15 WHIRR, 5 plus 10 extra")
+	_check(quote.keys().count("effect_text") == 1 and not before.has("effect_text"),
+		label + ": effect_text is a quote-only key, not in read_state")
+	var scribbled := visit.quote()
+	scribbled["effect_text"] = "free healing"
+	scribbled["choices"].clear()
+	_check(visit.quote() == quote and visit.quote().get("effect_text") == EFFECT,
+		label + ": mutating a returned quote cannot alter the next fresh quote")
 	_check(visit.read_state() == before and visit.is_open(),
 		label + ": quoting changes nothing")
 
@@ -270,6 +287,30 @@ func _test_quotes() -> void:
 		and closed_quote.get("choices", ["x"]).is_empty()
 		and not closed_quote.has("can_buy"),
 		"a closed visit quotes no choices and no purchase")
+	_check(not closed_quote.has("effect_text"),
+		"a left visit's quote carries no effect_text")
+	var bought := _open(500)
+	bought.buy_fresh_stuffing("warden", NODE, bought.read_state())
+	var bought_quote := bought.quote()
+	_check(bought_quote.get("ok", true) == false
+		and bought_quote.get("choices", ["x"]).is_empty()
+		and not bought_quote.has("effect_text") and not bought_quote.has("can_buy"),
+		"a bought visit's quote carries no effect_text and no actionable choice")
+	var invalid_quote := _open(500, SAMPLE_QUOTE, "").quote()
+	_check(invalid_quote.get("ok", true) == false
+		and invalid_quote.get("choices", ["x"]).is_empty()
+		and not invalid_quote.has("effect_text"),
+		"an invalid visit's quote carries no effect_text")
+	var bad_price_quote := _open(500, 0).quote()
+	_check(bad_price_quote.get("ok", true) == false
+		and not bad_price_quote.has("effect_text"),
+		"a visit with an invalid quote price carries no effect_text")
+	var lone := _open(500, SAMPLE_QUOTE, NODE, null, one_slot)
+	var lone_quote := lone.quote()
+	_check(lone_quote.get("effect_text") == EFFECT
+		and lone_quote.get("eligible") == ["seamstress"]
+		and lone_quote.get("choices") == ["buy_fresh_stuffing", "leave"],
+		"one-eligible-doll quote explains the use and lists only that buyer")
 
 
 func _test_purchase_and_leave() -> void:
@@ -293,6 +334,14 @@ func _test_purchase_and_leave() -> void:
 		"only the selected doll's pocket gained one fresh_stuffing")
 	_check(paid["heroes"] == before["heroes"] and paid["heroes"] == _party(),
 		"HP, fray, rank, lost flags and parts are untouched: no healing, no WHIRR")
+	_check(not paid.has("effect_text") and not before.has("effect_text")
+		and not paid.has("whirr") and not paid.has("healed")
+		and paid["pockets_after"]["warden"].count(ITEM) == 1
+		and paid["pockets_after"]["warden"].count(EFFECT) == 0,
+		"the advisory text is no receipt field and no pocket or inventory entry")
+	_check(paid["gold"] == before["gold"] - paid["charged_gold"]
+		and paid["charged_gold"] == before["price"],
+		"gold is charged exactly once at the quoted price")
 	var state := visit.read_state()
 	_check(visit.is_consumed() and not visit.is_open() and state["gold"] == 0
 		and state["pockets"] == after and state["heroes"] == before["heroes"]
@@ -337,6 +386,9 @@ func _test_purchase_and_leave() -> void:
 		and left.get("pockets") == _pockets()
 		and left.get("heroes") == _party(),
 		"Leave consumes the visit once without charging or changing pockets")
+	_check(not left.has("effect_text") and not leaving.read_state().has("effect_text")
+		and not leaving.quote().has("effect_text"),
+		"after Leave no effect text leaks into the receipt, state or a later quote")
 	_check(leaving.is_consumed() and leaving.read_state()["gold"] == 80
 		and leaving.read_state()["pockets"] == _pockets()
 		and leaving.leave(NODE, leaving.read_state()).get("ok", true) == false
@@ -358,6 +410,13 @@ func _test_refusals() -> void:
 	forged["blocked"] = ""
 	_reject(poor, "rag_duelist", NODE, forged, "falsified unaffordable quote")
 	_reject(poor, "rag_duelist", NODE, _open(500).quote(), "replayed affordable quote")
+	var poor_quote := poor.quote()
+	_check(poor_quote.get("effect_text") == EFFECT and poor_quote.get("choices") == ["leave"]
+		and poor_quote.get("can_buy") == false and poor_quote.get("eligible") == [],
+		"after refusals the unaffordable quote still explains the use but offers only Leave")
+	var with_text := poor_state.duplicate(true)
+	with_text["effect_text"] = EFFECT
+	_reject(poor, "rag_duelist", NODE, with_text, "state padded with effect_text")
 	var poor_left := poor.leave(NODE, poor_state)
 	_check(poor_left.get("ok") == true and poor_left.get("charged_gold") == 0
 		and poor_left.get("gold") == SAMPLE_QUOTE - 1 and poor.is_consumed(),
