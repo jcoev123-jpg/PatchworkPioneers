@@ -57,6 +57,7 @@ var event_panel: Control
 var event_title: Label
 var event_text: Label
 var event_buttons: Array[Button] = []
+var _event_generation := 0
 ## id -> Label / Button placed under each figure seen when looking back.
 var figure_labels: Dictionary = {}
 var snip_buttons: Dictionary = {}
@@ -182,9 +183,13 @@ func _ready() -> void:
 	eye_readout = _label(Rect2(28, 18, 800, 30), "", 19)
 	clue = _label(Rect2(240, 96, 800, 40), "", 22)
 	clue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	feedback = _label(Rect2(240, 560, 800, 40), "Borrow a doll's eyes, then walk on.", 20)
+	feedback = _label(Rect2(286, 554, 708, 54), "Borrow a doll's eyes, then walk on.", 20)
 	feedback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	feedback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	feedback.max_lines_visible = 2
+	feedback.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	feedback.tooltip_text = feedback.text
 	forward_button = _button("WALK ON", Rect2(500, 610, 280, 66), 30, func(): _use_primary("forward"))
 	back_button = _button("LOOK BACK", Rect2(796, 620, 190, 48), 21, func(): _use_primary("look_back"))
 	drawer_toggle = _button("DOLLS & POCKETS", Rect2(24, 414, 250, 48), 19, _toggle_drawer)
@@ -372,6 +377,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> Dictionary:
 	if walk == null:
 		return {"ok": false, "error": "not_started"}
+	var before: Dictionary = expected.duplicate(true)
 	var previous_step: int = int(expected.step)
 	var request := {"kind": kind, "actor": expected.viewpoint}
 	if kind == "forward" and walk.tug_unresolved():
@@ -397,14 +403,16 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 		hush()
 		var animate: bool = receipt.ok and not reduced_motion
 		refresh(animate)
-		feedback.text = describe(kind, request, receipt, expected.dolls)
+		feedback.text = describe(kind, request, receipt, expected.dolls, before, expected)
 		if receipt.ok and expected.phase == "complete":
 			feedback.text = "The corridor ends here."
+		feedback.tooltip_text = feedback.text
 	return receipt
 
 
 ## Player-facing line for one receipt; never shows ids or raw event data.
-static func describe(kind: String, request: Dictionary, receipt: Dictionary, dolls: Array) -> String:
+static func describe(kind: String, request: Dictionary, receipt: Dictionary, dolls: Array,
+		before: Dictionary = {}, after: Dictionary = {}) -> String:
 	if not receipt.get("ok", false):
 		return "That cannot be done: %s." % str(receipt.get("error", "blocked")).replace("_", " ")
 	var names := {}
@@ -439,9 +447,13 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 			"machine_pending":
 				lines.append("The sewing machine waits at the next stop.")
 			"dummy_inspected":
-				lines.append("You study the tailor's dummy.")
+				if kind != "curio":
+					lines.append("You study the tailor's dummy.")
 			"curio_choice":
-				lines.append("You chose to %s." % str(event.get("choice", "look")).replace("_", " "))
+				if kind == "curio" and not before.is_empty() and not after.is_empty():
+					lines.append(curio_result(request, receipt, before, after, names))
+				else:
+					lines.append("No curio consequence was confirmed.")
 	if lines.is_empty():
 		match kind:
 			"forward":
@@ -455,6 +467,115 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 			_:
 				lines.append("Done.")
 	return " ".join(lines)
+
+
+## Witness only this accepted curio action: earlier descriptors remain pending, and
+## protective pins/dye may change in place rather than create a new reward.
+## Neither this nor describe() reads hidden odds or advances the Walk RNG.
+static func curio_result(request: Dictionary, receipt: Dictionary, before: Dictionary,
+		after: Dictionary, names: Dictionary) -> String:
+	if not receipt.get("ok", false):
+		return "That choice was refused."
+	var source: String = str(request.get("target", ""))
+	var choice: String = str(request.get("choice", ""))
+	var accepted := false
+	var inspected: Variant = null
+	for event in receipt.get("events", []):
+		if event.get("source", "") != source:
+			continue
+		if event.get("kind") == "curio_choice" and event.get("choice") == choice:
+			accepted = true
+		elif event.get("kind") == "dummy_inspected" and event.get("mimic") is bool:
+			inspected = event.mimic
+	if not accepted:
+		return "No curio outcome was confirmed."
+	if choice == "leave":
+		return "You leave it untouched. Nothing is taken."
+	if choice == "inspect":
+		if inspected is bool:
+			return "A false stitch moves inside. The dummy is a mimic." if inspected else "The stitches lie still. The dummy is no mimic."
+		return "You study the seams; nothing is revealed."
+
+	var old_pending: Array = before.get("pending", [])
+	var next_pending: Array = after.get("pending", [])
+	var protection := ""
+	# Protection is consumed in-place. It is never a newly awarded item.
+	for index in mini(old_pending.size(), next_pending.size()):
+		var old: Dictionary = old_pending[index]
+		var now: Dictionary = next_pending[index]
+		if old.get("kind") == "pins" and old.get("target") == source \
+				and not old.get("consumed", false) and now.get("consumed", false):
+			protection = "A guarding pin holds the teeth at bay."
+		elif old.get("kind") == "dye" and old.get("target") == request.get("actor") \
+				and old.get("effects", {}).get("skip_one_curio_trap", false) \
+				and not now.get("effects", {}).get("skip_one_curio_trap", false):
+			protection = "The dye seals the hungry seam."
+	var outcomes: Array[String] = []
+	if not protection.is_empty():
+		outcomes.append(protection)
+	# Curio resolution only appends pending entries; previous source matches,
+	# even from earlier pulls on this same instance, are NOT this pull's loot.
+	for index in range(old_pending.size(), next_pending.size()):
+		var effect: Dictionary = next_pending[index]
+		if effect.get("source") != source or effect.get("consumed", false):
+			continue
+		var detail: Dictionary = effect.get("effects", {})
+		match str(effect.get("kind", "")):
+			"curio_fight":
+				match str(detail.get("encounter", "")):
+					"awakened_pincushion":
+						outcomes.append("The pincushion wakes. It waits in the next fight.")
+					"tailors_dummy_mimic":
+						outcomes.append("The dummy stirs: a mimic awaits the next fight.")
+					_:
+						outcomes.append("Something wakes for the next fight.")
+			"curio_fray":
+				var amount: int = int(detail.get("amount", 0))
+				var victim: String = str(effect.get("target", ""))
+				var prior_fray := -1
+				var later_fray := -1
+				for doll in before.get("dolls", []):
+					if doll.get("id") == victim:
+						prior_fray = int(doll.get("fray", 0))
+				for doll in after.get("dolls", []):
+					if doll.get("id") == victim:
+						later_fray = int(doll.get("fray", 0))
+				if detail.get("already_applied", false) and amount > 0 and later_fray - prior_fray == amount:
+					outcomes.append("The needles lash %s: +%d Fray now." % [names.get(victim, "a doll"), amount])
+			"curio_trap":
+				if detail.get("status") == "bleed":
+					outcomes.append("Bleed %d is queued on %s." % [int(detail.get("amount", 0)),
+						names.get(effect.get("target", ""), "a doll")])
+			"curio_loot":
+				var quantity: int = int(detail.get("amount", 0))
+				match str(detail.get("kind", "")):
+					"scraps":
+						outcomes.append("Queued for after the Walk: %d scraps." % quantity)
+					"gold":
+						outcomes.append("Queued for after the Walk: %d gold." % quantity)
+					"pocket_item":
+						var item_name: String = str(detail.get("id", "")).replace("_", " ").capitalize()
+						outcomes.append("Queued for after the Walk: %d %s." % [quantity, item_name])
+			"curio_part":
+				var part_id: String = str(detail.get("id", ""))
+				var part: Dictionary = StitchedWalkCurios.parts().get(part_id, {})
+				var part_name: String = str(part.get("name", part_id.replace("_", " ").capitalize()))
+				outcomes.append("A tier-%s %s awaits after the Walk." % [str(detail.get("tier", 1)), part_name])
+			"secret_room":
+				outcomes.append("The wall reveals a hidden chamber on this floor.")
+			"side_room":
+				outcomes.append("A side room with another curio waits beyond the seam.")
+	if choice == "pull" and not outcomes.is_empty():
+		var unresolved := false
+		for curio in after.get("curios", []):
+			if curio.get("instance") == source:
+				unresolved = not curio.get("resolved", false)
+				break
+		if unresolved:
+			outcomes.append("More pins remain.")
+	if outcomes.is_empty():
+		return "The choice leaves no new consequence."
+	return " ".join(outcomes)
 
 
 func set_reduced_motion(value: bool) -> void:
@@ -542,6 +663,7 @@ func refresh(animate: bool = false) -> void:
 	_show_event()
 	if expected.phase == "complete":
 		feedback.text = "The corridor ends here."
+		feedback.tooltip_text = feedback.text
 	_update_flicker()
 	_place_figure_controls()
 	if bark_timer.is_stopped() and expected.phase == "walking":
@@ -683,8 +805,8 @@ func _place_figure_controls() -> void:
 
 ## Old event controls can outlive their event for the rest of the frame.
 ## Validate the displayed current target before delegating an accepted choice.
-func _use_event_choice(request: Dictionary) -> void:
-	if expected.get("phase") != "walking" or expected.looking_back or not event_panel.is_visible_in_tree():
+func _use_event_choice(request: Dictionary, generation: int = -1) -> void:
+	if generation != _event_generation or expected.get("phase") != "walking" or expected.looking_back or not event_panel.is_visible_in_tree():
 		return
 	if request.kind == "curio":
 		var curio := current_curio()
@@ -700,6 +822,7 @@ func _use_event_choice(request: Dictionary) -> void:
 
 ## The in-corridor event: a curio on this step, or the tug holding the rear doll.
 func _show_event() -> void:
+	_event_generation += 1
 	for button in event_buttons:
 		button.queue_free()
 	event_buttons.clear()
@@ -727,7 +850,8 @@ func _show_event() -> void:
 	event_panel.show()
 	for index in choices.size():
 		var request: Dictionary = choices[index][1]
+		var generation := _event_generation
 		var width := (580.0 - 12.0 * (choices.size() - 1)) / choices.size()
 		var button := _button(choices[index][0], Rect2(20 + index * (width + 12), 118, width, 44), 19,
-			func(): _use_event_choice(request), event_panel)
+			func(): _use_event_choice(request, generation), event_panel)
 		event_buttons.append(button)
