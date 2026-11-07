@@ -67,6 +67,9 @@ func _initialize() -> void:
 	_test_ac2_rag_duelist_duel_mask_mirror()
 	_test_ac3_vitality_boundaries_and_hanging_doll()
 	_test_ac4_guards_determinism_and_forgery()
+	_test_ac1_seamstress_full_hp_paid_heal_blocked()
+	_test_ac2_seamstress_damaged_and_hanging_paid_heal()
+	_test_ac3_full_hp_counterexamples_available()
 
 	if failures.is_empty():
 		print("run_stitched_hero_vital_seams_test: PASS (%d checks)" % checks)
@@ -519,3 +522,281 @@ func _test_ac4_guards_determinism_and_forgery() -> void:
 	var rng_state_after: int = seeded_rng.state
 	_check(rng_state_after == rng_state_before, "AC4: Seeded RNG unchanged by choose")
 	_check(randi() == global_rand_before, "AC4: Global RNG sequence completely untouched")
+
+
+## AC1: Using shipped v3_seamstress_crimson_quilt_surgeon record, four different rank-1..4 dolls
+## with living Seamstress at HP 20/20 and gold >= 12, stitch_wound is quoted but unavailable,
+## forecasts unchanged gold, and choose refuses without mutation/latching.
+func _test_ac1_seamstress_full_hp_paid_heal_blocked() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	_check(not catalog.is_empty(), "AC1: Shipped catalog loaded")
+	var events: Array = catalog.get("events", [])
+	var surgeon_record: Dictionary = {}
+	for ev_raw: Variant in events:
+		if ev_raw is Dictionary and String((ev_raw as Dictionary).get("id", "")) == "v3_seamstress_crimson_quilt_surgeon":
+			surgeon_record = (ev_raw as Dictionary).duplicate(true)
+			break
+	_check(not surgeon_record.is_empty(), "AC1: Found v3_seamstress_crimson_quilt_surgeon in shipped catalog")
+	_check(surgeon_record.get("required_hero") == "seamstress", "AC1: required_hero is seamstress")
+
+	# Four different rank-1..4 dolls with living Seamstress at HP 20/20
+	var party: Array = _party("seamstress", 2, 20, 20, false)
+	var wallet := {"gold": 12, "scraps": 0}
+	var caller_party_orig: Array = party.duplicate(true)
+	var caller_wallet_orig: Dictionary = wallet.duplicate(true)
+	var caller_record_orig: Dictionary = surgeon_record.duplicate(true)
+	var node_id := "node_seamstress_full_hp_1"
+
+	var visit := SeamsAdapter.open_stitched(node_id, surgeon_record, party, wallet)
+	_check(visit != null and visit.is_valid(), "AC1: Visit is valid for 20/20 Seamstress")
+	_check(visit.is_open(), "AC1: Visit is open")
+	_check(not visit.is_claimed(), "AC1: Visit is not claimed initially")
+
+	var quote: Dictionary = visit.preview_choices()
+	_check(quote.get("ok", false) == true, "AC1: Preview choices ok")
+	var choices: Array = quote.get("choices", [])
+	var choices_by_id: Dictionary = {}
+	for c_raw: Variant in choices:
+		var c: Dictionary = c_raw
+		choices_by_id[c.get("id")] = c
+
+	_check(choices_by_id.has("stitch_wound"), "AC1: stitch_wound choice present in quote")
+	var c_stitch: Dictionary = choices_by_id.get("stitch_wound", {})
+	_check(c_stitch.get("gold_delta") == -12, "AC1: stitch_wound gold_delta is -12")
+	_check(c_stitch.get("scraps_delta") == 0, "AC1: stitch_wound scraps_delta is 0")
+	_check(c_stitch.get("hp_delta") == 8, "AC1: stitch_wound hp_delta is 8")
+	_check(c_stitch.get("max_hp_delta") == 0, "AC1: stitch_wound max_hp_delta is 0")
+	_check(c_stitch.get("target_hero_id") == "seamstress", "AC1: stitch_wound targets seamstress")
+	_check(c_stitch.get("target_hero_rank") == 2, "AC1: stitch_wound targets rank 2")
+	_check(c_stitch.get("available") == false, "AC1: stitch_wound is unavailable at full HP")
+	_check(c_stitch.get("affordable") == false, "AC1: stitch_wound is unaffordable at full HP")
+	_check(String(c_stitch.get("blocked", "")).contains("full HP"), "AC1: stitch_wound blocked mentions full HP")
+	_check(c_stitch.get("projected_gold") == 12, "AC1: stitch_wound forecasts unchanged gold")
+	_check(c_stitch.get("projected_scraps") == 0, "AC1: stitch_wound forecasts unchanged scraps")
+	_check(c_stitch.get("projected_wallet") == wallet, "AC1: stitch_wound forecasts unchanged wallet")
+
+	# Detached snapshot and choose attempt
+	var opening_state: Dictionary = visit.read_state()
+	var state_copy: Dictionary = opening_state.duplicate(true)
+
+	var seeded_rng := RandomNumberGenerator.new()
+	seeded_rng.seed = 44444
+	var rng_before: int = seeded_rng.state
+
+	var refusal: Dictionary = visit.choose("stitch_wound", node_id, opening_state)
+	_check(refusal.get("ok", false) == false, "AC1: choose stitch_wound refuses at full HP")
+	_check(String(refusal.get("error", "")).contains("full HP"), "AC1: refusal error mentions full HP")
+	_check(visit.is_claimed() == false, "AC1: Visit remains unclaimed after refusal")
+	_check(visit.is_open() == true, "AC1: Visit remains open after refusal")
+	_check(visit.is_valid() == true, "AC1: Visit remains valid after refusal")
+	_check(visit.get_wallet() == {"gold": 12, "scraps": 0}, "AC1: Wallet unchanged after refusal")
+	_check(visit.read_state() == state_copy, "AC1: Internal state unchanged after refusal")
+	_check(opening_state == state_copy, "AC1: Caller state snapshot unmodified")
+	_check(party == caller_party_orig, "AC1: Caller party unmodified")
+	_check(wallet == caller_wallet_orig, "AC1: Caller wallet unmodified")
+	_check(surgeon_record == caller_record_orig, "AC1: Caller event record unmodified")
+	_check(seeded_rng.state == rng_before, "AC1: RNG untouched during refused choose")
+
+	# Visit remains usable for an available choice after refusal
+	var leave_receipt: Dictionary = visit.choose("leave", node_id, opening_state)
+	_check(leave_receipt.get("ok", false) == true, "AC1: Can still choose leave after stitch_wound refusal")
+	_check(visit.is_claimed() == true, "AC1: Visit latched after leave choice")
+
+
+## AC2: Living Seamstress at HP 19/20 or HP 0/20 (lost=false), gold 12 permits stitch_wound;
+## quote and one guarded receipt preserve gold -12, scraps 0, raw HP +8, max HP 0, Seamstress target.
+## Raw HP intent is not capped to missing HP. LOST/absent protagonist fails closed.
+func _test_ac2_seamstress_damaged_and_hanging_paid_heal() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var events: Array = catalog.get("events", [])
+	var surgeon_record: Dictionary = {}
+	for ev_raw: Variant in events:
+		if (ev_raw as Dictionary).get("id") == "v3_seamstress_crimson_quilt_surgeon":
+			surgeon_record = (ev_raw as Dictionary).duplicate(true)
+			break
+
+	var wallet_12 := {"gold": 12, "scraps": 0}
+
+	# 1. Living Seamstress at 19/20 HP, gold 12
+	var party_19: Array = _party("seamstress", 1, 19, 20, false)
+	var visit_19 := SeamsAdapter.open_stitched("node_seamstress_19", surgeon_record, party_19, wallet_12)
+	_check(visit_19.is_valid(), "AC2: 19/20 Seamstress visit is valid")
+
+	var quote_19: Dictionary = visit_19.preview_choices()
+	var choices_19: Dictionary = {}
+	for c_raw: Variant in quote_19.get("choices", []):
+		choices_19[(c_raw as Dictionary).get("id")] = c_raw
+
+	var stitch_19: Dictionary = choices_19.get("stitch_wound", {})
+	_check(stitch_19.get("available") == true, "AC2: stitch_wound is available at 19/20 HP")
+	_check(stitch_19.get("affordable") == true, "AC2: stitch_wound is affordable at 19/20 HP")
+	_check(stitch_19.get("blocked") == "", "AC2: stitch_wound blocked is empty at 19/20 HP")
+	_check(stitch_19.get("projected_gold") == 0, "AC2: stitch_wound projected gold is 0")
+	_check(stitch_19.get("projected_scraps") == 0, "AC2: stitch_wound projected scraps is 0")
+
+	var state_19: Dictionary = visit_19.read_state()
+	var receipt_19: Dictionary = visit_19.choose("stitch_wound", "node_seamstress_19", state_19)
+	_check(receipt_19.get("ok", false) == true, "AC2: 19/20 Seamstress stitch_wound choose succeeded")
+	_check(receipt_19.get("gold_delta") == -12, "AC2: receipt gold_delta is -12")
+	_check(receipt_19.get("scraps_delta") == 0, "AC2: receipt scraps_delta is 0")
+	_check(receipt_19.get("hp_delta") == 8, "AC2: raw hp_delta is 8 (not capped to +1)")
+	_check(receipt_19.get("max_hp_delta") == 0, "AC2: receipt max_hp_delta is 0")
+	_check(receipt_19.get("target_hero_id") == "seamstress", "AC2: receipt target_hero_id is seamstress")
+	_check(receipt_19.get("wallet", {}).get("gold") == 0, "AC2: wallet gold updated to 0")
+	_check(visit_19.is_claimed() == true, "AC2: visit_19 is now claimed")
+	_check(visit_19.is_open() == false, "AC2: visit_19 is no longer open")
+
+	# Subsequent claim rejects
+	var second_claim: Dictionary = visit_19.choose("leave", "node_seamstress_19", visit_19.read_state())
+	_check(second_claim.get("ok", false) == false, "AC2: Subsequent claim on claimed visit rejects")
+
+	# 2. Living Seamstress at 0/20 HP, lost=false (Hanging by a thread)
+	var party_0: Array = _party("seamstress", 3, 0, 20, false)
+	var visit_0 := SeamsAdapter.open_stitched("node_seamstress_0", surgeon_record, party_0, wallet_12)
+	_check(visit_0.is_valid(), "AC2: 0/20 lost=false Seamstress visit is valid")
+
+	var quote_0: Dictionary = visit_0.preview_choices()
+	var choices_0: Dictionary = {}
+	for c_raw: Variant in quote_0.get("choices", []):
+		choices_0[(c_raw as Dictionary).get("id")] = c_raw
+
+	var stitch_0: Dictionary = choices_0.get("stitch_wound", {})
+	_check(stitch_0.get("available") == true, "AC2: stitch_wound available for 0/20 hanging Seamstress")
+	_check(stitch_0.get("affordable") == true, "AC2: stitch_wound affordable for 0/20 hanging Seamstress")
+
+	var state_0: Dictionary = visit_0.read_state()
+	var receipt_0: Dictionary = visit_0.choose("stitch_wound", "node_seamstress_0", state_0)
+	_check(receipt_0.get("ok", false) == true, "AC2: 0/20 Seamstress choose succeeded")
+	_check(receipt_0.get("gold_delta") == -12, "AC2: hanging receipt gold_delta is -12")
+	_check(receipt_0.get("scraps_delta") == 0, "AC2: hanging receipt scraps_delta is 0")
+	_check(receipt_0.get("hp_delta") == 8, "AC2: hanging receipt raw hp_delta is 8")
+	_check(receipt_0.get("max_hp_delta") == 0, "AC2: hanging receipt max_hp_delta is 0")
+	_check(receipt_0.get("target_hero_id") == "seamstress", "AC2: hanging receipt targets seamstress")
+
+	# 3. LOST protagonist fails closed
+	var party_lost: Array = _party("seamstress", 1, 10, 20, true)
+	var visit_lost := SeamsAdapter.open_stitched("node_lost_seamstress", surgeon_record, party_lost, wallet_12)
+	_check(not visit_lost.is_valid(), "AC2: LOST Seamstress fails closed on open")
+	var claim_lost: Dictionary = visit_lost.choose("stitch_wound", "node_lost_seamstress", {})
+	_check(claim_lost.get("ok", false) == false, "AC2: LOST Seamstress choose rejects")
+
+	# 4. Absent protagonist fails closed
+	var party_absent: Array = [
+		{"id": "warden", "rank": 1, "hp": 20, "max_hp": 20, "lost": false},
+		{"id": "tinker", "rank": 2, "hp": 20, "max_hp": 20, "lost": false},
+		{"id": "lantern_monk", "rank": 3, "hp": 20, "max_hp": 20, "lost": false},
+		{"id": "button_golem", "rank": 4, "hp": 20, "max_hp": 20, "lost": false},
+	]
+	var visit_absent := SeamsAdapter.open_stitched("node_absent_seamstress", surgeon_record, party_absent, wallet_12)
+	_check(not visit_absent.is_valid(), "AC2: Absent Seamstress fails closed on open")
+
+
+## AC3: The full-HP restriction applies ONLY to the precise pure-paid-heal predicate:
+## - Crimson Quilt Surgeon donate_red_thread trades HP -4 for gold +18, and leave stays free.
+## - Warden's reinforce_shield_seam spends 2 scraps for max HP +3 with no heal.
+## - Rag Duelist's bind_mirror_cape spends 2 scraps for HP +4 and max HP +2 at full HP.
+func _test_ac3_full_hp_counterexamples_available() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var events: Array = catalog.get("events", [])
+	var surgeon_record: Dictionary = {}
+	var warden_record: Dictionary = {}
+	var duelist_record: Dictionary = {}
+	for ev_raw: Variant in events:
+		var d: Dictionary = ev_raw
+		var eid: String = String(d.get("id", ""))
+		if eid == "v3_seamstress_crimson_quilt_surgeon":
+			surgeon_record = d.duplicate(true)
+		elif eid == "v3_warden_buckle_heart_ward":
+			warden_record = d.duplicate(true)
+		elif eid == "v3_rag_duelist_duel_mask_mirror":
+			duelist_record = d.duplicate(true)
+
+	_check(not surgeon_record.is_empty(), "AC3: surgeon record found")
+	_check(not warden_record.is_empty(), "AC3: warden record found")
+	_check(not duelist_record.is_empty(), "AC3: duelist record found")
+
+	# 1. Seamstress at full HP (20/20): donate_red_thread (HP -4, gold +18) is available and committable
+	var seam_full: Array = _party("seamstress", 1, 20, 20, false)
+	var visit_donate := SeamsAdapter.open_stitched("node_donate_1", surgeon_record, seam_full, {"gold": 12, "scraps": 0})
+	var quote_donate: Dictionary = visit_donate.preview_choices()
+	var choices_donate: Dictionary = {}
+	for c_raw: Variant in quote_donate.get("choices", []):
+		choices_donate[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_donate: Dictionary = choices_donate.get("donate_red_thread", {})
+	_check(c_donate.get("available") == true, "AC3: donate_red_thread available at full HP")
+	_check(c_donate.get("affordable") == true, "AC3: donate_red_thread affordable at full HP")
+	_check(c_donate.get("gold_delta") == 18, "AC3: donate_red_thread gold_delta is +18")
+	_check(c_donate.get("hp_delta") == -4, "AC3: donate_red_thread hp_delta is -4")
+	_check(c_donate.get("projected_gold") == 30, "AC3: donate_red_thread projected gold is 30")
+
+	var receipt_donate: Dictionary = visit_donate.choose("donate_red_thread", "node_donate_1", visit_donate.read_state())
+	_check(receipt_donate.get("ok", false) == true, "AC3: donate_red_thread choose succeeded at full HP")
+	_check(receipt_donate.get("gold_delta") == 18, "AC3: donate receipt gold_delta +18")
+	_check(receipt_donate.get("hp_delta") == -4, "AC3: donate receipt hp_delta -4")
+	_check(receipt_donate.get("wallet", {}).get("gold") == 30, "AC3: donate receipt wallet gold 30")
+
+	# Seamstress at full HP: leave is available and committable
+	var visit_leave := SeamsAdapter.open_stitched("node_leave_1", surgeon_record, seam_full, {"gold": 12, "scraps": 0})
+	var quote_leave: Dictionary = visit_leave.preview_choices()
+	var choices_leave: Dictionary = {}
+	for c_raw: Variant in quote_leave.get("choices", []):
+		choices_leave[(c_raw as Dictionary).get("id")] = c_raw
+	var c_leave: Dictionary = choices_leave.get("leave", {})
+	_check(c_leave.get("available") == true, "AC3: leave is available at full HP")
+	var receipt_leave: Dictionary = visit_leave.choose("leave", "node_leave_1", visit_leave.read_state())
+	_check(receipt_leave.get("ok", false) == true, "AC3: leave choose succeeded at full HP")
+	_check(receipt_leave.get("wallet", {}).get("gold") == 12, "AC3: leave preserves wallet")
+
+	# 2. Warden at full HP (20/20): reinforce_shield_seam (-2 scraps, +3 max HP, 0 HP heal) is available and committable
+	var warden_full: Array = _party("warden", 1, 20, 20, false)
+	var visit_warden := SeamsAdapter.open_stitched("node_warden_full", warden_record, warden_full, {"gold": 10, "scraps": 4})
+	var quote_warden: Dictionary = visit_warden.preview_choices()
+	var choices_warden: Dictionary = {}
+	for c_raw: Variant in quote_warden.get("choices", []):
+		choices_warden[(c_raw as Dictionary).get("id")] = c_raw
+	var c_reinf: Dictionary = choices_warden.get("reinforce_shield_seam", {})
+	_check(c_reinf.get("available") == true, "AC3: Warden reinforce_shield_seam available at full HP")
+	_check(c_reinf.get("scraps_delta") == -2, "AC3: reinforce_shield_seam scraps_delta is -2")
+	_check(c_reinf.get("hp_delta") == 0, "AC3: reinforce_shield_seam hp_delta is 0")
+	_check(c_reinf.get("max_hp_delta") == 3, "AC3: reinforce_shield_seam max_hp_delta is 3")
+	_check(c_reinf.get("projected_scraps") == 2, "AC3: reinforce_shield_seam projected scraps is 2")
+
+	var receipt_warden: Dictionary = visit_warden.choose("reinforce_shield_seam", "node_warden_full", visit_warden.read_state())
+	_check(receipt_warden.get("ok", false) == true, "AC3: Warden reinforce_shield_seam choose succeeded at full HP")
+	_check(receipt_warden.get("scraps_delta") == -2, "AC3: Warden receipt scraps_delta is -2")
+	_check(receipt_warden.get("max_hp_delta") == 3, "AC3: Warden receipt max_hp_delta is 3")
+	_check(receipt_warden.get("hp_delta") == 0, "AC3: Warden receipt hp_delta is 0")
+	_check(receipt_warden.get("wallet", {}).get("scraps") == 2, "AC3: Warden receipt wallet scraps is 2")
+
+	# 3. Rag Duelist at full HP (20/20): bind_mirror_cape (-2 scraps, +4 HP, +2 max HP) is available and committable
+	var duelist_full: Array = _party("rag_duelist", 1, 20, 20, false)
+	var visit_duelist := SeamsAdapter.open_stitched("node_duelist_full", duelist_record, duelist_full, {"gold": 5, "scraps": 3})
+	var quote_duelist: Dictionary = visit_duelist.preview_choices()
+	var choices_duelist: Dictionary = {}
+	for c_raw: Variant in quote_duelist.get("choices", []):
+		choices_duelist[(c_raw as Dictionary).get("id")] = c_raw
+	var c_bind: Dictionary = choices_duelist.get("bind_mirror_cape", {})
+	_check(c_bind.get("available") == true, "AC3: bind_mirror_cape available at full HP (raising max HP is not wasted)")
+	_check(c_bind.get("scraps_delta") == -2, "AC3: bind_mirror_cape scraps_delta is -2")
+	_check(c_bind.get("hp_delta") == 4, "AC3: bind_mirror_cape hp_delta is 4")
+	_check(c_bind.get("max_hp_delta") == 2, "AC3: bind_mirror_cape max_hp_delta is 2")
+	_check(c_bind.get("projected_scraps") == 1, "AC3: bind_mirror_cape projected scraps is 1")
+
+	var receipt_duelist: Dictionary = visit_duelist.choose("bind_mirror_cape", "node_duelist_full", visit_duelist.read_state())
+	_check(receipt_duelist.get("ok", false) == true, "AC3: bind_mirror_cape choose succeeded at full HP")
+	_check(receipt_duelist.get("scraps_delta") == -2, "AC3: bind_mirror_cape receipt scraps_delta is -2")
+	_check(receipt_duelist.get("hp_delta") == 4, "AC3: bind_mirror_cape receipt hp_delta is 4")
+	_check(receipt_duelist.get("max_hp_delta") == 2, "AC3: bind_mirror_cape receipt max_hp_delta is 2")
+	_check(receipt_duelist.get("wallet", {}).get("scraps") == 1, "AC3: bind_mirror_cape receipt wallet scraps is 1")
+
+	# 4. Helper predicate unit validation
+	var hero_full := {"hp": 20, "max_hp": 20}
+	var hero_damaged := {"hp": 19, "max_hp": 20}
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(-12, 0, 8, 0, hero_full) == true, "AC3: pure gold paid heal at full HP is true")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, -2, 10, 0, hero_full) == true, "AC3: pure scraps paid heal at full HP is true")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(-12, 0, 8, 0, hero_damaged) == false, "AC3: pure paid heal at damaged HP is false")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(18, 0, -4, 0, hero_full) == false, "AC3: hp sacrifice for gold is false")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, 0, 0, 0, hero_full) == false, "AC3: free leave is false")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, -2, 0, 3, hero_full) == false, "AC3: max hp gain without hp heal is false")
+	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, -2, 4, 2, hero_full) == false, "AC3: max hp gain with hp heal is false")

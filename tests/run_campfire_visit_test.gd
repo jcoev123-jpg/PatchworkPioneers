@@ -56,6 +56,7 @@ func _initialize() -> void:
 	_test_fear_refusals_replay_and_rng()
 	_test_tales_clears_unravelled_below_threshold()
 	_test_tales_resolve_clear_forecast()
+	_test_stitched_mend_ends_hanging()
 	_finish()
 
 
@@ -2011,3 +2012,91 @@ func _test_tales_resolve_clear_forecast() -> void:
 	high[0]["resolve"] = "hollow"
 	_check(_tales_quote_text(RunCampfireVisit.new("camp_hi", high, "stitched", 100)).find(RESOLVE_CLEARS_MARK) == -1,
 		"FRAY that stays at or above 50 emits no resolve suffix")
+
+
+## Mend ends Hanging for a successfully healed doll and the quote says so.
+func _test_stitched_mend_ends_hanging() -> void:
+	seed(808080)
+	var expected_next := randi()
+	seed(808080)
+	var refusal := {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
+	# Rank 1 full, rank 2 wounded, rank 3 Hanging 26-max doll with a tear, rank 4 LOST at 0 HP.
+	var source := _lost_party([40, 18, 0, 0], [3], [30, 25, 10, 200])
+	_check(int(source[2]["max_hp"]) == 26, "Hanging fixture doll has max HP 26")
+	source[2]["hanging"] = true
+	source[2]["torn_parts"] = [{"slot": "arms", "state": "torn"}]
+	source[2]["opaque"] = {"seam": ["wool", {"knot": 3}]}
+	source[3]["hanging"] = false
+	var original := source.duplicate(true)
+	var visit := RunCampfireVisit.new("camp_hang", source, "stitched", 40)
+	var open := visit.read_state()
+	_check(open.get("status") == "stitched_open" and open.get("heroes") == original,
+		"Hanging fixture opens as a genuine four-doll Stitched Campfire")
+	var text: String = open["quote"]["text"]
+	var gain := _mend_oracle(original)
+	var head := "Mend 30%% max HP (+%d HP now)" % gain
+	_check(gain == 16 and text.find(head) != -1,
+		"quote keeps the 30% rule and exact +HP total (9 wounded + 7 Hanging)")
+	_check(_bracket_after(text, head) == _bracket_oracle(original, [0, 9, 7, 0], "+%d HP"),
+		"quote keeps the original per-doll HP bracket")
+	var ends := " [Hanging ends: %s]" % _doll_name(original[2])
+	_check(text.find(head + _bracket_oracle(original, [0, 9, 7, 0], "+%d HP") + ends) != -1,
+		"quote names only the non-LOST zero-HP beneficiary after the bracket")
+	_check(text.find("Hanging ends: %s, " % _doll_name(original[2])) == -1
+		and text.find(_doll_name(original[3]) + "]") == -1
+		and text.find("Hanging ends: " + _doll_name(original[3])) == -1
+		and text.find("Hanging ends: " + _doll_name(original[1])) == -1,
+		"quote excludes the LOST doll and the merely wounded doll")
+	_check(visit.read_state() == open and source == original, "reading the quote changes no state")
+	# Refusals keep state and RNG, and do not spend the single choice.
+	_assert_stitched_refused(visit, "mend", "camp_other", original, 40, "Hanging wrong node")
+	var stale := original.duplicate(true)
+	stale[2]["hanging"] = false
+	_assert_stitched_refused(visit, "mend", "camp_hang", stale, 40, "Hanging stale expected roster")
+	var receipt := visit.select("mend", "camp_hang", original, 40)
+	_check(receipt.get("ok") == true and receipt.get("decision") == "mend",
+		"Mend still commits after the refusals")
+	var healed: Array = receipt.get("heroes")
+	var expected := original.duplicate(true)
+	expected[1]["hp"] = 27
+	expected[2]["hp"] = 7
+	expected[2]["hanging"] = false
+	_check(healed == expected, "Mend commits exactly the quoted HP and only clears the Hanging flag")
+	_check(healed[2]["hp"] == 7 and healed[2]["hanging"] == false
+		and healed[2]["torn_parts"] == original[2]["torn_parts"]
+		and healed[2]["opaque"] == original[2]["opaque"]
+		and healed[2]["fray"] == original[2]["fray"],
+		"26-max Hanging doll gets 7 HP, loses Hanging, and keeps its tear and other fields")
+	_check(healed[3] == original[3] and healed[3]["lost"] == true and healed[3]["hanging"] == false
+		and healed[0] == original[0],
+		"LOST and full dolls are byte-for-byte unchanged")
+	var receipt_gain: int = 0
+	for i in range(4):
+		receipt_gain += int(healed[i]["hp"]) - int(original[i]["hp"])
+	_check(receipt_gain == gain, "receipt gain equals the quoted total")
+	var committed := visit.read_state()
+	_assert_stitched_refused(visit, "mend", "camp_hang", healed, 40, "Hanging duplicate Mend")
+	_assert_stitched_refused(visit, "leave", "camp_hang", healed, 40, "Hanging replay after commit")
+	_check(visit.read_state() == committed and committed["status"] == "stitched_decided",
+		"post-commit replays leave the committed visit untouched")
+	# No hanging key stays absent; explicit false stays false; both are quoted honestly.
+	var plain := _stitched_party([0, 0, 26, 48], NO_FRAY)
+	plain[1]["hanging"] = false
+	_check(not plain[0].has("hanging") and plain[1]["hanging"] == false,
+		"fixture has one 0-HP doll without a hanging key and one with explicit false")
+	var plain_original := plain.duplicate(true)
+	var plain_visit := RunCampfireVisit.new("camp_plain", plain, "stitched", 40)
+	var plain_text: String = plain_visit.read_state()["quote"]["text"]
+	var plain_ends := " [Hanging ends: %s, %s]" % [_doll_name(plain_original[0]), _doll_name(plain_original[1])]
+	_check(plain_text.find("Mend 30%% max HP (+%d HP now)" % _mend_oracle(plain_original)) != -1
+		and plain_text.find(plain_ends) != -1,
+		"quote announces the 0-HP recovery for dolls without a true hanging flag")
+	var plain_receipt := plain_visit.select("mend", "camp_plain", plain_original, 40)
+	var plain_expected := plain_original.duplicate(true)
+	plain_expected[0]["hp"] = 12
+	plain_expected[1]["hp"] = 9
+	_check(plain_receipt.get("ok") == true and plain_receipt["heroes"] == plain_expected
+		and not plain_receipt["heroes"][0].has("hanging")
+		and plain_receipt["heroes"][1]["hanging"] == false,
+		"absent hanging key stays absent and explicit false stays false")
+	_check(randi() == expected_next, "Hanging quotes, refusals and Mend draw no global RNG")

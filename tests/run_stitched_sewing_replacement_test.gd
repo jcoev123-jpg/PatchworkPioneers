@@ -261,7 +261,7 @@ func _test_quote_projection(service: RunStitchedSewingReplacement, offer: Dictio
 		_check(str(part["text"]) == str(record["text"]) and not str(part["text"]).is_empty(), "offer text equals authored text: " + slot)
 		_check(part["ability"] is Dictionary and not part["ability"].is_empty() and part["stat"] is Dictionary and not part["stat"].is_empty(), "offer ability and stat are non-empty: " + slot)
 	var head: Dictionary = offer["parts"]["head"]["ability"]
-	_check(str(head["kind"]) == "debuff" and int(head["effects"]["weak"]) == 1 and int(head["effects"]["mark"]) == 2, "HEAD Sack Glare Weak 1 and Mark 2")
+	_check(str(head["kind"]) == "debuff" and int(head["effects"]["weak"]) == 2 and int(head["effects"]["mark"]) == 2, "HEAD Sack Glare Weak 2 and Mark 2")
 	_check(_ints(head["launch"]) == [1, 2, 3] and _ints(head["target"]) == [1, 2, 3] and str(head["target_side"]) == "enemy", "HEAD launch and enemy target ranks 1-3")
 	_check(int(head["acc"]) == 92 and _ints(head["dmg"]) == [0, 0], "HEAD ACC 92, no damage")
 	_check(int(offer["parts"]["head"]["stat"]["acc"]) == 4, "HEAD stat acc +4")

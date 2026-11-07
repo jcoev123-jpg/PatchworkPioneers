@@ -129,8 +129,8 @@ const EXPECTED := {
 		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
-			{"bleed": 2, "weak": 1},
-			{"bleed": 3, "weak": 1},
+			{"bleed": 2, "weak": 2},
+			{"bleed": 3, "weak": 2},
 			{"bleed": 4, "weak": 2},
 		],
 	},
@@ -221,6 +221,8 @@ func _initialize() -> void:
 	_test_live_tier_stats()
 	_test_negatives()
 	_test_live_starters()
+	_test_scarlet_knot_timeline()
+	_test_scarlet_knot_rejections()
 	_test_live_rejections()
 	_test_needle_rain_multi()
 	_test_needle_rain_mark_bonus()
@@ -329,6 +331,10 @@ func _test_catalog() -> void:
 			"AC1: %s is the starter wearable for the %s slot" % [starter, slot])
 		_check(by_id.has(alternate) and str(by_id[alternate]["slot"]) == slot,
 			"AC1: %s is the alternative wearable for the %s slot" % [alternate, slot])
+	var scarlet_text := str(by_id["seamstress_scarlet_knot_hat"]["text"]).to_lower()
+	_check(scarlet_text.contains("bleed 2") and scarlet_text.contains("weak 2")
+		and scarlet_text.contains("next strike") and not scarlet_text.contains("weak 1"),
+		"AC1: Scarlet Knot text names its tier-I Bleed 2 / Weak 2 and next-strike duration")
 	# The one edited description really explains the rank 1-4 shower from hero ranks 1-4, plus damage and Bleed.
 	var rain_text := str(by_id["seamstress_needle_rain_needle"]["text"]).to_lower()
 	_check(rain_text.contains("each living foe") and rain_text.contains("enemy ranks 1-4"),
@@ -580,6 +586,212 @@ func _test_live_starters() -> void:
 	_test_snare_rejections()
 	_heal_witness(false)
 	_heal_witness(true)
+
+
+## The alternate head is really worn by the rank-2 Seamstress. All trials use the
+## shipped four-hero/three-foe preview and normal turn sequencing, never a stand-in cast.
+func _scarlet_trial(seed_value: int, tier: int) -> Dictionary:
+	var kit := STARTER_PARTS.duplicate(true)
+	kit["head"] = "seamstress_scarlet_knot_hat"
+	var battle := _build_battle(seed_value, tier, kit, false)
+	if battle == null or battle.get_heroes().size() != 4 or battle.get_foes().size() != 3:
+		return {}
+	if not _to(battle, "seamstress"):
+		return {}
+	var wearer := battle.get_unit("seamstress")
+	var foe := battle.get_unit("fray_scavenger")
+	if int(wearer.get("rank", 0)) != 2 or _worn_part_id(wearer, "seamstress_scarlet_knot_hat") != "seamstress_scarlet_knot_hat":
+		return {}
+	if int(foe.get("rank", 0)) != 1 or int(foe.get("hp", 0)) <= 0:
+		return {}
+	if foe["statuses"].has("bleed") or foe["statuses"].has("weak"):
+		return {}
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var receipt := battle.use_part("seamstress_scarlet_knot_hat", 1)
+	var results: Array = receipt.get("results", [])
+	if not bool(receipt.get("ok", false)) or results.size() != 1:
+		return {}
+	if str(receipt.get("actor", "")) != "seamstress" or str(receipt.get("part", "")) != "seamstress_scarlet_knot_hat":
+		return {}
+	if str(results[0].get("target", "")) != "fray_scavenger" or str(results[0].get("target_side", "")) != "foe":
+		return {}
+	return {
+		"battle": battle, "receipt": receipt, "seed": seed_value,
+		"before": before, "rng_before": rng_before, "before_foe": foe,
+		"after_cast": battle.state_snapshot(), "rng_after_cast": battle.rng_state(),
+	}
+
+
+## A bounded seed search must exhibit BOTH a real Scarlet Knot hit and a later
+## landed Sack Swing with measurably lower damage than an equal-seed control.
+## The sole control mutation is removing Weak immediately before that attack.
+func _test_scarlet_knot_timeline() -> void:
+	for tier in [1, 2, 3]:
+		var label := "Scarlet Knot tier %d" % tier
+		var expected_bleed: int = tier + 1
+		var witness: Dictionary = {}
+		for seed_value in range(1, 256):
+			var trial := _scarlet_trial(seed_value, tier)
+			if trial.is_empty():
+				continue
+			var cast: Dictionary = trial["receipt"]
+			var cast_result: Dictionary = cast["results"][0]
+			if not bool(cast_result.get("hit", false)):
+				continue
+			var battle: StitchedRules = trial["battle"]
+			var foe := battle.get_unit("fray_scavenger")
+			if int(foe["statuses"].get("weak", 0)) != 2 or int(foe["statuses"].get("bleed", 0)) != expected_bleed:
+				continue
+			var control := _scarlet_trial(seed_value, tier)
+			if control.is_empty() or control["receipt"] != cast or control["after_cast"] != trial["after_cast"]:
+				continue
+			var normal: StitchedRules = control["battle"]
+			if not _to(battle, "fray_scavenger") or not _to(normal, "fray_scavenger"):
+				continue
+			var turn_start := battle.get_unit("fray_scavenger")
+			var untouched_start := normal.state_snapshot()
+			var untouched_rng := normal.rng_state()
+			if turn_start != normal.get_unit("fray_scavenger") or battle.state_snapshot() != untouched_start or battle.rng_state() != untouched_rng:
+				continue
+			if int(turn_start["statuses"].get("weak", 0)) != 1 or int(turn_start["statuses"].get("bleed", 0)) != expected_bleed - 1:
+				continue
+			if int(turn_start["hp"]) != int(trial["before_foe"]["hp"]) - expected_bleed:
+				continue
+			var warden_before: int = int(battle.get_unit("warden")["hp"])
+			normal._units["fray_scavenger"]["statuses"].erase("weak")
+			var weakened_attack := battle.use_foe_ability("sack_swing", 1)
+			var normal_attack := normal.use_foe_ability("sack_swing", 1)
+			if not bool(weakened_attack.get("ok", false)) or not bool(normal_attack.get("ok", false)):
+				continue
+			if weakened_attack.get("results", []).size() != 1 or normal_attack.get("results", []).size() != 1:
+				continue
+			var weaker: Dictionary = weakened_attack["results"][0]
+			var stronger: Dictionary = normal_attack["results"][0]
+			if not bool(weaker.get("hit", false)) or not bool(stronger.get("hit", false)):
+				continue
+			if str(weaker.get("target", "")) != "warden" or str(stronger.get("target", "")) != "warden":
+				continue
+			if int(weaker.get("damage", -1)) >= int(stronger.get("damage", -1)):
+				continue
+			witness = {
+				"trial": trial, "control": control, "cast_result": cast_result,
+				"turn_start": turn_start, "pre_attack_snapshot": untouched_start,
+				"pre_attack_rng": untouched_rng, "warden_before": warden_before,
+				"weakened_attack": weakened_attack, "normal_attack": normal_attack,
+			}
+			break
+		_check(not witness.is_empty(), "AC2: bounded equal-seed " + label + " lands its cast and a damage-reduced Sack Swing")
+		if witness.is_empty():
+			continue
+		var trial: Dictionary = witness["trial"]
+		var battle: StitchedRules = trial["battle"]
+		var control: StitchedRules = witness["control"]["battle"]
+		var cast_result: Dictionary = witness["cast_result"]
+		var cast: Dictionary = trial["receipt"]
+		var weakened_attack: Dictionary = witness["weakened_attack"]
+		var normal_attack: Dictionary = witness["normal_attack"]
+		var weaker: Dictionary = weakened_attack["results"][0]
+		var stronger: Dictionary = normal_attack["results"][0]
+		_check(bool(cast_result["hit"]) and cast_result.has("roll") and cast_result.has("hit_chance")
+			and int(cast_result["roll"]) <= int(cast_result["hit_chance"])
+			and str(cast.get("ability", "")) == "scarlet_knot",
+			"AC2: " + label + " genuinely rolls a hit with the equipped head")
+		_check(_status_duration(cast_result.get("statuses", []), "bleed") == expected_bleed
+			and _status_duration(cast_result.get("statuses", []), "weak") == 2,
+			"AC2: " + label + " cast receipt reports Bleed and Weak 2")
+		_check(int(witness["turn_start"]["hp"]) == int(trial["before_foe"]["hp"]) - expected_bleed
+			and int(witness["turn_start"]["statuses"].get("bleed", 0)) == expected_bleed - 1
+			and int(witness["turn_start"]["statuses"].get("weak", 0)) == 1,
+			"AC2: " + label + " takes the normal Bleed tick while Weak survives its first foe turn-start")
+		_check(witness["control"]["receipt"] == cast
+			and witness["control"]["after_cast"] == trial["after_cast"]
+			and witness["control"]["rng_after_cast"] == trial["rng_after_cast"]
+			and witness["control"]["before"] == trial["before"]
+			and witness["control"]["rng_before"] == trial["rng_before"],
+			"AC3: " + label + " starts with identical casts, full state, and RNG")
+		_check(weaker.has("roll") and stronger.has("roll")
+			and int(weaker["roll"]) == int(stronger["roll"])
+			and int(weaker["damage"]) < int(stronger["damage"])
+			and battle.rng_state() == control.rng_state(),
+			"AC2: matched landed Sack Swings share a roll/RNG but Weak lowers damage")
+		_check(int(battle.get_unit("warden")["hp"]) == int(witness["warden_before"]) - int(weaker["damage"])
+			and int(control.get_unit("warden")["hp"]) == int(witness["warden_before"]) - int(stronger["damage"]),
+			"AC2: the reduced Sack Swing damages the actual rank-1 Warden less")
+		_check(int(battle.get_unit("fray_scavenger")["statuses"].get("weak", 0)) == 1,
+			"AC2: " + label + " remains Weak during its landed strike")
+		var previous_hp: int = int(battle.get_unit("fray_scavenger")["hp"])
+		var following := _to(battle, "fray_scavenger")
+		_check(following and battle.current_actor_id() == "fray_scavenger",
+			"AC2: " + label + " reaches the same foe's following actual turn")
+		if not following:
+			continue
+		_check(not battle.get_unit("fray_scavenger")["statuses"].has("weak")
+			and int(battle.get_unit("fray_scavenger")["hp"]) == previous_hp - (expected_bleed - 1),
+			"AC2: unrefreshed Weak expires on the following foe turn with its next normal Bleed tick")
+		var replay := _scarlet_trial(int(trial["seed"]), tier)
+		_check(not replay.is_empty(), "AC3: " + label + " can rebuild its full seeded replay")
+		if replay.is_empty():
+			continue
+		var replay_battle: StitchedRules = replay["battle"]
+		var replay_reached := _to(replay_battle, "fray_scavenger")
+		var replay_attack := replay_battle.use_foe_ability("sack_swing", 1) if replay_reached else {}
+		var replay_following := _to(replay_battle, "fray_scavenger") if bool(replay_attack.get("ok", false)) else false
+		_check(replay["before"] == trial["before"] and replay["rng_before"] == trial["rng_before"]
+			and replay["receipt"] == cast and replay["after_cast"] == trial["after_cast"]
+			and replay["rng_after_cast"] == trial["rng_after_cast"]
+			and replay_reached and replay_attack == weakened_attack and replay_following
+			and replay_battle.state_snapshot() == battle.state_snapshot()
+			and replay_battle.rng_state() == battle.rng_state(),
+			"AC3: " + label + " replays real cast/strike/two foe turns, receipts, state and RNG exactly")
+
+
+func _test_scarlet_knot_rejections() -> void:
+	for tier in [1, 2, 3]:
+		var label := "Scarlet Knot tier %d" % tier
+		var miss: Dictionary = {}
+		for seed_value in range(1, 256):
+			var candidate := _scarlet_trial(seed_value, tier)
+			if not candidate.is_empty() and not bool(candidate["receipt"]["results"][0].get("hit", true)):
+				miss = candidate
+				break
+		_check(not miss.is_empty(), "AC3: a bounded natural " + label + " miss exists")
+		if miss.is_empty():
+			continue
+		var result: Dictionary = miss["receipt"]["results"][0]
+		var battle: StitchedRules = miss["battle"]
+		var foe := battle.get_unit("fray_scavenger")
+		_check(result.has("roll") and result.has("hit_chance")
+			and int(result["roll"]) > int(result["hit_chance"]),
+			"AC3: " + label + " miss comes from a genuine failed roll")
+		_check(not _has_status(result.get("statuses", []), "bleed")
+			and not _has_status(result.get("statuses", []), "weak")
+			and not foe["statuses"].has("bleed") and not foe["statuses"].has("weak")
+			and int(foe["hp"]) == int(miss["before_foe"]["hp"]),
+			"AC3: " + label + " miss inflicts no Bleed, Weak or HP loss")
+		var repeat := _scarlet_trial(int(miss["seed"]), tier)
+		_check(not repeat.is_empty() and repeat["receipt"] == miss["receipt"]
+			and repeat["before"] == miss["before"] and repeat["rng_before"] == miss["rng_before"]
+			and repeat["after_cast"] == miss["after_cast"] and repeat["rng_after_cast"] == miss["rng_after_cast"],
+			"AC3: " + label + " miss replays receipt, complete state and RNG")
+	var kit := STARTER_PARTS.duplicate(true)
+	kit["head"] = "seamstress_scarlet_knot_hat"
+	var illegal := _build_battle(17, 1, kit)
+	if illegal == null:
+		return
+	_check(illegal.current_actor_id() == "seamstress"
+		and int(illegal.get_unit("seamstress")["rank"]) == 2,
+		"AC3: an equipped Scarlet Knot starts a legal rank-2 caster turn")
+	var before := illegal.state_snapshot()
+	var rng_before := illegal.rng_state()
+	for rank in [0, 4, 5]:
+		_check(not bool(illegal.use_part("seamstress_scarlet_knot_hat", rank).get("ok", false)),
+			"AC3: Scarlet Knot refuses illegal or unreachable foe rank %d" % rank)
+	_check(not bool(illegal.use_part("seamstress_mending_knot_hat", 1).get("ok", false)),
+		"AC3: the unequipped Mending Knot cannot be cast with Scarlet Knot worn")
+	_check(before == illegal.state_snapshot() and rng_before == illegal.rng_state()
+		and illegal.current_actor_id() == "seamstress",
+		"AC3: all illegal Scarlet actions preserve full state, caster turn and RNG")
 
 
 ## Thread Prick damages and Bleeds one enemy, and the Bleed really ticks on that foe's turn.
