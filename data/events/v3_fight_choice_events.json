@@ -263,6 +263,39 @@
         { "id": "buy_dull_blade_permit", "text": "Pay 23 gold for a dull-blade crossing permit", "outcome": { "gold": -23, "scraps": 0 } },
         { "id": "leave", "text": "Take the long bank around the quiet button pond", "outcome": { "gold": 0, "scraps": 0 } }
       ]
+    },
+    {
+      "id": "v3_bone_keyring_turnstile",
+      "title": "The Bone-Key Turnstile",
+      "description": "A house-sized ring of tarnished keys turns in the seam of the corridor wall; button-eyed latchkeepers haul it by red cord while each key casts a second shadow.",
+      "fight_choice_id": "force_turnstile_keys",
+      "choices": [
+        { "id": "force_turnstile_keys", "text": "Break the spinning latch and face the keykeepers (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "bind_keyring_with_thread", "text": "Bind the swinging keys with 2 scraps for safe passage", "outcome": { "gold": 0, "scraps": -2 } },
+        { "id": "leave", "text": "Follow the narrow wall seam away from the keys", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_ember_matchbox_roadblock",
+      "title": "The Ember Matchbox Roadblock",
+      "description": "A fallen matchbox blocks the floorboard road, its charred sticks propped upright as watchtowers; soot-smudged ragdoll wardens hold a red-thread tripline across the glowing drawer.",
+      "fight_choice_id": "cut_matchstick_tripline",
+      "choices": [
+        { "id": "cut_matchstick_tripline", "text": "Cut the tripline and confront the matchbox wardens (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "buy_ember_safe_pass", "text": "Pay 18 gold for an ember-safe crossing token", "outcome": { "gold": -18, "scraps": 0 } },
+        { "id": "leave", "text": "Take the long unlit route beside the skirting board", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
+    },
+    {
+      "id": "v3_moonlit_tea_strainer_crossing",
+      "title": "The Moonlit Tea-Strainer Crossing",
+      "description": "A silver tea strainer swings over a gap between quilted floorboards, carrying a tiny bridge of black lace; three aproned doll porters keep its chain taut by candlelight.",
+      "fight_choice_id": "seize_strainer_bridge",
+      "choices": [
+        { "id": "seize_strainer_bridge", "text": "Seize the strainer bridge and face the porters (Fight)", "outcome": { "gold": 0, "scraps": 0 } },
+        { "id": "offer_strainer_stitches", "text": "Offer 3 scraps to lash the strainer safely in place", "outcome": { "gold": 0, "scraps": -3 } },
+        { "id": "leave", "text": "Back away from the swinging silver mesh", "outcome": { "gold": 0, "scraps": 0 } }
+      ]
     }
   ]
 }
