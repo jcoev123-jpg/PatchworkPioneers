@@ -92,6 +92,8 @@ var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
 const STITCHED_SAVE_PATH := "user://stitched_run.save"
+## Playtest cheats (debug builds only; delete scripts/debug/ before the full game ships).
+const PLAYTEST_CHEATS_PATH := "res://scripts/debug/playtest_cheats.gd"
 @export var stitched_save_path: String = STITCHED_SAVE_PATH
 var stitched_continue_button: Button
 var start_button: Button
@@ -262,6 +264,8 @@ var terminal_result_panel: LiveRunTerminalResultPanel
 func _ready() -> void:
 	_build_title()
 	_load_difficulty_progress.call_deferred()
+	if OS.is_debug_build() and ResourceLoader.exists(PLAYTEST_CHEATS_PATH):
+		add_child(load(PLAYTEST_CHEATS_PATH).new())
 
 
 func _build_title() -> void:
