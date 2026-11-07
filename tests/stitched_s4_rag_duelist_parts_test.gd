@@ -92,6 +92,7 @@ const EXPECTED := {
 		"launch": [2, 3], "target": [1, 2], "target_side": "enemy", "pose": "attack2",
 		"acc": 90,
 		"dmg": [[4, 6], [5, 8], [7, 10]],
+		"mark_damage": [0, 3, 5],
 		"effects": [{}, {}, {}],
 		"self_move": [-1, -1, -1],
 	},
@@ -178,9 +179,11 @@ var _cached_catalog: Dictionary = {}
 func _initialize() -> void:
 	_test_catalog()
 	_test_tiers()
+	_test_lunge_mark_contract()
 	_test_flourish_catalog()
 	_test_cape_slip_text()
 	_test_tattered_snare_text()
+	_test_rapier_lunge_text()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
@@ -192,6 +195,7 @@ func _initialize() -> void:
 	_test_dodge()
 	_test_cape_slip_rank_four()
 	_test_status_ticks()
+	_test_lunge_mark_payoff()
 	_test_live_rejections()
 	_test_determinism()
 	if _failures.is_empty():
@@ -362,6 +366,9 @@ func _test_tiers() -> void:
 					"%s: rank %d target legality" % [tag, rank])
 			_check(_int_list(ability["dmg"]) == _int_list(spec["dmg"][tier - 1]),
 				"AC1: " + tag + " damage range " + str(spec["dmg"][tier - 1]))
+			var mark_ladder: Array = spec.get("mark_damage", [0, 0, 0])
+			_check(int(ability.get("mark_damage", -1)) == int(mark_ladder[tier - 1]),
+				"AC1: " + tag + " mark_damage " + str(mark_ladder[tier - 1]))
 			_check(_int_dict(ability["effects"]) == _int_dict(spec["effects"][tier - 1]),
 				"AC1: " + tag + " effects " + str(spec["effects"][tier - 1]))
 			var effects: Dictionary = ability["effects"]
@@ -391,6 +398,77 @@ func _test_tiers() -> void:
 				"AC1: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_dmg = dmg
 			previous_effects = effects
+
+
+# ---------------------------------------------------------------- AC1: Rapier Lunge Mark payoff contract
+
+## The named arms part is the only Rapier Lunge record and the only wearable in this kit with a
+## Mark payoff: tiers II and III author mark_damage 3 and 5, tier I keeps the validated default 0,
+## and its damage, ranks, ACC, arms stat, forward step and attack2 pose stay exactly as before.
+func _test_lunge_mark_contract() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC1: the shipped catalog loads for the Rapier Lunge Mark contract")
+		return
+	var lunge_id := str(STARTER_PARTS["arms"])
+	_check(lunge_id == "rag_duelist_arms_rapier_lunge",
+		"AC1: the starter arms part is the named Rapier Lunge")
+	if not catalog["by_id"].has(lunge_id):
+		_check(false, "AC1: the catalog authors the named Rapier Lunge arms part")
+		return
+	var part: Dictionary = catalog["by_id"][lunge_id]
+	var damage_ladder := [[4, 6], [5, 8], [7, 10]]
+	var mark_ladder := [0, 3, 5]
+	_check(_int_dict(part["stat"]) == {"dmg": 1},
+		"AC1: Rapier Lunge keeps its +1 arms damage stat at every tier")
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var tag := "Rapier Lunge tier %d" % tier
+		_check(int(ability.get("mark_damage", -1)) == int(mark_ladder[tier - 1]),
+			"AC1: " + tag + " resolves mark_damage " + str(mark_ladder[tier - 1]))
+		_check(_int_list(ability["dmg"]) == _int_list(damage_ladder[tier - 1]),
+			"AC1: " + tag + " keeps its authored damage range")
+		_check(int(ability["acc"]) == 90 and _int_list(ability["launch"]) == [2, 3]
+			and _int_list(ability["target"]) == [1, 2],
+			"AC1: " + tag + " keeps ACC 90 and its rank 2-3 launch / rank 1-2 target masks")
+		_check(int(ability["self_move"]) == -1 and str(ability["move"]) == "attack2",
+			"AC1: " + tag + " keeps its one-rank forward step and attack2 pose")
+		_check(_int_dict(ability["effects"]) == {} and not bool(ability["multi"])
+			and int(ability["crit"]) == 0,
+			"AC1: " + tag + " adds no on-hit effect, crit or multi-target")
+	# The other seven wearables keep the validated default: no Mark payoff anywhere else.
+	for part_id in ALL_PART_IDS:
+		if str(part_id) == lunge_id:
+			continue
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(catalog["by_id"][part_id], tier)
+			_check(int(ability.get("mark_damage", -1)) == 0,
+				"AC1: %s tier %d keeps the default mark_damage 0" % [str(part_id), tier])
+	# The authored JSON puts the overrides only on the two upgraded tiers.
+	var raw: Variant = _read_json(PARTS_PATH)
+	var authored: Dictionary = {}
+	if raw is Dictionary and raw.get("parts") is Array:
+		for entry in raw["parts"]:
+			if entry is Dictionary and str(entry.get("id", "")) == lunge_id:
+				authored = entry
+	if authored.is_empty() or not authored.get("ability") is Dictionary:
+		_check(false, "AC1: the authored JSON still holds the Rapier Lunge entry")
+		return
+	_check(not authored["ability"].has("mark_damage"),
+		"AC1: tier I authors no mark_damage override and keeps the validated default 0")
+	var tiers: Dictionary = authored.get("tiers", {})
+	_check(tiers.has("2") and tiers.has("3"),
+		"AC1: Rapier Lunge authors both upgraded stitch tiers")
+	if tiers.has("2") and tiers.has("3"):
+		var tier_two: Dictionary = tiers["2"].get("ability", {})
+		var tier_three: Dictionary = tiers["3"].get("ability", {})
+		_check(int(tier_two.get("mark_damage", -1)) == 3,
+			"AC1: the authored tier-II override carries mark_damage 3")
+		_check(int(tier_three.get("mark_damage", -1)) == 5,
+			"AC1: the authored tier-III override carries mark_damage 5")
+		_check(int(tier_two.get("self_move", -99)) == -1
+			and int(tier_three.get("self_move", -99)) == -1,
+			"AC1: both upgrade tiers preserve the authored forward step")
 
 
 # ---------------------------------------------------------------- AC1: Cape Flourish backward step
@@ -547,6 +625,34 @@ func _test_tattered_snare_text() -> void:
 		"AC1: Tattered Snare text names both upgrading stitch tiers explicitly: " + text)
 	_check(not lower.contains("damage") and not lower.contains("hit") and not lower.contains("step"),
 		"AC1: Tattered Snare text never claims a direct hit or an extra move: " + text)
+
+
+# ---------------------------------------------------------------- AC1: Rapier Lunge rules text
+
+## The upgraded Rapier Lunge copy must name the Mark payoff, say it arrives with the stitch tiers,
+## and keep describing its one-rank forward step. It must not adopt another part's effect.
+func _test_rapier_lunge_text() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC1: the shipped catalog loads for the Rapier Lunge text check")
+		return
+	var lunge_id := str(STARTER_PARTS["arms"])
+	if not catalog["by_id"].has(lunge_id):
+		_check(false, "AC1: the Rapier Lunge text check needs the starter arms part")
+		return
+	var text := str(catalog["by_id"][lunge_id].get("text", "")).strip_edges()
+	_check(not text.is_empty(), "AC1: Rapier Lunge carries rules text")
+	var lower := text.to_lower()
+	_check(lower.contains("mark"), "AC1: Rapier Lunge text names the Mark it exploits: " + text)
+	_check(lower.contains(" ii") and lower.contains(" iii"),
+		"AC1: Rapier Lunge text names the upgrading stitch tiers II and III: " + text)
+	_check(lower.contains("bite") or lower.contains("harder"),
+		"AC1: Rapier Lunge text says upgraded Lunge bites harder against Mark: " + text)
+	_check(lower.contains("step") or lower.contains("forward"),
+		"AC1: Rapier Lunge text still describes its one-rank forward step: " + text)
+	_check(not lower.contains("exposed") and not lower.contains("tangled")
+		and not lower.contains("bleed") and not lower.contains("weak"),
+		"AC1: Rapier Lunge text never claims another part's status: " + text)
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
@@ -1387,6 +1493,251 @@ func _test_status_ticks() -> void:
 			"AC3: the missed Feint still spends the Duelist's action")
 
 
+# ---------------------------------------------------------------- AC2/AC3: Feather Feint -> Lunge Mark payoff
+
+## The concrete head-to-arms combo: a genuine tier-III Feather Feint Marks a living foe, that
+## foe's own real turn ticks Mark 2 down to 1, and the Duelist's next scheduled rank-2 turn lands
+## an upgraded Rapier Lunge on the still-Marked foe. Tier II proves the authored +3 and tier III
+## the authored +5, both added before Exposed and PROT. An identical-seed twin that Feints another
+## rank keeps the same damage roll and shows no bonus at all on the unmarked target.
+func _test_lunge_mark_payoff() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC2: the shipped catalog loads for the Rapier Lunge Mark payoff")
+		return
+	var lunge_id := str(STARTER_PARTS["arms"])
+	var mark_ladder := [0, 3, 5]
+	var last_witness := {}
+	for tier in [2, 3]:
+		var tag := "Rapier Lunge tier %d on a Feather-Feint Mark" % tier
+		var witness := _lunge_payoff_witness(tier, 1, 1)
+		if witness.is_empty():
+			_check(false, "AC2: a fixed seed lands " + tag)
+			continue
+		last_witness = witness
+		var battle: StitchedRules = witness["battle"]
+		var receipt: Dictionary = witness["receipt"]
+		var result: Dictionary = receipt["results"][0]
+		var foe_id := str(witness["foe"])
+		var target := battle.get_unit(foe_id)
+		var before: Dictionary = witness["statuses_before"]
+		var ability := StitchedParts.ability_at_tier(catalog["by_id"][lunge_id], tier)
+		var mark_damage := int(ability["mark_damage"])
+		var prot := int(target["prot"])
+		var bonus := int(battle.get_unit(OWNER)["dmg_bonus"])
+		var dealt := int(result["damage"])
+		var bases := _base_roll_candidates(ability, bonus, bool(result.get("crit", false)))
+		_check(bool(witness["feint"].get("ok", false)),
+			"AC2: " + tag + " really starts from a landed real Feather Feint")
+		var worn: Dictionary = battle.get_unit(OWNER)["parts"]
+		_check(int(worn["arms"]["tier"]) == tier and str(worn["arms"]["id"]) == lunge_id,
+			"AC2: " + tag + " the live Duelist really wears the tested Rapier Lunge tier")
+		_check(int(worn["head"]["tier"]) == 3
+			and str(worn["head"]["id"]) == str(STARTER_PARTS["head"]),
+			"AC2: " + tag + " the Mark came from the live tier-III Feather Feint head")
+		_check(str(receipt.get("part", "")) == lunge_id,
+			"AC2: " + tag + " casts the worn Rapier Lunge arms part")
+		_check(str(receipt.get("ability", "")) == "rag_duelist_arms_rapier_lunge_move",
+			"AC2: " + tag + " resolves the authored Rapier Lunge ability id")
+		_check(str(receipt.get("actor", "")) == OWNER, "AC2: " + tag + " is used by the Rag Duelist")
+		_check(str(result.get("target", "")) == foe_id and str(result.get("target_side", "")) == "foe"
+			and int(result.get("target_rank", 0)) == 1,
+			"AC2: " + tag + " hits the Marked rank-1 foe")
+		_check(bool(result.get("hit", false)), "AC2: " + tag + " reports a confirmed hit")
+		_check(int(before.get("mark", 0)) == 1,
+			"AC2: the real tier-III Feather Feint Mark survives one foe turn as Mark 1")
+		_check(int(before.get("exposed", 0)) == 2,
+			"AC2: the tier-III Exposed 3 survives the same foe turn as Exposed 2")
+		_check(int(before.get("weak", 0)) == 0 and int(before.get("tangled", 0)) == 0,
+			"AC2: " + tag + " target carries no other damage modifier")
+		_check(mark_damage == int(mark_ladder[tier - 1]),
+			"AC2: " + tag + " resolves its authored Mark bonus %d" % mark_ladder[tier - 1])
+		var matched: Array = _matching_bases(bases, before, true, mark_damage, prot, dealt)
+		_check(not matched.is_empty(),
+			"AC2: " + tag + " damage equals its seeded base + Mark bonus, then Exposed and PROT")
+		for base in matched:
+			_check(dealt != base + mark_damage,
+				"AC2: " + tag + " reports post-modifier damage, not the raw base plus Mark bonus")
+			_check(dealt > StitchedRules.damage_after_modifiers(base, {}, before, false, 0, prot),
+				"AC2: " + tag + " the Marked target takes more than the same base would unmarked")
+		# Mark-before-Exposed is observably different from adding the bonus after the multiplier.
+		var ordered := false
+		for base in matched:
+			var mark_first := StitchedRules.damage_after_modifiers(base, {}, before, true, mark_damage, prot)
+			var mark_last := _mark_after_exposed(base, before, mark_damage, prot)
+			if mark_first != mark_last:
+				ordered = true
+				_check(dealt == mark_first,
+					"AC2: " + tag + " applies the Mark bonus before the Exposed multiplier")
+		_check(ordered, "AC2: " + tag + " really distinguishes Mark-first from Mark-last ordering")
+		_check(int(result.get("target_hp", -1)) == int(target["hp"]),
+			"AC2: " + tag + " reports the foe's real remaining HP")
+		_check(int(target["hp"]) == int(witness["hp_before"]) - dealt,
+			"AC2: " + tag + " the foe's HP really drops by exactly the reported damage")
+		_check(int(target["hp"]) > 0, "AC2: " + tag + " leaves the Marked foe alive")
+		_check(result.get("statuses", []).is_empty(),
+			"AC2: " + tag + " applies no status that could consume or refresh the Mark")
+		# The mandatory +1 forward step swaps with the legal front ally.
+		var move: Dictionary = receipt.get("self_move", {})
+		_check(bool(move.get("ok", false)), "AC2: " + tag + " resolves its one-rank forward step")
+		_check(int(move.get("from", 0)) == 2 and int(move.get("to", 0)) == 1,
+			"AC2: " + tag + " steps from rank 2 to rank 1")
+		_check(str(move.get("swapped", "")) == "seamstress",
+			"AC2: " + tag + " swaps with the legal front ally")
+		_check(int(battle.get_unit(OWNER)["rank"]) == 1
+			and int(battle.get_unit("seamstress")["rank"]) == 2,
+			"AC2: " + tag + " really moves both heroes on the board")
+		# AC4: the same seed and the same legal actions replay receipt, state and RNG exactly.
+		var replay := _lunge_payoff_witness(tier, 1, 1, true, true, false, int(witness["seed"]))
+		_check(not replay.is_empty() and int(replay["seed"]) == int(witness["seed"]),
+			"AC4: " + tag + " replays on the same fixed seed")
+		if not replay.is_empty():
+			var replay_battle: StitchedRules = replay["battle"]
+			_check(replay["receipt"] == receipt
+				and replay_battle.state_snapshot() == battle.state_snapshot()
+				and replay_battle.rng_state() == battle.rng_state(),
+				"AC4: " + tag + " replays its receipt, complete state and RNG exactly")
+		# AC3: an otherwise identical unmarked target at the same tier and seed gets no bonus.
+		var twin := _lunge_payoff_witness(tier, 2, 1, false, true, false, int(witness["seed"]))
+		if twin.is_empty():
+			_check(false, "AC3: a fixed seed lands the unmarked twin of " + tag)
+			continue
+		_check(int(twin["seed"]) == int(witness["seed"]),
+			"AC3: the unmarked twin runs the identical fixed seed")
+		var twin_result: Dictionary = twin["receipt"]["results"][0]
+		var twin_before: Dictionary = twin["statuses_before"]
+		var twin_dealt := int(twin_result["damage"])
+		_check(bool(twin_result.get("hit", false)),
+			"AC3: the unmarked twin lands its Lunge on the same seeded roll")
+		_check(bool(twin_result.get("crit", false)) == bool(result.get("crit", false)),
+			"AC3: the unmarked twin shares the marked Lunge's crit roll")
+		_check(int(twin_before.get("mark", 0)) == 0 and int(twin_before.get("exposed", 0)) == 0,
+			"AC3: the twin's Lunge target really carries no Mark")
+		var twin_feint_result: Dictionary = twin["feint"]["results"][0]
+		_check(bool(twin_feint_result.get("hit", false))
+			and int(twin_feint_result.get("damage", -1)) == 0
+			and _status_value(twin_feint_result.get("statuses", []), "mark") == 2,
+			"AC3: the twin Mark sits on the other foe, so the missing bonus is target-specific")
+		var twin_ability := StitchedParts.ability_at_tier(catalog["by_id"][lunge_id], tier)
+		var twin_bases := _base_roll_candidates(twin_ability, bonus, bool(twin_result.get("crit", false)))
+		var twin_prot := int(twin["battle"].get_unit(str(twin["foe"]))["prot"])
+		var twin_matched: Array = _matching_bases(
+			twin_bases, twin_before, false, mark_damage, twin_prot, twin_dealt)
+		var shared := false
+		for base in matched:
+			if not (base in twin_matched):
+				continue
+			shared = true
+			_check(twin_dealt == StitchedRules.damage_after_modifiers(
+				base, {}, twin_before, false, mark_damage, twin_prot),
+				"AC3: the unmarked twin adds no mark_damage to the identical seeded base")
+			_check(StitchedRules.damage_after_modifiers(
+				base, {}, twin_before, true, mark_damage, twin_prot) > twin_dealt,
+				"AC3: the same base would have dealt more had the twin's target been Marked")
+		_check(shared, "AC3: the marked and unmarked witnesses roll the same seeded base damage")
+	# Tier I stays the validated default: no bonus even on a Marked target.
+	var tier_one := _lunge_payoff_witness(1, 1, 1)
+	if tier_one.is_empty():
+		_check(false, "AC3: a fixed seed lands a tier-I Lunge on a Marked foe")
+	else:
+		var battle: StitchedRules = tier_one["battle"]
+		var result: Dictionary = tier_one["receipt"]["results"][0]
+		var before: Dictionary = tier_one["statuses_before"]
+		var ability := StitchedParts.ability_at_tier(catalog["by_id"][lunge_id], 1)
+		var dealt := int(result["damage"])
+		var bonus := int(battle.get_unit(OWNER)["dmg_bonus"])
+		var prot := int(battle.get_unit(str(tier_one["foe"]))["prot"])
+		_check(int(ability.get("mark_damage", -1)) == 0,
+			"AC3: tier-I Rapier Lunge resolves the validated default mark_damage 0")
+		_check(int(before.get("mark", 0)) == 1 and bool(result.get("hit", false)),
+			"AC3: the tier-I witness really hits a Marked foe")
+		var bases := _base_roll_candidates(ability, bonus, bool(result.get("crit", false)))
+		var matched: Array = _matching_bases(bases, before, true, 0, prot, dealt)
+		_check(not matched.is_empty(),
+			"AC3: tier-I damage uses no Mark bonus")
+		for base in matched:
+			_check(StitchedRules.damage_after_modifiers(base, {}, before, true, 3, prot) > dealt,
+				"AC3: a tier-II Mark bonus would have raised the same tier-I hit's damage")
+	# A missed upgraded Lunge deals no damage and keeps the Mark for a later attempt.
+	var missed := _lunge_payoff_witness(3, 1, 1, true, false, true)
+	if missed.is_empty():
+		_check(false, "AC3: a fixed seed makes a Marked Rapier Lunge miss")
+	else:
+		var miss_battle: StitchedRules = missed["battle"]
+		var miss_result: Dictionary = missed["receipt"]["results"][0]
+		var miss_foe := str(missed["foe"])
+		_check(not bool(miss_result.get("hit", true)), "AC3: the Marked Lunge miss witness really missed")
+		_check(int(miss_result.get("damage", -1)) == 0,
+			"AC3: a missed upgraded Lunge deals no damage")
+		_check(int(miss_battle.get_unit(miss_foe)["hp"]) == int(missed["hp_before"]),
+			"AC3: a missed upgraded Lunge leaves the Marked foe's HP untouched")
+		_check(int(missed["statuses_before"].get("mark", 0)) == 1
+			and miss_result.get("statuses", []).is_empty(),
+			"AC3: a missed Lunge neither consumes nor reapplies the Mark")
+		_check(miss_battle.current_actor_id() != OWNER,
+			"AC3: the missed Lunge still spends the Duelist's action")
+	# Illegal target ranks, an illegal launch rank and a blocked forward swap are atomic.
+	var prepared := {}
+	if last_witness.is_empty():
+		_check(false, "AC3: the marked payoff witness exists for the refusal checks")
+	else:
+		prepared = _feint_then_lunge(int(last_witness["seed"]), 3, 1)
+	if prepared.is_empty():
+		_check(false, "AC3: the marked payoff fixture can be rebuilt for refusals")
+	else:
+		var refusal_battle: StitchedRules = prepared["battle"]
+		var foe_id := str(prepared["foe"])
+		var mark_before := int(refusal_battle.get_unit(foe_id)["statuses"].get("mark", 0))
+		var hp_before := int(refusal_battle.get_unit(foe_id)["hp"])
+		var state := refusal_battle.state_snapshot()
+		var rng := refusal_battle.rng_state()
+		var bad_rank := refusal_battle.use_part(lunge_id, 3)
+		_check(not bool(bad_rank.get("ok", false))
+			and str(bad_rank.get("error", "")).contains("no legal target in rank 3"),
+			"AC3: an upgraded Lunge refuses a rank outside its authored 1-2 target mask")
+		_check(state == refusal_battle.state_snapshot() and rng == refusal_battle.rng_state(),
+			"AC3: the illegal target rank preserved state, turn pointer and RNG")
+		refusal_battle._units["seamstress"]["statuses"]["tangled"] = 1
+		state = refusal_battle.state_snapshot()
+		rng = refusal_battle.rng_state()
+		var blocked := refusal_battle.use_part(lunge_id, 1)
+		_check(not bool(blocked.get("ok", false))
+			and str(blocked.get("error", "")).contains("self move is blocked"),
+			"AC3: a tangled front ally refuses the upgraded Lunge swap")
+		_check(state == refusal_battle.state_snapshot() and rng == refusal_battle.rng_state(),
+			"AC3: the blocked-swap refusal preserved state, turn pointer and RNG")
+		_check(refusal_battle.current_actor_id() == OWNER,
+			"AC3: the blocked swap never spends the Duelist's turn")
+		_check(int(refusal_battle.get_unit(foe_id)["hp"]) == hp_before
+			and int(refusal_battle.get_unit(foe_id)["statuses"].get("mark", 0)) == mark_before,
+			"AC3: the blocked swap rolls no damage and never consumes the Mark")
+	# A rank-1 wearer may still Feint, but the upgraded Lunge refuses that launch rank.
+	var front := {}
+	for candidate in range(1, 240):
+		front = _feint_then_lunge(candidate, 3, 1, 0)
+		if not front.is_empty():
+			break
+	if front.is_empty():
+		_check(false, "AC3: a fixed seed lands a rank-1 Feather Feint in front")
+	else:
+		var front_battle: StitchedRules = front["battle"]
+		var front_foe := str(front["foe"])
+		_check(int(front_battle.get_unit(OWNER)["rank"]) == 1,
+			"AC3: the front-rank fixture really places the Duelist in rank 1")
+		var state := front_battle.state_snapshot()
+		var rng := front_battle.rng_state()
+		var refused := front_battle.use_part(lunge_id, 1)
+		_check(not bool(refused.get("ok", false))
+			and str(refused.get("error", "")).contains("cannot launch from rank 1"),
+			"AC3: the upgraded Lunge refuses to launch from rank 1")
+		_check(state == front_battle.state_snapshot() and rng == front_battle.rng_state(),
+			"AC3: the illegal launch rank preserved state, turn pointer and RNG")
+		_check(int(front_battle.get_unit(front_foe)["statuses"].get("mark", 0)) == 1,
+			"AC3: the illegal launch rank leaves the Marked foe untouched")
+		_check(front_battle.current_actor_id() == OWNER,
+			"AC3: the illegal launch rank never spends the Duelist's turn")
+
+
 # ---------------------------------------------------------------- AC2/AC3: refusals are atomic
 
 func _test_live_rejections() -> void:
@@ -1565,8 +1916,10 @@ func _read_json(path: String) -> Variant:
 
 ## The shipped S2 preview deep-copied in memory: the Warden is replaced by the Rag Duelist at the
 ## requested rank, the eight authored parts are appended, and only the four fitted slots are worn.
+## `slot_tiers` may override the stitch tier of one or more slots (for example a tier-III Feather
+## Feint head with a tier-II Rapier Lunge arms); every other slot keeps `tier`.
 func _preview_config(seed_value: int, tier: int, kit: Dictionary, hero_index: int,
-		torn_slot: String = "") -> Dictionary:
+		torn_slot: String = "", slot_tiers: Dictionary = {}) -> Dictionary:
 	var parsed: Variant = _read_json(PREVIEW_PATH)
 	if not parsed is Dictionary:
 		return {}
@@ -1592,7 +1945,7 @@ func _preview_config(seed_value: int, tier: int, kit: Dictionary, hero_index: in
 	for slot in SLOTS:
 		if not kit.has(slot):
 			continue
-		var worn := {"id": str(kit[slot]), "tier": tier}
+		var worn := {"id": str(kit[slot]), "tier": int(slot_tiers.get(slot, tier))}
 		if str(slot) == torn_slot:
 			worn["torn"] = true
 		duelist["parts"][slot] = worn
@@ -1620,8 +1973,9 @@ func _preview_config(seed_value: int, tier: int, kit: Dictionary, hero_index: in
 
 
 func _build_battle(seed_value: int, tier: int = 1, kit: Dictionary = STARTER_PARTS,
-		hero_index: int = 0, report: bool = true) -> StitchedRules:
-	var config := _preview_config(seed_value, tier, kit, hero_index)
+		hero_index: int = 0, report: bool = true,
+		slot_tiers: Dictionary = {}) -> StitchedRules:
+	var config := _preview_config(seed_value, tier, kit, hero_index, "", slot_tiers)
 	if config.is_empty():
 		if report:
 			_check(false, "AC2: the shipped S2 preview can be prepared in memory")
@@ -1755,6 +2109,117 @@ func _dodge_witness(part_id: String, tier: int) -> Dictionary:
 			"permanent": permanent, "foe_acc": foe_acc, "miss_streak": miss_streak,
 		}
 	return {}
+
+
+# ---------------------------------------------------------------- Mark payoff helpers
+
+## Builds the seeded fixture with a genuine tier-III Feather Feint head and the requested Rapier
+## Lunge tier fitted in the arms slot, lands the Feint on the foe in `feint_rank`, then walks the
+## real schedule (passing the intervening turns) to the Duelist's next turn. Nothing is forced:
+## the Feint must hit on a real roll, apply a real Mark, and survive that foe's own status tick.
+func _feint_then_lunge(seed_value: int, lunge_tier: int, feint_rank: int,
+		hero_index: int = 1) -> Dictionary:
+	var battle := _build_battle(seed_value, 3, STARTER_PARTS, hero_index, false,
+		{"arms": lunge_tier})
+	if battle == null:
+		return {}
+	if not _to(battle, OWNER):
+		return {}
+	var feint := battle.use_part(str(STARTER_PARTS["head"]), feint_rank)
+	if not bool(feint.get("ok", false)) or feint.get("results", []).is_empty():
+		return {}
+	var feint_result: Dictionary = feint["results"][0]
+	if not bool(feint_result.get("hit", false)) or int(feint_result.get("damage", -1)) != 0:
+		return {}
+	var foe_id := str(feint_result["target"])
+	if int(battle.get_unit(foe_id)["statuses"].get("mark", 0)) <= 0:
+		return {}
+	if not _to(battle, OWNER):
+		return {}
+	return {"battle": battle, "feint": feint, "feint_result": feint_result, "foe": foe_id}
+
+
+## Repeats the Feint-then-Lunge setup over fixed seeds until the real upgraded Lunge hits (or,
+## when asked, misses) the foe at `lunge_rank`. A tier-II Feint Mark 1 would expire on the foe's
+## own turn, so the head stays the authored tier-III Feather Feint (Mark 2 -> Mark 1) while the
+## arms keep the tested tier. Returns the receipt and the exact pre-attack target state.
+func _lunge_payoff_witness(lunge_tier: int, feint_rank: int, lunge_rank: int,
+		expect_target_marked: bool = true, require_hit: bool = true,
+		require_miss: bool = false, start_seed: int = 1) -> Dictionary:
+	for seed_value in range(start_seed, start_seed + 240):
+		var prepared := _feint_then_lunge(seed_value, lunge_tier, feint_rank)
+		if prepared.is_empty():
+			continue
+		var battle: StitchedRules = prepared["battle"]
+		var target := {}
+		for foe in battle.get_foes():
+			if int(foe["rank"]) == lunge_rank:
+				target = foe
+		if target.is_empty():
+			continue
+		if expect_target_marked != (int(target["statuses"].get("mark", 0)) > 0):
+			continue
+		var hp_before := int(target["hp"])
+		var statuses_before: Dictionary = target["statuses"].duplicate(true)
+		var snapshot_before := battle.state_snapshot()
+		var rng_before := battle.rng_state()
+		var receipt := battle.use_part(str(STARTER_PARTS["arms"]), lunge_rank)
+		if not bool(receipt.get("ok", false)) or receipt.get("results", []).is_empty():
+			continue
+		var hit := bool(receipt["results"][0].get("hit", false))
+		if require_hit and not hit:
+			continue
+		if require_miss and hit:
+			continue
+		return {
+			"battle": battle, "receipt": receipt, "foe": str(target["id"]),
+			"seed": seed_value, "hp_before": hp_before,
+			"statuses_before": statuses_before, "snapshot_before": snapshot_before,
+			"rng_before": rng_before, "feint": prepared["feint"],
+		}
+	return {}
+
+
+## Every base damage number a receipt can carry: each seeded damage roll in the authored range,
+## or the fixed crit value, plus the worn arms stat.
+func _base_roll_candidates(ability: Dictionary, bonus: int, critical: bool) -> Array:
+	var out: Array = []
+	var damage := _int_list(ability.get("dmg", []))
+	if damage.size() != 2:
+		return out
+	if critical:
+		out.append(StitchedRules.crit_damage(damage[1]) + bonus)
+		return out
+	for value in range(damage[0], damage[1] + 1):
+		out.append(value + bonus)
+	return out
+
+
+## The base rolls that reproduce a receipt's damage under the real mark -> Weak/Exposed ->
+## Tangled -> PROT order.
+func _matching_bases(bases: Array, statuses: Dictionary, marked: bool, mark_damage: int,
+		prot: int, dealt: int) -> Array:
+	var matched: Array = []
+	for base in bases:
+		if StitchedRules.damage_after_modifiers(base, {}, statuses, marked, mark_damage, prot) == dealt:
+			matched.append(int(base))
+	return matched
+
+
+## Counterfactual ordering witness: the Exposed multiplier first, then the Mark bonus (before
+## PROT). The real rules add the bonus first, so these differ whenever the witness is sound.
+func _mark_after_exposed(base: int, statuses: Dictionary, mark_damage: int, prot: int) -> int:
+	var damage := base
+	if int(statuses.get("exposed", 0)) > 0:
+		@warning_ignore("integer_division")
+		var whole: int = damage / 2
+		@warning_ignore("integer_division")
+		var partial: int = (damage % 2) * 3 / 2
+		damage = whole * 3 + partial
+	damage += mark_damage
+	if int(statuses.get("tangled", 0)) > 0 and damage > 0:
+		damage += 2
+	return StitchedRules.apply_protection(damage, prot)
 
 
 # ---------------------------------------------------------------- value helpers
