@@ -16,6 +16,8 @@ const EXPECTED_PURSE := {"Fight": 20, "Elite": 40, "Treasure": 25}
 
 func _run() -> void:
 	_poor_stall_refusals()
+	_all_owned_stall()
+	_mixed_sold_lost_stall()
 	_salvage_walk()
 	for message in failures:
 		printerr(message)
@@ -64,19 +66,36 @@ func _poor_stall_refusals() -> void:
 		distinct = distinct and int(offer.get("price", 0)) > 0 and not seen.has(str(offer.get("id", "")))
 		seen.append(str(offer.get("id", "")))
 	_check(distinct, "the three offers are distinct and positively priced")
+	_check_coat_stock(stock, "the zero-gold stall")
+	var replay_run := StitchedRunSession.start(int(session.seed_value))
+	_check(replay_run != null and replay_run.enter(poor_node, replay_run.snapshot())
+			and replay_run.pending.stock == stock and replay_run.rng.state == session.rng.state,
+		"an equal seed replays the same stock and RNG state")
+	var drawn := session.snapshot()
+	session.visit_actions()
+	session.visit_actions()
+	_check(session.snapshot() == drawn, "repeated visit_actions draw no RNG and change nothing")
 	var buy_actions := []
 	var leave_actions := 0
+	var enabled_leave := false
 	for action in actions:
 		if action.id == "buy_patch":
 			buy_actions.append(action)
 		elif action.id == "leave":
 			leave_actions += 1
+			enabled_leave = bool(action.enabled)
 	_check(buy_actions.size() == stock.size() * session.heroes.size() * 2 and leave_actions == 1,
 		"every offer is quoted for every hero in both slots beside exactly one Leave")
+	_check(enabled_leave, "Leave stays enabled at an empty-wallet stall")
+	var readable := true
 	for action in buy_actions:
 		if action.enabled:
 			_check(false, "a zero-gold wallet disables every quoted purchase")
 			break
+	for action in buy_actions:
+		var row_price := int(_catalog_prices().get(str(action.arguments[0]), 0))
+		readable = readable and str(action.text).contains("%d gold" % row_price) and str(action.text).contains("need")
+	_check(readable, "disabled poor rows stay readable with their exact price and a need-more-gold note")
 	var visit := session.snapshot()
 	var target: Dictionary = buy_actions[0]
 	var arguments: Array = target.get("arguments", [])
@@ -251,13 +270,171 @@ func _stall_purchase(session: StitchedRunSession, plan: Dictionary, index: int) 
 
 
 func _authored_price(offer_id: String) -> int:
-	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/initial_offers.json"))
+	return int(_catalog_prices().get(offer_id, 0))
+
+
+## id -> authored gold price from the Stitched-only patch catalog (never the retired card-era shop).
+func _catalog_prices() -> Dictionary:
+	var prices := {}
+	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/shop/stitched_patch_offers.json"))
 	if not document is Dictionary:
-		return 0
+		return prices
 	for trinket in document.get("trinkets", []):
-		if str(trinket.get("id", "")) == offer_id:
-			return int(trinket.get("price", 0))
-	return 0
+		prices[str(trinket.get("id", ""))] = int(trinket.get("price", 0))
+	return prices
+
+
+## IDs of the authored COAT patches (the only effects this stall may stock).
+func _coat_ids() -> Array:
+	var ids := []
+	var document: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m04_coat_patches.json"))
+	if document is Array:
+		for record in document:
+			if record is Dictionary and str(record.get("slot", "")) == "COAT":
+				ids.append(str(record.get("id", "")))
+	return ids
+
+
+func _check_coat_stock(stock: Array, label: String) -> void:
+	var prices := _catalog_prices()
+	var coats := _coat_ids()
+	var authentic := stock.size() == 3
+	for offer in stock:
+		var id := str(offer.get("id", ""))
+		authentic = authentic and prices.has(id) and coats.has(id) and int(offer.get("price", 0)) == int(prices[id])
+	_check(authentic, "%s stocks three COAT rows at their authored Stitched catalog prices" % label)
+
+
+## A genuine seeded run whose floor-one choices include a Patch Stall.
+func _stall_run() -> Dictionary:
+	for seed_number in range(POOR_SEED, POOR_SEED + SEED_SEARCH):
+		var session := StitchedRunSession.start(seed_number)
+		if session != null:
+			var node := _floor_one_stall(session)
+			if not node.is_empty():
+				return {"session": session, "node": node}
+	return {}
+
+
+## Test-only ledger: own these patches (also worn two per living hero) and re-seal the run.
+func _own_patches(session: StitchedRunSession, ids: Array) -> void:
+	session.patches = ids.duplicate()
+	for hero in session.heroes:
+		hero.patches = []
+	var index := 0
+	for id in ids:
+		var hero: Dictionary = session.heroes[(index >> 1) % session.heroes.size()]
+		if hero.patches.size() < 2:
+			hero.patches.append(id)
+		index += 1
+
+
+## Every coat owned: the stall must show three truthful SOLD rows, buy nothing and draw nothing.
+func _all_owned_stall() -> void:
+	var run := _stall_run()
+	_check(not run.is_empty(), "all-owned witness run reaches a floor-one Patch Stall")
+	if run.is_empty():
+		return
+	var session: StitchedRunSession = run.session
+	var prices := _catalog_prices()
+	for required in ["quilted_coat", "padded_vest", "double_quilt_coat", "scrap_lined_vest",
+			"wool_patch_cloak", "chain_stitched_coat", "reinforced_patchcoat", "thick_felt_mantle"]:
+		_check(prices.has(required), "the Stitched catalog carries %s" % required)
+	var owned: Array = prices.keys()
+	owned.sort()
+	_own_patches(session, owned)
+	session.gold = 500
+	session._seal()
+	_check(session.is_consistent() and session.heroes.size() == 4, "the all-owned fixture is a sealed four-hero run")
+	var rng_before := session.rng.state
+	_check(session.enter(run.node, session.snapshot()) and session.phase == "visit",
+		"the all-owned run enters its routed Patch Stall")
+	_check(session.rng.state == rng_before, "an all-owned stall draws nothing from the run RNG")
+	var stock: Array = session.pending.stock
+	_check_coat_stock(stock, "the all-owned stall")
+	var all_owned := true
+	for offer in stock:
+		all_owned = all_owned and owned.has(str(offer.get("id", "")))
+	_check(all_owned, "all three displayed rows are genuinely owned")
+	var quote: Dictionary = session._service.quote()
+	var truthful: bool = quote.get("offers", []).size() == 3 and quote.get("decisions", []) == ["leave"]
+	for row in quote.get("offers", []):
+		truthful = truthful and row.get("can_buy") == false and str(row.get("blocked", "")) == "already owned"
+	_check(truthful, "the service quotes three SOLD rows and advertises only Leave")
+	var visit := session.snapshot()
+	var buys := []
+	var leave_enabled := false
+	for action in session.visit_actions():
+		if action.id == "buy_patch":
+			buys.append(action)
+		elif action.id == "leave":
+			leave_enabled = bool(action.enabled)
+	_check(buys.size() == 3 * 4 * 2, "every SOLD row stays visible for every hero and slot")
+	var closed := not buys.is_empty()
+	var labelled := not buys.is_empty()
+	for action in buys:
+		closed = closed and not action.enabled and not session.choose_visit("buy_patch", action.arguments, visit) \
+			and session.snapshot() == visit
+		labelled = labelled and str(action.text).contains("SOLD")
+	_check(closed, "no SOLD row is selectable and attempted purchases change nothing")
+	_check(labelled, "SOLD rows are labelled SOLD")
+	_check(leave_enabled, "Leave stays enabled when everything is sold")
+	_check(session.choose_visit("leave", [], session.snapshot()) and session.phase == "map",
+		"Leave closes the all-owned stall for free")
+	_check(session.gold == 500 and session.patches.size() == owned.size(), "the all-owned stall spends and mints nothing")
+
+
+## Some coats owned, one doll LOST: a live buy is enabled exactly when the service row can_buy.
+func _mixed_sold_lost_stall() -> void:
+	var run := _stall_run()
+	_check(not run.is_empty(), "mixed witness run reaches a floor-one Patch Stall")
+	if run.is_empty():
+		return
+	var session: StitchedRunSession = run.session
+	var owned: Array = _catalog_prices().keys()
+	owned.sort()
+	owned = owned.slice(0, owned.size() - 2)
+	_own_patches(session, owned)
+	session.gold = 500
+	var lost_id := str(session.heroes[1].id)
+	session.heroes[1].lost = true
+	session.heroes[1].hp = 0
+	session.heroes[1].patches = []
+	session._seal()
+	_check(session.enter(run.node, session.snapshot()) and session.phase == "visit",
+		"the mixed run enters its routed Patch Stall")
+	var rows := {}
+	var sold_rows := 0
+	var buyable_rows := 0
+	for row in session._service.quote().get("offers", []):
+		rows[str(row.id)] = row
+		if row.can_buy:
+			buyable_rows += 1
+		else:
+			sold_rows += 1
+	_check(rows.size() == 3 and sold_rows >= 1 and buyable_rows >= 1,
+		"the stall shows both a SOLD row and a buyable row")
+	var matches := true
+	var lost_seen := 0
+	var enabled_seen := 0
+	var visit := session.snapshot()
+	for action in session.visit_actions():
+		if action.id != "buy_patch":
+			continue
+		var row: Dictionary = rows.get(str(action.arguments[0]), {})
+		var expected: bool = bool(row.get("can_buy", false)) and str(action.arguments[1]) != lost_id
+		matches = matches and not row.is_empty() and bool(action.enabled) == expected
+		if str(action.arguments[1]) == lost_id:
+			lost_seen += 1
+			matches = matches and not action.enabled
+		if action.enabled:
+			enabled_seen += 1
+		else:
+			matches = matches and not session.choose_visit("buy_patch", action.arguments, visit) \
+				and session.snapshot() == visit
+	_check(matches, "a buy action is enabled exactly when the row can_buy and the doll lives")
+	_check(lost_seen == 3 * 2 and enabled_seen == buyable_rows * 3 * 2,
+		"the LOST doll has no enabled purchase while living dolls keep every buyable row")
 
 
 func _snapshot_hero(snapshot: Dictionary, hero_id: String) -> Dictionary:
