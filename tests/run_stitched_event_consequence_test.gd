@@ -65,6 +65,7 @@ func _initialize() -> void:
 	_test_wren_fear_ac1_projections()
 	_test_wren_fear_ac2_refusals_and_alternatives()
 	_test_wren_fear_ac3_shapes_and_invariants()
+	_test_require_candle_room_lantern_bobbin_ferry()
 	_finish()
 
 
@@ -6993,6 +6994,191 @@ func _test_wren_fear_ac3_shapes_and_invariants() -> void:
 	altered_fear_delta_rec["fear_delta"] = 15
 	_check(obs_svc.post_settlement_fear_observations(altered_fear_delta_rec, obs_snap, after_roster).is_empty(),
 		"AC3: post_settlement_fear_observations fails closed when fear_delta is altered")
+
+
+func _test_require_candle_room_lantern_bobbin_ferry() -> void:
+	var path := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
+	var source := FileAccess.get_file_as_string(path)
+	var doc: Variant = JSON.parse_string(source)
+	_check(doc is Dictionary and doc.get("id") == "s6_stitched_lantern_bobbin_ferry",
+		"AC1: genuine s6_stitched_lantern_bobbin_ferry.json parses")
+	var ferry_event: Dictionary = (doc as Dictionary).duplicate(true)
+	var event_snapshot: Dictionary = ferry_event.duplicate(true)
+
+	# AC1: With genuine Ferry JSON, a valid four-hero snapshot at candle 100 and scraps >=1,
+	# mend_wick preview is unavailable and choose refuses without claiming, changing funds/candle/snapshot
+	# or drawing RNG; the same visit can successfully leave. Test direct service preflight and claim.
+	var snap_100 := _gold_scraps_four(100, 1, 10, [10, 20, 30, 40])
+	var before_100: Dictionary = snap_100.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 12345
+	var guard_state: int = rng_guard.state
+
+	var svc_100 := RunStitchedEventConsequence.new(ferry_event)
+	_check(svc_100.is_valid() and not svc_100.is_claimed(), "AC1: visit opens with genuine Ferry JSON")
+
+	var prev_100: Dictionary = svc_100.preview(snap_100)
+	_check(prev_100.get("ok") == true and int(prev_100.get("candle")) == 100, "AC1: preview succeeds at candle 100")
+	var mend_100 := _entry(prev_100, "mend_wick")
+	_check(mend_100.get("available") == false
+		and int(mend_100.get("candle")) == 100
+		and int(mend_100.get("candle_delta")) == 8
+		and int(mend_100.get("scraps")) == 1
+		and int(mend_100.get("scraps_delta")) == -1
+		and int(mend_100.get("gold")) == 10
+		and int(mend_100.get("gold_delta")) == 0
+		and mend_100.get("fray") == {}
+		and int(mend_100.get("fray_delta")) == 0,
+		"AC1: mend_wick preview is unavailable at candle 100, preserving base candle and purses")
+
+	_assert_rejected(svc_100, "mend_wick", snap_100, 100, "AC1: mend_wick choose refuses at candle 100")
+	_check(svc_100.is_valid() and not svc_100.is_claimed(), "AC1: visit remains unclaimed after refusal")
+	_check(snap_100 == before_100, "AC1: snapshot unchanged by mend_wick refusal")
+	_check(ferry_event == event_snapshot, "AC1: source record unchanged by refusal")
+	_check(rng_guard.state == guard_state, "AC1: RNG undisturbed by refusal")
+
+	var leave_100: Dictionary = svc_100.choose("leave", snap_100)
+	_check(leave_100.get("ok") == true
+		and leave_100.get("choice_id") == "leave"
+		and int(leave_100.get("candle")) == 100
+		and int(leave_100.get("scraps")) == 1
+		and int(leave_100.get("gold")) == 10
+		and leave_100.get("fray") == {},
+		"AC1: leave succeeds on the same visit after mend_wick refusal")
+	_check(svc_100.is_claimed() and not svc_100.is_valid(), "AC1: visit latches after leave claim")
+	_assert_rejected(svc_100, "leave", snap_100, 100, "AC1: duplicate leave refuses")
+	_assert_rejected(svc_100, "mend_wick", snap_100, 100, "AC1: duplicate mend_wick refuses")
+
+	# AC2: With candle 92 and scraps >=1, mend_wick previews and settles 92->100, scraps 1->0 exactly once.
+	# With candle 0 it restores +8; with candle 99 it is admitted and clamps to 100 rather than demanding
+	# a full eight-point deficit. Compare exact preview and successful receipt; duplicate choose refuses
+	# and input copies remain untouched.
+	var snap_92 := _gold_scraps_four(92, 1, 10, [10, 20, 30, 40])
+	var before_92: Dictionary = snap_92.duplicate(true)
+	var svc_92 := RunStitchedEventConsequence.new(ferry_event)
+	var prev_92: Dictionary = svc_92.preview(snap_92)
+	var mend_92 := _entry(prev_92, "mend_wick")
+	_check(mend_92.get("available") == true
+		and int(mend_92.get("candle")) == 100
+		and int(mend_92.get("candle_delta")) == 8
+		and int(mend_92.get("scraps")) == 0
+		and int(mend_92.get("scraps_delta")) == -1
+		and int(mend_92.get("gold")) == 10
+		and int(mend_92.get("gold_delta")) == 0
+		and mend_92.get("fray") == {},
+		"AC2: candle 92 mend_wick preview available, 92 -> 100, scraps 1 -> 0")
+	var receipt_92: Dictionary = svc_92.choose("mend_wick", snap_92)
+	_check(receipt_92.get("ok") == true
+		and receipt_92.get("choice_id") == "mend_wick"
+		and int(receipt_92.get("candle")) == 100
+		and int(receipt_92.get("scraps")) == 0
+		and int(receipt_92.get("scraps_delta")) == -1
+		and int(receipt_92.get("gold")) == 10
+		and int(receipt_92.get("gold_delta")) == 0
+		and receipt_92.get("fray") == {},
+		"AC2: candle 92 mend_wick settles 92 -> 100, scraps 1 -> 0")
+	_check(int(receipt_92.get("candle")) == int(mend_92.get("candle"))
+		and int(receipt_92.get("scraps")) == int(mend_92.get("scraps"))
+		and int(receipt_92.get("gold")) == int(mend_92.get("gold")),
+		"AC2: receipt values match exact preview projections")
+	_check(svc_92.is_claimed() and not svc_92.is_valid(), "AC2: claimed exactly once")
+	_assert_rejected(svc_92, "mend_wick", snap_92, 92, "AC2: duplicate mend_wick refuses")
+	_assert_rejected(svc_92, "leave", snap_92, 92, "AC2: subsequent leave refuses after claim")
+	_check(snap_92 == before_92, "AC2: input snapshot copy remains untouched")
+
+	# Candle 0 restores +8
+	var snap_0 := _gold_scraps_four(0, 1, 10, [10, 20, 30, 40])
+	var before_0: Dictionary = snap_0.duplicate(true)
+	var svc_0 := RunStitchedEventConsequence.new(ferry_event)
+	var prev_0: Dictionary = svc_0.preview(snap_0)
+	var mend_0 := _entry(prev_0, "mend_wick")
+	_check(mend_0.get("available") == true
+		and int(mend_0.get("candle")) == 8
+		and int(mend_0.get("scraps")) == 0,
+		"AC2: candle 0 mend_wick previews +8 (0 -> 8)")
+	var receipt_0: Dictionary = svc_0.choose("mend_wick", snap_0)
+	_check(receipt_0.get("ok") == true
+		and int(receipt_0.get("candle")) == 8
+		and int(receipt_0.get("scraps")) == 0
+		and int(receipt_0.get("scraps_delta")) == -1,
+		"AC2: candle 0 mend_wick claims +8 (0 -> 8)")
+	_check(snap_0 == before_0, "AC2: candle 0 input copy untouched")
+
+	# Candle 99 admitted and clamps to 100
+	var snap_99 := _gold_scraps_four(99, 1, 10, [10, 20, 30, 40])
+	var before_99: Dictionary = snap_99.duplicate(true)
+	var svc_99 := RunStitchedEventConsequence.new(ferry_event)
+	var prev_99: Dictionary = svc_99.preview(snap_99)
+	var mend_99 := _entry(prev_99, "mend_wick")
+	_check(mend_99.get("available") == true
+		and int(mend_99.get("candle")) == 100
+		and int(mend_99.get("candle_delta")) == 8
+		and int(mend_99.get("scraps")) == 0,
+		"AC2: candle 99 admitted and clamps to 100 in preview")
+	var receipt_99: Dictionary = svc_99.choose("mend_wick", snap_99)
+	_check(receipt_99.get("ok") == true
+		and int(receipt_99.get("candle")) == 100
+		and int(receipt_99.get("scraps")) == 0
+		and int(receipt_99.get("scraps_delta")) == -1,
+		"AC2: candle 99 admitted and clamps to 100 in choose")
+	_check(snap_99 == before_99, "AC2: candle 99 input copy untouched")
+
+	# AC3: With candle 92 and scraps 0, mend_wick refuses without claiming and leave stays available.
+	# Funded pay_gold retains its -10 gold/+2 scraps trade. Tests check both offerings and all existing
+	# one-use/affordability negatives.
+	var snap_scraps0 := _gold_scraps_four(92, 0, 10, [10, 20, 30, 40])
+	var before_scraps0: Dictionary = snap_scraps0.duplicate(true)
+	var svc_scraps0 := RunStitchedEventConsequence.new(ferry_event)
+	var prev_scraps0: Dictionary = svc_scraps0.preview(snap_scraps0)
+	var mend_scraps0 := _entry(prev_scraps0, "mend_wick")
+	var pay_scraps0 := _entry(prev_scraps0, "pay_gold")
+	var leave_scraps0 := _entry(prev_scraps0, "leave")
+	_check(mend_scraps0.get("available") == false
+		and int(mend_scraps0.get("candle")) == 92
+		and int(mend_scraps0.get("scraps")) == 0,
+		"AC3: mend_wick unavailable with 0 scraps even when candle room exists")
+	_check(pay_scraps0.get("available") == true
+		and int(pay_scraps0.get("gold")) == 0
+		and int(pay_scraps0.get("gold_delta")) == -10
+		and int(pay_scraps0.get("scraps")) == 2
+		and int(pay_scraps0.get("scraps_delta")) == 2,
+		"AC3: funded pay_gold available with -10 gold / +2 scraps preview")
+	_check(leave_scraps0.get("available") == true, "AC3: leave stays available")
+
+	_assert_rejected(svc_scraps0, "mend_wick", snap_scraps0, 92,
+		"AC3: mend_wick refuses when scraps == 0 without latching")
+	_check(svc_scraps0.is_valid() and not svc_scraps0.is_claimed(), "AC3: visit unclaimed after mend_wick refusal")
+	_check(snap_scraps0 == before_scraps0, "AC3: snapshot unchanged after refusal")
+
+	var pay_receipt: Dictionary = svc_scraps0.choose("pay_gold", snap_scraps0)
+	_check(pay_receipt.get("ok") == true
+		and pay_receipt.get("choice_id") == "pay_gold"
+		and int(pay_receipt.get("gold")) == 0
+		and int(pay_receipt.get("gold_delta")) == -10
+		and int(pay_receipt.get("scraps")) == 2
+		and int(pay_receipt.get("scraps_delta")) == 2
+		and int(pay_receipt.get("candle")) == 92
+		and pay_receipt.get("fray") == {},
+		"AC3: funded pay_gold settles -10 gold / +2 scraps trade")
+	_check(svc_scraps0.is_claimed() and not svc_scraps0.is_valid(), "AC3: visit claimed by pay_gold")
+
+	var svc_leave_scraps0 := RunStitchedEventConsequence.new(ferry_event)
+	_assert_rejected(svc_leave_scraps0, "mend_wick", snap_scraps0, 92, "AC3: mend refusal on leave visit")
+	var leave_rec_scraps0: Dictionary = svc_leave_scraps0.choose("leave", snap_scraps0)
+	_check(leave_rec_scraps0.get("ok") == true and leave_rec_scraps0.get("choice_id") == "leave",
+		"AC3: leave claims after mend_wick refusal with scraps 0")
+
+	# Underfunded pay_gold negative (gold 9 < 10)
+	var snap_underfunded_gold := _gold_scraps_four(92, 1, 9, [10, 20, 30, 40])
+	var svc_under_gold := RunStitchedEventConsequence.new(ferry_event)
+	var prev_under_gold: Dictionary = svc_under_gold.preview(snap_underfunded_gold)
+	_check(_entry(prev_under_gold, "pay_gold").get("available") == false,
+		"AC3: underfunded gold 9 makes pay_gold unavailable")
+	_assert_rejected(svc_under_gold, "pay_gold", snap_underfunded_gold, 92,
+		"AC3: pay_gold refuses with insufficient gold (9 < 10)")
+	_check(svc_under_gold.is_valid() and not svc_under_gold.is_claimed(),
+		"AC3: visit open after underfunded pay_gold refusal")
+
 
 
 

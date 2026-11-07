@@ -3658,7 +3658,7 @@ func _open_stitched_postevent() -> bool:
 	# the exact integral JSON values, then let the consequence service validate.
 	var expected_effects := [
 		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": -10.0, "scraps": 2.0},
-		{"target": "party", "fray": 0.0, "candle": 8.0, "gold": 0.0, "scraps": -1.0},
+		{"target": "party", "fray": 0.0, "candle": 8.0, "gold": 0.0, "scraps": -1.0, "require_candle_room": true},
 		{"target": "party", "fray": 0.0, "candle": 0.0, "gold": 0.0, "scraps": 0.0},
 	]
 	for i in range(authored.size()):
