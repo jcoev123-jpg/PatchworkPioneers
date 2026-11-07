@@ -53,6 +53,7 @@ var candle_icon: TextureRect
 var ribbon: StitchedTurnOrderRibbon
 var portrait: TextureRect
 var actor_name: Label
+var thread_knot: TextureRect
 var health_bar: TextureProgressBar
 var health_text: Label
 var fray_bar: TextureProgressBar
@@ -367,6 +368,15 @@ func _build_bar() -> void:
 	actor_name = _label("", Rect2(158, BAR_TOP + 10, 300, 32), 28, AMBER)
 	actor_name.name = "ActorName"
 	add_child(actor_name)
+	# S13: a small thread knot by the name when two or more patches share a thread.
+	thread_knot = TextureRect.new()
+	thread_knot.name = "ThreadKnot"
+	thread_knot.position = Vector2(426, BAR_TOP + 6)
+	thread_knot.size = Vector2(40, 40)
+	thread_knot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thread_knot.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	thread_knot.mouse_filter = Control.MOUSE_FILTER_PASS
+	add_child(thread_knot)
 	add_child(_label("HEALTH", Rect2(158, BAR_TOP + 48, 80, 24), 17))
 	health_bar = _bar(Rect2(236, BAR_TOP + 50, 230, 22), BLOOD)
 	health_bar.name = "ActorHealth"
@@ -393,6 +403,16 @@ func _build_bar() -> void:
 		button.mouse_exited.connect(func(): _shade_parts())
 		button.focus_entered.connect(func(): _shade_parts())
 		button.focus_exited.connect(func(): _shade_parts())
+		# S13: the part shows as the cloth patch sewn on that limb; its border tells the tier.
+		for layer in ["Patch", "Border", "Frayed"]:
+			var art := TextureRect.new()
+			art.name = layer
+			art.position = Vector2(14, 14)
+			art.size = Vector2(86, 86)
+			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			button.add_child(art)
 		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 26, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 		slot_label.name = "Slot"
 		button.add_child(slot_label)
@@ -613,6 +633,12 @@ func _refresh_bar() -> void:
 	health_bar.value = float(shown.get("hp", 0))
 	health_text.text = "%d / %d" % [int(shown.get("hp", 0)), int(shown.get("max_hp", 0))] if not shown.is_empty() else ""
 	fray_bar.value = float(shown.get("fray", 0))
+	var worn_parts: Dictionary = shown.get("parts", {})
+	var knot := StitchedSewnPatches.set_thread(worn_parts) if hero_turn else ""
+	thread_knot.texture = _texture(StitchedSewnPatches.knot_path(knot)) if not knot.is_empty() else null
+	thread_knot.visible = not knot.is_empty()
+	thread_knot.tooltip_text = ("Whole cloth: every patch is sewn with one thread." if StitchedSewnPatches.whole_cloth(worn_parts)
+		else "Matching thread: some of these patches sit well together.") if not knot.is_empty() else ""
 	fray_bar.tint_progress = BLOOD if int(shown.get("fray", 0)) >= 100 else FRAY
 	for slot in part_buttons:
 		var button: TextureButton = part_buttons[slot]
@@ -620,9 +646,21 @@ func _refresh_bar() -> void:
 		var part: Dictionary = engine.parts.get(str(equipped.get("id", "")), {})
 		var move_label: Label = button.get_node("Move")
 		move_label.text = ""
+		var torn := bool(equipped.get("torn", false))
+		var patch: TextureRect = button.get_node("Patch")
+		patch.texture = _texture(StitchedSewnPatches.icon_path(str(part.get("id", "")), slot)) if not part.is_empty() else null
+		patch.modulate = Color(0.5, 0.47, 0.47, 0.8) if torn else Color.WHITE
+		(button.get_node("Border") as TextureRect).texture = _texture(
+			StitchedSewnPatches.border_path(int(equipped.get("tier", 1)))) if not part.is_empty() and not torn else null
+		(button.get_node("Frayed") as TextureRect).texture = _texture(StitchedSewnPatches.ART + "frayed.png") if torn else null
+		# With a patch picture the slot word steps aside and the move name sits along the hem.
+		var pictured := patch.texture != null
+		(button.get_node("Slot") as Label).visible = not pictured
+		move_label.position = Vector2(8, 80) if pictured else Vector2(16, 54)
+		move_label.size = Vector2(98, 30) if pictured else Vector2(82, 36)
 		if not part.is_empty():
 			move_label.text = str(StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))).get("name", ""))
-			if bool(equipped.get("torn", false)):
+			if torn:
 				move_label.text = "torn"
 		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
 		button.tooltip_text = str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""

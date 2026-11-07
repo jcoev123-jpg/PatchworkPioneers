@@ -1041,6 +1041,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"miss_streak": 0,
 		"guard_target": "",
 		"dodge_buff": {},
+		# S13: how many fights each worn patch has sat on this doll (the run session keeps it).
+		"patch_wear": (entry.get("patch_wear") as Dictionary).duplicate(true) if entry.get("patch_wear") is Dictionary else {},
 	}
 	_recompute_stats(unit)
 	# Optional carry is in actual HP after worn-part modifiers, never base HP.
@@ -1199,6 +1201,11 @@ func _recompute_stats(unit: Dictionary) -> void:
 		var stat := StitchedParts.stat_at_tier(_parts[worn["id"]], int(worn["tier"]))
 		for key in stat:
 			totals[key] = int(totals.get(key, 0)) + int(stat[key])
+	# S13: thread sets and broken-in patches sit better, a hidden bonus the player never reads.
+	if str(unit.get("side", "")) == "hero":
+		var hidden := StitchedSewnPatches.hidden_bonus(str(unit["id"]), parts, unit.get("patch_wear", {}))
+		for key in hidden:
+			totals[key] = int(totals.get(key, 0)) + int(hidden[key])
 	unit["acc"] = int(unit["base_acc"]) + int(totals["acc"])
 	unit["crit"] = int(totals["crit"])
 	# Arms grant damage: the equipped parts' dmg stat is a flat bonus on every direct attack.
