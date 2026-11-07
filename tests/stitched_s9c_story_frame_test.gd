@@ -90,13 +90,15 @@ func _run() -> void:
 	if walker == null:
 		_finish(app)
 		return
-	_check(walker.fear() == session.kid_fear() and walker.readout.text.contains("WREN FEAR 0/100"), "the walk HUD reads fear 0")
+	_check(walker.fear() == session.kid_fear() and walker.fear_readout.text == "WREN FEAR 0/100"
+		and is_equal_approx(walker.fear_meter.value, 0.0), "the walk HUD reads fear 0")
 	_check(not walker.flickering and not walker.is_processing(), "a calm walk does not flicker")
 	# A doll lost earlier in the night (+15 each) raises his fear; the walk HUD follows.
 	session._kid_fear.apply_observed_event({"kind": "lost"})
 	session._seal()
 	walker.refresh()
-	_check(session.kid_fear() == 15 and walker.readout.text.contains("WREN FEAR 15/100"), "a fear change shows in the walk HUD")
+	_check(session.kid_fear() == 15 and walker.fear_readout.text == "WREN FEAR 15/100"
+		and is_equal_approx(walker.fear_meter.value, 0.15), "a fear change shows in the walk HUD")
 	_check(not walker.flickering, "fear 15 does not flicker")
 	for _loss in range(3):
 		session._kid_fear.apply_observed_event({"kind": "lost"})
