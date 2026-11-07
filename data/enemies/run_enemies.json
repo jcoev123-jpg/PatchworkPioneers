@@ -1633,9 +1633,11 @@
           "acc": 85,
           "dmg": [4, 6],
           "crit": 0,
-          "effects": {},
+          "effects": {
+            "tangled": 2
+          },
           "self_move": 0,
-          "move": "attack2"
+          "move": "attack"
         },
         {
           "id": "pin_pitch",
@@ -1648,9 +1650,11 @@
           "acc": 84,
           "dmg": [2, 3],
           "crit": 0,
-          "effects": {},
+          "effects": {
+            "exposed": 2
+          },
           "self_move": 0,
-          "move": "attack3"
+          "move": "attack2"
         }
       ]
     }
