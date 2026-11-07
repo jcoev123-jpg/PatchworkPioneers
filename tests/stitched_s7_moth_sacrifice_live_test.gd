@@ -3,7 +3,8 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
 # Re-derived through the genuine map -> battle -> Peddler -> Event pipeline after the
-# merged roadside Event packs shifted the seeded selector.
+# merged roadside Event packs shifted the seeded selector. Revalidated on the current
+# catalog: victory drops Scissor Claw, Peddler sells Quill Mail, leaving 1 scrap.
 const RICH_SEED := 152239
 # The merged roadside Event packs shifted the seeded selector; this empty-satchel floor-1
 # witness still reaches the authored Moth with zero scraps.
@@ -260,26 +261,55 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 	if stage == null:
 		app.free()
 		return
+	var before_fight := session.snapshot()
 	var acted := _earn_moth_wallet(stage)
 	_check(acted > 0 and stage.battle.outcome() == "victory", "legal mounted abilities earn actual spares and scraps")
 	stage._action_buttons["exit"].pressed.emit()
 	_check(session.phase == "map", "victory returns to the genuine route: " + session.phase)
+	_check(session.receipts.size() == before_fight.receipts.size() + 1,
+		"opening Fight publishes one actual reward receipt")
+	if session.receipts.is_empty():
+		app.free()
+		return
+	var fight_receipt: Dictionary = session.receipts.back()
+	var reward: Dictionary = fight_receipt.get("reward", {})
+	_check(fight_receipt.get("node_id") == FIRST_NODE and fight_receipt.get("kind") == "Fight"
+		and fight_receipt.get("outcome") == "victory" and not reward.get("parts", []).is_empty()
+		and session.satchel == reward.get("parts", [])
+		and session.gold == before_fight.gold + int(reward.get("gold", 0))
+		and session.scraps == before_fight.scraps + int(reward.get("scraps", 0)),
+		"funded seed earns its real drop and wallet from victory: seed=%d reward=%s" % [RICH_SEED, reward])
 	_check(session.gold >= StitchedRunSession.PEDDLER_PRICE, "victory funds the spare purchase: gold=" + str(session.gold))
 	_check(_press_route(app, SHOP_NODE), "real route control activates connected Peddler")
+	_check(session.phase == "visit" and session.pending.get("service") == "Peddler"
+		and session.map.get_node(SHOP_NODE).type == "Shop", "generated second node mounts the real Peddler")
 	var purchase := _button(app, "buy_part")
 	_check(purchase != null and not purchase.disabled, "earned spare purchase is mounted and affordable")
 	if purchase == null or purchase.disabled:
 		app.free()
 		return
+	var before_purchase := session.snapshot()
+	var stock: Dictionary = session.pending.peddler_stock.part.duplicate(true)
 	purchase.pressed.emit()
+	var expected_spares: Array = before_purchase.satchel.duplicate(true)
+	expected_spares.append({"id": stock.id, "slot": session.catalog[stock.id].slot, "tier": 1, "torn": false})
+	_check(session.phase == "map" and session.satchel == expected_spares
+		and session.gold == before_purchase.gold - int(stock.price) and session.scraps == before_purchase.scraps
+		and session.receipts.size() == before_purchase.receipts.size() + 1
+		and session.receipts.back().node_id == SHOP_NODE and session.receipts.back().decision == "buy_part",
+		"mounted Peddler appends its quoted spare once and charges earned gold: stock=" + str(stock))
 	_check(session.satchel.size() >= 2, "earned drop and purchase supply two spares: " + str(session.satchel))
 	if session.satchel.size() >= 2:
 		_check(session.satchel[0].id != session.satchel[1].id, "ordered sacrifice witnesses are distinct parts")
 	_check(session.scraps >= 1, "earned wallet funds fumigate: scraps=" + str(session.scraps))
 	var before_entry := session.snapshot()
 	_check(_press_route(app, MOTH_NODE), "real route control activates connected Moth witness node")
+	var witness := "seed=%d action=%s args=%d phase=%s event=%s route=%s spares=%s scraps=%d gold=%d rng=%d->%d quote=%s" % [
+		RICH_SEED, id, index, session.phase, session.pending.get("event_id", "<none>"), session.map.get_route(),
+		session.satchel, session.scraps, session.gold, before_entry.rng, session.rng.state, session.visit_actions()]
+	print("funded Moth witness: " + witness)
 	_check(session.pending.get("event_id") == "moth_infestation",
-		"funded witness selected Event ID: " + str(session.pending.get("event_id")))
+		"funded Moth witness missing; re-derive through mounted Fight -> Peddler -> Event: " + witness)
 	_check(session.phase == "visit" and session.map.get_route() == before_entry.map.route + [MOTH_NODE],
 		"funded Event entry advances the authentic route once: " + str(session.map.get_route()))
 	_check(session.is_consistent() and session.rng.state != before_entry.rng,
@@ -291,6 +321,8 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 		_controls(app)
 		var arguments: Array = [index] if id == "sacrifice_part" else []
 		await _settle(app, id, arguments, keyboard)
+	else:
+		_check(false, "required funded settlement was not exercised: " + witness)
 	app.free()
 	await process_frame
 
@@ -350,5 +382,5 @@ func _run() -> void:
 	DirAccess.remove_absolute(SAVE_PATH)
 	for failure in failures:
 		printerr(failure)
-	print("stitched_s7_moth_sacrifice_live_test: %d checks, %d failures" % [checks, failures.size()])
+	print("stitched_s7_moth_sacrifice_live_test: %d checks, %d failures, %d witnessed settlements" % [checks, failures.size(), settled_branches])
 	quit(0 if failures.is_empty() else 1)
