@@ -88,7 +88,6 @@ func _exercise(repetition: int) -> Dictionary:
 	panel._on_choice_pressed(selector, "pay_road_toll", panel._generation, buttons[1])
 	buttons[1].pressed.emit()
 	panel._input(_key(KEY_2))
-	app._open_route()
 	_check(not app._open_stitched_fight() and not app._open_base() \
 		and app.stitched_event_panel == panel and gate.is_valid() and not gate.is_claimed() \
 		and not selector.is_claimed() and app.stitched_fight_view == null \

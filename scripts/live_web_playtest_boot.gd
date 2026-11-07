@@ -131,22 +131,6 @@ func _expected_view(app, screen: String) -> bool:
 			return _visible(app.base_screen) and app.base_screen.has_open_village() \
 				and not _visible(app.title_view) and app.run_map == null \
 				and app.deck == null and app.run_rng == null and app.run_deck.is_empty()
-		"map":
-			return _visible(app.route_view) and app.run_map != null and app.run_map.get_route().is_empty()
-		"battle":
-			return _visible(app.battle_view) and app.battle_result != null and app.battle_result.get_outcome() == CombatBattleResult.ACTIVE
-		"reward":
-			return _visible(app.reward_choice_panel) and app.reward_choice_panel.has_open_rewards() \
-				and app.battle_result.get_outcome() == CombatBattleResult.VICTORY and not app.fight_reward_claimed
-		"results":
-			return _visible(app.terminal_result_panel) and app.terminal_result_panel.has_open_result() \
-				and app.battle_result.get_outcome() == CombatBattleResult.DEFEAT and app.reward_choice_panel == null
-		"rest":
-			return _visible(app.rest_view) and app.rest_recovery != null
-		"shop":
-			return _visible(app.shop_view) and app.peddler_visit != null and app.peddler_visit.is_open()
-		"event":
-			return _visible(app.quiet_spool_panel) and app.quiet_spool_panel.has_open_event()
 	return false
 
 

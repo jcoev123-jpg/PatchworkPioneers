@@ -51,7 +51,7 @@ func _menu_layout(app: Node, expected: Array) -> void:
 		_check(rect.size.y == 56, button.text + " keeps the original compact hit height")
 		previous = rect
 		_menu_surface(button)
-	for button in [app.route_button, app.stitched_fight_button]:
+	for button in [app.stitched_fight_button]:
 		_check(not button.is_visible_in_tree() and button.disabled and button.focus_mode == Control.FOCUS_NONE
 			and button.pressed.get_connections().is_empty(), "retired action is hidden and inert")
 
