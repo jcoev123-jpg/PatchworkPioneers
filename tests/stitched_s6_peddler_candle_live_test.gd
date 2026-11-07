@@ -49,14 +49,22 @@ func _admit(app: Node) -> StitchedBattleScreen:
 	return app.stitched_fight_view
 
 
+## Deterministic mounted line. While the Scissor Crab has not yet landed the Pinch
+## from its round-three authored rotation the party only strikes non-crab foes,
+## mends and otherwise passes, so the real Bleed witness can appear; afterwards it
+## finishes the fight legally before that Bleed expires.
 func _victory(stage: StitchedBattleScreen) -> Dictionary:
 	if stage == null or stage.battle == null or not stage.battle.is_valid():
 		return {}
 	var actions := 0
 	var abilities := 0
+	var pinch_hit_round := 0
 	for turn in range(200):
 		if stage.battle.is_over() or stage.battle.current_side() != "hero":
 			break
+		var round_now := stage.battle.round_number()
+		var seen := stage.receipts.size()
+		var hold := round_now <= 3 and pinch_hit_round < 3
 		var actor: Dictionary = stage.battle.get_unit(stage.battle.current_actor_id())
 		var high := -10000
 		var part := ""
@@ -75,6 +83,8 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 				if str(skill.get("kind", "")) == "heal" and bool(skill.get("multi", false)):
 					weight = 100
 				elif str(legal[0]["side"]) == "foe":
+					if hold and _only_crab_targets(legal):
+						continue
 					weight = int(skill.get("dmg", [0, 0])[1]) * 4 \
 						+ int(skill.get("dmg", [0, 0])[0])
 				elif str(skill.get("kind", "")) == "heal":
@@ -96,8 +106,24 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		if result.get("ok") != true:
 			break
 		actions += 1
+		for index in range(seen, stage.receipts.size()):
+			var action: Dictionary = stage.receipts[index]
+			if str(action.get("actor", "")) != "scissor_crab" \
+					or str(action.get("ability", "")) != "pinch":
+				continue
+			for impact in action.get("results", []):
+				if bool(impact.get("hit", false)):
+					pinch_hit_round = round_now
 	return {"outcome": stage.battle.outcome(), "actions": actions,
 		"abilities": abilities}
+
+
+## A hold-phase strike is skipped when the Scissor Crab is all it could touch.
+func _only_crab_targets(legal: Array) -> bool:
+	for target in legal:
+		if str(target.get("id", "")) != "scissor_crab":
+			return false
+	return not legal.is_empty()
 
 
 ## An unwon Fight never earns the Peddler. Extra real aborted entries burn

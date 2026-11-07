@@ -1310,6 +1310,9 @@ func _resolve_ability(
 	for target in targets:
 		if str(target["side"]) == "foe" and (bool(target["dead"]) or int(target["hp"]) <= 0):
 			continue
+		# A prior hit may have lost another hero through the shared FRAY cascade.
+		if str(target["side"]) == "hero" and bool(target["lost"]):
+			continue
 		results.append(_resolve_single(actor, ability, target))
 	var receipt := {
 		"ok": true,
