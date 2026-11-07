@@ -57,6 +57,33 @@ const CROW_LEGS := {
 		"tier3": {"dmg": [7, 10], "mark_damage": 7, "effects": {"mark": 3}},
 	},
 }
+## Seven of the eight Scarecrow parts must keep their authored records; the only data change
+## is the tier-III Sack Glare target override. Crow Dive, Crow Peck and Crow Flock are pinned
+## by CROW_LEGS and _test_leg_rank4_data, so this table pins the remaining five siblings.
+const SIBLING_PARTS := {
+	"scarecrow_arms_fork_jab": {
+		"slot": "arms", "stat": {"dmg": 1}, "launch": [1, 2], "target": [1, 2],
+		"target_side": "enemy", "multi": false, "acc": 93, "dmg": [4, 6], "crit": 3,
+		"effects": {"bleed": 1}, "move": "attack",
+	},
+	"scarecrow_torso_straw_padding": {
+		"slot": "torso", "stat": {"max_hp": 6, "prot": 3}, "launch": [1, 2, 3],
+		"target": [1, 2, 3, 4], "target_side": "ally", "multi": false, "acc": 100,
+		"dmg": [0, 0], "crit": 0, "effects": {"guard": 2}, "move": "guard",
+	},
+	"scarecrow_arms_harvest_fright": {
+		"slot": "arms", "stat": {"dmg": 2}, "launch": [1, 2, 3], "target": [1, 2, 3],
+		"target_side": "enemy", "multi": true, "acc": 88, "dmg": [2, 4], "crit": 0,
+		"effects": {"weak": 2}, "move": "attack2",
+	},
+	"scarecrow_torso_straw_wrap": {
+		"slot": "torso", "stat": {"max_hp": 5, "prot": 4}, "launch": [1, 2, 3],
+		"target": [1, 2, 3, 4], "target_side": "ally", "multi": false, "acc": 100,
+		"dmg": [0, 0], "crit": 0, "effects": {"dodge": 6, "duration": 2}, "move": "guard",
+	},
+}
+const SACK_GLARE_TEXT := "A sack-faced glare Weakens and Marks a foe in enemy ranks 1-3; " \
+	+ "at stitch tier III it reaches rank 4."
 var failures: Array[String] = []
 var checks := 0
 
@@ -68,8 +95,10 @@ func _initialize() -> void:
 	_test_guard_and_dodge()
 	_test_mark_damage()
 	_test_leg_rank4_data()
+	_test_sack_glare_rank4_data()
 	_test_rank4_crows()
 	_test_rank4_crow_flock()
+	_test_sack_glare_rank4()
 	_test_rejections()
 	_test_replay()
 	for failure in failures:
@@ -577,6 +606,117 @@ func _test_leg_rank4_data() -> void:
 				"AC1: %s tier %d keeps its authored damage, mark_damage and effects" % [id, tier])
 
 
+## AC1, the task data contract: Sack Glare keeps every authored field except one new tier-III
+## target override. Tiers I and II stay enemy ranks 1-3 with a rank-four-excluding mask; tier
+## III resolves enemy ranks 1-4 with the full mask. Its stat, launch, single-target shape,
+## accuracy, zero damage and Weak/Mark magnitudes never change, and the seven sibling parts
+## keep their authored records.
+func _test_sack_glare_rank4_data() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"][STARTERS["head"]]
+	var base: Dictionary = part["ability"]
+	_check(str(part["name"]) == "Sack Glare" and str(part["slot"]) == "head"
+		and str(part["owner"]) == "scarecrow" and part["stat"] == {"acc": 4},
+		"AC1: Sack Glare keeps its head slot, owner and acc stat")
+	_check(str(base["id"]) == "scarecrow_head_sack_glare_move"
+		and str(base["name"]) == "Sack Glare" and str(base["kind"]) == "debuff"
+		and str(base["target_side"]) == "enemy" and not bool(base["multi"])
+		and int(base["acc"]) == 92 and base["dmg"] == [0, 0] and int(base["crit"]) == 0
+		and int(base["self_move"]) == 0 and str(base["move"]) == "skill",
+		"AC1: Sack Glare keeps its authored single-target enemy debuff, ACC and skill pose")
+	var front_mask := StitchedParts.rank_mask([1, 2, 3])
+	_check(front_mask == 0b1110 and front_mask != StitchedParts.ALL_RANKS_MASK,
+		"AC1: enemy ranks 1-3 form a mask that excludes rank 4")
+	_check(base["target"] == [1, 2, 3] and int(base["target_mask"]) == front_mask
+		and StitchedParts.ranks_allowed(int(base["target_mask"]), 3)
+		and not StitchedParts.ranks_allowed(int(base["target_mask"]), 4),
+		"AC1: Sack Glare base target stays enemy ranks 1-3")
+	for tier in [1, 2]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
+			"AC1: Sack Glare tier %d resolves as a validated ability" % tier)
+		_check(ability["target"] == [1, 2, 3]
+			and int(ability["target_mask"]) == front_mask
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 1)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 2)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 3)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 4)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 0)
+			and not StitchedParts.ranks_allowed(int(ability["target_mask"]), 5),
+			"AC1: Sack Glare tier %d still targets enemy ranks 1-3 only" % tier)
+		_check(ability["launch"] == [1, 2, 3]
+			and int(ability["launch_mask"]) == front_mask
+			and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 4),
+			"AC1: Sack Glare tier %d keeps its hero rank 1-3 launch" % tier)
+		_check(ability["effects"] == {"weak": tier, "mark": 2},
+			"AC1: Sack Glare tier %d keeps its authored Weak and Mark" % tier)
+		_check(str(ability["kind"]) == "debuff" and not bool(ability["multi"])
+			and int(ability["acc"]) == 92 and ability["dmg"] == [0, 0]
+			and int(ability["crit"]) == 0 and str(ability["move"]) == "skill",
+			"AC1: Sack Glare tier %d keeps its single-target accuracy, damage and pose" % tier)
+	_check(part["tiers"]["2"]["ability"].get("effects") == {"weak": 2, "mark": 2},
+		"AC1: the tier-II override keeps Weak 2/Mark 2")
+	# The loaded catalog normalises every tier into a full merged ability, so the authored
+	# override shape itself is checked against the raw JSON: only tier III gains a target list.
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	var raw_part: Dictionary = {}
+	if raw is Dictionary and raw.get("parts") is Array:
+		for entry in raw["parts"]:
+			if entry is Dictionary and str(entry.get("id", "")) == STARTERS["head"]:
+				raw_part = entry
+	_check(not raw_part.is_empty(), "AC1: the raw Sack Glare JSON entry is readable")
+	if not raw_part.is_empty():
+		var raw_tiers: Dictionary = raw_part.get("tiers", {})
+		var raw_tier2: Dictionary = raw_tiers.get("2", {}).get("ability", {})
+		var raw_tier3: Dictionary = raw_tiers.get("3", {}).get("ability", {})
+		_check(_int_ranks(raw_part["ability"]["target"]) == [1, 2, 3],
+			"AC1: the authored base ability keeps enemy ranks 1-3")
+		_check(not raw_tier2.has("target")
+			and raw_tier2.keys().size() == 1 and raw_tier2.has("effects"),
+			"AC1: the authored tier-II override adds no target reach")
+		_check(_int_ranks(raw_tier3.get("target")) == [1, 2, 3, 4]
+			and _int_effects(raw_tier3.get("effects")) == {"weak": 3, "mark": 3}
+			and raw_tier3.keys().size() == 2,
+			"AC1: the authored tier-III override adds only the enemy rank 1-4 target list")
+	var tier3: Dictionary = StitchedParts.ability_at_tier(part, 3)
+	_check(part["tiers"]["3"]["ability"]["target"] == [1, 2, 3, 4],
+		"AC1: only the tier-III override authors the enemy rank 1-4 target list")
+	_check(bool(StitchedParts.validate_ability(tier3).get("ok", false)),
+		"AC1: Sack Glare tier III resolves as a validated ability")
+	_check(tier3["target"] == [1, 2, 3, 4]
+		and int(tier3["target_mask"]) == StitchedParts.ALL_RANKS_MASK
+		and StitchedParts.ranks_allowed(int(tier3["target_mask"]), 4)
+		and StitchedParts.ranks_allowed(int(tier3["target_mask"]), 1)
+		and not StitchedParts.ranks_allowed(int(tier3["target_mask"]), 0)
+		and not StitchedParts.ranks_allowed(int(tier3["target_mask"]), 5),
+		"AC1: Sack Glare tier III targets enemy ranks 1-4 and never 0 or 5")
+	_check(tier3["launch"] == [1, 2, 3] and int(tier3["launch_mask"]) == front_mask
+		and not StitchedParts.ranks_allowed(int(tier3["launch_mask"]), 4),
+		"AC1: Sack Glare tier III still launches only from hero ranks 1-3")
+	_check(tier3["effects"] == {"weak": 3, "mark": 3},
+		"AC1: Sack Glare tier III keeps Weak 3 and Mark 3")
+	_check(str(tier3["kind"]) == "debuff" and not bool(tier3["multi"])
+		and int(tier3["acc"]) == 92 and tier3["dmg"] == [0, 0]
+		and int(tier3["crit"]) == 0 and str(tier3["move"]) == "skill",
+		"AC1: Sack Glare tier III keeps its single-target accuracy, zero damage and pose")
+	_check(base["target"] == [1, 2, 3] and base["effects"] == {"weak": 1, "mark": 2}
+		and int(base["target_mask"]) == front_mask,
+		"AC1: tier reads never replace Sack Glare's authored base reach or potency")
+	_check(str(part["text"]) == SACK_GLARE_TEXT,
+		"AC1: Sack Glare text states its front-three reach and the tier-III rank-four unlock")
+	for id in SIBLING_PARTS:
+		var sibling: Dictionary = cat["by_id"][id]
+		var spec: Dictionary = SIBLING_PARTS[id]
+		var sibling_base: Dictionary = sibling["ability"]
+		_check(str(sibling["slot"]) == str(spec["slot"]) and sibling["stat"] == spec["stat"],
+			"AC1: seven sibling parts keep slot and stat: " + id)
+		for key in ["launch", "target", "target_side", "multi", "acc", "dmg", "crit", "effects", "move"]:
+			_check(sibling_base[key] == spec[key],
+				"AC1: seven sibling parts keep authored %s: %s" % [str(key), id])
+
+
 ## The shipped preview with only an in-memory rank swap: Scarecrow leaves index 1 and appends
 ## behind the three preview companions, so he genuinely stands in allied rank 4.
 func _rank4_config(selected: String = "", tier: int = 1, seed_value: int = 501041) -> Dictionary:
@@ -973,6 +1113,175 @@ func _test_rank4_crow_flock() -> void:
 		break
 	_check(witnessed,
 		"AC2: a real seeded rank-4 Crow Flock Weakens and Marks every living foe at ranks 1, 2 and 4")
+
+
+## AC2/AC3, the task goal: the shipped 4v3 preview with only the existing Moth Scribe moved to
+## enemy rank 4 (rank 3 left empty). Scarecrow keeps his real rank-2 turn and casts tier-III
+## Sack Glare at rank 4: one Moth Scribe receipt, Weak 3 and Mark 3 in the receipt, no direct
+## damage, the other two foes untouched, the turn spent, and the same seed/action replays to an
+## identical receipt, snapshot and RNG. Tiers I/II refuse that same occupied rank 4, a tier-III
+## vacant rank 4 and a rank-4 hero launch refuse without spending anything, and a seeded miss
+## applies neither status.
+func _test_sack_glare_rank4() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var ability := StitchedParts.ability_at_tier(cat["by_id"][STARTERS["head"]], 3)
+	var setup := _rank4_foe_battle(501700, STARTERS["head"], 3)
+	_check(setup != null, "AC2: genuine occupied-rank-4 Sack Glare battle builds")
+	if setup != null:
+		var heroes: Array = setup.get_heroes()
+		var foes: Array = setup.get_foes()
+		_check(heroes.size() == 4 and foes.size() == 3,
+			"AC2: occupied-rank-4 Sack Glare keeps four real heroes and the three S2 foes")
+		var scarecrow := setup.get_unit("scarecrow")
+		_check(int(scarecrow.get("rank", -1)) == 2
+			and str(scarecrow.get("parts", {}).get("head", {}).get("id", "")) == STARTERS["head"]
+			and int(scarecrow.get("parts", {}).get("head", {}).get("tier", 0)) == 3,
+			"AC2: Scarecrow keeps his real rank 2 wearing tier-III Sack Glare")
+		_check(int(setup.get_unit("moth_scribe")["rank"]) == 4
+			and int(setup.get_unit("fray_scavenger")["rank"]) == 1
+			and int(setup.get_unit("scissor_crab")["rank"]) == 2,
+			"AC2: only the existing Moth Scribe moves to occupied enemy rank 4")
+		_check(foes.all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: the Moth Scribe's former enemy rank 3 stays vacant")
+		for id in ENEMY_IDS:
+			_check(not setup.get_unit(id).is_empty(), "AC2: actual shipped foe retained: " + id)
+	var b := _rank4_foe_battle(501700, STARTERS["head"], 3)
+	if b == null or not _to(b, "scarecrow"):
+		_check(false, "AC2: tier-III Sack Glare rank-4 witness receives Scarecrow's actual turn")
+	else:
+		var before := b.state_snapshot()
+		var scribe_before := b.get_unit("moth_scribe")
+		var scavenger_before := b.get_unit("fray_scavenger")
+		var crab_before := b.get_unit("scissor_crab")
+		var cast := b.use_part(STARTERS["head"], 4)
+		var after := b.state_snapshot()
+		var receipts: Array = cast.get("results", [])
+		_check(bool(cast.get("ok", false)) and str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "scarecrow"
+			and str(cast.get("part", "")) == STARTERS["head"]
+			and str(cast.get("ability", "")) == str(ability["id"]),
+			"AC2: tier-III Sack Glare runs as the equipped Scarecrow head at target rank 4")
+		_check(receipts.size() == 1 and str(cast.get("target", "")) == "moth_scribe"
+			and str(receipts[0].get("target", "")) == "moth_scribe"
+			and str(receipts[0].get("target_side", "")) == "foe"
+			and int(receipts[0].get("target_rank", 0)) == 4,
+			"AC2: the rank-4 cast resolves exactly one receipt on the real Moth Scribe")
+		if receipts.size() == 1:
+			var hit: Dictionary = receipts[0]
+			_check(bool(hit.get("hit", false)),
+				"AC2: the chosen seed lands the tier-III rank-4 Sack Glare (seed 501700)")
+			_check(int(hit.get("damage", -1)) == 0
+				and int(hit.get("target_hp", -1)) == int(scribe_before.get("hp", 0))
+				and int(b.get_unit("moth_scribe")["hp"]) == int(scribe_before.get("hp", 0)),
+				"AC2: the pure debuff deals no direct damage to the Moth Scribe")
+			_check(_status_amount(hit.get("statuses", []), "weak") == 3
+				and _status_amount(hit.get("statuses", []), "mark") == 3,
+				"AC2: the hit receipt carries the full authored Weak 3 and Mark 3")
+			# The struck foe may start its own turn before control returns, so a countdown-ticked
+			# 2 is as legitimate as an untouched 3; only the receipt must show the authored 3.
+			var scribe_after := b.get_unit("moth_scribe")
+			var weak_state := int(scribe_after["statuses"].get("weak", 0))
+			var mark_state := int(scribe_after["statuses"].get("mark", 0))
+			_check(weak_state >= 2 and weak_state <= 3 and mark_state >= 2 and mark_state <= 3,
+				"AC2: the Moth Scribe keeps its landed Weak and Mark in real battle state")
+			_check(b.get_unit("fray_scavenger") == scavenger_before
+				and b.get_unit("scissor_crab") == crab_before,
+				"AC2: the other two foes stay completely unchanged")
+			_check(int(after["round"]) != int(before["round"])
+				or int(after["turn_index"]) != int(before["turn_index"]),
+				"AC2: the legal rank-4 cast spends Scarecrow's genuine turn")
+			var replay := _rank4_foe_battle(501700, STARTERS["head"], 3)
+			var replayed := {}
+			if replay != null and _to(replay, "scarecrow"):
+				replayed = replay.use_part(STARTERS["head"], 4)
+			_check(not replayed.is_empty() and replayed == cast
+				and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"AC2: the same seed and action replay receipt, snapshot and RNG exactly")
+	# AC3: the unchanged front-three tiers refuse the now-occupied enemy rank 4, and the
+	# tier-III mask still refuses a vacant one, without spending Scarecrow's turn.
+	for tier in [1, 2]:
+		var front := _rank4_foe_battle(501800, STARTERS["head"], tier)
+		_check(front != null, "AC3: genuine occupied-rank-4 tier-%d Sack Glare battle builds" % tier)
+		if front == null:
+			continue
+		_check(int(front.get_unit("moth_scribe")["rank"]) == 4
+			and int(front.get_unit("scarecrow")["rank"]) == 2,
+			"AC3: tier-%d witness keeps a real rank-4 foe and a rank-2 Scarecrow" % tier)
+		if _to(front, "scarecrow"):
+			_reject_without_spend(front, STARTERS["head"], 4,
+				"Sack Glare tier %d rejects the occupied enemy rank 4" % tier)
+		else:
+			_check(false, "AC3: Sack Glare tier-%d rejection receives a real Scarecrow turn" % tier)
+	var empty := _battle(STARTERS["head"], 3, 501840)
+	_check(empty != null, "AC3: unaltered three-foe preview builds for tier-III Sack Glare")
+	if empty != null:
+		_check(empty.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+			"AC3: unaltered preview leaves enemy rank 4 genuinely vacant")
+		if _to(empty, "scarecrow"):
+			_reject_without_spend(empty, STARTERS["head"], 4,
+				"Sack Glare tier III rejects the vacant enemy rank 4")
+		else:
+			_check(false, "AC3: vacant-rank-4 rejection receives a real Scarecrow turn")
+	var vanguard := _rank4_battle(STARTERS["head"], 3, 501880)
+	_check(vanguard != null, "AC3: genuine rank-4 Scarecrow battle builds for Sack Glare")
+	if vanguard != null:
+		_check(int(vanguard.get_unit("scarecrow")["rank"]) == 4,
+			"AC3: the rank-4 launch witness really stands in hero rank 4")
+		if _to(vanguard, "scarecrow"):
+			_reject_without_spend(vanguard, STARTERS["head"], 1,
+				"Sack Glare tier III cannot launch from hero rank 4")
+		else:
+			_check(false, "AC3: rank-4 launch gate receives an actual scheduled turn")
+	# AC3: a seeded miss at the same tier-III rank-4 cast applies neither Weak nor Mark.
+	var miss := _rank4_foe_battle(501910, STARTERS["head"], 3)
+	if miss == null or not _to(miss, "scarecrow"):
+		_check(false, "AC3: seeded Sack Glare miss witness receives a real Scarecrow turn")
+	else:
+		var miss_before := miss.state_snapshot()
+		var miss_scribe := miss.get_unit("moth_scribe")
+		var miss_cast := miss.use_part(STARTERS["head"], 4)
+		var miss_after := miss.state_snapshot()
+		var miss_receipts: Array = miss_cast.get("results", [])
+		_check(bool(miss_cast.get("ok", false)) and miss_receipts.size() == 1
+			and str(miss_receipts[0].get("target", "")) == "moth_scribe"
+			and int(miss_receipts[0].get("target_rank", 0)) == 4,
+			"AC3: the seeded rank-4 Sack Glare still resolves one Moth Scribe receipt")
+		if miss_receipts.size() == 1:
+			var miss_hit: Dictionary = miss_receipts[0]
+			_check(not bool(miss_hit.get("hit", false)),
+				"AC3: the chosen seed genuinely misses (seed 501910)")
+			_check(miss_hit.get("statuses", []).is_empty()
+				and miss.get_unit("moth_scribe")["statuses"].get("weak", 0) == 0
+				and miss.get_unit("moth_scribe")["statuses"].get("mark", 0) == 0,
+				"AC3: a seeded miss applies neither Weak nor Mark in receipt or state")
+			_check(int(miss_hit.get("damage", -1)) == 0
+				and int(miss.get_unit("moth_scribe")["hp"]) == int(miss_scribe.get("hp", 0)),
+				"AC3: a seeded miss deals no damage to the Moth Scribe")
+			_check(int(miss_after["round"]) != int(miss_before["round"])
+				or int(miss_after["turn_index"]) != int(miss_before["turn_index"]),
+				"AC3: the legal but missing cast still spends Scarecrow's turn")
+
+
+## Raw JSON numbers parse as floats, so authored override values are compared as ints.
+func _int_ranks(value: Variant) -> Array:
+	var ranks: Array = []
+	if not value is Array:
+		return ranks
+	for item in value:
+		ranks.append(int(item))
+	return ranks
+
+
+func _int_effects(value: Variant) -> Dictionary:
+	var effects := {}
+	if not value is Dictionary:
+		return effects
+	for key in value:
+		effects[str(key)] = int(value[key])
+	return effects
 
 
 func _status_amount(statuses: Array, key: String) -> int:
