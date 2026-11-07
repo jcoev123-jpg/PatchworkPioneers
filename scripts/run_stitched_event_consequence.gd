@@ -356,30 +356,37 @@ func post_settlement_fear_observations(
 		return empty_result
 	var opening_party: Array = parsed_snap["snapshot"]["party"]
 
-	# Verify opening party matches claimed snapshot if available
-	if not _claimed_snapshot.is_empty() and _claimed_snapshot.has("party"):
-		var claimed_party: Array = _claimed_snapshot["party"]
-		if opening_party.size() != claimed_party.size():
+	# Verify opening party matches captured claimed snapshot (including id, fray, lost and order)
+	if _claimed_snapshot.is_empty() or not _claimed_snapshot.has("party"):
+		return empty_result
+	var claimed_party: Array = _claimed_snapshot["party"]
+	if opening_party.size() != claimed_party.size():
+		return empty_result
+	for i in range(opening_party.size()):
+		var op_entry: Dictionary = opening_party[i]
+		var cp_entry: Dictionary = claimed_party[i]
+		if str(op_entry.get("id", "")) != str(cp_entry.get("id", "")):
 			return empty_result
-		for i in range(opening_party.size()):
-			if opening_party[i]["id"] != claimed_party[i]["id"]:
-				return empty_result
+		if int(op_entry.get("fray", -1)) != int(cp_entry.get("fray", -1)):
+			return empty_result
+		if bool(op_entry.get("lost", false)) != bool(cp_entry.get("lost", false)):
+			return empty_result
 
 	var parsed_after: Dictionary = _parse_after_roster(after_roster)
 	if not bool(parsed_after.get("ok", false)):
 		return empty_result
 	var after_by_id: Dictionary = parsed_after["by_id"]
 
-	if after_by_id.size() != opening_party.size():
+	if after_by_id.size() != claimed_party.size():
 		return empty_result
-	for hero in opening_party:
+	for hero in claimed_party:
 		if not after_by_id.has(hero["id"]):
 			return empty_result
 
 	if target == TARGET_HERO:
 		var target_hero: String = str(receipt_dict.get("hero_id", ""))
 		var found_active := false
-		for hero in opening_party:
+		for hero in claimed_party:
 			if hero["id"] == target_hero and not bool(hero.get("lost", false)):
 				found_active = true
 				break
@@ -387,9 +394,9 @@ func post_settlement_fear_observations(
 			return empty_result
 
 	var observations: Array[Dictionary] = []
-	for opening_hero in opening_party:
-		var hero_id: String = opening_hero["id"]
-		if bool(opening_hero.get("lost", false)):
+	for hero_entry in claimed_party:
+		var hero_id: String = hero_entry["id"]
+		if bool(hero_entry.get("lost", false)):
 			continue
 		var after_hero: Dictionary = after_by_id[hero_id]
 		if bool(after_hero.get("lost", false)):
@@ -404,7 +411,7 @@ func post_settlement_fear_observations(
 		if intended_fray <= 0:
 			continue
 
-		var before_fray: int = int(opening_hero["fray"])
+		var before_fray: int = int(hero_entry["fray"])
 		var after_fray: int = int(after_hero["fray"])
 		var actual_gain: int = after_fray - before_fray
 		if actual_gain >= FRAY_GAIN_OBSERVATION_THRESHOLD:

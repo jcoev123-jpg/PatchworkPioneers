@@ -5634,6 +5634,25 @@ func _test_kid_fear_fray_observations_ac1() -> void:
 	var obs_39: Array = svc_10.derive_fear_observations(receipt_10, snap_30, after_39)
 	_check(obs_39.is_empty(), "AC1: 30 -> 39 produces no fear observation")
 
+	# Negative three-argument assertion: valid claimed +10 receipt, authentic after-roster with 30->39,
+	# and altered supplied before-FRAY 20: require empty observations (fail closed on mismatched opening fray).
+	var snap_altered_fray_20 := _four(50, [20, 20, 20, 20])
+	var obs_altered_20: Array = svc_10.derive_fear_observations(receipt_10, snap_altered_fray_20, after_39)
+	_check(obs_altered_20.is_empty(), "AC1: altered supplied before-FRAY 20 with authentic after-roster 39 yields empty observations")
+
+	# Altered opening lost flag fails closed
+	var snap_altered_lost := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 30, "lost": true},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 20},
+			{"id": "button_golem", "fray": 20},
+		],
+	}
+	var obs_altered_lost: Array = svc_10.derive_fear_observations(receipt_10, snap_altered_lost, after_40)
+	_check(obs_altered_lost.is_empty(), "AC1: altered supplied opening lost flag fails closed and yields empty observations")
+
 	# Case 3: 30 -> 30 (0 gain) produces no observation
 	var after_same := [
 		{"id": "warden", "fray": 30},
@@ -5950,6 +5969,34 @@ func _test_kid_fear_fray_observations_ac3_negative_and_invariants() -> void:
 		{"id": "button_golem", "fray": 55},
 	]
 	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, overflow_fray_roster).is_empty(), "AC3: overflow fray in after_roster returns empty")
+
+	# Mismatched opening snapshot: altered before-fray
+	var snap_altered_fray := _four(50, [20, 30, 30, 30])
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_fray, after_valid).is_empty(), "AC3: altered fray in opening_snapshot returns empty")
+
+	# Mismatched opening snapshot: altered lost flag
+	var snap_altered_lost_ac3 := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 30, "lost": true},
+			{"id": "seamstress", "fray": 30},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_lost_ac3, after_valid).is_empty(), "AC3: altered lost flag in opening_snapshot returns empty")
+
+	# Mismatched opening snapshot: altered hero order
+	var snap_altered_order := {
+		"candle": 50,
+		"party": [
+			{"id": "seamstress", "fray": 30},
+			{"id": "warden", "fray": 30},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_order, after_valid).is_empty(), "AC3: altered order in opening_snapshot returns empty")
 
 	# 8. Deep-copy preservation and input immutability
 	var test_snap := _four(50, [30, 30, 30, 30])
