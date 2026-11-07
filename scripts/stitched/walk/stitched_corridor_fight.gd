@@ -35,6 +35,8 @@ var plates: Dictionary = {}
 var hits: Dictionary = {}
 var part_buttons: Dictionary = {}
 var more_buttons: Dictionary = {}
+## Wren's hand: four small hands at the bar's right end, the slots later gifts will fill.
+var hand_buttons: Dictionary = {}
 var more_panel: NinePatchRect
 var more_grid: GridContainer
 var more_button: Button
@@ -296,9 +298,39 @@ func _build_bar() -> void:
 	continue_button = _button("Continue", Rect2(1012, BAR_TOP + 70, 230, 40), finish)
 	continue_button.name = "Continue"
 	add_child(continue_button)
+	_build_hands()
 
 
-## The rarely needed choices live behind More: stepping, passing, fleeing and Wren's hand.
+func _build_hands() -> void:
+	var book: Dictionary = StitchedKidHandActions.catalog().get("by_id", {})
+	for index in StitchedKidHandActions.IDS.size():
+		var action_id: String = StitchedKidHandActions.IDS[index]
+		var entry: Dictionary = book.get(action_id, {})
+		var button := TextureButton.new()
+		button.name = "Hand_" + action_id
+		button.texture_normal = _texture("res://assets/paper/kid/hand_%s.png" % action_id)
+		button.ignore_texture_size = true
+		button.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
+		button.position = Vector2(1132 + (index % 2) * 60, BAR_TOP + 8 + (index / 2) * 58)
+		button.size = Vector2(56, 56)
+		button.focus_mode = Control.FOCUS_ALL
+		button.tooltip_text = "Wren: %s\n%s" % [str(entry.get("name", action_id.capitalize())), _plain(str(entry.get("text", "")))]
+		button.pressed.connect(func(): _act(engine.choose_hand_action(action_id)))
+		for hover_signal in [button.mouse_entered, button.mouse_exited, button.focus_entered, button.focus_exited]:
+			hover_signal.connect(func(): _shade_parts())
+		add_child(button)
+		hand_buttons[action_id] = button
+
+
+## Drops a closing ": -8 fray." style clause so no hidden number shows on hover.
+static func _plain(text: String) -> String:
+	var cut := text.rfind(":")
+	if cut > 0 and RegEx.create_from_string(r"\d").search(text.substr(cut)) != null:
+		return text.substr(0, cut) + "."
+	return text
+
+
+## The rarely needed choices live behind More: stepping, passing and fleeing.
 func _build_more() -> void:
 	more_panel = _felt(Rect2(880, 312, 384, 270))
 	more_panel.name = "MorePanel"
@@ -318,9 +350,6 @@ func _build_more() -> void:
 		["re_tie", "Re-tie thread", func(): _act(engine.submit_re_tie())],
 		["retreat", "Flee", func(): _act(engine.submit_retreat())],
 	]
-	var short := {"steady": "Wren: Steady", "shield_candle": "Wren: Shield", "hold_back": "Wren: Hold", "lift": "Wren: Lift"}
-	for action_id in StitchedKidHandActions.IDS:
-		actions.append([action_id, short.get(action_id, action_id), func(): _act(engine.choose_hand_action(action_id))])
 	for entry in actions:
 		add_more(entry[0], entry[1], entry[2])
 
@@ -493,8 +522,9 @@ func _refresh_bar() -> void:
 	more_buttons.pass.disabled = not hero_turn
 	more_buttons.re_tie.disabled = not cut
 	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
-	for action_id in StitchedKidHandActions.IDS:
-		more_buttons[action_id].disabled = not hand_open
+	for action_id in hand_buttons:
+		hand_buttons[action_id].disabled = not hand_open
+		hand_buttons[action_id].visible = not battle.is_over()
 	more_button.disabled = battle.is_over()
 	if battle.is_over():
 		set_more_open(false)
@@ -527,6 +557,16 @@ func _shade_parts() -> void:
 		elif button.is_hovered() or button.has_focus():
 			tone = Color(1.18, 1.08, 0.95)
 		button.modulate = tone
+	for action_id in hand_buttons:
+		var hand: TextureButton = hand_buttons[action_id]
+		var tone := Color.WHITE
+		if hand.disabled:
+			tone = Color(0.45, 0.42, 0.42, 0.85)
+		elif engine._hand_pending.begins_with(action_id):
+			tone = Color(1.35, 1.12, 0.75)
+		elif hand.is_hovered() or hand.has_focus():
+			tone = Color(1.18, 1.08, 0.95)
+		hand.modulate = tone
 
 
 ## Lit figures are the ones that matter now: the actor, legal targets, the hovered one.
@@ -700,8 +740,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	var slots := {KEY_1: "head", KEY_2: "arms", KEY_3: "torso", KEY_4: "legs"}
+	var hands := {KEY_Q: "steady", KEY_W: "shield_candle", KEY_E: "hold_back", KEY_R: "lift"}
 	if slots.has(event.keycode):
 		choose_part(slots[event.keycode])
+	elif hands.has(event.keycode):
+		if not hand_buttons[hands[event.keycode]].disabled:
+			_act(engine.choose_hand_action(hands[event.keycode]))
 	elif event.keycode == KEY_ESCAPE:
 		if more_panel.visible:
 			set_more_open(false)
