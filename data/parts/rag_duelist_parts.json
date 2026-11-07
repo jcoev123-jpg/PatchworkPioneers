@@ -51,7 +51,7 @@
         "move": "skill"
       },
       "tiers": {
-        "2": {"ability": {"effects": {"tangled": 3, "weak": 1}}},
+        "2": {"ability": {"effects": {"tangled": 3, "weak": 2}}},
         "3": {"ability": {"effects": {"tangled": 4, "weak": 2}}}
       },
       "text": "Snap a rag-tie from ranks 1-2 around one foe in ranks 1-3: Tangled, longer at each stitch tier, and also Weak at stitch tiers II and III."

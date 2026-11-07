@@ -83,7 +83,7 @@ const EXPECTED := {
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 92,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
-		"effects": [{"tangled": 2}, {"tangled": 3, "weak": 1}, {"tangled": 4, "weak": 2}],
+		"effects": [{"tangled": 2}, {"tangled": 3, "weak": 2}, {"tangled": 4, "weak": 2}],
 		"self_move": [0, 0, 0],
 	},
 	"rag_duelist_arms_rapier_lunge": {
@@ -195,6 +195,7 @@ func _initialize() -> void:
 	_test_dodge()
 	_test_cape_slip_rank_four()
 	_test_status_ticks()
+	_test_snare_weak_reply()
 	_test_lunge_mark_payoff()
 	_test_live_rejections()
 	_test_determinism()
@@ -392,8 +393,13 @@ func _test_tiers() -> void:
 				if str(key) == "duration":
 					_check(int(effects[key]) == 1, "AC1: " + part_id + " keeps the one-turn dodge duration")
 					continue
-				_check(int(effects[key]) > int(previous_effects.get(key, 0)),
-					"AC1: %s %s rises with each stitch tier" % [part_id, str(key)])
+				var last := int(previous_effects.get(key, 0))
+				var now := int(effects[key])
+				# Snare tier III retains the new tier-II Weak 2; all other effects still grow.
+				var snare_weak_plateau: bool = part_id == "rag_duelist_head_tattered_snare" \
+					and str(key) == "weak" and tier == 3 and last == 2 and now == 2
+				_check(now > last or snare_weak_plateau,
+					"AC1: %s %s grows at its next tier or keeps the authored Snare Weak 2 plateau" % [part_id, str(key)])
 			_check(dmg != previous_dmg or effects != previous_effects,
 				"AC1: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_dmg = dmg
@@ -1316,6 +1322,101 @@ func _test_cape_slip_rank_four() -> void:
 			"AC4: " + tag + " replays its receipt, state and RNG exactly")
 
 
+## AC2: exercise the real foe reply, not just the countdown icon. Two battles run the
+## same seeded actions; only the control fixture's Weak status is erased after the foe's
+## start-of-turn tick. This isolates Weak's actual damage reduction without changing rules.
+func _test_snare_weak_reply() -> void:
+	var snare_id := str(ALTERNATE_PARTS["head"])
+	var witnessed := false
+	for seed_value in range(1, 120):
+		var kit := _kit_for(snare_id)
+		var weakened := _build_battle(seed_value, 2, kit, 0, false)
+		var control := _build_battle(seed_value, 2, kit, 0, false)
+		if weakened == null or control == null:
+			continue
+		var initial_foe := weakened.get_unit(FRAY_SCAVENGER)
+		if weakened.current_actor_id() != OWNER or control.current_actor_id() != OWNER \
+				or initial_foe.is_empty() or int(initial_foe.get("hp", 0)) <= 0 \
+				or int(initial_foe.get("rank", 0)) != 1:
+			continue
+		var cast := weakened.use_part(snare_id, 1)
+		var control_cast := control.use_part(snare_id, 1)
+		if not bool(cast.get("ok", false)) or cast.get("results", []).is_empty() \
+				or cast != control_cast or weakened.state_snapshot() != control.state_snapshot():
+			continue
+		var snare_hit: Dictionary = cast["results"][0]
+		if not bool(snare_hit.get("hit", false)) \
+				or str(snare_hit.get("target", "")) != FRAY_SCAVENGER:
+			continue
+		var landed_foe := weakened.get_unit(FRAY_SCAVENGER)
+		if int(landed_foe["statuses"].get("weak", 0)) != 2 \
+				or int(landed_foe["statuses"].get("tangled", 0)) != 3:
+			continue
+		if not _to(weakened, FRAY_SCAVENGER) or not _to(control, FRAY_SCAVENGER):
+			continue
+		var foe := weakened.get_unit(FRAY_SCAVENGER)
+		if int(foe.get("hp", 0)) <= 0 or int(foe.get("rank", 0)) != 1 \
+				or int(foe["statuses"].get("weak", 0)) != 1:
+			continue
+		# The two fixtures are identical before the control-only status removal.
+		if weakened.state_snapshot() != control.state_snapshot():
+			continue
+		var rng_before := weakened.rng_state()
+		var expected_without_weak := weakened.state_snapshot()
+		for unit in expected_without_weak["units"]:
+			if str(unit["id"]) == FRAY_SCAVENGER:
+				unit["statuses"].erase("weak")
+		# This is the ONLY fixture mutation: no target, roll, stats, or turn is altered.
+		var control_statuses: Dictionary = control._units[FRAY_SCAVENGER]["statuses"]
+		control_statuses.erase("weak")
+		var only_weak_differs := control.state_snapshot() == expected_without_weak
+		var control_rng_before := control.rng_state()
+		if not only_weak_differs or control_rng_before != rng_before:
+			continue
+		var weak_reply := weakened.use_foe_ability("sack_swing", 1)
+		var plain_reply := control.use_foe_ability("sack_swing", 1)
+		if not bool(weak_reply.get("ok", false)) or not bool(plain_reply.get("ok", false)) \
+				or weak_reply.get("results", []).is_empty() or plain_reply.get("results", []).is_empty():
+			continue
+		var weak_hit: Dictionary = weak_reply["results"][0]
+		var plain_hit: Dictionary = plain_reply["results"][0]
+		if not bool(weak_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)) \
+				or str(weak_hit.get("target", "")) != OWNER \
+				or str(plain_hit.get("target", "")) != OWNER:
+			continue
+		witnessed = true
+		_check(str(cast.get("actor", "")) == OWNER and str(cast.get("part", "")) == snare_id,
+			"AC2: a real equipped tier-II Snare was cast by the living Duelist")
+		_check(int(snare_hit.get("damage", -1)) == 0 and int(landed_foe["hp"]) == int(initial_foe["hp"]),
+			"AC2: the landed Snare does not directly damage the living rank-1 foe")
+		_check(int(landed_foe["statuses"].get("weak", 0)) == 2 \
+			and int(landed_foe["statuses"].get("tangled", 0)) == 3,
+			"AC2: the tier-II hit really lands Weak 2 and Tangled 3")
+		_check(int(foe["statuses"].get("weak", 0)) == 1 and weakened.current_actor_id() != FRAY_SCAVENGER,
+			"AC2: Weak 1 survived the foe's real turn start and the foe used its turn")
+		_check(only_weak_differs and rng_before == control_rng_before,
+			"AC2: the seeded control differed only by removal of Weak, not state or RNG")
+		_check(str(weak_reply.get("actor", "")) == FRAY_SCAVENGER \
+			and str(plain_reply.get("actor", "")) == FRAY_SCAVENGER \
+			and str(weak_reply.get("ability", "")) == "sack_swing" \
+			and str(plain_reply.get("ability", "")) == "sack_swing",
+			"AC2: the legally scheduled living foe uses the same real Sack Swing in both runs")
+		_check(int(weak_hit.get("damage", 0)) > 0 \
+			and int(weak_hit.get("damage", 0)) < int(plain_hit.get("damage", 0)),
+			"AC2: landed Weak reduces real Sack Swing damage against the seeded control")
+		_check(weakened.rng_state() == control.rng_state(),
+			"AC2: both same-seed foe attacks consume identical RNG")
+		var next_turn := _to(weakened, FRAY_SCAVENGER)
+		_check(next_turn, "AC2: the Snared foe reaches its following real turn without reapplication")
+		if next_turn:
+			var expired := weakened.get_unit(FRAY_SCAVENGER)
+			_check(int(expired.get("hp", 0)) > 0 and int(expired["statuses"].get("weak", 0)) == 0 \
+				and not expired["statuses"].has("weak"),
+				"AC2: Weak expires at the following foe turn, without a new Snare")
+		break
+	_check(witnessed, "AC2: a bounded same-seed live Snare/Sack Swing pair must land and expose Weak's damage reduction")
+
+
 # ---------------------------------------------------------------- AC2: statuses tick in play
 
 func _test_status_ticks() -> void:
@@ -1323,7 +1424,7 @@ func _test_status_ticks() -> void:
 	## Authored tier ladder: Tangled rises each tier, Weak only appears from tier II.
 	var snare_ladder := [
 		{"landed": {"tangled": 2, "weak": 0}, "after": {"tangled": 1, "weak": 0}},
-		{"landed": {"tangled": 3, "weak": 1}, "after": {"tangled": 2, "weak": 0}},
+		{"landed": {"tangled": 3, "weak": 2}, "after": {"tangled": 2, "weak": 1}},
 		{"landed": {"tangled": 4, "weak": 2}, "after": {"tangled": 3, "weak": 1}},
 	]
 	for tier in [1, 2, 3]:
