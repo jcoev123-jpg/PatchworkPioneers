@@ -121,10 +121,10 @@ func _run() -> void:
 		_check(button.theme_type_variation == "PatchHeadingButton"
 			and (button.get_theme_font("font") as Font).resource_path == shell.HEADING_FONT,
 			"title action uses the master Londrina heading button font: " + button.text)
-		_check(button.get_theme_color("font_color") == shared.get_color("font_color", "Button")
-			and button.get_theme_color("font_hover_color") == shared.get_color("font_hover_color", "Button")
-			and button.get_theme_color("font_pressed_color") == shared.get_color("font_pressed_color", "Button"),
-			"title action keeps inherited gothic text color in every state: " + button.text)
+		_check(button.get_theme_color("font_color").is_equal_approx(Color("f5e7cb"))
+			and button.get_theme_color("font_hover_color").is_equal_approx(Color("f5e7cb"))
+			and button.get_theme_color("font_pressed_color").is_equal_approx(Color("f5e7cb")),
+			"title action keeps pale gothic text over authored fabric in every state: " + button.text)
 	_check((shared.get_stylebox("panel", "Panel") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_OXBLOOD)
 		and (shared.get_stylebox("panel", "PanelContainer") as StyleBoxFlat).bg_color.is_equal_approx(GOTHIC_UMBER),
 		"shared Theme supplies contrasting gothic oxblood and umber surfaces")
@@ -311,10 +311,12 @@ func _run() -> void:
 	for button in [app.start_button, app.stitched_continue_button, app.base_button]:
 		_check(button.get_child_count() == 1 and button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 			"title stitches cannot block original button")
-	_check(app.base_button.get_theme_stylebox("normal") == shared.get_stylebox("normal", "Button")
-		and app.base_button.get_theme_stylebox("hover") == shared.get_stylebox("hover", "Button")
-		and app.base_button.get_theme_stylebox("focus") == shared.get_stylebox("focus", "Button"),
-		"third title action shares the sewn button theme")
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var room_skin := app.base_button.get_theme_stylebox(state) as StyleBoxTexture
+		var start_skin := app.start_button.get_theme_stylebox(state) as StyleBoxTexture
+		_check(room_skin != null and start_skin != null and room_skin.texture != null
+			and room_skin.texture == start_skin.texture and room_skin.modulate_color == start_skin.modulate_color,
+			"third title action shares the authored sewn button treatment: " + state)
 	_check(shell._actions == [app.start_button, app.stitched_continue_button, app.base_button],
 		"shell styles exactly the three live title actions")
 	for button in [app.stitched_fight_button]:

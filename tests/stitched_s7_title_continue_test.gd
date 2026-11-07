@@ -167,10 +167,12 @@ func _run() -> void:
 			and button.get_theme_font("font").resource_path == shell.HEADING_FONT
 			and button.get_theme_font_size("font_size") == actions[0].get_theme_font_size("font_size"),
 			"shared sewn heading typography: " + button.text)
-		for state in ["normal", "hover", "disabled", "focus"]:
-			_check(not button.has_theme_stylebox_override(state)
-				and button.get_theme_stylebox(state) == app.theme.get_stylebox(state, "Button"),
-				"inherited " + state + " style: " + button.text)
+		for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var surface := button.get_theme_stylebox(state) as StyleBoxTexture
+			_check(button.has_theme_stylebox_override(state) and surface != null
+				and surface.texture != null
+				and surface.texture.resource_path == "res://assets/paper/ui/reward_button.png",
+				"authored title-only " + state + " style: " + button.text)
 	var carry := _carry(app)
 	for button in [app.stitched_fight_button]:
 		button.pressed.emit()

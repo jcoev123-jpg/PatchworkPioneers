@@ -360,9 +360,40 @@ func _build_title() -> void:
 	stitched_unpicker_button.focus_mode = Control.FOCUS_NONE
 	stitched_unpicker_button.pressed.connect(_open_stitched_unpicker)
 	box.add_child(stitched_unpicker_button)
+	for button in [start_button, resume, base_button, stitched_peddler_button,
+			stitched_campfire_button, stitched_postevent_button, stitched_unpicker_button]:
+		_style_stitched_title_action(button)
 	_wire_stitched_title_focus()
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
+
+
+## Title-only version of the run action's authored reward-button nine-slice.
+## Explicit content margins keep the seven-action earned stack compact at 720px.
+func _style_stitched_title_action(button: Button) -> void:
+	var art := _stitched_run_texture("res://assets/paper/ui/reward_button.png")
+	if art != null:
+		for face in ["normal", "hover", "pressed", "disabled", "focus"]:
+			var felt := StyleBoxTexture.new()
+			felt.texture = art
+			for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+				felt.set_texture_margin(side, 14)
+				felt.set_content_margin(side, 20 if side in [SIDE_LEFT, SIDE_RIGHT] else 6)
+			felt.modulate_color = {"normal": Color("564044"), "hover": Color("775158"),
+				"pressed": Color("39282f"), "disabled": Color("363239"),
+				"focus": Color("ffce82")}[face]
+			if face == "focus":
+				# Only the bright stitched rim overlays the current button face.
+				felt.draw_center = false
+				for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
+					felt.set_expand_margin(side, 3)
+			button.add_theme_stylebox_override(face, felt)
+	button.add_theme_font_size_override("font_size", 28)
+	for face in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+		button.add_theme_color_override(face, Color("f5e7cb"))
+	button.add_theme_color_override("font_disabled_color", Color("ae9e8e"))
+	button.add_theme_color_override("font_outline_color", Color("2b191b"))
+	button.add_theme_constant_override("outline_size", 2)
 
 
 ## Include earned fixture stops only while their authenticated actions are eligible.
