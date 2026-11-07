@@ -4721,6 +4721,28 @@ func _sync_stitched_run_exit() -> void:
 		stage._action_buttons["exit"].disabled = not session.battle.is_over()
 
 
+## After validation only: retire all prior run surfaces before publishing a successor.
+## Detaching now stops queued-for-deletion controls from intercepting new input.
+func _retire_stitched_run_views() -> void:
+	if is_instance_valid(stitched_run_intro):
+		var intro_parent := stitched_run_intro.get_parent()
+		if intro_parent != null:
+			intro_parent.remove_child(stitched_run_intro)
+		stitched_run_intro.queue_free()
+	stitched_run_intro = null
+	if is_instance_valid(stitched_run_walk):
+		if stitched_run_walk.get_parent() == self:
+			remove_child(stitched_run_walk)
+		stitched_run_walk.queue_free()
+	stitched_run_walk = null
+	if is_instance_valid(stitched_run_battle):
+		if stitched_run_battle.get_parent() == self:
+			remove_child(stitched_run_battle)
+		stitched_run_battle.queue_free()
+	stitched_run_battle = null
+	_clear_stitched_run_panel()  # Invalidate obsolete run-page callbacks/epoch.
+
+
 func load_stitched_run(path: String) -> bool:
 	if deck != null or run_map != null or is_instance_valid(base_screen) \
 		or is_instance_valid(stitched_fight_view) or stitched_event_gate != null:
@@ -4729,10 +4751,7 @@ func load_stitched_run(path: String) -> bool:
 	if restored == null:
 		return false
 	# Publish only after the entire save has replayed and matched its state.
-	if is_instance_valid(stitched_run_battle):
-		remove_child(stitched_run_battle)
-		stitched_run_battle.queue_free()
-	stitched_run_battle = null
+	_retire_stitched_run_views()
 	stitched_run_session = restored
 	title_view.hide()
 	_present_stitched_run()
