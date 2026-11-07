@@ -106,6 +106,11 @@ func _run() -> void:
 		return
 	_bounds(hero, "hero")
 	_bounds(foe, "foe")
+	_check(hp.get_global_rect().size.y >= 8.0 and fray.get_global_rect().size.y >= 8.0
+		and foe["hp"].get_global_rect().size.y >= 8.0
+		and not hp_label.get_global_rect().intersects(hp_frame.get_global_rect())
+		and not fray_label.get_global_rect().intersects(fray_frame.get_global_rect()),
+		"real eight-pixel fills remain visible below separate readable caption rows")
 	_check(hp_frame.texture == FRAME and fray_frame.texture == FRAME
 		and foe["root"].get_node("HPFillSewnFrame").texture == FRAME,
 		"hero and foe retain existing authored nine-slice bar frames")

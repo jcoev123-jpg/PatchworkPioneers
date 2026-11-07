@@ -77,6 +77,26 @@ func _check_rank_font(label: Label, note: String) -> void:
 			note + " has measured visible width/height inside the genuine y530..546 underfoot band")
 
 
+func _check_rank_name(tag: Button, unit: Dictionary, rank: int, note: String) -> void:
+	var face: Font = tag.get_theme_font("font")
+	var px := tag.get_theme_font_size("font_size")
+	var caption := "R%d  %s" % [rank, str(unit.get("name", ""))]
+	var style := tag.get_theme_stylebox("normal") as StyleBoxTexture
+	_check(face is FontVariation and (face as FontVariation).base_font == StitchedBattleChrome.RANK_FONT
+		and tag.has_theme_font_override("font") and px >= 16
+		and tag.text == caption and not tag.clip_text
+		and tag.text_overrun_behavior == TextServer.OVERRUN_NO_TRIMMING
+		and style != null and style.texture == load("res://assets/paper/ui/hud_name_plate.png")
+		and tag.tooltip_text.contains(str(unit.get("name", ""))),
+		note + " reads the full rank and name on the dark sewn plate and keeps full focus/hover disclosure")
+	if face != null:
+		var measured := face.get_string_size(caption, HORIZONTAL_ALIGNMENT_LEFT, -1, px)
+		_check(measured.x <= tag.size.x - 10.0 and measured.y <= tag.size.y
+			and tag.size == Vector2(148, 23),
+			"%s measured name %.1fx%.1f fits the native 148x23 face at %dpx" % [
+				note, measured.x, measured.y, px])
+
+
 func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 	var backdrop = stage.get_node_or_null("SharedStitchedBackdrop")
 	_check(backdrop is ROSTER_STAGE.StageBackdrop and backdrop.has_image() and
@@ -146,6 +166,7 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 				and foot.get_global_rect().end.y <= 557.0
 				and not foot.get_global_rect().intersects(painted),
 				"%s R%d enlarged sewn foot plate clears figure and lower action panel" % [side, rank])
+			_check_rank_name(tag, unit, rank, key)
 			var name_rect := tag.get_global_rect()
 			var meter_rect := meter_root.get_global_rect()
 			var caption_rect := readout.get_global_rect()
@@ -155,7 +176,7 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 			var fill_style := hp.get_theme_stylebox("fill") as StyleBoxTexture
 			_check(tag.visible and meter_root.visible and not duplicate.visible
 				and duplicate.text.is_empty() and tag.focus_mode == Control.FOCUS_ALL
-				and tag.clip_text and not readout.clip_text
+				and not tag.clip_text and not readout.clip_text
 				and tag.get_theme_font_size("font_size") >= 16
 				and readout.get_theme_font_size("font_size") >= 15
 				and name_rect.size.x >= 145.0 and meter_rect.size.x == 170.0
@@ -831,6 +852,27 @@ func _verify_status_readout(stage: StitchedBattleScreen) -> void:
 		"heap-only rank-four figure activation is fail-closed and consumes no seeded RNG")
 	_check(stage._labels["log"].text == ordinary_log,
 		"exiting empty/heap rank seat restores the prior action message")
+	# Exceptional source names must never paint over the adjacent actor.
+	# The full authored name remains in keyboard and pointer disclosures.
+	foe_1["name"] = "The Exceptionally Long Frayed Scavenger Of The Night"
+	stage._refresh()
+	var long_name: Button = stage._seat_buttons["foe_1"]
+	var long_snapshot := battle.state_snapshot()
+	var long_rng := battle.rng_state()
+	_check(long_name.text.contains("Exceptionally Long") and long_name.clip_text
+		and long_name.text_overrun_behavior == TextServer.OVERRUN_TRIM_ELLIPSIS
+		and long_name.get_theme_font_size("font_size") >= 16
+		and long_name.tooltip_text.contains(str(foe_1["name"]))
+		and stage.status_detail("foe", 1).contains(str(foe_1["name"]))
+		and stage._status_disclosure_label != null,
+		"unusually long name truncates only the plate glyphs, preserving full text on hover and focus")
+	long_name.mouse_entered.emit()
+	_check(stage._status_disclosure.visible
+		and stage._status_disclosure_label.text.contains(str(foe_1["name"]))
+		and battle.state_snapshot() == long_snapshot and battle.rng_state() == long_rng
+		and stage.receipts.size() == view_receipts,
+		"full-name hover discloses complete identity without spending combat state or RNG")
+	long_name.mouse_exited.emit()
 	for unit_id in saved_units:
 		battle._units[unit_id] = saved_units[unit_id]
 	battle._heaps = saved_heaps
