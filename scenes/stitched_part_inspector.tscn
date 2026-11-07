@@ -78,12 +78,30 @@ offset_bottom = 88.0
 theme_override_font_sizes/font_size = 17
 text = "Select a slot, then a part to examine"
 
+[node name="OwnerLabel" type="Label" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 100.0
+offset_right = 112.0
+offset_bottom = 132.0
+theme_override_font_sizes/font_size = 18
+text = "OWNER"
+
+[node name="OwnerFilter" type="OptionButton" parent="CatalogPanel"]
+layout_mode = 0
+offset_left = 116.0
+offset_top = 94.0
+offset_right = 450.0
+offset_bottom = 139.0
+focus_mode = 2
+mouse_default_cursor_shape = 2
+
 [node name="SlotHead" type="Button" parent="CatalogPanel"]
 layout_mode = 0
 offset_left = 18.0
-offset_top = 99.0
+offset_top = 149.0
 offset_right = 120.0
-offset_bottom = 146.0
+offset_bottom = 196.0
 focus_mode = 2
 toggle_mode = true
 text = "HEAD"
@@ -91,9 +109,9 @@ text = "HEAD"
 [node name="SlotArms" type="Button" parent="CatalogPanel"]
 layout_mode = 0
 offset_left = 128.0
-offset_top = 99.0
+offset_top = 149.0
 offset_right = 230.0
-offset_bottom = 146.0
+offset_bottom = 196.0
 focus_mode = 2
 toggle_mode = true
 text = "ARMS"
@@ -101,9 +119,9 @@ text = "ARMS"
 [node name="SlotTorso" type="Button" parent="CatalogPanel"]
 layout_mode = 0
 offset_left = 238.0
-offset_top = 99.0
+offset_top = 149.0
 offset_right = 340.0
-offset_bottom = 146.0
+offset_bottom = 196.0
 focus_mode = 2
 toggle_mode = true
 text = "TORSO"
@@ -111,9 +129,9 @@ text = "TORSO"
 [node name="SlotLegs" type="Button" parent="CatalogPanel"]
 layout_mode = 0
 offset_left = 348.0
-offset_top = 99.0
+offset_top = 149.0
 offset_right = 450.0
-offset_bottom = 146.0
+offset_bottom = 196.0
 focus_mode = 2
 toggle_mode = true
 text = "LEGS"
@@ -121,7 +139,7 @@ text = "LEGS"
 [node name="PartScroll" type="ScrollContainer" parent="CatalogPanel"]
 layout_mode = 0
 offset_left = 18.0
-offset_top = 168.0
+offset_top = 210.0
 offset_right = 450.0
 offset_bottom = 500.0
 horizontal_scroll_mode = 0

@@ -1551,6 +1551,94 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_shutterhook_signal",
+      "title": "The Shutter-Hook Signal",
+      "description": "A towering nursery shutter swings over the ragdoll road; a squat oxblood watch doll holds an amber lantern beneath its giant brass hook while a red-thread warning bell taps the frame.",
+      "choices": [
+        {
+          "id": "reseat_sentry_hook",
+          "text": "Refasten the warning hook (spend 2 scraps; earn 29 gold)",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "buy_storm_hems",
+          "text": "Buy three coils of storm-hem thread (spend 16 gold; gain 3 scraps)",
+          "outcome": { "gold": -16, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the warning bell ringing into the night",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_ink_ribbon_typewriter",
+      "title": "The Ink-Ribbon Typewriter",
+      "description": "House-sized typewriter keys rise from a puddle of midnight ink like stepping stones; a round button-eyed typist gathers torn plum ribbons in a single trembling candlebeam.",
+      "choices": [
+        {
+          "id": "gather_fallen_ribbon",
+          "text": "Collect two loose ribbon windings (gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "replace_ink_spool",
+          "text": "Retie the ink spool (spend 1 scrap; earn 20 gold)",
+          "outcome": { "gold": 20, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the last typewriter key fall silent",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_cork_lid_lookout",
+      "title": "The Cork-Lid Lookout",
+      "description": "A saucer-wide cork stopper shelters a tiny moss-cloth sentry above a black inkwell; its stitched warning pennant hangs from an immense silver pin in the candlelit draft.",
+      "choices": [
+        {
+          "id": "buy_cork_lacing",
+          "text": "Buy three strands of cork-lid lacing (spend 18 gold; gain 3 scraps)",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "seal_lookout_cork",
+          "text": "Seal the sentry's leaking roof (spend 2 scraps; earn 31 gold)",
+          "outcome": { "gold": 31, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the pennant floating above the black ink",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_porcelain_doorbell",
+      "title": "The Porcelain Doorbell",
+      "description": "A cracked porcelain bell hangs above a giant cupboard door; a plump slate-blue latchkeeper in mismatched button boots holds its fallen red-thread pull cord under a wan candle.",
+      "choices": [
+        {
+          "id": "rethread_bell_puller",
+          "text": "Mend the porcelain bell pull (spend 1 scrap; earn 22 gold)",
+          "outcome": { "gold": 22, "scraps": -1 }
+        },
+        {
+          "id": "buy_bellcord",
+          "text": "Buy two braided bell cords (spend 12 gold; gain 2 scraps)",
+          "outcome": { "gold": -12, "scraps": 2 }
+        },
+        {
+          "id": "leave",
+          "text": "Pass the cupboard before the bell tolls",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

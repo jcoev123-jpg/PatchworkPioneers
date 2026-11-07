@@ -1125,6 +1125,327 @@ func _run() -> void:
 	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng,
 		"AC4: battle snapshot and RNG state are byte-for-byte unaffected by status cue assertions")
 
+	# S7 (lane4): Guard, Riposte and Thorns status cues, tooltips, mounted ribbon and precedence
+	var s7_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var s7_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	var s7_ally: Dictionary = battle.get_heroes()[1].duplicate(true)
+	var s7_ally_id: String = str(s7_ally["id"])
+	var s7_hero_id: String = str(s7_hero["id"])
+	var s7_foe_id: String = str(s7_foe["id"])
+
+	# AC1: Hero Guard with statuses.guard=2 and guard_target equal to a different allied public ID
+	var grd_hero := s7_hero.duplicate(true)
+	grd_hero["statuses"] = {"guard": 2}
+	grd_hero["guard_target"] = s7_ally_id
+
+	_check(StitchedTurnStatusCues.cue(grd_hero) == "GRD" and StitchedTurnStatusCues.cue(grd_hero).length() <= 4,
+		"AC1: public hero with positive int guard 2 and ally guard_target yields GRD cue")
+	var grd_tip := StitchedTurnStatusCues.tooltip(grd_hero)
+	_check(grd_tip.contains("Statuses: guard 2") and
+		grd_tip.contains(StitchedTurnStatusCues.GUARD_EXPLANATION) and
+		not grd_tip.contains(s7_ally_id) and not grd_tip.contains("guard_target"),
+		"AC1: guard hero tooltip discloses 'guard 2' and interceptor/thread explanation without leaking raw developer ID")
+
+	# AC1 Mounted ribbon: nonacting tag displays GRD, active tag displays NOW
+	var s7_unrelated: Dictionary = battle.get_heroes()[2].duplicate(true)
+	var s7_unrelated_id := str(s7_unrelated["id"])
+	ribbon.show_order([grd_hero, s7_unrelated], s7_unrelated_id, false)
+	_check(ribbon.displayed_entries.size() == 2, "AC1: ribbon shows 2 units")
+	_check(ribbon.marker_at(0).text == "GRD" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC1: nonactive guard tag displays muted GRD marker")
+	_check(ribbon.marker_at(1).text == "NOW" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC1: active tag displays amber NOW")
+
+	# Switch actor to guarding hero: displays NOW
+	ribbon.show_order([grd_hero, s7_unrelated], s7_hero_id, false)
+	_check(ribbon.marker_at(0).text == "NOW" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC1: active guard hero marker displays amber NOW")
+
+	# AC1 Negative guard checks: foe, missing guard_target, empty guard_target, self guard_target, non-positive
+	var grd_foe := s7_foe.duplicate(true)
+	grd_foe["statuses"] = {"guard": 2}
+	grd_foe["guard_target"] = str(battle.get_foes()[1]["id"])
+	_check(StitchedTurnStatusCues.cue(grd_foe) == "FOE",
+		"AC1: foe with forged guard status does not advertise itself as a hero guardian (yields FOE)")
+
+	var grd_self := s7_hero.duplicate(true)
+	grd_self["statuses"] = {"guard": 2}
+	grd_self["guard_target"] = s7_hero_id
+	_check(StitchedTurnStatusCues.cue(grd_self) == "HERO",
+		"AC1: hero with guard_target equal to self yields HERO fallback")
+
+	var grd_blank := s7_hero.duplicate(true)
+	grd_blank["statuses"] = {"guard": 2}
+	grd_blank["guard_target"] = ""
+	_check(StitchedTurnStatusCues.cue(grd_blank) == "HERO",
+		"AC1: hero with blank guard_target yields HERO fallback")
+
+	var grd_missing := s7_hero.duplicate(true)
+	grd_missing["statuses"] = {"guard": 2}
+	grd_missing.erase("guard_target")
+	_check(StitchedTurnStatusCues.cue(grd_missing) == "HERO",
+		"AC1: hero with missing guard_target yields HERO fallback")
+
+	# AC2: Hero and foe with Riposte and Thorns (1 and 3)
+	for val in [1, 3]:
+		var rip_h := s7_hero.duplicate(true)
+		var rip_f := s7_foe.duplicate(true)
+		rip_h["statuses"] = {"riposte": val}
+		rip_f["statuses"] = {"riposte": val}
+		_check(StitchedTurnStatusCues.cue(rip_h) == "RIP" and StitchedTurnStatusCues.cue(rip_h).length() <= 4,
+			"AC2: hero with riposte %d yields RIP cue" % val)
+		_check(StitchedTurnStatusCues.cue(rip_f) == "RIP" and StitchedTurnStatusCues.cue(rip_f).length() <= 4,
+			"AC2: foe with riposte %d yields RIP cue" % val)
+
+		var rip_h_tip := StitchedTurnStatusCues.tooltip(rip_h)
+		var rip_f_tip := StitchedTurnStatusCues.tooltip(rip_f)
+		_check(rip_h_tip.contains("Statuses: riposte %d" % val) and
+			rip_h_tip.contains(StitchedTurnStatusCues.RIPOSTE_EXPLANATION) and
+			rip_h_tip.contains("retaliation on a confirmed hit by a surviving target, ignoring PROT"),
+			"AC2: hero riposte %d tooltip contains counter and retaliation explanation" % val)
+		_check(rip_f_tip.contains("Statuses: riposte %d" % val) and
+			rip_f_tip.contains(StitchedTurnStatusCues.RIPOSTE_EXPLANATION) and
+			rip_f_tip.contains("retaliation on a confirmed hit by a surviving target, ignoring PROT"),
+			"AC2: foe riposte %d tooltip contains counter and retaliation explanation" % val)
+
+		var thrn_h := s7_hero.duplicate(true)
+		var thrn_f := s7_foe.duplicate(true)
+		thrn_h["statuses"] = {"thorns": val}
+		thrn_f["statuses"] = {"thorns": val}
+		_check(StitchedTurnStatusCues.cue(thrn_h) == "THRN" and StitchedTurnStatusCues.cue(thrn_h).length() <= 4,
+			"AC2: hero with thorns %d yields THRN cue" % val)
+		_check(StitchedTurnStatusCues.cue(thrn_f) == "THRN" and StitchedTurnStatusCues.cue(thrn_f).length() <= 4,
+			"AC2: foe with thorns %d yields THRN cue" % val)
+
+		var thrn_h_tip := StitchedTurnStatusCues.tooltip(thrn_h)
+		var thrn_f_tip := StitchedTurnStatusCues.tooltip(thrn_f)
+		_check(thrn_h_tip.contains("Statuses: thorns %d" % val) and
+			thrn_h_tip.contains(StitchedTurnStatusCues.THORNS_EXPLANATION) and
+			thrn_h_tip.contains("retaliation on a confirmed hit by a surviving target, ignoring PROT"),
+			"AC2: hero thorns %d tooltip contains counter and retaliation explanation" % val)
+		_check(thrn_f_tip.contains("Statuses: thorns %d" % val) and
+			thrn_f_tip.contains(StitchedTurnStatusCues.THORNS_EXPLANATION) and
+			thrn_f_tip.contains("retaliation on a confirmed hit by a surviving target, ignoring PROT"),
+			"AC2: foe thorns %d tooltip contains counter and retaliation explanation" % val)
+
+	# AC2: Mounted ribbon projection for Guard, Riposte and Thorns in order
+	var mount_grd := s7_hero.duplicate(true)
+	mount_grd["statuses"] = {"guard": 2}
+	mount_grd["guard_target"] = s7_ally_id
+	var mount_rip := s7_foe.duplicate(true)
+	mount_rip["statuses"] = {"riposte": 1}
+	var mount_thrn := s7_ally.duplicate(true)
+	mount_thrn["statuses"] = {"thorns": 3}
+	var mount_entries := [mount_grd, mount_rip, mount_thrn]
+
+	ribbon.show_order(mount_entries, "", false)
+	_check(ribbon.displayed_entries.size() == 3, "AC2: ribbon displays 3 counterattack/guard entries")
+	_check(ribbon.marker_at(0).text == "GRD" and
+		ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC2: tag 0 displays muted GRD marker")
+	_check(ribbon.marker_at(1).text == "RIP" and
+		ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC2: tag 1 displays muted RIP marker")
+	_check(ribbon.marker_at(2).text == "THRN" and
+		ribbon.marker_at(2).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC2: tag 2 displays muted THRN marker")
+
+	# AC4 font-fitting check on the new markers
+	for idx in range(3):
+		var marker := ribbon.marker_at(idx)
+		var font := marker.get_theme_font("font")
+		var font_sz := marker.get_theme_font_size("font_size")
+		var text := marker.text
+		_check(marker.size.x >= 34.0 and
+			font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz).x <= marker.size.x - 2.0 and
+			font.get_height(font_sz) <= marker.size.y,
+			"AC4: slot %d marker %s fits measured gothic cell without clipping" % [idx, text])
+
+	# AC4: Focus and hover parity on the new markers
+	for idx in range(3):
+		var tag := ribbon.tag_at(idx)
+		var exp_tip := StitchedTurnStatusCues.tooltip(mount_entries[idx])
+		_check(tag.tooltip_text == exp_tip, "AC4: slot %d tooltip_text matches pure tooltip" % idx)
+		tag.grab_focus()
+		await process_frame
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC4: slot %d keyboard focus reveals exact tooltip" % idx)
+		tag.release_focus()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d blur hides tooltip" % idx)
+		tag.mouse_entered.emit()
+		_check(tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tip,
+			"AC4: slot %d mouse hover reveals identical tooltip to keyboard focus" % idx)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d mouse exit hides tooltip" % idx)
+
+	# Actor cycling across GRD, RIP, THRN: prove prior marker returns (no stale NOW)
+	var grd_id := str(mount_grd["id"])
+	var rip_id := str(mount_rip["id"])
+	var thrn_id := str(mount_thrn["id"])
+
+	# GRD acts
+	ribbon.show_order(mount_entries, grd_id, false)
+	_check(ribbon.marker_at(0).text == "NOW" and ribbon.marker_at(1).text == "RIP" and ribbon.marker_at(2).text == "THRN",
+		"AC3: GRD actor shows NOW, other nonacting markers are RIP and THRN")
+
+	# RIP acts: GRD returns!
+	ribbon.show_order(mount_entries, rip_id, false)
+	_check(ribbon.marker_at(0).text == "GRD" and ribbon.marker_at(1).text == "NOW" and ribbon.marker_at(2).text == "THRN",
+		"AC3: prior GRD marker returns with no stale NOW when RIP acts")
+
+	# THRN acts: RIP returns!
+	ribbon.show_order(mount_entries, thrn_id, false)
+	_check(ribbon.marker_at(0).text == "GRD" and ribbon.marker_at(1).text == "RIP" and ribbon.marker_at(2).text == "NOW",
+		"AC3: prior RIP marker returns with no stale NOW when THRN acts")
+
+	# Unrelated acts: THRN returns!
+	ribbon.show_order(mount_entries, s7_unrelated_id, false)
+	_check(ribbon.marker_at(0).text == "GRD" and ribbon.marker_at(1).text == "RIP" and ribbon.marker_at(2).text == "THRN",
+		"AC3: all three return when unrelated unit acts")
+
+	# Battle is over: clears NOW, truthful markers return
+	ribbon.show_order(mount_entries, grd_id, true)
+	_check(ribbon.marker_at(0).text == "GRD" and ribbon.marker_at(1).text == "RIP" and ribbon.marker_at(2).text == "THRN",
+		"AC3: is_over=true clears NOW and returns truthful GRD, RIP, THRN markers")
+
+	# Status clearing: generic HERO/FOE returns and no stale text
+	var cleared_grd := mount_grd.duplicate(true)
+	var cleared_rip := mount_rip.duplicate(true)
+	var cleared_thrn := mount_thrn.duplicate(true)
+	cleared_grd["statuses"] = {}
+	cleared_grd["guard_target"] = ""
+	cleared_rip["statuses"] = {}
+	cleared_thrn["statuses"] = {}
+	ribbon.show_order([cleared_grd, cleared_rip, cleared_thrn], "", false)
+	_check(ribbon.marker_at(0).text == "HERO" and ribbon.marker_at(1).text == "FOE" and ribbon.marker_at(2).text == "HERO",
+		"AC3: cleared statuses return generic HERO and FOE cues")
+	for idx in range(3):
+		var tag := ribbon.tag_at(idx)
+		_check(not tag.tooltip_text.contains("guard") and not tag.tooltip_text.contains("riposte") and not tag.tooltip_text.contains("thorns") and
+			not tag.tooltip_text.contains("Guard:") and not tag.tooltip_text.contains("Riposte:") and not tag.tooltip_text.contains("Thorns:"),
+			"AC3: slot %d tag tooltip contains no stale guard/riposte/thorns text" % idx)
+
+	# AC3: Overlapping precedence order
+	# SEAM > STUN > TORN > hero Resolve > hero FRAY >=100 > BLD > GRD > RIP > THRN > BLND/TNGL/MARK/WEAK/EXPD > generic HERO/FOE
+	var multi_h := s7_hero.duplicate(true)
+	multi_h["guard_target"] = s7_ally_id
+
+	# GRD > RIP > THRN
+	multi_h["statuses"] = {"guard": 2, "riposte": 1, "thorns": 1}
+	_check(StitchedTurnStatusCues.cue(multi_h) == "GRD", "AC3: GRD wins over RIP and THRN")
+	var multi_tip := StitchedTurnStatusCues.tooltip(multi_h)
+	_check(multi_tip.contains("Statuses: guard 2, riposte 1, thorns 1") and
+		multi_tip.contains(StitchedTurnStatusCues.GUARD_EXPLANATION) and
+		multi_tip.contains(StitchedTurnStatusCues.RIPOSTE_EXPLANATION) and
+		multi_tip.contains(StitchedTurnStatusCues.THORNS_EXPLANATION),
+		"AC3: priority GRD marker does not hide other counters or explanations from full tooltip")
+
+	# RIP > THRN
+	multi_h["statuses"] = {"riposte": 1, "thorns": 2}
+	_check(StitchedTurnStatusCues.cue(multi_h) == "RIP", "AC3: RIP wins over THRN")
+
+	# Higher warnings beat GRD, RIP, THRN:
+	# BLD > GRD
+	multi_h["statuses"] = {"bleed": 1, "guard": 2, "riposte": 1, "thorns": 1}
+	_check(StitchedTurnStatusCues.cue(multi_h) == "BLD", "AC3: BLD overrides GRD, RIP, THRN")
+
+	# FRAY >= 100 > BLD
+	multi_h["fray"] = 100
+	_check(StitchedTurnStatusCues.cue(multi_h) == "FRAY", "AC3: FRAY >= 100 overrides BLD, GRD, RIP, THRN")
+	multi_h["fray"] = 20
+
+	# Resolve > FRAY
+	multi_h["resolve"] = "steadfast"
+	_check(StitchedTurnStatusCues.cue(multi_h) == "STFD", "AC3: Resolve overrides BLD, GRD, RIP, THRN")
+	multi_h["resolve"] = ""
+
+	# TORN > Resolve
+	multi_h["parts"]["head"]["torn"] = true
+	_check(StitchedTurnStatusCues.cue(multi_h) == "TORN", "AC3: TORN overrides BLD, GRD, RIP, THRN")
+	multi_h["parts"]["head"]["torn"] = false
+
+	# STUN > TORN
+	multi_h["statuses"]["stun"] = 1
+	_check(StitchedTurnStatusCues.cue(multi_h) == "STUN", "AC3: STUN overrides BLD, GRD, RIP, THRN")
+	multi_h["statuses"]["stun"] = 0
+
+	# SEAM > STUN
+	multi_h["hanging"] = true
+	_check(StitchedTurnStatusCues.cue(multi_h) == "SEAM", "AC3: SEAM overrides STUN, BLD, GRD, RIP, THRN")
+	multi_h["hanging"] = false
+
+	# GRD, RIP, THRN beat lower statuses BLND, TNGL, MARK, WEAK, EXPD:
+	multi_h["statuses"] = {"thorns": 2, "blind": 1, "tangled": 1, "mark": 1, "weak": 1, "exposed": 1}
+	_check(StitchedTurnStatusCues.cue(multi_h) == "THRN", "AC3: THRN overrides BLND, TNGL, MARK, WEAK, EXPD")
+
+	multi_h["statuses"]["riposte"] = 1
+	_check(StitchedTurnStatusCues.cue(multi_h) == "RIP", "AC3: RIP overrides THRN, BLND, TNGL, MARK, WEAK, EXPD")
+
+	multi_h["statuses"]["guard"] = 2
+	_check(StitchedTurnStatusCues.cue(multi_h) == "GRD", "AC3: GRD overrides RIP, THRN, BLND, TNGL, MARK, WEAK, EXPD")
+
+	# Foe spoofing resolve/fray gets RIP/THRN
+	var f_spoof_rt := s7_foe.duplicate(true)
+	f_spoof_rt["resolve"] = "bitter"
+	f_spoof_rt["fray"] = 150
+	f_spoof_rt["statuses"] = {"riposte": 1}
+	_check(StitchedTurnStatusCues.cue(f_spoof_rt) == "RIP", "AC3: foe spoofing resolve/fray gets RIP cue")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_rt).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_rt).contains("FRAY:"),
+		"AC3: foe with riposte does not disclose spoofed resolve or fray")
+
+	f_spoof_rt["statuses"] = {"thorns": 2}
+	_check(StitchedTurnStatusCues.cue(f_spoof_rt) == "THRN", "AC3: foe spoofing resolve/fray gets THRN cue")
+
+	# Fail-closed checks on guard, riposte, thorns: nonpositive or wrongly typed
+	for inv in [0, -1, -3, 1.5, 2.0, "1", "riposte", null, [], {}]:
+		var h_fail_grt := s7_hero.duplicate(true)
+		var f_fail_grt := s7_foe.duplicate(true)
+		h_fail_grt["guard_target"] = s7_ally_id
+		h_fail_grt["statuses"] = {"guard": inv, "riposte": inv, "thorns": inv}
+		f_fail_grt["statuses"] = {"guard": inv, "riposte": inv, "thorns": inv}
+		_check(StitchedTurnStatusCues.cue(h_fail_grt) == "HERO",
+			"AC3: invalid guard/riposte/thorns %s yields HERO fallback" % str(inv))
+		_check(StitchedTurnStatusCues.cue(f_fail_grt) == "FOE",
+			"AC3: invalid guard/riposte/thorns %s yields FOE fallback" % str(inv))
+		var h_tip := StitchedTurnStatusCues.tooltip(h_fail_grt)
+		var f_tip := StitchedTurnStatusCues.tooltip(f_fail_grt)
+		_check(not h_tip.contains("Guard:") and not h_tip.contains("Riposte:") and not h_tip.contains("Thorns:") and
+			not h_tip.contains("guard") and not h_tip.contains("riposte") and not h_tip.contains("thorns"),
+			"AC3: invalid guard/riposte/thorns %s produces no explanations or counters" % str(inv))
+		_check(not f_tip.contains("Guard:") and not f_tip.contains("Riposte:") and not f_tip.contains("Thorns:") and
+			not f_tip.contains("guard") and not f_tip.contains("riposte") and not f_tip.contains("thorns"),
+			"AC3: invalid foe guard/riposte/thorns %s produces no explanations or counters" % str(inv))
+
+	# Non-Dictionary statuses fail closed
+	for bad_st in [null, "riposte 1", 1, [1]]:
+		var h_bad: Dictionary = s7_hero.duplicate(true)
+		h_bad["guard_target"] = s7_ally_id
+		h_bad["statuses"] = bad_st
+		_check(StitchedTurnStatusCues.cue(h_bad) == "HERO",
+			"AC3: non-Dictionary statuses %s yields HERO fallback" % str(bad_st))
+		var h_bad_tip := StitchedTurnStatusCues.tooltip(h_bad)
+		_check(not h_bad_tip.contains("Guard:") and not h_bad_tip.contains("Riposte:") and not h_bad_tip.contains("Thorns:"),
+			"AC3: non-Dictionary statuses %s produces no explanations" % str(bad_st))
+
+	# AC4: Tooltip fits inside 280x198 text bounds for all new combinations
+	var clean_dual := s7_hero.duplicate(true)
+	clean_dual["statuses"] = {"guard": 2, "riposte": 1}
+	clean_dual["guard_target"] = s7_ally_id
+	var clean_dual_rt := s7_foe.duplicate(true)
+	clean_dual_rt["statuses"] = {"riposte": 1, "thorns": 2}
+	for fit_unit in [grd_hero, mount_rip, mount_thrn, clean_dual, clean_dual_rt]:
+		var text_to_measure := StitchedTurnStatusCues.tooltip(fit_unit)
+		var measured_sz := tip_font.get_multiline_string_size(text_to_measure, HORIZONTAL_ALIGNMENT_LEFT, help_text.size.x, tip_font_sz)
+		_check(measured_sz.y <= help_text.size.y,
+			"AC4: tooltip for %s fits inside 280x198 text area (measured height %d <= %d)" %
+			[fit_unit.get("name", fit_unit.get("id")), int(measured_sz.y), int(help_text.size.y)])
+
 	# AC4: Zero, negative, float, string, missing, malformed status values fail closed
 	for invalid_val in [0, -1, -3, 1.5, 2.0, "1", "blind", null, [], {}]:
 		var h_inv := blind_hero.duplicate(true)
@@ -1229,10 +1550,14 @@ func _run() -> void:
 
 	# Every existing cue must remain complete at the narrowest nine-tag capacity.
 	var all_cues: Array = resolve_snapshots.duplicate(true)
-	for status in ["stun", "bleed", "blind", "tangled", "mark", "weak", "exposed"]:
+	for status in ["stun", "bleed", "riposte", "thorns", "blind", "tangled", "mark", "weak", "exposed"]:
 		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
 		sample.statuses = {status: 2}
 		all_cues.append(sample)
+	var sample_grd: Dictionary = battle.get_heroes()[0].duplicate(true)
+	sample_grd.statuses = {"guard": 2}
+	sample_grd["guard_target"] = str(battle.get_heroes()[1]["id"])
+	all_cues.append(sample_grd)
 	for state in ["hanging", "torn", "fray"]:
 		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
 		if state == "hanging":

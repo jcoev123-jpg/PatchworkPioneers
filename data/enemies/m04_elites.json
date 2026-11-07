@@ -558,13 +558,14 @@
           "name": "Spool Snare",
           "kind": "debuff",
           "launch": [1, 4],
-          "target": [1, 3],
+          "target": [2, 3, 4],
           "target_side": "enemy",
           "multi": false,
           "acc": 90,
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
+            "pull": 1,
             "fray": 6
           },
           "self_move": 0,

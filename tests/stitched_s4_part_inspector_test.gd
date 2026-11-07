@@ -198,7 +198,143 @@ func _run() -> void:
         panel.free()
         await process_frame
         _check(not is_instance_valid(panel), "mount/free cycle %d leaves no inspector node" % cycle)
+    await _test_live_owners(packed)
     _finish()
+
+
+func _test_live_owners(packed: PackedScene) -> void:
+    var paths := [
+        "res://data/parts/warden_parts.json",
+        "res://data/parts/seamstress_parts.json",
+        "res://data/parts/tinker_parts.json",
+        "res://data/parts/yarn_ranger_parts.json",
+        "res://data/parts/enemy_parts.json",
+    ]
+    var input: Array = []
+    var source: Dictionary = {}
+    for path in paths:
+        var catalog := StitchedParts.load_catalog(path)
+        _check(bool(catalog.get("ok", false)), "independent live source validates: " + path)
+        if not bool(catalog.get("ok", false)):
+            return
+        input.append_array(catalog["parts"])
+    var pristine := input.duplicate(true)
+    for part in input:
+        source[str(part["id"])] = part
+    var witness_ids := [
+        "warden_head_pot_helm_bonk", "seamstress_mending_knot_hat",
+        "tinker_head_cog_shot", "yarn_ranger_head_needle_nock",
+        "scissor_crab_claw_arm", "moth_swarm_wings",
+        "felt_bulwark_button_shield",
+    ]
+    for id in witness_ids:
+        _check(source.has(id), "combined five real catalogs contain " + id)
+    var panel := packed.instantiate() as StitchedPartInspector
+    root.add_child(panel)
+    await process_frame
+    var owner_control := panel.get_node("CatalogPanel/OwnerFilter") as OptionButton
+    _check(owner_control.get_item_count() == 6
+        and owner_control.focus_mode == Control.FOCUS_ALL
+        and owner_control.get_theme_stylebox("focus") != null
+        and root.get_visible_rect().encloses(owner_control.get_global_rect()),
+        "Gothic owner dropdown is reachable and themed within 1280x720")
+    seed(886124)
+    var expected_draw := randi()
+    seed(886124)
+    _check(panel.present_parts(input) and panel.selected_owner == "all"
+        and panel.part_ids_in_slot("head").has("tinker_head_cog_shot"),
+        "standalone full validated atlas opens at All with source-backed rows")
+    var all_head := panel.part_ids_in_slot("head")
+    for owner in ["warden", "seamstress", "tinker", "yarn_ranger", "any"]:
+        var idx := StitchedPartInspector.OWNERS.find(owner)
+        owner_control.select(idx)
+        owner_control.item_selected.emit(idx)
+        _check(panel.selected_owner == owner
+            and panel.part_ids_in_slot("head") == all_head
+            and panel.visible_part_ids_in_slot("head").size()
+                == panel.get_node("CatalogPanel/PartScroll/PartRows").get_child_count(),
+            "owner " + owner + " changes rows, not full validated index")
+        var last_name := ""
+        var last_id := ""
+        for id in panel.visible_part_ids_in_slot("head"):
+            var part: Dictionary = source[id]
+            var part_name := str(part["name"]).to_lower()
+            _check(str(part["owner"]) == owner,
+                "every visible head row belongs to selected owner " + owner)
+            _check(last_name.is_empty() or last_name < part_name or (
+                last_name == part_name and last_id < id),
+                "owner rows remain name/ID alphabetic")
+            last_name = part_name
+            last_id = id
+    for group in [
+            ["warden", "warden_head_pot_helm_bonk"],
+            ["seamstress", "seamstress_mending_knot_hat"],
+            ["tinker", "tinker_head_cog_shot"],
+            ["yarn_ranger", "yarn_ranger_head_needle_nock"],
+            ["any", "scissor_crab_claw_arm"]]:
+        var owner: String = group[0]
+        var id: String = group[1]
+        var part: Dictionary = source[id]
+        _check(panel.select_owner(owner) and panel.select_part(id),
+            "owner and valid part are selectable: " + id)
+        _check(_line(panel, "PartMeta").contains("OWNER: " + owner)
+            and _line(panel, "PartName") == str(part["name"]),
+            "group selection does not invent the ID or displayed name: " + id)
+        for tier in [1, 2, 3]:
+            var ability := StitchedParts.ability_at_tier(part, tier)
+            var stats := StitchedParts.stat_at_tier(part, tier)
+            _check(panel.select_tier(tier)
+                and _line(panel, "NumbersLine").contains("ACC: %d%%" % int(ability["acc"]))
+                and _line(panel, "NumbersLine").contains("DAMAGE: %d-%d" % [
+                    int(ability["dmg"][0]), int(ability["dmg"][1])])
+                and _line(panel, "AbilityLine").contains(str(ability["name"]))
+                and _line(panel, "MovementLine").contains("POSE: " + str(ability["move"])),
+                "real tier %d accuracy/damage/ability/pose for %s" % [tier, id])
+            for key in stats:
+                _check(_line(panel, "StatLine").contains("%s +%d" % [
+                    str(key).to_upper().replace("_", " "), int(stats[key])]),
+                    "real tier %d %s stat for %s" % [tier, str(key), id])
+            for key in ability["effects"]:
+                _check(_line(panel, "EffectsLine").contains("%s %d" % [
+                    str(key).capitalize(), int(ability["effects"][key])]),
+                    "real tier %d %s effect for %s" % [tier, str(key), id])
+        _check(not panel.select_tier(0) and not panel.select_tier(4)
+            and not panel.select_owner("not_a_hero") and not panel.select_part("fictional")
+            and panel.selected_part_id == id and panel.selected_tier == 3,
+            "invalid tier, owner and part do not mutate selection")
+        _check(panel.select_slot("legs")
+            and panel.active_slot == "legs" and not panel.selected_part_id.is_empty()
+            and panel.selected_tier == 1,
+            "owner " + owner + " can change slot and resets on a different part")
+    _check(panel.select_owner("all") and panel.visible_part_ids_in_slot("head") == all_head
+        and panel.select_part("felt_bulwark_button_shield"),
+        "All restores full rows and allows other-slot foreign torso")
+    _check(panel.select_owner("seamstress")
+        and not panel.select_part("felt_bulwark_button_shield")
+        and panel.selected_owner == "seamstress",
+        "filtered selection rejects valid but hidden IDs")
+    var limited: Array = [source["scissor_crab_claw_arm"].duplicate(true)]
+    _check(panel.present_parts(limited) and panel.selected_owner == "all"
+        and panel.select_owner("tinker")
+        and panel.selected_part_id.is_empty()
+        and panel.visible_part_ids_in_slot("arms").is_empty()
+        and panel.part_ids_in_slot("arms").has("scissor_crab_claw_arm"),
+        "group without parts empties details, not the full source index")
+    _check(not panel.select_tier(2) and not panel.select_part("scissor_crab_claw_arm")
+        and _line(panel, "NumbersLine").is_empty()
+        and not panel.select_owner("invalid"),
+        "empty visible owner refuses stale tier, hidden part and invalid owner")
+    _check(not panel.present_parts([{"id": "bad"}])
+        and panel.selected_part_id.is_empty() and panel.selected_owner == "all"
+        and owner_control.disabled and not panel.select_owner("warden"),
+        "invalid re-presentation clears owner, selection and disables dropdown")
+    _check(panel.present_parts(input) and not owner_control.disabled
+        and panel.selected_owner == "all",
+        "full atlas recovers in All after invalid source")
+    _check(input == pristine and randi() == expected_draw,
+        "owner browsing never mutates input arrays or advances global RNG")
+    panel.free()
+    await process_frame
 
 
 func _reversed(parts: Array) -> Array:

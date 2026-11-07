@@ -8,6 +8,8 @@ const NODE := "route-peddler-12"
 const MODE := "stitched"
 const STARCH_PRICE := 30
 const SPOOL_PRICE := 45
+const STARCH_TEXT := "Use during the Walk: this doll starts the next fight with Guard."
+const SPOOL_TEXT := "Use during the Walk: repair a snipped thread or save a part from a Tug."
 
 const RUN_SEED := 14
 const SHOP_NODE := "f01_n3"
@@ -26,6 +28,7 @@ func _initialize() -> void:
 	seed(828282)
 	_test_admission_and_isolation()
 	_test_quotes()
+	_test_effect_text()
 	_test_purchases()
 	_test_refusals()
 	_test_leave()
@@ -260,6 +263,10 @@ func _assert_quote(visit: RunStitchedPeddlerWalkSupplies, starch_ok: bool,
 		and quote.get("eligible") == eligible and quote.get("node_id") == NODE
 		and quote.get("mode") == MODE,
 		label + ": both rows carry exact prices and honest buyability")
+	_check(starch.get("effect_text") == STARCH_TEXT
+		and spool.get("effect_text") == SPOOL_TEXT
+		and starch.keys().size() == 5 and spool.keys().size() == 5,
+		label + ": both rows keep their ID-keyed effect_text (one added field only) whatever the buyability")
 	var choices: Array = quote.get("choices")
 	_check(choices.has("leave") and choices.has("buy_starch") == starch_ok
 		and choices.has("buy_spare_spool") == spool_ok
@@ -294,6 +301,54 @@ func _test_quotes() -> void:
 		and closed_quote.get("choices", ["x"]).is_empty()
 		and not closed_quote.has("offers"),
 		"a closed visit quotes no choices")
+
+
+## AC1/AC2: effect_text is keyed by offer ID, not row position, and leaves the
+## rest of each row, the input order and the choices untouched.
+func _test_effect_text() -> void:
+	var orders: Array = [
+		[{"id": "spare_spool", "price": SPOOL_PRICE}, {"id": "starch", "price": STARCH_PRICE}],
+		[{"id": "starch", "price": STARCH_PRICE}, {"id": "spare_spool", "price": SPOOL_PRICE}]]
+	for order in orders:
+		var visit := _open(500, order)
+		var quote := visit.quote()
+		var rows: Array = quote.get("offers", [])
+		var label := "order " + str(order[0]["id"]) + " first"
+		_check(visit.is_open() and quote.get("ok") == true and rows.size() == 2
+			and rows[0]["id"] == order[0]["id"] and rows[1]["id"] == order[1]["id"],
+			label + ": the open quote keeps both rows in input order")
+		_check(_row(quote, "starch").get("effect_text") == STARCH_TEXT
+			and _row(quote, "spare_spool").get("effect_text") == SPOOL_TEXT,
+			label + ": each row carries its own exact effect_text by ID")
+		_check(_row(quote, "starch").get("price") == STARCH_PRICE
+			and _row(quote, "spare_spool").get("price") == SPOOL_PRICE
+			and _row(quote, "starch").get("can_buy") == true
+			and _row(quote, "spare_spool").get("can_buy") == true
+			and _row(quote, "starch").get("blocked") == ""
+			and _row(quote, "spare_spool").get("blocked") == ""
+			and quote.get("eligible") == ["rag_duelist", "warden"]
+			and quote.get("choices") == ["buy_" + str(order[0]["id"]),
+				"buy_" + str(order[1]["id"]), "leave"],
+			label + ": prices, buyability, eligible IDs and choices are unchanged")
+		_check(not visit.read_state()["offers"][0].has("effect_text"),
+			label + ": the stored visit state gains no effect_text; only the quote does")
+		quote["offers"][0]["effect_text"] = "forged"
+		_check(_row(visit.quote(), str(order[0]["id"])).get("effect_text")
+			== (STARCH_TEXT if order[0]["id"] == "starch" else SPOOL_TEXT),
+			label + ": mutating a returned quote cannot change the service text")
+	_check(STARCH_TEXT.length() < 80 and SPOOL_TEXT.length() < 80
+		and not "price" in STARCH_TEXT.to_lower() and not "gold" in SPOOL_TEXT.to_lower(),
+		"both sentences stay short and quote no price")
+	# Blocked rows explain the item too, and a snapshot taken after a quote still buys.
+	var poor := _open(0)
+	_check(_row(poor.quote(), "starch").get("effect_text") == STARCH_TEXT
+		and _row(poor.quote(), "spare_spool").get("effect_text") == SPOOL_TEXT
+		and _row(poor.quote(), "starch").get("can_buy") == false,
+		"a blocked row still explains the item")
+	var asked := _open(100)
+	asked.quote()
+	_check(asked.buy("starch", "rag_duelist", NODE, asked.read_state()).get("ok") == true,
+		"quoting with effect_text does not disturb the snapshot a buy requires")
 
 
 ## AC2: each item charges its own quote once and lands in one pocket only.
@@ -364,6 +419,17 @@ func _test_purchases() -> void:
 	# The Walk keeps the effect and cost for use: purchase touches no heroes or WHIRR.
 	_check(not rich_paid.has("whirr") and not rich_paid.has("effect"),
 		"purchase carries no WHIRR cost and fires no item effect")
+	_check(not rich_paid.has("effect_text") and not rich_paid.has("guard")
+		and not rich_paid.has("next_fight") and not spool_paid.has("repair")
+		and rich_paid["heroes"] == _party() and spool_paid["heroes"] == _party()
+		and rich.read_state()["heroes"] == _party()
+		and rich_spool.read_state()["heroes"] == _party(),
+		"a sale applies no Walk or next-fight effect and leaves every doll's HP, fray and parts unchanged")
+	var hero_leave := _open(100)
+	hero_leave.leave(NODE, hero_leave.read_state())
+	_check(hero_leave.read_state()["heroes"] == _party()
+		and hero_leave.read_state()["gold"] == 100,
+		"Leave leaves the dolls and the wallet unchanged")
 
 
 ## AC3: every real precondition refuses with no drift and keeps a legal buy/Leave.

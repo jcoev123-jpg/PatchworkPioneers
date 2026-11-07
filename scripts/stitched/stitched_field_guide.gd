@@ -8,6 +8,9 @@ const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const GOTHIC := preload("res://themes/gothic_theme.tres")
 const PART_INSPECTOR_SCENE := preload("res://scenes/stitched_part_inspector.tscn")
 const WARDEN_PARTS := "res://data/parts/warden_parts.json"
+const SEAMSTRESS_PARTS := "res://data/parts/seamstress_parts.json"
+const TINKER_PARTS := "res://data/parts/tinker_parts.json"
+const YARN_RANGER_PARTS := "res://data/parts/yarn_ranger_parts.json"
 const FOE_PARTS := "res://data/parts/enemy_parts.json"
 const BONE := Color("#f4e5cd")
 const BRASS := Color("#e0b977")
@@ -54,7 +57,8 @@ var atlas_status: Label
 var part_atlas: StitchedPartInspector
 # Fixed live sources. The mounted regression can replace one with a missing path
 # to prove that a partial catalog never leaves stale or selectable parts.
-var catalog_paths: Array[String] = [WARDEN_PARTS, FOE_PARTS]
+var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS,
+	YARN_RANGER_PARTS, FOE_PARTS]
 var page_index := 0
 var _active := false
 
@@ -134,7 +138,7 @@ func _on_visibility_changed() -> void:
 		_active = false
 
 
-## This is an atlas, not a satchel: both real file catalogs must validate in
+## This is an atlas, not a satchel: all five real file catalogs must validate in
 ## full before the existing inspector receives any entries. No gameplay API is
 ## referenced, and reopening always reloads the authored sources.
 func open_part_atlas() -> bool:
@@ -166,7 +170,7 @@ func open_part_atlas() -> bool:
 		_reject_part_atlas()
 		return false
 	(part_atlas.get_node("Subtitle") as Label).text = (
-		"REFERENCE ONLY  •  Warden parts and foe spoils; nothing is equipped or claimed here.")
+		"REFERENCE ONLY  •  Warden, Seamstress, Tinker, Yarn Ranger & spoils; no equips.")
 	part_atlas.show()
 	atlas_status.text = "REFERENCE ONLY  •  Inspect part abilities and tiers; no changes to your party."
 	_wire_atlas_focus()
@@ -206,7 +210,7 @@ func _atlas_focus_buttons() -> Array[Button]:
 	var ring: Array[Button] = []
 	if not _atlas_is_open():
 		return ring
-	for path in ["CloseButton", "CatalogPanel/SlotHead", "CatalogPanel/SlotArms",
+	for path in ["CloseButton", "CatalogPanel/OwnerFilter", "CatalogPanel/SlotHead", "CatalogPanel/SlotArms",
 			"CatalogPanel/SlotTorso", "CatalogPanel/SlotLegs"]:
 		var button := part_atlas.get_node(path) as Button
 		if not button.disabled:
@@ -303,7 +307,7 @@ func _build_view() -> void:
 	atlas_button = Button.new()
 	atlas_button.name = "PartAtlasButton"
 	atlas_button.text = "Parts & spoils"
-	atlas_button.tooltip_text = "Reference only: examine Warden parts and foe drops"
+	atlas_button.tooltip_text = "Reference only: examine Warden, Seamstress, Tinker, Yarn Ranger and foe parts"
 	atlas_button.custom_minimum_size = Vector2(190, 46)
 	atlas_button.add_theme_font_size_override("font_size", 19)
 	atlas_button.focus_mode = Control.FOCUS_ALL

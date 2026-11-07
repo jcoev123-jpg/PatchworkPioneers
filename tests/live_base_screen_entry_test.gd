@@ -309,8 +309,11 @@ func _check_parts_house(app, view: BaseScreen) -> void:
 	_check(root.gui_get_focus_owner() == inspector.get_node("CloseButton"),
 		"Parts entry focuses inspector Close")
 	await _key(KEY_TAB)
+	_check(root.gui_get_focus_owner() == inspector.get_node("CatalogPanel/OwnerFilter"),
+		"inspector Tab reaches owner filter, never underlying Base")
+	await _key(KEY_TAB)
 	_check(root.gui_get_focus_owner() == inspector.get_node("CatalogPanel/SlotHead"),
-		"inspector Tab traps focus away from underlying Base")
+		"next Tab reaches inspector Head after owner filter")
 	view.set_out_button.pressed.emit()
 	view.back_button.pressed.emit()
 	view.path_buttons[0].pressed.emit()

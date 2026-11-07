@@ -95,6 +95,7 @@ func _initialize() -> void:
 	check(seen_steps.size() > 1 and seen_slots.size() == 2, "nonvacuous variable arrival and both genuine part representations torn")
 	for choice in ["pins", "spare_spool", "yield"]:
 		outcome(choice)
+	hanging_rear_witness()
 	edges()
 	for failure in failures: printerr(failure)
 	print("stitched_s8e_tug_walk_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -166,6 +167,52 @@ func outcome(choice: String) -> void:
 	finish(walk)
 	reject(walk, rng, command)
 
+func hanging_rear_witness() -> void:
+	for seed_number in range(12):
+		var rng := random(seed_number + 300)
+		var dolls := party()
+		dolls[3].hp = 0
+		check(dolls[3].hp == 0 and not dolls[3].lost, "rank 4 is Hanging at 0 HP")
+		var inventory := pockets()
+		var walk := Walk.start(rng, "walls", dolls, inventory, null, false, true)
+		check(walk != null, "valid tug start with Hanging rear doll")
+		arrive(walk)
+		var before := walk.snapshot()
+		var receipt := act(walk, "tug", {"target": "thread_tug", "choice": "yield"})
+		check(receipt.ok and not walk.tug_unresolved(), "hanging rear doll tug yields successfully")
+		var torn: Array = receipt.snapshot.pending.filter(func(p): return p.kind == "torn_part")
+		check(torn.size() == 1, "exactly one torn part queued for hanging rear doll")
+		if torn.size() == 1:
+			var effect: Dictionary = torn[0]
+			check(effect.target == "3" and effect.source == "thread_tug" and not effect.consumed
+				and effect.effects.mendable and effect.effects.already_applied,
+				"hanging rear doll receives typed unconsumed mendable effect")
+			var slot: String = effect.effects.slot
+			check(slot in ["head", "arms"], "torn slot is head or arms")
+			var expected_dolls: Array = before.dolls.duplicate(true)
+			var original: Variant = expected_dolls[3].parts[slot]
+			if original is String: original = {"id": original, "tier": 1, "torn": false}
+			original.torn = true
+			expected_dolls[3].parts[slot] = original
+			check(effect.effects.part == original, "effect preserves real part ID and tier for hanging rear doll")
+			check(receipt.snapshot.dolls[3].parts[slot].torn == true, "rear doll part marked torn")
+			check(receipt.snapshot.dolls[2] == before.dolls[2], "rank 3 doll 2 is untouched")
+			check(receipt.snapshot.dolls[0] == before.dolls[0] and receipt.snapshot.dolls[1] == before.dolls[1],
+				"front dolls 0 and 1 are untouched")
+			check(receipt.snapshot.dolls == expected_dolls, "only rear doll's worn part torn")
+		# Deterministic replay check
+		var replay_rng := random(seed_number + 300)
+		var replay_dolls := party()
+		replay_dolls[3].hp = 0
+		var replay := Walk.start(replay_rng, "walls", replay_dolls, pockets(), null, false, true)
+		arrive(replay)
+		var second := act(replay, "tug", {"target": "thread_tug", "choice": "yield"})
+		check(receipt == second and rng.state == replay_rng.state,
+			"hanging rear resolution replays identically on independent seeded RNG")
+		finish(walk)
+		finish(replay)
+		check(walk.snapshot() == replay.snapshot(), "walk finishes identically after hanging rear tug")
+
 func edges() -> void:
 	var rng := random(12)
 	var state := rng.state
@@ -179,23 +226,43 @@ func edges() -> void:
 	check(Walk.start(rng, "walls", invalid, pockets(), null, false, true) == null and rng.state == state,
 		"forged equipped part fails start without RNG")
 	check(Walk.start(rng, "unknown", party(), pockets(), null, false, true) == null and rng.state == state, "invalid area no draw")
-	for mode in ["empty", "torn", "dead_rear", "all_dead"]:
+	for mode in ["empty", "torn", "hanging_rear", "hanging_no_part", "all_hanging", "dead_rear", "all_dead"]:
 		var dolls := party()
 		if mode == "empty": dolls[3].parts = {}
 		if mode == "torn": dolls[3].parts = {"head": {"id": "seamstress_mending_knot_hat", "tier": 3, "torn": true}}
-		if mode == "dead_rear": dolls[3].hp = 0
-		if mode == "all_dead":
+		if mode in ["hanging_rear", "dead_rear"]: dolls[3].hp = 0
+		if mode in ["all_hanging", "all_dead"]:
 			for doll in dolls: doll.hp = 0
+		if mode == "hanging_no_part":
+			dolls[3].hp = 0
+			dolls[3].parts = {}
 		var walk := Walk.start(rng, "walls", dolls, pockets(), null, false, true)
 		arrive(walk)
 		var before := walk.snapshot()
 		var rng_before := rng.state
 		var receipt := act(walk, "tug", {"target": "thread_tug", "choice": "yield"})
 		check(receipt.ok and not walk.tug_unresolved() and receipt.snapshot.pockets == before.pockets, "safe edge resolution " + mode)
-		if mode == "dead_rear":
-			check(receipt.snapshot.pending.size() == 1 and receipt.snapshot.pending[0].target == "2"
-				and receipt.snapshot.dolls[3] == before.dolls[3], "rearmost living doll chosen rather than dead rear")
+		if mode in ["hanging_rear", "all_hanging", "dead_rear", "all_dead"]:
+			var torn: Array = receipt.snapshot.pending.filter(func(p): return p.kind == "torn_part")
+			check(torn.size() == 1, "exactly one torn part queued in " + mode)
+			if torn.size() == 1:
+				var effect: Dictionary = torn[0]
+				check(effect.target == "3" and effect.source == "thread_tug" and not effect.consumed
+					and effect.effects.mendable and effect.effects.already_applied,
+					"rear doll suffers mendable torn part in " + mode)
+				var slot: String = effect.effects.slot
+				var expected_dolls: Array = before.dolls.duplicate(true)
+				var original: Variant = expected_dolls[3].parts[slot]
+				if original is String: original = {"id": original, "tier": 1, "torn": false}
+				original.torn = true
+				expected_dolls[3].parts[slot] = original
+				check(effect.effects.part == original, "effect preserves real part ID and tier in " + mode)
+				check(receipt.snapshot.dolls[2] == before.dolls[2], "rank 3 doll 2 is untouched in " + mode)
+				check(receipt.snapshot.dolls[0] == before.dolls[0] and receipt.snapshot.dolls[1] == before.dolls[1],
+					"ranks 1 and 2 untouched in " + mode)
+				check(receipt.snapshot.dolls == expected_dolls, "only rear doll torn in " + mode)
 		else:
 			check(receipt.snapshot.dolls == before.dolls and receipt.snapshot.pending.is_empty() and rng.state == rng_before
 				and receipt.events[0].kind == "tug_no_part", "no eligible part never fabricates, spends or rolls " + mode)
+			check(receipt.snapshot.dolls[2] == before.dolls[2], "rank 3 untouched when rear has no intact parts in " + mode)
 		finish(walk)

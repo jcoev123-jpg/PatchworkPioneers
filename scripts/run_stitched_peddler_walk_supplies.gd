@@ -26,6 +26,12 @@ const POCKET_CAP := 2
 const OFFER_IDS: Array = [STARCH, SPARE_SPOOL]
 const ITEM_IDS: Array = ["thimble_tonic", "fresh_stuffing", "starch", "dye", "pins",
 		"spare_spool"]
+## Display-only text for the quote: what the item does when USED during a Walk.
+## Buying never uses the item; the Walk applies the real effect.
+const EFFECT_TEXT: Dictionary = {
+	STARCH: "Use during the Walk: this doll starts the next fight with Guard.",
+	SPARE_SPOOL: "Use during the Walk: repair a snipped thread or save a part from a Tug.",
+}
 
 ## Process-local counter that makes every opened visit's ID unique (no RNG).
 static var _visits_opened := 0
@@ -229,7 +235,7 @@ func quote() -> Dictionary:
 		var id: String = offer["id"]
 		var blocked := _blocked_reason(id, eligible)
 		rows.append({"id": id, "price": offer["price"], "can_buy": blocked.is_empty(),
-			"blocked": blocked})
+			"blocked": blocked, "effect_text": str(EFFECT_TEXT[id])})
 		if blocked.is_empty():
 			choices.append(BUY + "_" + id)
 	choices.append(LEAVE)
