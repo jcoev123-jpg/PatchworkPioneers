@@ -45,11 +45,11 @@ func _run() -> void:
 		random.seed = StitchedWalkScreen.PREVIEW_SEED
 		var oracle := StitchedWalkRules.start(random, "walls", stage.expected.dolls, stage.expected.pockets, null, true)
 		_check(oracle != null and oracle.snapshot() == stage.expected, "screen opts into seeded mimic scheduling")
-		_check(stage.layers.size() == 3 and stage.trailing.size() == 4 and stage.switch_buttons.size() == 4, "nonempty mounted layer and rank controls")
-		for index in stage.layers.size():
-			_check(stage.layers[index].texture != null and stage.layers[index].get_rect() == StitchedWalkScreen.VIEW, "ordered authored layer geometry")
-			if index > 0:
-				_check(stage.layers[index - 1].get_index() < stage.layers[index].get_index(), "far mid near draw order")
+		_check(stage.stage != null and stage.stage.get_rect() == StitchedWalkScreen.VIEW and stage.switch_buttons.size() == 4, "full-screen 3D corridor and rank controls")
+		_check(stage.stage.corridor.get_child_count() == 6 and stage.stage.steps == int(stage.expected.corridor.steps), "corridor built for this walk")
+		for surface in stage.stage.corridor.get_children():
+			_check((surface as MeshInstance3D).mesh.material.albedo_texture != null, "every corridor surface is an authored picture")
+		_check(stage.stage.camera.rotation.y == 0.0 and not stage.stage.looking_back, "the borrowed eye faces ahead")
 		for button in [stage.forward_button, stage.back_button, stage.exit_button] + stage.switch_buttons + stage.pocket_buttons:
 			_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "mouse and keyboard controls remain inside viewport")
 			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "image-backed gothic control")
@@ -59,18 +59,21 @@ func _run() -> void:
 		stage.back_button.pressed.emit()
 		var receipt := oracle.act({"kind": "look_back", "actor": oracle.snapshot().viewpoint}, oracle.snapshot())
 		_check(stage.receipts.back() == receipt and stage.expected.looking_back and stage.expected.whirr == 5, "mounted LOOK BACK matches exact receipt")
+		_check(stage.stage.looking_back and not stage.event_panel.visible, "LOOK BACK turns the eye round")
 		var visible_dolls := 0
-		for index in stage.trailing.size():
-			if stage.trailing[index].visible:
+		for doll in stage.expected.dolls:
+			var figure: Sprite3D = stage.stage.figure_nodes.get(doll.id)
+			if figure != null and figure.visible:
 				visible_dolls += 1
-				_check(stage.trailing[index].texture != null and stage.rank_labels[index].text.begins_with("Rank " + str(index + 1)), "trailing doll art retains real ranks")
-		_check(visible_dolls == 3 and stage.shadow_picture.visible == oracle.shadow_visible(), "three real trailing dolls plus only scheduled shadow")
+				_check(figure.texture != null and stage.figure_labels[doll.id].text == doll.name, "trailing doll art carries its name")
+		_check(visible_dolls == 3 and stage.stage.figure_nodes.has(stage.expected.shadow.id) == oracle.shadow_visible(), "three real trailing dolls plus only scheduled shadow")
+		var last_doll: String = stage.expected.dolls[3].id
 		stage.candle = 0
 		stage.refresh()
-		_check(stage.readout.text.contains("snuffed") and stage.trailing[3].modulate.a < 0.2, "candle band fades distant dolls")
+		_check(stage.readout.text.contains("snuffed") and stage.stage.figure_nodes[last_doll].modulate.a < 0.2, "candle band fades distant dolls")
 		stage.candle = 78
 		stage.refresh()
-		_check(stage.trailing[3].modulate.a == 1.0, "bright candle restores trailing visibility")
+		_check(stage.stage.figure_nodes[last_doll].modulate.a == 1.0, "bright candle restores trailing visibility")
 		_reject(stage, "forward", {}, stale)
 		_reject(stage, "switch", {"target": "LOST"})
 		_reject(stage, "look_back", {"actor": "invalid"})
@@ -91,18 +94,18 @@ func _run() -> void:
 		_reject(stage, "use_item", {"slot": 0, "target": stage.expected.viewpoint})
 		stage.switch_buttons[0].pressed.emit()
 		oracle.act({"kind": "switch", "actor": oracle.snapshot().viewpoint, "target": stage.expected.dolls[0].id}, oracle.snapshot())
-		stage.target_picker.select(0)
 		for slot in [0, 0]:
 			var actor: String = oracle.snapshot().viewpoint
+			var mend: String = stage.pocket_target(str(stage.expected.pockets[actor][slot]))
 			stage.pocket_buttons[slot].pressed.emit()
-			receipt = oracle.act({"kind": "use_item", "actor": actor, "slot": slot, "target": actor}, oracle.snapshot())
+			receipt = oracle.act({"kind": "use_item", "actor": actor, "slot": slot, "target": mend}, oracle.snapshot())
 			_check(receipt.ok and stage.receipts.back() == receipt and receipt.events[0].kind == "heal", "mounted healing pockets reflect exact HP and WHIRR receipts")
 		_check(stage.pocket_buttons[0].disabled and stage.expected.pockets[stage.expected.viewpoint].is_empty(), "consumed items leave empty pockets")
 		stage.forward_button.pressed.emit()
 		receipt = oracle.act({"kind": "forward", "actor": oracle.snapshot().viewpoint}, oracle.snapshot())
 		_check(stage.receipts.back() == receipt and stage.travel != null and stage.travel.is_running(), "ordinary forward creates travel tween after exact S8a action")
 		stage.set_reduced_motion(true)
-		_check(stage.travel == null and stage.layers[2].position == StitchedWalkScreen.VIEW.position and stage.layers[2].scale == Vector2.ONE, "reduced motion immediately finishes travel geometry")
+		_check(stage.travel == null and not stage.stage.moving() and stage.stage.camera.position == Vector3(0, StitchedCorridorStage.EYE, stage.stage.eye_z(stage.expected.step)), "reduced motion immediately finishes travel geometry")
 		while stage.expected.phase == "walking":
 			stage.forward_button.pressed.emit()
 			receipt = oracle.act({"kind": "forward", "actor": oracle.snapshot().viewpoint}, oracle.snapshot())
@@ -149,7 +152,7 @@ func _public_mount() -> void:
 		while stage.expected.step < stage.expected.shadow.step:
 			stage.forward_button.pressed.emit()
 		stage.back_button.pressed.emit()
-		_check(stage.shadow_picture.visible == stage.expected.shadow.present, "real URL LOOK BACK reaches seeded reveal")
+		_check(stage.stage.figure_nodes.has(stage.expected.shadow.id) == stage.expected.shadow.present, "real URL LOOK BACK reaches seeded reveal")
 		stage.exit_button.pressed.emit()
 		await process_frame
 		_check(boot.walk_view == null and app.title_view.is_visible_in_tree() and app.run_rng == null, "public exit restores title without allocating live route combat")
@@ -169,16 +172,18 @@ func _mimic_mounts() -> void:
 		stage.back_button.pressed.emit()
 		var present: bool = stage.expected.shadow.present
 		witnesses[present] += 1
-		var visible := int(stage.shadow_picture.visible)
-		for picture in stage.trailing:
-			visible += int(picture.visible)
+		var shadow_id: String = stage.expected.shadow.id
+		var visible := 0
+		for id in stage.stage.figure_nodes:
+			if stage.figure_labels.has(id):
+				visible += int(stage.stage.figure_nodes[id].visible)
 		_check(visible == (4 if present else 3), "only seeded shadow shows four trailing figures")
-		_check(stage.snip_button.visible == present and stage.clue.visible == present, "SNIP and clue only for shadow")
+		_check(stage.snip_buttons.size() == (4 if present else 0) and stage.clue.visible == present, "SNIP and clue only for shadow")
 		if present:
-			_check(stage.shadow_picture.texture != null and stage.shadow_label.text.contains("Loose seam"), "authored fallback and distinct stitched clue mounted")
+			_check(stage.stage.figure_nodes[shadow_id].texture != null and stage.figure_labels[shadow_id].text.contains("Loose seam"), "authored fallback and distinct stitched clue mounted")
 			for doll in stage.expected.dolls:
 				if doll.id == stage.expected.shadow.disguise:
-					_check(stage.shadow_label.text.begins_with("Rank %d - %s" % [doll.rank, doll.name]), "extra doll uses actual disguised rank and name")
+					_check(stage.figure_labels[shadow_id].text.begins_with(doll.name), "extra doll uses the disguised doll name")
 			for index in [1, 2, 3]:
 				stage.switch_buttons[index].pressed.emit()
 				stage.back_button.pressed.emit()
@@ -187,14 +192,13 @@ func _mimic_mounts() -> void:
 					_check(stage.clue.text.contains("seams"), "glass eyes expose seams")
 				if index == 3:
 					_check(stage.clue.text.contains("breathing"), "stitched ears hear breathing")
-			_check(stage.snip_picker.item_count == 4, "three real targets and extra doll")
-			for control in [stage.snip_picker, stage.snip_button]:
+			_check(stage.snip_buttons.size() == 4 and stage.snip_buttons.has(shadow_id), "three real targets and extra doll")
+			for control in stage.snip_buttons.values():
 				_check(control.is_visible_in_tree() and control.focus_mode == Control.FOCUS_ALL
 					and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(control.get_global_rect()), "SNIP reachable by mouse and keyboard")
-			stage.snip_picker.select(3)
-			stage.snip_button.pressed.emit()
-			_check(stage.receipts.back().ok and stage.expected.shadow.removed and not stage.shadow_picture.visible
-				and not stage.snip_button.visible, "mounted SNIP delegates correct target and clears shadow")
+			stage.snip_buttons[shadow_id].pressed.emit()
+			_check(stage.receipts.back().ok and stage.expected.shadow.removed and not stage.stage.figure_nodes.has(shadow_id)
+				and stage.snip_buttons.is_empty(), "mounted SNIP under the figure clears the shadow")
 		else:
 			_reject(stage, "snip", {"target": "extra_thread_shadow"})
 		stage.free()
@@ -230,11 +234,11 @@ func _deferred_items() -> void:
 	_reject(stage, "use_item", {"slot": 0, "target": stage.expected.viewpoint})
 	while stage.expected.step < curio_step:
 		stage.forward_button.pressed.emit()
-	_check(stage.target_picker.item_count > 4, "current object exposed as anonymous target")
-	stage.target_picker.select(4)
+	var curio := stage.current_curio()
+	_check(not curio.is_empty() and stage.pocket_target("pins") == curio.instance, "pins go to the curio in the way")
+	_check(stage.event_panel.visible and stage.event_buttons.size() >= 2 and stage.stage.figure_nodes.has("curio"), "the curio stands in the corridor with its choices")
 	stage.pocket_buttons[0].pressed.emit()
 	_check(stage.receipts.back().ok and stage.expected.pending.back().kind == "pins" and not stage.expected.pending.back().consumed, "mounted pins queues current-instance effect")
-	stage.target_picker.select(0)
 	stage.pocket_buttons[0].pressed.emit()
 	_check(stage.receipts.back().ok and stage.expected.pending.back().kind == "spare_spool", "mounted spare spool queues receipt")
 	_check(stage.expected.pending.size() == 4 and stage.expected.dolls == pristine_dolls and stage.expected.whirr == 30, "deferred items never resolve horrors, HP, ranks or fray")

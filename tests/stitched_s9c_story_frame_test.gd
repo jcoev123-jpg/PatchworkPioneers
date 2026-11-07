@@ -30,10 +30,7 @@ func _shot(label: String) -> void:
 
 
 func _layers_dimmed(walker: StitchedWalkScreen) -> bool:
-	for layer in walker.layers:
-		if layer.modulate.r < walker._layer_tone.r - 0.01:
-			return true
-	return false
+	return walker.stage.dim < 0.99
 
 
 func _run() -> void:
