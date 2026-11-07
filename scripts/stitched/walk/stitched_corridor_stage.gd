@@ -28,7 +28,7 @@ const TRAIL_X := [0.0, -0.75, 0.75, 0.0]
 const STEP_TIME := 0.5
 const TURN_TIME := 0.35
 ## S11 fights stay in the corridor: the eye steps out through the near wall and looks across it.
-const FIGHT_EYE := Vector2(4.2, 1.05)
+const FIGHT_EYE := Vector2(5.0, 1.0)
 const FIGHT_FOV := 40.0
 const FIGHT_PITCH := -4.0
 const FIGHT_FOG := 0.6
@@ -314,8 +314,8 @@ func fight_point(side: String, rank: int) -> Vector3:
 	var index := clampi(rank, 1, 4) - 1
 	var depth := -0.15 if index % 2 == 1 else 0.1
 	if side == "hero":
-		return Vector3(depth, 0, fight_z() + 0.5 + index * 0.8)
-	return Vector3(depth, 0, fight_z() - 0.5 - index * 0.85)
+		return Vector3(depth, 0, fight_z() + 0.45 + index * 0.75)
+	return Vector3(depth, 0, fight_z() - 0.45 - index * 0.8)
 
 
 ## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.
