@@ -800,9 +800,11 @@ func _open_visit(kind: String) -> bool:
 			var supplies_quote := supplies.quote()
 			if supplies_quote.get("ok") == true:
 				for row in supplies_quote.offers:
-					var label := "Starch" if row.id == RunStitchedPeddlerWalkSupplies.STARCH else "Spare spool"
+					var is_starch: bool = row.id == RunStitchedPeddlerWalkSupplies.STARCH
+					var label := "Starch" if is_starch else "Spare spool"
+					var effect := "Guard next fight" if is_starch else "Fix snipped THREAD or save part from TUG"
 					for hero in roster:
-						_offer("buy_" + str(row.id), "%s / %s / %d gold" % [label, hero.name, row.price],
+						_offer("buy_" + str(row.id), "%s / %s / %d gold / %s" % [label, hero.name, row.price, effect],
 							row.can_buy and hero.id in supplies_quote.eligible, [hero.id])
 			_offer("leave", "Leave Peddler")
 		"Unpicker":
