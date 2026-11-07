@@ -93,10 +93,12 @@ func preview_choices() -> Dictionary:
 	for item: Dictionary in preview.choices:
 		var available: bool = item.affordable
 		item["service_request"] = {}
+		item["service_preview"] = {}
 		if item.choice_id == SERVICE_CHOICE_ID:
 			available = available and _has_usable_action(item.wallet)
 			if available:
 				item["service_request"] = {"stop_type": SERVICE_KIND}
+				item["service_preview"] = _build_service_preview(item.wallet)
 		item["available"] = available
 		item["actionable"] = available
 	preview["state"] = read_state()
@@ -107,17 +109,37 @@ func quote() -> Dictionary:
 	return preview_choices()
 
 
-func _has_usable_action(post_toll_wallet: Dictionary) -> bool:
+func _post_toll_quote(post_toll_wallet: Dictionary) -> Dictionary:
+	# A fresh temporary visit: never published, claimed or used to mutate this event.
 	var prospective := RunUnpickerVisit.open_stitched(_node_id, _heroes.duplicate(true),
 		post_toll_wallet.gold, _quoted_calm_price, _satchel.duplicate(true),
 		post_toll_wallet.scraps, _quoted_scrap_yield)
-	var offered := prospective.quote()
+	return prospective.quote()
+
+
+func _has_usable_action(post_toll_wallet: Dictionary) -> bool:
+	var offered := _post_toll_quote(post_toll_wallet)
 	if not offered.get("ok", false):
 		return false
 	for action: String in offered.choices:
 		if action != "leave":
 			return true
 	return false
+
+
+## Detached advisory forecast of the inner service, taken verbatim from the real
+## RunUnpickerVisit quote so no FRAY, resolve or satchel rule is duplicated here.
+func _build_service_preview(post_toll_wallet: Dictionary) -> Dictionary:
+	var offered := _post_toll_quote(post_toll_wallet)
+	if not offered.get("ok", false):
+		return {}
+	return {
+		"post_toll_gold": post_toll_wallet.gold,
+		"calm_price": offered.price,
+		"calm_outcomes": (offered.calm_outcomes as Array).duplicate(true),
+		"scrap_yield": offered.scrap_yield,
+		"unpick_outcomes": (offered.unpick_outcomes as Array).duplicate(true),
+	}
 
 
 func choose(choice_id: Variant, expected_node_id: Variant = null,
