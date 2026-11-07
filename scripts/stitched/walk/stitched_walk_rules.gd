@@ -419,7 +419,7 @@ func stitches_cue() -> bool:
 func _tear_rear_part(events: Array) -> void:
 	var rear: Dictionary = {}
 	for doll in _state.dolls:
-		if not doll.lost and doll.hp > 0 and (rear.is_empty() or doll.rank > rear.rank):
+		if not doll.lost and (rear.is_empty() or doll.rank > rear.rank):
 			rear = doll
 	var slots: Array = []
 	if not rear.is_empty():
