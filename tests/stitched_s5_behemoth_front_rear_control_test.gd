@@ -15,7 +15,7 @@ const TROPHY := "patchwork_behemoth_heart_torso"
 const MAUL := {
 	"id": "behemoth_maul", "name": "Behemoth Maul", "kind": "melee", "launch": [1, 3],
 	"target": [1, 2], "target_side": "enemy", "multi": false, "acc": 85,
-	"dmg": [8, 12], "crit": 0, "effects": {}, "self_move": 0, "move": "attack2",
+	"dmg": [8, 12], "crit": 0, "effects": {"tear": 1}, "self_move": 0, "move": "attack2",
 }
 const STUFFING_HURL := {
 	"id": "stuffing_hurl", "name": "Stuffing Hurl", "kind": "ranged", "launch": [1, 4],
@@ -151,7 +151,7 @@ func _test_source(catalog: Dictionary) -> void:
 		"abilities": [MAUL, STUFFING_HURL, ROPE_LASH, STITCH_WARD],
 	}
 	_check(boss.get("stitched") == _json(expected_profile),
-		"AC1: exact profile; only Rope Lash and Stuffing Hurl change multi/target/effects")
+		"AC1: exact profile; Maul tears, Rope Lash and Stuffing Hurl change multi/target")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, BOSS)
 	_check(not foe.is_empty() and StitchedEnemyCatalog.trophy_for(catalog, BOSS) == TROPHY,
 		"AC1: the canonical foe and its trophy load")

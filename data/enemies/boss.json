@@ -65,7 +65,7 @@
           "acc": 85,
           "dmg": [8, 12],
           "crit": 0,
-          "effects": {},
+          "effects": {"tear": 1},
           "self_move": 0,
           "move": "attack2"
         },

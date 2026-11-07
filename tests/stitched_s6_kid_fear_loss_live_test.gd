@@ -259,7 +259,9 @@ func _replacement_loss() -> void:
 
 
 func _no_loss(hanging: bool) -> void:
-	var app: Node = await _new_run(0 if hanging else 42)
+	# Seed 43 keeps the no-loss full route winning under the Behemoth Maul tear witness
+	# re-derived in stitched_s6_full_run_test.
+	var app: Node = await _new_run(0 if hanging else 43)
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and _route_kind(app, "Fight"), "no-loss witness mounts a genuine fight")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
