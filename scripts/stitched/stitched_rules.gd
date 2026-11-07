@@ -1166,6 +1166,11 @@ func _enter_turn() -> void:
 			_spend_dodge_turn(unit)
 			_turn_index += 1
 			continue
+		# An unravelled ally's FRAY cascade can lose this acting doll during
+		# its own start-of-turn effects. Never hand controls a LOST turn.
+		if not _can_act(unit):
+			_turn_index += 1
+			continue
 		return
 
 
