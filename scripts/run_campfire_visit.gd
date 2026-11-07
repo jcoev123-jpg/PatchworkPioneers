@@ -300,7 +300,10 @@ func select(decision: Variant, expected_node_id: Variant,
 					hero["hanging"] = false
 		TELL_TALES:
 			for hero in updated:
-				var reduced: int = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+				# A LOST doll's whole record (FRAY and resolve) is preserved.
+				if _is_lost_hero(hero):
+					continue
+				var reduced: int= maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
 				hero["fray"] = reduced
 				# An Unravelled trait ends once FRAY is strictly below 50 (exactly
 				# 50 keeps it). Only a present, known trait is cleared; Steadfast,
@@ -367,6 +370,8 @@ func _tales_changes_party() -> bool:
 	if _has_fear and _fear > 0:
 		return true
 	for hero in _heroes:
+		if _is_lost_hero(hero):
+			continue
 		if int(hero["fray"]) > 0:
 			return true
 	return false
@@ -434,11 +439,14 @@ func _mend_hanging_ends_suffix() -> String:
 	return " [Hanging ends: " + ", ".join(parts) + "]"
 
 
-## Per-doll Tell Tales FRAY relief in held roster order (LOST included).
+## Per-doll Tell Tales FRAY relief in held roster order (zero for LOST dolls).
 func _tales_relief_by_doll() -> Array:
 	var reliefs: Array = []
 	for hero in _heroes:
-		reliefs.append(mini(TALES_FRAY_REDUCTION, int(hero["fray"])))
+		if _is_lost_hero(hero):
+			reliefs.append(0)
+		else:
+			reliefs.append(mini(TALES_FRAY_REDUCTION, int(hero["fray"])))
 	return reliefs
 
 
@@ -449,6 +457,8 @@ func _tales_relief_by_doll() -> Array:
 func _tales_resolve_clear_suffix() -> String:
 	var parts: Array = []
 	for hero in _heroes:
+		if _is_lost_hero(hero):
+			continue
 		var reduced: int = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
 		if reduced >= RESOLVE_CLEAR_BELOW or not hero.has("resolve"):
 			continue
@@ -489,10 +499,12 @@ func _mend_gain_now() -> int:
 	return total
 
 
-## Actual FRAY Tell Tales would remove now, across every held record (LOST included).
+## Actual FRAY Tell Tales would remove now, across non-LOST dolls only.
 func _tales_fray_relief_now() -> int:
 	var total: int = 0
 	for hero in _heroes:
+		if _is_lost_hero(hero):
+			continue
 		total += mini(TALES_FRAY_REDUCTION, int(hero["fray"]))
 	return total
 
