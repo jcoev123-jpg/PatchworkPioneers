@@ -271,7 +271,8 @@
               5
             ],
             "effects": {
-              "tangled": 3
+              "tangled": 3,
+              "mark": 2
             }
           }
         },
@@ -282,12 +283,13 @@
               7
             ],
             "effects": {
-              "tangled": 4
+              "tangled": 4,
+              "mark": 3
             }
           }
         }
       },
-      "text": "Catch one foe in a buttonhole and leave them Tangled."
+      "text": "Catch one foe in a buttonhole and leave them Tangled, deeper at each stitch tier; stitch tiers II and III also Mark it for follow-up."
     },
     {
       "id": "button_golem_arms_popping_volley",
