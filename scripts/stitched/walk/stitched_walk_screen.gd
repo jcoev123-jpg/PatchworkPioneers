@@ -66,6 +66,13 @@ var preview_fear := 0
 var flickering := false
 var _flicker_time := 0.0
 var _built_for := ""
+## Idle chatter: a trailing doll speaks when the player leaves the walk alone.
+var barks := StitchedWalkBarks.new()
+var bark_label: Label
+var bark_timer: Timer
+var bark_count := 0
+var last_bark: Dictionary = {}
+var _bark_fade: Tween
 
 
 func attach(run: StitchedRunSession) -> bool:
@@ -185,6 +192,17 @@ func _ready() -> void:
 		pocket_buttons.append(_button("", Rect2(1010, 582 + index * 56, 246, 48), 19, func(): _use_pocket(index)))
 	exit_button = _button("TITLE", Rect2(1110, 18, 150, 44), 19, func(): exit_requested.emit())
 	_build_event_panel()
+	bark_label = _label(Rect2(140, 506, 1000, 48), "", 22)
+	bark_label.name = "DollBark"
+	bark_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	bark_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	bark_label.add_theme_color_override("font_color", CHROME.AMBER)
+	bark_label.hide()
+	bark_timer = Timer.new()
+	bark_timer.name = "BarkTimer"
+	bark_timer.one_shot = true
+	bark_timer.timeout.connect(_on_bark_timer)
+	add_child(bark_timer)
 	if walk != null:
 		refresh()
 		forward_button.grab_focus()
@@ -293,6 +311,7 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 		return receipt
 	expected = walk.snapshot() if host != null else receipt.snapshot.duplicate(true)
 	if is_node_ready():
+		hush()
 		var animate: bool = receipt.ok and not reduced_motion
 		refresh(animate)
 		feedback.text = describe(kind, request, receipt, expected.dolls)
@@ -440,6 +459,66 @@ func refresh(animate: bool = false) -> void:
 		feedback.text = "The corridor ends here."
 	_update_flicker()
 	_place_figure_controls()
+	if bark_timer.is_stopped() and expected.phase == "walking":
+		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+
+
+func _input(event: InputEvent) -> void:
+	if walk != null and (event is InputEventKey or event is InputEventMouseButton or event is InputEventMouseMotion):
+		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+
+
+func _arm_barks(delay: float) -> void:
+	if bark_timer == null or not bark_timer.is_inside_tree():
+		return
+	if expected.is_empty() or expected.phase != "walking":
+		bark_timer.stop()
+		return
+	bark_timer.start(delay)
+
+
+## The player is back: the doll stops mid-sentence and the idle wait starts over.
+func hush() -> void:
+	if _bark_fade != null:
+		_bark_fade.kill()
+		_bark_fade = null
+	bark_label.hide()
+	_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+
+
+func _on_bark_timer() -> void:
+	bark()
+	_arm_barks(float(barks.data.get("repeat_delay", 13.0)))
+
+
+## One doll speaks a line chosen from what the walk is hiding. Returns the pick.
+func bark() -> Dictionary:
+	if walk == null or expected.get("phase") != "walking":
+		return {}
+	var band: String = StitchedS1BEffects.candle_band(clampi(candle, 0, 100)).name
+	var said := barks.pick(expected, walk, band, fear(), bark_count, str(last_bark.get("line", "")))
+	if said.is_empty():
+		return said
+	bark_count += 1
+	last_bark = said
+	bark_label.text = "%s:  \"%s\"" % [said.name, said.line]
+	# Above an open event's panel, else just over the walk controls.
+	bark_label.position.y = event_panel.position.y - bark_label.size.y - 8 if event_panel.visible else 506.0
+	bark_label.show()
+	if _bark_fade != null:
+		_bark_fade.kill()
+	var hold := float(barks.data.get("show_time", 4.5))
+	_bark_fade = create_tween()
+	if reduced_motion:
+		bark_label.modulate.a = 1.0
+		_bark_fade.tween_interval(hold)
+	else:
+		bark_label.modulate.a = 0.0
+		_bark_fade.tween_property(bark_label, "modulate:a", 1.0, 0.4)
+		_bark_fade.tween_interval(hold)
+		_bark_fade.tween_property(bark_label, "modulate:a", 0.0, 0.8)
+	_bark_fade.tween_callback(bark_label.hide)
+	return said
 
 
 ## Who stands in the corridor right now: the curio ahead, the dolls trailing behind,
