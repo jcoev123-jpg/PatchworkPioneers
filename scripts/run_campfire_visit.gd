@@ -328,12 +328,14 @@ func _stitched_quote() -> Dictionary:
 	for choice in choices:
 		match String(choice):
 			MEND:
-				phrases.append("Mend %d%% max HP (+%d HP now)" % [MEND_HEAL_PERCENT, _mend_gain_now()])
+				phrases.append("Mend %d%% max HP (+%d HP now)%s" % [MEND_HEAL_PERCENT, _mend_gain_now(),
+					_beneficiary_suffix(_mend_gains_by_doll(), "+%d HP")])
 			TELL_TALES:
 				var relief := "-%d FRAY now" % _tales_fray_relief_now()
 				if _has_fear:
 					relief += "; -%d Wren FEAR now" % _tales_fear_relief_now()
-				phrases.append("Tell Tales up to %d FRAY each (%s)" % [TALES_FRAY_REDUCTION, relief])
+				phrases.append("Tell Tales up to %d FRAY each (%s)%s" % [TALES_FRAY_REDUCTION, relief,
+					_beneficiary_suffix(_tales_relief_by_doll(), "-%d FRAY")])
 			TRIM_THE_WICK:
 				phrases.append("Trim the Wick up to %d CANDLE (+%d now)" % [WICK_CANDLE_RESTORE, _wick_gain_now()])
 			STITCHED_LEAVE:
@@ -345,6 +347,42 @@ func _stitched_quote() -> Dictionary:
 		text += "Choose one: " + ", ".join(phrases.slice(0, phrases.size() - 1)) + ", or " \
 			+ String(phrases[phrases.size() - 1]) + "."
 	return {"text": text, "choices": choices}
+
+
+## Per-doll Mend gains in held roster order (zero for LOST or full dolls).
+func _mend_gains_by_doll() -> Array:
+	var gains: Array = []
+	for hero in _heroes:
+		var gain: int = 0
+		if not _is_lost_hero(hero):
+			var max_hp: int = int(hero["max_hp"])
+			@warning_ignore("integer_division")
+			var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+			gain = mini(amount, max_hp - int(hero["hp"]))
+		gains.append(gain)
+	return gains
+
+
+## Per-doll Tell Tales FRAY relief in held roster order (LOST included).
+func _tales_relief_by_doll() -> Array:
+	var reliefs: Array = []
+	for hero in _heroes:
+		reliefs.append(mini(TALES_FRAY_REDUCTION, int(hero["fray"])))
+	return reliefs
+
+
+## " [Name +N HP, ...]" listing only positive deltas; empty when nobody benefits.
+func _beneficiary_suffix(deltas: Array, delta_format: String) -> String:
+	var parts: Array = []
+	for index in range(mini(deltas.size(), _heroes.size())):
+		var delta: int = int(deltas[index])
+		if delta <= 0:
+			continue
+		var hero: Dictionary = _heroes[index]
+		parts.append("%s %s" % [str(hero.get("name", hero["id"])), delta_format % delta])
+	if parts.is_empty():
+		return ""
+	return " [" + ", ".join(parts) + "]"
 
 
 ## Actual HP Mend would restore now: per non-LOST doll min(floor(30% max), missing HP).
