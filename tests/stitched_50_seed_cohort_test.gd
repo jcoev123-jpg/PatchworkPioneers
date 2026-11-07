@@ -345,8 +345,13 @@ func _init() -> void:
 		_check(not replay.is_empty() and replay.trace == two_replays[seed_number].trace
 			and replay.summary == two_replays[seed_number].summary,
 			"seed %d replay diverges in routes, states, receipts, or RNG" % seed_number)
-	_check(victories >= 10 and victories <= 22,
-		"authentic survival baseline expected 10-22 wins, observed %d" % victories)
+	# Measured survival baseline, not a design rule: at the parent commit these fifty
+	# seeds won 11 runs. The authored S5 Bobbin Shot (ranged rear ranks 3/4, pull 1) now
+	# reels a back-line doll into reach, and two seeds (12 floor losses) end in a floor-12
+	# defeat instead. The band keeps its measured width; the replay, route, legality and
+	# full-roster checks below are unchanged.
+	_check(victories >= 9 and victories <= 22,
+		"authentic survival baseline expected 9-22 wins, observed %d" % victories)
 	print("COHORT_SUMMARY ", JSON.stringify({"runs": 50, "wins": victories,
 		"loss_floors": losses, "heroes": sampled.keys(), "replays": two_replays.keys(),
 		"checks": checks, "failures": failures.size()}))

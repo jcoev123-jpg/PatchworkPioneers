@@ -55,8 +55,8 @@ const COLOSSUS_TREADLE := {
 }
 const COLOSSUS_BOBBIN := {
 	"id": "colossus_bobbin", "name": "Bobbin Shot", "kind": "ranged",
-	"launch": [1, 4], "target": [1, 4], "target_side": "enemy", "multi": false,
-	"acc": 80, "dmg": [4, 6], "crit": 0, "effects": {},
+	"launch": [1, 4], "target": [3, 4], "target_side": "enemy", "multi": false,
+	"acc": 80, "dmg": [4, 6], "crit": 0, "effects": {"pull": 1},
 	"self_move": 0, "move": "attack3",
 }
 const COLOSSUS_BARRAGE := {
