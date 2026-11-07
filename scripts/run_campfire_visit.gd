@@ -244,6 +244,10 @@ func select(decision: Variant, expected_node_id: Variant,
 				@warning_ignore("integer_division")
 				var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
 				hero["hp"] = mini(max_hp, int(hero["hp"]) + amount)
+				# Any heal above 0 HP ends Hanging. Only an explicit true flag
+				# is cleared; an absent key is never fabricated.
+				if hero.get("hanging", false) == true and int(hero["hp"]) > 0:
+					hero["hanging"] = false
 		TELL_TALES:
 			for hero in updated:
 				var reduced: int = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
@@ -329,7 +333,7 @@ func _stitched_quote() -> Dictionary:
 		match String(choice):
 			MEND:
 				phrases.append("Mend %d%% max HP (+%d HP now)%s" % [MEND_HEAL_PERCENT, _mend_gain_now(),
-					_beneficiary_suffix(_mend_gains_by_doll(), "+%d HP")])
+					_beneficiary_suffix(_mend_gains_by_doll(), "+%d HP") + _mend_hanging_ends_suffix()])
 			TELL_TALES:
 				var relief := "-%d FRAY now" % _tales_fray_relief_now()
 				if _has_fear:
@@ -362,6 +366,22 @@ func _mend_gains_by_doll() -> Array:
 			gain = mini(amount, max_hp - int(hero["hp"]))
 		gains.append(gain)
 	return gains
+
+
+## Pure preview of select(MEND)'s Hanging release, in held roster order:
+## " [Hanging ends: Name, ...]" for each non-LOST doll at 0 HP whose actual Mend
+## gain is positive. Empty when nobody qualifies. Never mutates state.
+func _mend_hanging_ends_suffix() -> String:
+	var gains: Array = _mend_gains_by_doll()
+	var parts: Array = []
+	for index in range(mini(gains.size(), _heroes.size())):
+		var hero: Dictionary = _heroes[index]
+		if _is_lost_hero(hero) or int(hero["hp"]) != 0 or int(gains[index]) <= 0:
+			continue
+		parts.append(str(hero.get("name", hero["id"])))
+	if parts.is_empty():
+		return ""
+	return " [Hanging ends: " + ", ".join(parts) + "]"
 
 
 ## Per-doll Tell Tales FRAY relief in held roster order (LOST included).
