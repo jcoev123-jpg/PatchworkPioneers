@@ -235,6 +235,159 @@ func _verify_stage_art(stage: StitchedBattleScreen, foe_count: int = 3) -> void:
 		and stage._candle_meter != null and stage._action_buttons["pass"].position.y >= 640
 		and stage._labels["preview"].position.y >= 610,
 		"accessible rank controls, sewn order, candle, forecast and actions remain mounted")
+	_verify_threat_plates(stage, foe_count)
+
+
+func _verify_threat_caption(label: Label, minimum_font: int) -> void:
+	var font := label.get_theme_font("font")
+	var pixels := label.get_theme_font_size("font_size")
+	_check(font != null and not label.text.is_empty() and pixels >= minimum_font
+		and label.scale == Vector2.ONE and label.clip_text,
+		"threat caption has nonempty unscaled text at its original readable font size")
+	if font != null:
+		var measured := font.get_string_size(label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, pixels)
+		_check(measured.x <= label.size.x and font.get_height(pixels) <= label.size.y,
+			"threat caption's measured text width and line height fit its actual row")
+
+
+func _verify_threat_disclosure(stage: StitchedBattleScreen, ticket: StitchedFoeIntentPlate) -> void:
+	var prior_focus := root.gui_get_focus_owner()
+	var snapshot := stage.battle.state_snapshot()
+	var rng := stage.battle.rng_state()
+	var receipts := stage.receipts.duplicate(true)
+	var selected := stage._selected_part
+	var legal := stage.legal_targets().duplicate()
+	var preview := str(stage._labels["preview"].text)
+	var log_text := str(stage._labels["log"].text)
+	_check(ticket.is_visible_in_tree() and not ticket.tooltip_text.is_empty()
+		and ticket.focus_mode == Control.FOCUS_ALL and ticket.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"precondition: occupied threat plaque is reachable by pointer and keyboard")
+	ticket.mouse_entered.emit()
+	_check(stage._intent_disclosure.is_visible_in_tree()
+		and stage._intent_disclosure_label.text == ticket.tooltip_text,
+		"mounted plaque hover reveals the complete authoritative intent")
+	ticket.mouse_exited.emit()
+	_check(not stage._intent_disclosure.visible, "leaving threat hover dismisses its disclosure")
+	ticket.grab_focus()
+	_check(ticket.has_focus() and stage._intent_disclosure.is_visible_in_tree()
+		and stage._intent_disclosure_label.text == ticket.tooltip_text
+		and stage._intent_disclosure_label.get_line_count()
+			<= stage._intent_disclosure_label.get_visible_line_count(),
+		"keyboard threat focus reveals all disclosure lines without clipping")
+	ticket.release_focus()
+	if prior_focus != null:
+		prior_focus.grab_focus()
+	_check(not stage._intent_disclosure.visible and stage.battle.state_snapshot() == snapshot
+		and stage.battle.rng_state() == rng and stage.receipts == receipts
+		and stage._selected_part == selected and stage.legal_targets() == legal
+		and stage._labels["preview"].text == preview and stage._labels["log"].text == log_text,
+		"threat hover/focus and returning focus preserve state, RNG, receipts, selection and forecast")
+
+
+func _verify_threat_plates(stage: StitchedBattleScreen, foe_count: int) -> void:
+	var checked := 0
+	var earlier: Array[Rect2] = []
+	for rank in range(1, 5):
+		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[rank]
+		var foe := stage._unit_at("foe", rank)
+		if foe.is_empty():
+			_check(not ticket.visible and ticket.foe_id.is_empty(),
+				"vacant foe rank has no ghost threat plaque")
+			continue
+		checked += 1
+		var rect := ticket.get_global_rect()
+		var intent := StitchedFoeIntent.choose(stage.battle, foe)
+		_check(not intent.is_empty() and ticket.is_visible_in_tree()
+			and ticket.foe_id == foe["id"] and ticket.foe_rank == rank
+			and stage._foe_intents[rank] == intent
+			and ticket.texture == load("res://assets/paper/ui/hud_name_plate.png")
+			and ticket.patch_margin_left >= 16 and ticket.patch_margin_top >= 8
+			and ticket.scale == Vector2.ONE and rect.size.x > 0 and rect.size.y > 0
+			and rect.size.x <= 140 and rect.size.y <= 58
+			and Rect2(0, 0, 1280, 720).encloses(rect),
+			"actual occupied rank %d uses an unscaled sewn threat plaque at most 140x58" % rank)
+		_check(not rect.intersects(Rect2(710, 105, 545, 30))
+			and not rect.intersects(stage._turn_ribbon.get_global_rect())
+			and not rect.intersects(stage._candle_meter.get_global_rect()),
+			"compact threat clears foe header, turn order and candle")
+		for side in ["hero", "foe"]:
+			for other in range(1, 5):
+				var key: String = side + "_" + str(other)
+				if stage._unit_at(side, other).is_empty():
+					continue
+				_check(not rect.intersects(_painted_bounds(stage._puppets[key]))
+					and not rect.intersects(stage._foot_plates[key].get_global_rect())
+					and not rect.intersects(stage._rank_meters[key]["root"].get_node("BadgeRow").get_global_rect()),
+					"threat R%d clears occupied %s painted art, badges and footplate" % [rank, key])
+		for other_rect in earlier:
+			_check(not rect.intersects(other_rect), "neighboring threat plaques never overlap")
+		earlier.append(rect)
+		var body := Rect2(Vector2.ZERO, ticket.size)
+		var heading := ticket.primary.get_rect()
+		var target := ticket.secondary.get_rect()
+		_verify_threat_caption(ticket.primary, 24)
+		_verify_threat_caption(ticket.secondary, 18)
+		_check(body.encloses(heading) and body.encloses(target) and not heading.intersects(target),
+			"measured threat rows stay separate and enclosed by the compact sewn frame")
+		if ticket.glyph.visible:
+			var icon := ticket.glyph.get_rect()
+			_check(ticket.glyph.texture != null and icon.size.x >= 26 and icon.size.y >= 26
+				and ticket.glyph.scale == Vector2.ONE and body.encloses(icon)
+				and not icon.intersects(heading) and not icon.intersects(target),
+				"original 26px image glyph remains enclosed and clear of both text rows")
+		else:
+			_check(bool(intent.get("pass", false)) or bool(intent.get("stun", false))
+				or intent.get("ability_kind", "") in ["move", "unknown", ""],
+				"glyph omission reflects the actual projected no-action or unmapped kind")
+		_verify_threat_disclosure(stage, ticket)
+	_check(checked == foe_count, "non-vacuous compact threat checks cover every occupied foe rank")
+
+
+func _verify_threat_states(stage: StitchedBattleScreen) -> void:
+	var battle := stage.battle
+	var original := stage._unit_at("foe", 1).duplicate(true)
+	_check(not original.is_empty() and not original.get("abilities", []).is_empty(),
+		"precondition: real mounted foe has authored abilities for threat state transitions")
+	if original.is_empty() or original.get("abilities", []).is_empty():
+		return
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var receipts := stage.receipts.duplicate(true)
+	var actor: Dictionary = battle._units[str(original["id"])]
+	var long_name := "A Long Tangle of Moonlit Needles and Unravelling Threads"
+	for state in ["PASS", "STUN", "multi long name"]:
+		actor["statuses"] = {}
+		actor["abilities"] = []
+		if state == "STUN":
+			actor["statuses"] = {"stun": 1}
+		elif state == "multi long name":
+			var ability: Dictionary = original["abilities"][0].duplicate(true)
+			ability["name"] = long_name
+			ability["multi"] = true
+			ability["target_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
+			ability["launch_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
+			actor["abilities"] = [ability]
+		stage._refresh()
+		var ticket: StitchedFoeIntentPlate = stage._foe_tickets[1]
+		var intent := StitchedFoeIntent.choose(battle, battle.get_unit(str(original["id"])))
+		_check(not intent.is_empty() and stage._foe_intents[1] == intent,
+			"state transition is projected from the real mounted battle")
+		if state == "multi long name":
+			_check(not bool(intent["pass"]) and bool(intent["multi"])
+				and intent["affected_ranks"] == [1, 2, 3, 4]
+				and ticket.secondary.text == "HERO RANKS 1,2,3,4"
+				and ticket.primary.text.ends_with("…") and ticket.tooltip_text.contains(long_name)
+				and ticket.tooltip_text.contains("BASE DMG") and ticket.glyph.visible,
+				"long multi-rank threat preserves every rank and full authored name/base details")
+		else:
+			_check(ticket.primary.text == state and ticket.secondary.text == "NO ACTION"
+				and ticket.tooltip_text.contains(state) and not ticket.glyph.visible,
+				"PASS/STUN cannot leave a stale attack glyph or advertise a target")
+		_verify_threat_plates(stage, 3)
+	battle._units[str(original["id"])] = original.duplicate(true)
+	stage._refresh()
+	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng and stage.receipts == receipts,
+		"threat state fixtures restore the pristine seeded battle without spending a turn")
 
 
 func _verify_fourth_foe(stage: StitchedBattleScreen) -> void:
@@ -888,6 +1041,7 @@ func _run() -> void:
 			"mounted stage is seeded 4v3 with 8 potential stage ranks")
 		_verify_stage_art(stage)
 		_verify_fourth_foe(stage)
+		_verify_threat_states(stage)
 		_verify_worn_layout(stage)
 		_verify_turn_surface(stage)
 		await _verify_native_inspection(stage)
