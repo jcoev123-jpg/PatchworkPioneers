@@ -226,7 +226,10 @@ func _poor_shop() -> void:
 
 
 func _lost_shop() -> void:
-	var app: Node = await _new_run(0)
+	# Seed 25 re-derives the LOST witness on the Hook Drag reel: the same mounted opening Fight
+	# still loses exactly one doll and is won afterwards, its Shop is connected and f03_n3 is
+	# the reachable Sewing Circle.
+	var app: Node = await _new_run(25)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null:
 		app.free()

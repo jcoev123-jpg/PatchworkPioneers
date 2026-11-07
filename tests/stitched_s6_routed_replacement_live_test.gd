@@ -48,7 +48,10 @@ func _healthy_circle() -> void:
 
 
 func _lost_circle() -> void:
-	var app: Node = await _new_run(0)
+	# Seed 1690 re-derives the LOST witness on the Hook Drag reel: the same mounted opening Fight
+	# still loses exactly one doll and is won afterwards, its connected Shop funds a pocket, and
+	# the connected Sewing Circle leads on into a real ranked battle.
+	var app: Node = await _new_run(1690)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null:
 		app.free()
@@ -95,7 +98,11 @@ func _lost_circle() -> void:
 		return
 	tonic.pressed.emit()
 	_check(session.pockets[living[0].id] == ["thimble_tonic"], "survivor actually owns a tonic before replacement")
-	_check(session.choices().has("f03_n3") and _press_route(app, "f03_n3")
+	var circle_id := ""
+	for id in session.choices():
+		if session.map.get_node(id).type == "SewingCircle":
+			circle_id = id
+	_check(not circle_id.is_empty() and _press_route(app, circle_id)
 		and session.pending.service == "SewingCircle"
 		and session.map.get_node(session.pending.node_id).type == "SewingCircle",
 		"mounted Circle is the genuine connected map node")
