@@ -17,7 +17,7 @@ func _check(condition: bool, explanation: String) -> void:
 		failures.append(explanation)
 
 
-func _press(button: Button, label: String) -> bool:
+func _press(button: BaseButton, label: String) -> bool:
 	var usable := is_instance_valid(button) and button.is_visible_in_tree() and not button.disabled
 	_check(usable, "mounted, enabled player control: " + label)
 	if usable:
@@ -80,6 +80,63 @@ func _walk_to_stop(app: Node, node_id: String, ordinal: int) -> void:
 		and session.walk_receipts.size() == ordinal
 		and str(session.walk_receipts.back().get("node_id", "")) == node_id,
 		"Walk %d journals its route and publishes its own stop receipt" % ordinal)
+
+## Save a real partially traversed corridor, then independently Continue it from
+## a fresh title. Both mounted buttons must make the same next seeded command.
+func _walk_save_replay(app: Node) -> void:
+	var session: StitchedRunSession = app.stitched_run_session
+	var walker: StitchedWalkScreen = app.stitched_run_walk
+	_check(is_instance_valid(walker) and walker.walk == session.walk
+		and session.walk.snapshot().step == 0, "mid-Walk witness starts on a real opening step")
+	if not is_instance_valid(walker) or not _press(walker.forward_button, "mid-Walk first forward"):
+		return
+	await process_frame
+	_check(session.phase == "walk" and session.walk != null and session.is_consistent(),
+		"mid-Walk save is taken after a committed player step, not at entry")
+	if session.phase != "walk":
+		return
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	var receipts := session.receipts.duplicate(true)
+	var walks := session.walk_receipts.duplicate(true)
+	_check(StitchedRunSave.write_file(TEST_SAVE, session),
+		"authoritative Save writes an independently loadable mid-Walk document")
+	var stored := StitchedRunSave.read_file(TEST_SAVE)
+	_check(stored != null and stored.snapshot() == before and stored.journal == journal
+		and stored.receipts == receipts and stored.walk_receipts == walks
+		and stored.rng.state == before.rng,
+		"mid-Walk Save preserves party, pending node, pockets, ledger, receipts, RNG")
+	var fresh := _app(999)
+	await process_frame
+	await process_frame
+	if not _press(fresh.stitched_continue_button, "separate title Continue mid-Walk"):
+		fresh.free()
+		return
+	await process_frame
+	var restored: StitchedRunSession = fresh.stitched_run_session
+	_check(restored != null and restored != session and restored.phase == "walk"
+		and restored.snapshot() == before and restored.journal == journal
+		and restored.receipts == receipts and restored.walk_receipts == walks
+		and is_instance_valid(fresh.stitched_run_walk)
+		and fresh.stitched_run_walk.walk == restored.walk, "title Continue mounts exact mid-Walk state")
+	if restored != null and restored.phase == "walk" and session.phase == "walk":
+		var baseline_walk := session.journal.size()
+		var first: StitchedWalkScreen = app.stitched_run_walk
+		var second: StitchedWalkScreen = fresh.stitched_run_walk
+		_check(first.walk.tug_unresolved() == second.walk.tug_unresolved(),
+			"next seeded Walk command has identical preconditions")
+		_press(first.forward_button, "uninterrupted next Walk command")
+		_press(second.forward_button, "reloaded next Walk command")
+		await process_frame
+		_check(session.journal.size() == baseline_walk + 1
+			and restored.snapshot() == session.snapshot()
+			and restored.journal == session.journal
+			and restored.receipts == session.receipts
+			and restored.walk_receipts == session.walk_receipts
+			and restored.rng.state == session.rng.state and session.is_consistent(),
+			"independent next public Walk step reproduces state, pocket budgets, receipt and RNG")
+	fresh.free()
+	await process_frame
 
 
 func _corridors(app: Node) -> Array:
@@ -190,6 +247,7 @@ func _run() -> void:
 	_check(session.phase == "walk" and session.pending.node_id == event_id
 		and str(session.pending.kind) == EVENT_KIND and session.journal.back().action == "enter",
 		"Event ticket enters via live Walk and journals its exact node")
+	await _walk_save_replay(app)
 	await _walk_to_stop(app, event_id, 1)
 	if session.phase != "visit":
 		_finish(app)
@@ -240,9 +298,23 @@ func _run() -> void:
 	_check(FileAccess.file_exists(TEST_SAVE), "corridor Save creates isolated run file")
 	var before := session.snapshot()
 	var journal := session.journal.duplicate(true)
+	var preserved_receipts := session.receipts.duplicate(true)
+	var preserved_walks := session.walk_receipts.duplicate(true)
 	var captured := StitchedRunSave.read_file(TEST_SAVE)
-	_check(captured != null and captured.snapshot() == before and captured.journal == journal,
-		"corridor Save replays complete party, Fight, candle, fear, wallet, journal, battle and RNG")
+	_check(captured != null and captured.snapshot() == before and captured.journal == journal
+		and captured.receipts == preserved_receipts and captured.walk_receipts == preserved_walks
+		and captured.rng.state == session.rng.state,
+		"corridor Save replays complete party, Fight, hand budget, fear, wallet, receipts and RNG")
+	var hand_before := session.journal.size()
+	_check(corridor.hand_buttons.has("shield_candle"), "actual corridor displays Wren's Shield hand")
+	if corridor.hand_buttons.has("shield_candle"):
+		_press(corridor.hand_buttons["shield_candle"], "Wren Shield the Candle on uninterrupted Fight")
+	var hand_after := session.snapshot()
+	var hand_journal := session.journal.duplicate(true)
+	_check(session.journal.size() == hand_before + 1
+		and session.journal.back().get("method") == "use_hand_action"
+		and session.journal.back().get("arguments", [])[0] == "shield_candle"
+		and session.is_consistent(), "Wren's genuine hand commits one budgeted battle receipt")
 	app.free()
 	await process_frame
 	var fresh := _app(999)
@@ -265,6 +337,16 @@ func _run() -> void:
 		and resumed.battle.state_snapshot() == before.battle and resumed.journal == journal,
 		"explicit party, pending Fight, resources, fear, battle and journal equal saved values")
 	_check_fight(fresh, resumed, "after fresh title Continue")
+	if _corridors(fresh).size() == 1:
+		var reloaded_fight: StitchedCorridorFight = _corridors(fresh)[0]
+		_check(reloaded_fight.hand_buttons.has("shield_candle"),
+			"restored Fight exposes the same Wren hand")
+		if reloaded_fight.hand_buttons.has("shield_candle"):
+			_press(reloaded_fight.hand_buttons["shield_candle"], "Wren Shield the Candle after Fight reload")
+		_check(resumed.snapshot() == hand_after and resumed.journal == hand_journal
+			and resumed.receipts == preserved_receipts and resumed.walk_receipts == preserved_walks
+			and resumed.rng.state == hand_after.rng and resumed.is_consistent(),
+			"independent next Wren hand command reproduces exact Fight state, budget, journal and RNG")
 	if _corridors(fresh).size() == 1:
 		var preserved := resumed.snapshot()
 		DirAccess.remove_absolute(TEST_SAVE)
