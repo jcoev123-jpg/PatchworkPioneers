@@ -25,7 +25,22 @@ var _route: Array[String] = []
 var _generation_revision := 0
 
 
+## Opt-in Stitched pool: single-purpose stops, no legacy Rest/Shop aliases.
+## The live run still uses generate(); this is a separate explicit entry point.
+const STITCHED_NORMAL_TYPES := ["Fight", "Elite", "Event", "Treasure", "Campfire", "SewingCircle", "Peddler", "Unpicker", "PatchStall"]
+
+
 func generate(rng: RandomNumberGenerator) -> bool:
+	return _generate_with_pool(rng, NORMAL_TYPES)
+
+
+## Same topology, draw order and opening-Fight fallback as generate(), but
+## non-boss kinds come from STITCHED_NORMAL_TYPES. Draws only from rng.
+func generate_stitched(rng: RandomNumberGenerator) -> bool:
+	return _generate_with_pool(rng, STITCHED_NORMAL_TYPES)
+
+
+func _generate_with_pool(rng: RandomNumberGenerator, pool: Array) -> bool:
 	if rng == null:
 		return false
 
@@ -38,7 +53,7 @@ func generate(rng: RandomNumberGenerator) -> bool:
 			var node_id := "f%02d_n%d" % [floor_index + 1, position]
 			var kind := "Boss"
 			if floor_index < FLOOR_COUNT - 1:
-				kind = NORMAL_TYPES[rng.randi_range(0, NORMAL_TYPES.size() - 1)]
+				kind = pool[rng.randi_range(0, pool.size() - 1)]
 			new_nodes[node_id] = {
 				"id": node_id,
 				"floor": floor_index + 1,
@@ -228,7 +243,8 @@ func restore_state(value: Variant) -> bool:
 					or typeof(raw_node.get("type")) != TYPE_STRING \
 					or (str(raw_node["type"]) == "Boss") != (floor_index == FLOOR_COUNT - 1) \
 					or (floor_index < FLOOR_COUNT - 1 \
-						and not str(raw_node["type"]) in NORMAL_TYPES) \
+						and not (str(raw_node["type"]) in NORMAL_TYPES
+							or str(raw_node["type"]) in STITCHED_NORMAL_TYPES)) \
 					or not raw_node.get("outgoing") is Array:
 				return false
 			var outgoing: Array = raw_node["outgoing"]

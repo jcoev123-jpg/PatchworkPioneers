@@ -4,12 +4,16 @@ var failures: Array[String] = []
 var checks := 0
 
 const NORMAL_TYPES := ["Fight", "Elite", "Rest", "Shop", "Event", "Treasure", "SewingCircle", "Campfire", "PatchStall", "Unpicker"]
+# Independent oracle for the opt-in Stitched pool (no Rest/Shop, native Peddler).
+const STITCHED_TYPES := ["Fight", "Elite", "Event", "Treasure", "Campfire", "SewingCircle", "Peddler", "Unpicker", "PatchStall"]
 
 
 func _initialize() -> void:
 	_test_ungenerated_and_invalid_rng()
 	_test_seeded_replay_and_structure()
 	_test_playable_openings_preserve_original_generation()
+	_test_stitched_generation_sweep()
+	_test_stitched_export_restore_and_rejections()
 	_test_defensive_snapshots()
 	_test_traversal_and_rejections()
 	_test_guarded_undo()
@@ -191,7 +195,207 @@ func _test_playable_openings_preserve_original_generation() -> void:
 	_check(unpicker_seen, "bounded seeded graphs genuinely generate Unpicker")
 
 
-func _assert_graph(map: RunMap) -> void:
+func _test_stitched_generation_sweep() -> void:
+	var peddler_seen := false
+	var fallback_seen := false
+	var seeds_with_rest_shop := 0
+	_check(RunMap.STITCHED_NORMAL_TYPES == STITCHED_TYPES,
+		"Stitched pool is exactly the documented nine non-boss kinds")
+	_check(RunMap.NORMAL_TYPES == NORMAL_TYPES, "default pool is unchanged")
+	_check(not RunMap.new().generate_stitched(null), "Stitched generation rejects a null RNG")
+	for value in range(128):
+		var rng := _rng(value)
+		var map := RunMap.new()
+		_check(map.generate_stitched(rng), "Stitched generation succeeds for seed %d" % value)
+		var floors: Array = map.get_floors()
+		_check(floors.size() == 12, "Stitched seed %d has twelve floors" % value)
+		if floors.size() != 12:
+			continue
+		for floor_index in range(12):
+			var row: Array = floors[floor_index]
+			_check(row.size() >= 3 and row.size() <= 4, "Stitched seed %d floor %d width" % [value, floor_index + 1])
+			for node in row:
+				var kind: String = node["type"]
+				if floor_index == 11:
+					_check(kind == "Boss", "Stitched seed %d floor 12 is Boss" % value)
+					continue
+				_check(STITCHED_TYPES.has(kind), "Stitched seed %d kind %s is in the pool" % [value, kind])
+				_check(kind != "Rest" and kind != "Shop" and kind != "Boss",
+					"Stitched seed %d has no Rest/Shop/early Boss" % value)
+				peddler_seen = peddler_seen or kind == "Peddler"
+		_assert_graph(map, STITCHED_TYPES)
+		# Independent oracle: same topology/draws with the Stitched pool, plus the
+		# opening-Fight fallback; the final RNG state proves no extra draws.
+		var oracle_rng := _rng(value)
+		var oracle: Array = _original_graph(oracle_rng, STITCHED_TYPES)
+		var opening_fight := false
+		for node in oracle[0]:
+			opening_fight = opening_fight or node.type == "Fight"
+		if not opening_fight:
+			oracle[0][0].type = "Fight"
+			fallback_seen = true
+		_check(floors == oracle, "Stitched seed %d matches the independent oracle" % value)
+		_check(rng.state == oracle_rng.state, "Stitched seed %d consumes exactly the oracle draws" % value)
+		var legal_fight := false
+		for id in map.get_legal_choices():
+			legal_fight = legal_fight or map.get_node(id).type == "Fight"
+		_check(legal_fight, "Stitched seed %d offers a legal opening Fight" % value)
+		# Same seed on a fresh map: identical floors, choices and RNG state.
+		var twin_rng := _rng(value)
+		var twin := RunMap.new()
+		_check(twin.generate_stitched(twin_rng), "Stitched twin generates for seed %d" % value)
+		_check(twin.get_floors() == floors and twin.get_legal_choices() == map.get_legal_choices()
+			and twin_rng.state == rng.state, "Stitched seed %d replays identically" % value)
+		# The default generator for the same seed is untouched by the new API.
+		var legacy_rng := _rng(value)
+		var legacy := RunMap.new()
+		_check(legacy.generate(legacy_rng), "legacy generation still succeeds for seed %d" % value)
+		for row in legacy.get_floors():
+			for node in row:
+				seeds_with_rest_shop += 1 if node["type"] == "Rest" or node["type"] == "Shop" else 0
+	_check(peddler_seen, "bounded seed sweep genuinely generates Peddler")
+	_check(fallback_seen, "bounded seed sweep exercises the Stitched opening Fight fallback")
+	_check(seeds_with_rest_shop > 0, "default generation still produces Rest/Shop in the same sweep")
+
+
+# Walk a Stitched map preferring Peddler when offered; no RNG may be drawn.
+func _walk_stitched(map: RunMap, rng: RandomNumberGenerator, steps: int) -> bool:
+	var state := rng.state
+	for step in range(steps):
+		var legal := map.get_legal_choices()
+		if legal.is_empty():
+			return false
+		var chosen: String = legal[0]
+		for id in legal:
+			if map.get_node(id).type == "Peddler":
+				chosen = id
+				break
+		if not map.choose_node(chosen):
+			return false
+	return rng.state == state
+
+
+func _route_has_peddler(map: RunMap) -> bool:
+	for id in map.get_route():
+		if map.get_node(id).type == "Peddler":
+			return true
+	return false
+
+
+func _expect_restore_rejected(map: RunMap, rng: RandomNumberGenerator, state: Variant, label: String) -> void:
+	var before := _snapshot(map, rng)
+	var exported_before := map.export_state()
+	_check(not map.restore_state(state), label + " is rejected")
+	_check(_snapshot(map, rng) == before and map.export_state() == exported_before,
+		label + " leaves the live map and RNG untouched")
+
+
+func _test_stitched_export_restore_and_rejections() -> void:
+	var chosen_seed := -1
+	for value in range(128):
+		var probe_rng := _rng(value)
+		var probe := RunMap.new()
+		probe.generate_stitched(probe_rng)
+		if _walk_stitched(probe, probe_rng, 12) and _route_has_peddler(probe):
+			chosen_seed = value
+			break
+	_check(chosen_seed >= 0, "a legal Stitched route through a Peddler exists in the seed sweep")
+	if chosen_seed < 0:
+		return
+	var rng := _rng(chosen_seed)
+	var map := RunMap.new()
+	_check(map.generate_stitched(rng), "Stitched export fixture generates")
+	var after_generate := rng.state
+	_check(_walk_stitched(map, rng, 12), "Stitched route advances to the end without RNG draws")
+	_check(map.is_complete() and map.get_route().size() == 12
+		and map.get_node(map.get_current_node_id()).type == "Boss",
+		"Stitched route ends at a floor-12 Boss")
+	_check(rng.state == after_generate, "Stitched traversal leaves the RNG state unchanged")
+	_check(_route_has_peddler(map), "exported Stitched route includes a Peddler node")
+
+	var exported := map.export_state()
+	_check(exported.keys().size() == 4 and exported.has("floors") and exported.has("nodes")
+		and exported.has("route") and exported.has("generation_revision"),
+		"Stitched export keeps the four existing state keys")
+	var fresh_rng := _rng(chosen_seed + 1000)
+	var fresh_state := fresh_rng.state
+	var fresh := RunMap.new()
+	_check(fresh.restore_state(exported), "fresh map restores the exported Stitched graph")
+	_check(fresh.get_floors() == map.get_floors() and fresh.get_route() == map.get_route()
+		and fresh.export_state() == exported, "restored Stitched graph and route are identical")
+	_check(fresh_rng.state == fresh_state, "restore consumes no RNG")
+	var peddler_on_graph := false
+	for row in fresh.get_floors():
+		for node in row:
+			peddler_on_graph = peddler_on_graph or node["type"] == "Peddler"
+	_check(peddler_on_graph, "restored Stitched graph keeps its Peddler node")
+	var pristine_rng := _rng(chosen_seed)
+	var pristine := RunMap.new()
+	pristine.generate_stitched(pristine_rng)
+	var pristine_restored := RunMap.new()
+	_check(pristine_restored.restore_state(pristine.export_state()),
+		"unwalked Stitched graph restores")
+	_assert_graph(pristine_restored, STITCHED_TYPES)
+
+	# A mid-routesnapshot also restores and continues without RNG.
+	var mid_rng := _rng(chosen_seed)
+	var mid := RunMap.new()
+	mid.generate_stitched(mid_rng)
+	_check(_walk_stitched(mid, mid_rng, 4), "mid-route Stitched fixture advances")
+	var mid_state := mid.export_state()
+	var resumed := RunMap.new()
+	_check(resumed.restore_state(mid_state) and resumed.get_route() == mid.get_route()
+		and resumed.get_legal_choices() == mid.get_legal_choices(),
+		"mid-route Stitched snapshot restores with identical legal choices")
+
+	# Legacy snapshots with Rest/Shop remain restorable.
+	var legacy_rng := _rng(7)
+	var legacy := RunMap.new()
+	legacy.generate(legacy_rng)
+	var legacy_restored := RunMap.new()
+	_check(legacy_restored.restore_state(legacy.export_state())
+		and legacy_restored.get_floors() == legacy.get_floors(),
+		"default-generated snapshots still restore")
+
+	# Fail-closed mutations against a populated live map.
+	var live_rng := _rng(chosen_seed)
+	var live := RunMap.new()
+	live.generate_stitched(live_rng)
+	_check(_walk_stitched(live, live_rng, 2), "live map for rollback checks advances")
+	var node_id: String = "f03_n0"
+	var bad := exported.duplicate(true)
+	bad["nodes"][node_id]["type"] = "Bakery"
+	_expect_restore_rejected(live, live_rng, bad, "unknown kind")
+	bad = exported.duplicate(true)
+	bad["nodes"][node_id]["type"] = "Boss"
+	_expect_restore_rejected(live, live_rng, bad, "Boss before the final floor")
+	bad = exported.duplicate(true)
+	bad["nodes"]["f12_n0"]["type"] = "Peddler"
+	_expect_restore_rejected(live, live_rng, bad, "Peddler on the Boss floor")
+	bad = exported.duplicate(true)
+	bad["nodes"]["f12_n0"]["type"] = "Fight"
+	_expect_restore_rejected(live, live_rng, bad, "non-Boss kind on floor 12")
+	bad = exported.duplicate(true)
+	bad["nodes"][node_id]["type"] = 7
+	_expect_restore_rejected(live, live_rng, bad, "non-string kind")
+	bad = exported.duplicate(true)
+	bad["nodes"][node_id]["outgoing"].append("f09_n0")
+	_expect_restore_rejected(live, live_rng, bad, "edge skipping floors")
+	bad = exported.duplicate(true)
+	bad["nodes"][node_id]["outgoing"] = []
+	_expect_restore_rejected(live, live_rng, bad, "node without exits")
+	bad = exported.duplicate(true)
+	bad["route"] = [exported["route"][0], exported["route"][0]]
+	_expect_restore_rejected(live, live_rng, bad, "repeated route node")
+	bad = exported.duplicate(true)
+	bad["route"] = ["f02_n0"]
+	_expect_restore_rejected(live, live_rng, bad, "route not starting on floor one")
+	bad = exported.duplicate(true)
+	bad["extra_mode"] = "stitched"
+	_expect_restore_rejected(live, live_rng, bad, "extra serialized mode key")
+
+
+func _assert_graph(map: RunMap, types: Array = NORMAL_TYPES) -> void:
 	var floors: Array = map.get_floors()
 	_check(floors.size() == 12, "exactly twelve floors")
 	if floors.size() != 12:
@@ -208,7 +412,7 @@ func _assert_graph(map: RunMap) -> void:
 			_check(node.get("floor") == floor_index + 1 and node.get("position") == pos,
 				"correct floor and zero-based position for " + id)
 			_check((node.get("type") == "Boss") if floor_index == 11
-				else NORMAL_TYPES.has(node.get("type")), "valid kind for " + id)
+				else types.has(node.get("type")), "valid kind for " + id)
 			_check(node.get("outgoing") is Array, "outgoing array exists for " + id)
 			_check(map.get_node(id) == node, "lookup agrees with graph record for " + id)
 
@@ -361,7 +565,7 @@ func _test_traversal_and_rejections() -> void:
 
 
 # Frozen pre-fallback generator: independent oracle for topology and RNG draws.
-func _original_graph(rng: RandomNumberGenerator) -> Array:
+func _original_graph(rng: RandomNumberGenerator, pool: Array = NORMAL_TYPES) -> Array:
 	var new_floors: Array = []
 	var new_nodes: Dictionary = {}
 	for floor_index in range(12):
@@ -371,7 +575,7 @@ func _original_graph(rng: RandomNumberGenerator) -> Array:
 			var node_id := "f%02d_n%d" % [floor_index + 1, position]
 			var kind := "Boss"
 			if floor_index < 12 - 1:
-				kind = NORMAL_TYPES[rng.randi_range(0, NORMAL_TYPES.size() - 1)]
+				kind = pool[rng.randi_range(0, pool.size() - 1)]
 			new_nodes[node_id] = {
 				"id": node_id,
 				"floor": floor_index + 1,
