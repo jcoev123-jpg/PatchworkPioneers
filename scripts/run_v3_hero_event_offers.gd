@@ -193,7 +193,30 @@ func select_stitched_survivor_event_with_preview(
 	excluded_ids: Variant = null,
 	wallet: Variant = null
 ) -> Dictionary:
-	var rejected := {"ok": false, "event": {}, "preview": {}}
+	var outcome := select_stitched_survivor_visit_with_preview(rng, lost_ids, excluded_ids, wallet)
+	if not outcome.get("ok", false):
+		return {"ok": false, "event": {}, "preview": {}}
+	return {
+		"ok": true,
+		"event": (outcome["event"] as Dictionary).duplicate(true),
+		"preview": (outcome["preview"] as Dictionary).duplicate(true),
+	}
+
+
+## Uniformly samples one surviving party-eligible authored event that is not in
+## excluded_ids, whose required_hero is not in lost_ids, and has at least one
+## affordable non-Leave choice for wallet. Valid only for 4-hero Stitched services.
+## Returns detached canonical event record, an authentic RunEventChoice wallet preview,
+## and a fresh valid unclaimed RunEventChoice visit for the chosen ID.
+## Rejects with {ok: false, event: {}, preview: {}, visit: null} without advancing rng when the
+## service, rng, lost_ids, excluded_ids or wallet is invalid, or when no actionable record remains.
+func select_stitched_survivor_visit_with_preview(
+	rng: Variant,
+	lost_ids: Variant = null,
+	excluded_ids: Variant = null,
+	wallet: Variant = null
+) -> Dictionary:
+	var rejected := {"ok": false, "event": {}, "preview": {}, "visit": null}
 	if not _valid or _party_ids.size() != 4:
 		return rejected
 	if not (rng is RandomNumberGenerator) or not _valid_wallet(wallet):
@@ -216,6 +239,7 @@ func select_stitched_survivor_event_with_preview(
 		"ok": true,
 		"event": _eligible[chosen_id].duplicate(true),
 		"preview": preview.duplicate(true),
+		"visit": visit,
 	}
 
 
