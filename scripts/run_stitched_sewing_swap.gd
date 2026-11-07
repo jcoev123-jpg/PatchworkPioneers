@@ -80,7 +80,12 @@ func quote() -> Dictionary:
 			if blocked.is_empty():
 				for index in range(_satchel.size()):
 					if str(_satchel[index]["slot"]) == slot:
-						offers.append({"satchel_index": index, "part": _summary(_satchel[index], slot)})
+						var offer_part := _summary(_satchel[index], slot)
+						offers.append({
+							"satchel_index": index,
+							"part": offer_part,
+							"comparison": _comparison(_summary(worn, slot), offer_part),
+						})
 			slots.append({
 				"slot": slot,
 				"worn": _summary(worn, slot),
@@ -203,6 +208,41 @@ func _is_lost(hero: Dictionary) -> bool:
 
 func _fail(message: String) -> Dictionary:
 	return {"ok": false, "error": message, "state": read_state()}
+
+
+const COMPARISON_FIELDS := ["name", "launch", "target", "target_side", "dmg", "acc", "crit", "effects", "self_move"]
+
+
+## Before/after projection for one offer: the worn and incoming abilities at their actual tiers
+## plus the signed stat change (incoming minus worn; a missing key counts as 0; unchanged keys omitted).
+## Everything is a fresh deep copy derived from the two part summaries.
+func _comparison(worn_summary: Dictionary, offer_summary: Dictionary) -> Dictionary:
+	var stat_delta: Dictionary = {}
+	var worn_stat: Dictionary = worn_summary["stat"]
+	var offer_stat: Dictionary = offer_summary["stat"]
+	var keys: Dictionary = {}
+	for key in worn_stat:
+		keys[key] = true
+	for key in offer_stat:
+		keys[key] = true
+	for key in keys:
+		var delta := int(offer_stat.get(key, 0)) - int(worn_stat.get(key, 0))
+		if delta != 0:
+			stat_delta[str(key)] = delta
+	return {
+		"ability_before": _ability_view(worn_summary["ability"]),
+		"ability_after": _ability_view(offer_summary["ability"]),
+		"stat_delta": stat_delta,
+	}
+
+
+func _ability_view(ability: Dictionary) -> Dictionary:
+	var view: Dictionary = {}
+	for field in COMPARISON_FIELDS:
+		if ability.has(field):
+			var value: Variant = ability[field]
+			view[field] = value.duplicate(true) if (value is Array or value is Dictionary) else value
+	return view
 
 
 func _summary(part: Dictionary, slot: String) -> Dictionary:
