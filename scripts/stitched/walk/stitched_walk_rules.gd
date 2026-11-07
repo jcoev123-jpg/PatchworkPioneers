@@ -540,6 +540,55 @@ func claim_machine_toll(expected: Dictionary) -> Dictionary:
 	return _claim_receipt(true, "", targets)
 
 
+## Claim the one-shot Mannequins horror encounter once from a completed Walk.
+## Preconditions: started real Walk, matching expected snapshot, matching RNG state,
+## phase complete, authored following_forms mannequin schedule present and at stage 3,
+## exactly one authentic unconsumed Mannequins pending descriptor.
+## Returns detached authoritative receipt for next fight back-rank encounter.
+func claim_mannequins_encounter(expected: Dictionary) -> Dictionary:
+	if _state.is_empty() or _rng == null:
+		return _mannequins_receipt(false, "not_started")
+	if expected != _state or _rng.state != _state.get("rng"):
+		return _mannequins_receipt(false, "stale_snapshot")
+	if _state.get("phase") != "complete":
+		return _mannequins_receipt(false, "walk_incomplete")
+	if not _state.has("mannequins") or not _state.mannequins is Dictionary:
+		return _mannequins_receipt(false, "mannequins_not_scheduled")
+	var mannequins: Dictionary = _state.mannequins
+	if mannequins.get("id") != "following_forms":
+		return _mannequins_receipt(false, "invalid_mannequins_schedule")
+	if not mannequins.get("present", false):
+		return _mannequins_receipt(false, "mannequins_not_present")
+	if mannequins.get("stage") != 3:
+		return _mannequins_receipt(false, "mannequins_stage_incomplete")
+	if not _state.get("dolls") is Array or _state.dolls.size() != 4:
+		return _mannequins_receipt(false, "invalid_party")
+	var targets: Array = []
+	for doll in _state.dolls:
+		if not doll is Dictionary or not _text(doll.get("id")) or doll.id in targets:
+			return _mannequins_receipt(false, "invalid_party")
+		targets.append(doll.id)
+	var mannequin_descriptors: Array = []
+	for effect in _state.get("pending", []):
+		if effect is Dictionary and effect.get("kind") == "mannequins":
+			mannequin_descriptors.append(effect)
+	if mannequin_descriptors.size() != 1:
+		return _mannequins_receipt(false, "invalid_mannequins_descriptor")
+	var mannequin_effect: Dictionary = mannequin_descriptors[0]
+	if mannequin_effect.get("consumed") != false:
+		return _mannequins_receipt(false, "mannequins_already_consumed")
+	if mannequin_effect.get("source") != "following_forms":
+		return _mannequins_receipt(false, "invalid_mannequins_source")
+	var expected_effects := {"next_fight": true, "position": "party_back_rank"}
+	if mannequin_effect.get("effects") != expected_effects:
+		return _mannequins_receipt(false, "invalid_mannequins_effects")
+	if not _keys(mannequin_effect, ["kind", "source", "consumed", "effects"]):
+		return _mannequins_receipt(false, "invalid_mannequins_descriptor")
+	mannequin_effect.consumed = true
+	_state.revision += 1
+	return _mannequins_receipt(true, "")
+
+
 ## Claim the one-shot Pincushion fray consequence once from a completed Walk.
 ## Preconditions: started real Walk, matching expected snapshot, matching RNG state,
 ## phase complete, scheduled curio pin_nest with matching instance, exactly one matching
@@ -681,5 +730,37 @@ func _claim_receipt(ok: bool, error: String, targets: Array = []) -> Dictionary:
 			"next_fight_extra_foes": 1,
 			"party_fray": 10,
 			"targets": copied_targets.duplicate(true),
+		},
+	}
+
+
+func _mannequins_receipt(ok: bool, error: String) -> Dictionary:
+	var snap := snapshot()
+	if not ok:
+		return {
+			"ok": false,
+			"error": error,
+			"snapshot": snap,
+			"kind": "mannequins",
+			"source": "",
+			"horror": "",
+			"horror_id": "",
+			"next_fight": false,
+			"position": "",
+			"effects": {},
+		}
+	return {
+		"ok": true,
+		"error": "",
+		"snapshot": snap,
+		"kind": "mannequins",
+		"source": "following_forms",
+		"horror": "following_forms",
+		"horror_id": "following_forms",
+		"next_fight": true,
+		"position": "party_back_rank",
+		"effects": {
+			"next_fight": true,
+			"position": "party_back_rank",
 		},
 	}
