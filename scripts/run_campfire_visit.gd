@@ -334,8 +334,9 @@ func _stitched_quote() -> Dictionary:
 				var relief := "-%d FRAY now" % _tales_fray_relief_now()
 				if _has_fear:
 					relief += "; -%d Wren FEAR now" % _tales_fear_relief_now()
-				phrases.append("Tell Tales up to %d FRAY each (%s)%s" % [TALES_FRAY_REDUCTION, relief,
-					_beneficiary_suffix(_tales_relief_by_doll(), "-%d FRAY")])
+				phrases.append("Tell Tales up to %d FRAY each (%s)%s%s" % [TALES_FRAY_REDUCTION, relief,
+					_beneficiary_suffix(_tales_relief_by_doll(), "-%d FRAY"),
+					_tales_resolve_clear_suffix()])
 			TRIM_THE_WICK:
 				phrases.append("Trim the Wick up to %d CANDLE (+%d now)" % [WICK_CANDLE_RESTORE, _wick_gain_now()])
 			STITCHED_LEAVE:
@@ -369,6 +370,25 @@ func _tales_relief_by_doll() -> Array:
 	for hero in _heroes:
 		reliefs.append(mini(TALES_FRAY_REDUCTION, int(hero["fray"])))
 	return reliefs
+
+
+## Pure preview of select(TELL_TALES)'s resolve clearing, in held roster order:
+## " [Resolve clears: Name (trait), ...]" for each doll whose post-Tales FRAY is
+## below RESOLVE_CLEAR_BELOW and whose present resolve is a named Unravelled
+## trait. Empty when nobody qualifies. Mirrors select(); never mutates state.
+func _tales_resolve_clear_suffix() -> String:
+	var parts: Array = []
+	for hero in _heroes:
+		var reduced: int = maxi(0, int(hero["fray"]) - TALES_FRAY_REDUCTION)
+		if reduced >= RESOLVE_CLEAR_BELOW or not hero.has("resolve"):
+			continue
+		var trait_name: String = str(hero["resolve"])
+		if not (trait_name in StitchedS1BEffects.RESOLVE_TRAITS):
+			continue
+		parts.append("%s (%s)" % [str(hero.get("name", hero["id"])), trait_name])
+	if parts.is_empty():
+		return ""
+	return " [Resolve clears: " + ", ".join(parts) + "]"
 
 
 ## " [Name +N HP, ...]" listing only positive deltas; empty when nobody benefits.
