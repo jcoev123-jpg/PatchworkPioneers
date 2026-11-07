@@ -265,6 +265,10 @@ func quote() -> Dictionary:
 			choices = [BUY_CANDLE_STUB, STITCHED_LEAVE]
 		else:
 			choices = [STITCHED_LEAVE]
+	# Advisory forecast of buying once: read-only, grants nothing, draws no RNG.
+	var candle_after := mini(CANDLE_MAX, _candle + CANDLE_STUB_RESTORE)
+	var band_before := str(StitchedS1BEffects.candle_band(_candle).get("name", ""))
+	var band_after := str(StitchedS1BEffects.candle_band(candle_after).get("name", ""))
 	return {
 		"ok": open,
 		"mode": STITCHED,
@@ -274,6 +278,10 @@ func quote() -> Dictionary:
 		"price": _quoted_price,
 		"candle": _candle,
 		"gold": _gold,
+		"candle_after": candle_after,
+		"band_before": band_before,
+		"band_after": band_after,
+		"crosses_band": band_before != band_after,
 		"choices": choices,
 	}
 

@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_effective_quote()
 	_test_purchase_and_leave()
 	_test_refusals_and_legacy_isolation()
+	_test_band_forecast()
 	_check(randi() == next_draw,
 		"Stitched open, quote, buys, Leaves and every refusal draw no global RNG")
 	if failures.is_empty():
@@ -346,3 +347,84 @@ func _test_refusals_and_legacy_isolation() -> void:
 	_check(fresh_paid.get("ok") == true and fresh_paid.get("candle") == 45
 		and fresh_paid.get("gold") == 340,
 		"the Stitched choice still completes after refused legacy attempts")
+
+
+## AC1-AC3: the quote forecasts one purchase's candle and canonical light band
+## without granting, spending or drawing; the real buy then matches it.
+func _test_band_forecast() -> void:
+	# candle, restore, after, band before, band after, crosses
+	var cases: Array = [
+		[0, 25, 25, "snuffed", "dark", true],
+		[25, 25, 50, "dark", "gloom", true],
+		[26, 25, 51, "gloom", "dim", true],
+		[50, 25, 75, "gloom", "dim", true],
+		[51, 25, 76, "dim", "bright", true],
+		[75, 25, 100, "dim", "bright", true],
+		[76, 24, 100, "bright", "bright", false],
+		[99, 1, 100, "bright", "bright", false],
+		[100, 0, 100, "bright", "bright", false],
+	]
+	seed(909090)
+	var expected_rng := randi()
+	seed(909090)
+	for row in cases:
+		var candle: int = row[0]
+		var label := "forecast candle %d" % candle
+		var visit := _open(candle, 120, 45)
+		var before := visit.read_state()
+		var quote := visit.quote()
+		_check(quote.get("ok") == true and quote.get("restore") == row[1]
+			and quote.get("candle") == candle and quote.get("candle_after") == row[2]
+			and quote.get("band_before") == row[3] and quote.get("band_after") == row[4]
+			and quote.get("crosses_band") == row[5],
+			label + ": exact restore, candle_after, bands and crossing")
+		_check(quote.get("band_before") == StitchedS1BEffects.candle_band(candle)["name"]
+			and quote.get("band_after")
+			== StitchedS1BEffects.candle_band(int(quote.get("candle_after")))["name"],
+			label + ": bands equal the canonical StitchedS1BEffects names")
+		_check(quote.get("mode") == MODE and quote.get("node_id") == NODE
+			and quote.get("item") == ITEM and quote.get("price") == 45
+			and quote.get("gold") == 120,
+			label + ": legacy quote keys are preserved")
+		var expect_choices: Array = ["leave"] if candle == CANDLE_MAX \
+			else ["buy_candle_stub", "leave"]
+		_check(quote.get("choices") == expect_choices,
+			label + ": Buy gating is unchanged by the forecast")
+		_check(visit.read_state() == before and visit.is_open()
+			and visit.quote() == quote,
+			label + ": quoting is read-only and repeatable")
+	# An unaffordable visit still forecasts the purchase but offers Leave only.
+	var poor := _open(51, 10, 45)
+	var poor_quote := poor.quote()
+	_check(poor_quote.get("choices") == ["leave"]
+		and poor_quote.get("candle_after") == 76
+		and poor_quote.get("band_before") == "dim"
+		and poor_quote.get("band_after") == "bright"
+		and poor_quote.get("crosses_band") == true,
+		"an unaffordable visit forecasts the buy yet offers Leave only")
+	_reject(poor, "buy_candle_stub", NODE, poor.read_state(), "unaffordable forecast")
+	# Closed visits quote no choices and stay state-neutral.
+	var closed := _open(51, 120, 45)
+	_leave(closed, NODE, closed.read_state())
+	_check(closed.quote().get("ok") == false and closed.quote().get("choices") == [],
+		"a Left visit still quotes no choices")
+	# One affordable public buy matches the prior forecast exactly.
+	var buyer := _open(51, 120, 45)
+	var forecast := buyer.quote()
+	var snapshot := buyer.read_state()
+	var receipt := _buy(buyer, NODE, snapshot)
+	var after := buyer.read_state()
+	_check(receipt.get("ok") == true and receipt.get("charged_gold") == 45
+		and receipt.get("price") == 45 and receipt.get("candle_before") == 51
+		and receipt.get("restored") == forecast.get("restore")
+		and receipt.get("candle") == 76 and receipt.get("gold") == 75
+		and receipt.get("candle") == forecast.get("candle_after"),
+		"the 51 CANDLE buy charges 45 once and lands on the forecast 76")
+	_check(after["candle"] == 76 and after["gold"] == 75 and buyer.is_consumed()
+		and not buyer.is_open() and after["status"] == "stitched_used"
+		and StitchedS1BEffects.candle_band(after["candle"])["name"]
+		== forecast.get("band_after"),
+		"the settled state is consumed and in the forecast canonical band")
+	_check(randi() == expected_rng,
+		"forecasts, rejections and the buy leave the caller RNG state unchanged")
+	seed(424242) # Restore the suite's shared global RNG witness.
