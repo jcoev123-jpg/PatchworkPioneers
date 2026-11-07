@@ -188,7 +188,7 @@
           "acc": 84,
           "dmg": [6, 9],
           "crit": 0,
-          "effects": {},
+          "effects": {"stun": 1},
           "self_move": 0,
           "move": "attack2"
         },

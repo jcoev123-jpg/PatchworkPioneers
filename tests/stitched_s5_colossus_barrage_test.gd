@@ -13,7 +13,7 @@ const BURST := {
 const TREADLE := {
 	"id": "colossus_treadle", "name": "Treadle Stomp", "kind": "melee", "launch": [1, 3],
 	"target": [1], "target_side": "enemy", "multi": false, "acc": 84,
-	"dmg": [6, 9], "crit": 0, "effects": {}, "self_move": 0, "move": "attack2",
+	"dmg": [6, 9], "crit": 0, "effects": {"stun": 1}, "self_move": 0, "move": "attack2",
 }
 const BOBBIN := {
 	"id": "colossus_bobbin", "name": "Bobbin Shot", "kind": "ranged", "launch": [1, 4],
@@ -54,6 +54,7 @@ func _initialize() -> void:
 		_absent(catalog)
 		_hanging(catalog)
 		_dead(catalog)
+		_treadle(catalog)
 	if failures.is_empty():
 		print("stitched_s5_colossus_barrage_test: PASS (", checks, " checks)")
 	else:
@@ -86,7 +87,7 @@ func _source(catalog: Dictionary) -> void:
 		"is_boss": true, "turns_per_round": 2, "trophy": TROPHY,
 		"abilities": [TREADLE, BOBBIN, BURST, GUARD]}
 	_check(boss.get("stitched") == JSON.parse_string(JSON.stringify(expected)),
-		"exact canonical kit and order; only barrage target/multi/damage change")
+		"canonical kit and order; Treadle Stun 1 and remaining Colossus abilities intact")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, BOSS)
 	_check(not foe.is_empty() and StitchedEnemyCatalog.trophy_for(catalog, BOSS) == TROPHY,
 		"named canonical foe and unchanged trophy load")
@@ -130,10 +131,10 @@ func _battle(catalog: Dictionary, seed_value: int, ids: Array = [BOSS, "ragling"
 	return battle
 
 
-func _refuse(b: StitchedRules, rank: int, error: String) -> Dictionary:
+func _refuse(b: StitchedRules, rank: int, error: String, ability_id: String = BARRAGE) -> Dictionary:
 	var before := b.state_snapshot()
 	var rng := b.rng_state()
-	var receipt := b.use_foe_ability(BARRAGE, rank)
+	var receipt := b.use_foe_ability(ability_id, rank)
 	_check(not receipt.get("ok", true) and receipt.get("error") == error
 		and before == b.state_snapshot() and rng == b.rng_state(),
 		"refusal preserves HP/statuses/turn/receipts/RNG: " + error)
@@ -334,3 +335,148 @@ func _dead(catalog: Dictionary) -> void:
 		"dead boss cannot project an intent or spend RNG")
 	var error := "it is not a foe turn" if b.current_side() == "hero" else "the foe has no ability " + BARRAGE
 	_refuse(b, 1, error)
+
+# The Colossus's other front-only action uses the same public damage/Stun
+# transaction as any equipped ability. Discover both real hit and miss seeds;
+# never force rolls or inject statuses into a battle.
+func _treadle(catalog: Dictionary) -> void:
+	var seen := {"hit": false, "miss": false}
+	for seed_value in range(1, 301):
+		var first := _treadle_trace(catalog, seed_value)
+		if first.is_empty():
+			continue
+		var key := "hit" if first["hit"] else "miss"
+		if seen[key]:
+			continue
+		seen[key] = true
+		var replay := _treadle_trace(catalog, seed_value)
+		_check(first == replay, "Treadle complete same-seed " + key + " replay: action/pass receipts, snapshots, order, RNG")
+		if seen["hit"] and seen["miss"]:
+			break
+	_check(seen["hit"], "bounded real Colossus Treadle hit with damage, Stun and a skipped turn")
+	_check(seen["miss"], "bounded real Colossus Treadle miss without a Stun or skipped turn")
+	_treadle_refusals(catalog)
+
+
+func _treadle_trace(catalog: Dictionary, seed_value: int) -> Dictionary:
+	var b := _battle(catalog, seed_value)
+	if b == null:
+		return {}
+	var receipts: Array = []
+	if not _reach(b, BOSS, receipts):
+		return {}
+	# Require a living rank-one doll whose next turn is still in this round.
+	# This proves an actual skip instead of inferring one from a status flag.
+	var order := b.turn_order()
+	var boss_slot := int(b.state_snapshot()["turn_index"])
+	var front_slot := order.find("warden", boss_slot + 1)
+	var front := b.get_unit("warden")
+	if front_slot < 0 or front_slot >= order.size() - 1 or int(front["rank"]) != 1 \
+			or int(front["hp"]) <= 16 or bool(front["hanging"]) or bool(front["lost"]) \
+			or not front["statuses"].is_empty():
+		return {}
+	var actor := b.get_unit(BOSS)
+	_check(b.current_actor_id() == BOSS and b.current_side() == "foe" and b.round_number() == 1,
+		"Treadle reaches the actual rank-one Colossus turn")
+	var chance := StitchedRules.hit_chance(84 + int(actor["acc"]) + int(b.candle_band()["enemy_acc"]),
+		StitchedRules.effective_dodge(front), int(actor["miss_streak"]))
+	var action := b.use_foe_ability("colossus_treadle", 1)
+	receipts.append(action)
+	var results: Array = action.get("results", [])
+	_check(action.get("ok", false) and action.get("actor") == BOSS
+		and action.get("ability") == "colossus_treadle" and results.size() == 1,
+		"real Colossus Treadle resolves one front rank and spends a boss turn")
+	if not action.get("ok", false) or results.size() != 1:
+		return {}
+	var result: Dictionary = results[0]
+	var landed := bool(result.get("hit", false))
+	_check(result.get("target") == "warden" and result.get("target_rank") == 1
+		and result.get("hit_chance") == chance and result.get("hit") == (int(result.get("roll", 101)) <= chance),
+		"Treadle public receipt proves real rank-one target and seeded ACC/roll")
+	var now := b.get_unit("warden")
+	_check(now["hp"] > 0 and not now["hanging"] and not now["lost"],
+		"Treadle front doll remains healthy so Hanging cannot impersonate Stun")
+	if landed:
+		_check(int(result["damage"]) > 0 and int(result["target_hp"]) == int(front["hp"]) - int(result["damage"])
+			and int(now["hp"]) == int(result["target_hp"])
+			and result["statuses"] == [{"status": "stun", "duration": 1}],
+			"confirmed Treadle hit deals live HP damage and applies exactly Stun 1")
+	else:
+		_check(result["damage"] == 0 and result["statuses"].is_empty()
+			and result["target_hp"] == front["hp"] and now == front,
+			"genuine Treadle miss causes no damage, status or front doll mutation")
+	var snapshots: Array = [{"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state()}]
+	# Pass every intervening real actor; _enter_turn automatically consumes the
+	# stunned rank-one actor before any request can be issued on its behalf.
+	for step in range(20):
+		if b.is_over() or int(b.state_snapshot()["turn_index"]) >= front_slot:
+			break
+		_check(b.current_actor_id() != "warden", "front doll not active before its initiative slot")
+		var pass_receipt := b.pass_turn()
+		_check(pass_receipt.get("ok", false), "advance toward the real front doll initiative slot")
+		receipts.append(pass_receipt)
+		snapshots.append({"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state()})
+	var at_slot := int(b.state_snapshot()["turn_index"])
+	now = b.get_unit("warden")
+	if landed:
+		_check(at_slot > front_slot and b.current_actor_id() != "warden"
+			and not now["statuses"].has("stun") and int(now["statuses"].get("stun_resist", 0)) == 1,
+			"exactly one rank-one turn is skipped and canonical Stun Resist is granted")
+		_check(now["hp"] == result["target_hp"], "skipped turn inflicts no extra direct damage")
+		# At its next *eligible* turn, the doll may act again; the temporary
+		# resist has counted down naturally (no direct state manipulation).
+		var returned := false
+		for step in range(36):
+			if b.is_over():
+				break
+			if b.current_actor_id() == "warden":
+				returned = true
+				break
+			var next := b.pass_turn()
+			_check(next.get("ok", false), "advance to front doll's next eligible turn")
+			receipts.append(next)
+			snapshots.append({"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state()})
+		_check(returned, "front doll resumes a real turn after one skipped initiative")
+		if returned:
+			now = b.get_unit("warden")
+			_check(not now["statuses"].has("stun") and not now["statuses"].has("stun_resist"),
+				"temporary Stun Resist expires on the doll's next eligible turn")
+			var resumed := b.pass_turn()
+			_check(resumed.get("ok", false) and resumed.get("actor") == "warden",
+				"previously stunned front doll can spend its next normal turn")
+			receipts.append(resumed)
+			snapshots.append({"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state()})
+	else:
+		_check(at_slot == front_slot and b.current_actor_id() == "warden"
+			and not now["statuses"].has("stun") and not now["statuses"].has("stun_resist"),
+			"Treadle miss does not consume the target's scheduled turn or grant resistance")
+		if b.current_actor_id() == "warden":
+			var available := b.pass_turn()
+			_check(available.get("ok", false) and available.get("actor") == "warden",
+				"unhit front doll acts on its original scheduled turn")
+			receipts.append(available)
+			snapshots.append({"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state()})
+	return {
+		"hit": landed, "seed": seed_value, "receipts": receipts, "snapshots": snapshots,
+		"state": b.state_snapshot(), "order": b.turn_order(), "rng": b.rng_state(),
+	}
+
+
+func _treadle_refusals(catalog: Dictionary) -> void:
+	var b := _battle(catalog, 41)
+	if b != null and _reach(b, BOSS, []):
+		for rank in [0, 2, 5]:
+			_refuse(b, rank, "no legal target in rank %d" % rank, "colossus_treadle")
+		_check(b.current_actor_id() == BOSS, "invalid Treadle ranks cannot spend the Colossus turn")
+	var missing := _battle(catalog, 41, [BOSS, "ragling"], [1])
+	if missing != null and _reach(missing, BOSS, []):
+		_check(missing.get_unit("warden")["lost"] and missing.get_unit("seamstress")["hp"] > 0,
+			"rank-one doll genuinely absent while other heroes live")
+		_refuse(missing, 1, "no legal target in rank 1", "colossus_treadle")
+	for wrong_id in ["warden", "ragling"]:
+		var wrong := _battle(catalog, 41)
+		if wrong == null or not _reach(wrong, wrong_id, []):
+			continue
+		var error := "it is not a foe turn" if wrong_id == "warden" else "the foe has no ability colossus_treadle"
+		_check(wrong.current_actor_id() == wrong_id, "off-turn actor truly owns initiative: " + wrong_id)
+		_refuse(wrong, 1, error, "colossus_treadle")
