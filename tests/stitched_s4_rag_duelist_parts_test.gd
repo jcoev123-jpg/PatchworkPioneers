@@ -83,7 +83,7 @@ const EXPECTED := {
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 92,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
-		"effects": [{"tangled": 2}, {"tangled": 3}, {"tangled": 4}],
+		"effects": [{"tangled": 2}, {"tangled": 3, "weak": 1}, {"tangled": 4, "weak": 2}],
 		"self_move": [0, 0, 0],
 	},
 	"rag_duelist_arms_rapier_lunge": {
@@ -180,6 +180,7 @@ func _initialize() -> void:
 	_test_tiers()
 	_test_flourish_catalog()
 	_test_cape_slip_text()
+	_test_tattered_snare_text()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
@@ -522,6 +523,30 @@ func _test_cape_slip_text() -> void:
 	# Cape Flourish is the different legs ability; its backward step must not leak into this copy.
 	_check(not lower.contains("backward") and not lower.contains("step"),
 		"AC1: Cape Slip text never claims Cape Flourish's backward step: " + text)
+
+
+# ---------------------------------------------------------------- AC1: Tattered Snare rules text
+
+## The alternative head's copy must name both halves of its upgrade ladder: Tangled at every
+## stitch tier and Weak only from tier II, with no direct-hit or extra-move claim that this
+## zero-damage debuff does not support.
+func _test_tattered_snare_text() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		_check(false, "AC1: the shipped catalog loads for the Tattered Snare text check")
+		return
+	var snare_id := str(ALTERNATE_PARTS["head"])
+	if not catalog["by_id"].has(snare_id):
+		_check(false, "AC1: the Tattered Snare text check needs the alternative head part")
+		return
+	var text := str(catalog["by_id"][snare_id].get("text", "")).strip_edges()
+	var lower := text.to_lower()
+	_check(lower.contains("tangled"), "AC1: Tattered Snare text names Tangled: " + text)
+	_check(lower.contains("weak"), "AC1: Tattered Snare text names the higher-tier Weak: " + text)
+	_check(lower.contains(" ii") and lower.contains(" iii"),
+		"AC1: Tattered Snare text names both upgrading stitch tiers explicitly: " + text)
+	_check(not lower.contains("damage") and not lower.contains("hit") and not lower.contains("step"),
+		"AC1: Tattered Snare text never claims a direct hit or an extra move: " + text)
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
@@ -1184,19 +1209,78 @@ func _test_cape_slip_rank_four() -> void:
 # ---------------------------------------------------------------- AC2: statuses tick in play
 
 func _test_status_ticks() -> void:
-	var tangled := _cast_witness("rag_duelist_head_tattered_snare", 1, 0, 1, true)
-	if tangled.is_empty():
-		_check(false, "AC2: a fixed seed lands Tattered Snare for the expiry witness")
-	else:
-		var battle: StitchedRules = tangled["battle"]
-		var foe_id := str(tangled["receipt"]["results"][0]["target"])
-		_check(int(battle.get_unit(foe_id)["statuses"].get("tangled", 0)) == 2,
-			"AC2: a landed Tattered Snare leaves a real Tangled 2")
-		_check(_to(battle, foe_id), "AC2: the Tangled foe reaches its own seeded turn")
-		_check(int(battle.get_unit(foe_id)["statuses"].get("tangled", 0)) == 1,
-			"AC2: Tangled 2 ticks down by exactly one foe turn")
+	var snare_id := "rag_duelist_head_tattered_snare"
+	## Authored tier ladder: Tangled rises each tier, Weak only appears from tier II.
+	var snare_ladder := [
+		{"landed": {"tangled": 2, "weak": 0}, "after": {"tangled": 1, "weak": 0}},
+		{"landed": {"tangled": 3, "weak": 1}, "after": {"tangled": 2, "weak": 0}},
+		{"landed": {"tangled": 4, "weak": 2}, "after": {"tangled": 3, "weak": 1}},
+	]
+	for tier in [1, 2, 3]:
+		var expected: Dictionary = snare_ladder[tier - 1]
+		var landed: Dictionary = expected["landed"]
+		var after: Dictionary = expected["after"]
+		var tag := "Tattered Snare tier %d" % tier
+		var snare := _cast_witness(snare_id, tier, 0, 1, true)
+		if snare.is_empty():
+			_check(false, "AC2: a fixed seed lands " + tag + " for the expiry witness")
+			continue
+		var battle: StitchedRules = snare["battle"]
+		var result: Dictionary = snare["receipt"]["results"][0]
+		var foe_id := str(result["target"])
+		var foe := battle.get_unit(foe_id)
+		_check(int(result.get("damage", -1)) == 0,
+			"AC2: " + tag + " is a zero-damage debuff")
+		_check(int(foe["hp"]) == int(snare["foe_hp_before"].get(foe_id, -1)),
+			"AC2: " + tag + " leaves the landed foe's HP untouched")
+		_check(int(foe["statuses"].get("tangled", 0)) == int(landed["tangled"]),
+			"AC2: " + tag + " leaves a real Tangled %d" % int(landed["tangled"]))
+		_check(int(foe["statuses"].get("weak", 0)) == int(landed["weak"]),
+			"AC2: " + tag + " leaves Weak %d" % int(landed["weak"]))
+		if int(landed["weak"]) == 0:
+			_check(not foe["statuses"].has("weak"),
+				"AC2: " + tag + " never adds a Weak status")
+		_check(_status_value(result.get("statuses", []), "tangled") == int(landed["tangled"]),
+			"AC2: " + tag + " reports the applied Tangled")
+		_check(_status_value(result.get("statuses", []), "weak") ==
+			(-1 if int(landed["weak"]) == 0 else int(landed["weak"])),
+			"AC2: " + tag + " reports exactly its applied Weak")
+		for other in battle.get_foes():
+			if str(other["id"]) == foe_id:
+				continue
+			_check(int(other["statuses"].get("tangled", 0)) == 0
+				and int(other["statuses"].get("weak", 0)) == 0,
+				"AC2: " + tag + " debuffs only the chosen foe, not " + str(other["id"]))
+		var caster := battle.get_unit(OWNER)
+		_check(int(caster["statuses"].get("tangled", 0)) == 0
+			and int(caster["statuses"].get("weak", 0)) == 0,
+			"AC2: " + tag + " leaves no debuff on the caster")
+		_check(_to(battle, foe_id), "AC2: the " + tag + " foe reaches its own seeded turn")
+		_check(int(battle.get_unit(foe_id)["statuses"].get("tangled", 0)) == int(after["tangled"]),
+			"AC2: " + tag + " Tangled ticks down by exactly one foe turn")
+		_check(int(battle.get_unit(foe_id)["statuses"].get("weak", 0)) == int(after["weak"]),
+			"AC2: " + tag + " Weak ticks down by exactly one foe turn")
 		_check(int(battle.get_unit(foe_id)["hp"]) > 0,
-			"AC2: Tattered Snare itself deals no damage")
+			"AC2: " + tag + " itself deals no damage")
+	# A missed roll spends the action but applies neither status.
+	var missed := _cast_witness(snare_id, 3, 0, 1, false, true)
+	if missed.is_empty():
+		_check(false, "AC3: a fixed seed makes a tier-III Tattered Snare miss for the fail-closed witness")
+	else:
+		var miss_battle: StitchedRules = missed["battle"]
+		var miss_result: Dictionary = missed["receipt"]["results"][0]
+		var miss_foe_id := str(miss_result["target"])
+		_check(not bool(miss_result.get("hit", true)), "AC3: the Tattered Snare miss witness really missed")
+		_check(miss_result.get("statuses", []).is_empty(),
+			"AC3: a missed Tattered Snare reports no applied status")
+		var miss_foe := miss_battle.get_unit(miss_foe_id)
+		_check(int(miss_foe["statuses"].get("tangled", 0)) == 0
+			and int(miss_foe["statuses"].get("weak", 0)) == 0,
+			"AC3: a missed Tattered Snare adds neither Tangled nor Weak")
+		_check(int(miss_foe["hp"]) == int(missed["foe_hp_before"].get(miss_foe_id, -1)),
+			"AC3: a missed pure debuff deals no HP damage")
+		_check(miss_battle.current_actor_id() != OWNER,
+			"AC3: the missed roll still spends the Duelist's action")
 	var bleed := _cast_witness("rag_duelist_arms_needle_prick", 3, 0, 1, true)
 	if bleed.is_empty():
 		_check(false, "AC2: a fixed seed lands Needle Prick for the Bleed witness")
@@ -1488,19 +1572,28 @@ func _kit_for(part_id: String) -> Dictionary:
 
 
 func _cast_witness(part_id: String, tier: int, hero_index: int, target_rank: int,
-		needs_hit: bool) -> Dictionary:
-	for seed_value in range(1, 90):
+		needs_hit: bool, require_miss: bool = false) -> Dictionary:
+	for seed_value in range(1, 240):
 		var battle := _build_battle(seed_value, tier, _kit_for(part_id), hero_index, false)
 		if battle == null:
 			return {}
 		if not _to(battle, OWNER):
 			continue
+		var foe_hp_before := {}
+		for foe in battle.get_foes():
+			foe_hp_before[str(foe["id"])] = int(foe["hp"])
 		var receipt := battle.use_part(part_id, target_rank)
 		if not bool(receipt.get("ok", false)) or receipt.get("results", []).is_empty():
 			continue
-		if needs_hit and not bool(receipt["results"][0].get("hit", false)):
+		var hit := bool(receipt["results"][0].get("hit", false))
+		if needs_hit and not hit:
 			continue
-		return {"battle": battle, "receipt": receipt, "seed": seed_value}
+		if require_miss and hit:
+			continue
+		return {
+			"battle": battle, "receipt": receipt, "seed": seed_value,
+			"foe_hp_before": foe_hp_before,
+		}
 	return {}
 
 
