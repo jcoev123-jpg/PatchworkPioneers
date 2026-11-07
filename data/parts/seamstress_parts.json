@@ -215,9 +215,13 @@
       },
       "tiers": {
         "2": {"stat": {"dodge": 4}, "ability": {"effects": {"mark": 2, "tangled": 2}}},
-        "3": {"stat": {"dodge": 5}, "ability": {"effects": {"mark": 3, "tangled": 2}}}
+        "3": {
+          "stat": {"dodge": 5},
+          "ability": {"effects": {"mark": 3, "tangled": 2}},
+          "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 3 and Tangled 2."
+        }
       },
-      "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 1 and Tangled 1."
+      "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2."
     }
   ]
 }
