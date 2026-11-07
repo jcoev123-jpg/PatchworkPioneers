@@ -18,6 +18,9 @@ const MODE := "stitched"
 const FRESH_STUFFING := "fresh_stuffing"
 const BUY_FRESH_STUFFING := "buy_fresh_stuffing"
 const LEAVE := "leave"
+## Projection of the established Walk rules for a USED fresh stuffing (never applied
+## here): heals 35% HP, 5 WHIRR to use a pocket item plus 10 extra = 15 total.
+const EFFECT_TEXT := "Use during the Walk: heal 35% HP; costs 15 WHIRR (5 to use plus 10 extra)."
 const HERO_COUNT := 4
 const MIN_RANK := 1
 const MAX_RANK := 4
@@ -193,10 +196,11 @@ func quote() -> Dictionary:
 		"can_buy": can_buy,
 		"blocked": blocked,
 		"choices": choices,
+		"effect_text": EFFECT_TEXT,
 	}
 
 
-## Buys one fresh_stuffing for one eligible doll: appends a single literal
+## Buys one fresh_stuffingfor one eligible doll: appends a single literal
 ## "fresh_stuffing" string to only that doll's pocket, charges the quoted gold
 ## exactly once and consumes the visit. No healing, no WHIRR, nothing else.
 ## Any refusal changes nothing and keeps the visit open.
