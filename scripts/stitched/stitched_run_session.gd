@@ -88,6 +88,13 @@ var _sealed: Dictionary = {}
 var _service: RefCounted
 var _actions: Array = []
 var _event_record: Dictionary = {}
+const VISIT_GREETINGS := {
+	"Campfire": "A thimble of wax burns low between the floorboards. The dolls can rest, talk, or trade places.",
+	"Peddler": "A peddler has spread a handkerchief of wares across the boards.",
+	"PatchStall": "Scraps of cloth hang from a matchbox stall. Every patch has its price.",
+	"Unpicker": "A thin figure with a seam ripper offers to unpick what the dark has sewn in.",
+	"SewingCircle": "Old needles stand in a ring. Torn parts can be mended here, and lost dolls replaced.",
+}
 var _replacement_visit: RunStitchedSewingReplacement
 var _kid_fear: StitchedKidFear
 ## S8f: with walks on, every non-boss node is reached through a seeded Walk on the run RNG.
@@ -565,6 +572,16 @@ func _replacement(lost_id: String, candidate_id: String) -> Dictionary:
 
 func visit_actions() -> Array:
 	return _actions.duplicate(true) if phase == "visit" and is_consistent() else []
+
+
+## The road stop's story as the player reads it: the event's own words, or the host's greeting.
+func visit_story() -> String:
+	if phase != "visit":
+		return ""
+	var service := str(pending.get("service", ""))
+	if service == "Event" and str(_event_record.get("id", "")) == str(pending.get("event_id", "")):
+		return str(_event_record.get("description", ""))
+	return VISIT_GREETINGS.get(service, "Someone waits by the skirting board with something to offer.")
 
 
 func _walk_supply_offers() -> Array:
