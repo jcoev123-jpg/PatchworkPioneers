@@ -278,6 +278,12 @@
         },
         "3": {
           "ability": {
+            "target": [
+              1,
+              2,
+              3,
+              4
+            ],
             "dmg": [
               4,
               7
@@ -289,7 +295,7 @@
           }
         }
       },
-      "text": "Catch one foe in a buttonhole and leave them Tangled, deeper at each stitch tier; stitch tiers II and III also Mark it for follow-up."
+      "text": "Catch one foe in a buttonhole and leave them Tangled, deeper at each stitch tier; stitch tiers II and III also Mark it for follow-up, and only tier III can snag a foe in the rear rank 4."
     },
     {
       "id": "button_golem_arms_popping_volley",

@@ -33,6 +33,8 @@ func _initialize() -> void:
 	_test_buttonhole_snag()
 	_test_buttonhole_mark_bonus()
 	_test_buttonhole_miss()
+	_test_buttonhole_rank_four()
+	_test_buttonhole_rank_four_rejections()
 	_test_volley()
 	_test_volley_rank_four()
 	_test_volley_mark_bonus()
@@ -326,10 +328,11 @@ func _test_buttonhole_tiers() -> void:
 		and str(part["slot"]) == "head" and str(part["owner"]) == "button_golem"
 		and StitchedParts.stat_at_tier(part, 1) == {"crit": 4},
 		"AC1: Buttonhole Snag keeps its id, head slot, owner and crit stat")
+	# Only the tier-III override widens the authored target ranks to the rear enemy rank 4.
 	var rows := [
-		{"tier": 1, "dmg": [2, 4], "tangled": 2, "mark": 0},
-		{"tier": 2, "dmg": [3, 5], "tangled": 3, "mark": 2},
-		{"tier": 3, "dmg": [4, 7], "tangled": 4, "mark": 3},
+		{"tier": 1, "dmg": [2, 4], "tangled": 2, "mark": 0, "target": [1, 2, 3]},
+		{"tier": 2, "dmg": [3, 5], "tangled": 3, "mark": 2, "target": [1, 2, 3]},
+		{"tier": 3, "dmg": [4, 7], "tangled": 4, "mark": 3, "target": [1, 2, 3, 4]},
 	]
 	for row in rows:
 		var tier := int(row["tier"])
@@ -337,11 +340,11 @@ func _test_buttonhole_tiers() -> void:
 		_check(str(at["id"]) == "button_golem_head_buttonhole_snag_move"
 			and str(at["kind"]) == "debuff" and str(at["target_side"]) == "enemy"
 			and bool(at["multi"]) == false and at["launch"] == [1, 2]
-			and at["target"] == [1, 2, 3] and int(at["acc"]) == 93
+			and at["target"] == row["target"] and int(at["acc"]) == 93
 			and at["dmg"] == row["dmg"] and int(at["crit"]) == 0
 			and int(at["self_move"]) == 0 and str(at["move"]) == "skill"
 			and int(at["launch_mask"]) == StitchedParts.rank_mask([1, 2])
-			and int(at["target_mask"]) == StitchedParts.rank_mask([1, 2, 3]),
+			and int(at["target_mask"]) == StitchedParts.rank_mask(row["target"]),
 			"AC1: Buttonhole Snag tier %d keeps its authored ability" % tier)
 		_check(int(at["effects"].get("tangled", 0)) == int(row["tangled"]),
 			"AC1: Buttonhole Snag tier %d applies Tangled %d" % [tier, int(row["tangled"])])
@@ -349,11 +352,27 @@ func _test_buttonhole_tiers() -> void:
 			"AC1: Buttonhole Snag tier %d applies Mark %d" % [tier, int(row["mark"])])
 		if int(row["mark"]) == 0:
 			_check(not at["effects"].has("mark"), "AC1: tier-I Buttonhole Snag never adds Mark")
+		_check(StitchedParts.ranks_allowed(int(at["target_mask"]), 4) == (tier == 3),
+			"AC1: only tier-III Buttonhole Snag reaches enemy rank 4")
 		_check(bool(StitchedParts.validate_ability(at).get("ok", false)),
 			"AC1: Buttonhole Snag tier %d ability validates" % tier)
 	var text := str(part["text"]).to_lower()
 	_check(text.contains("tangled") and text.contains("mark"),
 		"AC1: Buttonhole Snag text names Tangled and the higher-tier Mark")
+	_check(text.contains("tier iii") and text.contains("rank 4"),
+		"AC1: Buttonhole Snag text credits rear rank 4 reach only to tier III")
+	var raw_parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	var raw_part := {}
+	if raw_parsed is Dictionary:
+		for entry in raw_parsed.get("parts", []):
+			if str(entry.get("id", "")) == ALTERNATES["head"]:
+				raw_part = entry
+				break
+	_check(not raw_part.is_empty()
+		and raw_part["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3]
+		and not raw_part["tiers"]["2"]["ability"].has("target")
+		and raw_part["tiers"]["3"]["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3, 4],
+		"AC1: only the authored tier-III override carries the widened target list")
 	var heads: Array = []
 	for p in c["parts"]:
 		if str(p["slot"]) == "head":
@@ -595,6 +614,186 @@ func _test_buttonhole_miss() -> void:
 	_check(witnessed, "AC3: a genuine upgraded Snag miss applies neither Tangled nor Mark but still spends the turn and RNG")
 
 
+func _test_buttonhole_rank_four() -> void:
+	# AC2: with the tier-III Snag equipped, the same real preview battle that Popping Volley
+	# uses has the existing Moth Scribe relocated to enemy rank 4 and rank 3 vacant.
+	var landed := {}
+	var landed_seed := 0
+	var missed := {}
+	var missed_seed := 0
+	for seed_value in range(504600, 504760):
+		var attempt := _rank_four_cast(3, seed_value, ALTERNATES["head"])
+		if attempt.is_empty():
+			continue
+		var battle: StitchedRules = attempt["battle"]
+		if not _rank_four_structure_ok(battle) or not _snag_equipped(battle, 3):
+			continue
+		var cast: Dictionary = attempt["cast"]
+		if not bool(cast.get("ok", false)) or cast.get("results", []).size() != 1:
+			continue
+		var receipt: Dictionary = cast["results"][0]
+		if str(receipt.get("target", "")) != "moth_scribe" \
+			or int(receipt.get("target_rank", 0)) != 4:
+			continue
+		if bool(receipt.get("hit", false)):
+			# If the target is the very next actor, its turn-start tick would already have
+			# reduced the counters; keep a witness readable at the authored amounts.
+			if landed.is_empty() and battle.current_actor_id() != "moth_scribe":
+				landed = attempt
+				landed_seed = seed_value
+		elif missed.is_empty():
+			missed = attempt
+			missed_seed = seed_value
+		if not landed.is_empty() and not missed.is_empty():
+			break
+	_check(not landed.is_empty(),
+		"AC2: equipped tier-III Snag lands a real seeded hit on the rank-4 foe")
+	if not landed.is_empty():
+		var battle: StitchedRules = landed["battle"]
+		var cast: Dictionary = landed["cast"]
+		var receipt: Dictionary = cast["results"][0]
+		var moth := battle.get_unit("moth_scribe")
+		_check(str(cast.get("actor", "")) == "button_golem"
+			and str(cast.get("part", "")) == ALTERNATES["head"]
+			and str(cast.get("ability", "")) == "button_golem_head_buttonhole_snag_move",
+			"AC2: the rank-4 hit runs as the equipped Golem head action")
+		_check(str(receipt.get("target", "")) == "moth_scribe"
+			and str(receipt.get("target_side", "")) == "foe"
+			and int(receipt.get("target_rank", 0)) == 4,
+			"AC2: the one Snag receipt names the rank-4 Moth Scribe on the enemy side")
+		_check(int(receipt.get("damage", 0)) > 0
+			and int(receipt.get("target_hp", -1)) == int(moth["hp"])
+			and int(moth["hp"]) == int(landed["moth_hp"]) - int(receipt["damage"]),
+			"AC2: genuine rolled damage drops the real rank-4 foe HP by the receipt amount")
+		_check(_status_value(receipt["statuses"], "tangled") == 4
+			and _status_value(receipt["statuses"], "mark") == 3,
+			"AC2: the tier-III receipt reports Tangled 4 and Mark 3")
+		_check(int(moth["statuses"].get("tangled", 0)) == 4
+			and int(moth["statuses"].get("mark", 0)) == 3,
+			"AC2: Tangled 4 and Mark 3 persist on that same rank-4 foe")
+		var untouched := true
+		for other_id in ["fray_scavenger", "scissor_crab"]:
+			untouched = untouched and int(battle.get_unit(other_id)["hp"]) \
+				== int(landed["foe_hp"][other_id])
+		_check(untouched and battle.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: the other foes stay untouched and no phantom rank-3 target exists")
+		_check(_spent_one_turn(landed["before"], landed["after"])
+			and battle.current_actor_id() != "button_golem"
+			and int(landed["rng_before"]) != int(landed["rng_after"]),
+			"AC2: the accepted rank-4 Snag spends exactly one turn and seeded RNG")
+		var replay := _rank_four_cast(3, landed_seed, ALTERNATES["head"])
+		_check(not replay.is_empty() and replay["cast"] == landed["cast"]
+			and replay["before"] == landed["before"] and replay["after"] == landed["after"]
+			and int(replay["rng_after"]) == int(landed["rng_after"]),
+			"AC2: equal-seed replay reproduces the rank-4 receipt, state and RNG")
+	# AC3: a legal seeded miss on the same rank-4 fixture still spends the turn but applies
+	# neither Tangled nor Mark and deals no damage.
+	_check(not missed.is_empty(),
+		"AC3: a genuine tier-III rank-4 Snag miss occurs in the bounded seed range")
+	if not missed.is_empty():
+		var miss_battle: StitchedRules = missed["battle"]
+		var miss_cast: Dictionary = missed["cast"]
+		var miss_receipt: Dictionary = miss_cast["results"][0]
+		var miss_moth := miss_battle.get_unit("moth_scribe")
+		_check(not bool(miss_receipt.get("hit", true))
+			and int(miss_receipt.get("damage", -1)) == 0
+			and miss_receipt.get("statuses", []).is_empty()
+			and not miss_moth["statuses"].has("tangled")
+			and not miss_moth["statuses"].has("mark")
+			and int(miss_moth["hp"]) == int(missed["moth_hp"]),
+			"AC3: the tier-III rank-4 miss applies no damage, Tangled or Mark")
+		_check(_spent_one_turn(missed["before"], missed["after"])
+			and miss_battle.current_actor_id() != "button_golem"
+			and int(missed["rng_before"]) != int(missed["rng_after"]),
+			"AC3: the legal rank-4 miss still spends its one turn and seeded RNG")
+		var miss_replay := _rank_four_cast(3, missed_seed, ALTERNATES["head"])
+		_check(not miss_replay.is_empty() and miss_replay["cast"] == missed["cast"]
+			and miss_replay["before"] == missed["before"] and miss_replay["after"] == missed["after"]
+			and int(miss_replay["rng_after"]) == int(missed["rng_after"]),
+			"AC3: equal-seed replay reproduces the rank-4 miss receipt, state and RNG")
+
+
+func _test_buttonhole_rank_four_rejections() -> void:
+	# AC3: tiers I and II stay authored to ranks 1-3, so an equipped Snag refuses the occupied
+	# rank 4 on the very same fixture before any turn, state or RNG change.
+	for tier in [1, 2]:
+		var witnessed := false
+		for seed_value in range(504760, 504800):
+			var battle := _rank_four_battle(tier, seed_value, ALTERNATES["head"])
+			if battle == null or not _to(battle, "button_golem"):
+				continue
+			if not _rank_four_structure_ok(battle) or not _snag_equipped(battle, tier):
+				continue
+			_reject(battle, ALTERNATES["head"], 4,
+				"equipped tier-%d Buttonhole Snag refuses occupied enemy rank 4" % tier,
+				"no legal target")
+			witnessed = true
+			break
+		_check(witnessed,
+			"AC3: tier-%d Snag reaches the real occupied rank-4 Golem turn for its refusal" % tier)
+	# AC3: the tier-III reach is authored, not a bypass: vacant rank 3 and ranks 0/5 still refuse.
+	var relocated := {}
+	for seed_value in range(504800, 504840):
+		var battle := _rank_four_battle(3, seed_value, ALTERNATES["head"])
+		if battle == null or not _to(battle, "button_golem"):
+			continue
+		if not _rank_four_structure_ok(battle) or not _snag_equipped(battle, 3):
+			continue
+		relocated = {"battle": battle, "seed": seed_value}
+		break
+	_check(not relocated.is_empty(), "AC3: tier-III rank-4 fixture reaches a real Golem turn")
+	if not relocated.is_empty():
+		var battle: StitchedRules = relocated["battle"]
+		_reject(battle, ALTERNATES["head"], 3, "vacant enemy rank 3", "no legal target")
+		_reject(battle, ALTERNATES["head"], 0, "enemy rank zero", "no legal target")
+		_reject(battle, ALTERNATES["head"], 5, "enemy rank five", "no legal target")
+		# A legal tier-III cast then ends the Golem's turn; every repeat is off turn.
+		var spent := battle.use_part(ALTERNATES["head"], 4)
+		_check(bool(spent.get("ok", false)), "AC3: the tier-III rank-4 cast was genuinely legal")
+		_reject(battle, ALTERNATES["head"], 4, "tier-III Snag off turn")
+	# AC3: the widened target list never widens the launch ranks, which stay 1-2.
+	for hero_rank in [3, 4]:
+		var cfg := _config(ALTERNATES["head"], 3, 504841 + hero_rank)
+		if cfg.is_empty():
+			_check(false, "AC3: rank-%d tier-III Snag configuration builds" % hero_rank)
+			continue
+		var golem: Dictionary = cfg["heroes"].pop_at(1)
+		cfg["heroes"].insert(hero_rank - 1, golem)
+		var made := StitchedRules.create(cfg)
+		_check(bool(made.get("ok", false)),
+			"AC3: rank-%d tier-III Snag battle builds" % hero_rank)
+		if not bool(made.get("ok", false)):
+			continue
+		var rear: StitchedRules = made["battle"]
+		if not _to(rear, "button_golem"):
+			_check(false, "AC3: rank-%d tier-III Snag receives its scheduled turn" % hero_rank)
+			continue
+		_check(int(rear.get_unit("button_golem")["rank"]) == hero_rank,
+			"AC3: the Golem really stands in hero rank %d" % hero_rank)
+		_reject(rear, ALTERNATES["head"], 4,
+			"tier-III Snag cannot launch from hero rank %d" % hero_rank, "cannot launch from rank")
+		_reject(rear, ALTERNATES["head"], 1,
+			"tier-III Snag cannot launch from hero rank %d at rank 1" % hero_rank,
+			"cannot launch from rank")
+	# AC3: a torn or unequipped head keeps the tier-III record fail-closed.
+	var torn_cfg := _config(ALTERNATES["head"], 3, 504850)
+	if not torn_cfg.is_empty():
+		torn_cfg["heroes"][1]["parts"]["head"]["torn"] = true
+		var torn_built := StitchedRules.create(torn_cfg)
+		_check(bool(torn_built.get("ok", false)), "AC3: torn tier-III Snag equipment builds")
+		if bool(torn_built.get("ok", false)):
+			var torn: StitchedRules = torn_built["battle"]
+			if _to(torn, "button_golem"):
+				_reject(torn, ALTERNATES["head"], 4, "torn tier-III Buttonhole Snag", "torn")
+			else:
+				_check(false, "AC3: torn tier-III Snag reaches the Golem turn")
+	var bare := _battle("", 1, 504851)
+	if bare == null or not _to(bare, "button_golem"):
+		_check(false, "AC3: unequipped Snag battle reaches the Golem turn")
+	else:
+		_reject(bare, ALTERNATES["head"], 4, "tier-III Snag not equipped", "not equipped")
+
+
 func _test_volley() -> void:
 	var witnessed := false
 	for seed_value in range(503240, 503300):
@@ -621,11 +820,13 @@ func _test_volley() -> void:
 	_check(witnessed, "AC2: real Popping Volley hits each of three unique foes exactly once")
 
 
-## A real 4v3 preview battle with Popping Volley equipped on the rank-2 Golem, then the
-## existing third foe moved into enemy rank 4 in this battle's own memory only. Rank 3 stays
-## vacant, ranks 1 and 2 keep their real foes, and exactly three foes remain.
-func _rank_four_battle(tier: int, seed_value: int) -> StitchedRules:
-	var cfg := _config(ALTERNATES["arms"], tier, seed_value)
+## A real 4v3 preview battle with the given part equipped on the rank-2 Golem (Popping Volley
+## by default), then the existing third foe moved into enemy rank 4 in this battle's own
+## memory only. Rank 3 stays vacant, ranks 1 and 2 keep their real foes, three foes remain.
+func _rank_four_battle(
+	tier: int, seed_value: int, part: String = ALTERNATES["arms"]
+) -> StitchedRules:
+	var cfg := _config(part, tier, seed_value)
 	if cfg.is_empty():
 		return null
 	var built := StitchedRules.create(cfg)
@@ -640,24 +841,49 @@ func _rank_four_battle(tier: int, seed_value: int) -> StitchedRules:
 
 ## One real scheduled Golem turn on the relocated fixture, with the pre/post snapshots needed
 ## for a same-seed replay check.
-func _rank_four_cast(tier: int, seed_value: int) -> Dictionary:
-	var battle := _rank_four_battle(tier, seed_value)
+func _rank_four_cast(
+	tier: int, seed_value: int, part: String = ALTERNATES["arms"]
+) -> Dictionary:
+	var battle := _rank_four_battle(tier, seed_value, part)
 	if battle == null or not _to(battle, "button_golem"):
 		return {}
+	var foe_hp := {}
+	for foe in battle.get_foes():
+		foe_hp[str(foe["id"])] = int(foe["hp"])
 	var before := battle.state_snapshot()
 	var rng := battle.rng_state()
 	var moth_hp := int(battle.get_unit("moth_scribe")["hp"])
-	var cast := battle.use_part(ALTERNATES["arms"], 4)
+	var cast := battle.use_part(part, 4)
 	return {
 		"battle": battle,
+		"part": part,
 		"cast": cast,
 		"before": before,
 		"rng_before": rng,
 		"after": battle.state_snapshot(),
 		"rng_after": battle.rng_state(),
 		"moth_hp": moth_hp,
+		"foe_hp": foe_hp,
 		"seed": seed_value,
 	}
+
+
+## The real four-hero/three-foe preview with only the existing Moth Scribe moved to enemy
+## rank 4 in this battle's own memory: ranks 1 and 2 keep their foes and rank 3 stays vacant.
+func _rank_four_structure_ok(battle: StitchedRules) -> bool:
+	return battle != null and battle.get_heroes().size() == 4 and battle.get_foes().size() == 3 \
+		and int(battle.get_unit("button_golem")["rank"]) == 2 \
+		and int(battle.get_unit("moth_scribe")["rank"]) == 4 \
+		and not bool(battle.get_unit("moth_scribe")["dead"]) \
+		and int(battle.get_unit("fray_scavenger")["rank"]) == 1 \
+		and int(battle.get_unit("scissor_crab")["rank"]) == 2 \
+		and battle.get_foes().all(func(foe): return int(foe["rank"]) != 3)
+
+
+func _snag_equipped(battle: StitchedRules, tier: int) -> bool:
+	var head: Dictionary = battle.get_unit("button_golem").get("parts", {}).get("head", {})
+	return str(head.get("id", "")) == ALTERNATES["head"] \
+		and int(head.get("tier", 0)) == tier and not bool(head.get("torn", false))
 
 
 func _test_volley_rank_four() -> void:
@@ -754,7 +980,8 @@ func _test_volley_rank_four() -> void:
 		_reject(plain, ALTERNATES["arms"], 0, "volley target rank zero")
 		_reject(plain, ALTERNATES["arms"], 5, "volley target rank five")
 		_reject(plain, STARTERS["head"], 4, "single-target Loose Button Pop has no rank-four target")
-		_reject(plain, ALTERNATES["head"], 4, "Buttonhole Snag's authored mask excludes rank four")
+		_reject(plain, ALTERNATES["head"], 4,
+			"the unequipped tier-I Buttonhole Snag has no rank-four target")
 		var before := plain.state_snapshot()
 		var rng := plain.rng_state()
 		var anchored := plain.use_part(ALTERNATES["arms"], 4)
@@ -856,13 +1083,21 @@ func _test_volley_catalog(c: Dictionary) -> void:
 		ALTERNATES["torso"]: {"launch": [1, 2, 3], "target": [1, 2, 3, 4], "stat": {"max_hp": 5, "prot": 5}},
 		ALTERNATES["legs"]: {"launch": [2, 3, 4], "target": [2, 3, 4], "stat": {"dodge": 5}},
 	}
+	# Buttonhole Snag is the one part whose target ranks differ by tier: the tier-III override
+	# adds enemy rank 4 while the base and tier-II masks stay at ranks 1-3.
+	var tier_targets := {
+		ALTERNATES["head"]: {1: [1, 2, 3], 2: [1, 2, 3], 3: [1, 2, 3, 4]},
+	}
 	for id in unchanged:
 		for tier in [1, 2, 3]:
 			var at := StitchedParts.ability_at_tier(c["by_id"][id], tier)
 			var stat := StitchedParts.stat_at_tier(c["by_id"][id], tier)
-			_check(at["launch"] == unchanged[id]["launch"] and at["target"] == unchanged[id]["target"]
+			var target: Array = unchanged[id]["target"]
+			if tier_targets.has(id):
+				target = tier_targets[id][tier]
+			_check(at["launch"] == unchanged[id]["launch"] and at["target"] == target
 				and int(at["launch_mask"]) == StitchedParts.rank_mask(unchanged[id]["launch"])
-				and int(at["target_mask"]) == StitchedParts.rank_mask(unchanged[id]["target"])
+				and int(at["target_mask"]) == StitchedParts.rank_mask(target)
 				and stat == unchanged[id]["stat"],
 				"AC1: %s keeps its authored ranks and slot stat at tier %d" % [id, tier])
 	var loose: Dictionary = c["by_id"][STARTERS["head"]]
@@ -1098,7 +1333,7 @@ func _test_wheels() -> void:
 			"AC2: wheel gains genuine temporary Dodge alongside movement")
 
 
-func _reject(b: StitchedRules, part: String, rank: int, reason: String) -> void:
+func _reject(b: StitchedRules, part: String, rank: int, reason: String, expect: String = "") -> void:
 	var actor := b.current_actor_id()
 	var snapshot := b.state_snapshot()
 	var rng := b.rng_state()
@@ -1106,6 +1341,9 @@ func _reject(b: StitchedRules, part: String, rank: int, reason: String) -> void:
 	_check(not bool(refused.get("ok", false)) and not str(refused.get("error", "")).is_empty()
 		and actor == b.current_actor_id() and snapshot == b.state_snapshot() and rng == b.rng_state(),
 		"AC3: no-turn/no-state/no-RNG illegal action: " + reason)
+	if not expect.is_empty():
+		_check(str(refused.get("error", "")).contains(expect),
+			"AC3: illegal action fails closed for the authored reason: " + reason)
 
 
 func _test_illegal() -> void:
