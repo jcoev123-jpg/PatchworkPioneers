@@ -1,5 +1,51 @@
-extends "res://tests/live_run_map_entry_test.gd"
+extends SceneTree
 ## Mounted presentation/lifecycle checks; visual layout is reviewed in web screenshots.
+
+var failures: Array[String] = []
+var checks := 0
+
+
+func _initialize() -> void:
+	call_deferred("_run")
+
+
+func _check(ok: bool, message: String) -> void:
+	checks += 1
+	if not ok:
+		failures.append(message)
+
+
+func _key(code: Key) -> void:
+	for down in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = code
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
+func _click(button: Button) -> void:
+	_check(is_instance_valid(button) and button.is_visible_in_tree(), "mouse target is mounted")
+	if not is_instance_valid(button):
+		return
+	var point := button.get_global_rect().get_center()
+	await _click_point(point)
+
+
+func _click_point(point: Vector2) -> void:
+	_check(root.get_visible_rect().has_point(point), "mouse target inside viewport")
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	for down in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
 
 ## The master body face every sewn tile label inherits: Patrick Hand.
 const BODY_FONT := "res://assets/fonts/PatrickHand-Regular.ttf"
