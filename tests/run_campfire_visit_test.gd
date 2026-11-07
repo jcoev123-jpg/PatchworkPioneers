@@ -1081,8 +1081,11 @@ func _test_swap_admission_and_quote() -> void:
 	_check(by_slot["head"]["offers"].size() == 1
 		and by_slot["head"]["offers"][0]["part"]["id"] == HEAD_RATTLE
 		and by_slot["legs"]["offers"][0]["part"]["id"] == LEGS_SHIELD
-		and by_slot["torso"]["can_swap"] == false and by_slot["torso"]["offers"].is_empty(),
-		"only same-slot spares are offered; torso has none")
+		and by_slot["torso"]["offers"].is_empty()
+		and by_slot["torso"]["can_swap"] == (not by_slot["torso"]["worn_offers"].is_empty()),
+		"only same-slot spares are offered; torso has no spare (can_swap only via direct exchange)")
+	_check(by_slot["torso"]["worn_offers"].size() == 3 and by_slot["torso"]["can_swap"] == true,
+		"torso is swappable only through three direct wearer exchanges, not the satchel")
 	var golem_arms: Dictionary = {}
 	for entry in quote["heroes"][3]["slots"]:
 		if entry["slot"] == "arms":
