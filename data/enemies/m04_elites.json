@@ -176,7 +176,7 @@
           "launch": [1, 4],
           "target": [1, 2, 3, 4],
           "target_side": "enemy",
-          "multi": false,
+          "multi": true,
           "acc": 90,
           "dmg": [0, 0],
           "crit": 0,
