@@ -30,6 +30,8 @@ var engine: StitchedBattleScreen
 var battle: StitchedRules
 var area := "floorboards"
 var stage: StitchedCorridorStage
+## Wren's authored hands, strings and fear jar live above the corridor, below hit targets.
+var kid_view: StitchedKidView
 var chrome: Control
 var plates: Dictionary = {}
 var hits: Dictionary = {}
@@ -107,6 +109,11 @@ func _ready() -> void:
 	add_child(stage)
 	stage.build(area, 2)
 	stage.fight_view(true)
+	# Mount a fresh projection: the old battle screen's KidView belongs to hidden chrome.
+	kid_view = StitchedKidView.new()
+	add_child(kid_view)
+	kid_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	kid_view.meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_build_plates()
 	_build_top()
 	_build_intents()
@@ -824,6 +831,28 @@ func _place_overlays() -> void:
 		hits[key].position = rect.position
 		hits[key].size = rect.size
 		hits[key].visible = rect.size.x > 0.0
+	_refresh_wren()
+
+
+## Read the stage's *current* 3D projection, not the hidden classic 2D hit boxes.
+## This hook also runs while a lunge moves the figures and when session fear changes
+## without a combat receipt. It does not issue any rule command or draw any new art.
+func _refresh_wren() -> void:
+	if kid_view == null or battle == null or engine == null:
+		return
+	var heroes := battle.get_heroes()
+	var tops: Dictionary = {}
+	for hero in heroes:
+		if bool(hero.get("lost", false)):
+			continue
+		var rank := int(hero.get("rank", 0))
+		if rank < 1 or rank > 4:
+			continue
+		var rect := stage.screen_rect("hero_%d" % rank)
+		if rect.size.x > 0.0 and rect.size.y > 0.0:
+			tops[rank] = Vector2(rect.get_center().x, rect.position.y)
+	kid_view.show_state(engine.kid_fear(), heroes, tops, battle.thread_cuts(),
+		engine._motion_is_reduced())
 
 
 func _build_bark() -> void:
