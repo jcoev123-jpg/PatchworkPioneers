@@ -100,30 +100,31 @@ func _initialize() -> void:
 
 
 func _test_ac1_default_off_parity() -> void:
-	for seed_number in range(12):
-		for mimic in [false, true]:
-			for tug in [false, true]:
-				for mannequins in [false, true]:
-					var dolls := party(100, "frantic")
-					var p := pockets()
-					var baseline_rng := random(seed_number)
-					var baseline := Walk.start(baseline_rng, "walls", dolls, p, null, mimic, tug, mannequins)
+	for fray_val in [99, 100]:
+		for seed_number in range(6):
+			for mimic in [false, true]:
+				for tug in [false, true]:
+					for mannequins in [false, true]:
+						var dolls := party(fray_val, "frantic")
+						var p := pockets()
+						var baseline_rng := random(seed_number)
+						var baseline := Walk.start(baseline_rng, "walls", dolls, p, null, mimic, tug, mannequins)
 
-					var off_rng := random(seed_number)
-					var off := Walk.start(off_rng, "walls", dolls, p, null, mimic, tug, mannequins, false)
+						var off_rng := random(seed_number)
+						var off := Walk.start(off_rng, "walls", dolls, p, null, mimic, tug, mannequins, false)
 
-					check(baseline != null and off != null, "AC1: both baseline and explicit-off start")
-					check(baseline.snapshot() == off.snapshot(), "AC1: baseline and explicit-off produce identical start snapshot")
-					check(baseline_rng.state == off_rng.state, "AC1: RNG state matches across baseline and off")
-					check(not off.snapshot().has("stitches"), "AC1: default-off snapshot has no stitches state")
-					check(baseline.snapshot().corridor.steps == off.snapshot().corridor.steps, "AC1: corridor steps unchanged")
+						check(baseline != null and off != null, "AC1: both baseline and explicit-off start")
+						check(baseline.snapshot() == off.snapshot(), "AC1: baseline and explicit-off produce identical start snapshot")
+						check(baseline_rng.state == off_rng.state, "AC1: RNG state matches across baseline and off")
+						check(not off.snapshot().has("stitches"), "AC1: default-off snapshot has no stitches state")
+						check(baseline.snapshot().corridor.steps == off.snapshot().corridor.steps, "AC1: corridor steps unchanged")
 
-					# Complete both and compare receipts
-					var b_steps := finish_walk(baseline)
-					var o_steps := finish_walk(off)
-					check(b_steps == o_steps, "AC1: step counts identical")
-					check(baseline.snapshot() == off.snapshot(), "AC1: completion snapshots match byte-for-byte")
-					check(baseline_rng.state == off_rng.state, "AC1: final RNG states match byte-for-byte")
+						# Complete both and compare receipts
+						var b_steps := finish_walk(baseline)
+						var o_steps := finish_walk(off)
+						check(b_steps == o_steps, "AC1: step counts identical")
+						check(baseline.snapshot() == off.snapshot(), "AC1: completion snapshots match byte-for-byte")
+						check(baseline_rng.state == off_rng.state, "AC1: final RNG states match byte-for-byte")
 
 
 func _test_ac2_cue_and_thresholds() -> void:
@@ -154,28 +155,51 @@ func _test_ac2_cue_and_thresholds() -> void:
 		check(not snap_sf.stitches.wrong_turn, "AC2: steadfast lead never takes wrong turn")
 		check(snap_sf.stitches.extra_steps == 0, "AC2: steadfast lead extra_steps is 0")
 
-	# Test all 5 unravelled traits at FRAY 100 and FRAY 99
+	# Test all 5 unravelled traits at FRAY 100, FRAY 99, and FRAY 49
 	var traits := ["frantic", "hollow", "bitter", "reckless", "cowering"]
 	for trait_name in traits:
-		# FRAY 99: cue false, eligible false
+		# FRAY 49: cue false, eligible false, wrong_turn false, extra_steps 0
+		var rng_49 := random(42)
+		var p_49 := party(49, trait_name)
+		var walk_49 := Walk.start(rng_49, "walls", p_49, pockets(), null, false, false, false, true)
+		check(walk_49 != null, "AC2: trait %s at 49 starts" % trait_name)
+		var snap_49 := walk_49.snapshot()
+		check(not snap_49.stitches.cue, "AC2: cue is false at fray 49 for trait %s" % trait_name)
+		check(not snap_49.stitches.eligible, "AC2: eligible is false at fray 49 for trait %s" % trait_name)
+		check(not snap_49.stitches.wrong_turn, "AC2: wrong_turn is false at fray 49 for trait %s" % trait_name)
+		check(snap_49.stitches.extra_steps == 0, "AC2: extra_steps is 0 at fray 49 for trait %s" % trait_name)
+
+		# FRAY 99: cue false, unravelled true, eligible true, valid roll drawn
 		var rng_99 := random(42)
 		var p_99 := party(99, trait_name)
 		var walk_99 := Walk.start(rng_99, "walls", p_99, pockets(), null, false, false, false, true)
 		check(walk_99 != null, "AC2: trait %s at 99 starts" % trait_name)
 		var snap_99 := walk_99.snapshot()
 		check(not snap_99.stitches.cue, "AC2: cue is false at fray 99 for trait %s" % trait_name)
-		check(not snap_99.stitches.eligible, "AC2: eligible is false at fray 99 for trait %s" % trait_name)
-		check(not snap_99.stitches.wrong_turn, "AC2: wrong_turn is false at fray 99 for trait %s" % trait_name)
+		check(not snap_99.stitches.cue_visible, "AC2: cue_visible is false at fray 99 for trait %s" % trait_name)
+		check(not walk_99.stitches_cue_visible(), "AC2: stitches_cue_visible() is false at fray 99 for trait %s" % trait_name)
+		check(snap_99.stitches.unravelled, "AC2: unravelled is true at fray 99 for trait %s" % trait_name)
+		check(snap_99.stitches.eligible, "AC2: eligible is true at fray 99 for trait %s" % trait_name)
+		check(snap_99.stitches.roll_eligible, "AC2: roll_eligible is true at fray 99 for trait %s" % trait_name)
+		check(snap_99.stitches.roll >= 1 and snap_99.stitches.roll <= 100, "AC2: valid roll drawn at fray 99 for %s" % trait_name)
+		if snap_99.stitches.wrong_turn:
+			check(snap_99.stitches.extra_steps == 2, "AC2: extra_steps is 2 on wrong_turn at fray 99 for %s" % trait_name)
+		else:
+			check(snap_99.stitches.extra_steps == 0, "AC2: extra_steps is 0 on no wrong_turn at fray 99 for %s" % trait_name)
 
-		# FRAY 100: cue true, unravelled true, eligible true
+		# FRAY 100: cue true, unravelled true, eligible true, valid roll drawn
 		var rng_100 := random(42)
 		var p_100 := party(100, trait_name)
 		var walk_100 := Walk.start(rng_100, "walls", p_100, pockets(), null, false, false, false, true)
 		check(walk_100 != null, "AC2: trait %s at 100 starts" % trait_name)
 		var snap_100 := walk_100.snapshot()
 		check(snap_100.stitches.cue, "AC2: cue is true at fray 100 for trait %s" % trait_name)
+		check(snap_100.stitches.cue_visible, "AC2: cue_visible is true at fray 100 for trait %s" % trait_name)
+		check(walk_100.stitches_cue_visible(), "AC2: stitches_cue_visible() is true at fray 100 for trait %s" % trait_name)
 		check(snap_100.stitches.unravelled, "AC2: unravelled is true at fray 100 for trait %s" % trait_name)
 		check(snap_100.stitches.eligible, "AC2: eligible is true at fray 100 for trait %s" % trait_name)
+		check(snap_100.stitches.roll_eligible, "AC2: roll_eligible is true at fray 100 for trait %s" % trait_name)
+		check(snap_100.stitches.roll >= 1 and snap_100.stitches.roll <= 100, "AC2: valid roll drawn at fray 100 for %s" % trait_name)
 
 	# SWITCH viewpoint tests
 	# Case 1: lead rank 1 has FRAY 100, rank 2 has FRAY 0
@@ -194,20 +218,39 @@ func _test_ac2_cue_and_thresholds() -> void:
 	check(walk_sw1.snapshot().stitches.lead_id == "0", "AC2: lead remains rank 1 doll")
 	check(walk_sw1.stitches_cue_visible(), "AC2: helper remains visible after switch")
 
-	# Case 2: lead rank 1 has FRAY 99, rank 2 has FRAY 150
+	# Case 2: lead rank 1 has FRAY 49 frantic (ineligible), rank 2 has FRAY 150 frantic
 	var rng_sw2 := random(42)
-	var p_sw2 := party(99, "frantic")
+	var p_sw2 := party(49, "frantic")
 	p_sw2[1].fray = 150
 	p_sw2[1].resolve = "frantic"
 	var walk_sw2 := Walk.start(rng_sw2, "walls", p_sw2, pockets(), null, false, false, false, true)
 	check(walk_sw2 != null, "AC2: switch walk 2 starts")
-	check(not walk_sw2.snapshot().stitches.cue, "AC2: cue inactive for rank 1 with fray 99")
+	check(not walk_sw2.snapshot().stitches.cue, "AC2: cue inactive for rank 1 with fray 49")
 	check(not walk_sw2.snapshot().stitches.eligible, "AC2: ineligible despite rank 2 having fray 150")
 	var sw_res2 := act(walk_sw2, "switch", {"target": "1"})
 	check(sw_res2.ok, "AC2: switch to high fray doll succeeds")
 	check(walk_sw2.snapshot().viewpoint == "1", "AC2: viewpoint is now doll 1")
 	check(not walk_sw2.snapshot().stitches.cue, "AC2: cue remains inactive when viewing high-fray non-lead")
 	check(not walk_sw2.stitches_cue_visible(), "AC2: helper remains false")
+	check(not walk_sw2.snapshot().stitches.eligible, "AC2: eligible remains false after switch")
+	check(walk_sw2.snapshot().stitches.lead_id == "0", "AC2: lead remains rank 1 doll 0")
+
+	# Case 3: lead rank 1 has FRAY 99 frantic (eligible but cue inactive), rank 2 has FRAY 150 frantic
+	var rng_sw3 := random(42)
+	var p_sw3 := party(99, "frantic")
+	p_sw3[1].fray = 150
+	p_sw3[1].resolve = "frantic"
+	var walk_sw3 := Walk.start(rng_sw3, "walls", p_sw3, pockets(), null, false, false, false, true)
+	check(walk_sw3 != null, "AC2: switch walk 3 starts")
+	check(not walk_sw3.snapshot().stitches.cue, "AC2: cue inactive for rank 1 with fray 99")
+	check(walk_sw3.snapshot().stitches.eligible, "AC2: eligible true for rank 1 with fray 99 frantic")
+	check(not walk_sw3.stitches_cue_visible(), "AC2: cue visible helper false initially")
+	var sw_res3 := act(walk_sw3, "switch", {"target": "1"})
+	check(sw_res3.ok, "AC2: switch to rank 2 succeeds")
+	check(walk_sw3.snapshot().viewpoint == "1", "AC2: viewpoint is now doll 1")
+	check(not walk_sw3.snapshot().stitches.cue, "AC2: cue remains inactive when viewing high-fray rank 2")
+	check(not walk_sw3.stitches_cue_visible(), "AC2: cue visible helper remains false after switch")
+	check(walk_sw3.snapshot().stitches.lead_id == "0", "AC2: lead remains rank 1 doll 0")
 
 
 func _test_ac3_percentile_wrong_turn_and_extra_steps() -> void:
@@ -216,7 +259,7 @@ func _test_ac3_percentile_wrong_turn_and_extra_steps() -> void:
 	var seen_rolls := {}
 
 	for seed_number in range(50):
-		var lead_fray := 100
+		var lead_fray := 99
 		var lead_trait := "frantic"
 
 		# Control without stitches
@@ -232,7 +275,8 @@ func _test_ac3_percentile_wrong_turn_and_extra_steps() -> void:
 		var test_walk := Walk.start(test_rng, "walls", party(lead_fray, lead_trait), pockets(), null, false, false, false, true)
 		check(test_walk != null, "AC3: test_walk starts")
 		var test_initial := test_walk.snapshot()
-		check(test_initial.stitches.eligible, "AC3: stitches is eligible")
+		check(not test_initial.stitches.cue, "AC3: cue inactive at fray 99")
+		check(test_initial.stitches.eligible, "AC3: stitches is eligible at fray 99")
 		var roll: int = test_initial.stitches.roll
 		check(roll >= 1 and roll <= 100, "AC3: roll is in 1..100")
 		seen_rolls[roll] = true
@@ -271,31 +315,32 @@ func _test_ac3_percentile_wrong_turn_and_extra_steps() -> void:
 
 
 func _test_ac3_replay_and_coexistence() -> void:
-	for seed_number in [7, 13, 21]:
-		# Two independent instances with all opt-ins enabled
-		var rng_a := random(seed_number)
-		var rng_b := random(seed_number)
-		var walk_a := Walk.start(rng_a, "walls", party(120, "reckless"), pockets(), null, true, true, true, true)
-		var walk_b := Walk.start(rng_b, "walls", party(120, "reckless"), pockets(), null, true, true, true, true)
-		check(walk_a != null and walk_b != null, "AC3: both coexist walks start")
-		check(walk_a.snapshot() == walk_b.snapshot(), "AC3: initial snapshots match byte-for-byte")
-		check(rng_a.state == rng_b.state, "AC3: RNG state matches byte-for-byte")
+	for fray_val in [99, 120]:
+		for seed_number in [7, 13, 21]:
+			# Two independent instances with all opt-ins enabled
+			var rng_a := random(seed_number)
+			var rng_b := random(seed_number)
+			var walk_a := Walk.start(rng_a, "walls", party(fray_val, "reckless"), pockets(), null, true, true, true, true)
+			var walk_b := Walk.start(rng_b, "walls", party(fray_val, "reckless"), pockets(), null, true, true, true, true)
+			check(walk_a != null and walk_b != null, "AC3: both coexist walks start (fray %d)" % fray_val)
+			check(walk_a.snapshot() == walk_b.snapshot(), "AC3: initial snapshots match byte-for-byte (fray %d)" % fray_val)
+			check(rng_a.state == rng_b.state, "AC3: RNG state matches byte-for-byte (fray %d)" % fray_val)
 
-		# Walk both in lockstep
-		while walk_a.snapshot().phase == "walking":
-			var rec_a: Dictionary
-			var rec_b: Dictionary
-			if walk_a.tug_unresolved():
-				rec_a = act(walk_a, "tug", {"target": "thread_tug", "choice": "yield"})
-				rec_b = act(walk_b, "tug", {"target": "thread_tug", "choice": "yield"})
-			else:
-				rec_a = act(walk_a, "forward")
-				rec_b = act(walk_b, "forward")
-			check(rec_a.ok and rec_b.ok, "AC3: lockstep action ok")
-			check(rec_a == rec_b, "AC3: receipts match byte-for-byte")
-			check(walk_a.snapshot() == walk_b.snapshot(), "AC3: snapshots match byte-for-byte at each step")
-			check(rng_a.state == rng_b.state, "AC3: RNG state matches byte-for-byte at each step")
-		check(walk_a.snapshot().phase == "complete", "AC3: coexistence walk reaches completion")
+			# Walk both in lockstep
+			while walk_a.snapshot().phase == "walking":
+				var rec_a: Dictionary
+				var rec_b: Dictionary
+				if walk_a.tug_unresolved():
+					rec_a = act(walk_a, "tug", {"target": "thread_tug", "choice": "yield"})
+					rec_b = act(walk_b, "tug", {"target": "thread_tug", "choice": "yield"})
+				else:
+					rec_a = act(walk_a, "forward")
+					rec_b = act(walk_b, "forward")
+				check(rec_a.ok and rec_b.ok, "AC3: lockstep action ok")
+				check(rec_a == rec_b, "AC3: receipts match byte-for-byte")
+				check(walk_a.snapshot() == walk_b.snapshot(), "AC3: snapshots match byte-for-byte at each step")
+				check(rng_a.state == rng_b.state, "AC3: RNG state matches byte-for-byte at each step")
+			check(walk_a.snapshot().phase == "complete", "AC3: coexistence walk reaches completion (fray %d)" % fray_val)
 
 
 func _test_ac4_rejections_and_atomicity() -> void:
