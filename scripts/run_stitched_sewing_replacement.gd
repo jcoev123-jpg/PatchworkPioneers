@@ -181,7 +181,8 @@ func _candidate_summary(candidate: Dictionary) -> Dictionary:
 	for slot in StitchedParts.SLOTS:
 		var worn: Dictionary = candidate["parts"][slot]
 		var entry: Dictionary = _catalog[str(worn["id"])]
-		var ability: Dictionary = StitchedParts.ability_at_tier(entry, int(worn["tier"]))
+		var ability: Dictionary = StitchedParts.ability_at_tier(entry, int(worn["tier"])).duplicate(true)
+		var stat: Dictionary = StitchedParts.stat_at_tier(entry, int(worn["tier"])).duplicate(true)
 		parts[slot] = {
 			"id": str(worn["id"]),
 			"name": str(entry["name"]),
@@ -189,7 +190,9 @@ func _candidate_summary(candidate: Dictionary) -> Dictionary:
 			"owner": str(entry["owner"]),
 			"tier": int(worn["tier"]),
 			"torn": bool(worn["torn"]),
-			"ability": {"id": str(ability["id"]), "name": str(ability["name"]), "kind": str(ability["kind"])},
+			"ability": ability,
+			"stat": stat,
+			"text": str(entry["text"]),
 		}
 	return {
 		"candidate_id": str(candidate["id"]),

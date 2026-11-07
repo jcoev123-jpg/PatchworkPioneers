@@ -28,6 +28,7 @@ func _initialize() -> void:
     _test_stitched_invalid_open_and_detachment()
     _test_stitched_quote_actionability()
     _test_stitched_unpick_spare()
+    _test_stitched_unpick_forecast()
     _test_stitched_lost_calm_eligibility()
     _test_stitched_calm_outcome_projection()
     _test_stitched_calm_outcome_availability()
@@ -1047,6 +1048,9 @@ func _test_stitched_unpick_spare() -> void:
             and quote["spares"][0] == {"index": 0, "id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false}
             and quote["spares"][1] == {"index": 1, "id": LEGS_ID, "slot": "legs", "tier": 2, "torn": true},
             "quote exposes calm, unpick, Leave, selectable spares and the quoted yield")
+    _check(quote["unpick_outcomes"] == _expected_unpick_outcomes()
+            and quote["unpick_outcomes"].size() == quote["spares"].size(),
+            "quote forecasts both spare unpicks in satchel order (SCRAPS 1 -> 3, 5 of 6 slots free)")
     _check(source["satchel"] == original and source["scraps"] == 1 and source["scrap_yield"] == 2
             and source["gold"] == 100 and not source["receipt"].is_empty(),
             "read_state carries satchel, scraps, yield and receipt")
@@ -1278,6 +1282,131 @@ func _test_stitched_unpick_spare() -> void:
 
 const ABSENT := "<absent>"
 const OUTCOME_KEYS := ["clears_unravelled", "fray_after", "fray_before", "fray_relief", "hero_id"]
+
+
+func _expected_unpick_outcomes() -> Array:
+    return [
+        {"index": 0, "part_id": ARMS_ID, "scraps_before": 1, "scraps_gained": 2,
+                "scraps_after": 3, "satchel_count_after": 1, "satchel_slots_free_after": 5},
+        {"index": 1, "part_id": LEGS_ID, "scraps_before": 1, "scraps_gained": 2,
+                "scraps_after": 3, "satchel_count_after": 1, "satchel_slots_free_after": 5},
+    ]
+
+
+## Read-only SCRAPS / satchel-capacity forecast for each indexed spare unpick.
+func _test_stitched_unpick_forecast() -> void:
+    var original := _e_spares()
+    var visit := _e_open(_e_spares(), 1, 2, 100)
+    var source := visit.read_state()
+    var quote := visit.quote()
+    var rows: Array = quote["unpick_outcomes"]
+    _check(visit.is_valid() and rows.size() == 2 and rows == _expected_unpick_outcomes()
+            and quote["spare_indices"] == [0, 1] and quote["scrap_yield"] == 2
+            and quote["hero_ids"] == ["warden", "seamstress", "tinker"] and quote["price"] == 75
+            and quote["choices"] == ["calm_hero", "unpick_spare", "leave"],
+            "forecast has exactly two rows in index order; existing quote fields keep their meaning")
+    for i in rows.size():
+        _check(rows[i]["index"] == quote["spares"][i]["index"]
+                and rows[i]["part_id"] == quote["spares"][i]["id"],
+                "forecast row %d is parallel to quote.spares" % i)
+
+    # Deterministic, detached and read-only (no RNG, no state change).
+    seed(7741)
+    var next_draw := randi()
+    seed(7741)
+    var local_rng := RandomNumberGenerator.new()
+    local_rng.seed = 7741
+    var local_before := local_rng.state
+    rows[0]["scraps_after"] = 999
+    rows[1]["part_id"] = "forged"
+    rows.clear()
+    var again := visit.quote()
+    _check(again["unpick_outcomes"] == _expected_unpick_outcomes() and again == visit.quote(),
+            "mutating a returned outcome array/row does not alter later quotes")
+    _check(visit.read_state() == source and not visit.is_consumed()
+            and source["satchel"] == original and source["scraps"] == 1
+            and source["gold"] == 100 and randi() == next_draw and local_rng.state == local_before,
+            "quoting and mutating forecasts leaves state, satchel, wallet, heroes and RNG untouched")
+
+    # One real authorized unpick at index 1 agrees with that row's preflight forecast.
+    var row: Dictionary = again["unpick_outcomes"][1]
+    var paid := _e_unpick(visit, 1, source)
+    _check(paid["ok"] == true and paid["removed_part"] == original[1]
+            and paid["removed_part"]["id"] == row["part_id"]
+            and paid["scraps_before"] == row["scraps_before"]
+            and paid["credited_scraps"] == row["scraps_gained"]
+            and paid["scraps_after"] == row["scraps_after"] and paid["scraps"] == 3
+            and paid["satchel"].size() == row["satchel_count_after"]
+            and RunUnpickerVisit.SATCHEL_MAX - paid["satchel"].size() == row["satchel_slots_free_after"]
+            and paid["satchel"] == [original[0]] and paid["charged_gold"] == 0
+            and paid["gold"] == 100 and paid["heroes"] == source["heroes"] and visit.is_consumed(),
+            "real unpick at index 1 matches its forecast: index 0 survives, SCRAPS 3, no gold spent")
+    _check(visit.quote()["unpick_outcomes"] == [] and visit.quote()["choices"] == [],
+            "consumed expanded visit exposes no forecast")
+    _e_reject(visit, "unpick", 1, source["visit_id"], NODE, source, "replayed forecast unpick")
+
+    # Duplicate IDs: the row index, not the part ID, is the identity.
+    var dup := [{"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false},
+            {"id": ARMS_ID, "slot": "arms", "tier": 3, "torn": true}]
+    var dup_visit := _e_open(dup, 4, 5)
+    var dup_source := dup_visit.read_state()
+    var dup_rows: Array = dup_visit.quote()["unpick_outcomes"]
+    _check(dup_rows.size() == 2 and dup_rows[0]["part_id"] == ARMS_ID
+            and dup_rows[1]["part_id"] == ARMS_ID and dup_rows[0]["index"] == 0
+            and dup_rows[1]["index"] == 1 and dup_rows[0]["scraps_after"] == 9
+            and dup_rows[1]["scraps_gained"] == 5 and dup_rows[1]["satchel_slots_free_after"] == 5,
+            "duplicate-ID spares get distinct indexed forecast rows")
+    var dup_paid := _e_unpick(dup_visit, 1, dup_source)
+    _check(dup_paid["ok"] and dup_paid["removed_part"]["tier"] == 3 and dup_paid["satchel"] == [dup[0]]
+            and dup_paid["scraps"] == dup_rows[1]["scraps_after"],
+            "duplicate-ID forecast row 1 matches removal of exactly that instance")
+
+    # Full satchel: capacity math uses the held size.
+    var full: Array = []
+    for i in 6:
+        full.append({"id": ARMS_ID, "slot": "arms", "tier": 1, "torn": false})
+    var full_rows: Array = _e_open(full).quote()["unpick_outcomes"]
+    _check(full_rows.size() == 6 and full_rows[5]["index"] == 5
+            and full_rows[0]["satchel_count_after"] == 5 and full_rows[5]["satchel_slots_free_after"] == 1,
+            "six spares forecast five held and one free slot per unpick")
+
+    # Zero-satchel expanded visit: no forecast, no unpick choice.
+    var empty := _e_open([])
+    var empty_quote := empty.quote()
+    _check(empty_quote["unpick_outcomes"] == [] and not empty_quote["choices"].has("unpick_spare")
+            and empty_quote["choices"] == ["calm_hero", "leave"],
+            "zero-satchel expanded visit has an empty forecast and no unpick choice")
+
+    # Unaffordable calm does not suppress the forecast or the unpick choice.
+    var poor := _e_open(_e_spares(), 1, 2, 0)
+    var poor_quote := poor.quote()
+    _check(poor_quote["hero_ids"] == [] and not poor_quote["choices"].has("calm_hero")
+            and poor_quote["choices"] == ["unpick_spare", "leave"] and poor_quote["price"] == 75
+            and poor_quote["unpick_outcomes"] == _expected_unpick_outcomes(),
+            "gold 0 keeps full salvage forecast and unpick_spare, without calm_hero")
+    var poor_source := poor.read_state()
+    var poor_paid := _e_unpick(poor, 0, poor_source)
+    _check(poor_paid["ok"] and poor_paid["gold"] == 0 and poor_paid["charged_gold"] == 0
+            and poor_paid["scraps"] == poor_quote["unpick_outcomes"][0]["scraps_after"],
+            "broke party unpicks exactly the forecast scraps for free")
+
+    # No actionable forecast for non-expanded, legacy, invalid or left visits.
+    var plain_quote := _s_open(_s_heroes(E_FRAYS), 100, 75).quote()
+    _check(not plain_quote.has("unpick_outcomes") and not plain_quote.has("spares")
+            and plain_quote["choices"] == ["calm_hero", "leave"],
+            "non-expanded Stitched quote has no unpick forecast")
+    var legacy_quote := _make_visit(_deck(), 175).quote()
+    _check(not legacy_quote.has("unpick_outcomes") and legacy_quote["choices"] == ["remove_card", "leave"],
+            "legacy card-removal quote has no unpick forecast")
+    var invalid_quote := _e_open(_e_spares(), -1, 2).quote()
+    _check(not invalid_quote["ok"] and invalid_quote["choices"] == []
+            and invalid_quote.get("unpick_outcomes", []) == [],
+            "invalid expanded open exposes no actionable forecast")
+    var left_visit := _e_open(_e_spares())
+    var left_source := left_visit.read_state()
+    _check(left_visit.leave(left_source["visit_id"], NODE, left_source)["ok"]
+            and left_visit.quote()["unpick_outcomes"] == [],
+            "left expanded visit exposes no forecast")
 
 
 ## Four heroes, all at `fray`, each carrying `resolve` (omitted entirely for ABSENT).

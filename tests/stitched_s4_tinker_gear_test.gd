@@ -27,6 +27,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_spring_clamp_catalog()
 	_test_spring_clamp_mark_setup()
+	_test_spring_clamp_next_foe_attack()
 	_test_spring_clamp_overload_payoff()
 	_test_spring_clamp_refusals()
 	_test_every_tier_in_real_combat()
@@ -1959,8 +1960,8 @@ func _test_spring_clamp_catalog() -> void:
 	_check(str(clamp_part["text"]).contains("Weak") and str(clamp_part["text"]).contains("Mark")
 		and str(clamp_part["text"]) != "Clamp an enemy's seam and leave it Weak.",
 		"AC1: Spring Clamp's short text now distinguishes the tier-I Weak clamp from the upgraded Weak-plus-Mark clamp")
-	var expected_effects := [{"weak": 1}, {"weak": 1, "mark": 1}, {"weak": 2, "mark": 2}]
-	var expected_weak := [1, 1, 2]
+	var expected_effects := [{"weak": 2}, {"weak": 2, "mark": 1}, {"weak": 2, "mark": 2}]
+	var expected_weak := [2, 2, 2]
 	var expected_mark := [0, 1, 2]
 	var expected_acc := [90, 90, 94]
 	var expected_dmg := [[3, 5], [4, 7], [5, 9]]
@@ -1982,7 +1983,7 @@ func _test_spring_clamp_catalog() -> void:
 			"AC1: tier %d Spring Clamp resolves its complete effects dictionary" % tier)
 		_check(int(ability["effects"].get("weak", 0)) == int(expected_weak[tier - 1])
 			and int(ability["effects"].get("mark", 0)) == int(expected_mark[tier - 1]),
-			"AC1: tier %d Spring Clamp Weak ladder is 1/1/2 and Mark ladder is 0/1/2" % tier)
+			"AC1: tier %d Spring Clamp Weak ladder is 2/2/2 and Mark ladder is 0/1/2" % tier)
 		_check(int(StitchedParts.stat_at_tier(clamp_part, tier).get("crit", 0)) == 4,
 			"AC1: tier %d Spring Clamp head stat stays crit +4" % tier)
 	for other_id in ALL_IDS:
@@ -2103,7 +2104,7 @@ func _clamp_witnesses(tier: int, target_rank: int, limit: int = 800) -> Dictiona
 ## Mark on the one foe they hit, tier I leaves only Weak, a legal miss leaves neither, and the
 ## same seed/config/action replays the receipt, snapshot and RNG exactly.
 func _test_spring_clamp_mark_setup() -> void:
-	var expected := {1: {"weak": 1, "mark": 0}, 2: {"weak": 1, "mark": 1}, 3: {"weak": 2, "mark": 2}}
+	var expected := {1: {"weak": 2, "mark": 0}, 2: {"weak": 2, "mark": 1}, 3: {"weak": 2, "mark": 2}}
 	var found := {}
 	for tier in [1, 2, 3]:
 		found[tier] = _clamp_witnesses(tier, 3)
@@ -2169,6 +2170,223 @@ func _test_spring_clamp_mark_setup() -> void:
 			and miss["before"] != miss["after"]
 			and int(miss["rng_before"]) != int(miss["rng_after"]),
 			"AC2: a legal miss still spends Tinker's turn and draws seeded RNG")
+
+
+
+## A control catalog is constructed solely for this test: tier-II Spring Clamp still has
+## its real equipment, ACC, damage and Mark 1, but omits Weak. No runtime rules or shipped
+## catalog are changed, and both seeded fights use StitchedRules.create/use_part.
+func _spring_clamp_no_weak_control(seed_value: int) -> StitchedRules:
+	var config := _config(ALTERNATES["head"], 2, seed_value)
+	if config.is_empty():
+		return null
+	config["heroes"][2]["parts"]["arms"] = {"id": ALTERNATES["arms"], "tier": 2}
+	var replaced := 0
+	for index in range(config["parts"].size()):
+		var part: Dictionary = config["parts"][index]
+		if str(part.get("id", "")) != ALTERNATES["head"]:
+			continue
+		var variant: Dictionary = part.duplicate(true)
+		var effects: Dictionary = variant["tiers"]["2"]["ability"]["effects"]
+		if effects != {"weak": 2, "mark": 1}:
+			return null
+		effects.erase("weak")
+		config["parts"][index] = variant
+		replaced += 1
+	if replaced != 1:
+		return null
+	var created := StitchedRules.create(config)
+	if not bool(created.get("ok", false)):
+		return null
+	return created["battle"] as StitchedRules
+
+
+## Only accept a non-vacuous, real 4v3 witness: Tinker actually lands the equipped tier-II
+## clamp on the living rank-3 Moth Scribe in both fights; that foe then gets its own actual
+## turn and lands Ink Flick on the same living rank-2 hero. Both attacks must consume the
+## same RNG, share hit/crit outcomes, and differ in damage only because one foe has Weak 1.
+## Advance to the foe's next scheduled turn to observe natural Weak expiry, without reapplying.
+func _spring_clamp_foe_reply(seed_value: int) -> Dictionary:
+	var weakened := _clamp_overload_battle(2, seed_value)
+	var ordinary := _spring_clamp_no_weak_control(seed_value)
+	if weakened == null or ordinary == null:
+		return {}
+	if not _to(weakened, "tinker") or not _to(ordinary, "tinker"):
+		return {}
+	if weakened.get_heroes().size() != 4 or weakened.get_foes().size() != 3:
+		return {}
+	if ordinary.get_heroes().size() != 4 or ordinary.get_foes().size() != 3:
+		return {}
+	var tinker := weakened.get_unit("tinker")
+	var moth := weakened.get_unit("moth_scribe")
+	if tinker.is_empty() or moth.is_empty():
+		return {}
+	if int(tinker.get("rank", 0)) != 3 or int(moth.get("rank", 0)) != 3:
+		return {}
+	if int(moth.get("hp", 0)) <= 0 or bool(moth.get("dead", true)):
+		return {}
+	if str(tinker.get("parts", {}).get("head", {}).get("id", "")) != ALTERNATES["head"]:
+		return {}
+	if str(tinker.get("parts", {}).get("arms", {}).get("id", "")) != ALTERNATES["arms"]:
+		return {}
+	if int(tinker["parts"]["head"].get("tier", 0)) != 2:
+		return {}
+	if ordinary.get_unit("moth_scribe") != moth:
+		return {}
+	if weakened.rng_state() != ordinary.rng_state():
+		return {}
+	var clamp := weakened.use_part(ALTERNATES["head"], 3)
+	var control_clamp := ordinary.use_part(ALTERNATES["head"], 3)
+	if not bool(clamp.get("ok", false)) or not bool(control_clamp.get("ok", false)):
+		return {}
+	if str(clamp.get("actor", "")) != "tinker" or str(clamp.get("ability", "")) != "tinker_spring_clamp_move":
+		return {}
+	if clamp.get("results", []).size() != 1 or control_clamp.get("results", []).size() != 1:
+		return {}
+	var clamp_hit: Dictionary = clamp["results"][0]
+	var control_hit: Dictionary = control_clamp["results"][0]
+	if not bool(clamp_hit.get("hit", false)) or not bool(control_hit.get("hit", false)):
+		return {}
+	if str(clamp_hit.get("target", "")) != "moth_scribe" or str(control_hit.get("target", "")) != "moth_scribe":
+		return {}
+	if int(clamp_hit.get("roll", -1)) != int(control_hit.get("roll", -2)):
+		return {}
+	if bool(clamp_hit.get("crit", false)) != bool(control_hit.get("crit", false)):
+		return {}
+	if int(clamp_hit.get("damage", -1)) != int(control_hit.get("damage", -2)):
+		return {}
+	if _receipt_status(clamp_hit, "weak") != 2 or _receipt_status(control_hit, "weak") != -1:
+		return {}
+	if _receipt_status(clamp_hit, "mark") != 1 or _receipt_status(control_hit, "mark") != 1:
+		return {}
+	var clamped_moth := weakened.get_unit("moth_scribe")
+	var unclamped_moth := ordinary.get_unit("moth_scribe")
+	if int(clamped_moth["statuses"].get("weak", 0)) != 2:
+		return {}
+	if int(unclamped_moth["statuses"].get("weak", 0)) != 0:
+		return {}
+	if int(clamped_moth["statuses"].get("mark", 0)) != 1 or int(unclamped_moth["statuses"].get("mark", 0)) != 1:
+		return {}
+	if int(clamped_moth["hp"]) != int(unclamped_moth["hp"]):
+		return {}
+	# If Moth starts immediately after the clamp, the live turn-start tick has
+	# already reduced Weak to 1; use a seed where Weak 2 is observable at receipt.
+	if weakened.current_actor_id() == "moth_scribe":
+		return {}
+	if weakened.current_actor_id() != ordinary.current_actor_id() or weakened.rng_state() != ordinary.rng_state():
+		return {}
+	if not _to(weakened, "moth_scribe") or not _to(ordinary, "moth_scribe"):
+		return {}
+	var weak_attacker := weakened.get_unit("moth_scribe")
+	var plain_attacker := ordinary.get_unit("moth_scribe")
+	var weak_hero := weakened.get_unit("seamstress")
+	var plain_hero := ordinary.get_unit("seamstress")
+	if weak_attacker.is_empty() or plain_attacker.is_empty() or weak_hero.is_empty() or plain_hero.is_empty():
+		return {}
+	if int(weak_attacker["statuses"].get("weak", 0)) != 1:
+		return {}
+	if int(plain_attacker["statuses"].get("weak", 0)) != 0:
+		return {}
+	if int(weak_attacker.get("rank", 0)) != 3 or int(plain_attacker.get("rank", 0)) != 3:
+		return {}
+	if int(weak_hero.get("rank", 0)) != 2 or int(plain_hero.get("rank", 0)) != 2:
+		return {}
+	if int(weak_hero.get("hp", 0)) <= 0 or int(plain_hero.get("hp", 0)) <= 0:
+		return {}
+	if weak_hero != plain_hero or int(weak_attacker["hp"]) != int(plain_attacker["hp"]):
+		return {}
+	if int(weak_attacker.get("dmg_bonus", 0)) != 0 or int(plain_attacker.get("dmg_bonus", 0)) != 0:
+		return {}
+	if weakened.rng_state() != ordinary.rng_state():
+		return {}
+	var abilities: Array = weak_attacker.get("abilities", [])
+	if abilities.is_empty():
+		return {}
+	var ink: Dictionary = abilities[0]
+	if str(ink.get("id", "")) != "ink_flick":
+		return {}
+	var strike := weakened.use_foe_ability("ink_flick", 2)
+	var normal := ordinary.use_foe_ability("ink_flick", 2)
+	if not bool(strike.get("ok", false)) or not bool(normal.get("ok", false)):
+		return {}
+	if str(strike.get("actor", "")) != "moth_scribe" or str(normal.get("actor", "")) != "moth_scribe":
+		return {}
+	if strike.get("results", []).size() != 1 or normal.get("results", []).size() != 1:
+		return {}
+	var reduced: Dictionary = strike["results"][0]
+	var unreduced: Dictionary = normal["results"][0]
+	if not bool(reduced.get("hit", false)) or not bool(unreduced.get("hit", false)):
+		return {}
+	if str(reduced.get("target", "")) != "seamstress" or str(unreduced.get("target", "")) != "seamstress":
+		return {}
+	if int(reduced.get("roll", -1)) != int(unreduced.get("roll", -2)):
+		return {}
+	if bool(reduced.get("crit", false)) != bool(unreduced.get("crit", false)):
+		return {}
+	if int(unreduced.get("damage", 0)) <= int(reduced.get("damage", -1)):
+		return {}
+	if int(reduced.get("target_hp", -1)) != int(weak_hero["hp"]) - int(reduced["damage"]):
+		return {}
+	if int(unreduced.get("target_hp", -1)) != int(plain_hero["hp"]) - int(unreduced["damage"]):
+		return {}
+	if weakened.rng_state() != ordinary.rng_state():
+		return {}
+	var low := int(ink["dmg"][0])
+	var high := int(ink["dmg"][1])
+	if bool(reduced.get("crit", false)):
+		low = StitchedRules.crit_damage(high)
+		high = low
+	var exact_damage := false
+	for base in range(low, high + 1):
+		var actual_base := StitchedS1BEffects.enemy_damage(base, weakened.candle())
+		var expected_weak := StitchedRules.damage_after_modifiers(
+			actual_base, weak_attacker["statuses"], weak_hero["statuses"],
+			false, int(ink["mark_damage"]), int(weak_hero["prot"]))
+		var expected_plain := StitchedRules.damage_after_modifiers(
+			actual_base, plain_attacker["statuses"], plain_hero["statuses"],
+			false, int(ink["mark_damage"]), int(plain_hero["prot"]))
+		if expected_weak == int(reduced["damage"]) and expected_plain == int(unreduced["damage"]):
+			exact_damage = true
+	if not exact_damage:
+		return {}
+	if not _to(weakened, "moth_scribe") or not _to(ordinary, "moth_scribe"):
+		return {}
+	var expiry_weak := int(weakened.get_unit("moth_scribe")["statuses"].get("weak", 0))
+	var expiry_plain := int(ordinary.get_unit("moth_scribe")["statuses"].get("weak", 0))
+	if expiry_weak != 0 or expiry_plain != 0 or weakened.rng_state() != ordinary.rng_state():
+		return {}
+	return {
+		"seed": seed_value, "clamp": clamp, "control_clamp": control_clamp,
+		"weak_at_reply": int(weak_attacker["statuses"]["weak"]),
+		"plain_at_reply": int(plain_attacker["statuses"].get("weak", 0)),
+		"strike": strike, "normal": normal, "reduced": reduced, "unreduced": unreduced,
+		"expiry_weak": expiry_weak, "expiry_plain": expiry_plain,
+		"rng_after": weakened.rng_state(), "rules_match": exact_damage,
+	}
+
+
+func _test_spring_clamp_next_foe_attack() -> void:
+	var witness: Dictionary = {}
+	for seed_value in range(501000, 501800):
+		witness = _spring_clamp_foe_reply(seed_value)
+		if not witness.is_empty():
+			break
+	_check(not witness.is_empty(),
+		"AC2: a real seeded 4v3 Tinker clamp gives a living Moth Scribe Weak 2 before its next landed Ink Flick")
+	if witness.is_empty():
+		return
+	_check(int(witness["weak_at_reply"]) == 1 and int(witness["plain_at_reply"]) == 0,
+		"AC2: Weak 2 has ticked to Weak 1 on the actual foe attack turn; catalog-variant control has none")
+	_check(int(witness["reduced"]["damage"]) < int(witness["unreduced"]["damage"])
+		and int(witness["reduced"]["roll"]) == int(witness["unreduced"]["roll"])
+		and bool(witness["reduced"]["crit"]) == bool(witness["unreduced"]["crit"])
+		and bool(witness["rules_match"]),
+		"AC2: equal-roll landed foe attacks differ by the real Weak damage rule, not RNG or target protection")
+	_check(int(witness["expiry_weak"]) == 0 and int(witness["expiry_plain"]) == 0,
+		"AC2: Weak expires on the foe's next natural turn, without manual status clearing")
+	var replay := _spring_clamp_foe_reply(int(witness["seed"]))
+	_check(not replay.is_empty() and replay == witness,
+		"AC3: same seed reproduces the real Weak-versus-control clamp, foe attack, expiry and RNG")
 
 
 ## AC3 witness: two identical seeded battles clamp the living rank-3 Moth Scribe at tier II; the
@@ -2339,11 +2557,11 @@ func _test_spring_clamp_overload_payoff() -> void:
 		"AC3: the payoff witness keeps four real heroes, three foes and rank-3 Tinker in Spring Clamp and Overload")
 	_check(str(clamp_hit.get("target", "")) == "moth_scribe"
 		and int(clamp_hit.get("target_rank", 0)) == 3 and bool(clamp_hit.get("hit", false))
-		and int(witness["moth_marked"].get("statuses", {}).get("weak", 0)) == 1
+		and int(witness["moth_marked"].get("statuses", {}).get("weak", 0)) == 2
 		and int(witness["moth_marked"].get("statuses", {}).get("mark", 0)) == 1,
-		"AC3: the tier-II clamp really lands Weak 1 and Mark 1 on the living Moth Scribe")
+		"AC3: the tier-II clamp really lands Weak 2 and Mark 1 on the living Moth Scribe")
 	_check(witness["clamp_marked"] == witness["clamp_plain"]
-		and int(moth_unmarked.get("statuses", {}).get("weak", 0)) == 1
+		and int(moth_unmarked.get("statuses", {}).get("weak", 0)) == 2
 		and int(moth_unmarked.get("statuses", {}).get("mark", 0)) == 0
 		and int(moth_unmarked.get("hp", -1)) == int(witness["moth_marked"].get("hp", -2))
 		and int(moth_unmarked.get("statuses", {}).get("weak", 0))

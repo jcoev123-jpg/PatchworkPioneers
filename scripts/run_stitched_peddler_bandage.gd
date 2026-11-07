@@ -116,6 +116,21 @@ func _eligible_ids() -> Array:
 	return eligible
 
 
+## Read-only forecast of what a future bandage would clear on each eligible doll,
+## in original roster order: its whole positive integer Bleed count. Pure and
+## advisory; it never authorizes or charges anything.
+func _bleed_outcomes() -> Array:
+	var outcomes: Array = []
+	for hero in _heroes:
+		if hero.get("lost") == true:
+			continue
+		var bleed: Variant = (hero["statuses"] as Dictionary).get(BLEED)
+		if typeof(bleed) == TYPE_INT and bleed > 0:
+			outcomes.append({"hero_id": str(hero["id"]), "bleed_before": bleed,
+				"bleed_removed": bleed, "bleed_after": 0})
+	return outcomes
+
+
 ## Fully detached visit state: node, lifecycle status, Stitched mode, wallet,
 ## caller quote, deep-copied roster, eligible hero IDs and consumed flag.
 func read_state() -> Dictionary:
@@ -162,6 +177,7 @@ func quote() -> Dictionary:
 		"can_buy": can_buy,
 		"blocked": blocked,
 		"choices": choices,
+		"bleed_outcomes": _bleed_outcomes(),
 	}
 
 
