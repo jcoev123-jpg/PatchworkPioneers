@@ -45,7 +45,7 @@ const EXPECTED := {
 		"title": "The Cinder-Brass Bedwarmer",
 		"description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
 		"choices": [
-			{"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (+22 candle, +5 fray each)", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11}},
+			{"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (requires candle below 100, +22 candle, +5 fray each)", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true}},
 			{"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2}},
 			{"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
@@ -137,6 +137,7 @@ func _initialize() -> void:
 	_test_zero_purse_free_claims()
 	_test_unknown_choice_refusals()
 	_test_stale_effect_fails()
+	_test_full_candle_bedwarmer()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	_report()
 
@@ -436,6 +437,106 @@ func _test_stale_effect_fails() -> void:
 		"the stale effect consumes no claim")
 	_check(snapshot == before,
 		"the stale-effect flow mutates no snapshot")
+
+
+## Authentic full-candle witness: at candle 100 with gold >= 11, the genuine
+## Bedwarmer record quotes "rent_ember_lid" as unavailable (preserving opening
+## candle/gold and empty fray intent), choose() refuses without consuming the visit
+## or mutating state, and alternate choices ("sift_cooling_ashes" and "leave")
+## remain claimable. At near-full candle 99, embers remain available and claimable.
+func _test_full_candle_bedwarmer() -> void:
+	var event_id := "v3_cinder_brass_bedwarmer"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+
+	# 1. Full candle 100 with ample gold (60)
+	var snapshot_100 := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_100["candle"] = 100
+	var before_100: Dictionary = snapshot_100.duplicate(true)
+	var service_100 := RunStitchedEventConsequence.new(record)
+	_check(service_100.is_valid() and not service_100.is_claimed(),
+		"a fresh full-candle visit opens: " + event_id)
+	var preview_100: Dictionary = service_100.preview(snapshot_100)
+	_check(preview_100.get("ok") == true and int(preview_100.get("candle")) == 100,
+		"full-candle preview succeeds: " + event_id)
+	var rent_entry := _entry(preview_100, "rent_ember_lid")
+	_check(rent_entry.get("available") == false
+		and int(rent_entry.get("candle")) == 100
+		and int(rent_entry.get("candle_delta")) == 22
+		and int(rent_entry.get("gold")) == BASE_GOLD
+		and int(rent_entry.get("gold_delta")) == -11
+		and int(rent_entry.get("fray_delta")) == 5
+		and rent_entry.get("fray") == {},
+		"full candle quotes rent_ember_lid as unavailable with original deltas, base purse, and empty fray")
+	_check(_entry(preview_100, "sift_cooling_ashes").get("available") == true,
+		"sift_cooling_ashes remains available at full candle")
+	_check(_entry(preview_100, "leave").get("available") == true,
+		"leave remains available at full candle")
+
+	# choose("rent_ember_lid") refuses at candle 100 without latching
+	var refusal: Dictionary = service_100.choose("rent_ember_lid", snapshot_100)
+	_check(refusal == _refusal(100),
+		"rent_ember_lid is refused at candle 100 with uniform refusal shape")
+	_check(service_100.is_valid() and not service_100.is_claimed(),
+		"refusal on full candle leaves the visit unclaimed and open")
+	_check(snapshot_100 == before_100,
+		"refusal on full candle mutates no caller snapshot")
+	_check(record == record_snapshot,
+		"refusal on full candle mutates no source record")
+
+	# Alternative choice succeeds on the same visit after refusal
+	var sift_receipt: Dictionary = service_100.choose("sift_cooling_ashes", snapshot_100)
+	_check(sift_receipt.get("ok") == true
+		and int(sift_receipt.get("candle")) == 88
+		and int(sift_receipt.get("scraps")) == BASE_SCRAPS + 2
+		and sift_receipt.get("fray") == _fray_map(-6),
+		"sift_cooling_ashes claims successfully on the same visit after rent_ember_lid refusal")
+	_check(service_100.is_claimed() and not service_100.is_valid(),
+		"visit latches once after alternative claim")
+
+	# Independent full-candle visit where leave succeeds after refusal
+	var service_leave := RunStitchedEventConsequence.new(record)
+	var snapshot_leave := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_leave["candle"] = 100
+	_check(service_leave.choose("rent_ember_lid", snapshot_leave) == _refusal(100),
+		"rent_ember_lid refusal on second independent visit")
+	var leave_receipt: Dictionary = service_leave.choose("leave", snapshot_leave)
+	var expected_leave := {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": "leave",
+		"target": "party",
+		"hero_id": "",
+		"candle": 100,
+		"fray": {},
+	}
+	_check(leave_receipt == expected_leave,
+		"leave succeeds after rent_ember_lid refusal at candle 100")
+
+	# 2. Near-full candle 99 with exact gold (11)
+	var snapshot_99 := _funded_snapshot(11, BASE_SCRAPS)
+	snapshot_99["candle"] = 99
+	var before_99: Dictionary = snapshot_99.duplicate(true)
+	var service_99 := RunStitchedEventConsequence.new(record)
+	var preview_99: Dictionary = service_99.preview(snapshot_99)
+	var rent_99 := _entry(preview_99, "rent_ember_lid")
+	_check(rent_99.get("available") == true
+		and int(rent_99.get("candle")) == 100
+		and int(rent_99.get("gold")) == 0
+		and rent_99.get("fray") == _fray_map(5),
+		"candle 99 with gold 11 quotes rent_ember_lid available, clamped candle 100, gold 0, fray +5")
+	var receipt_99: Dictionary = service_99.choose("rent_ember_lid", snapshot_99)
+	_check(receipt_99.get("ok") == true
+		and int(receipt_99.get("candle")) == 100
+		and int(receipt_99.get("gold")) == 0
+		and receipt_99.get("fray") == _fray_map(5),
+		"candle 99 with gold 11 claims rent_ember_lid settling clamped candle 100, gold 0, fray +5")
+	_check(service_99.is_claimed() and not service_99.is_valid(),
+		"visit latches after funded near-full claim")
+	_check(service_99.choose("rent_ember_lid", snapshot_99) == _refusal(99),
+		"replay refusal on near-full claim")
+	_check(snapshot_99 == before_99,
+		"claim mutates no caller snapshot")
 
 
 func _funded_snapshot(gold: int, scraps: int) -> Dictionary:
