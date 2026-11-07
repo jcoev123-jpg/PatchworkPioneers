@@ -55,6 +55,7 @@ func _initialize() -> void:
 	_test_fear_other_choices_and_swap()
 	_test_fear_refusals_replay_and_rng()
 	_test_tales_clears_unravelled_below_threshold()
+	_test_tales_resolve_clear_forecast()
 	_finish()
 
 
@@ -1866,3 +1867,147 @@ func _test_tales_clears_unravelled_below_threshold() -> void:
 	_check(fear_visit.read_state()["fear"] == 45
 		and fear_visit.read_state()["heroes"] == fear_receipt["heroes"],
 		"read_state holds the soothed FEAR and the cleared resolve")
+
+
+## The " [Resolve clears: ...]" forecast of the Tell Tales quote.
+const RESOLVE_CLEARS_MARK := "[Resolve clears:"
+
+
+func _tales_quote_text(visit: RunCampfireVisit) -> String:
+	return str(visit.read_state().get("quote", {}).get("text", ""))
+
+
+## Expected suffix derived independently from a fresh committed receipt: a doll
+## is named only when its held resolve was a named trait and the receipt cleared it.
+func _receipt_clear_suffix(before: Array, after: Array) -> String:
+	var parts: Array = []
+	for i in range(before.size()):
+		var was: String = str(before[i].get("resolve", ""))
+		if was in StitchedS1BEffects.RESOLVE_TRAITS and str(after[i].get("resolve", "x")) == "":
+			parts.append("%s (%s)" % [str(before[i].get("name", before[i]["id"])), was])
+	if parts.is_empty():
+		return ""
+	return " [Resolve clears: " + ", ".join(parts) + "]"
+
+
+func _test_tales_resolve_clear_forecast() -> void:
+	# AC1: the brief's four-doll fixture names only Frantic and Bitter.
+	var resolves: Array = ["frantic", "hollow", "bitter", "steadfast"]
+	var source := _stitched_party([35, 18, 0, 48], [74, 75, 25, 100])
+	for i in range(4):
+		source[i]["resolve"] = resolves[i]
+	var original := source.duplicate(true)
+	seed(515151)
+	var expected_next := randi()
+	seed(515151)
+	var visit := RunCampfireVisit.new("camp_fc", source, "stitched", 40)
+	var quote_before: Dictionary = visit.read_state()["quote"].duplicate(true)
+	var text := str(quote_before.get("text", ""))
+	var forecast := " [Resolve clears: %s (frantic), %s (bitter)]" % [
+		str(original[0]["name"]), str(original[2]["name"])]
+	_check(quote_before.get("choices") == ["mend", "tell_tales", "trim_the_wick", "leave"],
+		"forecast fixture offers the same four choices")
+	_check(text.find("Tell Tales up to 25 FRAY each (-%d FRAY now)" % (25 + 25 + 25 + 25)) != -1,
+		"existing Tell Tales phrase and actual FRAY total are preserved")
+	_check(text.find(" [%s -25 FRAY, %s -25 FRAY, %s -25 FRAY, %s -25 FRAY]" % [
+		str(original[0]["name"]), str(original[1]["name"]),
+		str(original[2]["name"]), str(original[3]["name"])]) != -1
+		or text.find("-25 FRAY") != -1, "existing beneficiary suffix is preserved")
+	_check(text.find(forecast) != -1, "quote names only rank-1 Frantic and rank-3 Bitter")
+	_check(text.count(RESOLVE_CLEARS_MARK) == 1 and text.find("(hollow)") == -1
+		and text.find("(steadfast)") == -1, "Hollow at 75 -> 50 and Steadfast are not forecast")
+	# Mutating or discarding a returned quote copy never alters the open visit.
+	var exposed := visit.read_state()
+	exposed["quote"]["text"] = "forged"
+	exposed["quote"]["choices"].clear()
+	exposed["heroes"][0]["resolve"] = "forged"
+	_check(visit.read_state()["quote"] == quote_before and visit.read_state()["heroes"] == original,
+		"mutating returned quote/state copies leaves the visit and quote identical")
+	var receipt := visit.select("tell_tales", "camp_fc", original, 40)
+	var heroes: Array = receipt.get("heroes", [])
+	_check(receipt.get("ok") == true and heroes.size() == 4, "forecast fixture commits Tell Tales")
+	if heroes.size() == 4:
+		_check([heroes[0]["fray"], heroes[1]["fray"], heroes[2]["fray"], heroes[3]["fray"]]
+			== [49, 50, 0, 75]
+			and [heroes[0]["resolve"], heroes[1]["resolve"], heroes[2]["resolve"],
+				heroes[3]["resolve"]] == ["", "hollow", "", "steadfast"],
+			"fresh receipt settles FRAY [49,50,0,75] and resolves ['', 'hollow', '', 'steadfast']")
+		_check(_receipt_clear_suffix(original, heroes) == forecast,
+			"receipt-derived clears equal the quoted forecast")
+	_check(randi() == expected_next, "forecast quote and select draw no RNG")
+	_assert_stitched_refused(visit, "tell_tales", "camp_fc", heroes, 40, "replayed Tell Tales")
+	_check(_tales_quote_text(visit).find(RESOLVE_CLEARS_MARK) == -1,
+		"a decided visit offers no choice and no forecast")
+	# AC2: all five traits clear at 49 and keep at 50, forecast matches the receipt.
+	var witnessed_clear := 0
+	var witnessed_keep := 0
+	for trait_name in StitchedS1BEffects.RESOLVE_TRAITS:
+		for pair in [[74, true], [75, false]]:
+			var party := _stitched_party(FULL_HPS, [pair[0], 80, 90, 100])
+			party[0]["resolve"] = trait_name
+			var snapshot := party.duplicate(true)
+			var one := RunCampfireVisit.new("camp_tr", party, "stitched", 100)
+			var one_text := _tales_quote_text(one)
+			var named := "%s (%s)" % [str(snapshot[0]["name"]), trait_name]
+			var one_receipt := one.select("tell_tales", "camp_tr", snapshot, 100)
+			var cleared: bool = one_receipt.get("ok") == true \
+				and one_receipt["heroes"][0]["resolve"] == ""
+			_check(cleared == pair[1], "%s at FRAY %d: receipt clears only below 50" % [trait_name, pair[0]])
+			_check((one_text.find(named) != -1) == cleared
+				and one_text.find(RESOLVE_CLEARS_MARK) == (-1 if not cleared else one_text.find(RESOLVE_CLEARS_MARK)),
+				"%s at FRAY %d: quote names the doll exactly when the receipt clears it" % [trait_name, pair[0]])
+			var receipt_suffix := _receipt_clear_suffix(snapshot, one_receipt["heroes"])
+			_check((receipt_suffix.is_empty() and one_text.find(RESOLVE_CLEARS_MARK) == -1)
+				or (not receipt_suffix.is_empty() and one_text.find(receipt_suffix) != -1),
+				"%s at FRAY %d: quote carries the receipt-derived suffix" % [trait_name, pair[0]])
+			if cleared:
+				witnessed_clear += 1
+			else:
+				witnessed_keep += 1
+	_check(witnessed_clear == 5 and witnessed_keep == 5, "both boundaries witnessed for all five traits")
+	# Already-low trait is cleared (and forecast) when Tales is chosen for another reason.
+	var low := _stitched_party(FULL_HPS, [10, 0, 0, 0])
+	low[1]["resolve"] = "reckless"
+	var low_snapshot := low.duplicate(true)
+	var low_visit := RunCampfireVisit.new("camp_low", low, "stitched", 100)
+	var low_text := _tales_quote_text(low_visit)
+	_check(low_text.find(" [Resolve clears: %s (reckless)]" % str(low_snapshot[1]["name"])) != -1,
+		"an already-low trait is forecast when Tales is chosen for another doll")
+	var low_receipt := low_visit.select("tell_tales", "camp_low", low_snapshot, 100)
+	_check(low_receipt.get("ok") == true and low_receipt["heroes"][1]["resolve"] == "",
+		"an already-low trait is cleared by the matching receipt")
+	# LOST dolls are named for their trait but never revived.
+	var lost := _lost_party([0, 30, 26, 48], [0], [74, 0, 0, 0])
+	lost[0]["resolve"] = "cowering"
+	var lost_snapshot := lost.duplicate(true)
+	var lost_visit := RunCampfireVisit.new("camp_lostfc", lost, "stitched", 100)
+	var lost_text := _tales_quote_text(lost_visit)
+	_check(lost_text.find(" [Resolve clears: %s (cowering)]" % str(lost_snapshot[0]["name"])) != -1
+		and lost_text.to_lower().find("revive") == -1,
+		"a LOST doll's trait is forecast without any revival claim")
+	var lost_receipt := lost_visit.select("tell_tales", "camp_lostfc", lost_snapshot, 100)
+	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0]["lost"] == true
+		and lost_receipt["heroes"][0]["hp"] == 0 and lost_receipt["heroes"][0]["resolve"] == "",
+		"the LOST doll stays LOST at 0 HP while its trait clears")
+	# Steadfast, empty, unknown and absent resolves are never forecast.
+	var none := _stitched_party(FULL_HPS, [30, 40, 20, 10])
+	none[0]["resolve"] = "steadfast"
+	none[1]["resolve"] = ""
+	none[2]["resolve"] = "mystery"
+	var none_visit := RunCampfireVisit.new("camp_none", none, "stitched", 100)
+	var none_text := _tales_quote_text(none_visit)
+	_check(none_text.find("Tell Tales up to 25 FRAY each") != -1 and none_text.find(RESOLVE_CLEARS_MARK) == -1,
+		"steadfast, empty, unknown and absent resolves add no suffix")
+	# A FEAR-only Tell Tales (no FRAY, no named trait) gains no suffix.
+	var fear_only := _stitched_party(FULL_HPS, [0, 0, 0, 0])
+	fear_only[0]["resolve"] = "steadfast"
+	var fear_visit := RunCampfireVisit.new("camp_fo", fear_only, "stitched", 100, 40)
+	var fear_text := _tales_quote_text(fear_visit)
+	_check(fear_visit.read_state()["quote"]["choices"].has("tell_tales")
+		and fear_text.find("-15 Wren FEAR now") != -1 and fear_text.find(RESOLVE_CLEARS_MARK) == -1,
+		"a FEAR-only Tell Tales quote has no Resolve clears suffix")
+	# A later FRAY-only visit above the line with a trait still forecasts nothing.
+	var high := _stitched_party(FULL_HPS, [90, 90, 90, 90])
+	high[0]["resolve"] = "hollow"
+	_check(_tales_quote_text(RunCampfireVisit.new("camp_hi", high, "stitched", 100)).find(RESOLVE_CLEARS_MARK) == -1,
+		"FRAY that stays at or above 50 emits no resolve suffix")
