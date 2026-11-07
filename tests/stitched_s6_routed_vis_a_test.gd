@@ -1,5 +1,6 @@
 extends "res://tests/stitched_s6_full_run_test.gd"
 ## S6 VIS-A: authenticated public route, service and terminal pages, not test-only UI.
+var _mouse_scroll_verified := false
 
 
 func _page(app: Node, expected_kind: String, label: String) -> Control:
@@ -107,6 +108,13 @@ func _assert_book(app: Node, label: String) -> void:
 		and scroll != null and decisions != null
 		and scroll.is_visible_in_tree() and decisions.is_visible_in_tree(),
 		label + " displays two authored felt pages and a scrolling right page")
+	var left_skin: StyleBoxTexture = left.get_theme_stylebox("panel") as StyleBoxTexture if left != null else null
+	var right_skin: StyleBoxTexture = right.get_theme_stylebox("panel") as StyleBoxTexture if right != null else null
+	_check(left_skin != null and right_skin != null and left_skin.texture != null
+		and right_skin.texture != null and left_skin.texture == right_skin.texture
+		and left_skin.texture_margin_left >= 16 and right_skin.texture_margin_right >= 16
+		and left_skin.modulate_color.r < 0.5 and right_skin.modulate_color.r < 0.5,
+		label + " both route pages have dark authored nine-slice felt, not code-drawn panels")
 	_check(choices.size() > 0 and app.stitched_run_buttons.size() == choices.size() + 2,
 		label + " has exactly the legal tickets plus Save and Reload")
 	if decisions == null:
@@ -142,6 +150,10 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 	var bands := graph.find_child("RouteGraphBands", true, false) as VBoxContainer
 	var preview := graph.find_child("RouteGraphPreview", true, false) as Label
 	var floors := session.map.get_floors()
+	var title := graph.find_child("GraphTitle", true, false) as Label
+	_check(title != null and title.get_theme_font_size("font_size") >= 14
+		and preview != null and preview.get_theme_font_size("font_size") >= 16,
+		label + " graph heading and outgoing-seam preview have effective readable sizes")
 	var route := session.map.get_route()
 	var choices := session.choices()
 	_check(graph.is_ancestor_of(scroll) and left.is_ancestor_of(graph)
@@ -160,14 +172,24 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 		label + " shows only the session's genuine connected next-floor paths")
 	var seen: Dictionary = {}
 	var edge_count := 0
+	var three_path_floors := 0
+	var four_path_floors := 0
 	for floor_index in floors.size():
 		var floor_nodes: Array = floors[floor_index]
+		if floor_nodes.size() == 3:
+			three_path_floors += 1
+		elif floor_nodes.size() == 4:
+			four_path_floors += 1
 		var band := graph.find_child("GraphFloor_%02d" % (floor_index + 1), true, false) as VBoxContainer
 		_check(band != null and band.get_meta("floor", -1) == floor_index + 1
 			and band.get_meta("node_ids", []) == floor_nodes.map(func(node: Dictionary): return str(node.id)),
 			label + " authored floor %02d has the exact generated nodes" % (floor_index + 1))
 		if band == null:
 			continue
+		var floor_title := band.get_child(0) as Label
+		_check(floor_title != null and floor_title.get_theme_font_size("font_size") >= 14
+			and "FLOOR %02d" % (floor_index + 1) in floor_title.text,
+			label + " every scrollable floor retains a readable numbered heading")
 		var row := band.find_child("GraphFloorPaths", false, false) as HBoxContainer
 		_check(row != null and row.get_child_count() == floor_nodes.size()
 			and floor_nodes.size() in [3, 4],
@@ -189,6 +211,8 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 			var state_label := tile.find_child("GraphNodeState", false, false) as Label
 			var activations := tile.find_children("GraphNodeActivate", "Button", false, false)
 			var activation := activations[0] as Button if activations.size() == 1 else null
+			var focus_skin: StyleBoxTexture = activation.get_theme_stylebox("focus") as StyleBoxTexture if activation != null else null
+			var normal_skin: StyleBoxTexture = activation.get_theme_stylebox("normal") as StyleBoxTexture if activation != null else null
 			_check(activations.size() == (1 if choices.has(id) else 0)
 				and (not choices.has(id) or (activation != null
 					and activation.get_meta("route_id", "") == id
@@ -196,7 +220,10 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 					and activation.focus_mode == Control.FOCUS_ALL and not activation.disabled
 					and activation.is_visible_in_tree()
 					and activation.get_theme_stylebox("normal") is StyleBoxTexture
-					and activation.get_theme_stylebox("focus") is StyleBoxTexture)),
+					and activation.get_theme_stylebox("focus") is StyleBoxTexture
+					and activation.get_theme_font_size("font_size") >= 16
+					and focus_skin != null and normal_skin != null
+					and focus_skin.modulate_color != normal_skin.modulate_color)),
 				label + " " + id + " has one real image-backed activation iff connected/legal")
 			_check(tile.get_meta("route_id") == id and tile.get_meta("node_kind") == record.type
 				and tile.get_meta("floor") == record.floor
@@ -214,7 +241,15 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 				and kind != null and record.type.to_upper() in kind.text
 				and floor_label != null and "FLOOR %02d" % record.floor in floor_label.text
 				and path_label != null and "PATH %d" % (record.position + 1) in path_label.text
-				and state_label != null and not state_label.text.is_empty(),
+				and state_label != null and state_label.text == (
+					"FOCUSED" if tile.get_meta("inspected") else
+					"CURRENT" if expected_status == "current" else
+					"VISITED" if expected_status == "visited" else
+					"LEGAL" if expected_status == "legal" else "FUTURE")
+				and kind.get_theme_font_size("font_size") >= 14
+				and floor_label.get_theme_font_size("font_size") >= 14
+				and path_label.get_theme_font_size("font_size") >= 14
+				and state_label.get_theme_font_size("font_size") >= 14,
 				label + " " + id + " has authored art and legible floor/kind/path/state")
 			var edges := tile.find_child("GraphNodeEdges", false, false) as HFlowContainer
 			_check(edges != null and edges.get_child_count() == record.outgoing.size(),
@@ -226,9 +261,14 @@ func _assert_graph(app: Node, book: StitchedRouteBookView, label: String) -> voi
 					_check(edge != null and edge.get_meta("source_id") == id
 						and edge.get_meta("target_id") == target
 						and edge.name == "GraphEdge_" + target
+						and "F%02d P%d" % [session.map.get_node(target).floor,
+							session.map.get_node(target).position + 1] in edge.text
+						and edge.get_theme_font_size("font_size") >= 14
 						and edge.mouse_filter == Control.MOUSE_FILTER_IGNORE,
 						label + " " + id + " retains directed link to " + target)
 					edge_count += 1
+	_check(three_path_floors > 0 and four_path_floors > 0,
+		label + " exercises real three-path and four-path seeded bands, not an empty fixture")
 	_check(seen.size() == floors.reduce(func(count, floor: Array): return count + floor.size(), 0)
 		and edge_count > seen.size(),
 		label + " retains the entire branching/crossing graph, not a route ticket list")
@@ -263,6 +303,32 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 		and navigation.get_global_rect().end.y <= 720
 		and r.end.x <= 1280,
 		label + " fits the branch scroll, tickets, four heroes, ledger and nav at 1280x720")
+	var floor_rows := graph.find_children("GraphFloorPaths", "HBoxContainer", true, false)
+	_check(floor_rows.size() == session.map.get_floors().size() and floor_rows.size() > 0,
+		label + " measures all twelve live rendered floor rows")
+	for floor_row in floor_rows:
+		var row_rect := (floor_row as Control).get_global_rect()
+		_check(row_rect.position.x >= g.position.x - 1
+			and row_rect.end.x <= g.end.x + 1
+			and row_rect.size.x > 0,
+			label + " 3-4 path row remains inside the graph scroll without horizontal clipping")
+		var previous_end := row_rect.position.x
+		for tile in floor_row.get_children():
+			var rect := (tile as Control).get_global_rect()
+			_check(rect.position.x >= previous_end - 1 and rect.end.x <= g.end.x + 1
+				and rect.size.x >= 81,
+				label + " every path tile stays in reading order without overlap")
+			previous_end = rect.end.x
+			for child in tile.get_children():
+				if child is Control:
+					var child_rect := (child as Control).get_global_rect()
+					_check(child_rect.position.x >= rect.position.x - 1
+						and child_rect.end.x <= rect.end.x + 1,
+						label + " tile icon, facts, ENTER and seam labels remain inside their column")
+	var atlas_scroll := graph_scroll as ScrollContainer
+	_check(atlas_scroll != null and atlas_scroll.get_v_scroll_bar().max_value
+		- atlas_scroll.get_v_scroll_bar().page > 100,
+		label + " twelve full-height node bands overflow vertically into a real native scroll")
 	var initial := session.snapshot()
 	var choices := session.choices()
 	_check(choices.size() > 0, label + " has at least one real choice to inspect")
@@ -335,6 +401,62 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids") == []
 			and session.snapshot() == initial,
 			label + " graph blur restores empty preview with no spend")
+	# One genuine wheel witness per run is sufficient; Godot's synthetic wheel
+	# button state is global and repeated separate Window mounts are not physical
+	# pointer sessions. Keyboard paging is still checked on every mounted atlas.
+	atlas_scroll.scroll_vertical = 0
+	await process_frame
+	var after_wheel := 0
+	if not _mouse_scroll_verified:
+		var wheel_motion := InputEventMouseMotion.new()
+		wheel_motion.position = atlas_scroll.get_global_rect().get_center()
+		root.push_input(wheel_motion, true)
+		await process_frame
+		atlas_scroll.scroll_vertical = 0
+		await process_frame
+		var wheel := InputEventMouseButton.new()
+		wheel.button_index = MOUSE_BUTTON_WHEEL_DOWN
+		wheel.pressed = true
+		wheel.factor = 1.0
+		wheel.position = atlas_scroll.get_global_rect().get_center()
+		root.push_input(wheel, true)
+		await process_frame
+		wheel.pressed = false
+		root.push_input(wheel, true)
+		await process_frame
+		_mouse_scroll_verified = atlas_scroll.scroll_vertical > 0 and session.snapshot() == initial
+		_check(_mouse_scroll_verified,
+			label + " pointer wheel scrolls actual tall atlas without advancing RNG or ledger")
+		after_wheel = atlas_scroll.scroll_vertical
+	atlas_scroll.grab_focus()
+	await process_frame
+	var page_key := InputEventKey.new()
+	page_key.keycode = KEY_PAGEDOWN
+	page_key.pressed = true
+	Input.parse_input_event(page_key)
+	await process_frame
+	page_key.pressed = false
+	Input.parse_input_event(page_key)
+	await process_frame
+	_check(atlas_scroll.scroll_vertical > after_wheel and session.snapshot() == initial,
+		label + " keyboard PageDown scrolls the native atlas without route entry")
+	atlas_scroll.scroll_vertical = 0
+	await process_frame
+	if not choices.is_empty():
+		var cancel_tile := graph.find_child("GraphNode_" + choices[0], true, false) as VBoxContainer
+		var cancel_button := cancel_tile.get_node("GraphNodeActivate") as Button
+		cancel_button.grab_focus()
+		await process_frame
+		_check(cancel_button.has_focus() and graph.inspected_route_id == choices[0],
+			label + " Escape precondition has a real focused, legal atlas entry")
+		var escape_key := InputEventKey.new()
+		escape_key.keycode = KEY_ESCAPE
+		escape_key.pressed = true
+		root.push_input(escape_key, true)
+		await process_frame
+		_check(not cancel_button.has_focus() and graph.inspected_route_id.is_empty()
+			and session.snapshot() == initial,
+			label + " keyboard Escape cancels preview without route, wallet or RNG mutation")
 	graph.set_inspected_route("invented")
 	_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
 		label + " nonexistent map focus cannot create a path or draw RNG")

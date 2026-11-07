@@ -56,6 +56,9 @@ func _initialize() -> void:
 	_test_lost_heroes_ac2_hero_targeted_and_required_hero()
 	_test_lost_heroes_ac3_min_fray_and_all_lost()
 	_test_lost_heroes_ac4_schema_compatibility_and_invariants()
+	_test_kid_fear_fray_observations_ac1()
+	_test_kid_fear_fray_observations_ac2_party_wide_and_debt_parcel()
+	_test_kid_fear_fray_observations_ac3_negative_and_invariants()
 	_finish()
 
 
@@ -5583,6 +5586,482 @@ func _test_lost_heroes_ac4_schema_compatibility_and_invariants() -> void:
 	# Verify test_rng was not drawn or altered
 	for i in range(5):
 		_check(test_rng.randi() == control_rng.randi(), "AC4: seeded RNG was never drawn during consequence operations")
+
+
+func _test_kid_fear_fray_observations_ac1() -> void:
+	# AC1: 30 -> 40 yields exactly one {"kind":"fray_gain","hero_id":ID,"amount":10}
+	# 30 -> 39 and fray decreases produce none.
+	# StitchedKidFear consumer yields exactly +2 for the qualifying observation.
+	var event_record := _event([
+		_choice("fray_hero", "Fray the warden's seam.", _effect(0, 10, "hero", "warden")),
+		_choice("relief_hero", "Soothe the warden's seam.", _effect(0, -10, "hero", "warden")),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	], "ev_test_kid_fear_ac1")
+
+	var snap_30 := _four(50, [30, 20, 20, 20])
+	var svc_10 := RunStitchedEventConsequence.new(event_record)
+	var receipt_10 := svc_10.choose("fray_hero", snap_30)
+	_check(bool(receipt_10.get("ok", false)) == true, "AC1: genuine choose succeeds")
+
+	# Case 1: 30 -> 40 (+10 actual gain)
+	var after_40 := [
+		{"id": "warden", "fray": 40},
+		{"id": "seamstress", "fray": 20},
+		{"id": "tinker", "fray": 20},
+		{"id": "button_golem", "fray": 20},
+	]
+	var obs_10: Array = svc_10.derive_fear_observations(receipt_10, snap_30, after_40)
+	_check(obs_10.size() == 1, "AC1: 30 -> 40 yields exactly one observation")
+	_check(obs_10[0] is Dictionary, "AC1: observation is a Dictionary")
+	_check(obs_10[0].get("kind") == "fray_gain", "AC1: observation kind is fray_gain")
+	_check(obs_10[0].get("hero_id") == "warden", "AC1: observation hero_id is warden")
+	_check(obs_10[0].get("amount") == 10, "AC1: observation amount is 10")
+
+	# Consumer verification with StitchedKidFear fixture
+	var kid_fear := StitchedKidFear.new(0)
+	_check(kid_fear.get_fear() == 0, "AC1: kid fear starts at 0")
+	var fear_receipt := kid_fear.apply_observed_event(obs_10[0])
+	_check(bool(fear_receipt.get("ok", false)) == true, "AC1: kid fear accepts fray_gain observation")
+	_check(kid_fear.get_fear() == 2, "AC1: StitchedKidFear consumer yields exactly +2 for one qualifying observation (0 -> 2)")
+
+	# Case 2: 30 -> 39 (+9 actual gain) produces no observation
+	var after_39 := [
+		{"id": "warden", "fray": 39},
+		{"id": "seamstress", "fray": 20},
+		{"id": "tinker", "fray": 20},
+		{"id": "button_golem", "fray": 20},
+	]
+	var obs_39: Array = svc_10.derive_fear_observations(receipt_10, snap_30, after_39)
+	_check(obs_39.is_empty(), "AC1: 30 -> 39 produces no fear observation")
+
+	# Negative three-argument assertion: valid claimed +10 receipt, authentic after-roster with 30->39,
+	# and altered supplied before-FRAY 20: require empty observations (fail closed on mismatched opening fray).
+	var snap_altered_fray_20 := _four(50, [20, 20, 20, 20])
+	var obs_altered_20: Array = svc_10.derive_fear_observations(receipt_10, snap_altered_fray_20, after_39)
+	_check(obs_altered_20.is_empty(), "AC1: altered supplied before-FRAY 20 with authentic after-roster 39 yields empty observations")
+
+	# Altered opening lost flag fails closed
+	var snap_altered_lost := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 30, "lost": true},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 20},
+			{"id": "button_golem", "fray": 20},
+		],
+	}
+	var obs_altered_lost: Array = svc_10.derive_fear_observations(receipt_10, snap_altered_lost, after_40)
+	_check(obs_altered_lost.is_empty(), "AC1: altered supplied opening lost flag fails closed and yields empty observations")
+
+	# Case 3: 30 -> 30 (0 gain) produces no observation
+	var after_same := [
+		{"id": "warden", "fray": 30},
+		{"id": "seamstress", "fray": 20},
+		{"id": "tinker", "fray": 20},
+		{"id": "button_golem", "fray": 20},
+	]
+	var obs_same: Array = svc_10.derive_fear_observations(receipt_10, snap_30, after_same)
+	_check(obs_same.is_empty(), "AC1: 30 -> 30 produces no fear observation")
+
+	# Case 4: 40 -> 30 (fray decrease) produces no observation
+	var after_decrease := [
+		{"id": "warden", "fray": 25},
+		{"id": "seamstress", "fray": 20},
+		{"id": "tinker", "fray": 20},
+		{"id": "button_golem", "fray": 20},
+	]
+	var obs_dec: Array = svc_10.derive_fear_observations(receipt_10, snap_30, after_decrease)
+	_check(obs_dec.is_empty(), "AC1: fray decrease produces no fear observation")
+
+	# Case 5: Fray relief choice (-10 fray intent) produces no observation
+	var svc_relief := RunStitchedEventConsequence.new(event_record)
+	var snap_relief := _four(50, [50, 20, 20, 20])
+	var receipt_relief := svc_relief.choose("relief_hero", snap_relief)
+	_check(bool(receipt_relief.get("ok", false)) == true, "AC1: relief choice succeeds")
+	var after_relief := [
+		{"id": "warden", "fray": 40},
+		{"id": "seamstress", "fray": 20},
+		{"id": "tinker", "fray": 20},
+		{"id": "button_golem", "fray": 20},
+	]
+	var obs_relief: Array = svc_relief.derive_fear_observations(receipt_relief, snap_relief, after_relief)
+	_check(obs_relief.is_empty(), "AC1: fray relief choice produces no fear observation")
+
+
+func _test_kid_fear_fray_observations_ac2_party_wide_and_debt_parcel() -> void:
+	# AC2: Party-wide +25 event yields exactly one observation per surviving active doll
+	# that actually gains at least 10, in stable party/rank order.
+	# Four eligible dolls yield +8 total Wren fear when applied once each.
+	# A lost doll yields no gain observation, and 198 -> 200 does not count as +25.
+	# Verify with real authored event fixture and controlled after-roster snapshots,
+	# without asserting catalog totals or order.
+
+	# Find real authored frayed_debt_parcel from data/events/stitched_route_effects.json
+	var route_file := FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json")
+	var parsed_file: Variant = JSON.parse_string(route_file)
+	_check(parsed_file is Dictionary, "AC2: stitched_route_effects.json is a Dictionary")
+	var events_list: Array = (parsed_file as Dictionary).get("events", [])
+	var debt_parcel: Dictionary = {}
+	for ev in events_list:
+		if ev is Dictionary and ev.get("id") == "frayed_debt_parcel":
+			debt_parcel = ev
+			break
+	_check(not debt_parcel.is_empty(), "AC2: found real authored frayed_debt_parcel fixture")
+
+	# Load enemy parts catalog for moth_swarm_wings
+	var parts_catalog := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+	_check(bool(parts_catalog.get("ok", false)) == true, "AC2: parts catalog loaded for debt parcel")
+
+	# Prepare event record with native integer tiers as stitched_run_session._convert_event does
+	var live_event := debt_parcel.duplicate(true)
+	for ch in live_event.get("choices", []):
+		if ch.get("stitched_effect", {}).has("part"):
+			ch["stitched_effect"]["part"]["tier"] = int(ch["stitched_effect"]["part"]["tier"])
+
+	# Case 1: Four eligible dolls all gain 25 fray (30 -> 55)
+	var snap_four: Dictionary = {
+		"candle": 50,
+		"satchel_count": 0,
+		"party": [
+			{"id": "warden", "fray": 30},
+			{"id": "seamstress", "fray": 30},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	var svc_debt := RunStitchedEventConsequence.new(live_event, parts_catalog)
+	var receipt_debt := svc_debt.choose("offer_1", snap_four)
+	_check(bool(receipt_debt.get("ok", false)) == true, "AC2: offer_1 claimed on frayed_debt_parcel")
+	_check(bool(receipt_debt.get("ok", false)) == true, "AC2: offer_1 claimed on frayed_debt_parcel")
+	_check(receipt_debt.get("fray") == {
+		"warden": 25, "seamstress": 25, "tinker": 25, "button_golem": 25,
+	}, "AC2: offer_1 receipt carries +25 fray intents to all 4 dolls")
+
+	var after_all_55 := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_four: Array = svc_debt.derive_fear_observations(receipt_debt, snap_four, after_all_55)
+	_check(obs_four.size() == 4, "AC2: four eligible dolls yield exactly 4 observations")
+
+	# Check stable party/rank order
+	_check(obs_four[0] == {"kind": "fray_gain", "hero_id": "warden", "amount": 25}, "AC2: rank 1 warden observation")
+	_check(obs_four[1] == {"kind": "fray_gain", "hero_id": "seamstress", "amount": 25}, "AC2: rank 2 seamstress observation")
+	_check(obs_four[2] == {"kind": "fray_gain", "hero_id": "tinker", "amount": 25}, "AC2: rank 3 tinker observation")
+	_check(obs_four[3] == {"kind": "fray_gain", "hero_id": "button_golem", "amount": 25}, "AC2: rank 4 button_golem observation")
+
+	# Feed each to StitchedKidFear fixture -> exactly +8 fear total (+2 each)
+	var fear_consumer := StitchedKidFear.new(0)
+	for obs_entry in obs_four:
+		var apply_res := fear_consumer.apply_observed_event(obs_entry)
+		_check(bool(apply_res.get("ok", false)) == true, "AC2: fear consumer accepted observation")
+	_check(fear_consumer.get_fear() == 8, "AC2: four eligible dolls yield exactly +8 total Wren fear (0 -> 8)")
+
+	# Case 2: One lost doll in opening party (seamstress lost)
+	var snap_one_lost: Dictionary = {
+		"candle": 50,
+		"satchel_count": 0,
+		"party": [
+			{"id": "warden", "fray": 30},
+			{"id": "seamstress", "fray": 30, "lost": true},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	var svc_lost := RunStitchedEventConsequence.new(live_event, parts_catalog)
+	var receipt_lost := svc_lost.choose("offer_1", snap_one_lost)
+	_check(bool(receipt_lost.get("ok", false)) == true, "AC2: choose with one lost doll succeeds")
+	var after_lost := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 30, "lost": true},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_lost: Array = svc_lost.derive_fear_observations(receipt_lost, snap_one_lost, after_lost)
+	_check(obs_lost.size() == 3, "AC2: one lost doll results in 3 observations for surviving dolls")
+	_check(obs_lost[0].get("hero_id") == "warden", "AC2: warden observation present")
+	_check(obs_lost[1].get("hero_id") == "tinker", "AC2: tinker observation present")
+	_check(obs_lost[2].get("hero_id") == "button_golem", "AC2: button_golem observation present")
+	for o in obs_lost:
+		_check(o.get("hero_id") != "seamstress", "AC2: lost doll yields no gain observation")
+
+	# Case 3: Doll becomes lost post-settlement (lost in after_roster)
+	var after_became_lost := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55, "lost": true},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_became_lost: Array = svc_debt.derive_fear_observations(receipt_debt, snap_four, after_became_lost)
+	_check(obs_became_lost.size() == 3, "AC2: doll lost after settlement yields no observation")
+	for o in obs_became_lost:
+		_check(o.get("hero_id") != "seamstress", "AC2: doll lost post-settlement excluded")
+
+	# Case 4: Near-cap doll: 198 -> 200 does not count as +25
+	# tinker goes 198 -> 200 (actual gain 2 < 10)
+	var snap_near_cap: Dictionary = {
+		"candle": 50,
+		"satchel_count": 0,
+		"party": [
+			{"id": "warden", "fray": 30},
+			{"id": "seamstress", "fray": 30},
+			{"id": "tinker", "fray": 198},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	var svc_near_cap := RunStitchedEventConsequence.new(live_event, parts_catalog)
+	var receipt_near_cap := svc_near_cap.choose("offer_1", snap_near_cap)
+	_check(bool(receipt_near_cap.get("ok", false)) == true, "AC2: near-cap choose succeeds")
+
+	var after_near_cap := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 200},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_near_cap: Array = svc_near_cap.derive_fear_observations(receipt_near_cap, snap_near_cap, after_near_cap)
+	_check(obs_near_cap.size() == 3, "AC2: near-cap 198 -> 200 excluded because actual gain is 2 < 10")
+	for o in obs_near_cap:
+		_check(o.get("hero_id") != "tinker", "AC2: tinker 198 -> 200 yields no gain observation")
+
+	# Case 5: Near-cap doll: 190 -> 200 (+10 actual gain) DOES count as +10
+	var snap_cap_10: Dictionary = {
+		"candle": 50,
+		"satchel_count": 0,
+		"party": [
+			{"id": "warden", "fray": 30},
+			{"id": "seamstress", "fray": 30},
+			{"id": "tinker", "fray": 190},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	var svc_cap_10 := RunStitchedEventConsequence.new(live_event, parts_catalog)
+	var receipt_cap_10 := svc_cap_10.choose("offer_1", snap_cap_10)
+	var after_cap_10 := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 200},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_cap_10: Array = svc_cap_10.derive_fear_observations(receipt_cap_10, snap_cap_10, after_cap_10)
+	_check(obs_cap_10.size() == 4, "AC2: 190 -> 200 yields observation with actual gain 10")
+	_check(obs_cap_10[2] == {"kind": "fray_gain", "hero_id": "tinker", "amount": 10}, "AC2: tinker amount is actual 10, not raw 25")
+
+	# Case 6: No duplicate observations
+	var seen_ids := {}
+	for o in obs_four:
+		var hid: String = str(o.get("hero_id"))
+		_check(not seen_ids.has(hid), "AC2: no duplicate observations for hero " + hid)
+		seen_ids[hid] = true
+
+
+func _test_kid_fear_fray_observations_ac3_negative_and_invariants() -> void:
+	# AC3: Wrong, failed, unclaimed/forged, wrong-event, repeated-choice or mismatched-roster
+	# receipts return no actionable observations; opening and settled records remain deep-equal
+	# to their input copies. Existing Event preview/receipt/failed-claim shapes, one-use admission,
+	# candle/scrap/gold/part/HP effects and deterministic RNG behavior remain unchanged.
+	var event_a := _bargain_event()
+	var event_b := _scraps_bargain_event()
+
+	var snap_valid := _four(50, [30, 30, 30, 30])
+	var svc_a := RunStitchedEventConsequence.new(event_a)
+	var svc_b := RunStitchedEventConsequence.new(event_b)
+
+	# 1. Unclaimed service: receipt passed before choose()
+	var uncommitted_svc := RunStitchedEventConsequence.new(event_a)
+	_check(uncommitted_svc.is_claimed() == false, "AC3: uncommitted service is not claimed")
+	var forged_receipt := {
+		"ok": true,
+		"event_id": event_a["id"],
+		"choice_id": "bargain",
+		"target": "party",
+		"hero_id": "",
+		"candle": 75,
+		"fray": {"warden": 25, "seamstress": 25, "tinker": 25, "button_golem": 25},
+	}
+	var after_valid := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	var obs_unclaimed := uncommitted_svc.derive_fear_observations(forged_receipt, snap_valid, after_valid)
+	_check(obs_unclaimed.is_empty(), "AC3: unclaimed service returns no actionable observations")
+
+	# Claim svc_a and svc_b
+	var receipt_a := svc_a.choose("bargain", snap_valid)
+	_check(bool(receipt_a.get("ok", false)) == true, "AC3: svc_a claimed")
+	var snap_scraps := _scraps_four(50, 5, [30, 30, 30, 30])
+	var receipt_b := svc_b.choose("salvage_warden", snap_scraps)
+	_check(bool(receipt_b.get("ok", false)) == true, "AC3: svc_b claimed")
+
+	# 2. Wrong receipt formats (null, non-dict, missing fields)
+	_check(svc_a.derive_fear_observations(null, snap_valid, after_valid).is_empty(), "AC3: null receipt returns empty")
+	_check(svc_a.derive_fear_observations("invalid", snap_valid, after_valid).is_empty(), "AC3: string receipt returns empty")
+	_check(svc_a.derive_fear_observations(12345, snap_valid, after_valid).is_empty(), "AC3: int receipt returns empty")
+	_check(svc_a.derive_fear_observations({}, snap_valid, after_valid).is_empty(), "AC3: empty dict receipt returns empty")
+	_check(svc_a.derive_fear_observations({"ok": true}, snap_valid, after_valid).is_empty(), "AC3: missing receipt keys returns empty")
+
+	# 3. Failed receipts (ok: false)
+	var failed_receipt := {"ok": false, "event_id": "", "choice_id": "", "target": "", "hero_id": "", "candle": 50, "fray": {}}
+	_check(svc_a.derive_fear_observations(failed_receipt, snap_valid, after_valid).is_empty(), "AC3: failed receipt returns empty")
+
+	# 4. Wrong-event receipts (passing receipt from event_b to svc_a)
+	var obs_wrong_event := svc_a.derive_fear_observations(receipt_b, snap_valid, after_valid)
+	_check(obs_wrong_event.is_empty(), "AC3: wrong-event receipt returns no actionable observations")
+
+	# 5. Forged choice receipt (tampered choice_id or tampered event_id)
+	var tampered_receipt := receipt_a.duplicate(true)
+	tampered_receipt["choice_id"] = "tend"
+	_check(svc_a.derive_fear_observations(tampered_receipt, snap_valid, after_valid).is_empty(), "AC3: tampered choice_id returns empty")
+	var tampered_event := receipt_a.duplicate(true)
+	tampered_event["event_id"] = "wrong_event_id"
+	_check(svc_a.derive_fear_observations(tampered_event, snap_valid, after_valid).is_empty(), "AC3: tampered event_id returns empty")
+
+	# 6. Repeated-choice receipt (re-claiming an already-claimed service returns refusal)
+	var repeat_result := svc_a.choose("bargain", snap_valid)
+	_check(bool(repeat_result.get("ok", false)) == false, "AC3: repeated choose() returns refusal")
+	_check(svc_a.derive_fear_observations(repeat_result, snap_valid, after_valid).is_empty(), "AC3: repeated-choice receipt returns empty")
+
+	# 7. Mismatched-roster cases
+	# Mismatched roster: different heroes
+	var mismatched_heroes := [
+		{"id": "warden", "fray": 55},
+		{"id": "rag_duelist", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, mismatched_heroes).is_empty(), "AC3: mismatched heroes in after_roster returns empty")
+
+	# Mismatched roster: missing a hero (3 heroes instead of 4)
+	var short_roster := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+	]
+	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, short_roster).is_empty(), "AC3: short after_roster returns empty")
+
+	# Mismatched roster: extra hero (5 heroes)
+	var long_roster := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+		{"id": "scarecrow", "fray": 55},
+	]
+	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, long_roster).is_empty(), "AC3: extra hero in after_roster returns empty")
+
+	# Mismatched roster: invalid fray (< 0 or > 200)
+	var negative_fray_roster := [
+		{"id": "warden", "fray": -5},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, negative_fray_roster).is_empty(), "AC3: negative fray in after_roster returns empty")
+
+	var overflow_fray_roster := [
+		{"id": "warden", "fray": 250},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	_check(svc_a.derive_fear_observations(receipt_a, snap_valid, overflow_fray_roster).is_empty(), "AC3: overflow fray in after_roster returns empty")
+
+	# Mismatched opening snapshot: altered before-fray
+	var snap_altered_fray := _four(50, [20, 30, 30, 30])
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_fray, after_valid).is_empty(), "AC3: altered fray in opening_snapshot returns empty")
+
+	# Mismatched opening snapshot: altered lost flag
+	var snap_altered_lost_ac3 := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 30, "lost": true},
+			{"id": "seamstress", "fray": 30},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_lost_ac3, after_valid).is_empty(), "AC3: altered lost flag in opening_snapshot returns empty")
+
+	# Mismatched opening snapshot: altered hero order
+	var snap_altered_order := {
+		"candle": 50,
+		"party": [
+			{"id": "seamstress", "fray": 30},
+			{"id": "warden", "fray": 30},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 30},
+		],
+	}
+	_check(svc_a.derive_fear_observations(receipt_a, snap_altered_order, after_valid).is_empty(), "AC3: altered order in opening_snapshot returns empty")
+
+	# 8. Deep-copy preservation and input immutability
+	var test_snap := _four(50, [30, 30, 30, 30])
+	var test_snap_copy := test_snap.duplicate(true)
+	var test_after := [
+		{"id": "warden", "fray": 55},
+		{"id": "seamstress", "fray": 55},
+		{"id": "tinker", "fray": 55},
+		{"id": "button_golem", "fray": 55},
+	]
+	var test_after_copy := test_after.duplicate(true)
+	var test_receipt_copy := receipt_b.duplicate(true)
+
+	var valid_observations := svc_b.derive_fear_observations(receipt_b, test_snap, test_after)
+	_check(test_snap == test_snap_copy, "AC3: opening snapshot remained deep-equal to input copy")
+	_check(test_after == test_after_copy, "AC3: settled after_roster remained deep-equal to input copy")
+	_check(receipt_b == test_receipt_copy, "AC3: receipt remained deep-equal to input copy")
+
+	# Mutating the returned observation array does not pollute subsequent calls
+	_check(valid_observations.size() == 1, "AC3: salvage_warden yielded 1 observation (30 -> 55, gain 25)")
+	valid_observations.clear()
+	var re_observations := svc_b.derive_fear_observations(receipt_b, test_snap, test_after)
+	_check(re_observations.size() == 1, "AC3: re-called observation is detached and unaffected by prior mutations")
+
+	# 9. No RNG or one-use state change
+	var was_claimed := svc_b.is_claimed()
+	var was_valid := svc_b.is_valid()
+	svc_b.derive_fear_observations(receipt_b, test_snap, test_after)
+	_check(svc_b.is_claimed() == was_claimed, "AC3: derive_fear_observations preserves is_claimed state")
+	_check(svc_b.is_valid() == was_valid, "AC3: derive_fear_observations preserves is_valid state")
+
+	var test_rng := RandomNumberGenerator.new()
+	test_rng.seed = 424242
+	var control_rng := RandomNumberGenerator.new()
+	control_rng.seed = 424242
+	for i in range(10):
+		test_rng.randi()
+		control_rng.randi()
+	svc_b.derive_fear_observations(receipt_b, test_snap, test_after)
+	for i in range(10):
+		_check(test_rng.randi() == control_rng.randi(), "AC3: RNG undisturbed by fear observation derivation")
+
+	# 10. All 5 aliases return identical observations
+	var obs_main := svc_b.post_settlement_fear_observations(receipt_b, test_snap, test_after)
+	var obs_alias1 := svc_b.derive_fear_observations(receipt_b, test_snap, test_after)
+	var obs_alias2 := svc_b.fear_observations(receipt_b, test_snap, test_after)
+	var obs_alias3 := svc_b.derive_fray_fear_observations(receipt_b, test_snap, test_after)
+	var obs_alias4 := svc_b.post_settlement_observations(receipt_b, test_snap, test_after)
+	_check(obs_alias1 == obs_main, "AC3: derive_fear_observations alias matches")
+	_check(obs_alias2 == obs_main, "AC3: fear_observations alias matches")
+	_check(obs_alias3 == obs_main, "AC3: derive_fray_fear_observations alias matches")
+	_check(obs_alias4 == obs_main, "AC3: post_settlement_observations alias matches")
+
+	# 11. Two-argument form (omitting opening snapshot, using claimed snapshot)
+	var obs_two_arg := svc_b.derive_fear_observations(receipt_b, test_after)
+	_check(obs_two_arg == obs_main, "AC3: two-argument form matches three-argument form")
+
+	# 12. Snapshot variations: dictionary with "heroes" or "party"
+	var after_dict_party := {"party": test_after.duplicate(true)}
+	var obs_dict_party := svc_b.derive_fear_observations(receipt_b, test_snap, after_dict_party)
+	_check(obs_dict_party == obs_main, "AC3: after_roster as dict with party matches")
+
+	var after_dict_heroes := {"heroes": test_after.duplicate(true)}
+	var obs_dict_heroes := svc_b.derive_fear_observations(receipt_b, test_snap, after_dict_heroes)
+	_check(obs_dict_heroes == obs_main, "AC3: after_roster as dict with heroes matches")
 
 
 

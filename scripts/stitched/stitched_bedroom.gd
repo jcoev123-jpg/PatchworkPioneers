@@ -49,6 +49,9 @@ var door_light: TextureRect
 var spots := {}
 var dolls := {}
 var labels := {}
+var inspector: StitchedBedroomDollInspector
+var _hover_inspection := ""
+var _focus_inspection := ""
 var record: Dictionary = StitchedBedroomRecord.fresh()
 var _art: Texture2D
 
@@ -90,6 +93,9 @@ func _ready() -> void:
 		doll.texture = load(path) as Texture2D if ResourceLoader.exists(path) else null
 		room.add_child(doll)
 		dolls[id] = doll
+	inspector = StitchedBedroomDollInspector.new()
+	room.add_child(inspector)
+	visibility_changed.connect(_on_room_visibility_changed)
 	resized.connect(_fit)
 	present(record)
 	_fit()
@@ -131,6 +137,17 @@ func present(next: Dictionary) -> void:
 	_restyle_spots()
 	_place_door_light()
 	_place_dolls()
+	if inspector != null:
+		inspector.present(record)
+		# Re-presentation may happen on the same room with the same focused
+		# button. Refresh that readout, but never retain a stale hover.
+		_hover_inspection = ""
+		_focus_inspection = ""
+		for id in ["shelf", "tin"]:
+			var button: Button = spots.get(id)
+			if is_instance_valid(button) and button.has_focus():
+				_focus_inspection = id
+		_sync_inspection()
 	if labels.has("window"):
 		labels.window.text = "Night %d" % night_number()
 	if labels.has("door"):
@@ -187,6 +204,15 @@ func _make_spot(spot_id: String, button: Button) -> void:
 	spots[spot_id] = button
 	if not button.pressed.is_connected(_on_spot_pressed.bind(spot_id)):
 		button.pressed.connect(_on_spot_pressed.bind(spot_id))
+	if spot_id in ["shelf", "tin"]:
+		if not button.mouse_entered.is_connected(_inspection_hover.bind(spot_id, true)):
+			button.mouse_entered.connect(_inspection_hover.bind(spot_id, true))
+		if not button.mouse_exited.is_connected(_inspection_hover.bind(spot_id, false)):
+			button.mouse_exited.connect(_inspection_hover.bind(spot_id, false))
+		if not button.focus_entered.is_connected(_inspection_focus.bind(spot_id, true)):
+			button.focus_entered.connect(_inspection_focus.bind(spot_id, true))
+		if not button.focus_exited.is_connected(_inspection_focus.bind(spot_id, false)):
+			button.focus_exited.connect(_inspection_focus.bind(spot_id, false))
 	var label: Label = labels.get(spot_id)
 	if label == null:
 		label = Label.new()
@@ -244,6 +270,8 @@ func _restyle_spots() -> void:
 		room.move_child(dolls[id], -1)
 	for id in labels:
 		room.move_child(labels[id], -1)
+	if is_instance_valid(inspector):
+		room.move_child(inspector, -1)
 
 
 func _place_door_light() -> void:
@@ -313,6 +341,43 @@ func _fit() -> void:
 	if room == null or size.x <= 0.0 or size.y <= 0.0:
 		return
 	room.scale = size / DESIGN_SIZE
+
+
+func _inspection_hover(spot_id: String, entering: bool) -> void:
+	if entering:
+		_hover_inspection = spot_id
+	elif _hover_inspection == spot_id:
+		_hover_inspection = ""
+	_sync_inspection()
+
+
+func _inspection_focus(spot_id: String, entering: bool) -> void:
+	if entering:
+		_focus_inspection = spot_id
+	elif _focus_inspection == spot_id:
+		_focus_inspection = ""
+	_sync_inspection()
+
+
+func _sync_inspection() -> void:
+	if not is_instance_valid(inspector):
+		return
+	if not is_inside_tree() or not is_visible_in_tree():
+		inspector.dismiss()
+		return
+	var active := _hover_inspection if not _hover_inspection.is_empty() else _focus_inspection
+	if active in ["shelf", "tin"]:
+		inspector.show_view(active)
+	else:
+		inspector.dismiss()
+
+
+func _on_room_visibility_changed() -> void:
+	if not is_visible_in_tree():
+		_hover_inspection = ""
+		_focus_inspection = ""
+		if is_instance_valid(inspector):
+			inspector.dismiss()
 
 
 func _on_spot_pressed(spot_id: String) -> void:

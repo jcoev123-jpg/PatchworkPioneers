@@ -33,6 +33,15 @@ var exit_button: Button
 var target_picker: OptionButton
 var readout: Label
 var eye_readout: Label
+var whirr_readout: Label
+var candle_readout: Label
+var fear_readout: Label
+var whirr_warning: Label
+var fear_warning: Label
+var whirr_meter: ProgressBar
+var candle_meter: ProgressBar
+var fear_meter: ProgressBar
+var hud_panels: Array[NinePatchRect] = []
 var feedback: Label
 var eye_overlay: TextureRect
 var travel: Tween
@@ -148,8 +157,31 @@ func _ready() -> void:
 	shadow_label = _label(Rect2(70, 484, 220, 64), "")
 	eye_overlay = _picture(self, "EyeTreatment", VIEW)
 	clue = _label(Rect2(40, 202, 900, 36), "")
-	readout = _label(Rect2(40, 26, 1190, 38), "")
-	eye_readout = _label(Rect2(40, 64, 900, 32), "")
+	# Three sewn, image-backed status strips fit wholly in the top border.
+	# Leave the 920x440 eye picture and the command column untouched.
+	hud_panels.append(_hud_panel("CorridorPlate", Rect2(36, 20, 486, 76)))
+	hud_panels.append(_hud_panel("WhirrPlate", Rect2(528, 20, 227, 76)))
+	hud_panels.append(_hud_panel("CandlePlate", Rect2(763, 20, 227, 76)))
+	hud_panels.append(_hud_panel("FearPlate", Rect2(998, 20, 246, 76)))
+	readout = _label(Rect2(48, 27, 466, 29), "")
+	eye_readout = _label(Rect2(48, 60, 466, 26), "")
+	for caption in [readout, eye_readout]:
+		caption.clip_text = true
+		caption.mouse_filter = Control.MOUSE_FILTER_STOP
+	readout.add_theme_font_size_override("font_size", 23)
+	eye_readout.add_theme_font_size_override("font_size", 20)
+	whirr_readout = _hud_caption(Rect2(540, 26, 207, 24))
+	candle_readout = _hud_caption(Rect2(775, 26, 207, 24))
+	fear_readout = _hud_caption(Rect2(1010, 26, 224, 24))
+	whirr_meter = CHROME._meter(self, "WalkWhirrMeter", Rect2(541, 54, 204, 10), Color("c68f6c"))
+	candle_meter = CHROME._meter(self, "WalkCandleMeter", Rect2(776, 54, 204, 10), CHROME.AMBER)
+	fear_meter = CHROME._meter(self, "WalkFearMeter", Rect2(1011, 54, 220, 10), Color("af6268"))
+	whirr_warning = _hud_caption(Rect2(540, 71, 442, 23))
+	fear_warning = _hud_caption(Rect2(1010, 71, 226, 23))
+	whirr_warning.add_theme_font_size_override("font_size", 18)
+	fear_warning.add_theme_font_size_override("font_size", 18)
+	whirr_warning.add_theme_color_override("font_color", CHROME.AMBER)
+	fear_warning.add_theme_color_override("font_color", Color("ffb1a0"))
 	forward_button = _button("FORWARD", Rect2(980, 106, 250, 48), func(): command("forward"))
 	back_button = _button("LOOK BACK", Rect2(980, 166, 250, 48), func(): command("look_back"))
 	for index in 4:
@@ -161,10 +193,12 @@ func _ready() -> void:
 	target_picker.size = Vector2(250, 42)
 	CHROME.style_button(target_picker)
 	add_child(target_picker)
+	target_picker.item_selected.connect(func(_index: int): _refresh_pocket_actions())
 	for index in 2:
 		pocket_buttons.append(_button("", Rect2(980, 320 + index * 54, 250, 46), func():
 			command("use_item", {"slot": index, "target": target_picker.get_item_metadata(target_picker.selected)})))
 	var motion := CheckButton.new()
+	motion.name = "ReducedMotionToggle"
 	motion.text = "Reduced motion"
 	motion.position = Vector2(980, 438)
 	motion.size = Vector2(250, 40)
@@ -209,6 +243,31 @@ func _label(rectangle: Rect2, caption: String) -> Label:
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(label)
 	return label
+
+
+func _hud_panel(title: String, rectangle: Rect2) -> NinePatchRect:
+	var panel := NinePatchRect.new()
+	panel.name = title
+	panel.texture = CHROME.FELT
+	panel.position = rectangle.position
+	panel.size = rectangle.size
+	panel.patch_margin_left = 14
+	panel.patch_margin_right = 14
+	panel.patch_margin_top = 12
+	panel.patch_margin_bottom = 12
+	panel.self_modulate = Color("715356ed")
+	panel.mouse_filter = Control.MOUSE_FILTER_STOP
+	panel.focus_mode = Control.FOCUS_ALL
+	add_child(panel)
+	return panel
+
+
+func _hud_caption(rectangle: Rect2) -> Label:
+	var caption := _label(rectangle, "")
+	caption.add_theme_font_size_override("font_size", 20)
+	caption.clip_text = true
+	caption.mouse_filter = Control.MOUSE_FILTER_STOP
+	return caption
 
 
 func _button(caption: String, rectangle: Rect2, action: Callable) -> Button:
@@ -318,6 +377,8 @@ func set_reduced_motion(value: bool) -> void:
 	reduced_motion = value
 	if value:
 		_stop_travel()
+	if is_node_ready() and not expected.is_empty():
+		_refresh_status(StitchedS1BEffects.candle_band(clampi(candle, 0, 100)))
 	_update_flicker()
 
 
@@ -351,8 +412,73 @@ func _stop_travel() -> void:
 		layer.scale = Vector2.ONE
 
 
+## All status is projected from the detached Walk snapshot and the session's live
+## candle/fear. This routine deliberately never calls WalkRules.act or RNG.
+func _refresh_status(band: Dictionary) -> void:
+	var current_whirr := clampi(int(expected.whirr), 0, 100)
+	var current_candle := clampi(candle, 0, 100)
+	var current_fear := fear()
+	var warning := ""
+	if current_whirr >= 100:
+		warning = "NEXT FIGHT: +1 foe, +10 fray per doll"
+	elif current_whirr >= 50:
+		warning = "The Machine is stirring."
+	whirr_readout.text = "WHIRR %d/100" % current_whirr
+	candle_readout.text = "CANDLE %d / %s" % [current_candle, str(band.name).to_upper()]
+	fear_readout.text = "WREN FEAR %d/100" % current_fear
+	whirr_warning.text = warning
+	fear_warning.text = ("Flicker suppressed" if reduced_motion else "Sight flickers at 50+") if current_fear >= StitchedKidFear.SHAKE_THRESHOLD else ""
+	whirr_meter.value = current_whirr / 100.0
+	candle_meter.value = current_candle / 100.0
+	fear_meter.value = current_fear / 100.0
+	var whirr_detail := "WHIRR %d/100. %s" % [current_whirr, warning if not warning.is_empty() else "The Machine is quiet."]
+	var candle_detail := "Candle %d/100. %s light." % [current_candle, str(band.name).to_upper()]
+	var fear_detail := "Wren fear %d/100. %s" % [current_fear, fear_warning.text if not fear_warning.text.is_empty() else "Sight is steady."]
+	var corridor_detail := "%s, step %d of %d." % [expected.corridor.name, expected.step, expected.corridor.steps]
+	readout.tooltip_text = corridor_detail
+	eye_readout.tooltip_text = eye_readout.text
+	hud_panels[0].tooltip_text = corridor_detail + " " + eye_readout.text
+	for index in 3:
+		var detail: String = [whirr_detail, candle_detail, fear_detail][index]
+		hud_panels[index + 1].tooltip_text = detail
+		[whirr_readout, candle_readout, fear_readout][index].tooltip_text = detail
+		[whirr_meter, candle_meter, fear_meter][index].tooltip_text = detail
+	whirr_warning.tooltip_text = whirr_detail
+	fear_warning.tooltip_text = fear_detail
+
+
+## The inspected pocket is the ONLY source for a fresh-stuffing +15 hint.
+## Disabled/invalid targets expose no asserted cost and spend nothing.
+func _refresh_pocket_actions() -> void:
+	if expected.is_empty() or pocket_buttons.size() != 2:
+		return
+	var pocket: Array = expected.pockets[expected.viewpoint]
+	var chosen: Variant = target_picker.get_item_metadata(target_picker.selected) if target_picker.selected >= 0 else ""
+	var doll_target := false
+	var curio_target := false
+	for doll in expected.dolls:
+		if doll.id == chosen and not doll.lost:
+			doll_target = true
+	for curio in expected.curios:
+		if curio.instance == chosen and curio.step == expected.step and not curio.get("resolved", false):
+			curio_target = true
+	for index in pocket_buttons.size():
+		var button := pocket_buttons[index]
+		var has_item := index < pocket.size()
+		button.text = str(pocket[index]).replace("_", " ").capitalize() if has_item else "Empty pocket"
+		var item := str(pocket[index]) if has_item else ""
+		var legal: bool = has_item and expected.phase == "walking" and (curio_target if item == "pins" else doll_target)
+		button.disabled = not legal
+		button.tooltip_text = ("WHIRR +15: fresh stuffing heals 35% HP (+5 use, +10 stuffing)."
+			if item == "fresh_stuffing" else "WHIRR +5: use %s." % item.replace("_", " ")) if legal else ""
+	target_picker.tooltip_text = ("Select a doll or an unidentified object. Curio interactions cost WHIRR +5."
+		if curio_target else "Choose a legal doll or unidentified object for a pocket action.") if expected.phase == "walking" else ""
+
+
 func refresh() -> void:
 	_stop_travel()
+	if host != null:
+		candle = host.candle
 	var band := StitchedS1BEffects.candle_band(clampi(candle, 0, 100))
 	var depth: int = {"bright": 4, "dim": 3, "gloom": 2, "dark": 1, "snuffed": 0}[band.name]
 	var paths: Array = art.corridors[expected.corridor.id][expected.step]
@@ -429,15 +555,18 @@ func refresh() -> void:
 	snip_picker.visible = shadow_visible and snip_picker.item_count > 0
 	snip_button.visible = snip_picker.visible
 	snip_button.disabled = not snip_picker.visible
-	readout.text = "%s   |   Step %d/%d   |   Candle %d - %s   |   WHIRR %d/100   |   WREN FEAR %d/100" % [expected.corridor.name, expected.step, expected.corridor.steps, candle, band.name, expected.whirr, fear()]
-	var pocket: Array = expected.pockets[expected.viewpoint]
-	for index in pocket_buttons.size():
-		pocket_buttons[index].text = str(pocket[index]).replace("_", " ").capitalize() if index < pocket.size() else "Empty pocket"
-		pocket_buttons[index].disabled = index >= pocket.size() or expected.phase != "walking"
+	readout.text = "%s  |  Step %d/%d" % [expected.corridor.name, expected.step, expected.corridor.steps]
+	_refresh_status(band)
+	_refresh_pocket_actions()
 	forward_button.disabled = expected.phase != "walking"
 	forward_button.text = "LET IT TAKE ONE" if walk.tug_unresolved() else "FORWARD"
+	forward_button.tooltip_text = ("WHIRR +5: yield to the thread tug." if walk.tug_unresolved() else "WHIRR +0: advance one step.") if not forward_button.disabled else ""
 	exit_button.visible = host == null
 	back_button.disabled = expected.phase != "walking"
+	back_button.tooltip_text = "WHIRR +5: look behind the lead doll." if not back_button.disabled else ""
+	for button in switch_buttons:
+		button.tooltip_text = "WHIRR +5: borrow this doll's eyes and pocket; ranks stay put." if not button.disabled else ""
+	snip_button.tooltip_text = "WHIRR +5: snip the chosen thread." if not snip_button.disabled else ""
 	if expected.phase == "complete":
 		feedback.text = "Walk complete. Back to title."
 	_update_flicker()

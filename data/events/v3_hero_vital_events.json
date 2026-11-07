@@ -657,6 +657,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_silver_candle_snuffer",
+      "title": "The Silver Candle Snuffer",
+      "description": "A tarnished candle snuffer hangs over a doll-size skirting-board chapel like a silver bell; the Lantern Monk cups his moth-halo lantern beneath its velvet tassel.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "polish_snuffer_lining",
+          "text": "Pay 12 gold for a warm silver lining (heal 8 HP)",
+          "outcome": { "gold": -12, "scraps": 0, "hp": 8, "max_hp": 0 }
+        },
+        {
+          "id": "strip_snuffer_chain",
+          "text": "Strip the swinging chain (lose 5 HP; gain 2 scraps)",
+          "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little chapel with its snuffed candles",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_darning_mushroom_lookout",
+      "title": "The Darning-Mushroom Lookout",
+      "description": "An enormous wooden darning mushroom rises above a folded lace ravine; the Yarn Ranger anchors wool bolas round its stalk while stitched birds settle on the cap.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "brace_mushroom_stalk",
+          "text": "Spend 2 scraps bracing the lookout seams (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "unpick_mushroom_cap",
+          "text": "Unpick the splintered cap (lose 6 HP; gain 3 scraps)",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the stitched birds asleep on the mushroom",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_iron_washboard_chapel",
+      "title": "The Iron Washboard Chapel",
+      "description": "A rusted iron washboard stands as a ribbed shrine between giant floorboard cracks; the Button Golem presses its loose brass buttons against the shivering metal grooves.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "set_washboard_ribs",
+          "text": "Spend 3 scraps riveting on protective ribs (+3 max HP)",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "sell_button_plating",
+          "text": "Sell 2 max HP of button plating for 26 gold",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the washboard humming in the dark",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
