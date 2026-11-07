@@ -22,6 +22,7 @@ func _initialize() -> void:
 	seed(535)
 	_test_handoff()
 	_test_boundaries()
+	_test_service_preview()
 	_test_authentication()
 	_test_invalid_inputs()
 	_check(rng.state == rng_before, "all branches draw no run RNG")
@@ -154,6 +155,109 @@ func _test_boundaries() -> void:
 	# Caller quotes are authoritative, with no adapter-owned price or yield.
 	_check(not _choice(_open(40, _heroes(), [], 3, 31, 7), "hire_unpicker").available, "custom calm quote used")
 	_check(_choice(_open(10, _heroes(), _spares(), 3, 999, 7), "hire_unpicker").available, "custom spare quote used")
+
+
+func _preview_heroes() -> Array:
+	# Live-style roster: known Unravelled at FRAY 80 and 130, one zero-FRAY doll, one LOST doll.
+	var heroes := _heroes()
+	var fray := [80, 130, 0, 60]
+	for i in 4:
+		heroes[i].fray = fray[i]
+	heroes[0].resolve = "frantic"
+	heroes[1].resolve = "hollow"
+	heroes[3].lost = true
+	return heroes
+
+
+func _live_open(gold: int, heroes: Array, satchel: Array, scraps: int = 3) -> RefCounted:
+	return _open(gold, heroes, satchel, scraps, 75, 2)
+
+
+func _real_quote(heroes: Array, satchel: Array, post_toll_gold: int, scraps: int = 3) -> Dictionary:
+	return RunUnpickerVisit.open_stitched(NODE, heroes, post_toll_gold, 75, satchel, scraps, 2).quote()
+
+
+func _test_service_preview() -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	var rng_before := rng.state
+	var heroes := _preview_heroes()
+	var satchel := _spares()
+	var visit = _live_open(100, heroes, satchel)
+	_check(visit.is_valid(), "preview fixture opens")
+	var source: Dictionary = visit.read_state()
+	var hire := _choice(visit, "hire_unpicker")
+	_check(hire.available and hire.wallet == {"gold": 90, "scraps": 3}, "hire available at 100 gold")
+	var preview: Dictionary = hire.service_preview
+	_check(preview.get("post_toll_gold") == 90, "post-toll gold projected")
+	_check(preview.get("calm_price") == 75 and preview.get("scrap_yield") == 2, "caller quotes carried")
+	var real := _real_quote(heroes, satchel, 90)
+	_check(real.ok and real.calm_outcomes.size() == 2, "real quote names exactly two eligible dolls")
+	_check(preview.get("calm_outcomes") == real.calm_outcomes, "calm outcomes equal real quote")
+	_check(preview.get("unpick_outcomes") == real.unpick_outcomes, "unpick outcomes equal real quote")
+	_check(real.unpick_outcomes.size() == 1 and preview.unpick_outcomes[0].index == 0, "indexed spare outcome")
+	_check(preview.unpick_outcomes[0].scraps_gained == 2 and preview.unpick_outcomes[0].scraps_after == 5, "+2 scraps for spare")
+	var calm: Array = preview.calm_outcomes
+	_check(calm[0].hero_id == "warden" and calm[0].fray_before == 80 and calm[0].fray_after == 30 \
+		and calm[0].fray_relief == 50 and calm[0].clears_unravelled, "FRAY 80 clears at 30")
+	_check(calm[1].hero_id == "seamstress" and calm[1].fray_after == 80 \
+		and calm[1].fray_relief == 50 and not calm[1].clears_unravelled, "FRAY 130 stays at 80")
+	for outcome: Dictionary in calm:
+		_check(outcome.hero_id != "tinker" and outcome.hero_id != "lantern_monk", "zero-FRAY and LOST dolls omitted")
+	# Other rows carry no preview and keep authored economics.
+	var sale := _choice(visit, "sell_trim")
+	var leave := _choice(visit, "leave")
+	_check(sale.service_preview == {} and leave.service_preview == {}, "trade and leave carry empty preview")
+	_check(sale.available and sale.gold_delta == 0 and sale.scraps_delta == 1, "trade still +1 scrap")
+	_check(leave.available and leave.gold_delta == 0 and leave.scraps_delta == 0, "leave still free")
+	# Repeated previews are pure and detached.
+	preview.calm_outcomes[0].fray_after = 0
+	preview.calm_outcomes.clear()
+	preview.unpick_outcomes[0].scraps_after = 99
+	preview.unpick_outcomes.clear()
+	var again: Dictionary = _choice(visit, "hire_unpicker").service_preview
+	_check(again.calm_outcomes == real.calm_outcomes and again.unpick_outcomes == real.unpick_outcomes, "repeat preview detached from earlier mutation")
+	_check(visit.quote().choices[0].service_preview == again, "quote equals preview")
+	_check(visit.read_state() == source, "preview leaves state and version unchanged")
+	heroes[0].fray = 0
+	satchel.clear()
+	_check(_choice(visit, "hire_unpicker").service_preview == again, "preview detached from caller inputs")
+	# Choosing hire charges only the toll and cannot replay.
+	var result: Dictionary = visit.choose("hire_unpicker", NODE, source)
+	_check(result.ok and result.wallet == {"gold": 90, "scraps": 3}, "hire charges only entrance")
+	_check(result.service_request == {"stop_type": "Unpicker"}, "service request unchanged")
+	_check(result.state.heroes == source.heroes and result.state.satchel == source.satchel, "no calm or unpick applied by hire")
+	_check(not visit.choose("hire_unpicker", NODE, source).ok, "hire replay denied")
+	# Exact gold boundary without spares: 85 calms after the toll, 84 cannot.
+	var no_spares: Array = []
+	var edge = _live_open(85, _preview_heroes(), no_spares)
+	var edge_hire := _choice(edge, "hire_unpicker")
+	_check(edge_hire.available and edge_hire.service_preview.post_toll_gold == 75, "85 gold hire available")
+	_check(edge_hire.service_preview.calm_outcomes == _real_quote(_preview_heroes(), no_spares, 75).calm_outcomes \
+		and edge_hire.service_preview.calm_outcomes.size() == 2, "85 gold projects calm")
+	_check(edge_hire.service_preview.unpick_outcomes.is_empty(), "no spares, no unpick outcomes")
+	var short = _live_open(84, _preview_heroes(), no_spares)
+	var short_hire := _choice(short, "hire_unpicker")
+	_check(not short_hire.available and short_hire.service_preview == {} and short_hire.service_request == {}, "84 gold hire unavailable with empty preview")
+	_check(_choice(short, "sell_trim").available and _choice(short, "leave").available, "alternatives stay open at 84")
+	# 12 gold with a spare: useful for unpicking only.
+	var poor = _live_open(12, _preview_heroes(), _spares())
+	var poor_hire := _choice(poor, "hire_unpicker")
+	_check(poor_hire.available and poor_hire.service_preview.post_toll_gold == 2, "12 gold hire available")
+	_check(poor_hire.service_preview.calm_outcomes.is_empty(), "unaffordable calm projects nothing")
+	_check(poor_hire.service_preview.unpick_outcomes == _real_quote(_preview_heroes(), _spares(), 2).unpick_outcomes \
+		and poor_hire.service_preview.unpick_outcomes.size() == 1, "spare projected at 12 gold")
+	# Only zero-FRAY or LOST dolls, with and without a spare.
+	var calm_free := _preview_heroes()
+	calm_free[0].fray = 0
+	calm_free[1].fray = 0
+	var spare_only := _choice(_live_open(100, calm_free, _spares()), "hire_unpicker")
+	_check(spare_only.available and spare_only.service_preview.calm_outcomes.is_empty(), "no calm target projected")
+	_check(spare_only.service_preview.unpick_outcomes.size() == 1, "spare still projected")
+	var nothing := _choice(_live_open(100, calm_free, no_spares), "hire_unpicker")
+	_check(not nothing.available and nothing.service_preview == {} and nothing.service_request == {}, "no usable option leaves hire unavailable")
+	_check(_choice(_live_open(5, _preview_heroes(), _spares()), "hire_unpicker").service_preview == {}, "unaffordable toll has empty preview")
+	_check(rng.state == rng_before, "preview draws no RNG")
 
 
 func _test_authentication() -> void:
