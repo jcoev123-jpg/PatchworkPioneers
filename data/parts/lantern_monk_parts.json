@@ -221,7 +221,8 @@
             "effects": {
               "guard": 3
             }
-          }
+          },
+          "text": "Plant the lantern pole to Guard one ally for three turns, taking its blows."
         },
         "3": {
           "ability": {
@@ -234,7 +235,8 @@
             "effects": {
               "guard": 4
             }
-          }
+          },
+          "text": "Plant the lantern pole to Guard one ally for four turns, even from rear rank 4, taking its blows."
         }
       },
       "text": "Plant the lantern pole to Guard one ally for two turns, taking its blows."
