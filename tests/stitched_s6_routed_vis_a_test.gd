@@ -2,6 +2,7 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## S6 VIS-A: authenticated public route, service and terminal pages, not test-only UI.
 var _mouse_scroll_verified := false
 var _stop_witnesses := 0
+var _campfire_witnesses := 0
 
 
 func _page(app: Node, expected_kind: String, label: String) -> Control:
@@ -502,6 +503,14 @@ func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRun
 	var text := preview.text
 	var kind := RunV3StopChoiceProjection.v3_kind_for(str(node.type))
 	var lead := str(RunV3StopChoiceProjection.stitched_stop_help_for(kind).get("lead", ""))
+	var hint := StitchedRouteGraphView.campfire_recovery_hint_for(str(node.type))
+	if kind == "Campfire":
+		_check(not hint.is_empty(), label + " Campfire has a recovery hint")
+		_campfire_witnesses += 1
+		# The compact hint replaces the generic lead for Campfire only.
+		lead = hint
+	else:
+		_check(hint.is_empty(), label + " " + str(node.type) + " gains no Campfire hint")
 	_check(("LIT F%02d P%d" % [node.floor, node.position + 1]) in text,
 		label + " preview keeps the inspected floor and path")
 	for target in node.outgoing:
@@ -517,16 +526,29 @@ func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRun
 		_stop_witnesses += 1
 		_check(lead in text and str(preview.get_meta("stop_purpose", "")) == lead,
 			label + " " + str(node.type) + " shows its stop purpose from the shared helper")
+	if kind == "Campfire":
+		_check("30%" in text and "25" in text and "50" in text and "100" in text
+			and "Mend 30% HP" in text and "Tales -25 FRAY" in text
+			and "Wick +50 CANDLE" in text and "max 100" in text
+			and "pick one" in text and "Possible" in text,
+			label + " Campfire shows all three recovery values as one possible pick")
+		_check(not RunV3StopChoiceProjection.stitched_stop_help_for("Campfire").lead in text,
+			label + " Campfire hint replaces the generic lead")
+		_check(not "guarantee" in text.to_lower() and not "heals " in text.to_lower(),
+			label + " Campfire promises no guaranteed gain")
 	for other in _SPLIT_KINDS:
 		var other_lead := str(RunV3StopChoiceProjection.stitched_stop_help_for(other).get("lead", ""))
-		if other_lead != lead:
+		if other_lead != lead and not (kind == "Campfire" and other == "Campfire"):
 			_check(not other_lead in text, label + " does not show the " + other + " purpose")
 	_check(not "GOLD" in text.to_upper() and not "STOCK" in text.to_upper(),
 		label + " invents no price or stock")
 	await process_frame
 	var scroll := graph.find_child("RouteGraphScroll", true, false) as Control
 	_check(scroll != null and scroll.get_global_rect().size.y >= 100
-		and preview.get_line_count() <= 2
+		and preview.get_theme_font_size("font_size") >= 16
+		and preview.get_line_count() <= (5 if kind == "Campfire" else 2)
+		and preview.get_global_rect().position.x >= graph.get_global_rect().position.x - 1
+		and preview.get_global_rect().end.x <= graph.get_global_rect().end.x + 1
 		and preview.get_global_rect().end.y <= (graph.get_global_rect().end.y + 1),
 		label + " preview keeps the atlas scroll at least 100px and inside the page")
 
@@ -555,6 +577,23 @@ func _check_stop_purpose_helper() -> void:
 	for kind in _NON_STOP_KINDS:
 		_check(StitchedRouteGraphView.stop_purpose_for(kind).is_empty(),
 			"'" + kind + "' gains no split-stop purpose")
+	var hint := StitchedRouteGraphView.campfire_recovery_hint_for("Campfire")
+	_check(hint == "Possible, pick one: Mend %d%% HP / Tales -%d FRAY / Wick +%d CANDLE, max %d" % [
+		RunCampfireVisit.MEND_HEAL_PERCENT, RunCampfireVisit.TALES_FRAY_REDUCTION,
+		RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
+		and "Mend 30% HP" in hint and "Tales -25 FRAY" in hint
+		and "Wick +50 CANDLE" in hint and "max 100" in hint
+		and not "GOLD" in hint.to_upper(),
+		"Campfire hint shows 30/25/50/100 from the real constants and no price")
+	_check(StitchedRouteGraphView.campfire_recovery_hint_for("Rest") == hint,
+		"legacy Rest maps to the same Campfire hint")
+	for kind in ["Peddler", "SewingCircle", "Unpicker", "PatchStall", "Shop"]:
+		_check(StitchedRouteGraphView.campfire_recovery_hint_for(kind).is_empty()
+			and not StitchedRouteGraphView.stop_purpose_for(kind).is_empty(),
+			kind + " keeps its own lead and gains no Campfire hint")
+	for kind in _NON_STOP_KINDS:
+		_check(StitchedRouteGraphView.campfire_recovery_hint_for(kind).is_empty(),
+			"'" + kind + "' gains no Campfire hint")
 
 
 ## S8f-enabled live app: graph admission is the same real entry used by tickets.
@@ -958,6 +997,10 @@ func _run() -> void:
 	await _visit_kind("SewingCircle", true)
 	_check(_stop_witnesses > witnesses_before,
 		"a genuine mounted legal SewingCircle stop showed its purpose by mouse and keyboard")
+	var campfire_before := _campfire_witnesses
+	await _visit_kind("Campfire", false)
+	_check(_campfire_witnesses > campfire_before,
+		"a genuine mounted legal Campfire showed its recovery hint by mouse and keyboard")
 	var win_app: Node = await _new_run(42)
 	if win_app.stitched_run_session != null:
 		_complete_route(win_app)
