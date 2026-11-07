@@ -70,6 +70,10 @@ func _initialize() -> void:
 	_test_ac1_seamstress_full_hp_paid_heal_blocked()
 	_test_ac2_seamstress_damaged_and_hanging_paid_heal()
 	_test_ac3_full_hp_counterexamples_available()
+	_test_s6_ac1_warden_buckle_heart_ward_hp_projection()
+	_test_s6_ac2_rag_duelist_duel_mask_mirror_hp_projection()
+	_test_s6_ac3_unavailable_choice_opening_hp_projections()
+	_test_s6_ac4_repeated_quotes_and_claim_parity()
 
 	if failures.is_empty():
 		print("run_stitched_hero_vital_seams_test: PASS (%d checks)" % checks)
@@ -800,3 +804,323 @@ func _test_ac3_full_hp_counterexamples_available() -> void:
 	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, 0, 0, 0, hero_full) == false, "AC3: free leave is false")
 	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, -2, 0, 3, hero_full) == false, "AC3: max hp gain without hp heal is false")
 	_check(SeamsAdapter.is_pure_paid_heal_at_full_hp(0, -2, 4, 2, hero_full) == false, "AC3: max hp gain with hp heal is false")
+
+	# Unit test helper project_vital_consequence
+	var p1: Dictionary = SeamsAdapter.project_vital_consequence(22, 22, 0, -2, true)
+	_check(p1["projected_max_hp"] == 20 and p1["projected_hp"] == 20 and p1["effective_hp_delta"] == -2, "Helper: max-HP sacrifice capping HP")
+	var p2: Dictionary = SeamsAdapter.project_vital_consequence(17, 18, 4, 2, true)
+	_check(p2["projected_max_hp"] == 20 and p2["projected_hp"] == 20 and p2["effective_hp_delta"] == 3, "Helper: heal capped by new max HP")
+	var p3: Dictionary = SeamsAdapter.project_vital_consequence(0, 18, 4, 2, true)
+	_check(p3["projected_max_hp"] == 20 and p3["projected_hp"] == 4 and p3["effective_hp_delta"] == 4, "Helper: hanging doll heal")
+	var p4: Dictionary = SeamsAdapter.project_vital_consequence(20, 20, 8, 0, false)
+	_check(p4["projected_max_hp"] == 20 and p4["projected_hp"] == 20 and p4["effective_hp_delta"] == 0, "Helper: unavailable preserves opening")
+
+
+## S6 AC1: Shipped v3_warden_buckle_heart_ward with living Warden at rank 2 (HP 22 / max HP 22),
+## wallet 10 gold / 5 scraps: sell_rivets quotes/claims raw gold +24, max_hp_delta -2, hp_delta 0,
+## while projected_max_hp = 20, projected_hp = 20, effective_hp_delta = -2;
+## detached party remains 22/22 until authoritative settlement.
+func _test_s6_ac1_warden_buckle_heart_ward_hp_projection() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		if (ev_raw as Dictionary).get("id") == "v3_warden_buckle_heart_ward":
+			warden_record = (ev_raw as Dictionary).duplicate(true)
+			break
+	_check(not warden_record.is_empty(), "S6 AC1: Found v3_warden_buckle_heart_ward")
+
+	var party: Array = _party("warden", 2, 22, 22, false)
+	var wallet := {"gold": 10, "scraps": 5}
+	var node_id := "node_s6_warden_1"
+
+	var visit := SeamsAdapter.open_stitched(node_id, warden_record, party, wallet)
+	_check(visit.is_valid(), "S6 AC1: Visit is valid")
+
+	var quote: Dictionary = visit.preview_choices()
+	var choices_by_id: Dictionary = {}
+	for c_raw: Variant in quote.get("choices", []):
+		choices_by_id[(c_raw as Dictionary).get("id")] = c_raw
+
+	_check(choices_by_id.has("sell_rivets"), "S6 AC1: sell_rivets present in quote")
+	var c_sell: Dictionary = choices_by_id.get("sell_rivets", {})
+	_check(c_sell.get("gold_delta") == 24, "S6 AC1: sell_rivets gold_delta is +24")
+	_check(c_sell.get("scraps_delta") == 0, "S6 AC1: sell_rivets scraps_delta is 0")
+	_check(c_sell.get("hp_delta") == 0, "S6 AC1: sell_rivets raw hp_delta is 0")
+	_check(c_sell.get("max_hp_delta") == -2, "S6 AC1: sell_rivets raw max_hp_delta is -2")
+	_check(c_sell.get("projected_max_hp") == 20, "S6 AC1: sell_rivets quote projected_max_hp is 20")
+	_check(c_sell.get("projected_hp") == 20, "S6 AC1: sell_rivets quote projected_hp is 20")
+	_check(c_sell.get("effective_hp_delta") == -2, "S6 AC1: sell_rivets quote effective_hp_delta is -2")
+	_check(c_sell.get("available") == true, "S6 AC1: sell_rivets quote is available")
+
+	# Check reinforce_shield_seam: max_hp +3, hp 0 -> 22+3=25 max, 22 hp, eff 0
+	var c_reinf: Dictionary = choices_by_id.get("reinforce_shield_seam", {})
+	_check(c_reinf.get("projected_max_hp") == 25, "S6 AC1: reinforce quote projected_max_hp is 25")
+	_check(c_reinf.get("projected_hp") == 22, "S6 AC1: reinforce quote projected_hp is 22")
+	_check(c_reinf.get("effective_hp_delta") == 0, "S6 AC1: reinforce quote effective_hp_delta is 0")
+
+	# Check leave: 0 delta -> 22 max, 22 hp, eff 0
+	var c_leave: Dictionary = choices_by_id.get("leave", {})
+	_check(c_leave.get("projected_max_hp") == 22, "S6 AC1: leave quote projected_max_hp is 22")
+	_check(c_leave.get("projected_hp") == 22, "S6 AC1: leave quote projected_hp is 22")
+	_check(c_leave.get("effective_hp_delta") == 0, "S6 AC1: leave quote effective_hp_delta is 0")
+
+	# Choose sell_rivets
+	var state_before: Dictionary = visit.read_state()
+	var receipt: Dictionary = visit.choose("sell_rivets", node_id, state_before)
+	_check(receipt.get("ok") == true, "S6 AC1: sell_rivets choose succeeded")
+	_check(receipt.get("gold_delta") == 24, "S6 AC1: receipt raw gold_delta +24")
+	_check(receipt.get("max_hp_delta") == -2, "S6 AC1: receipt raw max_hp_delta -2")
+	_check(receipt.get("hp_delta") == 0, "S6 AC1: receipt raw hp_delta 0")
+	_check(receipt.get("projected_max_hp") == 20, "S6 AC1: receipt top-level projected_max_hp is 20")
+	_check(receipt.get("projected_hp") == 20, "S6 AC1: receipt top-level projected_hp is 20")
+	_check(receipt.get("effective_hp_delta") == -2, "S6 AC1: receipt top-level effective_hp_delta is -2")
+	_check(receipt.get("wallet", {}).get("gold") == 34, "S6 AC1: receipt wallet gold updated to 34")
+
+	# Detached party remains 22/22 until authoritative settlement
+	var service_party: Array = visit.get_party()
+	for hero: Variant in service_party:
+		if (hero as Dictionary).get("id") == "warden":
+			_check((hero as Dictionary).get("hp") == 22, "S6 AC1: service party Warden HP remains 22")
+			_check((hero as Dictionary).get("max_hp") == 22, "S6 AC1: service party Warden max_hp remains 22")
+	for hero: Variant in party:
+		if (hero as Dictionary).get("id") == "warden":
+			_check((hero as Dictionary).get("hp") == 22, "S6 AC1: caller party Warden HP remains 22")
+			_check((hero as Dictionary).get("max_hp") == 22, "S6 AC1: caller party Warden max_hp remains 22")
+
+
+## S6 AC2: Shipped v3_rag_duelist_duel_mask_mirror with living rank-3 Rag Duelist at HP 17 / max HP 18,
+## >= 2 scraps: bind_mirror_cape retains raw HP +4 / max HP +2, but quote and successful claim
+## project max HP 20 and HP 20 (effective HP +3); with non-LOST Hanging duel-mask target at HP 0 / max HP 18,
+## the same choice projects HP 4 / max HP 20 and remains eligible.
+func _test_s6_ac2_rag_duelist_duel_mask_mirror_hp_projection() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var duelist_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		if (ev_raw as Dictionary).get("id") == "v3_rag_duelist_duel_mask_mirror":
+			duelist_record = (ev_raw as Dictionary).duplicate(true)
+			break
+	_check(not duelist_record.is_empty(), "S6 AC2: Found v3_rag_duelist_duel_mask_mirror")
+
+	# Case A: Rag Duelist at rank 3, HP 17 / max HP 18, wallet with >= 2 scraps
+	var party_17: Array = _party("rag_duelist", 3, 17, 18, false)
+	var wallet := {"gold": 8, "scraps": 4}
+	var node_id_a := "node_s6_duelist_1"
+
+	var visit_a := SeamsAdapter.open_stitched(node_id_a, duelist_record, party_17, wallet)
+	_check(visit_a.is_valid(), "S6 AC2: Case A visit is valid")
+
+	var quote_a: Dictionary = visit_a.preview_choices()
+	var choices_a: Dictionary = {}
+	for c_raw: Variant in quote_a.get("choices", []):
+		choices_a[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_bind_a: Dictionary = choices_a.get("bind_mirror_cape", {})
+	_check(c_bind_a.get("hp_delta") == 4, "S6 AC2: bind_mirror_cape raw hp_delta is 4")
+	_check(c_bind_a.get("max_hp_delta") == 2, "S6 AC2: bind_mirror_cape raw max_hp_delta is 2")
+	_check(c_bind_a.get("scraps_delta") == -2, "S6 AC2: bind_mirror_cape raw scraps_delta is -2")
+	_check(c_bind_a.get("projected_max_hp") == 20, "S6 AC2: bind_mirror_cape projected_max_hp is 20")
+	_check(c_bind_a.get("projected_hp") == 20, "S6 AC2: bind_mirror_cape projected_hp is 20")
+	_check(c_bind_a.get("effective_hp_delta") == 3, "S6 AC2: bind_mirror_cape effective_hp_delta is +3")
+	_check(c_bind_a.get("available") == true, "S6 AC2: bind_mirror_cape is available")
+
+	var state_a: Dictionary = visit_a.read_state()
+	var receipt_a: Dictionary = visit_a.choose("bind_mirror_cape", node_id_a, state_a)
+	_check(receipt_a.get("ok") == true, "S6 AC2: bind_mirror_cape choose succeeded")
+	_check(receipt_a.get("hp_delta") == 4, "S6 AC2: receipt retains raw hp_delta +4")
+	_check(receipt_a.get("max_hp_delta") == 2, "S6 AC2: receipt retains raw max_hp_delta +2")
+	_check(receipt_a.get("projected_max_hp") == 20, "S6 AC2: receipt projected_max_hp is 20")
+	_check(receipt_a.get("projected_hp") == 20, "S6 AC2: receipt projected_hp is 20")
+	_check(receipt_a.get("effective_hp_delta") == 3, "S6 AC2: receipt effective_hp_delta is +3")
+
+	# Case B: non-LOST Hanging duel-mask target at HP 0 / max HP 18
+	var party_hanging: Array = _party("rag_duelist", 3, 0, 18, false)
+	var node_id_b := "node_s6_duelist_hanging"
+
+	var visit_b := SeamsAdapter.open_stitched(node_id_b, duelist_record, party_hanging, wallet)
+	_check(visit_b.is_valid(), "S6 AC2: Case B hanging visit is valid")
+
+	var quote_b: Dictionary = visit_b.preview_choices()
+	var choices_b: Dictionary = {}
+	for c_raw: Variant in quote_b.get("choices", []):
+		choices_b[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_bind_b: Dictionary = choices_b.get("bind_mirror_cape", {})
+	_check(c_bind_b.get("available") == true, "S6 AC2: hanging target bind_mirror_cape remains eligible")
+	_check(c_bind_b.get("projected_max_hp") == 20, "S6 AC2: hanging target projected_max_hp is 20")
+	_check(c_bind_b.get("projected_hp") == 4, "S6 AC2: hanging target projected_hp is 4")
+	_check(c_bind_b.get("effective_hp_delta") == 4, "S6 AC2: hanging target effective_hp_delta is +4")
+
+	var state_b: Dictionary = visit_b.read_state()
+	var receipt_b: Dictionary = visit_b.choose("bind_mirror_cape", node_id_b, state_b)
+	_check(receipt_b.get("ok") == true, "S6 AC2: hanging target choose succeeded")
+	_check(receipt_b.get("projected_max_hp") == 20, "S6 AC2: hanging receipt projected_max_hp is 20")
+	_check(receipt_b.get("projected_hp") == 4, "S6 AC2: hanging receipt projected_hp is 4")
+	_check(receipt_b.get("effective_hp_delta") == 4, "S6 AC2: hanging receipt effective_hp_delta is +4")
+	_check(receipt_b.get("hp_delta") == 4, "S6 AC2: hanging receipt preserves raw hp_delta 4")
+	_check(receipt_b.get("max_hp_delta") == 2, "S6 AC2: hanging receipt preserves raw max_hp_delta 2")
+
+
+## S6 AC3: Authentic paid Seamstress stitch_wound at full HP, unaffordable 2-scrap Warden reinforcement,
+## or max-HP reduction below established floor of 10: availability and refusal remain exactly as before;
+## unavailable projections stay at opening HP/max HP (effective_hp_delta 0), no resources spent,
+## and visit remains open for Leave.
+func _test_s6_ac3_unavailable_choice_opening_hp_projections() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var surgeon_record: Dictionary = {}
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		var eid: String = String((ev_raw as Dictionary).get("id", ""))
+		if eid == "v3_seamstress_crimson_quilt_surgeon":
+			surgeon_record = (ev_raw as Dictionary).duplicate(true)
+		elif eid == "v3_warden_buckle_heart_ward":
+			warden_record = (ev_raw as Dictionary).duplicate(true)
+
+	# 1. Authentic paid Seamstress stitch_wound at full HP (20/20)
+	var party_seam: Array = _party("seamstress", 1, 20, 20, false)
+	var wallet_seam := {"gold": 12, "scraps": 0}
+	var visit_seam := SeamsAdapter.open_stitched("node_s6_seam_full", surgeon_record, party_seam, wallet_seam)
+	var quote_seam: Dictionary = visit_seam.preview_choices()
+	var choices_seam: Dictionary = {}
+	for c_raw: Variant in quote_seam.get("choices", []):
+		choices_seam[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_stitch: Dictionary = choices_seam.get("stitch_wound", {})
+	_check(c_stitch.get("available") == false, "S6 AC3: stitch_wound unavailable at full HP")
+	_check(c_stitch.get("projected_max_hp") == 20, "S6 AC3: stitch_wound unavailable projected_max_hp is opening 20")
+	_check(c_stitch.get("projected_hp") == 20, "S6 AC3: stitch_wound unavailable projected_hp is opening 20")
+	_check(c_stitch.get("effective_hp_delta") == 0, "S6 AC3: stitch_wound unavailable effective_hp_delta is 0")
+
+	var ref_seam: Dictionary = visit_seam.choose("stitch_wound", "node_s6_seam_full", visit_seam.read_state())
+	_check(ref_seam.get("ok") == false, "S6 AC3: stitch_wound refused at full HP")
+	_check(visit_seam.is_open() == true, "S6 AC3: visit remains open after refusal")
+	_check(visit_seam.get_wallet() == wallet_seam, "S6 AC3: no wallet resources spent after refusal")
+	var leave_seam: Dictionary = visit_seam.choose("leave", "node_s6_seam_full", visit_seam.read_state())
+	_check(leave_seam.get("ok") == true, "S6 AC3: visit remains open for Leave")
+
+	# 2. Unaffordable 2-scrap Warden reinforcement (wallet has 1 scrap)
+	var party_warden: Array = _party("warden", 2, 19, 22, false)
+	var wallet_short := {"gold": 10, "scraps": 1}
+	var visit_warden := SeamsAdapter.open_stitched("node_s6_w_short", warden_record, party_warden, wallet_short)
+	var quote_w: Dictionary = visit_warden.preview_choices()
+	var choices_w: Dictionary = {}
+	for c_raw: Variant in quote_w.get("choices", []):
+		choices_w[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_reinf: Dictionary = choices_w.get("reinforce_shield_seam", {})
+	_check(c_reinf.get("available") == false, "S6 AC3: reinforce unavailable with 1 scrap")
+	_check(c_reinf.get("projected_max_hp") == 22, "S6 AC3: reinforce unavailable projected_max_hp is opening 22")
+	_check(c_reinf.get("projected_hp") == 19, "S6 AC3: reinforce unavailable projected_hp is opening 19")
+	_check(c_reinf.get("effective_hp_delta") == 0, "S6 AC3: reinforce unavailable effective_hp_delta is 0")
+
+	var ref_w: Dictionary = visit_warden.choose("reinforce_shield_seam", "node_s6_w_short", visit_warden.read_state())
+	_check(ref_w.get("ok") == false, "S6 AC3: reinforce refused with insufficient scraps")
+	_check(visit_warden.is_open() == true, "S6 AC3: visit remains open after scraps refusal")
+	_check(visit_warden.get_wallet() == wallet_short, "S6 AC3: no scraps spent")
+	var leave_w: Dictionary = visit_warden.choose("leave", "node_s6_w_short", visit_warden.read_state())
+	_check(leave_w.get("ok") == true, "S6 AC3: visit remains open for Leave")
+
+	# 3. Max-HP reduction below established floor of 10 (Warden max_hp = 11, sell_rivets max_hp_delta = -2 -> 9 < 10)
+	var party_floor: Array = _party("warden", 2, 11, 11, false)
+	var visit_floor := SeamsAdapter.open_stitched("node_s6_w_floor", warden_record, party_floor, wallet_seam)
+	var quote_fl: Dictionary = visit_floor.preview_choices()
+	var choices_fl: Dictionary = {}
+	for c_raw: Variant in quote_fl.get("choices", []):
+		choices_fl[(c_raw as Dictionary).get("id")] = c_raw
+
+	var c_sell: Dictionary = choices_fl.get("sell_rivets", {})
+	_check(c_sell.get("available") == false, "S6 AC3: sell_rivets unavailable when result < 10 floor")
+	_check(c_sell.get("projected_max_hp") == 11, "S6 AC3: sell_rivets below floor projected_max_hp is opening 11")
+	_check(c_sell.get("projected_hp") == 11, "S6 AC3: sell_rivets below floor projected_hp is opening 11")
+	_check(c_sell.get("effective_hp_delta") == 0, "S6 AC3: sell_rivets below floor effective_hp_delta is 0")
+
+	var ref_fl: Dictionary = visit_floor.choose("sell_rivets", "node_s6_w_floor", visit_floor.read_state())
+	_check(ref_fl.get("ok") == false, "S6 AC3: sell_rivets refused when below 10 floor")
+	_check(visit_floor.is_open() == true, "S6 AC3: visit remains open after floor refusal")
+	var leave_fl: Dictionary = visit_floor.choose("leave", "node_s6_w_floor", visit_floor.read_state())
+	_check(leave_fl.get("ok") == true, "S6 AC3: visit remains open for Leave")
+
+
+## S6 AC4: Repeated quotes on one opened authentic visit are equal and do not change supplied
+## party, wallet, catalog, service state or seeded/global RNG. On success, the three added
+## top-level receipt fields equal the chosen quote; legacy nested receipt/intents,
+## one-claim-only protection and all existing regression assertions still pass.
+func _test_s6_ac4_repeated_quotes_and_claim_parity() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		if (ev_raw as Dictionary).get("id") == "v3_warden_buckle_heart_ward":
+			warden_record = (ev_raw as Dictionary).duplicate(true)
+			break
+
+	var party: Array = _party("warden", 2, 22, 22, false)
+	var wallet := {"gold": 10, "scraps": 5}
+	var orig_party: Array = party.duplicate(true)
+	var orig_wallet: Dictionary = wallet.duplicate(true)
+	var orig_record: Dictionary = warden_record.duplicate(true)
+	var node_id := "node_s6_parity_1"
+
+	var seeded_rng := RandomNumberGenerator.new()
+	seeded_rng.seed = 99991
+	var rng_seed_before: int = seeded_rng.state
+	seed(77771)
+	var global_rand_before: int = randi()
+	seed(77771)
+
+	var visit := SeamsAdapter.open_stitched(node_id, warden_record, party, wallet)
+	_check(visit.is_valid(), "S6 AC4: Visit is valid")
+
+	# Repeated quotes
+	var quote1: Dictionary = visit.preview_choices()
+	var quote2: Dictionary = visit.preview_choices()
+	var quote3: Dictionary = visit.preview_choices()
+
+	_check(SeamsAdapter._same_value(quote1, quote2), "S6 AC4: Repeated quote 1 and 2 are equal")
+	_check(SeamsAdapter._same_value(quote2, quote3), "S6 AC4: Repeated quote 2 and 3 are equal")
+	_check(party == orig_party, "S6 AC4: Party unmodified after repeated quotes")
+	_check(wallet == orig_wallet, "S6 AC4: Wallet unmodified after repeated quotes")
+	_check(warden_record == orig_record, "S6 AC4: Catalog record unmodified after repeated quotes")
+	_check(seeded_rng.state == rng_seed_before, "S6 AC4: Seeded RNG unmodified after repeated quotes")
+	_check(randi() == global_rand_before, "S6 AC4: Global RNG unmodified after repeated quotes")
+	seed(77771)
+
+	# Find sell_rivets quote
+	var chosen_quote_entry: Dictionary = {}
+	for c_raw: Variant in quote1.get("choices", []):
+		if (c_raw as Dictionary).get("id") == "sell_rivets":
+			chosen_quote_entry = c_raw
+			break
+
+	var state_before: Dictionary = visit.read_state()
+	var claim_res: Dictionary = visit.choose("sell_rivets", node_id, state_before)
+	_check(claim_res.get("ok") == true, "S6 AC4: choose succeeded")
+
+	# Three added top-level receipt fields equal the chosen quote
+	_check(claim_res.get("projected_max_hp") == chosen_quote_entry.get("projected_max_hp"), "S6 AC4: top-level projected_max_hp equals quote")
+	_check(claim_res.get("projected_hp") == chosen_quote_entry.get("projected_hp"), "S6 AC4: top-level projected_hp equals quote")
+	_check(claim_res.get("effective_hp_delta") == chosen_quote_entry.get("effective_hp_delta"), "S6 AC4: top-level effective_hp_delta equals quote")
+
+	# Legacy nested receipt unchanged
+	var nested_rc: Dictionary = claim_res.get("receipt", {})
+	_check(nested_rc.get("event_id") == "v3_warden_buckle_heart_ward", "S6 AC4: nested receipt event_id")
+	_check(nested_rc.get("choice_id") == "sell_rivets", "S6 AC4: nested receipt choice_id")
+	_check(nested_rc.get("gold_delta") == 24, "S6 AC4: nested receipt gold_delta 24")
+	_check(nested_rc.get("scraps_delta") == 0, "S6 AC4: nested receipt scraps_delta 0")
+	_check(nested_rc.get("hp_delta") == 0, "S6 AC4: nested receipt hp_delta 0")
+	_check(nested_rc.get("max_hp_delta") == -2, "S6 AC4: nested receipt max_hp_delta -2")
+	_check(nested_rc.get("wallet", {}).get("gold") == 34, "S6 AC4: nested receipt wallet gold 34")
+
+	# Legacy intents unchanged
+	var intents: Dictionary = claim_res.get("intents", {})
+	_check(intents.get("hero_id") == "warden", "S6 AC4: intents hero_id")
+	_check(intents.get("gold_delta") == 24, "S6 AC4: intents gold_delta")
+	_check(intents.get("scraps_delta") == 0, "S6 AC4: intents scraps_delta")
+	_check(intents.get("hp_delta") == 0, "S6 AC4: intents hp_delta")
+	_check(intents.get("max_hp_delta") == -2, "S6 AC4: intents max_hp_delta")
+
+	# One-claim-only protection
+	var second_claim: Dictionary = visit.choose("leave", node_id, visit.read_state())
+	_check(second_claim.get("ok") == false, "S6 AC4: second claim refused")
+
+	_check(seeded_rng.state == rng_seed_before, "S6 AC4: Seeded RNG unmodified after claim")
+	_check(randi() == global_rand_before, "S6 AC4: Global RNG unmodified after claim")
+
