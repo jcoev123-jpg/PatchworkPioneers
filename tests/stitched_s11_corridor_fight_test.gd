@@ -15,6 +15,189 @@ func _check(ok: bool, why: String) -> void:
 		failures.append(why)
 
 
+## Every visible threat comes from the same read-only projection as the live
+## driver. A fourth rank is checked too when the fixture has one.
+func _verify_live_intents(fight: StitchedCorridorFight, expected: int) -> void:
+	var found := 0
+	var occupied := 0
+	for rank in range(1, 5):
+		var foe: Dictionary = fight.engine._unit_at("foe", rank)
+		var projected: Dictionary = StitchedFoeIntent.choose(fight.battle, foe)
+		var ticket: StitchedFoeIntentPlate = fight.intent_tickets[rank]
+		var tag: Label = fight.intent_tags[rank]
+		if foe.is_empty():
+			_check(projected.is_empty() and not ticket.visible and ticket.foe_id.is_empty()
+				and not ticket.glyph.visible and ticket.tooltip_text.is_empty()
+				and not tag.visible and not fight.intent_projections.has(rank),
+				"empty/dead/heap foe R%d has no cached projection, glyph, or plaque" % rank)
+			continue
+		occupied += 1
+		_check(not projected.is_empty(), "live foe R%d has an actual next projection" % rank)
+		if projected.is_empty():
+			continue
+		found += 1
+		_check(ticket.is_visible_in_tree() and tag.is_visible_in_tree()
+			and ticket.texture == StitchedFoeIntentPlate.PLATE_TEXTURE
+			and ticket.foe_id == projected["foe_id"] and ticket.foe_rank == rank
+			and fight.intent_projections.get(rank, {}) == projected
+			and ticket.tooltip_text.contains(str(projected["foe_name"]))
+			and tag.text.begins_with("FOE R%d" % rank),
+			"mounted foe R%d has its own authored projection, ID/name and rank" % rank)
+		_check(ticket.size.x >= 170 and ticket.primary.get_theme_font_size("font_size") >= 24
+			and ticket.secondary.get_theme_font_size("font_size") >= 17
+			and ticket.get_global_rect().end.x <= 1280
+			and ticket.get_global_rect().position.y > fight.ribbon.get_global_rect().end.y
+			and ticket.get_global_rect().end.y < StitchedCorridorFight.BAR_TOP
+			and ticket.focus_mode == Control.FOCUS_ALL,
+			"R%d native text and accessible plaque clear top ribbon and lower bar" % rank)
+		# Compare live hit shapes, not hard-coded screen coordinates: the
+		# threat strip must never steal a click from a 3D figure or Wren.
+		for key in fight.hits:
+			if fight.hits[key].visible:
+				_check(not ticket.get_global_rect().intersects(fight.hits[key].get_global_rect()),
+					"foe intent R%d clears the actual %s figure hit zone" % [rank, key])
+		for action_id in fight.hand_buttons:
+			_check(not ticket.get_global_rect().intersects(fight.hand_buttons[action_id].get_global_rect()),
+				"foe intent R%d clears Wren's %s hand" % [rank, action_id])
+		if bool(projected.get("stun", false)) or bool(projected.get("pass", false)):
+			_check(ticket.primary.text in ["STUN", "PASS"] and ticket.secondary.text == "NO ACTION"
+				and not ticket.glyph.visible and tag.text.contains("NO ACTION"),
+				"R%d STUN/PASS is NO ACTION with no ghost strike" % rank)
+		else:
+			_check(ticket.tooltip_text.contains(str(projected["ability_name"]))
+				and ticket.tooltip_text.contains("Kind: " + str(projected["ability_kind"]).to_upper())
+				and tag.text.contains(str(projected["ability_kind"]).to_upper())
+				and ticket.tooltip_text.contains("BASE ACC")
+				and ticket.tooltip_text.contains("BASE DMG")
+				and ticket.ability_kind == projected["ability_kind"],
+				"R%d displays full authored ability name/kind/base details" % rank)
+			var target_line: String = ticket.secondary.text
+			var ranks := PackedStringArray()
+			for affected in projected.get("affected_ranks", []):
+				ranks.append(str(affected))
+			var side := "HERO" if projected.get("target_side", "") == "hero" else "FOE"
+			_check(not ranks.is_empty() and target_line.contains(side)
+				and target_line.contains(",".join(ranks))
+				and ticket.tooltip_text.contains("rank"),
+				"R%d displays ALL exact affected %s ranks %s" % [rank, side, ",".join(ranks)])
+	_check(occupied == expected and found == expected,
+		"non-vacuous corridor intent count %d/%d matches %d living foes" % [found, occupied, expected])
+
+
+func _verify_inspection(fight: StitchedCorridorFight) -> void:
+	var screen := fight.engine
+	var pristine := fight.battle.state_snapshot()
+	var rng := fight.battle.rng_state()
+	var receipts := screen.receipts.duplicate(true)
+	var part := screen._selected_part
+	var hand_pending := screen._hand_pending
+	var hand_budget := fight.battle.hand_action_open()
+	fight.refresh()
+	_verify_live_intents(fight, 3)
+	var ticket: StitchedFoeIntentPlate = fight.intent_tickets[1]
+	_check(ticket.visible and not ticket.tooltip_text.is_empty(), "precondition: a live foe's sewn ticket is inspectable")
+	ticket.mouse_entered.emit()
+	_check(fight.intent_disclosure.visible and fight.intent_detail.text.contains(ticket.tooltip_text)
+		and fight.intent_detail.text.contains("FOE R1") and fight.intent_disclosure.texture == StitchedCorridorFight.FELT
+		and fight.intent_detail.get_theme_font_size("font_size") >= 18
+		and ticket.primary.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
+		and ticket._get_tooltip(Vector2.ZERO).is_empty(),
+		"actual hovered ticket opens pale bone sewn full-detail disclosure, never a stock tooltip")
+	_check(fight.intent_detail.get_visible_line_count() == fight.intent_detail.get_line_count()
+		and fight.intent_detail.get_theme_color("font_color") == StitchedCorridorFight.BONE,
+		"all authoritative disclosure lines fit the pale-bone authored panel without clipping")
+	for key in fight.hits:
+		if fight.hits[key].visible:
+			_check(not fight.intent_disclosure.get_global_rect().intersects(fight.hits[key].get_global_rect()),
+				"hovered sewn disclosure clears actual 3D figure %s click zone (panel=%s hit=%s)" % [key, str(fight.intent_disclosure.get_global_rect()), str(fight.hits[key].get_global_rect())])
+	ticket.mouse_exited.emit()
+	_check(not fight.intent_disclosure.visible and fight.intent_detail.text.is_empty(),
+		"hover exit closes the sewn details")
+	ticket.grab_focus()
+	_check(ticket.has_focus() and fight.intent_disclosure.visible
+		and fight.intent_detail.text.contains(ticket.tooltip_text),
+		"keyboard focus opens the identical complete intent details")
+	ticket.release_focus()
+	_check(not fight.intent_disclosure.visible, "keyboard focus exit hides the disclosure")
+	_check(fight.battle.state_snapshot() == pristine and fight.battle.rng_state() == rng
+		and screen.receipts == receipts and screen._selected_part == part
+		and screen._hand_pending == hand_pending and fight.battle.hand_action_open() == hand_budget,
+		"idle refresh, hover and keyboard focus spend no battle state, RNG, part or hand")
+
+
+func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
+	var screen := fight.engine
+	var battle := fight.battle
+	var pristine := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var receipts := screen.receipts.duplicate(true)
+	var original: Dictionary = screen._unit_at("foe", 1).duplicate(true)
+	var third: Dictionary = screen._unit_at("foe", 3).duplicate(true)
+	_check(not original.is_empty() and not third.is_empty()
+		and not original.get("abilities", []).is_empty() and screen._unit_at("foe", 4).is_empty(),
+		"precondition: actual 4v3 fight has authored foe abilities and a vacant fourth rank")
+	if original.is_empty() or third.is_empty() or original.get("abilities", []).is_empty():
+		return
+	# The same kind of retained combat unit as the S2 post-summon fixture.
+	var extra := third.duplicate(true)
+	extra["id"] = "ragling"
+	extra["name"] = "Ragling"
+	extra["rank"] = 4
+	battle._units[str(extra["id"])] = extra
+	fight.refresh()
+	_verify_live_intents(fight, 4)
+	_check(fight.stage.figure_nodes.has("foe_4") and fight.stage.figure_nodes["foe_4"].visible,
+		"a fourth living unit appears in the mounted 3D corridor with its own ticket")
+	battle._units.erase(str(extra["id"]))
+	fight.refresh()
+	_verify_live_intents(fight, 3)
+	_check(not fight.intent_tickets[4].visible and fight.intent_tickets[4].foe_id.is_empty(),
+		"retired fourth foe never leaves a stale intent")
+	var actor: Dictionary = battle._units[str(original["id"])]
+	for state in ["PASS", "STUN", "MULTI"]:
+		actor["abilities"] = []
+		actor["statuses"] = {}
+		if state == "STUN":
+			actor["statuses"] = {"stun": 1}
+		elif state == "MULTI":
+			var ability: Dictionary = original["abilities"][0].duplicate(true)
+			ability["name"] = "A Long Tangle of Moonlit Needles and Unravelling Threads"
+			ability["multi"] = true
+			ability["target_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
+			ability["launch_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
+			actor["abilities"] = [ability]
+		fight.refresh()
+		_verify_live_intents(fight, 3)
+		var threat: StitchedFoeIntentPlate = fight.intent_tickets[1]
+		if state == "MULTI":
+			_check(fight.intent_projections[1].get("affected_ranks", []) == [1, 2, 3, 4]
+				and threat.secondary.text.contains("1,2,3,4")
+				and threat.tooltip_text.contains("A Long Tangle of Moonlit Needles")
+				and threat.glyph.visible,
+				"four-rank splash keeps the exact ranks, authored full name and glyph")
+		else:
+			_check(threat.primary.text == state and threat.secondary.text == "NO ACTION"
+				and not threat.glyph.visible, state + " cannot show a stale attack")
+	battle._units[str(original["id"])] = original.duplicate(true)
+	# Dead units and their scrap heaps are not intent-bearing actors.
+	var down: Dictionary = battle._units[str(original["id"])]
+	down["hp"] = 0
+	down["dead"] = true
+	var original_heaps := battle._heaps.duplicate(true)
+	battle._heaps.append({"rank": 1, "hp": 5, "max_hp": 5})
+	fight.refresh()
+	_verify_live_intents(fight, 2)
+	_check(fight.plates["foe_1"].visible and fight.plates["foe_1"].get_node("Name").text == "Scrap heap"
+		and not fight.intent_tickets[1].visible, "a visible fallen foe's heap never has a phantom threat")
+	battle._heaps = original_heaps
+	battle._units[str(original["id"])] = original.duplicate(true)
+	fight.refresh()
+	_verify_live_intents(fight, 3)
+	_check(battle.state_snapshot() == pristine and battle.rng_state() == rng
+		and screen.receipts == receipts and screen._selected_part.is_empty()
+		and battle.hand_action_open(), "all detached fixtures restore the genuine 4v3 battle, RNG and hand")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var screen := StitchedBattleScreen.new()
@@ -29,6 +212,9 @@ func _run() -> void:
 		and not fight.chrome.visible, "the classic chrome is tucked away whole, not torn out")
 	_check(screen.is_visible_in_tree() and screen._action_buttons.has("exit"), "the engine itself stays live")
 	_check(fight.stage.fighting and fight.stage.camera.fov == StitchedCorridorStage.FIGHT_FOV, "the corridor turns to the fight view")
+	_verify_live_intents(fight, 3)
+	_verify_inspection(fight)
+	_verify_intent_fixtures(fight)
 	var heroes := 0
 	var foes := 0
 	for key in fight.plates:
@@ -87,6 +273,7 @@ STATUS: none"))
 		_check(screen.receipts.size() > before_hand and not screen.battle.hand_action_open(), "Wren steadies a doll from the bar")
 		for action_id in StitchedKidHandActions.IDS:
 			_check(fight.hand_buttons[action_id].disabled, action_id + " rests once the hand is spent this round")
+		_verify_live_intents(fight, 3)
 	# Left alone on a turn, a standing doll speaks over its own head.
 	for kind in ["fight_idle", "fight_hurt", "fight_dark", "fight_boss", "fight_winning", "fight_losing"]:
 		_check(not fight.barks.data.contexts.get(kind, []).is_empty(), "fight lines for " + kind)
@@ -130,6 +317,12 @@ STATUS: none"))
 		if not done:
 			screen.submit_pass()
 		await process_frame
+		if not screen.battle.is_over():
+			var remaining := 0
+			for rank in range(1, 5):
+				if not screen._unit_at("foe", rank).is_empty():
+					remaining += 1
+			_verify_live_intents(fight, remaining)
 	_check(acted >= 3, "dolls act through the round part buttons (%d)" % acted)
 	_check(screen.battle.is_over(), "the fight ends")
 	await process_frame
