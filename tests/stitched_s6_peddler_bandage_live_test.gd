@@ -43,15 +43,22 @@ func _admit(app: Node) -> StitchedBattleScreen:
 
 ## Deterministic line that really defeats all three Roadblock foes with mounted part
 ## actions: a whole-party mending part first, then the highest authored damage at the lowest
-## legal rank. Every other part is left to its authored target rolls.
+## legal rank. While the Scissor Crab has not yet landed a Pinch from its round-three
+## authored rotation the party leaves the crab alone (front-rank foes, mends or legal
+## passes only), so the real Pinch gets its turn; afterwards it finishes the fight before
+## that Bleed expires. Every action is a genuine mounted part or legal pass.
 func _victory(stage: StitchedBattleScreen) -> Dictionary:
 	if stage == null or stage.battle == null or not stage.battle.is_valid():
 		return {}
 	var steps := 0
 	var abilities := 0
+	var pinch_hit_round := 0
 	for iteration in range(200):
 		if stage.battle.is_over() or stage.battle.current_side() != "hero":
 			break
+		var round_now := stage.battle.round_number()
+		var seen := stage.receipts.size()
+		var hold := round_now <= 3 and pinch_hit_round < 3
 		var actor: Dictionary = stage.battle.get_unit(stage.battle.current_actor_id())
 		var best_score := -10000
 		var best_id := ""
@@ -69,6 +76,8 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 					continue
 				var score := -20
 				if str(legal[0]["side"]) == "foe":
+					if hold and _only_crab_targets(legal):
+						continue
 					score = int(skill.get("dmg", [0, 0])[1]) * 4 + int(skill.get("dmg", [0, 0])[0])
 				elif str(skill.get("kind", "")) == "heal":
 					var ally: Dictionary = stage._unit_at("hero", rank)
@@ -91,8 +100,25 @@ func _victory(stage: StitchedBattleScreen) -> Dictionary:
 		if receipt.get("ok") != true:
 			break
 		steps += 1
+		for index in range(seen, stage.receipts.size()):
+			var action: Dictionary = stage.receipts[index]
+			if str(action.get("actor", "")) != "scissor_crab" \
+					or str(action.get("action", "")) != "ability" \
+					or str(action.get("ability", "")) != "pinch":
+				continue
+			for impact in action.get("results", []):
+				if bool(impact.get("hit", false)):
+					pinch_hit_round = round_now
 	return {"steps": steps, "abilities": abilities, "outcome": stage.battle.outcome(),
 		"rounds": stage.battle.round_number()}
+
+
+## A hold-phase strike is skipped when the Scissor Crab is all it could touch.
+func _only_crab_targets(legal: Array) -> bool:
+	for target in legal:
+		if str(target.get("id", "")) != "scissor_crab":
+			return false
+	return not legal.is_empty()
 
 
 ## Living survivors' real HP plus every positive carried Bleed, by canonical ID.
@@ -226,6 +252,13 @@ func _trace() -> Dictionary:
 	_check(victory_hp.size() == 4 and victory_bleed.has(pinch_target) \
 		and int(victory_bleed[pinch_target]) > 0,
 		"the real Pinch victim still carries positive Bleed at terminal victory")
+	# Without a real living Pinch witness the Peddler chain below has no subject;
+	# record the failures above, tear the app down and never dereference a null row.
+	if pinch.is_empty() or pinch_target.is_empty() or not victory_bleed.has(pinch_target) \
+			or int(victory_bleed[pinch_target]) <= 0:
+		app.free()
+		await process_frame
+		return {}
 	var opening: Dictionary = first.battle.opening_strike().duplicate(true)
 	var final_round := first.battle.round_number()
 	first._action_buttons["exit"].pressed.emit()
@@ -334,6 +367,12 @@ func _trace() -> Dictionary:
 		and bandage.text.contains(str(PRICE) + " gold") \
 		and leave_button != null and not leave_button.disabled,
 		"the eligible hero's bandage and the free Leave are both usable")
+	# An absent or disabled row has no lawful buy to press: keep the recorded
+	# failures and stop before emitting on a missing control.
+	if bandage == null or bandage.disabled or leave_button == null or leave_button.disabled:
+		app.free()
+		await process_frame
+		return {}
 	var unbled_id := ""
 	var rows_ok := true
 	for hero in displayed.get("heroes", []):

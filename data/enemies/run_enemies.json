@@ -43,7 +43,7 @@
       ]
     },
     "stitched": {
-      "max_hp": 30,
+      "max_hp": 24,
       "speed": 4,
       "dodge": 5,
       "acc": 0,
