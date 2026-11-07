@@ -26,6 +26,8 @@ const MARK_EXPLANATION := "Marked: mark-hunting abilities gain their authored bo
 const STUN_EXPLANATION := "Stun: skip the next turn; then briefly resist another Stun."
 const GUARD_EXPLANATION := "Guard: intercept hits aimed at a chosen ally while their thread is joined."
 const STUN_RESIST_EXPLANATION := "Stun Resist: blocks another Stun until this unit's next turn begins."
+const RIPOSTE_EXPLANATION := "Riposte: reaction damage retaliation on a confirmed hit by a surviving target, ignoring PROT."
+const THORNS_EXPLANATION := "Thorns: reaction damage retaliation on a confirmed hit by a surviving target, ignoring PROT."
 const WEAK_EXPLANATION := "Weak: outgoing direct attack damage -25% (rounded down)."
 const EXPOSED_EXPLANATION := "Exposed: incoming direct attack damage +50% (rounded down)."
 const COMBINED_WEAK_EXPOSED_EXPLANATION := "With Weak on the attacker and Exposed on the target, apply combined x9/8 once, rounded down before Tangled/PROT."
@@ -37,6 +39,28 @@ static func _number(value: Variant) -> bool:
 
 static func _positive_count(value: Variant) -> bool:
 	return value is int and int(value) > 0
+
+
+static func _has_valid_guard(unit: Dictionary) -> bool:
+	if unit.get("side") != "hero":
+		return false
+	var statuses: Variant = unit.get("statuses")
+	if not (statuses is Dictionary and _positive_count(statuses.get("guard"))):
+		return false
+	var target: Variant = unit.get("guard_target")
+	if not (target is String and not str(target).strip_edges().is_empty()):
+		target = statuses.get("guard_target")
+	if not (target is String):
+		return false
+	var target_str := str(target).strip_edges()
+	if target_str.is_empty():
+		return false
+	var unit_id: Variant = unit.get("id")
+	if not (unit_id is String and not str(unit_id).strip_edges().is_empty()):
+		return false
+	if target_str == str(unit_id).strip_edges():
+		return false
+	return true
 
 
 static func resolve_cue(unit: Dictionary) -> String:
@@ -85,6 +109,12 @@ static func cue(unit: Dictionary) -> String:
 		return "FRAY"
 	if statuses is Dictionary and _positive_count(statuses.get("bleed")):
 		return "BLD"
+	if _has_valid_guard(unit):
+		return "GRD"
+	if statuses is Dictionary and _positive_count(statuses.get("riposte")):
+		return "RIP"
+	if statuses is Dictionary and _positive_count(statuses.get("thorns")):
+		return "THRN"
 	if statuses is Dictionary and _positive_count(statuses.get("blind")):
 		return "BLND"
 	if statuses is Dictionary and _positive_count(statuses.get("tangled")):
@@ -157,6 +187,10 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			lines.append(GUARD_EXPLANATION)
 		if _positive_count(raw.get("stun_resist")):
 			lines.append(STUN_RESIST_EXPLANATION)
+		if _positive_count(raw.get("riposte")):
+			lines.append(RIPOSTE_EXPLANATION)
+		if _positive_count(raw.get("thorns")):
+			lines.append(THORNS_EXPLANATION)
 		if _positive_count(raw.get("blind")):
 			lines.append(BLIND_EXPLANATION)
 		if _positive_count(raw.get("tangled")):
