@@ -3,6 +3,7 @@ extends SceneTree
 ## StitchedFoeIntent. The shipped rules core is the only combat engine used here.
 
 const ZIPPER := "zipper_hauler"
+const SNAKE := "spool_snarekeeper"
 const RAGLING := "ragling"
 const HERO_IDS := ["warden", "seamstress", "tinker", "lantern_monk"]
 const ELITE_PATH := "res://data/enemies/m04_elites.json"
@@ -29,12 +30,17 @@ func _run() -> void:
 		"canonical S5 catalog loads: " + str(catalog.get("error", "")))
 	if bool(catalog.get("ok", false)):
 		_test_authored()
+		_test_authored_spool()
 		_test_drag(2)
 		_test_drag(4)
 		_test_slam()
+		_test_spool_pull_and_miss()
+		_test_spool_refusals()
 		_test_refusals_miss_and_blocked_pull()
 		_test_intent_and_replay()
+		_test_spool_replay()
 		await _test_live_driver()
+		await _test_live_spool_driver()
 	for failure in failures:
 		printerr(failure)
 	print("stitched_s5_zipper_haul_combo_test: ", "PASS" if failures.is_empty() else "FAIL",
@@ -129,22 +135,112 @@ func _test_authored() -> void:
 		"AC1: untouched Scissor Bailiff anchor keeps its Stitched identity")
 
 
+# ---------------------------------------------------------------- AC1 Snarekeeper authored data
+
+func _test_authored_spool() -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(ELITE_PATH))
+	_check(parsed is Array and not (parsed as Array).is_empty(),
+		"real m04 elite JSON is a nonempty array")
+	if not parsed is Array:
+		return
+	var raw: Dictionary = {}
+	var anchor: Dictionary = {}
+	for record in parsed:
+		if not record is Dictionary:
+			continue
+		if str(record.get("id", "")) == SNAKE:
+			raw = record
+		elif str(record.get("id", "")) == ZIPPER:
+			anchor = record
+	_check(not raw.is_empty(), "Spool Snarekeeper is present in the shipped elite catalog")
+	_check(not anchor.is_empty(), "named untouched Zipper Hauler anchor is present")
+	if raw.is_empty():
+		return
+	var lash := {
+		"id": "snare_lash", "name": "Snare Lash", "kind": "melee",
+		"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
+		"acc": 88, "dmg": [4, 5], "crit": 0, "effects": {"tangled": 1},
+		"self_move": 0, "move": "attack2",
+	}
+	var snare := {
+		"id": "spool_snare", "name": "Spool Snare", "kind": "debuff",
+		"launch": [1, 4], "target": [2, 3, 4], "target_side": "enemy", "multi": false,
+		"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"pull": 1, "fray": 6},
+		"self_move": 0, "move": "skill",
+	}
+	var profile := {
+		"max_hp": 40, "speed": 4, "dodge": 5, "acc": 0, "prot": 8,
+		"is_boss": false, "turns_per_round": 1, "trophy": "spool_snarekeeper_snare",
+		"abilities": [lash, snare],
+	}
+	_check(raw.get("stitched") == JSON.parse_string(JSON.stringify(profile)),
+		"AC1: Snarekeeper profile keeps its identity and changes only Spool Snare")
+	var legacy := raw.duplicate(true)
+	legacy.erase("stitched")
+	_check(legacy == JSON.parse_string(JSON.stringify({
+		"id": "spool_snarekeeper", "name": "Spool Snarekeeper", "max_hp": 40,
+		"art_path": "res://assets/paper/enemies/spool_snarekeeper.png",
+		"intent": {"target": "front", "actions": [
+			{"type": "shove", "amount": 0, "direction": 1, "weight": 2},
+			{"type": "debuff", "amount": 2, "status": "weak", "weight": 2},
+			{"type": "attack", "amount": 8, "weight": 3},
+			{"type": "attack", "amount": 9, "move": "attack2", "weight": 1},
+			{"type": "attack", "amount": 6, "hits": 2, "move": "attack3", "weight": 1},
+		]},
+	})), "AC1: Snarekeeper's entire legacy record stays unchanged")
+	var foe := StitchedEnemyCatalog.foe_for(catalog, SNAKE)
+	_check(foe.get("id") == SNAKE and foe.get("name") == "Spool Snarekeeper"
+		and foe.get("max_hp") == 40 and foe.get("speed") == 4 and foe.get("dodge") == 5
+		and foe.get("acc") == 0 and foe.get("prot") == 8 and foe.get("is_boss") == false
+		and foe.get("turns_per_round") == 1
+		and StitchedEnemyCatalog.trophy_for(catalog, SNAKE) == "spool_snarekeeper_snare",
+		"AC1: foe_for keeps HP/SPEED/DODGE/ACC/PROT/tier/trophy")
+	var ids: Array = []
+	for ability in foe.get("abilities", []):
+		ids.append(str(ability["id"]))
+	_check(ids == ["snare_lash", "spool_snare"],
+		"AC1: the shipped kit carries exactly the two canonical Snarekeeper moves")
+	for authored in [lash, snare]:
+		var validated := StitchedParts.validate_ability(authored)
+		_check(bool(validated.get("ok", false)),
+			"AC1: " + str(authored["id"]) + " validates through the real parts rules")
+		if bool(validated.get("ok", false)):
+			_check(foe["abilities"].has(validated["ability"]),
+				"AC1: foe_for carries the exact validated " + str(authored["id"]))
+	var selected: Dictionary = {}
+	for ability in foe.get("abilities", []):
+		if str(ability["id"]) == "spool_snare":
+			selected = ability
+	_check(not selected.is_empty() and selected.get("target") == [2, 3, 4]
+		and selected.get("effects") == {"pull": 1, "fray": 6}
+		and int(selected.get("acc", 0)) == 90 and selected.get("dmg") == [0, 0],
+		"AC1: Spool Snare reaches ranks 2/3/4 with authored pull 1 and Fray 6")
+	var anchor_foe := StitchedEnemyCatalog.foe_for(catalog, ZIPPER)
+	var anchor_ids: Array = []
+	for ability in anchor_foe.get("abilities", []):
+		anchor_ids.append(str(ability["id"]))
+	_check(anchor_ids == ["hauler_slam", "chain_drag"]
+		and anchor_foe["abilities"][1].get("target") == [2, 3, 4]
+		and anchor_foe["abilities"][1].get("effects") == {"pull": 1, "fray": 4},
+		"AC1: Zipper Hauler's canonical Slam and Chain Drag stay exactly authored")
+
+
 # ---------------------------------------------------------------- live battle helpers
 
-func _config(seed_value: int) -> Dictionary:
+func _config(seed_value: int, primary: String = ZIPPER) -> Dictionary:
 	var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW_PATH))
 	config["seed"] = seed_value
 	config["candle"] = 100
 	config["parts"].append_array(catalog["parts"].duplicate(true))
 	config["foes"] = [
-		StitchedEnemyCatalog.foe_for(catalog, ZIPPER),
+		StitchedEnemyCatalog.foe_for(catalog, primary),
 		StitchedEnemyCatalog.foe_for(catalog, RAGLING),
 	]
 	return config
 
 
-func _battle(seed_value: int) -> StitchedRules:
-	var built := StitchedRules.create(_config(seed_value))
+func _battle(seed_value: int, primary: String = ZIPPER) -> StitchedRules:
+	var built := StitchedRules.create(_config(seed_value, primary))
 	_check(bool(built.get("ok", false)),
 		"seed %d builds a real 4v2 battle: %s" % [seed_value, str(built.get("error", ""))])
 	if not bool(built.get("ok", false)):
@@ -244,6 +340,206 @@ func _test_drag(target_rank: int) -> void:
 			"rank-%d drag leaves both foes in their ranks" % target_rank)
 		break
 	_check(witnesses > 0, "nonvacuous confirmed rank-%d Chain Drag witness" % target_rank)
+
+
+# ---------------------------------------------------------------- AC2 Spool Snare pull
+
+func _hero_at_rank(battle: StitchedRules, rank: int) -> String:
+	for hero in battle.get_heroes():
+		if int(hero["rank"]) == rank:
+			return str(hero["id"])
+	return ""
+
+
+func _spool_ready(seed_value: int) -> StitchedRules:
+	var b := _battle(seed_value, SNAKE)
+	if b == null:
+		return null
+	if not _to(b, SNAKE, 2):
+		return null
+	var choice := StitchedFoeIntent.choose(b, b.get_unit(SNAKE))
+	if str(choice.get("ability_id", "")) != "spool_snare" \
+			or int(choice.get("target_rank", 0)) != 4:
+		return null
+	return b
+
+
+func _test_spool_pull_and_miss() -> void:
+	var hit_seed := -1
+	var miss_seed := -1
+	for seed_value in range(1, 97):
+		if hit_seed < 0:
+			var b := _spool_ready(seed_value)
+			if b != null:
+				var target_id := _hero_at_rank(b, 4)
+				var front_id := _hero_at_rank(b, 3)
+				var before_target := b.get_unit(target_id)
+				var before_front := b.get_unit(front_id)
+				var before_ranks := _hero_ranks(b)
+				var before_rng := b.rng_state()
+				var receipt := b.use_foe_ability("spool_snare", 4)
+				var results: Array = receipt.get("results", [])
+				if bool(receipt.get("ok", false)) and results.size() == 1 \
+						and bool(results[0].get("hit", false)):
+					hit_seed = seed_value
+					var result: Dictionary = results[0]
+					_check(result.get("target") == target_id
+						and int(result.get("target_rank", 0)) == 4,
+						"AC2: landed Spool Snare targets the deep rank-4 doll")
+					_check(int(result.get("damage", -1)) == 0
+						and int(result.get("target_hp", -1)) == int(before_target["hp"]),
+						"AC2: landed Spool Snare deals no direct damage")
+					_check(result.get("fray_event") == {
+						"ok": true, "action": "fray", "actor": target_id,
+						"before": int(before_target["fray"]), "change": 6,
+						"after": int(before_target["fray"]) + 6, "transition": "",
+					}, "AC2: landed Spool Snare adds exactly six actual Fray at candle 100")
+					_check(result.get("shift") == {
+						"ok": true, "from": 4, "to": 3, "swapped": front_id,
+					}, "AC2: landed Spool Snare reports the exact one-rank forward swap")
+					var expected_target := before_target.duplicate(true)
+					expected_target["rank"] = 3
+					expected_target["fray"] = int(before_target["fray"]) + 6
+					var expected_front := before_front.duplicate(true)
+					expected_front["rank"] = 4
+					_check(b.get_unit(target_id) == expected_target,
+						"AC2: the reeled doll keeps its identity and arrives at rank 3")
+					_check(b.get_unit(front_id) == expected_front,
+						"AC2: the former rank-3 ally swaps back with every other field kept")
+					_check(_hero_ranks(b) == _with_swap(before_ranks, target_id, 3, front_id, 4),
+						"AC2: Spool Snare swaps exactly the two dolls and moves no other hero")
+					_check(before_rng != b.rng_state() and int(result.get("roll", 0)) <=
+						int(result.get("hit_chance", 0)),
+						"AC2: the landed pull is a genuine authored hit roll")
+		if miss_seed < 0:
+			var m := _spool_ready(seed_value)
+			if m != null:
+				var target_id := _hero_at_rank(m, 4)
+				var before_target := m.get_unit(target_id)
+				var before_ranks := _hero_ranks(m)
+				var before_rng := m.rng_state()
+				var receipt := m.use_foe_ability("spool_snare", 4)
+				var results: Array = receipt.get("results", [])
+				if bool(receipt.get("ok", false)) and results.size() == 1 \
+						and not bool(results[0].get("hit", true)):
+					miss_seed = seed_value
+					var result: Dictionary = results[0]
+					_check(before_rng != m.rng_state(),
+						"AC2: a missed Spool Snare still spends its real hit roll")
+					_check(int(result.get("damage", -1)) == 0 and not result.has("shift")
+						and not result.has("fray_event") and result.get("statuses", []).is_empty(),
+						"AC2: a missed Spool Snare applies no damage, pull, Fray or status")
+					_check(_hero_ranks(m) == before_ranks
+						and int(m.get_unit(target_id)["fray"]) == int(before_target["fray"]),
+						"AC2: a missed Spool Snare causes no phantom displacement or Fray")
+		if hit_seed > 0 and miss_seed > 0:
+			break
+	_check(hit_seed > 0 and miss_seed > 0,
+		"nonvacuous seeded Spool Snare hit and miss witnesses")
+	if hit_seed > 0:
+		_test_spool_blocked(hit_seed)
+
+
+func _test_spool_blocked(hit_seed: int) -> void:
+	var variants := [
+		["tangled target", "tangled units cannot move"],
+		["cut thread", "thread cut blocks movement"],
+		["Wren held", "Wren is holding this doll back"],
+		["tangled neighbour", "a tangled ally cannot be swapped"],
+	]
+	for variant in variants:
+		var b := _spool_ready(hit_seed)
+		if b == null:
+			_check(false, "failed to rebuild the Spool Snare blocked witness")
+			continue
+		var target_id := _hero_at_rank(b, 4)
+		var front_id := _hero_at_rank(b, 3)
+		match str(variant[0]):
+			"tangled target":
+				b._units[target_id]["statuses"]["tangled"] = 1
+			"cut thread":
+				b._thread_cuts[target_id] = int(b.get_unit(target_id)["rank"])
+			"Wren held":
+				b._held[target_id] = b.round_number()
+			"tangled neighbour":
+				b._units[front_id]["statuses"]["tangled"] = 1
+		var before_rng := b.rng_state()
+		var before_ranks := _hero_ranks(b)
+		var before_fray := int(b.get_unit(target_id)["fray"])
+		var receipt := b.use_foe_ability("spool_snare", 4)
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and results.size() == 1
+			and bool(results[0].get("hit", false))
+			and int(results[0].get("roll", 0)) <= int(results[0].get("hit_chance", 0)),
+			"AC2: " + str(variant[0]) + " witness still lands a true authored hit")
+		if results.size() != 1:
+			continue
+		_check(results[0].get("shift") == {"ok": false, "reason": str(variant[1])},
+			"AC2: " + str(variant[0]) + " refuses the pull: " + str(variant[1]))
+		_check(int(results[0].get("damage", -1)) == 0,
+			"AC2: " + str(variant[0]) + " blocked pull still deals no direct damage")
+		_check(_hero_ranks(b) == before_ranks,
+			"AC2: " + str(variant[0]) + " moves neither the reeled doll nor its neighbour")
+		_check(int(b.get_unit(target_id)["fray"]) == before_fray + 6
+			and results[0].get("fray_event", {}).get("change", 0) == 6,
+			"AC2: " + str(variant[0]) + " still applies its authored Fray 6")
+		_check(before_rng != b.rng_state(),
+			"AC2: " + str(variant[0]) + " spends exactly the real hit roll")
+
+
+func _test_spool_refusals() -> void:
+	var b := _spool_ready(11)
+	if b == null:
+		_check(false, "precondition: Spool Snarekeeper reaches its round-two turn")
+		return
+	var state := b.state_snapshot()
+	var rng := b.rng_state()
+	var wrong := b.use_foe_ability("spool_snare", 1)
+	_check(wrong.get("ok") == false
+		and str(wrong.get("error", "")) == "no legal target in rank 1",
+		"AC2: rank-1 Spool Snare is refused by the real target mask")
+	_check(b.state_snapshot() == state and b.rng_state() == rng,
+		"AC2: refused Spool Snare spends no turn or RNG and mutates nothing")
+	b._units[SNAKE]["rank"] = 2
+	state = b.state_snapshot()
+	rng = b.rng_state()
+	var out_of_launch := b.use_foe_ability("spool_snare", 4)
+	_check(out_of_launch.get("ok") == false
+		and str(out_of_launch.get("error", "")) == "ability cannot launch from rank 2",
+		"AC2: rank-2 Spool Snare is refused before any roll by its launch mask")
+	_check(b.state_snapshot() == state and b.rng_state() == rng,
+		"AC2: out-of-launch Spool Snare consumes no turn or RNG and mutates nothing")
+
+
+func _spool_replay(seed_value: int) -> Dictionary:
+	var battle := _spool_ready(seed_value)
+	if battle == null:
+		return {}
+	var before_state := battle.state_snapshot()
+	var before_rng := battle.rng_state()
+	var choice := StitchedFoeIntent.choose(battle, battle.get_unit(SNAKE))
+	if choice.is_empty() or bool(choice.get("pass", true)):
+		return {}
+	var receipt := battle.use_foe_ability(str(choice["ability_id"]), int(choice["target_rank"]))
+	return {
+		"choice": choice,
+		"receipt": receipt,
+		"before_state": before_state,
+		"before_rng": before_rng,
+		"after_state": battle.state_snapshot(),
+		"after_rng": battle.rng_state(),
+	}
+
+
+func _test_spool_replay() -> void:
+	var first := _spool_replay(11)
+	var second := _spool_replay(11)
+	_check(first.size() > 0 and first == second,
+		"AC4: identical seed replays the same Snarekeeper intent, target and receipt")
+	_check(str(first.get("choice", {}).get("ability_id", "")) == "spool_snare"
+		and int(first.get("choice", {}).get("target_rank", 0)) == 4
+		and str(first.get("receipt", {}).get("ability", "")) == "spool_snare",
+		"AC4: replayed Snarekeeper round two commits the advertised rank-4 Spool Snare")
 
 
 # ---------------------------------------------------------------- AC2 exposing slam
@@ -407,8 +703,8 @@ func _trace(seed_value: int) -> Array:
 				and choice.get("target_side") == "hero"
 				and choice.get("ability_kind") == ("melee" if slam else "debuff")
 				and not bool(choice.get("multi", true))
-				and int(choice.get("target_rank", 0)) == (1 if slam else 2)
-				and choice.get("affected_ranks") == [1 if slam else 2]
+				and int(choice.get("target_rank", 0)) == (1 if slam else 4)
+				and choice.get("affected_ranks") == ([1] if slam else [4])
 				and int(choice.get("base_acc", -1)) == (84 if slam else 88)
 				and choice.get("base_damage") == ([5, 7] if slam else [0, 0])
 				and int(choice.get("base_crit", -1)) == 0
@@ -457,4 +753,61 @@ func _test_live_driver() -> void:
 			"AC3: real player Pass drives the mounted automatic foe driver")
 	_check(seen.has("hauler_slam") and seen.has("chain_drag"),
 		"live mounted driver commits both canonical Zipper Stitched moves")
+	screen.free()
+
+
+# ---------------------------------------------------------------- live mounted Snarekeeper
+
+func _test_live_spool_driver() -> void:
+	root.size = Vector2i(1280, 720)
+	var screen := StitchedBattleScreen.new()
+	_check(screen.begin(_config(11, SNAKE)),
+		"live battle screen begins with canonical Spool Snarekeeper and the real S2 party")
+	if screen.battle == null:
+		screen.free()
+		return
+	root.add_child(screen)
+	await process_frame
+	var seen: Dictionary = {}
+	var displayed_seen := false
+	var matched := false
+	for step in range(40):
+		if screen.battle.is_over():
+			break
+		if screen.battle.current_side() != "hero":
+			await process_frame
+			continue
+		# Every currently displayed foe plate is the pure chooser's projection.
+		var before_intents: Dictionary = {}
+		for foe in screen.battle.get_foes():
+			before_intents[str(foe["id"])] = screen._foe_intents.get(int(foe["rank"]), {})
+		var snake_rank := int(screen.battle.get_unit(SNAKE).get("rank", 0))
+		if snake_rank > 0 and screen._foe_tickets[snake_rank].visible:
+			displayed_seen = true
+			_check(screen._foe_intents.get(snake_rank, {})
+				== StitchedFoeIntent.choose(screen.battle, screen.battle.get_unit(SNAKE)),
+				"AC4: live Snarekeeper plate displays the authoritative chooser projection")
+		var before := screen.receipts.size()
+		_check(bool(screen.submit_pass().get("ok", false)),
+			"AC4: real player Pass drives the mounted automatic Snarekeeper driver")
+		for i in range(before, screen.receipts.size()):
+			var item: Dictionary = screen.receipts[i]
+			if str(item.get("actor", "")) != SNAKE or str(item.get("action", "")) != "ability":
+				continue
+			var ability := str(item.get("ability", ""))
+			seen[ability] = true
+			var projected: Dictionary = before_intents.get(SNAKE, {})
+			if ability == "spool_snare" and str(projected.get("ability_id", "")) == "spool_snare":
+				var results: Array = item.get("results", [])
+				_check(results.size() == 1
+					and int(results[0].get("target_rank", 0)) == int(projected.get("target_rank", 0))
+					and int(projected.get("target_rank", 0)) == 4,
+					"AC4: the displayed rank-4 Spool Snare is the committed target rank")
+				matched = true
+		if seen.has("snare_lash") and seen.has("spool_snare"):
+			break
+	_check(displayed_seen, "non-vacuous: the mounted Snarekeeper really shows a plate")
+	_check(matched, "AC4: the live driver commits its displayed Spool Snare to rank 4")
+	_check(seen.has("snare_lash") and seen.has("spool_snare"),
+		"live mounted driver commits both canonical Snarekeeper Stitched moves")
 	screen.free()
