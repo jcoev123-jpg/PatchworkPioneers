@@ -17,7 +17,7 @@ const DIVE := {
 }
 const DEVOUR := {
 	"id": "queen_devour", "name": "Devour", "kind": "melee",
-	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
+	"launch": [1, 2], "target": [1, 2], "target_side": "enemy", "multi": false,
 	"acc": 85, "dmg": [7, 9], "crit": 0, "effects": {"bleed": 2},
 	"self_move": 0, "move": "attack4",
 }
@@ -59,6 +59,7 @@ func _initialize() -> void:
 		_test_intent(catalog)
 		_test_dive(catalog)
 		_test_dive_intent(catalog)
+		_test_devour(catalog)
 	if failures.is_empty():
 		print("stitched_s5_moth_queen_dust_test: PASS (", checks, " checks)")
 	else:
@@ -123,7 +124,8 @@ func _test_source(catalog: Dictionary) -> void:
 		_check(not StitchedEnemyCatalog.foe_for(catalog, boss_id).is_empty(), "AC4: other boss still loads: " + boss_id)
 
 
-func _battle(catalog: Dictionary, seed_value: int, ids: Array = FOES) -> StitchedRules:
+func _battle(catalog: Dictionary, seed_value: int, ids: Array = FOES,
+		lost_ranks: Array = []) -> StitchedRules:
 	var preview: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW))
 	_check(preview is Dictionary, "real hero/part preview document exists")
 	if not preview is Dictionary:
@@ -135,8 +137,11 @@ func _battle(catalog: Dictionary, seed_value: int, ids: Array = FOES) -> Stitche
 		foes.append(foe)
 	var parts: Array = preview["parts"].duplicate(true)
 	parts.append_array(catalog["parts"])
+	var heroes: Array = preview["heroes"].duplicate(true)
+	for rank in lost_ranks:
+		heroes[int(rank) - 1].merge({"hp": 0, "lost": true, "parts": {}}, true)
 	var created := StitchedRules.create({"mode": "stitched", "seed": seed_value, "candle": 100,
-		"heroes": preview["heroes"].duplicate(true), "parts": parts, "foes": foes})
+		"heroes": heroes, "parts": parts, "foes": foes})
 	_check(created.get("ok", false), "real catalog battle creates: " + str(created.get("error")))
 	if not created.get("ok", false):
 		return null
@@ -149,7 +154,12 @@ func _battle(catalog: Dictionary, seed_value: int, ids: Array = FOES) -> Stitche
 			queen_turns += 1
 	_check(queen_turns == 2, "AC4: Moth Queen keeps two boss turns in the rolled order")
 	for hero in battle.get_heroes():
-		_check(hero["hp"] == hero["max_hp"] and hero["statuses"].is_empty(), "real healthy hero without statuses")
+		if lost_ranks.has(int(hero["rank"])):
+			_check(hero["lost"] and int(hero["hp"]) == 0 and hero["statuses"].is_empty(),
+				"genuinely absent doll has no HP or ghost statuses")
+		else:
+			_check(hero["hp"] == hero["max_hp"] and hero["statuses"].is_empty(),
+				"real healthy hero without statuses")
 	return battle
 
 
@@ -524,3 +534,136 @@ func _test_dive_intent(catalog: Dictionary) -> void:
 				"AC3: editing a projected Tangled status cannot modify the real kit or RNG")
 		_check(projections.size() == 2 and projections[0] == projections[1],
 			"AC3: two actual round-two projections exactly replay")
+
+
+# The Queen's single-target Devour shares her real catalog and seeded ranked fight.
+# Keep rank-one continuity and prove the newly legal rank two separately.
+func _test_devour(catalog: Dictionary) -> void:
+	for rank in [1, 2]:
+		var seen := {"hit": false, "miss": false}
+		for seed_value in range(1, 151):
+			var first := _devour_trace(catalog, seed_value, rank)
+			if first.is_empty():
+				continue
+			var key := "hit" if bool(first["hit"]) else "miss"
+			if not seen[key]:
+				seen[key] = true
+				_check(first == _devour_trace(catalog, seed_value, rank),
+					"single-target Devour at rank %d replays %s receipts, status, turns and RNG" % [rank, key])
+			if seen["hit"] and seen["miss"]:
+				break
+		_check(seen["hit"] and seen["miss"],
+			"non-vacuous rank-%d Devour hit with Bleed 2 and natural clean miss" % rank)
+	for missing_rank in [1, 2]:
+		var missing := _battle(catalog, 61, ["moth_queen", "ragling"], [missing_rank])
+		if missing == null or not _reach(missing, "moth_queen", []):
+			_check(false, "absent-rank Devour test reaches the Queen's real turn")
+			continue
+		var victim_id := "warden" if missing_rank == 1 else "seamstress"
+		var surviving_id := "seamstress" if missing_rank == 1 else "warden"
+		_check(missing.get_unit(victim_id)["lost"] and int(missing.get_unit(victim_id)["hp"]) == 0
+			and int(missing.get_unit(surviving_id)["hp"]) > 0,
+			"actual absent rank %d and occupied opposite front rank" % missing_rank)
+		var before := missing.state_snapshot()
+		var rng := missing.rng_state()
+		var denied := missing.use_foe_ability("queen_devour", missing_rank)
+		_check(not denied.get("ok", true)
+			and denied.get("error") == "no legal target in rank %d" % missing_rank
+			and missing.state_snapshot() == before and missing.rng_state() == rng,
+			"absent rank %d refuses Devour with no ghost bleed, turn or RNG spend" % missing_rank)
+		var legal := missing.use_foe_ability("queen_devour", 3 - missing_rank)
+		_check(legal.get("ok", false) and legal.get("results", []).size() == 1
+			and legal["results"][0]["target"] == surviving_id
+			and missing.get_unit(victim_id)["statuses"].is_empty(),
+			"the other occupied front rank is still legal with no ghost effect on missing doll")
+	for wrong_id in ["warden", "ragling"]:
+		var wrong := _battle(catalog, 61, ["moth_queen", "ragling"])
+		if wrong == null or not _reach(wrong, wrong_id, []):
+			_check(false, "wrong actor reaches its own real turn")
+			continue
+		var before := wrong.state_snapshot()
+		var rng := wrong.rng_state()
+		var denied := wrong.use_foe_ability("queen_devour", 2)
+		var error := "it is not a foe turn" if wrong_id == "warden" else "the foe has no ability queen_devour"
+		_check(not denied.get("ok", true) and denied.get("error") == error
+			and wrong.state_snapshot() == before and wrong.rng_state() == rng,
+			"wrong side/foe cannot spend Devour or mutate its rank-two doll")
+
+
+func _devour_trace(catalog: Dictionary, seed_value: int, rank: int) -> Dictionary:
+	var battle := _battle(catalog, seed_value, ["moth_queen", "ragling"])
+	if battle == null:
+		return {}
+	var receipts: Array = []
+	if not _reach(battle, "moth_queen", receipts):
+		return {}
+	var queen := battle.get_unit("moth_queen")
+	var victim_id := "warden" if rank == 1 else "seamstress"
+	var victim := battle.get_unit(victim_id)
+	var others: Dictionary = {}
+	for hero in battle.get_heroes():
+		if str(hero["id"]) != victim_id:
+			others[str(hero["id"])] = hero
+	_check(int(queen["rank"]) == 1 and battle.current_actor_id() == "moth_queen"
+		and battle.current_side() == "foe" and int(victim["rank"]) == rank
+		and int(victim["hp"]) > 16 and not victim["lost"] and not victim["hanging"]
+		and victim["statuses"].is_empty(),
+		"real living front-rank %d doll and first-rank Queen are ready for Devour" % rank)
+	if int(victim["hp"]) <= 16 or victim["lost"] or victim["hanging"]:
+		return {}
+	for invalid_rank in [0, 3, 4, 5]:
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var denied := battle.use_foe_ability("queen_devour", invalid_rank)
+		_check(not denied.get("ok", true)
+			and denied.get("error") == "no legal target in rank %d" % invalid_rank
+			and battle.state_snapshot() == before and battle.rng_state() == rng,
+			"out-of-mask Devour rank %d never spends status, turn or RNG" % invalid_rank)
+		receipts.append(denied)
+	var before_turn := battle.state_snapshot()
+	var actor := battle.get_unit("moth_queen")
+	var chance := StitchedRules.hit_chance(85 + int(actor["acc"]) + int(battle.candle_band()["enemy_acc"]),
+		StitchedRules.effective_dodge(victim), int(actor["miss_streak"]))
+	var receipt := battle.use_foe_ability("queen_devour", rank)
+	receipts.append(receipt)
+	var results: Array = receipt.get("results", [])
+	_check(receipt.get("ok", false) and receipt.get("actor") == "moth_queen"
+		and receipt.get("ability") == "queen_devour" and results.size() == 1
+		and (battle.round_number() > int(before_turn["round"]) or
+			int(battle.state_snapshot()["turn_index"]) > int(before_turn["turn_index"])),
+		"Devour spends one legal Queen turn and returns exactly one target result")
+	if not receipt.get("ok", false) or results.size() != 1:
+		return {}
+	var result: Dictionary = results[0]
+	var hit := bool(result.get("hit", false))
+	_check(result.get("target") == victim_id and int(result.get("target_rank", 0)) == rank
+		and int(result.get("hit_chance", 0)) == chance
+		and hit == (int(result.get("roll", 101)) <= chance),
+		"Devour seeded ACC roll names only the real selected front-rank doll")
+	var now := battle.get_unit(victim_id)
+	_check(int(now["hp"]) > 0 and not now["lost"] and not now["hanging"],
+		"the Devour victim survives so an effect receipt can lawfully apply")
+	for other_id in others:
+		_check(battle.get_unit(str(other_id)) == others[other_id],
+			"Devour does not splash the unselected doll " + str(other_id))
+	if hit:
+		var bases: Array = [StitchedRules.crit_damage(9)] if bool(result["crit"]) else [7, 8, 9]
+		var damages: Array = []
+		for base in bases:
+			var scaled := StitchedS1BEffects.enemy_damage(int(base) + int(queen["dmg_bonus"]),
+				battle.candle())
+			damages.append(StitchedRules.damage_after_modifiers(scaled, queen["statuses"],
+				victim["statuses"], false, 0, int(victim["prot"])))
+		var bleed := int(now["statuses"].get("bleed", 0))
+		_check(damages.has(int(result["damage"])) and int(result["damage"]) > 0
+			and int(result["target_hp"]) == int(victim["hp"]) - int(result["damage"])
+			and result["statuses"] == [{"status": "bleed", "duration": 2}]
+			and ((bleed == 2 and int(now["hp"]) == int(result["target_hp"]))
+				or (bleed == 1 and int(now["hp"]) == int(result["target_hp"]) - 1)),
+			"one natural Devour hit lands authored damage and Bleed 2 on the living target")
+	else:
+		_check(result["damage"] == 0 and result["statuses"].is_empty()
+			and int(result["target_hp"]) == int(victim["hp"]) and now == victim,
+			"Devour miss cannot deal damage, Bleed or another status")
+	return {"hit": hit, "rank": rank, "receipts": receipts,
+		"state": battle.state_snapshot(), "order": battle.turn_order(), "rng": battle.rng_state()}

@@ -585,7 +585,8 @@ func _complete_route(app: Node) -> void:
 				_check(false, "session battle is actually mounted")
 				break
 			var result := _win(stage)
-			_check(result.acted > 0 and stage.battle.is_over(), "actual legal turns settle the ranked route fight")
-			if not stage.battle.is_over():
+			_check(result.acted > 0 and stage.battle.is_over() and stage.battle.outcome() == "victory",
+				"actual legal turns earn the ranked route fight's victory")
+			if not stage.battle.is_over() or stage.battle.outcome() != "victory":
 				break
 			stage._action_buttons["exit"].pressed.emit()

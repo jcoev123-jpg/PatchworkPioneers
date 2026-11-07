@@ -1017,7 +1017,10 @@ func _run() -> void:
 	await _visit_kind("Campfire", false)
 	_check(_campfire_witnesses > campfire_before,
 		"a genuine mounted legal Campfire showed its recovery hint by mouse and keyboard")
-	var win_app: Node = await _new_run(42)
+	# Seed 43 is the verified winning route witness now that either front rank can be
+	# hit by the Colossus's Stun stomp and the Queen's bleeding Devour; seed 42's route
+	# ends in a real defeat at the final Boss under those authored targets.
+	var win_app: Node = await _new_run(43)
 	if win_app.stitched_run_session != null:
 		_complete_route(win_app)
 		_terminal(win_app, "victory")

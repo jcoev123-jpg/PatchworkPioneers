@@ -12,7 +12,7 @@ const BURST := {
 }
 const TREADLE := {
 	"id": "colossus_treadle", "name": "Treadle Stomp", "kind": "melee", "launch": [1, 3],
-	"target": [1], "target_side": "enemy", "multi": false, "acc": 84,
+	"target": [1, 2], "target_side": "enemy", "multi": false, "acc": 84,
 	"dmg": [6, 9], "crit": 0, "effects": {"stun": 1}, "self_move": 0, "move": "attack2",
 }
 const BOBBIN := {
@@ -356,6 +356,7 @@ func _treadle(catalog: Dictionary) -> void:
 	_check(seen["hit"], "bounded real Colossus Treadle hit with damage, Stun and a skipped turn")
 	_check(seen["miss"], "bounded real Colossus Treadle miss without a Stun or skipped turn")
 	_treadle_refusals(catalog)
+	_treadle_rank_two(catalog)
 
 
 func _treadle_trace(catalog: Dictionary, seed_value: int) -> Dictionary:
@@ -462,10 +463,87 @@ func _treadle_trace(catalog: Dictionary, seed_value: int) -> Dictionary:
 	}
 
 
+# Independently hit rank two through the public foe action; rank one is still covered by
+# _treadle_trace above. The first actor, target and survival preconditions are real.
+func _treadle_rank_two(catalog: Dictionary) -> void:
+	var seen := {"hit": false, "miss": false}
+	for seed_value in range(1, 201):
+		var first := _treadle_rank_two_trace(catalog, seed_value)
+		if first.is_empty():
+			continue
+		var key := "hit" if bool(first["hit"]) else "miss"
+		if not seen[key]:
+			seen[key] = true
+			_check(first == _treadle_rank_two_trace(catalog, seed_value),
+				"rank-two Treadle " + key + " replays receipts, HP/statuses, order and RNG")
+		if seen["hit"] and seen["miss"]:
+			break
+	_check(seen["hit"] and seen["miss"],
+		"real seeded rank-two Treadle produces both one landed Stun and a clean miss")
+
+
+func _treadle_rank_two_trace(catalog: Dictionary, seed_value: int) -> Dictionary:
+	var b := _battle(catalog, seed_value)
+	if b == null:
+		return {}
+	var receipts: Array = []
+	if not _reach(b, BOSS, receipts):
+		return {}
+	var victim := b.get_unit("seamstress")
+	var front := b.get_unit("warden")
+	var actor := b.get_unit(BOSS)
+	_check(b.current_actor_id() == BOSS and b.current_side() == "foe"
+		and int(actor["rank"]) == 1 and int(victim["rank"]) == 2
+		and int(victim["hp"]) > 16 and not victim["lost"] and not victim["hanging"]
+		and victim["statuses"].is_empty() and int(front["rank"]) == 1,
+		"actual living second-rank Seamstress faces a legal first-rank Colossus")
+	if int(victim["hp"]) <= 16 or victim["lost"] or victim["hanging"]:
+		return {}
+	for rank in [0, 3, 4, 5]:
+		receipts.append(_refuse(b, rank, "no legal target in rank %d" % rank, "colossus_treadle"))
+	var before := b.state_snapshot()
+	var chance := StitchedRules.hit_chance(84 + int(actor["acc"]) + int(b.candle_band()["enemy_acc"]),
+		StitchedRules.effective_dodge(victim), int(actor["miss_streak"]))
+	var action := b.use_foe_ability("colossus_treadle", 2)
+	receipts.append(action)
+	var results: Array = action.get("results", [])
+	_check(action.get("ok", false) and action.get("actor") == BOSS
+		and action.get("ability") == "colossus_treadle" and results.size() == 1
+		and (b.round_number() > int(before["round"]) or
+			int(b.state_snapshot()["turn_index"]) > int(before["turn_index"])),
+		"rank-two Treadle is single-target and spends exactly one real boss turn")
+	if not action.get("ok", false) or results.size() != 1:
+		return {}
+	var result: Dictionary = results[0]
+	var landed := bool(result.get("hit", false))
+	_check(result.get("target") == "seamstress" and int(result.get("target_rank", 0)) == 2
+		and int(result.get("hit_chance", 0)) == chance
+		and landed == (int(result.get("roll", 101)) <= chance),
+		"authored ACC/seed hit check resolves against the real rank-two doll")
+	var now := b.get_unit("seamstress")
+	_check(b.get_unit("warden") == front and int(now["hp"]) > 0
+		and not now["lost"] and not now["hanging"],
+		"Stun never splashes rank one; rank-two victim survives the hit")
+	if landed:
+		_check(int(result["damage"]) > 0
+			and int(result["target_hp"]) == int(victim["hp"]) - int(result["damage"])
+			and int(now["hp"]) == int(result["target_hp"])
+			and result["statuses"] == [{"status": "stun", "duration": 1}]
+			and (int(now["statuses"].get("stun", 0)) == 1
+				or int(now["statuses"].get("stun_resist", 0)) == 1),
+			"landed rank-two receipt and living hero HP/Stun (or consumed skip) agree")
+	else:
+		_check(result["damage"] == 0 and result["statuses"].is_empty()
+			and result["target_hp"] == victim["hp"] and now == victim,
+			"natural rank-two miss causes no Stun, damage or ghost hero state")
+	return {"hit": landed, "receipts": receipts, "state": b.state_snapshot(),
+		"order": b.turn_order(), "rng": b.rng_state()}
+
+
 func _treadle_refusals(catalog: Dictionary) -> void:
 	var b := _battle(catalog, 41)
 	if b != null and _reach(b, BOSS, []):
-		for rank in [0, 2, 5]:
+		for rank in [0, 3, 4, 5]:
 			_refuse(b, rank, "no legal target in rank %d" % rank, "colossus_treadle")
 		_check(b.current_actor_id() == BOSS, "invalid Treadle ranks cannot spend the Colossus turn")
 	var missing := _battle(catalog, 41, [BOSS, "ragling"], [1])
@@ -473,6 +551,19 @@ func _treadle_refusals(catalog: Dictionary) -> void:
 		_check(missing.get_unit("warden")["lost"] and missing.get_unit("seamstress")["hp"] > 0,
 			"rank-one doll genuinely absent while other heroes live")
 		_refuse(missing, 1, "no legal target in rank 1", "colossus_treadle")
+		var legal := missing.use_foe_ability("colossus_treadle", 2)
+		_check(legal.get("ok", false) and legal.get("results", []).size() == 1
+			and legal["results"][0]["target"] == "seamstress",
+			"missing rank one leaves the real rank-two doll legally vulnerable")
+		_check(missing.get_unit("warden")["lost"] and missing.get_unit("warden")["statuses"].is_empty(),
+			"no ghost Stun is applied to the missing front doll")
+	var missing_two := _battle(catalog, 41, [BOSS, "ragling"], [2])
+	if missing_two != null and _reach(missing_two, BOSS, []):
+		_check(missing_two.get_unit("seamstress")["lost"] and missing_two.get_unit("warden")["hp"] > 0,
+			"rank-two doll is actually absent while rank one survives")
+		_refuse(missing_two, 2, "no legal target in rank 2", "colossus_treadle")
+		_check(missing_two.get_unit("seamstress")["statuses"].is_empty(),
+			"absent rank-two doll cannot receive ghost Stun")
 	for wrong_id in ["warden", "ragling"]:
 		var wrong := _battle(catalog, 41)
 		if wrong == null or not _reach(wrong, wrong_id, []):

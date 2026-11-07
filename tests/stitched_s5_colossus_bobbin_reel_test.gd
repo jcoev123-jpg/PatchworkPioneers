@@ -16,7 +16,7 @@ const RAGLING := "ragling"
 
 const TREADLE := {
 	"id": "colossus_treadle", "name": "Treadle Stomp", "kind": "melee", "launch": [1, 3],
-	"target": [1], "target_side": "enemy", "multi": false, "acc": 84,
+	"target": [1, 2], "target_side": "enemy", "multi": false, "acc": 84,
 	"dmg": [6, 9], "crit": 0, "effects": {"stun": 1}, "self_move": 0, "move": "attack2",
 }
 const BOBBIN_ABILITY := {

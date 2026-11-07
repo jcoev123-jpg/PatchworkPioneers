@@ -22,7 +22,7 @@ const DIVE := {
 }
 const DEVOUR := {
 	"id": "queen_devour", "name": "Devour", "kind": "melee",
-	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
+	"launch": [1, 2], "target": [1, 2], "target_side": "enemy", "multi": false,
 	"acc": 85, "dmg": [7, 9], "crit": 0, "effects": {"bleed": 2},
 	"self_move": 0, "move": "attack4",
 }

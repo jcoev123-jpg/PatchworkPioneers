@@ -49,7 +49,7 @@ const LEGACY_INTENT := {
 }
 const COLOSSUS_TREADLE := {
 	"id": "colossus_treadle", "name": "Treadle Stomp", "kind": "melee",
-	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
+	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
 	"acc": 84, "dmg": [6, 9], "crit": 0, "effects": {"stun": 1},
 	"self_move": 0, "move": "attack2",
 }
@@ -85,7 +85,7 @@ const MOTH_DIVE := {
 }
 const MOTH_DEVOUR := {
 	"id": "queen_devour", "name": "Devour", "kind": "melee",
-	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
+	"launch": [1, 2], "target": [1, 2], "target_side": "enemy", "multi": false,
 	"acc": 85, "dmg": [7, 9], "crit": 0, "effects": {"bleed": 2},
 	"self_move": 0, "move": "attack4",
 }
