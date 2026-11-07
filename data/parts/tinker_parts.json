@@ -296,7 +296,11 @@
             "dmg": [
               4,
               7
-            ]
+            ],
+            "effects": {
+              "weak": 1,
+              "mark": 1
+            }
           }
         },
         "3": {
@@ -307,12 +311,13 @@
               9
             ],
             "effects": {
-              "weak": 2
+              "weak": 2,
+              "mark": 2
             }
           }
         }
       },
-      "text": "Clamp an enemy's seam and leave it Weak."
+      "text": "Clamp an enemy's seam and leave it Weak; a reinforced clamp also Marks the seam so Overload bites deeper."
     },
     {
       "id": "tinker_arms_overload",
