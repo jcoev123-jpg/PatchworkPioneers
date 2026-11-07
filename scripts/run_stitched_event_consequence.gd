@@ -1152,10 +1152,10 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 			return {"ok": false}
 		parsed["fear"] = int(raw_fear)
 	if has_min_fray:
-		var raw_min_fray: Variant = effect.get("min_fray")
-		if typeof(raw_min_fray) != TYPE_INT:
+		var min_fray_read: Dictionary = _read_signed_int(effect.get("min_fray"))
+		if not min_fray_read.get("ok", false):
 			return {"ok": false}
-		var min_fray_val: int = int(raw_min_fray)
+		var min_fray_val: int = int(min_fray_read["value"])
 		if min_fray_val < MIN_FRAY_MIN or min_fray_val > MIN_FRAY_MAX:
 			return {"ok": false}
 		parsed["min_fray"] = min_fray_val

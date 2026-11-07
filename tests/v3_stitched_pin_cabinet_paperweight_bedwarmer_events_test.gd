@@ -36,7 +36,7 @@ const EXPECTED := {
 		"title": "The Moonblack Paperweight",
 		"description": "A moonblack glass paperweight pins a torn house plan to the floorboards; a small cream-felt mapkeeper waits beneath its cold reflection, holding an ink-stained spool.",
 		"choices": [
-			{"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16}},
+			{"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16, "min_fray": 1}},
 			{"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the black glass holding down the plan", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
