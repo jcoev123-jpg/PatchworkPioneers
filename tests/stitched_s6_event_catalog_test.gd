@@ -92,6 +92,50 @@ func _run() -> void:
 	bogus.choices[0].outcome = {"gold": -4.5}
 	_check(session._convert_event(bogus, overrides).is_empty(),
 		"fractional authored wallet debit cannot be rounded into a purchase")
+
+	# Smallest special Warden-event routability check outside the generic SOURCES list
+	var vital_doc: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/v3_hero_vital_events.json"))
+	_check(vital_doc is Dictionary and vital_doc.get("events") is Array, "v3_hero_vital_events parses")
+	var warden_raw: Dictionary = {}
+	if vital_doc is Dictionary and vital_doc.get("events") is Array:
+		for ev in vital_doc.events:
+			if ev is Dictionary and str(ev.get("id", "")) == "v3_warden_buckle_heart_ward":
+				warden_raw = ev.duplicate(true)
+				break
+	_check(not warden_raw.is_empty() and RunEventChoice.new(warden_raw).is_valid(),
+		"v3_warden_buckle_heart_ward exists and passes RunEventChoice schema check")
+	_check(session._convert_event(warden_raw, overrides).is_empty(),
+		"generic converter preserves fail-closed rejection on Warden hero-vital four-key outcome")
+
+	StitchedRunSession.pinned_event_id = "v3_warden_buckle_heart_ward"
+	var warden_session := StitchedRunSession.start(234)
+	if warden_session != null:
+		var target_node := ""
+		for nid in warden_session.choices():
+			if warden_session.map.get_node(nid).type == "Event":
+				target_node = nid
+				break
+		if not target_node.is_empty():
+			_check(warden_session.enter(target_node, warden_session.snapshot())
+				and warden_session.phase == "visit"
+				and warden_session.pending.event_id == "v3_warden_buckle_heart_ward"
+				and warden_session._service is RunStitchedHeroVitalSeams
+				and warden_session.visit_actions().size() == 3,
+				"authentic Warden vitality crossroad admits into live Stitched Event and dispatches to RunStitchedHeroVitalSeams")
+
+	var no_warden_session := StitchedRunSession.start(234, ["seamstress", "tinker", "lantern_monk", "rag_duelist"])
+	if no_warden_session != null:
+		var target_node := ""
+		for nid in no_warden_session.choices():
+			if no_warden_session.map.get_node(nid).type == "Event":
+				target_node = nid
+				break
+		if not target_node.is_empty():
+			_check(no_warden_session.enter(target_node, no_warden_session.snapshot())
+				and no_warden_session.phase == "visit"
+				and no_warden_session.pending.event_id != "v3_warden_buckle_heart_ward",
+				"party without Warden never samples or offers v3_warden_buckle_heart_ward")
+	StitchedRunSession.pinned_event_id = ""
 	var app := await _new_run(234)
 	var live: StitchedRunSession = app.stitched_run_session
 	if live != null:

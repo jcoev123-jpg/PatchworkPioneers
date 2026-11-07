@@ -1089,6 +1089,31 @@ func _apply_receipt(result: Dictionary) -> void:
 	for index in heroes.size():
 		if lost.has(heroes[index].id):
 			heroes[index] = lost[heroes[index].id]
+	if result.has("max_hp_delta"):
+		var target_id: String = str(result.get("target_hero_id", result.get("hero_id", "")))
+		var max_delta: int = int(result.get("max_hp_delta", 0))
+		for hero in heroes:
+			if hero.id == target_id and not hero.lost:
+				hero.base_max_hp += max_delta
+	var hp_delta: int = int(result.get("hp_delta", 0))
+	if hp_delta != 0 and result.has("target_hero_id"):
+		var target_id: String = str(result.get("target_hero_id", result.get("hero_id", "")))
+		var authority := StitchedRules.new()
+		authority._valid = true
+		authority._rng = rng
+		authority._parts = catalog
+		authority._candle = candle
+		authority._satchel = satchel.duplicate(true)
+		for hero in heroes:
+			authority._units[hero.id] = hero
+		if authority._units.has(target_id) and not authority._units[target_id].lost:
+			var target_unit: Dictionary = authority._units[target_id]
+			if hp_delta < 0:
+				authority._damage_target(target_unit, -hp_delta, {})
+			else:
+				target_unit.hp = mini(int(target_unit.max_hp), int(target_unit.hp) + hp_delta)
+				target_unit.hanging = target_unit.hp == 0 and not target_unit.lost
+		satchel = authority.satchel()
 	for hero in heroes:
 		if hero.fray < StitchedRules.FRAY_RECOVER and hero.resolve in StitchedS1BEffects.RESOLVE_TRAITS:
 			hero.resolve = ""
@@ -1097,8 +1122,10 @@ func _apply_receipt(result: Dictionary) -> void:
 		for worn in hero.parts.values():
 			if not worn.torn:
 				maximum += int(StitchedParts.stat_at_tier(catalog[worn.id], worn.tier).get("max_hp", 0))
+		maximum = maxi(10, maximum)
 		hero.max_hp = maximum
 		hero.hp = mini(hero.hp, maximum)
+		hero.hanging = hero.hp == 0 and not hero.lost
 
 
 func _open_event() -> bool:
@@ -1138,6 +1165,23 @@ func _open_event() -> bool:
 	for override_id in overrides:
 		if not seen_overrides.has(override_id):
 			return false
+	var vital_document: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/v3_hero_vital_events.json"))
+	if not vital_document is Dictionary or not vital_document.get("events") is Array:
+		return false
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in vital_document.events:
+		if ev_raw is Dictionary and str(ev_raw.get("id", "")) == "v3_warden_buckle_heart_ward":
+			warden_record = ev_raw.duplicate(true)
+			break
+	if warden_record.is_empty() or not RunEventChoice.new(warden_record).is_valid():
+		return false
+	var warden_eligible := false
+	for hero in heroes:
+		if hero.id == "warden" and not hero.lost:
+			warden_eligible = true
+			break
+	if warden_eligible:
+		records.append(warden_record)
 	if records.is_empty():
 		return false
 	records.sort_custom(func(a: Dictionary, b: Dictionary): return a.id < b.id)
@@ -1160,6 +1204,8 @@ func _open_event() -> bool:
 			_service = RunStitchedInkblackUnpickerEvent.new(_event_record.id, id, _roster(), satchel, wallet, CALM_PRICE, UNPICK_YIELD)
 		"v3_threadmill_sewing_circle", "v3_moonlace_darning_parlor":
 			_service = RunStitchedSewingWaystationEvent.new(_event_record.id, id, _roster(), satchel, wallet, catalog, SEWING_COST, SEWING_COST)
+		"v3_warden_buckle_heart_ward":
+			_service = RunStitchedHeroVitalSeams.open_stitched(id, _event_record, _roster(), wallet)
 		_:
 			_service = RunStitchedEventConsequence.new(_event_record)
 	var quote: Dictionary = _service.preview(_event_snapshot(), catalog) if _service is RunStitchedEventConsequence else _service.preview_choices()
@@ -1315,6 +1361,8 @@ func _choose_event(choice_id: String, arguments: Array) -> Dictionary:
 				return _service.choose(choice_id, index, pending.node_id, state)
 		return {"ok": false}
 	if not _service is RunStitchedEventConsequence:
+		if _service is RunStitchedHeroVitalSeams and not arguments.is_empty():
+			return {"ok": false}
 		return _service.choose(choice_id, pending.node_id, _service.read_state())
 	match _event_record.get("actions", {}).get(choice_id, ""):
 		"unpick":
