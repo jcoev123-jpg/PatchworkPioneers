@@ -148,7 +148,7 @@ func _earn_moth_wallet(stage: StitchedBattleScreen) -> int:
 			stage._part_buttons[slot].pressed.emit()
 			for rank in [1, 2, 3, 4]:
 				var target: Button = stage._target_buttons.get("foe_" + str(rank))
-				if target != null and not target.disabled and target.is_visible_in_tree():
+				if target != null and not target.disabled and target.visible:
 					target.pressed.emit()
 					done = true
 					break
