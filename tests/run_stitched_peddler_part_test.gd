@@ -523,7 +523,7 @@ func _test_full_ability_quotes() -> void:
 	merged[claw_id] = foreign["by_id"][claw_id].duplicate(true)
 	var merged_before: Dictionary = merged.duplicate(true)
 	var witnesses: Array = [
-		{"id": HEAD, "key": "weak", "amounts": [1, 2, 3], "dmg": [[3, 5], [5, 7], [6, 9]], "crit": [0, 0, 8],
+		{"id": HEAD, "key": "weak", "amounts": [2, 2, 3], "dmg": [[3, 5], [5, 7], [6, 9]], "crit": [0, 0, 8],
 			"target": [[1, 2], [1, 2], [1, 2, 3]]},
 		{"id": claw_id, "key": "bleed", "amounts": [2, 3, 4], "dmg": [[4, 7], [5, 8], [6, 9]], "crit": [0, 0, 0],
 			"target": [[1, 2], [1, 2], [1, 2]]},

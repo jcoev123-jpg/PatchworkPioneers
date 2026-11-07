@@ -1,5 +1,5 @@
 extends SceneTree
-## S4 Warden contract: Helmet Rattle's Weak seam deepens with its stitch tier (I/II/III -> 1/2/3),
+## S4 Warden contract: Helmet Rattle's Weak seam deepens with its stitch tier (I/II/III -> 2/2/3),
 ## and at tier III the clanging helm also reaches enemy rank 3. Tiers I and II stay at ranks 1-2,
 ## so the tier-III reach is the only added rank; rank 4 is refused at every tier.
 ##
@@ -27,7 +27,7 @@ const RANK_THREE_FOE := "moth_scribe"
 const OTHER_FOES := ["fray_scavenger", "scissor_crab"]
 const RANK_THREE := 3
 const RANK_FOUR := 4
-const TIER_WEAK := [1, 2, 3]
+const TIER_WEAK := [2, 2, 3]
 const TIER_DMG := [[3, 5], [5, 7], [6, 9]]
 const TIER_CRIT := [0, 0, 8]
 const TIER_ACC := [90, 90, 90]
@@ -49,7 +49,7 @@ const SIBLING_EXPECTED := {
 		"dmg": [[4, 6], [5, 8], [7, 10]],
 		"acc": [90, 90, 95],
 		"crit": [0, 0, 0],
-		"effects": [{"weak": 1}, {"weak": 1}, {"weak": 1}],
+		"effects": [{"weak": 2}, {"weak": 2}, {"weak": 2}],
 	},
 	"warden_arms_shield_catch": {
 		"slot": "arms",
@@ -137,6 +137,7 @@ var witnessed_hit_seed := 0
 
 func _initialize() -> void:
 	_test_real_catalog()
+	_test_base_weak_reply()
 	_test_invalid_copies()
 	_test_rank_three_hit_witness()
 	_test_lower_tiers_cannot_reach_rank_three()
@@ -246,7 +247,7 @@ func _test_real_catalog() -> void:
 	_check(int(base.get("acc", -1)) == 90, "AC2: tier I keeps ACC 90")
 	_check(base.get("dmg", []) == [3, 5], "AC2: tier I keeps damage [3, 5]")
 	_check(int(base.get("crit", -1)) == 0, "AC2: tier I keeps crit 0")
-	_check(base.get("effects", {}) == {"weak": 1}, "AC1: tier I applies Weak 1")
+	_check(base.get("effects", {}) == {"weak": 2}, "AC1: tier I applies Weak 2")
 	_check(int(base.get("self_move", -1)) == 0, "AC2: the move never shifts the wearer")
 	_check(str(base.get("move", "")) == "attack2", "AC2: the move keeps the attack2 pose")
 
@@ -335,7 +336,10 @@ func _test_real_catalog() -> void:
 
 ## A copy of the shipped preview with the real Warden catalog appended and Helmet Rattle worn
 ## in Warden's head slot. Hero array order is hero rank, so warden_rank moves him to that rank.
-func _config(catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1) -> Dictionary:
+func _config(
+	catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1,
+	head_part: String = PART_ID
+) -> Dictionary:
 	var parsed: Variant = _read_json(PREVIEW_PATH)
 	if not parsed is Dictionary:
 		return {}
@@ -349,7 +353,7 @@ func _config(catalog: Dictionary, seed_value: int, tier: int, warden_rank: int =
 	if warden_entry.is_empty():
 		_check(false, "AC2: the shipped preview really contains Warden")
 		return {}
-	warden_entry["parts"]["head"] = {"id": PART_ID, "tier": tier, "torn": false}
+	warden_entry["parts"]["head"] = {"id": head_part, "tier": tier, "torn": false}
 	if warden_rank != 1:
 		var reordered: Array = []
 		for hero in config["heroes"]:
@@ -361,9 +365,10 @@ func _config(catalog: Dictionary, seed_value: int, tier: int, warden_rank: int =
 
 
 func _battle(
-	catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1
+	catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1,
+	head_part: String = PART_ID
 ) -> StitchedRules:
-	var config := _config(catalog, seed_value, tier, warden_rank)
+	var config := _config(catalog, seed_value, tier, warden_rank, head_part)
 	if config.is_empty():
 		return null
 	var created := StitchedRules.create(config)
@@ -405,6 +410,168 @@ func _turn_spent(b: StitchedRules, before: Dictionary) -> bool:
 		return true
 	return int(after["turn_index"]) > int(before["turn_index"]) \
 		and b.current_actor_id() != WARDEN
+
+
+
+# ----------------------------------------------------------- AC2/AC3: base Weak on a real foe reply
+
+## Both head patches must keep Weak through the foe's first actual strike. A control
+## battle with the same seed has Warden bonk rank 2 instead of rank 1; both bonks hit
+## and consume the same RNG, but the rank-1 attacker is unweakened in the control.
+## This compares real foe damage, not a fabricated damage fixture or planted Weak.
+func _test_base_weak_reply() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		return
+	for part_id in ["warden_head_pot_helm_bonk", PART_ID]:
+		var label: String = "AC2/AC3: base " + str(part_id)
+		_check(catalog.get("by_id", {}).has(part_id), label + ": the real catalog contains this head")
+		if not catalog.get("by_id", {}).has(part_id):
+			continue
+
+		# A bad target is refused before state, turn or RNG changes for either head.
+		var illegal := _battle(catalog, 1, 1, 1, part_id)
+		if illegal == null or not _to(illegal, WARDEN):
+			_check(false, label + ": an equipped Warden gets a live turn for refusal")
+			continue
+		var before_refusal := illegal.state_snapshot()
+		var rng_refusal := illegal.rng_state()
+		var rejected := illegal.use_part(part_id, RANK_THREE)
+		_check(not bool(rejected.get("ok", true)), label + ": base rank-three use is refused")
+		_check(before_refusal == illegal.state_snapshot()
+			and rng_refusal == illegal.rng_state()
+			and illegal.current_actor_id() == WARDEN,
+			label + ": refusal preserves authoritative state, turn and RNG")
+
+		var hit_seen := false
+		var miss_seen := false
+		for seed_value in range(1, SEED_SEARCH_LIMIT):
+			var b := _battle(catalog, seed_value, 1, 1, part_id)
+			var baseline := _battle(catalog, seed_value, 1, 1, part_id)
+			if b == null or baseline == null or not _to(b, WARDEN) or not _to(baseline, WARDEN):
+				continue
+			var equipped: Dictionary = b.get_unit(WARDEN).get("parts", {}).get("head", {})
+			var front_before := b.get_unit(RANK_ONE_FOE)
+			if str(equipped.get("id", "")) != part_id or int(equipped.get("tier", 0)) != 1 \
+				or bool(equipped.get("torn", true)) or int(b.get_unit(WARDEN).get("rank", 0)) != 1 \
+				or int(front_before.get("hp", 0)) <= 0 \
+				or int(front_before.get("statuses", {}).get("weak", 0)) != 0:
+				continue
+			var before_action := b.state_snapshot()
+			var attempt := b.use_part(part_id, 1)
+			var control := baseline.use_part(part_id, 2)
+			var results: Array = attempt.get("results", [])
+			var controls: Array = control.get("results", [])
+			if not bool(attempt.get("ok", false)) or results.size() != 1:
+				continue
+			var bonk: Dictionary = results[0]
+			if not miss_seen and not bool(bonk.get("hit", true)):
+				_check(int(bonk.get("roll", 0)) > int(bonk.get("hit_chance", 100)),
+					label + ": a natural RNG miss exceeds the real hit chance")
+				_check(int(bonk.get("damage", -1)) == 0 and bonk.get("statuses", []).is_empty()
+					and b.get_unit(RANK_ONE_FOE).get("statuses", {}).get("weak", 0) == 0
+					and b.get_unit(RANK_ONE_FOE).get("hp", -1) == front_before.get("hp", -2),
+					label + ": a genuine miss adds no Weak or damage")
+				_check(_turn_spent(b, before_action),
+					label + ": a missed action still spends Warden's turn")
+				miss_seen = true
+			if hit_seen or not bool(bonk.get("hit", false)) or not bool(control.get("ok", false)) \
+				or controls.size() != 1 or not bool(controls[0].get("hit", false)):
+				if hit_seen and miss_seen:
+					break
+				continue
+			var control_bonk: Dictionary = controls[0]
+			if int(bonk.get("damage", 0)) <= 0 or int(control_bonk.get("damage", 0)) <= 0 \
+				or b.get_unit(RANK_ONE_FOE).get("hp", 0) <= 0 \
+				or baseline.get_unit("scissor_crab").get("hp", 0) <= 0:
+				continue
+			var receipt_status := _status_entry(bonk.get("statuses", []), "weak")
+			var action_snapshot := b.state_snapshot()
+			var action_rng := b.rng_state()
+			var replay := _battle(catalog, seed_value, 1, 1, part_id)
+			if replay == null or not _to(replay, WARDEN):
+				continue
+			var replay_receipt := replay.use_part(part_id, 1)
+			_check(replay_receipt == attempt and replay.state_snapshot() == action_snapshot
+				and replay.rng_state() == action_rng,
+				label + ": the equipped bonk, state and RNG replay from the same seed")
+			_check(int(bonk.get("roll", 100)) <= int(bonk.get("hit_chance", -1))
+				and int(control_bonk.get("roll", 100)) <= int(control_bonk.get("hit_chance", -1)),
+				label + ": both competing bonks are natural landed hits")
+			_check(int(receipt_status.get("duration", 0)) == 2
+				and int(b.get_unit(RANK_ONE_FOE).get("statuses", {}).get("weak", 0)) in [1, 2],
+				label + ": a real equipped tier-I bonk applies Weak 2")
+			_check(b.rng_state() == baseline.rng_state(),
+				label + ": bonking different living foes consumed identical seeded RNG")
+			if not _to(b, RANK_ONE_FOE) or not _to(baseline, RANK_ONE_FOE):
+				continue
+			var attacker := b.get_unit(RANK_ONE_FOE)
+			var ordinary_attacker := baseline.get_unit(RANK_ONE_FOE)
+			var hero := b.get_unit(WARDEN)
+			var ordinary_hero := baseline.get_unit(WARDEN)
+			if attacker.is_empty() or ordinary_attacker.is_empty() or hero.is_empty() or ordinary_hero.is_empty():
+				continue
+			var attack_ability: Dictionary = attacker.get("abilities", [])[0]
+			if str(attack_ability.get("id", "")) != "sack_swing":
+				continue
+			var weak_at_strike := int(attacker.get("statuses", {}).get("weak", 0))
+			var ordinary_at_strike := int(ordinary_attacker.get("statuses", {}).get("weak", 0))
+			var same_rng := b.rng_state() == baseline.rng_state()
+			var strike := b.use_foe_ability("sack_swing", 1)
+			var ordinary := baseline.use_foe_ability("sack_swing", 1)
+			var strike_results: Array = strike.get("results", [])
+			var ordinary_results: Array = ordinary.get("results", [])
+			if not bool(strike.get("ok", false)) or not bool(ordinary.get("ok", false)) \
+				or strike_results.size() != 1 or ordinary_results.size() != 1:
+				continue
+			var actual: Dictionary = strike_results[0]
+			var normal: Dictionary = ordinary_results[0]
+			if not bool(actual.get("hit", false)) or not bool(normal.get("hit", false)):
+				continue
+			_check(str(strike.get("actor", "")) == RANK_ONE_FOE
+				and str(strike.get("ability", "")) == "sack_swing"
+				and str(actual.get("target", "")) == WARDEN,
+				label + ": the actually weakened victim uses its authored foe attack")
+			_check(weak_at_strike == 1 and ordinary_at_strike == 0,
+				label + ": Weak 2 ticks to Weak 1, while the control has no Weak")
+			_check(same_rng and int(actual.get("roll", -1)) == int(normal.get("roll", -2))
+				and bool(actual.get("crit", false)) == bool(normal.get("crit", true)),
+				label + ": both real foe strikes share RNG, hit roll and critical outcome")
+			_check(hero.get("statuses", {}) == ordinary_hero.get("statuses", {})
+				and hero.get("prot", -1) == ordinary_hero.get("prot", -2),
+				label + ": both strikes face an identically protected hero")
+			var lower := int(attack_ability["dmg"][0])
+			var upper := int(attack_ability["dmg"][1])
+			if bool(actual.get("crit", false)):
+				lower = StitchedRules.crit_damage(upper)
+				upper = lower
+			var rules_match := false
+			for raw in range(lower, upper + 1):
+				var candle_base := StitchedS1BEffects.enemy_damage(raw, b.candle())
+				var ordinary_damage := StitchedRules.damage_after_modifiers(
+					candle_base, ordinary_attacker["statuses"], ordinary_hero["statuses"],
+					false, int(attack_ability["mark_damage"]), int(ordinary_hero["prot"]))
+				var weakened_damage := StitchedRules.damage_after_modifiers(
+					candle_base, attacker["statuses"], hero["statuses"],
+					false, int(attack_ability["mark_damage"]), int(hero["prot"]))
+				if ordinary_damage == int(normal.get("damage", -1)) \
+					and weakened_damage == int(actual.get("damage", -1)):
+					rules_match = true
+			_check(rules_match and int(normal.get("damage", 0)) > int(actual.get("damage", 0)),
+				label + ": actual weakened damage is smaller than the rules' ordinary unweakened baseline")
+			_check(int(actual.get("target_hp", -1)) == int(hero["hp"]) - int(actual.get("damage", -2))
+				and int(normal.get("target_hp", -1)) == int(ordinary_hero["hp"]) - int(normal.get("damage", -2)),
+				label + ": real damage updates both Warden HP totals")
+			if not _to(b, RANK_ONE_FOE) or not _to(baseline, RANK_ONE_FOE):
+				continue
+			_check(int(b.get_unit(RANK_ONE_FOE).get("statuses", {}).get("weak", 0)) == 0
+				and int(baseline.get_unit(RANK_ONE_FOE).get("statuses", {}).get("weak", 0)) == 0,
+				label + ": Weak expires at the victim's following actual turn without reapplication")
+			hit_seen = true
+			if miss_seen:
+				break
+		_check(hit_seen, label + ": a seeded landed bonk weakens the next real foe strike and expires")
+		_check(miss_seen, label + ": a seeded natural bonk miss applies no Weak")
 
 
 # ---------------------------------------------------------------- AC2: tier-III rank-3 hit
