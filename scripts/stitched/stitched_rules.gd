@@ -1338,12 +1338,12 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			if not bool(hero["lost"]):
 				_change_fray(hero, -2)
 	var statuses: Dictionary = unit["statuses"]
-	if int(statuses.get("stun", 0)) > 0:
+	var stunned := int(statuses.get("stun", 0)) > 0
+	if stunned:
 		statuses["stun"] = int(statuses["stun"]) - 1
 		if int(statuses["stun"]) <= 0:
 			statuses.erase("stun")
-		statuses["stun_resist"] = 1
-		return true
+	# Skipping an action does not skip Bleed or other start-of-turn clocks.
 	var bleed := int(statuses.get("bleed", 0))
 	if bleed > 0:
 		statuses["bleed"] = bleed - 1
@@ -1362,7 +1362,11 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			statuses.erase(key)
 			if key == "guard":
 				unit["guard_target"] = ""
-	return false
+	# A fresh resist must come after old clocks tick, or it expires immediately.
+	# Death/Hanging above exits before granting resistance to a fallen unit.
+	if stunned and _can_act(unit) and int(unit["hp"]) > 0:
+		statuses["stun_resist"] = 1
+	return stunned
 
 
 func _begin_hanging_or_death(unit: Dictionary) -> void:

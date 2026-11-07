@@ -41,7 +41,7 @@ var _valid: bool = true
 ## Static factory creating an instance with bounded initial fear (default 0).
 static func create(initial_fear: Variant = 0) -> Dictionary:
 	if initial_fear != null:
-		if typeof(initial_fear) != TYPE_INT and typeof(initial_fear) != TYPE_FLOAT:
+		if typeof(initial_fear) != TYPE_INT:
 			return {"ok": false, "error": "initial fear must be an integer 0..100", "sequence": 0}
 		var f := int(initial_fear)
 		if f < FEAR_MIN or f > FEAR_MAX:
@@ -65,7 +65,7 @@ func _init(initial_fear: Variant = 0) -> void:
 		_fear = 0
 		_valid = true
 		return
-	if typeof(initial_fear) != TYPE_INT and typeof(initial_fear) != TYPE_FLOAT:
+	if typeof(initial_fear) != TYPE_INT:
 		_valid = false
 		_fear = 0
 		return
@@ -85,7 +85,7 @@ func reset(initial_fear: Variant = 0) -> Dictionary:
 	if not _valid:
 		return {"ok": false, "error": "invalid service instance", "sequence": _sequence, "fear": _fear}
 	if initial_fear != null:
-		if typeof(initial_fear) != TYPE_INT and typeof(initial_fear) != TYPE_FLOAT:
+		if typeof(initial_fear) != TYPE_INT:
 			return {"ok": false, "error": "initial fear must be an integer 0..100", "sequence": _sequence, "fear": _fear}
 		var f := int(initial_fear)
 		if f < FEAR_MIN or f > FEAR_MAX:
@@ -164,7 +164,7 @@ func get_state() -> Dictionary:
 func check_hand_failure(percentile_roll: Variant) -> Dictionary:
 	if not _valid:
 		return {"ok": false, "error": "invalid service instance", "sequence": _sequence, "failed": false, "shake": false}
-	if typeof(percentile_roll) != TYPE_INT and typeof(percentile_roll) != TYPE_FLOAT:
+	if typeof(percentile_roll) != TYPE_INT:
 		return {"ok": false, "error": "percentile roll must be an integer 1..100", "sequence": _sequence, "failed": false, "shake": is_shaking()}
 	var roll := int(percentile_roll)
 	if roll < 1 or roll > 100:
@@ -355,8 +355,8 @@ func _evaluate_event_delta(event: Dictionary) -> Dictionary:
 					break
 			if amount_val == null:
 				return {"ok": false, "error": "fray event missing amount/change"}
-			if typeof(amount_val) != TYPE_INT and typeof(amount_val) != TYPE_FLOAT:
-				return {"ok": false, "error": "fray gain amount must be numeric"}
+			if typeof(amount_val) != TYPE_INT:
+				return {"ok": false, "error": "fray gain amount must be an integer"}
 			var amount := int(amount_val)
 			if amount < 0:
 				return {"ok": false, "error": "fray gain amount cannot be negative (%d)" % amount}
@@ -381,8 +381,8 @@ func _evaluate_event_delta(event: Dictionary) -> Dictionary:
 					return {"ok": false, "error": "invalid candle band payload"}
 			elif event.has("candle"):
 				var candle_val: Variant = event["candle"]
-				if typeof(candle_val) != TYPE_INT and typeof(candle_val) != TYPE_FLOAT:
-					return {"ok": false, "error": "candle value must be numeric"}
+				if typeof(candle_val) != TYPE_INT:
+					return {"ok": false, "error": "candle value must be an integer"}
 				var c := int(candle_val)
 				if c < 0 or c > 100:
 					return {"ok": false, "error": "candle value %d out of bounds (0..100)" % c}
