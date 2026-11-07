@@ -40,6 +40,9 @@ const SNARE_SPECS := {
 	"acc": [94, 97, 100],
 	"effects": [{"tangled": 2}, {"tangled": 3}, {"tangled": 4}],
 }
+## Only the tier-III ability override widens the net to the rear enemy rank 4; tiers I and II
+## stay authored at ranks 1-3.
+const SNARE_TARGETS := [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]]
 const REEL_ID := "yarn_ranger_legs_reel_thread"
 const REEL_LAUNCH := [2, 3, 4]
 const REEL_TARGET := [2, 3, 4]
@@ -115,6 +118,8 @@ func _initialize() -> void:
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
 	_test_rank_four_snare_net_launch()
+	_test_snare_net_rank_four_foe()
+	_test_snare_net_rank_four_foe_rejections()
 	_test_rank_four_reel_thread_launch()
 	_test_reel_thread_rank_four_target()
 	_test_multi_tangled()
@@ -137,6 +142,17 @@ func _check(ok: bool, message: String) -> void:
 
 func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
+
+
+## The on-disk record exactly as authored, before StitchedParts merges any tier override.
+func _raw_part(part_id: String) -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	if not parsed is Dictionary:
+		return {}
+	for entry in parsed.get("parts", []):
+		if str(entry.get("id", "")) == part_id:
+			return entry
+	return {}
 
 
 ## Only an in-memory S2 copy changes: replace the original rank-3 Tinker,
@@ -395,8 +411,10 @@ func _test_purling_launch_tiers() -> void:
 			"AC1: tier %d Purling Barrage keeps authored damage and Exposed" % tier)
 
 
-## Snare Net keeps its multi-target enemy 1-3 debuff at every tier while its launch mask
-## gains hero rank four. Ranks 1, 0 and 5 stay illegal launches.
+## Snare Net keeps its multi-target enemy debuff at every tier while its launch mask gains hero
+## rank four. Only the stitch tier-III override widens the authored target ranks to include the
+## rear enemy rank 4; tiers I and II stay authored at ranks 1-3. Ranks 1, 0 and 5 stay illegal
+## launches, and the base record keeps its rank 1-3 target list.
 func _test_snare_net_launch_tiers() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -406,6 +424,7 @@ func _test_snare_net_launch_tiers() -> void:
 		and part["stat"] == {"prot": 5, "max_hp": 3},
 		"AC1: Snare Net stays a Yarn Ranger torso part with its authored stat")
 	for tier in [1, 2, 3]:
+		var expected_targets: Array = SNARE_TARGETS[tier - 1]
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var mask := int(ability["launch_mask"])
 		var reachable := true
@@ -417,15 +436,40 @@ func _test_snare_net_launch_tiers() -> void:
 		_check(ability["launch"] == SNARE_LAUNCH
 			and mask == StitchedParts.rank_mask(SNARE_LAUNCH) and reachable and excluded,
 			"AC1: tier %d Snare Net launch mask allows 2,3,4 and refuses 0,1,5" % tier)
-		_check(ability["target"] == [1, 2, 3]
-			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+		var targets_reachable := true
+		for rank in expected_targets:
+			targets_reachable = targets_reachable and StitchedParts.ranks_allowed(
+				int(ability["target_mask"]), rank)
+		var targets_excluded := true
+		for rank in [0, 5]:
+			targets_excluded = targets_excluded and not StitchedParts.ranks_allowed(
+				int(ability["target_mask"]), rank)
+		_check(ability["target"] == expected_targets
+			and int(ability["target_mask"]) == StitchedParts.rank_mask(expected_targets)
+			and targets_reachable and targets_excluded
 			and str(ability["target_side"]) == "enemy" and bool(ability["multi"])
 			and str(ability["kind"]) == "debuff"
 			and int(ability["acc"]) == int(SNARE_SPECS["acc"][tier - 1])
 			and ability["dmg"] == [0, 0] and int(ability["crit"]) == 0
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "skill"
-			and ability["effects"] == SNARE_SPECS["effects"][tier - 1],
-			"AC1: tier %d Snare Net keeps its enemy 1-3 multi debuff, ACC and Tangled" % tier)
+			and ability["effects"] == SNARE_SPECS["effects"][tier - 1]
+			and StitchedParts.stat_at_tier(part, tier) == {"prot": 5, "max_hp": 3},
+			"AC1: tier %d Snare Net keeps its enemy multi debuff, ACC, Tangled and stat, aiming at %s"
+				% [tier, str(expected_targets)])
+		_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), 4) == (tier == 3),
+			"AC1: only tier-III Snare Net reaches enemy rank 4")
+	# The base record and the tier-II override keep the authored ranks 1-3; only the tier-III
+	# ability override carries the widened rank-4 target list.
+	var raw := _raw_part(SNARE_ID)
+	_check(not raw.is_empty()
+		and raw["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3]
+		and not raw["tiers"]["2"]["ability"].has("target")
+		and raw["tiers"]["3"]["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3, 4],
+		"AC1: only the authored tier-III Snare Net override carries the widened target list")
+	var text := str(part["text"]).to_lower()
+	_check(text.contains("tier iii") and text.contains("rank 4")
+		and text.contains("ranks one through three"),
+		"AC1: Snare Net text credits the rear rank 4 only to tier III and keeps ranks 1-3")
 
 
 ## Reel Thread launches from hero rank four as well as ranks two and three at every stitch
@@ -567,6 +611,344 @@ func _test_rank_four_snare_net_launch() -> void:
 	_check(_to(front, "yarn_ranger"), "AC3: rank-one Snare Net Ranger obtains a real scheduled turn")
 	if front.current_actor_id() == "yarn_ranger":
 		_reject_without_spend(front, SNARE_ID, 1, "rank-one Snare Net launch")
+
+
+## The genuine four-hero / three-foe fixture whose existing Moth Scribe has been moved into
+## enemy rank 4 in this battle's own memory only, advanced to the Ranger's real scheduled turn
+## with the equipped Snare Net in her torso slot. Rank 3 stays vacant and three foes remain.
+func _snare_rank_four_turn(tier: int, seed_value: int) -> StitchedRules:
+	var battle := _rank_four_foe_battle(SNARE_ID, tier, seed_value)
+	if battle == null or not _to(battle, "yarn_ranger"):
+		return null
+	if battle.current_actor_id() != "yarn_ranger":
+		return null
+	if battle.get_heroes().size() != 4 or battle.get_foes().size() != 3:
+		return null
+	var ranger := battle.get_unit("yarn_ranger")
+	var rear := battle.get_unit("moth_scribe")
+	if rear.is_empty() or int(ranger["rank"]) != 3 \
+			or str(ranger["parts"]["torso"]["id"]) != SNARE_ID \
+			or int(rear["rank"]) != 4 or int(rear["hp"]) <= 0 \
+			or not battle.get_foes().all(func(foe): return int(foe["rank"]) != 3):
+		return null
+	return battle
+
+
+## One real scheduled Ranger turn on that fixture, aiming the equipped Snare Net at rank 4.
+func _snare_rank_four_cast(tier: int, seed_value: int) -> Dictionary:
+	var battle := _snare_rank_four_turn(tier, seed_value)
+	if battle == null:
+		return {}
+	var foes_before := {}
+	for foe in battle.get_foes():
+		foes_before[str(foe["id"])] = {
+			"hp": int(foe["hp"]),
+			"rank": int(foe["rank"]),
+			"statuses": foe["statuses"].duplicate(true),
+		}
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var cast := battle.use_part(SNARE_ID, 4)
+	return {
+		"battle": battle,
+		"cast": cast,
+		"foes_before": foes_before,
+		"before": before,
+		"rng_before": rng_before,
+		"after": battle.state_snapshot(),
+		"rng_after": battle.rng_state(),
+		"seed": seed_value,
+	}
+
+
+## Records each given foe's Tangled at its first naturally scheduled turn after the cast. The
+## caller only passes turns: no status is injected and no hit or miss is forced.
+func _snare_tangled_ticks(battle: StitchedRules, foe_ids: Array) -> Dictionary:
+	var pending := foe_ids.duplicate()
+	var at_turn := {}
+	for _step in range(55):
+		if battle.is_over():
+			return {}
+		var actor := battle.current_actor_id()
+		if actor in pending:
+			at_turn[actor] = int(battle.get_unit(actor)["statuses"].get("tangled", 0))
+			pending.erase(actor)
+		if pending.is_empty():
+			break
+		if not bool(battle.pass_turn().get("ok", false)):
+			return {}
+	if not pending.is_empty():
+		return {}
+	return at_turn
+
+
+## The task goal: at stitch tier III only, the alternate Snare Net reaches the living Moth Scribe
+## moved into enemy rank 4 of the ordinary four-hero / three-foe battle. Rank 3 stays vacant, so
+## one legal cast aimed at that rear rank must independently snare the real foes in ranks 1, 2
+## and 4, and each affected foe's natural next turn must tick its Tangled 4 down to 3. A legal
+## seeded miss keeps its own target clean, and the same seed replays identically.
+func _test_snare_net_rank_four_foe() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := int(SNARE_SPECS["effects"][2]["tangled"])
+	_check(expected == 4, "AC2: tier-III Snare Net authors Tangled 4")
+	var foe_ids := ["fray_scavenger", "scissor_crab", "moth_scribe"]
+	var landed := {}
+	var landed_seed := -1
+	var missed := {}
+	var missed_seed := -1
+	for seed_value in range(510040, 510140):
+		var attempt := _snare_rank_four_cast(3, seed_value)
+		if attempt.is_empty():
+			continue
+		var cast: Dictionary = attempt["cast"]
+		var results: Array = cast.get("results", [])
+		if not bool(cast.get("ok", false)) or results.size() != 3:
+			continue
+		var ranks: Array = []
+		var target_ids: Array = []
+		var clean := true
+		for result in results:
+			var target_id := str(result.get("target", ""))
+			ranks.append(int(result.get("target_rank", 0)))
+			target_ids.append(target_id)
+			var prior: Dictionary = attempt["foes_before"].get(target_id, {})
+			if prior.is_empty() or str(result.get("target_side", "")) != "foe" \
+					or int(result.get("damage", -1)) != 0 \
+					or int(result.get("target_hp", -1)) != int(prior.get("hp", -1)) \
+					or int(prior.get("statuses", {}).get("tangled", 0)) != 0:
+				clean = false
+		if not clean or ranks != [1, 2, 4] or target_ids != foe_ids:
+			continue
+		var all_hit := results.all(func(item): return bool(item.get("hit", false)))
+		if all_hit:
+			var branded := true
+			for result in results:
+				branded = branded and result.get("statuses", []).any(
+					func(s): return str(s.get("status", "")) == "tangled" \
+						and int(s.get("duration", 0)) == expected)
+			var battle: StitchedRules = attempt["battle"]
+			var post := {}
+			var still_authored := true
+			for foe_id in foe_ids:
+				post[foe_id] = int(battle.get_unit(foe_id)["statuses"].get("tangled", 0))
+				still_authored = still_authored \
+					and int(post[foe_id]) in [expected, expected - 1]
+			if not branded or not still_authored:
+				continue
+			if landed.is_empty():
+				landed = attempt
+				landed["post"] = post
+				landed_seed = seed_value
+		else:
+			var battle: StitchedRules = attempt["battle"]
+			var miss_clean := true
+			for result in results:
+				var foe := battle.get_unit(str(result.get("target", "")))
+				if bool(result.get("hit", false)):
+					miss_clean = miss_clean \
+						and int(foe["statuses"].get("tangled", 0)) >= expected - 1
+				else:
+					miss_clean = miss_clean and int(result.get("damage", -1)) == 0 \
+						and not result.get("statuses", []).any(
+							func(s): return str(s.get("status", "")) == "tangled") \
+						and int(foe["statuses"].get("tangled", 0)) == 0 \
+						and int(foe["hp"]) == int(attempt["foes_before"][str(foe["id"])]["hp"])
+			if miss_clean and missed.is_empty():
+				missed = attempt
+				missed_seed = seed_value
+		if not landed.is_empty() and not missed.is_empty():
+			break
+	_check(not landed.is_empty(),
+		"AC2: a bounded real seed shows tier-III Snare Net aimed at rank 4 snaring ranks 1, 2 and 4")
+	_check(not missed.is_empty(),
+		"AC3: a bounded real seed shows a legal tier-III rank-4 Snare Net miss")
+	if not landed.is_empty() and not missed.is_empty():
+		print("AC2 Snare Net rank-four foe tier III landed witness seed %d" % landed_seed)
+		print("AC3 Snare Net rank-four foe tier III miss witness seed %d" % missed_seed)
+	if not landed.is_empty():
+		var battle: StitchedRules = landed["battle"]
+		var cast: Dictionary = landed["cast"]
+		var results: Array = cast["results"]
+		_check(str(cast.get("actor", "")) == "yarn_ranger"
+			and str(cast.get("part", "")) == SNARE_ID
+			and str(cast.get("ability", "")) == "yarn_ranger_torso_snare_net_move"
+			and results[0].get("target") == "fray_scavenger" and int(results[0]["target_rank"]) == 1
+			and results[1].get("target") == "scissor_crab" and int(results[1]["target_rank"]) == 2
+			and results[2].get("target") == "moth_scribe" and int(results[2]["target_rank"]) == 4,
+			"AC2: the tier-III rank-4 cast returns three receipts ordered by real target ranks 1, 2 and 4")
+		var zero_damage := true
+		var independently_tangled := true
+		for item in results:
+			var foe_id := str(item["target"])
+			var foe := battle.get_unit(foe_id)
+			zero_damage = zero_damage and int(item.get("damage", -1)) == 0 \
+				and int(item.get("target_hp", -1)) == int(landed["foes_before"][foe_id]["hp"]) \
+				and int(foe["hp"]) == int(landed["foes_before"][foe_id]["hp"])
+			independently_tangled = independently_tangled and bool(item.get("hit", false)) \
+				and item["statuses"].any(func(s): return str(s.get("status", "")) == "tangled" \
+					and int(s.get("duration", 0)) == expected) \
+				and int(foe["statuses"].get("tangled", 0)) >= expected - 1
+		_check(zero_damage, "AC2: the zero-damage net leaves every struck foe's HP unchanged")
+		_check(independently_tangled,
+			"AC2: every struck foe independently carries Tangled %d after the cast" % expected)
+		_check(landed["post"].values().any(func(value): return int(value) == expected),
+			"AC2: at least one struck foe still carries Tangled %d before its next turn" % expected)
+		var after: Dictionary = landed["after"]
+		var prior: Dictionary = landed["before"]
+		_check(str(battle.current_actor_id()) != "yarn_ranger"
+			and (int(after["round"]) > int(prior["round"])
+				or (int(after["round"]) == int(prior["round"])
+					and int(after["turn_index"]) > int(prior["turn_index"])))
+			and int(landed["rng_after"]) != int(landed["rng_before"]),
+			"AC2: the accepted rank-4 cast spends one Ranger turn and seeded RNG")
+		var replay := _snare_rank_four_cast(3, landed_seed)
+		_check(not replay.is_empty() and replay["cast"] == cast
+			and replay["before"] == landed["before"] and replay["after"] == landed["after"]
+			and replay["rng_after"] == landed["rng_after"],
+			"AC3: equal-seed replay reproduces the tier-III rank-4 receipt, state and RNG")
+		if not replay.is_empty():
+			var tick_battle: StitchedRules = replay["battle"]
+			var at_turn := _snare_tangled_ticks(tick_battle, foe_ids)
+			_check(not at_turn.is_empty() and foe_ids.all(
+				func(foe_id): return int(at_turn.get(foe_id, -1)) == expected - 1),
+				"AC2: each struck foe's natural next turn ticks Tangled %d down to %d"
+					% [expected, expected - 1])
+	if not missed.is_empty():
+		var miss_battle: StitchedRules = missed["battle"]
+		var miss_cast: Dictionary = missed["cast"]
+		var miss_hits := 0
+		var miss_clean := true
+		for item in miss_cast["results"]:
+			var foe_id := str(item["target"])
+			var foe := miss_battle.get_unit(foe_id)
+			if bool(item.get("hit", false)):
+				miss_hits += 1
+				miss_clean = miss_clean and int(foe["statuses"].get("tangled", 0)) >= expected - 1
+			else:
+				miss_clean = miss_clean and int(item.get("damage", -1)) == 0 \
+					and not item.get("statuses", []).any(
+						func(s): return str(s.get("status", "")) == "tangled") \
+					and int(foe["statuses"].get("tangled", 0)) == 0 \
+					and int(foe["hp"]) == int(missed["foes_before"][foe_id]["hp"])
+		_check(miss_clean,
+			"AC3: the legal missed net applies no Tangled, damage or HP change to its missed foe")
+		_check(miss_hits >= 1 and missed["after"] != missed["before"]
+			and int(missed["rng_after"]) != int(missed["rng_before"]),
+			"AC3: the legal rank-4 miss still spends its Ranger turn and seeded RNG")
+		var miss_replay := _snare_rank_four_cast(3, missed_seed)
+		_check(not miss_replay.is_empty() and miss_replay["cast"] == miss_cast
+			and miss_replay["after"] == missed["after"]
+			and miss_replay["rng_after"] == missed["rng_after"],
+			"AC3: equal-seed replay reproduces the rank-4 miss receipt, state and RNG")
+
+
+## Tiers I and II keep their authored ranks 1-3, so on the very same rank-4 fixture they refuse
+## the occupied rear rank atomically while a legal rank-1 aimed cast snares only the real foes in
+## ranks 1 and 2. Tier III remains authored, not a bypass: out-of-range ranks, a legal but vacant
+## aimed rank, a rank-one launch, an off-turn repeat and a torn or unequipped net all fail closed
+## or resolve only real living targets.
+func _test_snare_net_rank_four_foe_rejections() -> void:
+	for tier in [1, 2]:
+		var b := _rank_four_foe_battle(SNARE_ID, tier, 511040 + tier)
+		_check(b != null, "AC3: fresh tier-%d Snare Net fixture has a living rank-4 foe" % tier)
+		if b == null:
+			continue
+		var rear := b.get_unit("moth_scribe")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(b.get_unit("yarn_ranger")["rank"]) == 3
+			and int(rear["rank"]) == 4 and int(rear["hp"]) > 0
+			and b.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC3: tier %d really faces one living foe at rank 4 with rank 3 vacant" % tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC3: tier %d Snare Net Ranger obtains a real scheduled turn" % tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		var rear_hp := int(rear["hp"])
+		var rear_statuses: Dictionary = rear["statuses"].duplicate(true)
+		_reject_without_spend(b, SNARE_ID, 4,
+			"tier %d Snare Net aimed at the occupied enemy rank 4" % tier)
+		var receipt := b.use_part(SNARE_ID, 1)
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and results.size() == 2
+			and results[0].get("target") == "fray_scavenger" and int(results[0]["target_rank"]) == 1
+			and results[1].get("target") == "scissor_crab" and int(results[1]["target_rank"]) == 2
+			and int(b.get_unit("moth_scribe")["hp"]) == rear_hp
+			and b.get_unit("moth_scribe")["statuses"] == rear_statuses,
+			"AC3: tier %d Snare Net aimed at rank 1 snares only the real foes in ranks 1 and 2" % tier)
+	# A real tier-III Ranger turn on the rank-4 fixture refuses ranks 0 and 5 atomically, then
+	# the accepted cast ends her turn so every repeat is off turn.
+	var near: StitchedRules = null
+	for seed_value in range(511000, 511040):
+		near = _snare_rank_four_turn(3, seed_value)
+		if near != null:
+			break
+	_check(near != null, "AC3: tier-III rank-4 fixture reaches a real Ranger turn")
+	if near != null:
+		_reject_without_spend(near, SNARE_ID, 0, "tier-III Snare Net target rank zero")
+		_reject_without_spend(near, SNARE_ID, 5, "tier-III Snare Net target rank five")
+		var cast: Dictionary = near.use_part(SNARE_ID, 4)
+		_check(bool(cast.get("ok", false)) and cast.get("results", []).size() == 3,
+			"AC3: the tier-III rank-4 cast really resolves three targets")
+		_reject_without_spend(near, SNARE_ID, 4, "tier-III Snare Net off turn")
+	# A multi-target net aimed at a legal but vacant rank is not a phantom: it resolves only the
+	# living legal ranks 1-3 and never an invented rank-4 target, while out-of-range ranks 0/5
+	# already refuse atomically above.
+	var vacant := _battle(SNARE_ID, 3, 511041)
+	_check(vacant != null, "AC3: tier-III Snare Net fixture without a rank-4 foe exists")
+	if vacant != null:
+		_check(vacant.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+			"AC3: that fixture really has no foe at enemy rank 4")
+		_check(_to(vacant, "yarn_ranger"), "AC3: vacant-rank tier-III Ranger reaches her turn")
+		if vacant.current_actor_id() == "yarn_ranger":
+			var before := vacant.state_snapshot()
+			var vacant_cast := vacant.use_part(SNARE_ID, 4)
+			var results: Array = vacant_cast.get("results", [])
+			var result_ranks: Dictionary = {}
+			var ghost := false
+			for receipt in results:
+				var target_rank := int(receipt.get("target_rank", 0))
+				result_ranks[target_rank] = str(receipt.get("target", ""))
+				ghost = ghost or target_rank == 4
+			_check(bool(vacant_cast.get("ok", false)) and results.size() == 3
+				and result_ranks.size() == 3 and result_ranks.has(1)
+				and result_ranks.has(2) and result_ranks.has(3) and not ghost
+				and vacant.state_snapshot() != before,
+				"AC3: a legal but vacant aimed rank 4 resolves only the real living ranks 1-3")
+			_reject_without_spend(vacant, SNARE_ID, 4,
+				"replayed tier-III Snare Net after its turn is spent")
+	# Doubling the reach never widens the launch ranks, which stay 2-4.
+	var front := _front_rank_four_foe_battle(SNARE_ID, 3, 511042)
+	_check(front != null, "AC3: tier-III rank-one Ranger fixture with a real rank-4 foe exists")
+	if front != null:
+		var front_ranger := front.get_unit("yarn_ranger")
+		var rear := front.get_unit("moth_scribe")
+		_check(int(front_ranger["rank"]) == 1
+			and str(front_ranger["parts"]["torso"]["id"]) == SNARE_ID
+			and int(rear["rank"]) == 4 and int(rear["hp"]) > 0,
+			"AC3: tier-III rank-one Ranger really faces the living rank-4 foe")
+		_check(_to(front, "yarn_ranger"),
+			"AC3: tier-III rank-one Ranger obtains a real scheduled turn")
+		if front.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(front, SNARE_ID, 4, "tier-III rank-one Snare Net launch")
+	# A torn alternate torso and an unequipped net never spend the turn or draw RNG.
+	var torn_config := _config(SNARE_ID, 3, 511043)
+	if not torn_config.is_empty():
+		torn_config["heroes"][2]["parts"]["torso"]["torn"] = true
+		var torn_created := StitchedRules.create(torn_config)
+		_check(bool(torn_created.get("ok", false)),
+			"AC3: torn tier-III Snare Net admitted as equipment")
+		if bool(torn_created.get("ok", false)):
+			var torn_battle: StitchedRules = torn_created["battle"]
+			_check(_to(torn_battle, "yarn_ranger"),
+				"AC3: torn tier-III Snare Net Ranger obtains a real scheduled turn")
+			if torn_battle.current_actor_id() == "yarn_ranger":
+				_reject_without_spend(torn_battle, SNARE_ID, 1, "torn tier-III Snare Net")
+	var bare := _battle("", 3, 511044)
+	_check(bare != null, "AC3: tier-III starter battle exists for the unequipped net check")
+	if bare != null and _to(bare, "yarn_ranger"):
+		_reject_without_spend(bare, SNARE_ID, 1, "unequipped tier-III Snare Net")
 
 
 ## The authentic seeded battle: the same four heroes and three foes, Ranger at rank four

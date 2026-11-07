@@ -410,6 +410,12 @@
         },
         "3": {
           "ability": {
+            "target": [
+              1,
+              2,
+              3,
+              4
+            ],
             "acc": 100,
             "effects": {
               "tangled": 4
@@ -417,7 +423,7 @@
           }
         }
       },
-      "text": "Cast a net over every living foe in ranks one through three, Tangling each independently."
+      "text": "Cast a net over every living foe in ranks one through three and Tangle each independently; only stitch tier III also reaches a foe in the rear rank 4."
     },
     {
       "id": "yarn_ranger_legs_endless_skein",
