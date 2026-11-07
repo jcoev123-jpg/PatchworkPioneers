@@ -1595,6 +1595,11 @@ func _resolve_attack(
 func _apply_effects(
 	actor: Dictionary, target: Dictionary, ability: Dictionary, receipt: Dictionary
 ) -> void:
+	# Lethal direct damage has already settled death and cleared statuses. Never
+	# reattach a debuff to the dead foe (or a lost doll) after that kill.
+	if (str(target.get("side", "")) == "foe" and bool(target.get("dead", false))) \
+			or (str(target.get("side", "")) == "hero" and bool(target.get("lost", false))):
+		return
 	var effects: Dictionary = ability["effects"]
 	for key in effects:
 		var value := int(effects[key])
