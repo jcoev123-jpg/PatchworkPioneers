@@ -17,6 +17,7 @@ var inspected_route_id := ""
 var legal_ids: Array[String] = []
 var _nodes: Dictionary = {}
 var _edge_labels: Dictionary = {}
+var _records_by_id: Dictionary = {}
 var _preview: Label
 
 
@@ -30,6 +31,12 @@ func present(map: RunMap, choices: Array[String]) -> void:
 	var route := map.get_route()
 	var current_id := map.get_current_node_id()
 	var floors := map.get_floors()
+	# Keep the actual generated records indexed by ID; branches are not inferred
+	# from visual columns, ordinal positions or any presumed floor sequence.
+	_records_by_id.clear()
+	for floor_nodes in floors:
+		for record in floor_nodes:
+			_records_by_id[str(record.id)] = record.duplicate(true)
 	set_meta("floor_count", floors.size())
 	set_meta("visited_ids", route.duplicate())
 	set_meta("legal_ids", legal_ids.duplicate())
@@ -77,6 +84,7 @@ func present(map: RunMap, choices: Array[String]) -> void:
 	_preview.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_preview.custom_minimum_size.y = 44
 	_preview.set_meta("preview_ids", [])
+	_preview.set_meta("preview_destinations", [])
 	add_child(_preview)
 	_refresh_inspection()
 
@@ -187,8 +195,9 @@ func _add_node(parent: HBoxContainer, record: Dictionary, route: Array[String], 
 	tile.add_child(exits)
 	var labels: Array[Label] = []
 	for target in record.outgoing:
+		var destination: Dictionary = _records_by_id.get(str(target), {})
 		var edge := _label("→ F%02d P%d" % [
-			_floor_of_id(str(target)), _path_of_id(str(target))], 14, FUTURE)
+			int(destination.get("floor", 0)), int(destination.get("position", -1)) + 1], 14, FUTURE)
 		edge.name = "GraphEdge_" + str(target)
 		edge.set_meta("source_id", id)
 		edge.set_meta("target_id", str(target))
@@ -262,16 +271,27 @@ func _refresh_inspection() -> void:
 	if _preview == null:
 		return
 	var exits: Array = []
+	var destinations: Array = []
 	var purpose := ""
-	if not inspected_route_id.is_empty()and _nodes.has(inspected_route_id):
+	if not inspected_route_id.is_empty() and legal_ids.has(inspected_route_id) \
+			and _nodes.has(inspected_route_id):
 		exits = _nodes[inspected_route_id].get_meta("outgoing", []).duplicate(true)
 		var node: Control = _nodes[inspected_route_id]
-		_preview.text = "LIT F%02d P%d  →  %s" % [
-			node.get_meta("floor"), node.get_meta("path"),
-			" / ".join(exits.map(func(target): return "F%02d P%d" % [
-				_floor_of_id(str(target)), _path_of_id(str(target))]))
-			if not exits.is_empty() else "FINAL SEAM"]
 		var node_kind := str(node.get_meta("node_kind", ""))
+		var next_labels: Array[String] = []
+		for target in exits:
+			var destination: Dictionary = _records_by_id.get(str(target), {})
+			if destination.is_empty():
+				continue
+			# The ID remains attached as metadata, while the actual record supplies
+			# every visible coordinate and kind, even for crossed/extra links.
+			destinations.append({"id": str(target), "type": str(destination.type),
+				"floor": int(destination.floor), "path": int(destination.position) + 1})
+			next_labels.append("F%02d P%d: %s" % [
+				int(destination.floor), int(destination.position) + 1, str(destination.type)])
+		_preview.text = "LIT F%02d P%d: %s\nNEXT: %s" % [
+			node.get_meta("floor"), node.get_meta("path"), node_kind,
+			"  /  ".join(next_labels) if not exits.is_empty() else "FINAL SEAM"]
 		purpose = stop_purpose_for(node_kind)
 		# A Campfire swaps its generic lead for the compact recovery hint.
 		var hint := campfire_recovery_hint_for(node_kind)
@@ -284,6 +304,7 @@ func _refresh_inspection() -> void:
 		_preview.text = "FOCUS A LIT TICKET TO TRACE ITS NEXT SEAMS"
 		_preview.add_theme_color_override("font_color", BONE)
 	_preview.set_meta("preview_ids", exits)
+	_preview.set_meta("preview_destinations", destinations)
 	_preview.set_meta("stop_purpose", purpose)
 
 
@@ -336,13 +357,6 @@ func _style_node(id: String) -> void:
 		edge.add_theme_color_override("font_color", AMBER if inspected else (
 			VISITED if status in ["visited", "current"] else FUTURE))
 
-
-func _floor_of_id(id: String) -> int:
-	return int(id.substr(1, 2))
-
-
-func _path_of_id(id: String) -> int:
-	return int(id.get_slice("_n", 1)) + 1
 
 
 func _label(value: String, size: int, color: Color) -> Label:
