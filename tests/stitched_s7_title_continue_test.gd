@@ -112,7 +112,7 @@ func _ring(app: Node, buttons: Array) -> void:
 			var index := posmod(step * direction, buttons.size())
 			_check(root.gui_get_focus_owner() == buttons[index],
 				"physical Tab ring direction %d step %d" % [direction, step])
-	for button in [app.route_button, app.stitched_fight_button]:
+	for button in [app.stitched_fight_button]:
 		_check(not button.visible and button.disabled and button.focus_mode == Control.FOCUS_NONE
 			and button.pressed.get_connections().is_empty() and not button.has_focus(),
 			"retired shortcut never enters live keyboard ring: " + button.text)
@@ -144,9 +144,9 @@ func _run() -> void:
 		if child is Button and child.is_visible_in_tree():
 			visible_actions.append(child)
 	_check(visible_actions == actions, "fresh mounted title exposes only the three real actions")
-	_check(not app.start_run_requested.is_connected(Callable(app, "_start_run"))
-		and not app.route_button.pressed.is_connected(Callable(app, "_open_route")),
-		"the old card start and route hooks have no production listeners")
+	_check(not app.has_signal("start_run_requested") and app.get("route_button") == null
+		and not app.has_method("_start_run") and not app.has_method("_open_route"),
+		"the old card start and route hooks are gone")
 	var viewport := Rect2(Vector2.ZERO, Vector2(1280, 720))
 	var previous := Rect2()
 	for button: Button in actions:
@@ -174,7 +174,7 @@ func _run() -> void:
 				and surface.texture.resource_path == "res://assets/paper/ui/reward_button.png",
 				"authored title-only " + state + " style: " + button.text)
 	var carry := _carry(app)
-	for button in [app.route_button, app.stitched_fight_button]:
+	for button in [app.stitched_fight_button]:
 		button.pressed.emit()
 	_check(app.stitched_event_panel == null and app.stitched_fight_view == null
 		and app.stitched_run_panel == null and app.title_view.is_visible_in_tree()
@@ -280,7 +280,7 @@ func _run() -> void:
 		app._return_stitched_run_title()
 		await process_frame
 		_check(app.start_button.has_focus(), "run return focuses live New Run")
-		for button in [app.route_button, app.stitched_fight_button]:
+		for button in [app.stitched_fight_button]:
 			button.pressed.emit()
 		_check(app.stitched_run_session == null and app.stitched_event_panel == null
 			and app.title_view.is_visible_in_tree(), "stale shortcut signals remain inert on return")

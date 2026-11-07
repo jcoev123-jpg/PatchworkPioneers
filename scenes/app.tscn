@@ -1,15 +1,7 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene load_steps=4 format=3]
 
 [ext_resource type="Script" path="res://scripts/app.gd" id="1"]
-[ext_resource type="Script" path="res://scripts/live_enemy_roster.gd" id="2"]
-[ext_resource type="Script" path="res://scripts/live_support_hand.gd" id="3"]
-[ext_resource type="Script" path="res://scripts/live_combat_meters.gd" id="4"]
-[ext_resource type="Script" path="res://scripts/live_area_attack_action.gd" id="5"]
-[ext_resource type="Script" path="res://scripts/live_elite_patch_sewing.gd" id="6"]
 [ext_resource type="Script" path="res://scripts/patchwork_ui_shell.gd" id="7"]
-[ext_resource type="Script" path="res://scripts/live_warden_reaction_hand.gd" id="8"]
-[ext_resource type="Script" path="res://scripts/live_visit_card_tiles.gd" id="9"]
-[ext_resource type="Script" path="res://scripts/live_lantern_monk_pole_shelter_hand.gd" id="10"]
 
 [ext_resource type="Theme" path="res://themes/gothic_theme.tres" id="11_gothic"]
 
@@ -32,34 +24,3 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("7")
-
-[node name="LiveEnemyRoster" type="Node" parent="."]
-script = ExtResource("2")
-
-[node name="LiveSupportHand" type="Node" parent="."]
-script = ExtResource("3")
-
-[node name="LiveWardenReactionHand" type="Node" parent="."]
-script = ExtResource("8")
-
-[node name="LiveLanternMonkPoleShelterHand" type="Node" parent="."]
-script = ExtResource("10")
-
-[node name="LiveCombatMeters" type="Node" parent="."]
-script = ExtResource("4")
-
-[node name="LiveAreaAttackAction" type="Node" parent="."]
-script = ExtResource("5")
-
-[node name="LiveElitePatchSewing" type="Node" parent="."]
-script = ExtResource("6")
-
-[node name="LiveVisitCardTiles" type="Control" parent="."]
-layout_mode = 3
-anchors_preset = 15
-anchor_right = 1.0
-anchor_bottom = 1.0
-grow_horizontal = 2
-grow_vertical = 2
-mouse_filter = 2
-script = ExtResource("9")

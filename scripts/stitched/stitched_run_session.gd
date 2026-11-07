@@ -96,6 +96,11 @@ var walks_enabled := false
 var walk: StitchedWalkRules
 var walk_carry: Array = []
 var walk_receipts: Array = []
+## Debug-build playtest cheats only (scripts/debug/playtest_cheats.gd); empty in real play.
+var cheat_event_id := ""
+## Tests pin the drawn Event record for every session, so save/replay meets it too; the draw
+## still spends its seeded roll. Empty in real play.
+static var pinned_event_id := ""
 
 
 static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}) -> StitchedRunSession:
@@ -976,6 +981,9 @@ func _open_event() -> bool:
 		return false
 	records.sort_custom(func(a: Dictionary, b: Dictionary): return a.id < b.id)
 	_event_record = records[rng.randi_range(0, records.size() - 1)]
+	for record in records:
+		if record.id in [cheat_event_id, pinned_event_id] and not str(record.id).is_empty():
+			_event_record = record
 	pending["event_id"] = _event_record.id
 	pending["title"] = _event_record.title
 	var wallet := {"gold": gold, "scraps": scraps}

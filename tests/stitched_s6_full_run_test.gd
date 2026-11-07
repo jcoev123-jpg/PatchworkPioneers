@@ -117,10 +117,8 @@ func _exercise_village_entry() -> void:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
 	await process_frame
-	_check(not app.route_button.is_visible_in_tree() and app.route_button.disabled
-		and app.route_button.focus_mode == Control.FOCUS_NONE
-		and app.run_map == null and app.deck == null,
-		"fresh title hides the retired card route from pointer and keyboard")
+	_check(app.get("route_button") == null and app.run_map == null and app.deck == null,
+		"fresh title has no retired card route")
 	app.base_button.pressed.emit()
 	var village: BaseScreen = app.base_screen
 	_check(village != null and village.is_visible_in_tree(),

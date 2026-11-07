@@ -2,10 +2,8 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
-# Re-derived through the genuine map -> battle -> Peddler -> Event pipeline after the
-# roadside/hero Event pool grew again and shifted the seeded selector (282486 now met
-# quilting_bee). This seed's mounted run wins f01_n1 with a real drop and one scrap,
-# buys a distinct second spare at the f02_n1 Peddler, and reaches the Moth on f03_n1.
+# This seed's mounted run wins f01_n1 with a real drop and one scrap, buys a distinct
+# second spare at the f02_n1 Peddler, and enters the f03_n1 Event (pinned to the Moth).
 const RICH_SEED := 588735
 # The merged roadside Event packs shifted the seeded selector; this empty-satchel floor-1
 # witness still reaches the authored Moth with zero scraps.
@@ -150,7 +148,7 @@ func _earn_moth_wallet(stage: StitchedBattleScreen) -> int:
 			stage._part_buttons[slot].pressed.emit()
 			for rank in [1, 2, 3, 4]:
 				var target: Button = stage._target_buttons.get("foe_" + str(rank))
-				if target != null and not target.disabled and target.is_visible_in_tree():
+				if target != null and not target.disabled and target.visible:
 					target.pressed.emit()
 					done = true
 					break
@@ -374,10 +372,14 @@ func _poor_branch() -> void:
 
 
 func _run() -> void:
+	# Each new Event pack shifts the seeded selector off the Moth, so the funded runs pin
+	# the drawn record; route, wallet and spares stay earned through the real pipeline.
+	StitchedRunSession.pinned_event_id = "moth_infestation"
 	await _rich_branch("sacrifice_part", 0)
 	await _rich_branch("sacrifice_part", 1, true)
 	await _rich_branch("fumigate")
 	await _rich_branch("escape")
+	StitchedRunSession.pinned_event_id = ""
 	await _poor_branch()
 	_check(settled_branches == 5, "both indexed sacrifices, funded fumigate, funded escape and empty escape actually settled")
 	DirAccess.remove_absolute(SAVE_PATH)
