@@ -68,7 +68,7 @@
       "title": "The Cinder-Brass Bedwarmer",
       "description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
       "choices": [
-        {"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (+22 candle, +5 fray each)", "stitched_effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11}},
+        {"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (requires candle below 100, +22 candle, +5 fray each)", "stitched_effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true}},
         {"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "stitched_effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2}},
         {"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]

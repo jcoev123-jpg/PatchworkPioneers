@@ -59,6 +59,9 @@ func _initialize() -> void:
 	_test_kid_fear_fray_observations_ac1()
 	_test_kid_fear_fray_observations_ac2_party_wide_and_debt_parcel()
 	_test_kid_fear_fray_observations_ac3_negative_and_invariants()
+	_test_require_candle_room_shipped_bedwarmer()
+	_test_require_candle_room_fixtures_and_lost_dolls()
+	_test_require_candle_room_schema_and_rejections()
 	_finish()
 
 
@@ -6062,6 +6065,378 @@ func _test_kid_fear_fray_observations_ac3_negative_and_invariants() -> void:
 	var after_dict_heroes := {"heroes": test_after.duplicate(true)}
 	var obs_dict_heroes := svc_b.derive_fear_observations(receipt_b, test_snap, after_dict_heroes)
 	_check(obs_dict_heroes == obs_main, "AC3: after_roster as dict with heroes matches")
+
+
+func _test_require_candle_room_shipped_bedwarmer() -> void:
+	var source := FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json")
+	var doc: Variant = JSON.parse_string(source)
+	_check(doc is Dictionary and doc.has("events"), "AC1: loads stitched_route_effects.json")
+	var bedwarmer: Dictionary = {}
+	if doc is Dictionary and doc.has("events"):
+		for ev in doc["events"]:
+			if ev is Dictionary and ev.get("id") == "v3_cinder_brass_bedwarmer":
+				bedwarmer = (ev as Dictionary).duplicate(true)
+				break
+	_check(not bedwarmer.is_empty(), "AC1: genuine shipped Bedwarmer record found")
+	var record_snapshot: Dictionary = bedwarmer.duplicate(true)
+
+	# AC1: Candle 100, gold 60, four dolls: preview quotes unavailable, original deltas, empty fray
+	var snap_100 := _gold_scraps_four(100, 4, 60, [10, 20, 30, 40])
+	var before_100: Dictionary = snap_100.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 998877
+	var guard_state: int = rng_guard.state
+
+	var svc_100 := RunStitchedEventConsequence.new(bedwarmer)
+	_check(svc_100.is_valid() and not svc_100.is_claimed(), "AC1: visit opens")
+	var prev_100: Dictionary = svc_100.preview(snap_100)
+	_check(prev_100.get("ok") == true and int(prev_100.get("candle")) == 100, "AC1: preview ok")
+	var rent_100 := _entry(prev_100, "rent_ember_lid")
+	_check(rent_100.get("available") == false
+		and int(rent_100.get("candle")) == 100
+		and int(rent_100.get("candle_delta")) == 22
+		and int(rent_100.get("gold")) == 60
+		and int(rent_100.get("gold_delta")) == -11
+		and int(rent_100.get("fray_delta")) == 5
+		and rent_100.get("fray") == {},
+		"AC1: rent_ember_lid unavailable at candle 100, preserving base purse and empty fray intent")
+	_check(_entry(prev_100, "sift_cooling_ashes").get("available") == true, "AC1: sift available")
+	_check(_entry(prev_100, "leave").get("available") == true, "AC1: leave available")
+
+	# choose("rent_ember_lid") refused without latching, without mutating snapshot or record, no gold spent
+	_assert_rejected(svc_100, "rent_ember_lid", snap_100, 100, "AC1: rent_ember_lid rejected at candle 100")
+	_check(svc_100.is_valid() and not svc_100.is_claimed(), "AC1: visit remains unclaimed after refusal")
+	_check(snap_100 == before_100, "AC1: snapshot unchanged by refusal")
+	_check(bedwarmer == record_snapshot, "AC1: source record unchanged by refusal")
+	_check(rng_guard.state == guard_state, "AC1: RNG undisturbed by refusal")
+
+	# AC3: Sift cooling ashes succeeds on the same visit after refusal
+	var sift_receipt: Dictionary = svc_100.choose("sift_cooling_ashes", snap_100)
+	_check(sift_receipt.get("ok") == true
+		and int(sift_receipt.get("candle")) == 88
+		and int(sift_receipt.get("scraps")) == 6
+		and sift_receipt.get("fray") == {"warden": -6, "seamstress": -6, "tinker": -6, "button_golem": -6},
+		"AC3: sift succeeds on same visit after rent refusal")
+	_check(svc_100.is_claimed() and not svc_100.is_valid(), "AC3: visit latches on sift")
+
+	# AC3: Leave succeeds on an independent full-candle visit after refusal
+	var svc_leave := RunStitchedEventConsequence.new(bedwarmer)
+	var snap_leave := _gold_scraps_four(100, 4, 60, [10, 20, 30, 40])
+	_assert_rejected(svc_leave, "rent_ember_lid", snap_leave, 100, "AC3: refusal on independent visit")
+	var leave_receipt: Dictionary = svc_leave.choose("leave", snap_leave)
+	_check(leave_receipt.get("ok") == true
+		and int(leave_receipt.get("candle")) == 100
+		and leave_receipt.get("fray") == {},
+		"AC3: leave succeeds after refusal at candle 100")
+	_check(svc_leave.is_claimed() and not svc_leave.is_valid(), "AC3: visit latches on leave")
+
+	# AC2: Candle 99 and gold >= 11 (tested with exact gold 11)
+	var snap_99 := _gold_scraps_four(99, 4, 11, [10, 20, 30, 40])
+	var before_99: Dictionary = snap_99.duplicate(true)
+	var svc_99 := RunStitchedEventConsequence.new(bedwarmer)
+	var prev_99: Dictionary = svc_99.preview(snap_99)
+	var rent_99 := _entry(prev_99, "rent_ember_lid")
+	_check(rent_99.get("available") == true
+		and int(rent_99.get("candle")) == 100
+		and int(rent_99.get("gold")) == 0
+		and rent_99.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 99 with gold 11 quotes available, clamped candle 100, gold 0, fray +5")
+	var receipt_99: Dictionary = svc_99.choose("rent_ember_lid", snap_99)
+	_check(receipt_99.get("ok") == true
+		and int(receipt_99.get("candle")) == 100
+		and int(receipt_99.get("gold")) == 0
+		and int(receipt_99.get("gold_delta")) == -11
+		and receipt_99.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 99 with gold 11 claims rent_ember_lid, clamped candle 100, gold 0, fray +5")
+	_check(svc_99.is_claimed() and not svc_99.is_valid(), "AC2: latched once")
+	_assert_rejected(svc_99, "rent_ember_lid", snap_99, 99, "AC2: replay refusal")
+	_assert_rejected(svc_99, "leave", snap_99, 99, "AC2: spent visit refuses alternative")
+	_check(snap_99 == before_99, "AC2: snapshot undisturbed")
+
+	# AC2: Candle 40 and gold 60 yields candle 62 and gold 49
+	var snap_40 := _gold_scraps_four(40, 4, 60, [10, 20, 30, 40])
+	var svc_40 := RunStitchedEventConsequence.new(bedwarmer)
+	var prev_40: Dictionary = svc_40.preview(snap_40)
+	var rent_40 := _entry(prev_40, "rent_ember_lid")
+	_check(rent_40.get("available") == true
+		and int(rent_40.get("candle")) == 62
+		and int(rent_40.get("gold")) == 49
+		and rent_40.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 40 and gold 60 quotes candle 62 and gold 49")
+	var receipt_40: Dictionary = svc_40.choose("rent_ember_lid", snap_40)
+	_check(receipt_40.get("ok") == true
+		and int(receipt_40.get("candle")) == 62
+		and int(receipt_40.get("gold")) == 49
+		and receipt_40.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 40 and gold 60 claims candle 62 and gold 49")
+
+	# AC3: Underfunded gold 10 with candle 40 (candle < 100)
+	var snap_underfunded := _gold_scraps_four(40, 4, 10, [10, 20, 30, 40])
+	var before_under: Dictionary = snap_underfunded.duplicate(true)
+	var svc_under := RunStitchedEventConsequence.new(bedwarmer)
+	var prev_under: Dictionary = svc_under.preview(snap_underfunded)
+	var rent_under := _entry(prev_under, "rent_ember_lid")
+	_check(rent_under.get("available") == false
+		and int(rent_under.get("candle")) == 40
+		and int(rent_under.get("gold")) == 10
+		and rent_under.get("fray") == {},
+		"AC3: underfunded gold 10 quotes rent_ember_lid unavailable")
+	_check(_entry(prev_under, "sift_cooling_ashes").get("available") == true,
+		"AC3: sift remains available on underfunded visit")
+	_assert_rejected(svc_under, "rent_ember_lid", snap_underfunded, 40,
+		"AC3: underfunded rent refused without latching")
+	_check(svc_under.is_valid() and not svc_under.is_claimed(), "AC3: visit open after underfunded refusal")
+	_check(snap_underfunded == before_under, "AC3: underfunded snapshot untouched")
+	var under_sift: Dictionary = svc_under.choose("sift_cooling_ashes", snap_underfunded)
+	_check(under_sift.get("ok") == true and int(under_sift.get("candle")) == 28,
+		"AC3: free salvage claims on underfunded visit after refusal")
+
+
+func _test_require_candle_room_fixtures_and_lost_dolls() -> void:
+	# 1. Resource-free candle room gate preserves legacy 8-key preview and 7-key receipt
+	var free_gated_event := _event([
+		_choice("ember_breeze", "Warm the party.", {
+			"target": "party", "candle": 15, "fray": 2, "require_candle_room": true,
+		}),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	], "ev_free_candle_room")
+	var legacy_preview_keys := ["available", "candle", "candle_delta", "choice_id", "fray", "fray_delta", "hero_id", "target"]
+	legacy_preview_keys.sort()
+	var legacy_receipt_keys := ["candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target"]
+	legacy_receipt_keys.sort()
+
+	# At candle 100: unavailable, legacy 8-key preview entry
+	var snap_100 := _four(100, [10, 20, 30, 40])
+	var svc_free_100 := RunStitchedEventConsequence.new(free_gated_event)
+	var prev_free_100 := svc_free_100.preview(snap_100)
+	var breeze_entry_100 := _entry(prev_free_100, "ember_breeze")
+	_check(breeze_entry_100.get("available") == false
+		and _receipt_keys(breeze_entry_100) == legacy_preview_keys,
+		"AC4: free candle-room choice has exact legacy 8-key preview entry when full")
+	_assert_rejected(svc_free_100, "ember_breeze", snap_100, 100, "AC4: free choice rejected at candle 100")
+
+	# At candle 50: available, exact legacy 7-key receipt
+	var snap_50 := _four(50, [10, 20, 30, 40])
+	var svc_free_50 := RunStitchedEventConsequence.new(free_gated_event)
+	var prev_free_50 := svc_free_50.preview(snap_50)
+	var breeze_entry_50 := _entry(prev_free_50, "ember_breeze")
+	_check(breeze_entry_50.get("available") == true
+		and int(breeze_entry_50.get("candle")) == 65
+		and _receipt_keys(breeze_entry_50) == legacy_preview_keys,
+		"AC4: free candle-room choice has exact legacy 8-key preview entry when eligible")
+	var receipt_50 := svc_free_50.choose("ember_breeze", snap_50)
+	_check(receipt_50.get("ok") == true
+		and int(receipt_50.get("candle")) == 65
+		and _receipt_keys(receipt_50) == legacy_receipt_keys,
+		"AC4: free candle-room choice has exact legacy 7-key receipt")
+
+	# Ungated choice at candle 100 still available (omitting require_candle_room preserves legacy)
+	var ungated_event := _event([
+		_choice("ungated_ember", "Add light.", _effect(15, 2)),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	], "ev_ungated")
+	var svc_ungated := RunStitchedEventConsequence.new(ungated_event)
+	var prev_ungated := svc_ungated.preview(snap_100)
+	_check(_entry(prev_ungated, "ungated_ember").get("available") == true
+		and int(_entry(prev_ungated, "ungated_ember").get("candle")) == 100,
+		"AC3: omitting require_candle_room preserves legacy candle clamp at 100")
+
+	# 2. Lost doll recipient flags
+	var party_with_lost := [
+		{"id": "warden", "fray": 20, "lost": true},
+		{"id": "seamstress", "fray": 30, "lost": false},
+		{"id": "tinker", "fray": 40, "lost": false},
+		{"id": "button_golem", "fray": 50, "lost": false},
+	]
+	var snap_lost := {"candle": 90, "party": party_with_lost, "gold": 50}
+	var gated_gold_event := _event([
+		_choice("paid_warm", "Warm active party.", {
+			"target": "party", "candle": 20, "fray": 5, "gold": -10, "require_candle_room": true,
+		}),
+		_choice("hero_warm", "Warm seamstress.", {
+			"target": "hero", "hero_id": "seamstress", "candle": 20, "fray": 5, "gold": -10, "require_candle_room": true,
+		}),
+		_choice("lost_hero_warm", "Warm lost warden.", {
+			"target": "hero", "hero_id": "warden", "candle": 20, "fray": 5, "gold": -10, "require_candle_room": true,
+		}),
+	], "ev_lost_check")
+
+	var svc_lost := RunStitchedEventConsequence.new(gated_gold_event)
+	var prev_lost := svc_lost.preview(snap_lost)
+	# Party target: only non-lost heroes receive fray intent
+	var paid_warm_entry := _entry(prev_lost, "paid_warm")
+	_check(paid_warm_entry.get("available") == true
+		and paid_warm_entry.get("fray") == {"seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: lost hero omitted from fray intents on party target with require_candle_room")
+	var lost_hero_entry := _entry(prev_lost, "lost_hero_warm")
+	_check(lost_hero_entry.get("available") == false and lost_hero_entry.get("fray") == {},
+		"AC4: targeting a lost hero is unavailable")
+	_assert_rejected(svc_lost, "lost_hero_warm", snap_lost, 90, "AC4: lost hero target refused")
+
+	# If all heroes are lost, party target with fray benefit is unavailable
+	var all_lost_party := [
+		{"id": "warden", "fray": 20, "lost": true},
+		{"id": "seamstress", "fray": 30, "lost": true},
+	]
+	var snap_all_lost := {"candle": 90, "party": all_lost_party, "gold": 50}
+	var svc_all_lost := RunStitchedEventConsequence.new(gated_gold_event)
+	var prev_all_lost := svc_all_lost.preview(snap_all_lost)
+	_check(_entry(prev_all_lost, "paid_warm").get("available") == false,
+		"AC4: party choice with benefits unavailable when all heroes lost")
+
+
+func _test_require_candle_room_schema_and_rejections() -> void:
+	var snap_40 := _gold_four(40, 60, [10, 20, 30, 40])
+	var expected_malformed_preview_keys := [
+		"available", "candle", "candle_delta", "choice_id", "fray", "fray_delta", "hero_id", "target"
+	]
+	expected_malformed_preview_keys.sort()
+
+	# 1. Bad gate values: must be strictly native bool true
+	var bad_gate_values: Array = [
+		false,
+		0,
+		1,
+		"true",
+		"false",
+		"1",
+		"",
+		" ",
+		1.0,
+		0.0,
+		null,
+		[true],
+		{"require_candle_room": true},
+	]
+	for idx in range(bad_gate_values.size()):
+		var bad_gate: Variant = bad_gate_values[idx]
+		for target_mode in ["party", "hero"]:
+			var broken_effect := {
+				"target": target_mode,
+				"candle": 22,
+				"fray": 5,
+				"require_candle_room": bad_gate,
+			}
+			if target_mode == "hero":
+				broken_effect["hero_id"] = "seamstress"
+			var broken_choice := _choice("broken_gate", "Bad gate.", broken_effect)
+			var svc := RunStitchedEventConsequence.new(_event([
+				broken_choice,
+				_choice("leave", "Leave.", _effect(0, 0)),
+			]))
+			var prev := svc.preview(snap_40)
+			var broken_entry := _entry(prev, "broken_gate")
+			_check(prev.get("ok") == true
+				and broken_entry.get("available") == false
+				and broken_entry.get("candle_delta") == null
+				and broken_entry.get("fray_delta") == null
+				and int(broken_entry.get("candle")) == 40
+				and broken_entry.get("fray") == {}
+				and _receipt_keys(broken_entry) == expected_malformed_preview_keys,
+				"AC4: bad require_candle_room %d (%s) is malformed with null deltas" % [idx, target_mode])
+			_assert_rejected(svc, "broken_gate", snap_40, 40,
+				"AC4: bad require_candle_room %d (%s) commit rejected" % [idx, target_mode])
+			var leave_rec := svc.choose("leave", snap_40)
+			_check(leave_rec.get("ok") == true and int(leave_rec.get("candle")) == 40,
+				"AC4: leave claims on same visit after bad gate %d (%s)" % [idx, target_mode])
+
+	# 2. Bad candle values with require_candle_room: true
+	# Strictly positive native integer required: reject zero, negative, fractional, strings, non-numbers
+	var bad_room_candle_deltas: Array = [
+		0,
+		-1,
+		-22,
+		-100,
+		-9223372036854775807,
+		22.5,
+		0.5,
+		-0.5,
+		-22.5,
+		"22",
+		"0",
+		"-22",
+		true,
+		false,
+		null,
+		INF,
+		-INF,
+		NAN,
+		[22],
+		{"candle": 22},
+	]
+	for idx in range(bad_room_candle_deltas.size()):
+		var bad_candle: Variant = bad_room_candle_deltas[idx]
+		for target_mode in ["party", "hero"]:
+			var broken_effect := {
+				"target": target_mode,
+				"candle": bad_candle,
+				"fray": 5,
+				"require_candle_room": true,
+			}
+			if target_mode == "hero":
+				broken_effect["hero_id"] = "seamstress"
+			var broken_choice := _choice("broken_candle", "Bad candle.", broken_effect)
+			var valid_choice := _choice("valid_room", "Valid room.", {
+				"target": "party", "candle": 22, "fray": 5, "require_candle_room": true,
+			})
+			var svc := RunStitchedEventConsequence.new(_event([
+				broken_choice,
+				valid_choice,
+				_choice("leave", "Leave.", _effect(0, 0)),
+			]))
+			var prev := svc.preview(snap_40)
+			var broken_entry := _entry(prev, "broken_candle")
+			_check(prev.get("ok") == true
+				and broken_entry.get("available") == false
+				and broken_entry.get("candle_delta") == null
+				and broken_entry.get("fray_delta") == null
+				and int(broken_entry.get("candle")) == 40
+				and broken_entry.get("fray") == {}
+				and _entry(prev, "valid_room").get("available") == true,
+				"AC4: bad room candle delta %d (%s) is malformed while sibling stays available" % [idx, target_mode])
+			_assert_rejected(svc, "broken_candle", snap_40, 40,
+				"AC4: bad room candle delta %d (%s) commit rejected" % [idx, target_mode])
+			var valid_rec := svc.choose("valid_room", snap_40)
+			_check(valid_rec.get("ok") == true and int(valid_rec.get("candle")) == 62,
+				"AC4: valid sibling claims after bad room candle %d (%s)" % [idx, target_mode])
+
+	# 3. Contradictory gates and unrecognized keys
+	var structural_errors: Array = [
+		# both require_candle_room and require_full_candle
+		{"id": "both_gates", "text": "Both candle gates.", "stitched_effect": {
+			"candle": 22, "fray": 5, "target": "party",
+			"require_candle_room": true, "require_full_candle": true,
+		}},
+		# unrecognized key alongside require_candle_room
+		{"id": "extra_key", "text": "Extra key.", "stitched_effect": {
+			"candle": 22, "fray": 5, "target": "party",
+			"require_candle_room": true, "bogus_field": 42,
+		}},
+		# party with hero_id alongside require_candle_room
+		{"id": "party_hero_id", "text": "Party with hero_id.", "stitched_effect": {
+			"candle": 22, "fray": 5, "target": "party",
+			"hero_id": "warden", "require_candle_room": true,
+		}},
+	]
+	for idx in range(structural_errors.size()):
+		var broken_def: Dictionary = structural_errors[idx]
+		var svc := RunStitchedEventConsequence.new(_event([
+			broken_def,
+			_choice("leave", "Leave.", _effect(0, 0)),
+		]))
+		var prev := svc.preview(snap_40)
+		var broken_entry := _entry(prev, broken_def["id"])
+		_check(prev.get("ok") == true
+			and broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null,
+			"AC4: structural error %d (%s) is malformed" % [idx, broken_def["id"]])
+		_assert_rejected(svc, broken_def["id"], snap_40, 40,
+			"AC4: structural error %d (%s) commit rejected" % [idx, broken_def["id"]])
+		var leave_rec := svc.choose("leave", snap_40)
+		_check(leave_rec.get("ok") == true and int(leave_rec.get("candle")) == 40,
+			"AC4: leave claims after structural error %d" % idx)
+
 
 
 

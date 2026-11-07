@@ -32,11 +32,14 @@ extends RefCounted
 ## preview() and claimable in choose() iff the opening snapshot candle matches a band
 ## in that set. An event choice cannot specify both `required_candle_band` and
 ## `required_candle_bands`.
-## `scraps`, `gold`, `part`, `hp` and
-## `require_full_candle` are optional on `stitched_effect`; when omitted, the
+## `scraps`, `gold`, `part`, `hp`,
+## `require_full_candle` and `require_candle_room` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
 ## present, `require_full_candle` must be native boolean `true` on a strictly
 ## negative native integer `candle` delta (`-N`), requiring `snapshot.candle >= N`
+## for the choice to be available in `preview()` or claimable in `choose()`.
+## When present, `require_candle_room` must be native boolean `true` on a strictly
+## positive native integer `candle` delta (`+N`), requiring `snapshot.candle < 100`
 ## for the choice to be available in `preview()` or claimable in `choose()`.
 ## When present, `scraps` and `gold` are
 ## signed integral deltas applied to the shared party scraps and gold purses
@@ -236,6 +239,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if not _meets_min_fray(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _can_afford_candle(base_candle, parsed_effect):
+		return _rejection(base_candle)
+	if not _has_candle_room(base_candle, parsed_effect):
 		return _rejection(base_candle)
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
 	var projected_scraps := 0
@@ -575,6 +580,15 @@ func _can_afford_candle(base_candle: int, parsed_effect: Dictionary) -> bool:
 	return delta < 0 and delta >= -base_candle
 
 
+## Shared candle-room admission gate for preview and commit when
+## `require_candle_room: true` is present on `stitched_effect`.
+## Qualifies iff opening candle is strictly below CANDLE_MAX (100).
+func _has_candle_room(base_candle: int, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("require_candle_room", false):
+		return true
+	return base_candle < CANDLE_MAX
+
+
 ## Shared FRAY admission gate for preview and commit when
 ## `min_fray` is present on `stitched_effect`.
 ## For target: "party" without required_hero, qualifies iff at least one active
@@ -690,6 +704,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if not _meets_min_fray(base_state, parsed_effect):
 		return entry
 	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
+		return entry
+	if not _has_candle_room(int(base_state["candle"]), parsed_effect):
 		return entry
 	var projected_scraps := 0
 	if has_scraps:
@@ -921,10 +937,13 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_required_hero: bool = effect.has("required_hero")
 	var has_hp: bool = effect.has("hp")
 	var has_require_full_candle: bool = effect.has("require_full_candle")
+	var has_require_candle_room: bool = effect.has("require_candle_room")
 	var has_min_fray: bool = effect.has("min_fray")
 	var has_required_candle_band: bool = effect.has("required_candle_band")
 	var has_required_candle_bands: bool = effect.has("required_candle_bands")
 	if has_required_candle_band and has_required_candle_bands:
+		return {"ok": false}
+	if has_require_full_candle and has_require_candle_room:
 		return {"ok": false}
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
@@ -933,6 +952,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_required_hero else 0)
 		+ (1 if has_hp else 0)
 		+ (1 if has_require_full_candle else 0)
+		+ (1 if has_require_candle_room else 0)
 		+ (1 if has_min_fray else 0)
 		+ (1 if has_required_candle_band else 0)
 		+ (1 if has_required_candle_bands else 0)
@@ -968,6 +988,12 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if typeof(raw_require_full_candle) != TYPE_BOOL or not bool(raw_require_full_candle):
 			return {"ok": false}
 		if typeof(effect.get("candle")) != TYPE_INT or candle_delta >= 0:
+			return {"ok": false}
+	if has_require_candle_room:
+		var raw_require_candle_room: Variant = effect.get("require_candle_room")
+		if typeof(raw_require_candle_room) != TYPE_BOOL or raw_require_candle_room != true:
+			return {"ok": false}
+		if candle_delta <= 0:
 			return {"ok": false}
 	var required_candle_band := ""
 	if has_required_candle_band:
@@ -1010,6 +1036,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"required_hero": required_hero,
 		"has_hp": has_hp,
 		"require_full_candle": has_require_full_candle,
+		"require_candle_room": has_require_candle_room,
 		"has_min_fray": has_min_fray,
 		"has_required_candle_band": has_required_candle_band,
 		"required_candle_band": required_candle_band,
