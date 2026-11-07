@@ -66,6 +66,27 @@ STATUS: none"))
 				_check(not (label.text.to_lower().contains(word) and label.text.to_lower().contains(":")),
 					"no readout for " + word + ": " + label.text)
 	_check(not fight.continue_button.visible, "Continue waits for the fight to end")
+	# Wren's hand sits on the bar as four small hands, not behind More.
+	_check(fight.hand_buttons.size() == 4, "four of Wren's hands on the bar")
+	for action_id in StitchedKidHandActions.IDS:
+		var hand: TextureButton = fight.hand_buttons[action_id]
+		_check(hand.texture_normal != null and hand.visible and not fight.more_buttons.has(action_id),
+			action_id + " is a picture on the bar, not a More choice")
+		_check(hand.position.x + hand.size.x <= 1264.0 and hand.position.y >= StitchedCorridorFight.BAR_TOP
+			and hand.position.y + hand.size.y <= StitchedCorridorFight.BAR_TOP + 126.0, action_id + " fits inside the bar")
+		_check(not RegEx.create_from_string(r"\d").search(hand.tooltip_text), action_id + " hover shows no number: " + hand.tooltip_text)
+		_check(not hand.get_global_rect().intersects(fight.more_button.get_global_rect()), action_id + " clears More")
+	_check(StitchedCorridorFight._plain("Wren cups a doll: -8 fray.") == "Wren cups a doll.", "the fray number is cut from the hover")
+	if screen.battle.hand_action_open():
+		_check(not fight.hand_buttons.steady.disabled, "the hand is free at the round's start")
+		fight.hand_buttons.steady.pressed.emit()
+		_check(screen._hand_pending == "steady" and fight.hand_buttons.steady.modulate.r > 1.0, "Steady waits for a doll and glows")
+		var before_hand := screen.receipts.size()
+		fight.click_figure("hero", 1)
+		await process_frame
+		_check(screen.receipts.size() > before_hand and not screen.battle.hand_action_open(), "Wren steadies a doll from the bar")
+		for action_id in StitchedKidHandActions.IDS:
+			_check(fight.hand_buttons[action_id].disabled, action_id + " rests once the hand is spent this round")
 	# Left alone on a turn, a standing doll speaks over its own head.
 	for kind in ["fight_idle", "fight_hurt", "fight_dark", "fight_boss", "fight_winning", "fight_losing"]:
 		_check(not fight.barks.data.contexts.get(kind, []).is_empty(), "fight lines for " + kind)
@@ -114,6 +135,7 @@ STATUS: none"))
 	await process_frame
 	_check(fight._seen_receipts == screen.receipts.size(), "every action reaches the corridor view %d/%d" % [fight._seen_receipts, screen.receipts.size()])
 	_check(fight.continue_button.visible and fight.outcome_label.visible, "Continue appears at the end")
+	_check(not fight.hand_buttons.lift.visible, "Wren's hands step aside for Continue")
 	_check(fight.bark_timer.is_stopped() and fight.bark().is_empty(), "the dolls fall quiet once the fight is over")
 	var exited := [false]
 	screen.exit_requested.connect(func(): exited[0] = true)
