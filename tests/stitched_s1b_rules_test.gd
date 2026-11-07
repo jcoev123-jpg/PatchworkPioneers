@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_reckless_guard()
 	_test_stun_clock()
 	_test_steadfast_turn_gate()
+	_test_reaction_order()
 	_test_mode_independence()
 	if failures.is_empty():
 		print("stitched_s1b_rules_test: PASS (", checks, " checks)")
@@ -951,3 +952,223 @@ func _test_steadfast_turn_gate() -> void:
 			witnessed = true
 			break
 		_check(witnessed, "AC3: nonvacuous seeded actionable Steadfast " + command)
+
+
+# Reaction witnesses use the public four-hero/three-foe turn API, genuine fixture
+# Quilt Up / Stitch Step, and a minimal validated foe self-buff. No statuses,
+# terminal flags, receipts or RNG state are injected into the battle.
+func _hero_reaction_defender_trace(seed_value: int, foe_hp: int, with_riposte: bool = true, foe_acc: int = 100) -> Dictionary:
+	var cfg := _config(seed_value, 51)  # No opening strike changes the foe's authored HP.
+	# Quilt Up can target only rank 1 or 4; Stitch Step launches only in
+	# ranks 1 or 3. Both genuinely coexist on the rank-1 Warden if the
+	# rank-4 Monk wears the fixture Quilt and Warden wears the fixture legs.
+	cfg["heroes"][0]["parts"]["legs"] = "any_legs_stitch_step"
+	cfg["heroes"][3]["parts"]["torso"] = "warden_torso_quilt"
+	cfg["foes"][0]["max_hp"] = foe_hp
+	cfg["foes"][0]["abilities"][0]["acc"] = foe_acc
+	var built := StitchedRules.create(cfg)
+	if not bool(built["ok"]):
+		return {}
+	var b: StitchedRules = built["battle"]
+	if b.get_heroes().size() != 4 or b.get_foes().size() != 3 or not _to(b, "warden"):
+		return {}
+	var step := b.use_part("any_legs_stitch_step", 1) if with_riposte else b.use_part("warden_torso_quilt", 1)
+	if not bool(step.get("ok", false)) or not _to(b, "monk"):
+		return {}
+	var quilt := b.use_part("warden_torso_quilt", 1)
+	if not bool(quilt.get("ok", false)) or not _to(b, "foe_0"):
+		return {}
+	var defender := b.get_unit("warden")
+	var foe := b.get_unit("foe_0")
+	if int(defender["statuses"].get("thorns", 0)) != 2 or int(defender["statuses"].get("riposte", 0)) != (2 if with_riposte else 0):
+		return {}
+	if int(foe["hp"]) != foe_hp or bool(foe["dead"]):
+		return {}
+	var before := _snapshot(b)
+	var rng_before := b.rng_state()
+	var invalid := b.use_foe_ability("not_an_authored_reaction_ability", 1)
+	var atomic := not bool(invalid.get("ok", false)) and _snapshot(b) == before and b.rng_state() == rng_before
+	var strike := b.use_foe_ability("foe_hit", 1)
+	if not bool(strike.get("ok", false)) or strike["results"].size() != 1:
+		return {}
+	return {
+		"setup": [step, quilt], "before": before, "rng_before": rng_before,
+		"atomic": atomic, "invalid": invalid, "defender_before": defender, "foe_before": foe,
+		"strike": strike, "foe_after": b.get_unit("foe_0"),
+		"defender_after": b.get_unit("warden"),
+		"heaps": b.get_heaps(), "after": _snapshot(b), "rng_after": b.rng_state(),
+	}
+
+
+func _foe_reaction_defender_trace(seed_value: int, already_hanging: bool = false, with_riposte: bool = true) -> Dictionary:
+	var cfg := _config(seed_value, 100)
+	cfg["heroes"][0]["max_hp"] = 2  # The real Quilt torso adds 6: initial HP 8.
+	var effects := {"thorns": 8}
+	if with_riposte:
+		effects["riposte"] = 2
+	var self_buff := _ability("foe_reaction_stitch", "buff", effects, [0, 0])
+	self_buff["target_side"] = "self"
+	self_buff["move"] = "guard"
+	cfg["foes"][0]["abilities"].append(self_buff)
+	var built := StitchedRules.create(cfg)
+	if not bool(built["ok"]):
+		return {}
+	var b: StitchedRules = built["battle"]
+	if b.get_heroes().size() != 4 or b.get_foes().size() != 3 or not _to(b, "foe_0"):
+		return {}
+	var buff := b.use_foe_ability("foe_reaction_stitch", 1)
+	if not bool(buff.get("ok", false)) or not _to(b, "warden"):
+		return {}
+	var hanging_receipt: Dictionary = {}
+	if already_hanging:
+		hanging_receipt = b.apply_fray_event("warden", 200)
+		if str(hanging_receipt.get("transition", "")) != "hanging":
+			return {}
+	var hero := b.get_unit("warden")
+	var foe := b.get_unit("foe_0")
+	if int(foe["statuses"].get("thorns", 0)) != 8 or int(foe["statuses"].get("riposte", 0)) != (2 if with_riposte else 0):
+		return {}
+	if int(foe["hp"]) != 30 or bool(foe["dead"]) or int(hero["hp"]) != (0 if already_hanging else 8):
+		return {}
+	if bool(hero["hanging"]) != already_hanging or bool(hero["lost"]):
+		return {}
+	var chosen := "s1b_test_head" if not bool(hero["parts"]["head"]["torn"]) else "warden_arm_shield_bash"
+	var before := _snapshot(b)
+	var rng_before := b.rng_state()
+	var strike := b.use_part(chosen, 1)
+	if not bool(strike.get("ok", false)) or strike["results"].size() != 1:
+		return {}
+	return {
+		"buff": buff, "hanging_receipt": hanging_receipt,
+		"ability": chosen, "before": before, "rng_before": rng_before,
+		"hero_before": hero, "foe_before": foe, "strike": strike,
+		"hero_after": b.get_unit("warden"), "foe_after": b.get_unit("foe_0"),
+		"satchel": b.satchel(), "ally_fray": int(b.get_unit("seamstress")["fray"]),
+		"heaps": b.get_heaps(), "after": _snapshot(b), "rng_after": b.rng_state(),
+	}
+
+
+func _test_reaction_order() -> void:
+	# Two genuine fixture buffs coexist on the defender, then an authored foe
+	# strike kills its own 2-HP attacker on Thorns. A one-buff control proves
+	# the terminal reaction spends no additional RNG or heap transaction.
+	var killed := false
+	for seed_value in range(1, 90):
+		var both := _hero_reaction_defender_trace(seed_value, 2)
+		if both.is_empty() or not bool(both["strike"]["results"][0].get("hit", false)):
+			continue
+		var solo := _hero_reaction_defender_trace(seed_value, 2, false)
+		if solo.is_empty() or not bool(solo["strike"]["results"][0].get("hit", false)):
+			continue
+		var hit: Dictionary = both["strike"]["results"][0]
+		_check(bool(both["atomic"]) and bool(solo["atomic"]), "AC3: invalid live foe command spends neither turn, state nor RNG")
+		_check(int(both["defender_before"]["statuses"].get("thorns", 0)) == 2
+			and int(both["defender_before"]["statuses"].get("riposte", 0)) == 2
+			and str(hit.get("target", "")) == "warden",
+			"AC1: actual Quilt Up and Stitch Step jointly defend the struck hero")
+		_check(int(both["foe_before"]["hp"]) == 2 and int(hit.get("thorns", 0)) == 2
+			and not hit.has("riposte") and not hit.has("attacker_seam_roll"),
+			"AC1: fatal Thorns ends reactions before Riposte or a seam roll")
+		_check(bool(both["foe_after"]["dead"]) and int(both["foe_after"]["hp"]) == 0
+			and both["heaps"].size() == 1 and str(both["heaps"][0]["foe_id"]) == "foe_0"
+			and int(both["heaps"][0]["hp"]) == StitchedRules.heap_hp_for(2),
+			"AC1: dead attacker generates exactly one genuine heap")
+		_check(both["rng_after"] == solo["rng_after"] and both["heaps"] == solo["heaps"]
+			and hit.get("attacker_heap", {}) == solo["strike"]["results"][0].get("attacker_heap", {}),
+			"AC1: terminal reaction draws no extra RNG and adds no extra heap")
+		_check(both == _hero_reaction_defender_trace(seed_value, 2),
+			"AC3: independent same-seed lethal receipts, snapshots, heaps and RNG replay")
+		killed = true
+		break
+	_check(killed, "AC1: nonvacuous seeded lethal foe-Thorns witness")
+
+	var survived := false
+	for seed_value in range(1, 90):
+		var both := _hero_reaction_defender_trace(seed_value, 30)
+		if both.is_empty() or not bool(both["strike"]["results"][0].get("hit", false)):
+			continue
+		var hit: Dictionary = both["strike"]["results"][0]
+		_check(int(both["defender_before"]["statuses"].get("thorns", 0)) == 2
+			and int(both["defender_before"]["statuses"].get("riposte", 0)) == 2,
+			"AC3: both actual defender reactions are armed for surviving attacker")
+		_check(int(hit.get("thorns", 0)) == 2 and int(hit.get("riposte", 0)) == 2
+			and int(hit.get("attacker_hp", -1)) == 26 and int(both["foe_after"]["hp"]) == 26
+			and not bool(both["foe_after"]["dead"]) and both["heaps"].is_empty(),
+			"AC3: surviving foe receives Thorns then exactly one Riposte")
+		_check(both == _hero_reaction_defender_trace(seed_value, 30),
+			"AC3: independent same-seed surviving reactions replay exactly")
+		survived = true
+		break
+	_check(survived, "AC3: nonvacuous seeded survivor witness")
+
+	var missed := false
+	for seed_value in range(1, 90):
+		var sample := _hero_reaction_defender_trace(seed_value, 30, true, 0)
+		if sample.is_empty() or bool(sample["strike"]["results"][0].get("hit", false)):
+			continue
+		var hit: Dictionary = sample["strike"]["results"][0]
+		_check(bool(sample["atomic"]) and int(sample["defender_before"]["statuses"].get("thorns", 0)) == 2
+			and int(sample["defender_before"]["statuses"].get("riposte", 0)) == 2,
+			"AC3: missed and illegal strikes have real active reaction preconditions")
+		_check(not hit.has("thorns") and not hit.has("riposte")
+			and int(sample["foe_after"]["hp"]) == int(sample["foe_before"]["hp"])
+			and sample["heaps"].is_empty(),
+			"AC3: a genuine miss triggers neither reaction nor a heap")
+		_check(sample == _hero_reaction_defender_trace(seed_value, 30, true, 0),
+			"AC3: missed strike receipt, snapshot and RNG independently replay")
+		missed = true
+		break
+	_check(missed, "AC3: nonvacuous seeded missed strike witness")
+
+	var new_hanging := false
+	var lost := false
+	for seed_value in range(1, 200):
+		if not new_hanging:
+			var fresh := _foe_reaction_defender_trace(seed_value)
+			if not fresh.is_empty() and bool(fresh["strike"]["results"][0].get("hit", false)):
+				var hit: Dictionary = fresh["strike"]["results"][0]
+				_check(not bool(fresh["hero_before"]["hanging"]) and int(fresh["hero_before"]["hp"]) == 8
+					and int(fresh["foe_before"]["statuses"].get("thorns", 0)) == 8
+					and int(fresh["foe_before"]["statuses"].get("riposte", 0)) == 2,
+					"AC2: newly Hanging hero began alive against a truly double-buffed foe")
+				_check(int(hit.get("thorns", 0)) == 8 and bool(hit.get("attacker_hanging", false))
+					and bool(hit.get("attacker_tear", {}).get("ok", false))
+					and int(hit.get("riposte", 0)) == 2 and hit.has("attacker_seam_roll")
+					and str(hit.get("attacker_seam", "")) in ["hold", "lost"],
+					"AC2: Thorns first Hangs a doll, Riposte still executes its legitimate seam roll")
+				_check(bool(fresh["hero_after"]["hanging"]) != bool(fresh["hero_after"]["lost"])
+					and fresh["ally_fray"] == (33 if bool(fresh["hero_after"]["lost"]) else 8),
+					"AC2: one new Hanging transition plus only its legitimate seam outcome")
+				_check(fresh == _foe_reaction_defender_trace(seed_value),
+					"AC2/3: newly Hanging reactions replay receipts, snapshots and RNG")
+				new_hanging = true
+		if not lost:
+			var previously := _foe_reaction_defender_trace(seed_value, true)
+			if not previously.is_empty() and bool(previously["strike"]["results"][0].get("hit", false)):
+				var hit: Dictionary = previously["strike"]["results"][0]
+				var solo := _foe_reaction_defender_trace(seed_value, true, false)
+				# Choose a seed whose FIRST (Thorns) seam failed, not one
+				# whose Riposte made a second, later seam fail.
+				if solo.is_empty() or str(solo["strike"]["results"][0].get("attacker_seam", "")) != "lost":
+					continue
+				_check(bool(previously["hero_before"]["hanging"]) and int(previously["hero_before"]["hp"]) == 0
+					and int(previously["foe_before"]["statuses"].get("thorns", 0)) == 8
+					and int(previously["foe_before"]["statuses"].get("riposte", 0)) == 2,
+					"AC2: Thorns strikes an already Hanging hero while both foe reactions are active")
+				_check(int(hit.get("thorns", 0)) == 8 and bool(hit.get("attacker_lost", false))
+					and hit.has("attacker_seam_roll") and not hit.has("riposte"),
+					"AC2: first failed seam loses hero, suppressing later Riposte and second seam")
+				_check(bool(previously["hero_after"]["lost"]) and not bool(previously["hero_after"]["hanging"])
+					and previously["hero_after"]["parts"].is_empty()
+					and previously["satchel"].size() == 4 and previously["ally_fray"] == 33,
+					"AC2: exactly one loss/satchel transfer and one +25 ally-fray loss cascade")
+				_check(not solo.is_empty() and solo["rng_after"] == previously["rng_after"]
+					and solo["satchel"] == previously["satchel"] and solo["ally_fray"] == previously["ally_fray"],
+					"AC2: no second seam RNG draw or satchel transaction after LOST")
+				_check(previously == _foe_reaction_defender_trace(seed_value, true),
+					"AC2/3: independently seeded LOST reaction receipts, snapshot and RNG replay")
+				lost = true
+		if new_hanging and lost:
+			break
+	_check(new_hanging, "AC2: nonvacuous new-Hanging through Thorns then Riposte witness")
+	_check(lost, "AC2: nonvacuous previously-Hanging then LOST through Thorns witness")

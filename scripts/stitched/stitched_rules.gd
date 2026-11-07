@@ -1591,10 +1591,12 @@ func _resolve_attack(
 	_apply_effects(actor, target, ability, receipt)
 	# Thorns and Riposte are reaction damage: they answer a confirmed hit and ignore PROT.
 	var thorns := int(target["statuses"].get("thorns", 0))
-	if thorns > 0 and int(target["hp"]) > 0:
+	if thorns > 0 and int(target["hp"]) > 0 and not bool(actor["dead"]) and not bool(actor["lost"]):
 		_damage_attacker(actor, thorns, receipt, "thorns")
 	var riposte := int(target["statuses"].get("riposte", 0))
-	if riposte > 0 and int(target["hp"]) > 0:
+	# A zero-HP Hanging hero is still present and can take a seam check;
+	# only an actually DEAD foe or LOST doll stops the reaction chain.
+	if riposte > 0 and int(target["hp"]) > 0 and not bool(actor["dead"]) and not bool(actor["lost"]):
 		_damage_attacker(actor, riposte, receipt, "riposte")
 
 
