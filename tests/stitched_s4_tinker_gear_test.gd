@@ -25,6 +25,10 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_spring_clamp_catalog()
+	_test_spring_clamp_mark_setup()
+	_test_spring_clamp_overload_payoff()
+	_test_spring_clamp_refusals()
 	_test_every_tier_in_real_combat()
 	_test_scrap_bomb_exposed()
 	_test_back_rank_shots()
@@ -1925,3 +1929,564 @@ func _test_replay() -> void:
 		"AC3: equal-seed four-ability trace replays receipts, all state and exact RNG")
 	for receipt in first.get("receipts", []):
 		_check(bool(receipt.get("ok", false)), "AC3: replay trace's every action executes")
+
+
+## AC1: the authored Spring Clamp part, resolved through the catalog parser at all three stitch
+## tiers. Tier I stays a Weak-only clamp; tiers II/III carry the whole effects dictionary the
+## parser replaces, so both Weak and Mark must be authored there. Every other number, rank,
+## stat, pose and the other seven Tinker entries stay as shipped.
+func _test_spring_clamp_catalog() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)), "AC1: StitchedParts.load_catalog accepts the revised Tinker catalog")
+	if not bool(accepted.get("ok", false)):
+		return
+	for expected_id in ALL_IDS:
+		_check(accepted["by_id"].has(expected_id), "AC1: revised catalog still carries " + expected_id)
+	var slot_counts := {"head": 0, "arms": 0, "torso": 0, "legs": 0}
+	for raw_part in accepted["parts"]:
+		var counted: Dictionary = raw_part
+		if slot_counts.has(str(counted["slot"])):
+			slot_counts[str(counted["slot"])] = int(slot_counts[str(counted["slot"])]) + 1
+	for slot in slot_counts:
+		_check(int(slot_counts[slot]) == 2, "AC1: Tinker still offers two choices in the " + slot + " slot")
+	var clamp_part: Dictionary = accepted["by_id"].get(ALTERNATES["head"], {})
+	_check(not clamp_part.is_empty(), "AC1: Spring Clamp remains in the Tinker catalog")
+	if clamp_part.is_empty():
+		return
+	_check(str(clamp_part["name"]) == "Spring Clamp" and str(clamp_part["slot"]) == "head"
+		and str(clamp_part["owner"]) == "tinker" and clamp_part["stat"] == {"crit": 4},
+		"AC1: Spring Clamp stays Tinker's crit +4 HEAD part")
+	_check(str(clamp_part["text"]).contains("Weak") and str(clamp_part["text"]).contains("Mark")
+		and str(clamp_part["text"]) != "Clamp an enemy's seam and leave it Weak.",
+		"AC1: Spring Clamp's short text now distinguishes the tier-I Weak clamp from the upgraded Weak-plus-Mark clamp")
+	var expected_effects := [{"weak": 1}, {"weak": 1, "mark": 1}, {"weak": 2, "mark": 2}]
+	var expected_weak := [1, 1, 2]
+	var expected_mark := [0, 1, 2]
+	var expected_acc := [90, 90, 94]
+	var expected_dmg := [[3, 5], [4, 7], [5, 9]]
+	for tier in [1, 2, 3]:
+		var ability := StitchedParts.ability_at_tier(clamp_part, tier)
+		_check(str(ability["id"]) == "tinker_spring_clamp_move" and str(ability["name"]) == "Spring Clamp"
+			and str(ability["kind"]) == "ranged" and str(ability["target_side"]) == "enemy"
+			and not bool(ability["multi"]),
+			"AC1: tier %d Spring Clamp stays a single-target ranged enemy ability" % tier)
+		_check(ability["launch"] == [2, 3] and int(ability["launch_mask"]) == StitchedParts.rank_mask([2, 3])
+			and ability["target"] == [1, 2, 3]
+			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3]),
+			"AC1: tier %d Spring Clamp launches from hero ranks 2-3 at enemy ranks 1-3" % tier)
+		_check(int(ability["acc"]) == int(expected_acc[tier - 1]) and ability["dmg"] == expected_dmg[tier - 1]
+			and int(ability["crit"]) == 0 and int(ability["mark_damage"]) == 0
+			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack",
+			"AC1: tier %d Spring Clamp keeps ACC/damage/crit/mark_damage/self_move/attack pose" % tier)
+		_check(ability["effects"] == expected_effects[tier - 1],
+			"AC1: tier %d Spring Clamp resolves its complete effects dictionary" % tier)
+		_check(int(ability["effects"].get("weak", 0)) == int(expected_weak[tier - 1])
+			and int(ability["effects"].get("mark", 0)) == int(expected_mark[tier - 1]),
+			"AC1: tier %d Spring Clamp Weak ladder is 1/1/2 and Mark ladder is 0/1/2" % tier)
+		_check(int(StitchedParts.stat_at_tier(clamp_part, tier).get("crit", 0)) == 4,
+			"AC1: tier %d Spring Clamp head stat stays crit +4" % tier)
+	for other_id in ALL_IDS:
+		if other_id == ALTERNATES["head"]:
+			continue
+		var other: Dictionary = accepted["by_id"][other_id]
+		for tier in [1, 2, 3]:
+			_check(bool(StitchedParts.validate_ability(StitchedParts.ability_at_tier(other, tier)).get("ok", false)),
+				"AC1: unchanged %s still resolves to a legal tier-%d ability" % [other_id, tier])
+	var overload_part: Dictionary = accepted["by_id"].get(ALTERNATES["arms"], {})
+	for tier in [1, 2, 3]:
+		_check(not overload_part.is_empty()
+			and int(StitchedParts.ability_at_tier(overload_part, tier)["mark_damage"]) == [3, 4, 5][tier - 1]
+			and int(StitchedParts.ability_at_tier(overload_part, tier)["effects"].size()) == 0,
+			"AC3: tier %d Overload still authors only its 3/4/5 Mark bonus and no on-hit effects" % tier)
+
+
+## Reads one receipt's duration for a named status (-1 when it is absent).
+func _receipt_status(receipt: Dictionary, key: String) -> int:
+	for status in receipt.get("statuses", []):
+		if str(status.get("status", "")) == key:
+			return int(status.get("duration", 0))
+	return -1
+
+
+## The shipped S2 preview with genuine four heroes and three foes where Tinker really wears the
+## alternate Spring Clamp head AND the alternate Overload arms at the same stitch tier. The
+## preview file itself is never edited; only Tinker's equipped IDs change.
+func _clamp_overload_battle(tier: int, seed_value: int, torn_head: bool = false) -> StitchedRules:
+	var config := _config(ALTERNATES["head"], tier, seed_value)
+	if config.is_empty():
+		return null
+	config["heroes"][2]["parts"]["arms"] = {"id": ALTERNATES["arms"], "tier": tier}
+	if torn_head:
+		config["heroes"][2]["parts"]["head"]["torn"] = true
+	var result := StitchedRules.create(config)
+	if not bool(result.get("ok", false)):
+		return null
+	return result["battle"] as StitchedRules
+
+
+## AC2 witness: rank-3 Tinker, wearing both alternate parts, takes a real scheduled turn in the
+## seeded preview and clamps exactly one living foe at the requested enemy rank. Returns {} when
+## the fixture or action is not exactly that legal real path.
+func _clamp_cast(tier: int, seed_value: int, target_rank: int) -> Dictionary:
+	var battle := _clamp_overload_battle(tier, seed_value)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	var tinker := battle.get_unit("tinker")
+	if int(tinker.get("rank", 0)) != 3:
+		return {}
+	if str(tinker.get("parts", {}).get("head", {}).get("id", "")) != ALTERNATES["head"]:
+		return {}
+	if str(tinker.get("parts", {}).get("arms", {}).get("id", "")) != ALTERNATES["arms"]:
+		return {}
+	if battle.get_heroes().size() != 4 or battle.get_foes().size() != 3:
+		return {}
+	var victim_id := ""
+	for foe in battle.get_foes():
+		if int(foe.get("rank", 0)) == target_rank and not bool(foe.get("dead", true)) \
+				and int(foe.get("hp", 0)) > 0:
+			victim_id = str(foe["id"])
+	if victim_id.is_empty():
+		return {}
+	var victim_before := battle.get_unit(victim_id)
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	var shot := battle.use_part(ALTERNATES["head"], target_rank)
+	if str(shot.get("action", "")) != "ability" or str(shot.get("actor", "")) != "tinker" \
+			or str(shot.get("part", "")) != ALTERNATES["head"] \
+			or str(shot.get("ability", "")) != "tinker_spring_clamp_move":
+		return {}
+	var results: Array = shot.get("results", [])
+	if results.size() != 1:
+		return {}
+	var hit: Dictionary = results[0]
+	if str(hit.get("target", "")) != victim_id or int(hit.get("target_rank", 0)) != target_rank \
+			or str(hit.get("target_side", "")) != "foe":
+		return {}
+	return {
+		"battle": battle,
+		"shot": shot,
+		"hit_receipt": hit,
+		"victim_id": victim_id,
+		"victim_before": victim_before,
+		"victim_after": battle.get_unit(victim_id),
+		"before": before,
+		"after": battle.state_snapshot(),
+		"rng_before": rng_before,
+		"rng_after": battle.rng_state(),
+		"actor_before": actor_before,
+		"actor_after": battle.current_actor_id(),
+	}
+
+
+## Bounded fixed-seed search over the genuine seeded fixture for Spring Clamp casts at one tier
+## and one legal enemy rank. Keeps the first landed hit and the first legal miss.
+func _clamp_witnesses(tier: int, target_rank: int, limit: int = 800) -> Dictionary:
+	var hit: Dictionary = {}
+	var miss: Dictionary = {}
+	for seed_value in range(501000, 501000 + limit):
+		var cast := _clamp_cast(tier, seed_value, target_rank)
+		if cast.is_empty():
+			continue
+		cast["seed"] = seed_value
+		if bool(cast["hit_receipt"].get("hit", false)):
+			if hit.is_empty():
+				hit = cast
+		elif miss.is_empty():
+			miss = cast
+		if not hit.is_empty() and not miss.is_empty():
+			break
+	return {"hit": hit, "miss": miss}
+
+
+## AC2: every tier's real cast resolves through seeded combat. Tier II and III leave Weak plus
+## Mark on the one foe they hit, tier I leaves only Weak, a legal miss leaves neither, and the
+## same seed/config/action replays the receipt, snapshot and RNG exactly.
+func _test_spring_clamp_mark_setup() -> void:
+	var expected := {1: {"weak": 1, "mark": 0}, 2: {"weak": 1, "mark": 1}, 3: {"weak": 2, "mark": 2}}
+	var found := {}
+	for tier in [1, 2, 3]:
+		found[tier] = _clamp_witnesses(tier, 3)
+		var witness: Dictionary = found[tier]["hit"]
+		_check(not witness.is_empty(), "AC2: bounded fixed-seed tier %d Spring Clamp hit witness exists" % tier)
+		if witness.is_empty():
+			continue
+		var battle: StitchedRules = witness["battle"]
+		var receipt: Dictionary = witness["hit_receipt"]
+		var victim_before: Dictionary = witness["victim_before"]
+		var victim_after: Dictionary = witness["victim_after"]
+		var weak_wanted := int(expected[tier]["weak"])
+		var mark_wanted := int(expected[tier]["mark"])
+		_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
+			and int(battle.get_unit("tinker")["rank"]) == 3
+			and str(battle.get_unit("tinker")["parts"]["head"]["id"]) == ALTERNATES["head"]
+			and str(battle.get_unit("tinker")["parts"]["arms"]["id"]) == ALTERNATES["arms"],
+			"AC2: tier %d witness keeps four real heroes, three foes and rank-3 Tinker wearing both alternate parts" % tier)
+		_check(str(witness["shot"].get("action", "")) == "ability"
+			and str(witness["shot"].get("actor", "")) == "tinker"
+			and str(witness["shot"].get("part", "")) == ALTERNATES["head"]
+			and str(witness["shot"].get("ability", "")) == "tinker_spring_clamp_move",
+			"AC2: tier %d Spring Clamp runs as Tinker's own equipped head action" % tier)
+		_check(bool(receipt.get("hit", false)) and int(receipt.get("damage", 0)) > 0
+			and int(receipt.get("target_rank", 0)) == 3
+			and str(receipt.get("target_side", "")) == "foe",
+			"AC2: tier %d Spring Clamp lands exactly one real hit receipt on the living rank-3 foe" % tier)
+		_check(_receipt_status(receipt, "weak") == weak_wanted,
+			"AC2: tier %d hit receipt carries Weak %d" % [tier, weak_wanted])
+		_check(_receipt_status(receipt, "mark") == (mark_wanted if mark_wanted > 0 else -1),
+			"AC2: tier %d hit receipt carries Mark %s" % [tier, "absent" if mark_wanted == 0 else str(mark_wanted)])
+		_check(receipt.get("statuses", []).size() == (2 if mark_wanted > 0 else 1),
+			"AC2: tier %d clamp hit writes exactly its authored status receipts" % tier)
+		_check(int(victim_after.get("statuses", {}).get("weak", 0)) == weak_wanted
+			and int(victim_after.get("statuses", {}).get("mark", 0)) == mark_wanted,
+			"AC2: tier %d Weak %d and Mark %d persist on that same foe" % [tier, weak_wanted, mark_wanted])
+		_check(int(victim_after.get("hp", -1)) == int(victim_before.get("hp", 0)) - int(receipt.get("damage", 0))
+			and int(receipt.get("target_hp", -1)) == int(victim_after.get("hp", -2)),
+			"AC2: tier %d real foe HP drops by the receipted clamp damage" % tier)
+		_check(str(witness["actor_before"]) == "tinker" and str(witness["actor_after"]) != "tinker"
+			and witness["before"] != witness["after"]
+			and int(witness["rng_before"]) != int(witness["rng_after"]),
+			"AC2: tier %d cast spends exactly one scheduled Tinker turn and draws seeded RNG" % tier)
+		var replay := _clamp_cast(tier, int(witness["seed"]), 3)
+		_check(not replay.is_empty() and replay["shot"] == witness["shot"]
+			and replay["before"] == witness["before"] and replay["after"] == witness["after"]
+			and int(replay["rng_after"]) == int(witness["rng_after"]),
+			"AC2: tier %d equal-seed replay reproduces the receipt, state snapshot and RNG" % tier)
+	var miss: Dictionary = found[2]["miss"]
+	_check(not miss.is_empty(), "AC2: a bounded fixed-seed legal Spring Clamp miss exists")
+	if not miss.is_empty():
+		var miss_receipt: Dictionary = miss["hit_receipt"]
+		var miss_victim: Dictionary = miss["victim_after"]
+		_check(not bool(miss_receipt.get("hit", false)) and int(miss_receipt.get("damage", 0)) == 0
+			and int(miss_receipt.get("target_hp", -1)) == int(miss["victim_before"].get("hp", -2))
+			and str(miss_receipt.get("target", "")) == str(miss["victim_id"]),
+			"AC2: the seeded miss reports no damage and an unchanged target HP")
+		_check(miss_receipt.get("statuses", []).is_empty()
+			and int(miss_victim.get("statuses", {}).get("weak", 0)) == 0
+			and int(miss_victim.get("statuses", {}).get("mark", 0)) == 0,
+			"AC2: a legal Spring Clamp miss applies neither Weak nor Mark")
+		_check(str(miss["actor_before"]) == "tinker" and str(miss["actor_after"]) != "tinker"
+			and miss["before"] != miss["after"]
+			and int(miss["rng_before"]) != int(miss["rng_after"]),
+			"AC2: a legal miss still spends Tinker's turn and draws seeded RNG")
+
+
+## AC3 witness: two identical seeded battles clamp the living rank-3 Moth Scribe at tier II; the
+## control then loses only the victim's Mark, keeping Weak, HP, statuses, ranks, turns and RNG.
+## Both advance legally to Tinker's next scheduled turn and land Overload on that same foe.
+## Returns {} unless every precondition holds, both casts land on matching rolls and the marked
+## hit deals exactly the authored tier-II Mark bonus more without killing the victim.
+func _clamp_overload_witness(tier: int, seed_value: int) -> Dictionary:
+	var marked := _clamp_overload_battle(tier, seed_value)
+	var unmarked := _clamp_overload_battle(tier, seed_value)
+	if marked == null or unmarked == null:
+		return {}
+	if not _to(marked, "tinker") or not _to(unmarked, "tinker"):
+		return {}
+	if int(marked.get_unit("tinker")["rank"]) != 3 or int(unmarked.get_unit("tinker")["rank"]) != 3:
+		return {}
+	if str(marked.get_unit("tinker")["parts"]["head"]["id"]) != ALTERNATES["head"] \
+			or str(marked.get_unit("tinker")["parts"]["arms"]["id"]) != ALTERNATES["arms"]:
+		return {}
+	var moth := marked.get_unit("moth_scribe")
+	if moth.is_empty() or int(moth.get("rank", 0)) != 3 or bool(moth.get("dead", true)) \
+			or int(moth.get("hp", 0)) <= 0:
+		return {}
+	var clamp_marked := marked.use_part(ALTERNATES["head"], 3)
+	var clamp_plain := unmarked.use_part(ALTERNATES["head"], 3)
+	if clamp_marked != clamp_plain or not bool(clamp_marked.get("ok", false)):
+		return {}
+	var clamp_results: Array = clamp_marked.get("results", [])
+	if clamp_results.size() != 1:
+		return {}
+	var clamp_hit: Dictionary = clamp_results[0]
+	if str(clamp_hit.get("target", "")) != "moth_scribe" or int(clamp_hit.get("target_rank", 0)) != 3 \
+			or not bool(clamp_hit.get("hit", false)):
+		return {}
+	var clamp_ability := StitchedParts.ability_at_tier(_catalog()["by_id"][ALTERNATES["head"]], tier)
+	var mark_potency := int(clamp_ability["effects"].get("mark", 0))
+	var weak_potency := int(clamp_ability["effects"].get("weak", 0))
+	if mark_potency <= 0 or weak_potency <= 0:
+		return {}
+	var moth_marked := marked.get_unit("moth_scribe")
+	if int(moth_marked.get("statuses", {}).get("mark", 0)) != mark_potency \
+			or int(moth_marked.get("statuses", {}).get("weak", 0)) != weak_potency:
+		return {}
+	# Controlled counterfactual: the twin keeps Weak, HP, statuses, ranks, turn and RNG but
+	# loses only the one Mark this clamp just applied.
+	unmarked._units["moth_scribe"]["statuses"].erase("mark")
+	if int(unmarked.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 0:
+		return {}
+	if int(unmarked.get_unit("moth_scribe")["statuses"].get("weak", 0)) != weak_potency \
+			or int(unmarked.get_unit("moth_scribe")["hp"]) != int(moth_marked.get("hp", -1)):
+		return {}
+	if not _to(marked, "tinker") or not _to(unmarked, "tinker"):
+		return {}
+	if marked.is_over() or unmarked.is_over():
+		return {}
+	if marked.current_actor_id() != "tinker" or unmarked.current_actor_id() != "tinker":
+		return {}
+	var remaining_mark := int(marked.get_unit("moth_scribe")["statuses"].get("mark", 0))
+	if remaining_mark <= 0:
+		return {}
+	if int(unmarked.get_unit("moth_scribe")["statuses"].get("mark", 0)) != 0:
+		return {}
+	if int(marked.get_unit("moth_scribe")["statuses"].get("weak", 0)) \
+			!= int(unmarked.get_unit("moth_scribe")["statuses"].get("weak", 0)):
+		return {}
+	if marked.round_number() != unmarked.round_number():
+		return {}
+	var marked_snapshot := marked.state_snapshot()
+	var unmarked_snapshot := unmarked.state_snapshot()
+	if int(marked_snapshot.get("turn_index", -1)) != int(unmarked_snapshot.get("turn_index", -2)):
+		return {}
+	var rng_before := marked.rng_state()
+	if rng_before != unmarked.rng_state():
+		return {}
+	var moth_before := marked.get_unit("moth_scribe")
+	var moth_unmarked := unmarked.get_unit("moth_scribe")
+	var charged := marked.use_part(ALTERNATES["arms"], 3)
+	var plain := unmarked.use_part(ALTERNATES["arms"], 3)
+	if not bool(charged.get("ok", false)) or not bool(plain.get("ok", false)):
+		return {}
+	var charged_results: Array = charged.get("results", [])
+	var plain_results: Array = plain.get("results", [])
+	if charged_results.size() != 1 or plain_results.size() != 1:
+		return {}
+	var charged_hit: Dictionary = charged_results[0]
+	var plain_hit: Dictionary = plain_results[0]
+	if str(charged_hit.get("target", "")) != "moth_scribe" \
+			or int(charged_hit.get("target_rank", 0)) != 3:
+		return {}
+	if str(plain_hit.get("target", "")) != "moth_scribe" \
+			or int(plain_hit.get("target_rank", 0)) != 3:
+		return {}
+	if not bool(charged_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)):
+		return {}
+	if int(charged_hit.get("roll", 0)) != int(plain_hit.get("roll", -1)) \
+			or bool(charged_hit.get("crit", false)) != bool(plain_hit.get("crit", false)):
+		return {}
+	var mark_damage := int(
+		StitchedParts.ability_at_tier(_catalog()["by_id"][ALTERNATES["arms"]], tier)["mark_damage"]
+	)
+	if mark_damage <= 0:
+		return {}
+	if int(charged_hit.get("damage", 0)) - int(plain_hit.get("damage", 0)) != mark_damage:
+		return {}
+	if marked.rng_state() != unmarked.rng_state():
+		return {}
+	var moth_after := marked.get_unit("moth_scribe")
+	if bool(moth_after.get("dead", true)) or int(moth_after.get("hp", 0)) <= 0:
+		return {}
+	if int(moth_after.get("hp", -1)) != int(moth_before.get("hp", 0)) - int(charged_hit.get("damage", 0)):
+		return {}
+	if int(unmarked.get_unit("moth_scribe")["hp"]) \
+			!= int(moth_before.get("hp", 0)) - int(plain_hit.get("damage", 0)):
+		return {}
+	if int(charged_hit.get("target_hp", -1)) != int(moth_after.get("hp", -2)):
+		return {}
+	return {
+		"marked": marked,
+		"unmarked": unmarked,
+		"seed": seed_value,
+		"clamp_marked": clamp_marked,
+		"clamp_plain": clamp_plain,
+		"clamp_hit": clamp_hit,
+		"moth_marked": moth_marked,
+		"moth_before": moth_before,
+		"moth_unmarked": moth_unmarked,
+		"moth_after": moth_after,
+		"mark_potency": mark_potency,
+		"weak_potency": weak_potency,
+		"remaining_mark": remaining_mark,
+		"marked_snapshot": marked_snapshot,
+		"unmarked_snapshot": unmarked_snapshot,
+		"rng_before": rng_before,
+		"charged": charged,
+		"plain": plain,
+		"charged_hit": charged_hit,
+		"plain_hit": plain_hit,
+		"mark_damage": mark_damage,
+		"rng_after": marked.rng_state(),
+	}
+
+
+## AC3: the same seeded battle pays off the tier-II Spring Clamp's Mark with the already shipped
+## Overload mark_damage; a twin that differs only by that Mark takes exactly the authored bonus
+## less, on identical hit/crit rolls, without killing the victim and with identical later RNG.
+func _test_spring_clamp_overload_payoff() -> void:
+	var witness: Dictionary = {}
+	var witness_seed := 0
+	for seed_value in range(501000, 502400):
+		witness = _clamp_overload_witness(2, seed_value)
+		if not witness.is_empty():
+			witness_seed = seed_value
+			break
+	_check(not witness.is_empty(),
+		"AC3: bounded fixed-seed tier-II Spring Clamp then Overload payoff witness exists")
+	if witness.is_empty():
+		return
+	var marked: StitchedRules = witness["marked"]
+	var unmarked: StitchedRules = witness["unmarked"]
+	var clamp_hit: Dictionary = witness["clamp_hit"]
+	var charged_hit: Dictionary = witness["charged_hit"]
+	var plain_hit: Dictionary = witness["plain_hit"]
+	var moth_unmarked: Dictionary = witness["moth_unmarked"]
+	_check(marked.get_heroes().size() == 4 and marked.get_foes().size() == 3
+		and int(marked.get_unit("tinker")["rank"]) == 3
+		and str(marked.get_unit("tinker")["parts"]["head"]["id"]) == ALTERNATES["head"]
+		and str(marked.get_unit("tinker")["parts"]["arms"]["id"]) == ALTERNATES["arms"],
+		"AC3: the payoff witness keeps four real heroes, three foes and rank-3 Tinker in Spring Clamp and Overload")
+	_check(str(clamp_hit.get("target", "")) == "moth_scribe"
+		and int(clamp_hit.get("target_rank", 0)) == 3 and bool(clamp_hit.get("hit", false))
+		and int(witness["moth_marked"].get("statuses", {}).get("weak", 0)) == 1
+		and int(witness["moth_marked"].get("statuses", {}).get("mark", 0)) == 1,
+		"AC3: the tier-II clamp really lands Weak 1 and Mark 1 on the living Moth Scribe")
+	_check(witness["clamp_marked"] == witness["clamp_plain"]
+		and int(moth_unmarked.get("statuses", {}).get("weak", 0)) == 1
+		and int(moth_unmarked.get("statuses", {}).get("mark", 0)) == 0
+		and int(moth_unmarked.get("hp", -1)) == int(witness["moth_marked"].get("hp", -2))
+		and int(moth_unmarked.get("statuses", {}).get("weak", 0))
+			== int(witness["moth_marked"].get("statuses", {}).get("weak", 0))
+		and int(moth_unmarked.get("rank", 0)) == int(witness["moth_marked"].get("rank", -1)),
+		"AC3: the control keeps Weak, HP, rank and every other value and loses only that Mark")
+	_check(str(witness["charged"].get("action", "")) == "ability"
+		and str(witness["charged"].get("actor", "")) == "tinker"
+		and str(witness["charged"].get("part", "")) == ALTERNATES["arms"]
+		and str(witness["charged"].get("ability", "")) == "tinker_overload_move"
+		and int(witness["remaining_mark"]) == 1,
+		"AC3: the shipped Overload is the later genuine Tinker action on the still-Marked foe")
+	_check(int(charged_hit.get("damage", 0)) - int(plain_hit.get("damage", 0)) == int(witness["mark_damage"])
+		and int(witness["mark_damage"]) == 4
+		and int(_catalog()["by_id"][ALTERNATES["arms"]]["tiers"]["2"]["ability"]["mark_damage"]) == 4,
+		"AC3: the Marked Overload hit deals exactly the authored tier-II Mark bonus 4 more than its twin")
+	_check(int(charged_hit.get("roll", 0)) == int(plain_hit.get("roll", -1))
+		and bool(charged_hit.get("crit", false)) == bool(plain_hit.get("crit", false)),
+		"AC3: marked and unmarked Overload casts use matching hit and crit rolls")
+	_check(marked.rng_state() == unmarked.rng_state()
+		and int(witness["rng_after"]) == marked.rng_state(),
+		"AC3: both battles finish the payoff with identical seeded RNG")
+	_check(int(charged_hit.get("damage", 0)) > int(plain_hit.get("damage", 0))
+		and int(witness["moth_after"].get("hp", 0)) > 0
+		and int(charged_hit.get("target_hp", -1)) == int(witness["moth_after"].get("hp", -2)),
+		"AC3: the marked payoff is strictly stronger and leaves the victim alive at its receipted HP")
+	var replay := _clamp_overload_witness(2, witness_seed)
+	_check(not replay.is_empty(), "AC3: the Spring Clamp/Overload payoff witness replays at seed %d" % witness_seed)
+	if not replay.is_empty():
+		_check(replay["clamp_marked"] == witness["clamp_marked"]
+			and replay["charged"] == witness["charged"] and replay["plain"] == witness["plain"]
+			and replay["marked_snapshot"] == witness["marked_snapshot"]
+			and replay["unmarked_snapshot"] == witness["unmarked_snapshot"]
+			and int(replay["rng_after"]) == int(witness["rng_after"]),
+			"AC3: equal-seed replay reproduces both clamp receipts, both Overload receipts, state and RNG")
+
+
+## AC3 refusals: Spring Clamp's authored reach and equipment are enforced before any spend. A
+## living rank-4 foe, a vacant legal rank, an unequipped or torn head, a non-Tinker actor, an
+## already-spent turn and a genuine hero rank-1 launch are all refused without changing the
+## snapshot, drawing seeded RNG, spending the turn or writing any status.
+func _test_spring_clamp_refusals() -> void:
+	var seed_value := 501777
+	var rear := _rear_foe_battle(2, seed_value, {"id": ALTERNATES["head"], "tier": 2},
+		{"id": ALTERNATES["arms"], "tier": 2})
+	var rear_ready := rear != null and _to(rear, "tinker")
+	_check(rear_ready, "AC3: the Spring Clamp reach/refusal witness reaches a real rank-3 Tinker turn")
+	if rear_ready:
+		_check(int(rear.get_unit("tinker")["rank"]) == 3
+			and int(rear.get_unit("moth_scribe")["rank"]) == 4
+			and rear.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC3: the witness really faces a living foe in rank 4 with the legal rank 3 vacant")
+		var before := rear.state_snapshot()
+		var rng := rear.rng_state()
+		var moth_before := rear.get_unit("moth_scribe")
+		var rank_four := rear.use_part(ALTERNATES["head"], 4)
+		var vacant := rear.use_part(ALTERNATES["head"], 3)
+		_check(not bool(rank_four.get("ok", false)) and str(rank_four.get("error", "")).contains("rank 4")
+			and not bool(vacant.get("ok", false)) and str(vacant.get("error", "")).contains("rank 3"),
+			"AC3: Spring Clamp refuses the out-of-reach living rank-4 foe and the vacant legal rank 3")
+		_check(before == rear.state_snapshot() and rng == rear.rng_state()
+			and rear.current_actor_id() == "tinker",
+			"AC3: those refusals change no state, spend no turn and draw no seeded RNG")
+		_check(rear.get_unit("moth_scribe") == moth_before
+			and rear.get_unit("moth_scribe")["statuses"].is_empty(),
+			"AC3: the refused rank-4 foe keeps its HP and an unwritten status dictionary")
+		var legal := rear.use_part(ALTERNATES["head"], 1)
+		_check(bool(legal.get("ok", false)) and legal.get("results", []).size() == 1
+			and rear.current_actor_id() != "tinker",
+			"AC3: the same real turn still legally clamps a foe reachable in rank 1")
+	var bare := _battle("", 2, seed_value)
+	var bare_ready := bare != null and _to(bare, "tinker")
+	_check(bare_ready, "AC3: the unequipped-head witness reaches a real Tinker turn")
+	if bare_ready:
+		_check(str(bare.get_unit("tinker")["parts"]["head"]["id"]) == STARTERS["head"],
+			"AC3: the unequipped witness really wears a different head")
+		var bare_before := bare.state_snapshot()
+		var bare_rng := bare.rng_state()
+		var unequipped := bare.use_part(ALTERNATES["head"], 1)
+		_check(not bool(unequipped.get("ok", false)) and str(unequipped.get("error", "")).contains("not equipped")
+			and bare_before == bare.state_snapshot() and bare_rng == bare.rng_state()
+			and bare.current_actor_id() == "tinker",
+			"AC3: an unequipped Spring Clamp refuses without state, turn or RNG spend")
+	var torn := _clamp_overload_battle(2, seed_value, true)
+	var torn_ready := torn != null and _to(torn, "tinker")
+	_check(torn_ready, "AC3: the torn-head witness reaches a real Tinker turn")
+	if torn_ready:
+		var torn_before := torn.state_snapshot()
+		var torn_rng := torn.rng_state()
+		var torn_shot := torn.use_part(ALTERNATES["head"], 1)
+		_check(not bool(torn_shot.get("ok", false)) and str(torn_shot.get("error", "")).contains("torn")
+			and torn_before == torn.state_snapshot() and torn_rng == torn.rng_state()
+			and torn.current_actor_id() == "tinker",
+			"AC3: a torn Spring Clamp refuses without state, turn or RNG spend")
+	var bystander := _clamp_overload_battle(2, seed_value)
+	var other_actor := ""
+	if bystander != null:
+		for index in range(40):
+			if bystander.is_over():
+				break
+			var actor := bystander.current_actor_id()
+			if actor != "tinker" and str(bystander.current_side()) == "hero":
+				other_actor = actor
+				break
+			if not bool(bystander.pass_turn().get("ok", false)):
+				break
+	_check(not other_actor.is_empty(), "AC3: a non-Tinker hero turn exists for the wrong-actor refusal")
+	if not other_actor.is_empty():
+		var actor_before := bystander.state_snapshot()
+		var actor_rng := bystander.rng_state()
+		var wrong_actor := bystander.use_part(ALTERNATES["head"], 1)
+		_check(not bool(wrong_actor.get("ok", false)) and actor_before == bystander.state_snapshot()
+			and actor_rng == bystander.rng_state()
+			and bystander.current_actor_id() == other_actor,
+			"AC3: Spring Clamp refuses while another hero holds the turn, with no state, turn or RNG spend")
+	var spent := _clamp_overload_battle(2, seed_value)
+	var spent_ready := spent != null and _to(spent, "tinker")
+	if spent_ready:
+		spent_ready = bool(spent.use_part(ALTERNATES["head"], 1).get("ok", false))
+	_check(spent_ready and spent.current_actor_id() != "tinker",
+		"AC3: a real Spring Clamp cast spends the turn for the off-turn refusal")
+	if spent_ready:
+		var spent_before := spent.state_snapshot()
+		var spent_rng := spent.rng_state()
+		var off_turn := spent.use_part(ALTERNATES["head"], 1)
+		_check(not bool(off_turn.get("ok", false)) and spent_before == spent.state_snapshot()
+			and spent_rng == spent.rng_state() and spent.current_actor_id() != "tinker",
+			"AC3: a stale Spring Clamp after the spent turn refuses without any further change")
+	var front := _clamp_overload_battle(2, seed_value)
+	var front_ready := front != null and _to(front, "tinker")
+	if front_ready:
+		var first_step := front.move(-1)
+		front_ready = bool(first_step.get("ok", false)) and _to(front, "tinker")
+	if front_ready:
+		var second_step := front.move(-1)
+		front_ready = bool(second_step.get("ok", false)) and _to(front, "tinker")
+	_check(front_ready and int(front.get_unit("tinker")["rank"]) == 1,
+		"AC3: genuine adjacent Tinker Moves bring her to the forbidden launch rank 1")
+	if front_ready:
+		var front_before := front.state_snapshot()
+		var front_rng := front.rng_state()
+		var front_shot := front.use_part(ALTERNATES["head"], 1)
+		_check(not bool(front_shot.get("ok", false)) and str(front_shot.get("error", "")).contains("rank 1")
+			and front_before == front.state_snapshot() and front_rng == front.rng_state()
+			and front.current_actor_id() == "tinker",
+			"AC3: Spring Clamp refuses a genuine hero rank-1 launch without state, turn or RNG spend")
