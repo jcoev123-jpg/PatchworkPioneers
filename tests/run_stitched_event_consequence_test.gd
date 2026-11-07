@@ -3867,15 +3867,13 @@ func _test_paid_wick_opt_in_and_rejections() -> void:
 						index, target_mode, base_candle,
 					])
 
-	# 3. AC3: Nonnegative or non-native-int candle deltas with require_full_candle: true are malformed:
+	# 3. AC3: Nonnegative, fractional, or non-integer candle deltas with require_full_candle: true are malformed:
 	var bad_paid_candle_deltas: Array = [
 		0,
 		1,
 		25,
 		100,
 		9223372036854775807,
-		-25.0,
-		-1.0,
 		0.0,
 		25.0,
 		-25.5,
@@ -3920,6 +3918,17 @@ func _test_paid_wick_opt_in_and_rejections() -> void:
 			var valid_rec := svc.choose("pay_wick", snap_40)
 			_check(valid_rec.get("ok") == true and valid_rec.get("candle") == 15,
 				"AC3: valid paid-wick sibling claims after invalid paid delta %d (%s)" % [index, target_mode])
+
+	# JSON parsers produce finite integral floats for negative deltas; verify -25.0 is valid:
+	for float_delta in [-25.0, -1.0]:
+		var json_choice := _choice("json_wick", "JSON float wick.", _paid_wick_effect(float_delta, -25, true, "party"))
+		var json_svc := RunStitchedEventConsequence.new(_event([json_choice, _choice("leave", "Leave.", _effect(0, 0, "party"))]))
+		var json_prev := json_svc.preview(snap_40)
+		_check(json_prev.get("ok") == true and _entry(json_prev, "json_wick").get("available") == true,
+			"AC3: integral float candle delta %s from JSON is valid" % str(float_delta))
+		var json_rec := json_svc.choose("json_wick", snap_40)
+		_check(json_rec.get("ok") == true and json_rec.get("candle") == 40 + int(float_delta),
+			"AC3: integral float candle delta %s from JSON claims correctly" % str(float_delta))
 
 	# 4. AC3: Structural errors alongside require_full_candle, forged choice IDs, and malformed snapshots:
 	var structural_broken: Array = [

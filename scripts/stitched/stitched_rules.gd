@@ -1166,6 +1166,11 @@ func _enter_turn() -> void:
 			_spend_dodge_turn(unit)
 			_turn_index += 1
 			continue
+		# An unravelled ally's FRAY cascade can lose this acting doll during
+		# its own start-of-turn effects. Never hand controls a LOST turn.
+		if not _can_act(unit):
+			_turn_index += 1
+			continue
 		return
 
 
@@ -1304,6 +1309,9 @@ func _resolve_ability(
 	var results: Array = []
 	for target in targets:
 		if str(target["side"]) == "foe" and (bool(target["dead"]) or int(target["hp"]) <= 0):
+			continue
+		# A prior hit may have lost another hero through the shared FRAY cascade.
+		if str(target["side"]) == "hero" and bool(target["lost"]):
 			continue
 		results.append(_resolve_single(actor, ability, target))
 	var receipt := {

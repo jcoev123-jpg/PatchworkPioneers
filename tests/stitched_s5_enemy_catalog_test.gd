@@ -43,6 +43,7 @@ func _run() -> void:
 		_finish()
 		return
 	_test_completeness(catalog)
+	_test_fray_scavenger_tuning(catalog)
 	_test_trophies(catalog)
 	_test_fail_closed(catalog)
 	_test_seeded_fights(catalog)
@@ -323,6 +324,57 @@ func _test_fail_closed(catalog: Dictionary) -> void:
 		"AC2: phase two must author distinct actions")
 	_check(bool(catalog.get("ok", false)) and catalog["foes"].size() > 0,
 		"AC1: the real loader still validates after every malformed probe")
+
+
+# ---------------------------------------------------------------- Fray Scavenger HP tuning
+
+func _test_fray_scavenger_tuning(catalog: Dictionary) -> void:
+	var raw: Variant = _read_json("res://data/enemies/run_enemies.json")
+	var source: Dictionary = {}
+	if raw is Array:
+		for entry in raw:
+			if entry is Dictionary and str(entry.get("id", "")) == "fray_scavenger":
+				source = entry
+				break
+	_check(not source.is_empty() and int(source.get("max_hp", 0)) == 14
+		and int(source.get("stitched", {}).get("max_hp", 0)) == 24,
+		"AC1: only the ordinary Fray Scavenger's Stitched HP is tuned; legacy HP remains 14")
+	var fray := StitchedEnemyCatalog.foe_for(catalog, "fray_scavenger")
+	_check(not fray.is_empty() and int(fray.get("max_hp", 0)) == 24
+		and int(fray.get("speed", -1)) == 4 and int(fray.get("prot", -1)) == 4
+		and not fray.get("abilities", []).is_empty(),
+		"AC1: real enemy loader resolves the tuned 24-HP Stitched foe with its authored kit")
+	var first_battle := _battle(catalog, ["fray_scavenger", "ragling"], 6110)
+	if first_battle == null:
+		_check(false, "AC2: the tuned two-foe seeded fight must be constructible")
+		return
+	var first_foe := first_battle.get_unit("fray_scavenger")
+	_check(first_battle.get_foes().size() == 2 and not first_foe.is_empty()
+		and int(first_foe.get("max_hp", 0)) == 24 and int(first_foe.get("hp", 0)) == 24,
+		"AC2: a real two-foe ranked battle starts with Fray Scavenger at 24/24 HP")
+	var initial_state := first_battle.state_snapshot()
+	var first := _auto_play(first_battle, 120)
+	var legal_hero_part := false
+	var genuine_fray_damage := false
+	for receipt in first["receipts"]:
+		if not bool(receipt.get("ok", false)) or str(receipt.get("actor_side", "")) != "hero" \
+				or str(receipt.get("action", "")) != "ability" or str(receipt.get("part", "")).is_empty():
+			continue
+		legal_hero_part = true
+		for result in receipt.get("results", []):
+			if str(result.get("target", "")) == "fray_scavenger" \
+					and bool(result.get("hit", false)) and int(result.get("damage", 0)) > 0 \
+					and int(result.get("target_hp", 24)) < 24:
+				genuine_fray_damage = true
+	_check(legal_hero_part and genuine_fray_damage,
+		"AC2: an equipped legal hero part lands real damage on the 24-HP Fray Scavenger")
+	var replay_battle := _battle(catalog, ["fray_scavenger", "ragling"], 6110)
+	if replay_battle == null:
+		_check(false, "AC2: matching replay battle must be constructible")
+		return
+	_check(replay_battle.state_snapshot() == initial_state
+		and first == _auto_play(replay_battle, 120) and not first["receipts"].is_empty(),
+		"AC2: the same seed and ranked actions replay identical snapshots, RNG and receipts")
 
 
 # ---------------------------------------------------------------- AC2 seeded rules
