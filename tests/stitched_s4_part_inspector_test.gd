@@ -3,6 +3,8 @@ extends SceneTree
 
 const SCENE := "res://scenes/stitched_part_inspector.tscn"
 const FIXTURE := "res://tests/fixtures/stitched_s1a_parts.json"
+const SEAMSTRESS_PATH := "res://data/parts/seamstress_parts.json"
+const BOBBIN_PART := "seamstress_bobbin_snag_spools"
 var failures: Array[String] = []
 var checks := 0
 
@@ -306,6 +308,7 @@ func _test_live_owners(packed: PackedScene) -> void:
             and panel.active_slot == "legs" and not panel.selected_part_id.is_empty()
             and panel.selected_tier == 1,
             "owner " + owner + " can change slot and resets on a different part")
+    _test_bobbin_snag_text(panel, source)
     _check(panel.select_owner("all") and panel.visible_part_ids_in_slot("head") == all_head
         and panel.select_part("felt_bulwark_button_shield"),
         "All restores full rows and allows other-slot foreign torso")
@@ -340,6 +343,103 @@ func _test_live_owners(packed: PackedScene) -> void:
 func _reversed(parts: Array) -> Array:
     var result := parts.duplicate(true)
     result.reverse()
+    return result
+
+
+## AC1/AC2/AC3: the shipped Bobbin Snag legs part used to print "Mark 1 and Tangled 1" while every
+## tier really applied Mark 2/Tangled 2 or Mark 3/Tangled 2. The real catalog, the shipped
+## inspector readout and StitchedParts.ability_at_tier must now agree at all three tiers.
+func _test_bobbin_snag_text(panel: StitchedPartInspector, source: Dictionary) -> void:
+    var expected_text := [
+        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2.",
+        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2.",
+        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 3 and Tangled 2.",
+    ]
+    var expected_effects := [
+        {"mark": 2, "tangled": 2},
+        {"mark": 2, "tangled": 2},
+        {"mark": 3, "tangled": 2},
+    ]
+    var catalog := StitchedParts.load_catalog(SEAMSTRESS_PATH)
+    _check(bool(catalog.get("ok", false)) and catalog["by_id"].has(BOBBIN_PART),
+        "AC1: the shipped Seamstress catalog loads and authors " + BOBBIN_PART)
+    if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(BOBBIN_PART):
+        return
+    var part: Dictionary = catalog["by_id"][BOBBIN_PART]
+    _check(source.has(BOBBIN_PART) and source[BOBBIN_PART] == part,
+        "AC1: the mounted inspector was handed this same validated Bobbin Snag record")
+    _check(str(part["text"]) == expected_text[0],
+        "AC1: the tier-I base text states Mark 2 and Tangled 2: " + str(part["text"]))
+    _check(not str(part["text"]).contains("Mark 1") and not str(part["text"]).contains("Tangled 1"),
+        "AC1: the tier-I base text no longer claims Mark 1 and Tangled 1")
+    var tiers: Dictionary = part["tiers"]
+    _check(tiers.has("2") and not tiers["2"].has("text"),
+        "AC1: tier II keeps the base-text fallback with no redundant override")
+    _check(tiers.has("3") and str(tiers["3"].get("text", "")) == expected_text[2],
+        "AC1: tier III authors its own Mark 3 and Tangled 2 text")
+    _check(int(tiers["2"]["stat"]["dodge"]) == 4 and int(tiers["3"]["stat"]["dodge"]) == 5,
+        "AC3: the tier-II and tier-III Dodge overrides stay 4 and 5")
+    var ability: Dictionary = part["ability"]
+    _check(str(ability["id"]) == "bobbin_snag" and str(ability["name"]) == "Bobbin Snag"
+        and str(ability["kind"]) == "debuff",
+        "AC3: Bobbin Snag keeps its id, name and debuff kind")
+    _check(str(part["owner"]) == "seamstress" and str(part["slot"]) == "legs",
+        "AC3: Bobbin Snag stays the Seamstress legs part")
+    for tier in [1, 2, 3]:
+        var resolved := StitchedParts.ability_at_tier(part, tier)
+        var effects: Dictionary = resolved["effects"]
+        _check(effects == expected_effects[tier - 1],
+            "AC1: tier %d ability effects are %s" % [tier, str(expected_effects[tier - 1])])
+        _check(str(resolved["id"]) == "bobbin_snag" and int(resolved["acc"]) == 90
+            and _ints(resolved["dmg"]) == [0, 0] and not bool(resolved["multi"]),
+            "AC3: tier %d Bobbin Snag keeps single-target 90%% accuracy and no damage" % tier)
+        _check(StitchedParts.stat_at_tier(part, tier) == {"dodge": tier + 2},
+            "AC3: tier %d grants Dodge %d" % [tier, tier + 2])
+        _check(_ints(resolved["launch"]) == [2, 3] and _ints(resolved["target"]) == [1, 2, 3]
+            and str(resolved["target_side"]) == "enemy",
+            "AC3: tier %d launches from ranks 2-3 at enemy ranks 1-3" % tier)
+        for rank in [1, 2, 3, 4]:
+            _check(StitchedParts.ranks_allowed(int(resolved["launch_mask"]), rank)
+                == (rank != 1 and rank != 4)
+                and StitchedParts.ranks_allowed(int(resolved["target_mask"]), rank) == (rank != 4),
+                "AC3: tier %d rank %d launch and target legality" % [tier, rank])
+    _check(panel.select_owner("seamstress") and panel.select_part(BOBBIN_PART),
+        "AC2: the public owner and part selectors reach Bobbin Snag")
+    _check(panel.selected_part_id == BOBBIN_PART and panel.selected_tier == 1
+        and _line(panel, "PartName") == "Bobbin Snag Spools"
+        and _line(panel, "PartMeta").contains("OWNER: seamstress")
+        and _line(panel, "PartMeta").contains("SLOT: LEGS")
+        and _line(panel, "AbilityLine").contains("Bobbin Snag"),
+        "AC2: its real name, owner, slot and ability are on screen")
+    _check(_line(panel, "PartText") == expected_text[0],
+        "AC2: its first public selection shows the corrected tier-I text")
+    for tier in [1, 2, 3]:
+        var shown := StitchedParts.ability_at_tier(part, tier)
+        var shown_effects: Dictionary = shown["effects"]
+        var pair := "Mark %d and Tangled %d" % [
+            int(shown_effects["mark"]), int(shown_effects["tangled"])]
+        _check(panel.select_tier(tier) and panel.selected_tier == tier
+            and panel.selected_part_id == BOBBIN_PART,
+            "AC2: tier %d is publicly selectable without losing the part" % tier)
+        _check(_line(panel, "PartText") == expected_text[tier - 1],
+            "AC2: tier %d PartText reads %s, got %s" % [
+                tier, expected_text[tier - 1], _line(panel, "PartText")])
+        _check(_line(panel, "PartText").contains(pair),
+            "AC2: tier %d PartText matches ability_at_tier %s" % [tier, pair])
+        _check(not _line(panel, "PartText").contains("Mark 1 and Tangled 1"),
+            "AC2: tier %d PartText never shows the stale Mark 1 and Tangled 1" % tier)
+        _check(_line(panel, "EffectsLine") == "EFFECTS: Mark %d, Tangled %d" % [
+            int(shown_effects["mark"]), int(shown_effects["tangled"])],
+            "AC2: tier %d EffectsLine shows the effective pair: %s" % [
+                tier, _line(panel, "EffectsLine")])
+        _check(_line(panel, "StatLine").contains("DODGE +%d" % (tier + 2)),
+            "AC2: tier %d StatLine shows Dodge %d" % [tier, tier + 2])
+
+
+func _ints(values: Variant) -> Array:
+    var result: Array = []
+    for value in values:
+        result.append(int(value))
     return result
 
 
