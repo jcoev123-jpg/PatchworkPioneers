@@ -178,28 +178,28 @@ func _card_free_source_checks() -> void:
 	var rows := {}
 	for item in document.trinkets:
 		rows[item.get("id")] = item.get("price")
-	var named := ["stitched_badge", "spare_spool", "quilted_coat", "button_eye", "pincushion_arm",
-		"switchback_button", "padded_vest", "double_quilt_coat", "scrap_lined_vest", "wool_patch_cloak",
-		"chain_stitched_coat", "reinforced_patchcoat", "thick_felt_mantle", "bloodstitch_bonnet",
-		"button_glass_visor", "stern_seam_cap", "reinforced_browband", "hemguard_cuff",
-		"red_bobbin_cuff", "loose_thread_glove", "threadguard_wrap", "frayfinder_mitt",
-		"borrowed_button", "relay_bobbin", "hearth_lining"]
-	var inert := {}
-	for record in JSON.parse_string(FileAccess.get_file_as_string(
-			"res://data/patches/initial_patch_slots.json")):
-		inert[record.id] = true
-	_check(not inert.is_empty(), "starter inert patch IDs are readable")
+	var coats := {"scrap_lined_vest": 3, "padded_vest": 4, "wool_patch_cloak": 5, "quilted_coat": 6,
+		"chain_stitched_coat": 7, "double_quilt_coat": 8, "reinforced_patchcoat": 9,
+		"thick_felt_mantle": 10}
+	var retired := ["stitched_badge", "spare_spool", "button_eye", "pincushion_arm",
+		"switchback_button", "bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",
+		"reinforced_browband", "hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove",
+		"threadguard_wrap", "frayfinder_mitt", "borrowed_button", "relay_bobbin", "hearth_lining"]
 	var authored: Dictionary = RunStitchedPeddlerStock._authored_patches()
-	var power_ids: Array = []
-	for id in named:
+	var coat_defs := {}
+	for record in JSON.parse_string(FileAccess.get_file_as_string(
+			"res://data/patches/m04_coat_patches.json")):
+		coat_defs[record.id] = record
+	for id in coats:
+		_check(coat_defs.has(id) and coat_defs[id].slot == "COAT"
+			and int(coat_defs[id].max_hp_bonus) == int(coats[id]),
+			"authored max-HP coat definition exists: " + id)
 		_check(rows.has(id) and int(rows[id]) == 100, "source row costs exactly 100 gold: " + id)
-		if inert.has(id):
-			_check(not authored.has(id), "inert starter slot is not Peddler stock: " + id)
-		else:
-			_check(authored.has(id) and authored[id] == 100,
-				"helper resolves the ordinary patch at 100 gold: " + id)
-			power_ids.append(id)
-	_check(power_ids.size() >= 20, "ordinary power rows were actually exercised")
+		_check(authored.has(id) and authored[id] == 100,
+			"helper resolves the coat patch at 100 gold: " + id)
+	for id in retired:
+		_check(not rows.has(id), "retired card-era relic is not in the Peddler source: " + id)
+		_check(not authored.has(id), "retired card-era relic is not Peddler stock: " + id)
 	var parts: Variant = JSON.parse_string(FileAccess.get_file_as_string(RunStitchedPeddlerStock.PART_SOURCE))
 	var catalog := {}
 	var part_ids: Array = []
