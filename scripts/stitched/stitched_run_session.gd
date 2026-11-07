@@ -653,6 +653,25 @@ func visit_story() -> String:
 	return VISIT_GREETINGS.get(service, "Someone waits by the skirting board with something to offer.")
 
 
+## S13: the part a road-stop choice is about, as {id, slot}, so the page can show its patch.
+func visit_action_part(action: Dictionary) -> Dictionary:
+	var arguments: Array = action.get("arguments", [])
+	match str(action.get("id", "")):
+		"mend", "upgrade":
+			for hero in heroes:
+				if arguments.size() >= 2 and hero.id == str(arguments[0]):
+					return {"id": str(hero.parts[str(arguments[1])].id), "slot": str(arguments[1])}
+		"swap", "double_stitch":
+			if arguments.size() >= 3 and int(arguments[2]) < satchel.size():
+				var spare: Dictionary = satchel[int(arguments[2])]
+				return {"id": str(spare.id), "slot": str(spare.slot)}
+		"buy_part":
+			var id := str(pending.get("peddler_stock", {}).get("part", {}).get("id", ""))
+			if catalog.has(id):
+				return {"id": id, "slot": str(catalog[id].slot)}
+	return {}
+
+
 func _walk_supply_offers() -> Array:
 	return [{"id": RunStitchedPeddlerWalkSupplies.STARCH, "price": PEDDLER_PRICE},
 		{"id": RunStitchedPeddlerWalkSupplies.SPARE_SPOOL, "price": PEDDLER_PRICE}]
@@ -839,7 +858,7 @@ func _add_swaps(roster: Array) -> void:
 			continue
 		for index in satchel.size():
 			var spare: Dictionary = satchel[index]
-			_offer("swap", "%s / Sew on %s" % [hero.name, spare.id],
+			_offer("swap", "%s / Sew on %s" % [hero.name, str(catalog.get(spare.id, {}).get("name", spare.id))],
 				not hero.parts[spare.slot].torn, [hero.id, spare.slot, index])
 
 
