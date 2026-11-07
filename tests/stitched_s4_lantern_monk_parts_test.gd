@@ -62,8 +62,8 @@ const FROZEN_TIERS := {
 		"3": {"acc": 100, "effects": {"blind": 1, "exposed": 1}},
 	},
 	"lantern_monk_arms_wick_spark": {
-		"2": {"dmg": [5, 8]},
-		"3": {"dmg": [7, 10], "acc": 95},
+		"2": {"dmg": [5, 8], "effects": {"blind": 1, "exposed": 1}},
+		"3": {"dmg": [7, 10], "acc": 95, "effects": {"blind": 1, "exposed": 2}},
 	},
 	"lantern_monk_legs_pole_shelter": {
 		"2": {"effects": {"guard": 3}},
@@ -101,6 +101,12 @@ func _initialize() -> void:
 	_test_rank4_moth_cloud(2, 500990, 30, "tier II")
 	_test_rank4_moth_cloud(3, 501030, 30, "tier III")
 	_test_rank4_wick_spark(1, 500030, 60)
+	_test_wick_spark_exposed_seam(1, 500030, 90, 0)
+	_test_wick_spark_exposed_seam(2, 500030, 90, 1)
+	_test_wick_spark_exposed_seam(3, 500030, 90, 2)
+	_test_wick_spark_miss_no_seam(1, 500030, 90)
+	_test_wick_spark_miss_no_seam(2, 500030, 90)
+	_test_wick_spark_miss_no_seam(3, 500030, 90)
 	_test_moth_wink_rank4(1, 501680, 20)
 	_test_moth_wink_rank4(2, 501700, 20)
 	_test_moth_wink_rank4(3, 501720, 20)
@@ -415,6 +421,9 @@ func _test_wick_spark_launch() -> void:
 		and ability["effects"] == {"blind": 1} and int(ability["self_move"]) == 0
 		and str(ability["move"]) == "attack2",
 		"AC1: Wick Spark launches from [2,3,4], hits one enemy rank 1-3 and keeps its fuel values")
+	_check(str(part["text"]).to_lower().contains("blind")
+		and str(part["text"]).to_lower().contains("expose"),
+		"AC1: Wick Spark's short rules text names Blind and the upgraded Exposed seam")
 	for rank in [2, 3, 4]:
 		_check(StitchedParts.ranks_allowed(launch_mask, rank),
 			"AC1: Wick Spark may launch from hero rank %d" % rank)
@@ -431,6 +440,11 @@ func _test_wick_spark_launch() -> void:
 		"AC1: Wick Spark's target list stays exactly enemy ranks 1-3, never a rank-4 opener")
 	var expected_acc := {1: 91, 2: 91, 3: 95}
 	var expected_dmg := {1: [4, 6], 2: [5, 8], 3: [7, 10]}
+	var expected_effects := {
+		1: {"blind": 1},
+		2: {"blind": 1, "exposed": 1},
+		3: {"blind": 1, "exposed": 2},
+	}
 	for tier in [1, 2, 3]:
 		var tiered := StitchedParts.ability_at_tier(part, tier)
 		var valid := StitchedParts.validate_ability(tiered)
@@ -457,9 +471,12 @@ func _test_wick_spark_launch() -> void:
 		for rank in [0, 4, 5]:
 			_check(not StitchedParts.ranks_allowed(int(checked["target_mask"]), rank),
 				"AC1: Wick Spark tier %d never targets enemy rank %d" % [tier, rank])
+		_check(checked["effects"] == expected_effects[tier],
+			"AC1: Wick Spark tier %d effects are exactly %s" % [tier, str(expected_effects[tier])])
 		_check(int(checked["acc"]) == int(expected_acc[tier])
 			and checked["dmg"] == expected_dmg[tier]
-			and checked["effects"] == {"blind": 1} and int(checked["crit"]) == 0
+			and int(checked["effects"].get("blind", 0)) == 1
+			and int(checked["crit"]) == 0
 			and int(checked["mark_damage"]) == 0 and str(checked["move"]) == "attack2",
 			"AC1: Wick Spark tier %d keeps its ACC, damage, Blind and attack2 pose" % tier)
 		_check(StitchedParts.stat_at_tier(part, tier) == {"dmg": 1},
@@ -956,6 +973,151 @@ func _test_rank4_wick_spark(tier: int, seed_start: int, seed_count: int) -> void
 		break
 	_check(witnessed,
 		"AC2: a real seeded rank-4 Wick Spark damages and Blinds the living rank-1 foe")
+
+
+## S4 upgrade: upgraded Wick Spark still Blinds the foe it lands on and now also Exposes a
+## seam. A real seeded 4v3 battle with the Monk in hero rank 2 casts the actually equipped arms
+## part at the living rank-1 foe. A genuine hit must leave Blind 1 plus Exposed 1 at tier II or
+## Exposed 2 at tier III on that same foe; tier I remains a Blind-only witness. The same seed
+## and action replay to identical receipt, snapshot and RNG position.
+func _test_wick_spark_exposed_seam(
+	tier: int, seed_start: int, seed_count: int, expected_exposed: int
+) -> void:
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle(STARTERS["arms"], tier, seed_value)
+		if b == null:
+			continue
+		if str(b.get_unit("lantern_monk")["parts"]["arms"]["id"]) != STARTERS["arms"]:
+			continue
+		if not _to(b, "lantern_monk"):
+			continue
+		var foe_before := b.get_unit("fray_scavenger")
+		if foe_before.is_empty() or int(foe_before.get("rank", -1)) != 1 \
+				or bool(foe_before.get("dead", false)) or int(foe_before["hp"]) <= 0:
+			continue
+		var before := b.state_snapshot()
+		var cast := b.use_part(STARTERS["arms"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 1:
+			continue
+		var receipt: Dictionary = receipts[0]
+		if not bool(receipt.get("hit", false)) or str(receipt.get("target", "")) != "fray_scavenger":
+			continue  # a legal spark may still miss; keep searching for a genuine hit
+		var statuses: Array = receipt.get("statuses", [])
+		var receipt_blind := statuses.any(
+			func(status): return str(status.get("status", "")) == "blind" \
+				and int(status.get("duration", 0)) == 1)
+		var receipt_exposed := statuses.filter(
+			func(status): return str(status.get("status", "")) == "exposed")
+		if not receipt_blind:
+			continue
+		if expected_exposed == 0:
+			if not receipt_exposed.is_empty():
+				continue
+		elif receipt_exposed.size() != 1 \
+				or int(receipt_exposed[0].get("duration", 0)) != expected_exposed:
+			continue
+		var foe_after := b.get_unit("fray_scavenger")
+		if int(foe_after["statuses"].get("blind", 0)) != 1:
+			continue
+		if int(foe_after["statuses"].get("exposed", 0)) != expected_exposed:
+			continue
+		if int(foe_after["hp"]) >= int(foe_before["hp"]):
+			continue
+		witnessed = true
+		_check(str(cast.get("action", "")) == "ability"
+			and str(cast.get("actor", "")) == "lantern_monk"
+			and str(cast.get("part", "")) == STARTERS["arms"]
+			and str(cast.get("ability", "")) == "lantern_monk_arms_wick_spark_move",
+			"AC2: hero rank 2 Wick Spark tier %d runs as the equipped Monk arms part (seed %d)"
+				% [tier, seed_value])
+		_check(str(receipt.get("target_side", "")) == "foe"
+			and int(receipt.get("target_rank", -1)) == 1,
+			"AC2: Wick Spark tier %d lands on exactly one living rank-1 foe (seed %d)"
+				% [tier, seed_value])
+		_check(receipt_blind and (expected_exposed == 0 or receipt_exposed.size() == 1),
+			"AC2: Wick Spark tier %d receipt carries Blind 1%s (seed %d)"
+				% [tier, " and Exposed %d" % expected_exposed if expected_exposed > 0 else "", seed_value])
+		_check(int(foe_after["statuses"].get("blind", 0)) == 1
+			and int(foe_after["statuses"].get("exposed", 0)) == expected_exposed
+			and (expected_exposed > 0 or not foe_after["statuses"].has("exposed")),
+			"AC2: the real foe immediately holds Blind 1%s after the landed spark (tier %d, seed %d)"
+				% [" and Exposed %d" % expected_exposed if expected_exposed > 0 else "", tier, seed_value])
+		var after := b.state_snapshot()
+		var advanced_once := (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) == int(before["turn_index"]) + 1) \
+			or int(after["round"]) == int(before["round"]) + 1
+		_check(advanced_once and after != before,
+			"AC2: the upgraded spark spends exactly one turn and changes real battle state (tier %d, seed %d)"
+				% [tier, seed_value])
+		var replay := _battle(STARTERS["arms"], tier, seed_value)
+		if replay == null or not _to(replay, "lantern_monk"):
+			_check(false, "AC2: same-seed Wick Spark tier %d replay reached the Monk's turn (seed %d)"
+				% [tier, seed_value])
+		else:
+			var replayed := replay.use_part(STARTERS["arms"], 1)
+			_check(replayed == cast and replay.state_snapshot() == after
+				and replay.rng_state() == int(after["rng_state"]),
+				"AC2: same-seed Wick Spark tier %d replays receipt, snapshot and RNG (seed %d)"
+					% [tier, seed_value])
+		break
+	_check(witnessed,
+		"AC2: a real seeded rank-2 Wick Spark tier %d lands Blind 1 with Exposed %d"
+			% [tier, expected_exposed])
+
+
+## AC3: a legal Wick Spark cast that misses still spends the turn but applies neither Blind nor
+## the upgraded Exposed seam. A bounded seed window supplies a genuine miss from the real part.
+func _test_wick_spark_miss_no_seam(tier: int, seed_start: int, seed_count: int) -> void:
+	var witnessed := false
+	for seed_value in range(seed_start, seed_start + seed_count):
+		var b := _battle(STARTERS["arms"], tier, seed_value)
+		if b == null or not _to(b, "lantern_monk"):
+			continue
+		if str(b.get_unit("lantern_monk")["parts"]["arms"]["id"]) != STARTERS["arms"]:
+			continue
+		var foe_before := b.get_unit("fray_scavenger")
+		if foe_before.is_empty() or int(foe_before.get("rank", -1)) != 1 \
+				or bool(foe_before.get("dead", false)) or int(foe_before["hp"]) <= 0:
+			continue
+		var prior_blind := int(foe_before["statuses"].get("blind", 0))
+		var prior_exposed := int(foe_before["statuses"].get("exposed", 0))
+		if prior_blind > 0 or prior_exposed > 0:
+			continue  # keep searching for a clean miss witness with no prior seam status
+		var before := b.state_snapshot()
+		var cast := b.use_part(STARTERS["arms"], 1)
+		if not bool(cast.get("ok", false)):
+			continue
+		var receipts: Array = cast.get("results", [])
+		if receipts.size() != 1 or str(receipts[0].get("target", "")) != "fray_scavenger":
+			continue
+		var receipt: Dictionary = receipts[0]
+		if bool(receipt.get("hit", true)):
+			continue  # keep searching for a genuine miss
+		witnessed = true
+		var foe_after := b.get_unit("fray_scavenger")
+		_check(not receipt.get("statuses", []).any(func(status):
+				return str(status.get("status", "")) in ["blind", "exposed"]),
+			"AC3: a missed Wick Spark tier %d receipt carries no Blind or Exposed (seed %d)"
+				% [tier, seed_value])
+		_check(not foe_after["statuses"].has("blind")
+			and not foe_after["statuses"].has("exposed"),
+			"AC3: a missed Wick Spark tier %d leaves no Blind or Exposed on the foe (seed %d)"
+				% [tier, seed_value])
+		_check(int(foe_after["hp"]) == int(foe_before["hp"]),
+			"AC3: the missed spark deals no damage to the living rank-1 foe (seed %d)" % seed_value)
+		var after := b.state_snapshot()
+		var advanced_once := (int(after["round"]) == int(before["round"])
+				and int(after["turn_index"]) == int(before["turn_index"]) + 1) \
+			or int(after["round"]) == int(before["round"]) + 1
+		_check(advanced_once and after != before,
+			"AC3: the missed spark spends exactly one turn without status gain (tier %d, seed %d)"
+				% [tier, seed_value])
+		break
+	_check(witnessed, "AC3: a real seeded Wick Spark tier %d miss applies neither status" % tier)
 
 
 ## S4 completion: Moth Wink's authored launch list gains hero rank 4, so the starter head can

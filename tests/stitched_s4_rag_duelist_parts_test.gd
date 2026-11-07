@@ -74,7 +74,7 @@ const EXPECTED := {
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 95,
 		"dmg": [[0, 0], [0, 0], [0, 0]],
-		"effects": [{"exposed": 1}, {"exposed": 2}, {"exposed": 3}],
+		"effects": [{"exposed": 1}, {"exposed": 2, "mark": 1}, {"exposed": 3, "mark": 2}],
 		"self_move": [0, 0, 0],
 	},
 	"rag_duelist_head_tattered_snare": {
@@ -1295,17 +1295,92 @@ func _test_status_ticks() -> void:
 			"AC2: Bleed 4 really deals four HP at the start of that foe turn")
 		_check(int(battle.get_unit(foe_id)["statuses"].get("bleed", 0)) == 3,
 			"AC2: the Bleed counter ticks down by one unit turn")
-	var exposed := _cast_witness("rag_duelist_head_feather_feint", 3, 0, 1, true)
-	if exposed.is_empty():
-		_check(false, "AC2: a fixed seed lands Feather Feint for the Exposed witness")
+	## Feather Feint: tier I only Exposes the foe; tiers II and III also Mark that same seam, so a
+	## later mark_damage follow-up can find it. Both counters tick down one on that foe's real turn.
+	var feint_id := str(STARTER_PARTS["head"])
+	var feint_ladder := [
+		{"exposed": 1, "mark": 0},
+		{"exposed": 2, "mark": 1},
+		{"exposed": 3, "mark": 2},
+	]
+	for tier in [1, 2, 3]:
+		var landed: Dictionary = feint_ladder[tier - 1]
+		var exposed_amount := int(landed["exposed"])
+		var mark_amount := int(landed["mark"])
+		var tag := "Feather Feint tier %d" % tier
+		var feint := _cast_witness(feint_id, tier, 0, 1, true)
+		if feint.is_empty():
+			_check(false, "AC2: a fixed seed lands " + tag + " for the Exposed/Mark witness")
+			continue
+		var battle: StitchedRules = feint["battle"]
+		var receipt: Dictionary = feint["receipt"]
+		var result: Dictionary = receipt["results"][0]
+		var foe_id := str(result["target"])
+		_check(str(receipt.get("part", "")) == feint_id,
+			"AC2: " + tag + " casts the worn starter head part")
+		_check(str(receipt.get("ability", "")) == "rag_duelist_head_feather_feint_move",
+			"AC2: " + tag + " resolves the authored ability id")
+		_check(str(receipt.get("actor", "")) == OWNER, "AC2: " + tag + " is used by the Rag Duelist")
+		_check(bool(result.get("hit", false)), "AC2: " + tag + " landed on a real seeded roll")
+		_check(int(result.get("damage", -1)) == 0, "AC2: " + tag + " stays a zero-damage debuff")
+		var foe := battle.get_unit(foe_id)
+		_check(int(foe["hp"]) == int(feint["foe_hp_before"].get(foe_id, -1)),
+			"AC2: " + tag + " leaves the landed foe's HP untouched")
+		_check(int(foe["statuses"].get("exposed", 0)) == exposed_amount,
+			"AC2: %s leaves a real Exposed %d" % [tag, exposed_amount])
+		_check(int(foe["statuses"].get("mark", 0)) == mark_amount,
+			"AC2: %s leaves a real Mark %d" % [tag, mark_amount])
+		if mark_amount == 0:
+			_check(not foe["statuses"].has("mark"), "AC2: " + tag + " never adds a Mark")
+		var receipt_statuses: Array = result.get("statuses", [])
+		_check(receipt_statuses.size() == (1 if mark_amount == 0 else 2),
+			"AC2: " + tag + " receipt reports exactly its applied debuffs")
+		_check(_status_value(receipt_statuses, "exposed") == exposed_amount,
+			"AC2: " + tag + " reports the applied Exposed")
+		_check(_status_value(receipt_statuses, "mark") == (-1 if mark_amount == 0 else mark_amount),
+			"AC2: " + tag + " reports exactly its applied Mark")
+		for other in battle.get_foes():
+			if str(other["id"]) == foe_id:
+				continue
+			_check(int(other["statuses"].get("exposed", 0)) == 0
+				and int(other["statuses"].get("mark", 0)) == 0,
+				"AC2: " + tag + " debuffs only the chosen foe, not " + str(other["id"]))
+		# An equal-seed replay casts identically, so the added Mark adds no hidden randomness.
+		var snapshot_after_cast := battle.state_snapshot()
+		var rng_after_cast := battle.rng_state()
+		var replay := _build_battle(int(feint["seed"]), tier, _kit_for(feint_id), 0, false)
+		if replay == null or not _to(replay, OWNER):
+			_check(false, "AC4: " + tag + " replays on a second equal-seed fixture")
+			continue
+		var replay_receipt := replay.use_part(feint_id, 1)
+		_check(replay_receipt == receipt and replay.state_snapshot() == snapshot_after_cast
+			and replay.rng_state() == rng_after_cast,
+			"AC4: " + tag + " replays its receipt, state and RNG exactly")
+		# Both counters tick down exactly one on the affected foe's own next real turn.
+		_check(_to(battle, foe_id), "AC2: the " + tag + " foe reaches its own seeded turn")
+		_check(int(battle.get_unit(foe_id)["statuses"].get("exposed", 0)) == exposed_amount - 1,
+			"AC2: %s Exposed ticks down by exactly one foe turn" % tag)
+		_check(int(battle.get_unit(foe_id)["statuses"].get("mark", 0)) == maxi(mark_amount - 1, 0),
+			"AC2: %s Mark ticks down by exactly one foe turn" % tag)
+	# A missed Feint spends the action but applies neither Exposed nor Mark, at its upgraded tier.
+	var missed_feint := _cast_witness(feint_id, 3, 0, 1, false, true)
+	if missed_feint.is_empty():
+		_check(false, "AC3: a fixed seed makes a tier-III Feather Feint miss for the fail-closed witness")
 	else:
-		var battle: StitchedRules = exposed["battle"]
-		var foe_id := str(exposed["receipt"]["results"][0]["target"])
-		_check(int(battle.get_unit(foe_id)["statuses"].get("exposed", 0)) == 3,
-			"AC2: a landed tier-III Feather Feint leaves a real Exposed 3")
-		_check(_to(battle, foe_id), "AC2: the Exposed foe reaches its own seeded turn")
-		_check(int(battle.get_unit(foe_id)["statuses"].get("exposed", 0)) == 2,
-			"AC2: Exposed 3 ticks down by exactly one foe turn")
+		var miss_battle: StitchedRules = missed_feint["battle"]
+		var miss_result: Dictionary = missed_feint["receipt"]["results"][0]
+		var miss_foe_id := str(miss_result["target"])
+		_check(not bool(miss_result.get("hit", true)), "AC3: the Feather Feint miss witness really missed")
+		_check(miss_result.get("statuses", []).is_empty(),
+			"AC3: a missed Feather Feint reports no applied status")
+		var miss_foe := miss_battle.get_unit(miss_foe_id)
+		_check(int(miss_foe["statuses"].get("exposed", 0)) == 0
+			and int(miss_foe["statuses"].get("mark", 0)) == 0,
+			"AC3: a missed Feather Feint adds neither Exposed nor Mark")
+		_check(int(miss_foe["hp"]) == int(missed_feint["foe_hp_before"].get(miss_foe_id, -1)),
+			"AC3: a missed Feint deals no HP damage either")
+		_check(miss_battle.current_actor_id() != OWNER,
+			"AC3: the missed Feint still spends the Duelist's action")
 
 
 # ---------------------------------------------------------------- AC2/AC3: refusals are atomic
@@ -1333,6 +1408,30 @@ func _test_live_rejections() -> void:
 	var wrong_launch := battle.use_part("rag_duelist_arms_rapier_lunge", 1)
 	_check(not bool(wrong_launch.get("ok", false)) and str(wrong_launch.get("error", "")).contains("cannot launch from rank 1"),
 		"AC2: Rapier Lunge refuses to launch from rank 1")
+	# Feather Feint only launches from ranks 1-2, so a displaced Duelist is refused atomically.
+	for hero_rank in [3, 4]:
+		var displaced := _build_battle(53 + hero_rank, 1, STARTER_PARTS, hero_rank - 1)
+		if displaced == null:
+			continue
+		_check(_to(displaced, OWNER),
+			"AC3: the rank-%d Duelist reaches a genuine scheduled turn" % hero_rank)
+		_check(int(displaced.get_unit(OWNER)["rank"]) == hero_rank,
+			"AC3: the fixture really places the Duelist at rank %d" % hero_rank)
+		var displaced_before := displaced.state_snapshot()
+		var displaced_rng := displaced.rng_state()
+		var feint_launch := displaced.use_part("rag_duelist_head_feather_feint", 1)
+		_check(not bool(feint_launch.get("ok", false))
+			and str(feint_launch.get("error", "")).contains("cannot launch from rank %d" % hero_rank),
+			"AC3: Feather Feint refuses to launch from rank %d" % hero_rank)
+		_check(displaced_before == displaced.state_snapshot()
+			and displaced_rng == displaced.rng_state(),
+			"AC3: the rank-%d Feint refusal preserved state, turn pointer and RNG" % hero_rank)
+		_check(displaced.current_actor_id() == OWNER,
+			"AC3: the rank-%d Feint refusal never spends the Duelist's turn" % hero_rank)
+		for foe in displaced.get_foes():
+			_check(int(foe["statuses"].get("exposed", 0)) == 0
+				and int(foe["statuses"].get("mark", 0)) == 0,
+				"AC3: the rank-%d Feint refusal debuffs no foe" % hero_rank)
 	var unequipped_head := battle.use_part("rag_duelist_head_tattered_snare", 1)
 	_check(not bool(unequipped_head.get("ok", false)) and str(unequipped_head.get("error", "")).contains("not equipped"),
 		"AC2: an alternative part that is not equipped grants no battle action")
