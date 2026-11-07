@@ -181,6 +181,9 @@ func _card_free_source_checks() -> void:
 	var coats := {"scrap_lined_vest": 3, "padded_vest": 4, "wool_patch_cloak": 5, "quilted_coat": 6,
 		"chain_stitched_coat": 7, "double_quilt_coat": 8, "reinforced_patchcoat": 9,
 		"thick_felt_mantle": 10}
+	var expected_price := {"scrap_lined_vest": 70, "padded_vest": 100, "wool_patch_cloak": 100,
+		"quilted_coat": 100, "chain_stitched_coat": 100, "double_quilt_coat": 100,
+		"reinforced_patchcoat": 100, "thick_felt_mantle": 130}
 	var retired := ["stitched_badge", "spare_spool", "button_eye", "pincushion_arm",
 		"switchback_button", "bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",
 		"reinforced_browband", "hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove",
@@ -194,9 +197,10 @@ func _card_free_source_checks() -> void:
 		_check(coat_defs.has(id) and coat_defs[id].slot == "COAT"
 			and int(coat_defs[id].max_hp_bonus) == int(coats[id]),
 			"authored max-HP coat definition exists: " + id)
-		_check(rows.has(id) and int(rows[id]) == 100, "source row costs exactly 100 gold: " + id)
-		_check(authored.has(id) and authored[id] == 100,
-			"helper resolves the coat patch at 100 gold: " + id)
+		_check(rows.has(id) and int(rows[id]) == expected_price[id],
+			"source row costs exactly %d gold: %s" % [expected_price[id], id])
+		_check(authored.has(id) and authored[id] == expected_price[id],
+			"helper resolves the coat patch at %d gold: %s" % [expected_price[id], id])
 	for id in retired:
 		_check(not rows.has(id), "retired card-era relic is not in the Peddler source: " + id)
 		_check(not authored.has(id), "retired card-era relic is not Peddler stock: " + id)
