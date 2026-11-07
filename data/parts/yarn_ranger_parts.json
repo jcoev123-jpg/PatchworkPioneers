@@ -266,6 +266,7 @@
           7
         ],
         "crit": 0,
+        "mark_damage": 2,
         "effects": {
           "mark": 1
         },
@@ -279,6 +280,7 @@
               7,
               9
             ],
+            "mark_damage": 3,
             "effects": {
               "mark": 2
             }
@@ -290,13 +292,14 @@
               9,
               11
             ],
+            "mark_damage": 4,
             "effects": {
               "mark": 3
             }
           }
         }
       },
-      "text": "Send a needle arrow into a foe in any enemy rank, rear rank included, damaging and Marking it; no retired Unravel."
+      "text": "Send a needle arrow into a foe in any enemy rank, rear rank included, damaging and Marking it; it hits an ALREADY-Marked foe harder."
     },
     {
       "id": "yarn_ranger_arms_purling_barrage",
