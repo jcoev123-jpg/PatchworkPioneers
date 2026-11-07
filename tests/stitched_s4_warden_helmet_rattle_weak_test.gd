@@ -1,5 +1,7 @@
 extends SceneTree
-## S4 Warden contract: Helmet Rattle's Weak seam deepens with its stitch tier (I/II/III -> 1/2/3).
+## S4 Warden contract: Helmet Rattle's Weak seam deepens with its stitch tier (I/II/III -> 1/2/3),
+## and at tier III the clanging helm also reaches enemy rank 3. Tiers I and II stay at ranks 1-2,
+## so the tier-III reach is the only added rank; rank 4 is refused at every tier.
 ##
 ## The real version-1 Warden catalog is loaded through StitchedParts.load_catalog and every
 ## named record is resolved through StitchedParts.ability_at_tier. Records are found by id,
@@ -7,17 +9,33 @@ extends SceneTree
 ## parallel. The shipped validator is then exercised with copied invalid records (unknown
 ## effect, out-of-range rank, zero Weak) and the real catalog is checked again afterwards so
 ## the negative checks can never hide a mutation of the authored data.
+##
+## The same part is then worn into a real seeded four-hero/three-foe StitchedRules fight built
+## from data/stitched/s2_preview.json, so legality and Weak 3 are checked through the shipped
+## use_part path and the authoritative foe statuses. A bounded fixed-seed search witnesses a
+## genuine tier-III hit on the living rank-three foe; tiers I/II of the same state cannot target
+## rank 3, rank 4 never works, refusals are state/turn/RNG atomic, a natural miss adds no Weak,
+## and duplicate seeded trials replay identical receipts, snapshots and RNG.
 
 const WARDEN_PATH := "res://data/parts/warden_parts.json"
+const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
 const PART_ID := "warden_head_helmet_rattle"
 const ABILITY_ID := "head_helmet_rattle_move"
 const WARDEN := "warden"
+const RANK_ONE_FOE := "fray_scavenger"
+const RANK_THREE_FOE := "moth_scribe"
+const OTHER_FOES := ["fray_scavenger", "scissor_crab"]
+const RANK_THREE := 3
+const RANK_FOUR := 4
 const TIER_WEAK := [1, 2, 3]
 const TIER_DMG := [[3, 5], [5, 7], [6, 9]]
 const TIER_CRIT := [0, 0, 8]
 const TIER_ACC := [90, 90, 90]
+const TIER_TARGET := [[1, 2], [1, 2], [1, 2, 3]]
 const LAUNCH := [1, 2]
-const TARGET := [1, 2]
+const RATTLE_TEXT := "Rattle a nearby foe into Weakness; at tier III the clang reaches enemy rank 3."
+## Upper bound on the deterministic seed searches (never a wall-clock or random search).
+const SEED_SEARCH_LIMIT := 200
 
 ## The seven other authored Warden parts that must keep their original tier outputs.
 const SIBLING_EXPECTED := {
@@ -113,11 +131,18 @@ const SIBLING_EXPECTED := {
 
 var failures: Array[String] = []
 var checks := 0
+## The bounded hit witness' seed, reused by the replay check so it never guesses a hit.
+var witnessed_hit_seed := 0
 
 
 func _initialize() -> void:
 	_test_real_catalog()
 	_test_invalid_copies()
+	_test_rank_three_hit_witness()
+	_test_lower_tiers_cannot_reach_rank_three()
+	_test_rank_four_and_launch_and_off_turn()
+	_test_natural_miss_applies_no_weak()
+	_test_replay()
 	for failure in failures:
 		printerr(failure)
 	print("stitched_s4_warden_helmet_rattle_weak_test: ",
@@ -145,10 +170,31 @@ func _read_json(path: String) -> Variant:
 	return parsed
 
 
+func _catalog() -> Dictionary:
+	var catalog := StitchedParts.load_catalog(WARDEN_PATH)
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the real Warden catalog loads: " + str(catalog.get("error", "")))
+	return catalog
+
+
 func _raw_part(document: Dictionary) -> Dictionary:
 	for entry in document.get("parts", []):
 		if entry is Dictionary and str(entry.get("id", "")) == PART_ID:
 			return entry
+	return {}
+
+
+func _status_entry(statuses: Array, name: String) -> Dictionary:
+	for status in statuses:
+		if status is Dictionary and str(status.get("status", "")) == name:
+			return status
+	return {}
+
+
+func _snapshot_unit(snapshot: Dictionary, unit_id: String) -> Dictionary:
+	for unit in snapshot.get("units", []):
+		if unit is Dictionary and str(unit.get("id", "")) == unit_id:
+			return unit
 	return {}
 
 
@@ -181,8 +227,8 @@ func _test_real_catalog() -> void:
 	_check(str(part.get("slot", "")) == "head", "AC2: Helmet Rattle stays in the head slot")
 	_check(str(part.get("owner", "")) == WARDEN, "AC2: Helmet Rattle stays Warden's own part")
 	_check(part.get("stat", {}) == {"crit": 4}, "AC2: Helmet Rattle keeps its head stat crit 4")
-	_check(str(part.get("text", "")) == "Rattle a nearby foe into Weakness.",
-		"AC2: Helmet Rattle keeps its authored rules text")
+	_check(str(part.get("text", "")) == RATTLE_TEXT,
+		"AC2: Helmet Rattle states its tier-III rank-3 reach in its authored rules text")
 
 	var base: Dictionary = part.get("ability", {})
 	_check(str(base.get("id", "")) == ABILITY_ID, "AC2: tier I is the named Helmet Rattle move")
@@ -190,11 +236,12 @@ func _test_real_catalog() -> void:
 	_check(str(base.get("kind", "")) == "melee", "AC2: the move stays melee")
 	_check(str(base.get("target_side", "")) == "enemy", "AC2: the move still targets foes")
 	_check(base.get("launch", []) == LAUNCH, "AC2: launch stays exactly ranks 1 and 2")
-	_check(base.get("target", []) == TARGET, "AC2: target stays exactly ranks 1 and 2")
+	_check(base.get("target", []) == TIER_TARGET[0],
+		"AC2: tier I target stays exactly ranks 1 and 2")
 	_check(int(base.get("launch_mask", 0)) == StitchedParts.rank_mask(LAUNCH),
 		"AC2: the launch mask is derived from ranks 1 and 2")
-	_check(int(base.get("target_mask", 0)) == StitchedParts.rank_mask(TARGET),
-		"AC2: the target mask is derived from ranks 1 and 2")
+	_check(int(base.get("target_mask", 0)) == StitchedParts.rank_mask(TIER_TARGET[0]),
+		"AC2: the tier-I target mask is derived from ranks 1 and 2")
 	_check(not bool(base.get("multi", true)), "AC2: the move stays single-target")
 	_check(int(base.get("acc", -1)) == 90, "AC2: tier I keeps ACC 90")
 	_check(base.get("dmg", []) == [3, 5], "AC2: tier I keeps damage [3, 5]")
@@ -207,6 +254,7 @@ func _test_real_catalog() -> void:
 		var label := "AC1/AC2: tier " + str(tier)
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var stat := StitchedParts.stat_at_tier(part, tier)
+		var expected_target: Array = TIER_TARGET[tier - 1]
 		_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
 			label + " ability validates")
 		_check(int(ability.get("effects", {}).get("weak", 0)) == TIER_WEAK[tier - 1],
@@ -219,11 +267,22 @@ func _test_real_catalog() -> void:
 			label + " keeps crit " + str(TIER_CRIT[tier - 1]))
 		_check(int(ability.get("acc", -1)) == TIER_ACC[tier - 1],
 			label + " keeps ACC " + str(TIER_ACC[tier - 1]))
-		_check(ability.get("launch", []) == LAUNCH and ability.get("target", []) == TARGET,
-			label + " keeps its launch and target ranks")
-		_check(int(ability.get("launch_mask", 0)) == StitchedParts.rank_mask(LAUNCH)
-			and int(ability.get("target_mask", 0)) == StitchedParts.rank_mask(TARGET),
-			label + " keeps the ranks 1-2 masks")
+		_check(ability.get("launch", []) == LAUNCH,
+			label + " keeps its launch ranks 1 and 2")
+		_check(ability.get("target", []) == expected_target,
+			label + " targets exactly " + str(expected_target))
+		_check(int(ability.get("launch_mask", 0)) == StitchedParts.rank_mask(LAUNCH),
+			label + " keeps the launch mask for ranks 1 and 2")
+		_check(int(ability.get("target_mask", 0)) == StitchedParts.rank_mask(expected_target),
+			label + " derives the target mask from " + str(expected_target))
+		_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), 1)
+			and StitchedParts.ranks_allowed(int(ability["target_mask"]), 2),
+			label + " always reaches enemy ranks 1 and 2")
+		_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), RANK_THREE)
+			== (tier == 3),
+			label + " reaches enemy rank 3 only at tier III")
+		_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), RANK_FOUR),
+			label + " never reaches enemy rank 4")
 		_check(str(ability.get("target_side", "")) == "enemy"
 			and not bool(ability.get("multi", true)),
 			label + " stays a single-target enemy move")
@@ -270,6 +329,430 @@ func _test_real_catalog() -> void:
 			_check(str(ability.get("target_side", "")) == str(expected["side"])
 				and str(ability.get("move", "")) == str(expected["pose"]),
 				label + " keeps its original target side and pose")
+
+
+# ---------------------------------------------------------------- seeded real battle helpers
+
+## A copy of the shipped preview with the real Warden catalog appended and Helmet Rattle worn
+## in Warden's head slot. Hero array order is hero rank, so warden_rank moves him to that rank.
+func _config(catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1) -> Dictionary:
+	var parsed: Variant = _read_json(PREVIEW_PATH)
+	if not parsed is Dictionary:
+		return {}
+	var config: Dictionary = parsed
+	config["parts"].append_array(catalog["parts"])
+	config["seed"] = seed_value
+	var warden_entry: Dictionary = {}
+	for hero in config["heroes"]:
+		if hero is Dictionary and str(hero.get("id", "")) == WARDEN:
+			warden_entry = hero
+	if warden_entry.is_empty():
+		_check(false, "AC2: the shipped preview really contains Warden")
+		return {}
+	warden_entry["parts"]["head"] = {"id": PART_ID, "tier": tier, "torn": false}
+	if warden_rank != 1:
+		var reordered: Array = []
+		for hero in config["heroes"]:
+			if str(hero.get("id", "")) != WARDEN:
+				reordered.append(hero)
+		reordered.insert(clampi(warden_rank - 1, 0, reordered.size()), warden_entry)
+		config["heroes"] = reordered
+	return config
+
+
+func _battle(
+	catalog: Dictionary, seed_value: int, tier: int, warden_rank: int = 1
+) -> StitchedRules:
+	var config := _config(catalog, seed_value, tier, warden_rank)
+	if config.is_empty():
+		return null
+	var created := StitchedRules.create(config)
+	_check(bool(created.get("ok", false)),
+		"AC2: the seeded four-hero/three-foe battle builds at tier %d: %s"
+			% [tier, str(created.get("error", ""))])
+	return created.get("battle") if bool(created.get("ok", false)) else null
+
+
+func _to(b: StitchedRules, actor_id: String, limit: int = 30) -> bool:
+	for index in range(limit):
+		if b.is_over():
+			return false
+		if b.current_actor_id() == actor_id:
+			return true
+		var receipt := b.pass_turn()
+		if not bool(receipt.get("ok", false)):
+			return false
+	return false
+
+
+func _to_side(b: StitchedRules, side: String, limit: int = 30) -> bool:
+	for index in range(limit):
+		if b.is_over():
+			return false
+		if b.current_side() == side:
+			return true
+		var receipt := b.pass_turn()
+		if not bool(receipt.get("ok", false)):
+			return false
+	return false
+
+
+## Whether the Warden's one action was spent: the turn pointer moved on (or the round rolled
+## over), and it is no longer his turn.
+func _turn_spent(b: StitchedRules, before: Dictionary) -> bool:
+	var after := b.state_snapshot()
+	if int(after["round"]) > int(before["round"]) or b.is_over():
+		return true
+	return int(after["turn_index"]) > int(before["turn_index"]) \
+		and b.current_actor_id() != WARDEN
+
+
+# ---------------------------------------------------------------- AC2: tier-III rank-3 hit
+
+func _test_rank_three_hit_witness() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	var part: Dictionary = catalog["by_id"][PART_ID]
+	var ability := StitchedParts.ability_at_tier(part, 3)
+	var found: Dictionary = {}
+	for seed_value in range(1, SEED_SEARCH_LIMIT):
+		var b := _battle(catalog, seed_value, 3)
+		if b == null:
+			continue
+		if not _to(b, WARDEN):
+			continue
+		var warden := b.get_unit(WARDEN)
+		var foe := b.get_unit(RANK_THREE_FOE)
+		if int(warden["rank"]) != 1 and int(warden["rank"]) != 2:
+			continue
+		if foe.is_empty() or int(foe["rank"]) != RANK_THREE or int(foe["hp"]) <= 0:
+			continue
+		var start_state := b.state_snapshot()
+		var start_rng := b.rng_state()
+		var attempt := b.use_part(PART_ID, RANK_THREE)
+		if not bool(attempt.get("ok", false)):
+			_check(false, "AC2: tier III refuses a living rank-three foe: "
+				+ str(attempt.get("error", "")))
+			return
+		var attempt_results: Array = attempt.get("results", [])
+		if attempt_results.size() != 1 or not bool(attempt_results[0].get("hit", false)):
+			continue
+		# Skip seeds where the victim's own turn starts right after Warden's: its turn-start
+		# tick would decrement the freshly applied Weak before the authoritative read.
+		if b.current_actor_id() == RANK_THREE_FOE:
+			continue
+		found = {
+			"seed": seed_value,
+			"battle": b,
+			"receipt": attempt,
+			"before": start_state,
+			"rng": start_rng,
+			"warden": warden,
+			"foe": foe,
+		}
+		break
+	_check(not found.is_empty(),
+		"AC2: a bounded fixed-seed search witnesses a real tier-III rank-3 hit")
+	if found.is_empty():
+		return
+	witnessed_hit_seed = int(found["seed"])
+	var label := "AC2: tier-III rank-3 hit (seed %d)" % witnessed_hit_seed
+	var witness_b: StitchedRules = found["battle"]
+	var witness_receipt: Dictionary = found["receipt"]
+	var before: Dictionary = found["before"]
+	var witness_warden: Dictionary = found["warden"]
+	var foe_before: Dictionary = found["foe"]
+	var results: Array = witness_receipt.get("results", [])
+	var hit: Dictionary = results[0]
+	var victim := witness_b.get_unit(RANK_THREE_FOE)
+
+	_check(witness_b.get_heroes().size() == 4 and witness_b.get_foes().size() == 3,
+		label + ": the shipped 4v3 preview is intact")
+	_check(str(witness_warden["parts"]["head"]["id"]) == PART_ID
+		and int(witness_warden["parts"]["head"]["tier"]) == 3
+		and not bool(witness_warden["parts"]["head"]["torn"]),
+		label + ": Warden wears untorn tier-III Helmet Rattle in the head slot")
+	_check(int(witness_warden["rank"]) == 1 or int(witness_warden["rank"]) == 2,
+		label + ": Warden stands in a legal launch rank")
+	_check(int(witness_warden["hp"]) > 0 and not bool(witness_warden["lost"]),
+		label + ": Warden is alive when he acts")
+	_check(str(foe_before["side"]) == "foe" and int(foe_before["rank"]) == RANK_THREE
+		and int(foe_before["hp"]) > 0,
+		label + ": a living foe occupies enemy rank 3")
+	_check(witness_b.rng_state() != int(found["rng"]),
+		label + ": the seeded action consumes RNG from the captured position")
+	_check(str(witness_receipt.get("part", "")) == PART_ID
+		and str(witness_receipt.get("ability", "")) == ABILITY_ID
+		and str(witness_receipt.get("actor", "")) == WARDEN,
+		label + ": the receipt names the equipped part, its ability and Warden")
+	_check(results.size() == 1 and str(hit.get("target", "")) == RANK_THREE_FOE
+		and int(hit.get("target_rank", -1)) == RANK_THREE,
+		label + ": exactly one result lands on the chosen rank-three foe")
+	var chance := StitchedRules.hit_chance(
+		int(ability["acc"]) + int(witness_warden["acc"]),
+		StitchedRules.effective_dodge(foe_before),
+		int(witness_warden["miss_streak"]))
+	_check(int(hit.get("hit_chance", -1)) == chance,
+		label + ": the hit chance follows the authored ACC minus the foe's DODGE")
+	_check(bool(hit.get("hit", false)) and int(hit.get("roll", 100)) <= chance,
+		label + ": the fixed seed is a genuine seeded hit, not a forced one")
+	var damage := int(hit.get("damage", 0))
+	_check(damage > 0 and int(hit.get("target_hp", -1)) == int(foe_before["hp"]) - damage,
+		label + ": the landed rattle deals direct damage to the chosen foe")
+	var base_min := int(ability["dmg"][0]) + int(witness_warden["dmg_bonus"])
+	var base_max := int(ability["dmg"][1]) + int(witness_warden["dmg_bonus"])
+	var marked := int(foe_before["statuses"].get("mark", 0)) > 0
+	var expected_min := StitchedRules.damage_after_modifiers(base_min,
+		witness_warden["statuses"], foe_before["statuses"], marked,
+		int(ability["mark_damage"]), int(foe_before["prot"]))
+	var expected_max := StitchedRules.damage_after_modifiers(base_max,
+		witness_warden["statuses"], foe_before["statuses"], marked,
+		int(ability["mark_damage"]), int(foe_before["prot"]))
+	var expected_crit := StitchedRules.damage_after_modifiers(
+		StitchedRules.crit_damage(int(ability["dmg"][1])) + int(witness_warden["dmg_bonus"]),
+		witness_warden["statuses"], foe_before["statuses"], marked,
+		int(ability["mark_damage"]), int(foe_before["prot"]))
+	if bool(hit.get("crit", false)):
+		_check(damage == expected_crit,
+			label + ": a critical rattle deals its authored critical damage")
+	else:
+		_check(damage >= expected_min and damage <= expected_max,
+			label + ": a normal rattle stays inside its authored damage range")
+	var status := _status_entry(hit.get("statuses", []), "weak")
+	var weak_entries := 0
+	for entry in hit.get("statuses", []):
+		if entry is Dictionary and str(entry.get("status", "")) == "weak":
+			weak_entries += 1
+	_check(weak_entries == 1 and not status.is_empty()
+		and int(status.get("duration", 0)) == 3,
+		label + ": the hit receipt records exactly one Weak 3")
+	var expected_weak := maxi(int(foe_before["statuses"].get("weak", 0)), 3)
+	_check(int(victim["statuses"].get("weak", 0)) == expected_weak,
+		label + ": the authoritative target carries Weak 3")
+	_check(int(victim["hp"]) == int(foe_before["hp"]) - damage,
+		label + ": the authoritative target's HP matches the receipt")
+	for other_id in OTHER_FOES:
+		var other_before := _snapshot_unit(before, other_id)
+		var other_after := witness_b.get_unit(other_id)
+		_check(int(other_after["hp"]) == int(other_before["hp"])
+			and other_after["statuses"] == other_before["statuses"],
+			label + ": the unselected foe " + other_id + " keeps its HP and statuses")
+	_check(_turn_spent(witness_b, before),
+		label + ": the one rattle spends exactly Warden's turn")
+
+
+# ---------------------------------------------------------------- AC2/AC3: lower tiers refuse rank 3
+
+func _test_lower_tiers_cannot_reach_rank_three() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	var part: Dictionary = catalog["by_id"][PART_ID]
+	for tier in [1, 2]:
+		var label := "AC2/AC3: tier " + str(tier)
+		var b := _battle(catalog, 1, tier)
+		if b == null:
+			continue
+		if not _to(b, WARDEN):
+			_check(false, label + ": the seeded order reaches Warden's turn")
+			continue
+		var foe := b.get_unit(RANK_THREE_FOE)
+		_check(str(foe.get("side", "")) == "foe" and int(foe.get("rank", 0)) == RANK_THREE
+			and int(foe.get("hp", 0)) > 0,
+			label + ": a living legal-looking foe still occupies enemy rank 3")
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), RANK_THREE),
+			label + ": the target mask refuses rank 3")
+		var before := b.state_snapshot()
+		var rng := b.rng_state()
+		var refused := b.use_part(PART_ID, RANK_THREE)
+		_check(not bool(refused.get("ok", true)),
+			label + ": an equivalent lower-tier setup cannot target enemy rank 3")
+		_check(before == b.state_snapshot() and rng == b.rng_state()
+			and b.current_actor_id() == WARDEN,
+			label + ": the lower-tier refusal changes no state, turn or seeded RNG")
+		var legal := b.use_part(PART_ID, 1)
+		_check(bool(legal.get("ok", false)),
+			label + ": tiers I/II still use Helmet Rattle at enemy rank 1")
+		var legal_results: Array = legal.get("results", [])
+		_check(legal_results.size() == 1
+			and str(legal_results[0].get("target", "")) == RANK_ONE_FOE,
+			label + ": the legal lower-tier action lands on the rank-one foe")
+
+
+# ---------------------------------------------------------------- AC3: rank 4, launch, off-turn
+
+func _test_rank_four_and_launch_and_off_turn() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	var part: Dictionary = catalog["by_id"][PART_ID]
+	for tier in [1, 2, 3]:
+		var label := "AC3: tier " + str(tier)
+		var b := _battle(catalog, 1, tier)
+		if b == null or not _to(b, WARDEN):
+			_check(false, label + ": the rank-four witness reaches Warden's turn")
+			continue
+		_check(not StitchedParts.ranks_allowed(
+			int(StitchedParts.ability_at_tier(part, tier)["target_mask"]), RANK_FOUR),
+			label + ": the target mask refuses enemy rank 4")
+		var before := b.state_snapshot()
+		var rng := b.rng_state()
+		var refused := b.use_part(PART_ID, RANK_FOUR)
+		_check(not bool(refused.get("ok", true)),
+			label + ": enemy rank 4 is refused")
+		_check(before == b.state_snapshot() and rng == b.rng_state()
+			and b.current_actor_id() == WARDEN,
+			label + ": the rank-four refusal is state-, turn- and RNG-atomic")
+
+	# A Warden standing in hero rank 3 is outside Helmet Rattle's authored launch ranks.
+	var launch := _battle(catalog, 1, 3, RANK_THREE)
+	if launch == null or not _to(launch, WARDEN):
+		_check(false, "AC3: the wrong-launch witness reaches Warden's turn")
+		return
+	var warden := launch.get_unit(WARDEN)
+	_check(int(warden["rank"]) == RANK_THREE,
+		"AC3: the wrong-launch witness really stands in hero rank 3")
+	var living_rank_three := launch.get_unit(RANK_THREE_FOE)
+	_check(int(living_rank_three.get("hp", 0)) > 0
+		and int(living_rank_three.get("rank", 0)) == RANK_THREE,
+		"AC3: a living foe still occupies enemy rank 3")
+	var ability := StitchedParts.ability_at_tier(part, 3)
+	_check(not StitchedParts.ranks_allowed(int(ability["launch_mask"]), RANK_THREE),
+		"AC3: the launch mask refuses hero rank 3")
+	var launch_before := launch.state_snapshot()
+	var launch_rng := launch.rng_state()
+	var launch_refused := launch.use_part(PART_ID, RANK_THREE)
+	_check(not bool(launch_refused.get("ok", true)),
+		"AC3: an illegal launch rank is refused")
+	_check(launch_before == launch.state_snapshot() and launch_rng == launch.rng_state()
+		and launch.current_actor_id() == WARDEN,
+		"AC3: the wrong-launch refusal changes no state, turn or seeded RNG")
+
+	# A hero part used while a foe has the turn is refused without spending that foe's turn.
+	var off_turn := _battle(catalog, 1, 3)
+	if off_turn == null or not _to_side(off_turn, "foe"):
+		_check(false, "AC3: the off-turn witness reaches a foe turn")
+		return
+	var actor := off_turn.current_actor_id()
+	var off_before := off_turn.state_snapshot()
+	var off_rng := off_turn.rng_state()
+	var off_refused := off_turn.use_part(PART_ID, RANK_THREE)
+	_check(not bool(off_refused.get("ok", true)),
+		"AC3: a hero part used on a foe turn is refused")
+	_check(off_before == off_turn.state_snapshot() and off_rng == off_turn.rng_state()
+		and off_turn.current_actor_id() == actor,
+		"AC3: an off-turn use changes no state, active actor or seeded RNG")
+
+
+# ---------------------------------------------------------------- AC3: natural miss
+
+func _test_natural_miss_applies_no_weak() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	var witnessed := false
+	for seed_value in range(1, SEED_SEARCH_LIMIT):
+		var b := _battle(catalog, seed_value, 3)
+		if b == null or not _to(b, WARDEN):
+			continue
+		var foe_before := b.get_unit(RANK_THREE_FOE)
+		if foe_before.is_empty() or int(foe_before["rank"]) != RANK_THREE \
+			or int(foe_before["hp"]) <= 0:
+			continue
+		var other_before := {}
+		for other_id in OTHER_FOES:
+			other_before[other_id] = b.get_unit(other_id)
+		var before := b.state_snapshot()
+		var receipt := b.use_part(PART_ID, RANK_THREE)
+		if not bool(receipt.get("ok", false)):
+			continue
+		var results: Array = receipt.get("results", [])
+		if results.size() != 1 or bool(results[0].get("hit", true)):
+			continue
+		var miss: Dictionary = results[0]
+		var label := "AC3: natural miss (seed %d)" % seed_value
+		var victim := b.get_unit(RANK_THREE_FOE)
+		_check(int(miss.get("roll", 0)) > int(miss.get("hit_chance", 100)),
+			label + ": the bounded search finds a genuine seeded miss")
+		_check(int(miss.get("damage", -1)) == 0
+			and int(miss.get("target_hp", -1)) == int(foe_before["hp"])
+			and miss.get("statuses", []).is_empty(),
+			label + ": a miss deals no damage and records no status")
+		_check(int(victim["hp"]) == int(foe_before["hp"])
+			and int(victim["statuses"].get("weak", 0))
+				== int(foe_before["statuses"].get("weak", 0)),
+			label + ": a legal miss adds no Weak to the chosen foe")
+		for other_id in OTHER_FOES:
+			if other_id == RANK_THREE_FOE:
+				continue
+			var other_after := b.get_unit(other_id)
+			_check(int(other_after["hp"]) == int(other_before[other_id]["hp"])
+				and other_after["statuses"] == other_before[other_id]["statuses"],
+				label + ": the unselected foe " + other_id + " is untouched")
+		_check(_turn_spent(b, before),
+			label + ": the missed rattle still spends Warden's turn")
+		witnessed = true
+		break
+	_check(witnessed, "AC3: a bounded fixed-seed search witnesses a real missed rattle")
+
+
+# ---------------------------------------------------------------- AC3: identical-seed replay
+
+func _trace(catalog: Dictionary, seed_value: int, tier: int) -> Dictionary:
+	var b := _battle(catalog, seed_value, tier)
+	if b == null or not _to(b, WARDEN):
+		return {}
+	var receipts: Array = []
+	receipts.append(b.use_part(PART_ID, RANK_THREE))
+	receipts.append(b.use_part(PART_ID, 1))
+	return {
+		"receipts": receipts,
+		"state": b.state_snapshot(),
+		"rng": b.rng_state(),
+	}
+
+
+func _test_replay() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(PART_ID):
+		return
+	var seed_value := witnessed_hit_seed if witnessed_hit_seed > 0 else 1
+	for tier in [1, 2, 3]:
+		var label := "AC3: tier %d replay" % tier
+		var first := _trace(catalog, seed_value, tier)
+		var second := _trace(catalog, seed_value, tier)
+		_check(not first.is_empty() and first == second,
+			label + ": equal seeds replay receipts, authoritative state and RNG")
+		if first.is_empty():
+			continue
+		var receipts: Array = first.get("receipts", [])
+		_check(receipts.size() == 2,
+			label + ": the trace contains the two attempted actions")
+		if receipts.size() != 2:
+			continue
+		if tier == 3:
+			_check(bool(receipts[0].get("ok", false)),
+				label + ": tier III accepts the living rank-three foe")
+			_check(not bool(receipts[1].get("ok", true)),
+				label + ": the follow-up action is refused off-turn")
+			var results: Array = receipts[0].get("results", [])
+			var status := {}
+			if results.size() == 1:
+				status = _status_entry(results[0].get("statuses", []), "weak")
+			_check(results.size() == 1 and bool(results[0].get("hit", false))
+				and int(status.get("duration", 0)) == 3,
+				label + ": the replayed rank-three hit records Weak 3")
+		else:
+			_check(not bool(receipts[0].get("ok", true)),
+				label + ": the lower tier refuses rank 3 in the replay")
+			_check(bool(receipts[1].get("ok", false)),
+				label + ": the lower tier's legal rank-one action still executes")
+			var results: Array = receipts[1].get("results", [])
+			_check(results.size() == 1
+				and str(results[0].get("target", "")) == RANK_ONE_FOE,
+				label + ": the replayed lower-tier action lands on the rank-one foe")
 
 
 # ---------------------------------------------------------------- AC3: copied invalid records

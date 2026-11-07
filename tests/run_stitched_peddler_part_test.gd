@@ -523,8 +523,10 @@ func _test_full_ability_quotes() -> void:
 	merged[claw_id] = foreign["by_id"][claw_id].duplicate(true)
 	var merged_before: Dictionary = merged.duplicate(true)
 	var witnesses: Array = [
-		{"id": HEAD, "key": "weak", "amounts": [1, 2, 3], "dmg": [[3, 5], [5, 7], [6, 9]], "crit": [0, 0, 8]},
-		{"id": claw_id, "key": "bleed", "amounts": [2, 3, 4], "dmg": [[4, 7], [5, 8], [6, 9]], "crit": [0, 0, 0]},
+		{"id": HEAD, "key": "weak", "amounts": [1, 2, 3], "dmg": [[3, 5], [5, 7], [6, 9]], "crit": [0, 0, 8],
+			"target": [[1, 2], [1, 2], [1, 2, 3]]},
+		{"id": claw_id, "key": "bleed", "amounts": [2, 3, 4], "dmg": [[4, 7], [5, 8], [6, 9]], "crit": [0, 0, 0],
+			"target": [[1, 2], [1, 2], [1, 2]]},
 	]
 	for witness in witnesses:
 		var part_id := str(witness["id"])
@@ -544,7 +546,8 @@ func _test_full_ability_quotes() -> void:
 			var idx: int = tier - 1
 			_check(state_ability.get("dmg") == witness["dmg"][idx] and state_ability.get("crit") == witness["crit"][idx]
 				and state_ability.get("effects", {}).get(str(witness["key"])) == witness["amounts"][idx]
-				and state_ability.get("launch") == [1, 2] and state_ability.get("target") == [1, 2]
+				and state_ability.get("launch") == [1, 2]
+				and state_ability.get("target") == witness["target"][idx]
 				and state_ability.get("target_side") == "enemy" and state_ability.get("acc") == 90,
 				"authored damage, crit, status and unchanged ranks show at: " + label)
 			# Mutating the returned nested arrays and effects drifts nothing.
