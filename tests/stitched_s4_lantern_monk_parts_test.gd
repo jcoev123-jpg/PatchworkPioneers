@@ -115,6 +115,7 @@ func _initialize() -> void:
 	_test_rank4_moth_shroud(3, 501640, 40, 18, "tier III")
 	_test_moth_shroud_rejections()
 	_test_pole_shelter_rear_launch()
+	_test_pole_shelter_tier_text()
 	_test_rank4_pole_shelter()
 	_test_pole_shelter_rejections()
 	_test_rank2_moth_cloud_replay()
@@ -1560,6 +1561,93 @@ func _test_pole_shelter_rear_launch() -> void:
 	bad_launch["tiers"]["3"]["ability"]["launch"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(bad_launch).get("ok", false)),
 		"AC3: a tier-III Pole Shelter override with rank 5 still fails validation")
+
+
+## AC1/AC2: Pole Shelter's misleading higher-tier rules text is repaired with authored tier
+## overrides on the one existing record. Tier I keeps the accurate two-turn base sentence,
+## tier II reads three turns and tier III reads four turns plus the extra rear-rank-4 launch.
+## The numeric ability is untouched: Guard 2/3/4 is a longer duration, the launch masks stay
+## [1,2,3]/[1,2,3]/[1,2,3,4] and the ally target ranks stay 1-4 for a single guarded ally.
+func _test_pole_shelter_tier_text() -> void:
+	var cat := StitchedParts.load_catalog(CATALOG_PATH)
+	_check(bool(cat.get("ok", false)),
+		"AC1: catalog with Pole Shelter tier text validates: " + str(cat.get("error", "")))
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"].get(STARTERS["legs"], {})
+	_check(not part.is_empty() and str(part.get("name", "")) == "Pole Shelter"
+		and str(part.get("slot", "")) == "legs" and str(part.get("owner", "")) == "lantern_monk",
+		"AC1: the loaded catalog still holds the existing Lantern Monk legs Pole Shelter record")
+	if part.is_empty():
+		return
+	var base_text := str(part.get("text", ""))
+	_check(base_text == "Plant the lantern pole to Guard one ally for two turns, taking its blows.",
+		"AC1: tier-I base text stays the accurate two-turn Guard sentence")
+	var tiers: Dictionary = part.get("tiers", {})
+	var expected_words := {1: "two turns", 2: "three turns", 3: "four turns"}
+	var stale_words := {
+		1: ["three turns", "four turns", "rear rank 4"],
+		2: ["two turns", "four turns", "rear rank 4"],
+		3: ["two turns", "three turns"],
+	}
+	var expected_guard := {1: 2, 2: 3, 3: 4}
+	var expected_launch := {1: [1, 2, 3], 2: [1, 2, 3], 3: [1, 2, 3, 4]}
+	var target_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	for tier in [1, 2, 3]:
+		# Same fallback the schema and the shipped inspectors/cues use: the base text for
+		# tier I, and an authored per-tier "text" override when one exists.
+		var effective := base_text
+		if tier > 1:
+			_check(tiers.has(str(tier)) and tiers[str(tier)].has("text"),
+				"AC1: Pole Shelter tier %d carries an authored text override" % tier)
+			effective = str(tiers.get(str(tier), {}).get("text", base_text))
+		_check(effective.contains(str(expected_words[tier])),
+			"AC1: Pole Shelter tier %d effective text says %s: %s"
+				% [tier, str(expected_words[tier]), effective])
+		for stale in stale_words[tier]:
+			_check(not effective.to_lower().contains(str(stale)),
+				"AC1: Pole Shelter tier %d text drops the stale claim '%s'" % [tier, str(stale)])
+		if tier == 3:
+			_check(effective.to_lower().contains("rear rank 4"),
+				"AC1: Pole Shelter tier III text credits the extra rear-rank-4 launch")
+		_check(effective.to_lower().contains("one ally"),
+			"AC1: Pole Shelter tier %d text still Guards exactly one ally" % tier)
+		for overreach in ["second", "another ally", "allies", "each ally", "every ally"]:
+			_check(not effective.to_lower().contains(str(overreach)),
+				"AC1: Pole Shelter tier %d text never promises extra guarded allies (%s)"
+					% [tier, str(overreach)])
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var valid := StitchedParts.validate_ability(ability)
+		_check(bool(valid.get("ok", false)),
+			"AC2: Pole Shelter tier %d effective ability validates" % tier)
+		if not bool(valid.get("ok", false)):
+			continue
+		var checked: Dictionary = valid["ability"]
+		_check(int(checked["effects"].get("guard", 0)) == int(expected_guard[tier])
+			and checked["effects"].size() == 1 and checked["effects"].has("guard"),
+			"AC2: Pole Shelter tier %d grants Guard %d and no extra PROT/Heal/Block effect"
+				% [tier, int(expected_guard[tier])])
+		_check(checked["launch"] == expected_launch[tier]
+			and int(checked["launch_mask"]) == StitchedParts.rank_mask(expected_launch[tier])
+			and StitchedParts.ranks_allowed(int(checked["launch_mask"]), 4) == (tier == 3),
+			"AC2: Pole Shelter tier %d launches from exactly %s"
+				% [tier, str(expected_launch[tier])])
+		_check(checked["target"] == [1, 2, 3, 4]
+			and int(checked["target_mask"]) == target_mask
+			and str(checked["target_side"]) == "ally" and not bool(checked["multi"]),
+			"AC2: Pole Shelter tier %d still redirects blows for one ally in ranks 1-4" % tier)
+	_check(int(part["ability"]["effects"]["guard"]) == 2
+		and part["ability"]["launch"] == [1, 2, 3]
+		and part["ability"]["target"] == [1, 2, 3, 4],
+		"AC2: tier text reads never replace Pole Shelter's base ability in memory")
+	var blank_text: Dictionary = part.duplicate(true)
+	blank_text["tiers"]["2"]["text"] = ""
+	_check(not bool(StitchedParts.validate_part(blank_text).get("ok", false)),
+		"AC3: an empty tier-II Pole Shelter text still fails closed")
+	var stray_field: Dictionary = part.duplicate(true)
+	stray_field["tiers"]["3"]["targets"] = 2
+	_check(not bool(StitchedParts.validate_part(stray_field).get("ok", false)),
+		"AC3: a tier override that invents an extra guarded-target field still fails closed")
 
 
 ## One real seeded S2 preview fight with tier-III Pole Shelter equipped on the rank-4 Monk:
