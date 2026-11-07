@@ -1310,6 +1310,23 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "redline_reel",
+          "name": "Redline Reel",
+          "kind": "ranged",
+          "launch": [1, 2, 3],
+          "target": [2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [2, 4],
+          "crit": 0,
+          "effects": {
+            "pull": 1
+          },
+          "self_move": 0,
+          "move": "attack3"
         }
       ]
     }
@@ -1908,6 +1925,21 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "bobbin_drop",
+          "name": "Bobbin Drop",
+          "kind": "ranged",
+          "launch": [2, 3, 4],
+          "target": [2, 3, 4],
+          "target_side": "enemy",
+          "multi": true,
+          "acc": 84,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {},
+          "self_move": 0,
+          "move": "attack3"
         }
       ]
     }
