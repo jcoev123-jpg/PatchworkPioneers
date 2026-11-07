@@ -350,6 +350,12 @@
         },
         "3": {
           "ability": {
+            "target": [
+              1,
+              2,
+              3,
+              4
+            ],
             "dmg": [
               9,
               12
@@ -360,7 +366,7 @@
           }
         }
       },
-      "text": "Concentrated barrage of needles translated into one strong hit that Exposes the foe."
+      "text": "A single concentrated needle hit that Exposes a foe in enemy ranks 1-3; only stitch tier III reaches a foe in the rear rank 4."
     },
     {
       "id": "yarn_ranger_torso_snare_net",

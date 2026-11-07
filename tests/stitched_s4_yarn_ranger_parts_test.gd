@@ -34,6 +34,9 @@ const PURLING_SPECS := {
 	"dmg": [[5, 8], [7, 10], [9, 12]],
 	"effects": [{"exposed": 1}, {"exposed": 2}, {"exposed": 3}],
 }
+## Only the tier-III ability override widens the single-target shot to the rear enemy rank 4;
+## tiers I and II stay authored at ranks 1-3.
+const PURLING_TARGETS := [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]]
 const SNARE_ID := "yarn_ranger_torso_snare_net"
 const SNARE_LAUNCH := [2, 3, 4]
 const SNARE_SPECS := {
@@ -117,6 +120,8 @@ func _initialize() -> void:
 	_test_needle_arrow_premarked_bonus()
 	_test_rank_four_bolas_launch()
 	_test_rank_four_purling_launch()
+	_test_purling_rank_four_foe()
+	_test_purling_rank_four_foe_rejections()
 	_test_rank_four_snare_net_launch()
 	_test_snare_net_rank_four_foe()
 	_test_snare_net_rank_four_foe_rejections()
@@ -379,7 +384,8 @@ func _test_arms_launch_tiers() -> void:
 
 
 ## Purling Barrage keeps its authored single-target numbers at every tier while its launch
-## mask gains hero rank four. Rank two stays illegal, and enemy reach stays ranks 1-3.
+## mask gains hero rank four. Rank two stays illegal. Its target mask stays ranks 1-3 for
+## tiers I and II; only the stitch tier-III override reaches the rear enemy rank 4.
 func _test_purling_launch_tiers() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -389,6 +395,7 @@ func _test_purling_launch_tiers() -> void:
 		and part["stat"] == {"dmg": 2},
 		"AC1: Purling Barrage stays a Yarn Ranger arms part with its authored dmg stat")
 	for tier in [1, 2, 3]:
+		var expected_targets: Array = PURLING_TARGETS[tier - 1]
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var mask := int(ability["launch_mask"])
 		var reachable := true
@@ -399,16 +406,40 @@ func _test_purling_launch_tiers() -> void:
 			excluded = excluded and not StitchedParts.ranks_allowed(mask, rank)
 		_check(ability["launch"] == PURLING_LAUNCH
 			and mask == StitchedParts.rank_mask(PURLING_LAUNCH) and reachable and excluded,
-			"AC1: tier %d Purling Barrage launches from 3,4 and refuses 0,1,2,5" % tier)
-		_check(ability["target"] == [1, 2, 3]
-			and int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			"AC1: tier %d Purling Barrage launches only from 3,4 and refuses 0,1,2,5" % tier)
+		var targets_reachable := true
+		for rank in expected_targets:
+			targets_reachable = targets_reachable and StitchedParts.ranks_allowed(
+				int(ability["target_mask"]), rank)
+		var targets_excluded := true
+		for rank in [0, 5]:
+			targets_excluded = targets_excluded and not StitchedParts.ranks_allowed(
+				int(ability["target_mask"]), rank)
+		_check(ability["target"] == expected_targets
+			and int(ability["target_mask"]) == StitchedParts.rank_mask(expected_targets)
+			and targets_reachable and targets_excluded
 			and str(ability["target_side"]) == "enemy" and not bool(ability["multi"])
 			and int(ability["acc"]) == 92 and int(ability["crit"]) == 0
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack",
-			"AC1: tier %d Purling Barrage stays a single-target enemy 1-3 attack" % tier)
+			"AC1: tier %d Purling Barrage stays a single-target enemy attack on %s"
+				% [tier, str(expected_targets)])
+		_check(StitchedParts.ranks_allowed(int(ability["target_mask"]), 4) == (tier == 3),
+			"AC1: only tier-III Purling Barrage reaches enemy rank 4")
 		_check(ability["dmg"] == PURLING_SPECS["dmg"][tier - 1]
 			and ability["effects"] == PURLING_SPECS["effects"][tier - 1],
 			"AC1: tier %d Purling Barrage keeps authored damage and Exposed" % tier)
+	# The base record and the tier-II override keep the authored ranks 1-3; only the tier-III
+	# ability override carries the widened rank-4 target list.
+	var raw := _raw_part(PURLING_ID)
+	_check(not raw.is_empty()
+		and raw["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3]
+		and not raw["tiers"]["2"]["ability"].has("target")
+		and raw["tiers"]["3"]["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3, 4],
+		"AC1: only the authored tier-III Purling Barrage override carries the widened target list")
+	var text := str(part["text"]).to_lower()
+	_check(text.contains("tier iii") and text.contains("rank 4") and text.contains("single"),
+		"AC1: Purling Barrage text credits the rear rank 4 only to tier III and stays single-target")
+
 
 
 ## Snare Net keeps its multi-target enemy debuff at every tier while its launch mask gains hero
@@ -1020,6 +1051,361 @@ func _test_rank_four_purling_launch() -> void:
 		_check(witnessed,
 			"AC2: a bounded real seed shows rank-four tier %d Purling Barrage hitting rank one for damage and Exposed %d, with an identical replay"
 				% [tier, int(PURLING_SPECS["effects"][tier - 1]["exposed"])])
+
+
+## The genuine four-hero / three-foe fixture whose existing Moth Scribe has been moved into
+## enemy rank 4 in this battle's own memory only, advanced to the Ranger's real scheduled turn
+## with the alternate Purling Barrage in her arms slot. Enemy rank 3 stays vacant and exactly
+## three foes remain.
+func _purling_rank_four_turn(tier: int, seed_value: int) -> StitchedRules:
+	var battle := _rank_four_foe_battle(PURLING_ID, tier, seed_value)
+	if battle == null or not _to(battle, "yarn_ranger"):
+		return null
+	if battle.current_actor_id() != "yarn_ranger":
+		return null
+	if battle.get_heroes().size() != 4 or battle.get_foes().size() != 3:
+		return null
+	var ranger := battle.get_unit("yarn_ranger")
+	var rear := battle.get_unit("moth_scribe")
+	if rear.is_empty() or int(ranger["rank"]) != 3 \
+			or str(ranger["parts"]["arms"]["id"]) != PURLING_ID \
+			or int(rear["rank"]) != 4 or int(rear["hp"]) <= 0 \
+			or not battle.get_foes().all(func(foe): return int(foe["rank"]) != 3):
+		return null
+	return battle
+
+
+## One real scheduled Ranger turn on that fixture, aiming the equipped Purling Barrage at
+## rank 4, with the pre-cast foe, actor and turn-order positions captured for comparison.
+func _purling_rear_cast(tier: int, seed_value: int) -> Dictionary:
+	var battle := _purling_rank_four_turn(tier, seed_value)
+	if battle == null:
+		return {}
+	var ranger := battle.get_unit("yarn_ranger")
+	var rear := battle.get_unit("moth_scribe")
+	var foes_before := {}
+	for foe in battle.get_foes():
+		foes_before[str(foe["id"])] = {
+			"hp": int(foe["hp"]),
+			"rank": int(foe["rank"]),
+			"statuses": foe["statuses"].duplicate(true),
+		}
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var order_before := battle.turn_order()
+	var cast := battle.use_part(PURLING_ID, 4)
+	return {
+		"battle": battle,
+		"cast": cast,
+		"foes_before": foes_before,
+		"before": before,
+		"order_before": order_before,
+		"rng_before": rng_before,
+		"after": battle.state_snapshot(),
+		"order_after": battle.turn_order(),
+		"rng_after": battle.rng_state(),
+		"actor_statuses": ranger["statuses"].duplicate(true),
+		"actor_bonus": int(ranger.get("dmg_bonus", 0)),
+		"target_statuses": rear["statuses"].duplicate(true),
+		"target_prot": int(rear.get("prot", 0)),
+		"target_hp": int(rear["hp"]),
+		"seed": seed_value,
+	}
+
+
+## Reconstructs the rolled direct-damage base behind a hit receipt from its authored range,
+## the attacker's flat arms bonus and the real pre-cast modifier state. Returns -1 when the
+## receipt cannot come from an honest roll.
+func _purling_rolled_base(
+		ability: Dictionary, result: Dictionary, attempt: Dictionary) -> int:
+	var damaged := int(result.get("damage", -1))
+	if damaged <= 0:
+		return -1
+	var bonus := int(attempt["actor_bonus"])
+	if bool(result.get("crit", false)):
+		var crit_base := StitchedRules.crit_damage(int(ability["dmg"][1])) + bonus
+		if StitchedRules.damage_after_modifiers(
+				crit_base, attempt["actor_statuses"], attempt["target_statuses"],
+				false, 0, int(attempt["target_prot"])) == damaged:
+			return crit_base
+		return -1
+	for candidate in range(int(ability["dmg"][0]) + bonus,
+			int(ability["dmg"][1]) + bonus + 1):
+		if StitchedRules.damage_after_modifiers(
+				candidate, attempt["actor_statuses"], attempt["target_statuses"],
+				false, 0, int(attempt["target_prot"])) == damaged:
+			return candidate
+	return -1
+
+
+## The task goal: at stitch tier III only, the alternate single-target Purling Barrage reaches
+## the living Moth Scribe moved into enemy rank 4 of the ordinary four-hero / three-foe battle.
+## Rank 3 stays vacant, so one legal cast aimed at that rear rank resolves exactly one shot on
+## that foe. A bounded seed window witnesses a natural confirmed hit with real rolled damage
+## and Exposed 3 on the struck foe only, and the same seed replays identically.
+func _test_purling_rank_four_foe() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var tier := 3
+	var expected := int(PURLING_SPECS["effects"][tier - 1]["exposed"])
+	_check(expected == 3, "AC2: tier-III Purling Barrage authors Exposed 3")
+	var ability := StitchedParts.ability_at_tier(cat["by_id"][PURLING_ID], tier)
+	var setup := _purling_rank_four_turn(tier, 513040)
+	_check(setup != null,
+		"AC2: fresh four-hero/three-foe battle reaches the Ranger turn with a living rank-4 foe")
+	if setup == null:
+		return
+	var ranger := setup.get_unit("yarn_ranger")
+	var rear := setup.get_unit("moth_scribe")
+	_check(setup.get_heroes().size() == 4 and setup.get_foes().size() == 3
+		and int(ranger["rank"]) == 3
+		and str(ranger["parts"]["arms"]["id"]) == PURLING_ID
+		and int(rear["rank"]) == 4 and int(rear["hp"]) > 0
+		and setup.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+		"AC2: tier-III Purling is worn at rank 3 against three foes with only the Scribe at rank 4")
+	_reject_without_spend(setup, PURLING_ID, 0, "tier-III Purling target rank zero")
+	_reject_without_spend(setup, PURLING_ID, 5, "tier-III Purling target rank five")
+	var others_before := {}
+	for foe in setup.get_foes():
+		if str(foe["id"]) != "moth_scribe":
+			others_before[str(foe["id"])] = {
+				"hp": int(foe["hp"]),
+				"statuses": foe["statuses"].duplicate(true),
+			}
+	var rear_hp_before := int(rear["hp"])
+	var before := setup.state_snapshot()
+	var receipt := setup.use_part(PURLING_ID, 4)
+	var after := setup.state_snapshot()
+	var results: Array = receipt.get("results", [])
+	_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+		and str(receipt.get("actor", "")) == "yarn_ranger"
+		and str(receipt.get("part", "")) == PURLING_ID
+		and str(receipt.get("ability", "")) == "yarn_ranger_arms_purling_barrage_move"
+		and results.size() == 1
+		and str(results[0].get("target", "")) == "moth_scribe"
+		and str(results[0].get("target_side", "")) == "foe"
+		and int(results[0].get("target_rank", 0)) == 4,
+		"AC2: tier-III Purling legally resolves exactly one shot on the enemy at rank 4: "
+			+ str(receipt.get("error", "")))
+	_check(after != before and (int(after["round"]) > int(before["round"])
+		or (int(after["round"]) == int(before["round"])
+			and int(after["turn_index"]) > int(before["turn_index"])))
+		and setup.current_actor_id() != "yarn_ranger",
+		"AC2: the accepted tier-III rank-4 cast spends exactly one Ranger turn")
+	var untouched := true
+	for foe in setup.get_foes():
+		var foe_id := str(foe["id"])
+		if foe_id == "moth_scribe":
+			continue
+		var prior: Dictionary = others_before.get(foe_id, {})
+		if prior.is_empty() or int(foe["hp"]) != int(prior["hp"]) \
+				or foe["statuses"] != prior["statuses"]:
+			untouched = false
+	_check(untouched, "AC2: the rank-4 Purling shot touches no other foe")
+	if results.size() == 1:
+		var result: Dictionary = results[0]
+		if bool(result.get("hit", false)):
+			_check(int(result.get("damage", 0)) > 0
+				and int(result.get("target_hp", -1))
+					== rear_hp_before - int(result.get("damage", 0))
+				and result.get("statuses", []).any(
+					func(s): return str(s.get("status", "")) == "exposed" \
+						and int(s.get("duration", 0)) == expected)
+				and int(setup.get_unit("moth_scribe")["statuses"].get("exposed", 0)) == expected,
+				"AC2: a landed rank-4 Purling hit deals damage and leaves Exposed 3 on that foe")
+		else:
+			_check(int(result.get("damage", -1)) == 0
+				and int(result.get("target_hp", -1)) == rear_hp_before,
+				"AC2: a legal rank-4 Purling miss leaves the rear foe unharmed")
+	# A bounded explicit seed window witnesses a natural confirmed hit on the rear foe with
+	# real rolled damage and Exposed 3 on that foe only; the same seed replays exactly.
+	var landed := {}
+	var landed_seed := -1
+	for seed_value in range(513040, 513140):
+		var attempt := _purling_rear_cast(tier, seed_value)
+		if attempt.is_empty():
+			continue
+		var cast: Dictionary = attempt["cast"]
+		var shot_results: Array = cast.get("results", [])
+		if not bool(cast.get("ok", false)) or shot_results.size() != 1:
+			continue
+		var hit: Dictionary = shot_results[0]
+		if not bool(hit.get("hit", false)) or int(hit.get("damage", 0)) <= 0 \
+				or str(hit.get("target", "")) != "moth_scribe" \
+				or str(hit.get("target_side", "")) != "foe" \
+				or int(hit.get("target_rank", 0)) != 4:
+			continue
+		var battle: StitchedRules = attempt["battle"]
+		if int(battle.get_unit("moth_scribe")["statuses"].get("exposed", 0)) != expected:
+			continue
+		if not hit.get("statuses", []).any(func(s): return str(s.get("status", "")) == "exposed" \
+				and int(s.get("duration", 0)) == expected):
+			continue
+		if _purling_rolled_base(ability, hit, attempt) < 0:
+			continue
+		var clean := true
+		for foe_id in ["fray_scavenger", "scissor_crab"]:
+			var prior: Dictionary = attempt["foes_before"].get(foe_id, {})
+			var now := battle.get_unit(foe_id)
+			if prior.is_empty() or now.is_empty() or int(now["hp"]) != int(prior["hp"]) \
+					or now["statuses"] != prior["statuses"]:
+				clean = false
+		if not clean:
+			continue
+		landed = attempt
+		landed_seed = seed_value
+		break
+	_check(landed_seed >= 0,
+		"AC2: a bounded real seed shows tier-III Purling hitting rank 4 for rolled damage and Exposed 3")
+	if landed_seed < 0:
+		return
+	print("AC2 Purling Barrage rank-four foe tier III witness seed %d" % landed_seed)
+	var landed_cast: Dictionary = landed["cast"]
+	var landed_hit: Dictionary = landed_cast["results"][0]
+	var landed_battle: StitchedRules = landed["battle"]
+	var rear_prior: Dictionary = landed["foes_before"]["moth_scribe"]
+	var damaged := int(landed_hit.get("damage", 0))
+	var base := _purling_rolled_base(ability, landed_hit, landed)
+	_check(base >= 0 and damaged > 0
+		and damaged == StitchedRules.damage_after_modifiers(
+			base, landed["actor_statuses"], landed["target_statuses"], false, 0,
+			int(landed["target_prot"])),
+		"AC2: the rank-4 hit's damage matches an honest roll plus the real modifiers")
+	_check(int(landed_hit.get("target_hp", -1)) == int(rear_prior["hp"]) - damaged
+		and int(landed_battle.get_unit("moth_scribe")["hp"]) == int(rear_prior["hp"]) - damaged,
+		"AC2: the receipt and authoritative HP of the rear foe reflect exactly that damage")
+	_check(int(landed_battle.get_unit("moth_scribe")["statuses"].get("exposed", 0)) == expected
+		and int(landed_battle.get_unit("fray_scavenger")["statuses"].get("exposed", 0)) == 0
+		and int(landed_battle.get_unit("scissor_crab")["statuses"].get("exposed", 0)) == 0,
+		"AC2: only the struck rear foe carries Exposed 3 after the Purling shot")
+	_check(int(landed["rng_after"]) != int(landed["rng_before"])
+		and str(landed_battle.current_actor_id()) != "yarn_ranger",
+		"AC2: the landed rear-rank shot spends the Ranger turn and seeded RNG")
+	var replay := _purling_rear_cast(tier, landed_seed)
+	_check(not replay.is_empty() and replay["cast"] == landed_cast
+		and replay["before"] == landed["before"]
+		and replay["after"] == landed["after"]
+		and replay["order_after"] == landed["order_after"]
+		and replay["rng_after"] == landed["rng_after"],
+		"AC4: equal-seed rear-rank Purling replay reproduces receipts, snapshot, turn order and RNG")
+
+
+## Tiers I and II keep their authored ranks 1-3, so on the same occupied rank-4 fixture they
+## refuse the rear foe atomically while a legal rank-1 shot still fires. Tier III remains
+## authored, not a bypass: absent or dead rank-4 foes, out-of-range ranks, an illegal rank-one
+## or rank-two launch, an off-turn repeat and a torn or unequipped barrage all fail closed.
+func _test_purling_rank_four_foe_rejections() -> void:
+	for tier in [1, 2]:
+		var b := _rank_four_foe_battle(PURLING_ID, tier, 514040 + tier)
+		_check(b != null,
+			"AC3: fresh tier-%d Purling fixture has a living rank-4 foe" % tier)
+		if b == null:
+			continue
+		var ranger := b.get_unit("yarn_ranger")
+		var rear := b.get_unit("moth_scribe")
+		_check(b.get_heroes().size() == 4 and b.get_foes().size() == 3
+			and int(ranger["rank"]) == 3 and str(ranger["parts"]["arms"]["id"]) == PURLING_ID
+			and int(rear["rank"]) == 4 and int(rear["hp"]) > 0
+			and b.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC3: tier %d really faces one living foe at rank 4 with rank 3 vacant" % tier)
+		_check(_to(b, "yarn_ranger"),
+			"AC3: tier %d Purling Ranger obtains a real scheduled turn" % tier)
+		if b.current_actor_id() != "yarn_ranger":
+			continue
+		_reject_without_spend(b, PURLING_ID, 4,
+			"tier %d Purling aimed at the occupied enemy rank 4" % tier)
+		var rear_hp := int(rear["hp"])
+		var rear_statuses: Dictionary = rear["statuses"].duplicate(true)
+		var before := b.state_snapshot()
+		var receipt := b.use_part(PURLING_ID, 1)
+		var results: Array = receipt.get("results", [])
+		_check(bool(receipt.get("ok", false)) and results.size() == 1
+			and str(results[0].get("target", "")) == "fray_scavenger"
+			and str(results[0].get("target_side", "")) == "foe"
+			and int(results[0].get("target_rank", 0)) == 1
+			and int(b.get_unit("moth_scribe")["hp"]) == rear_hp
+			and b.get_unit("moth_scribe")["statuses"] == rear_statuses
+			and b.state_snapshot() != before,
+			"AC3: tier %d Purling aimed at rank 1 still fires only at the real rank-one foe" % tier)
+	# A real tier-III Ranger turn on the occupied rank-4 fixture refuses ranks 0 and 5
+	# atomically, then the accepted cast ends her turn so every repeat is off turn.
+	var near: StitchedRules = null
+	for seed_value in range(514000, 514040):
+		near = _purling_rank_four_turn(3, seed_value)
+		if near != null:
+			break
+	_check(near != null, "AC3: tier-III occupied rank-4 fixture reaches a real Ranger turn")
+	if near != null:
+		_reject_without_spend(near, PURLING_ID, 0, "tier-III Purling target rank zero")
+		_reject_without_spend(near, PURLING_ID, 5, "tier-III Purling target rank five")
+		var cast := near.use_part(PURLING_ID, 4)
+		_check(bool(cast.get("ok", false)) and cast.get("results", []).size() == 1
+			and str(cast["results"][0].get("target", "")) == "moth_scribe",
+			"AC3: the tier-III rank-4 cast really resolves the rear foe")
+		_reject_without_spend(near, PURLING_ID, 4, "tier-III Purling off turn")
+	# A dead rear foe is not a target even though the mask permits rank 4.
+	var dead := _purling_rank_four_turn(3, 514041)
+	_check(dead != null,
+		"AC3: tier-III rank-4 fixture reaches a real Ranger turn for the dead-foe check")
+	if dead != null:
+		dead._units["moth_scribe"]["hp"] = 0
+		dead._units["moth_scribe"]["dead"] = true
+		_check(int(dead.get_unit("moth_scribe")["hp"]) == 0,
+			"AC3: the rear foe is really dead before the aimed shot")
+		_reject_without_spend(dead, PURLING_ID, 4, "tier-III Purling dead rank-4 foe")
+	# A fresh three-foe battle has no living foe in enemy rank four, so the widened mask still
+	# refuses the shot without spending anything.
+	var absent := _battle(PURLING_ID, 3, 514042)
+	_check(absent != null, "AC3: fresh three-foe battle equips tier-III Purling with no rear foe")
+	if absent != null:
+		_check(absent.get_foes().all(func(foe): return int(foe["rank"]) != 4),
+			"AC3: that fixture really has no foe at enemy rank four")
+		_check(_to(absent, "yarn_ranger"),
+			"AC3: vacant-rank tier-III Purling Ranger obtains a real scheduled turn")
+		if absent.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(absent, PURLING_ID, 4,
+				"tier-III Purling enemy rank 4 has no living foe")
+	# The widened target reach never widens the launch ranks, which stay 3-4.
+	var rank_one := _rank_one_battle(PURLING_ID, 3, 514043)
+	_check(rank_one != null, "AC3: tier-III rank-one Purling fixture exists")
+	if rank_one != null:
+		var front := rank_one.get_unit("yarn_ranger")
+		_check(int(front["rank"]) == 1 and str(front["parts"]["arms"]["id"]) == PURLING_ID,
+			"AC3: rank-one Ranger wears tier-III Purling in the arms slot")
+		_check(_to(rank_one, "yarn_ranger"),
+			"AC3: rank-one Purling Ranger obtains a real scheduled turn")
+		if rank_one.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(rank_one, PURLING_ID, 1, "tier-III rank-one Purling launch")
+	var rank_two := _rank_two_battle(PURLING_ID, 3, 514044)
+	_check(rank_two != null, "AC3: tier-III rank-two Purling fixture exists")
+	if rank_two != null:
+		var mid := rank_two.get_unit("yarn_ranger")
+		var front_foe := rank_two.get_unit("fray_scavenger")
+		_check(int(mid["rank"]) == 2 and str(mid["parts"]["arms"]["id"]) == PURLING_ID
+			and int(front_foe["rank"]) == 1 and int(front_foe["hp"]) > 0,
+			"AC3: rank-two Ranger wears tier-III Purling while a living foe waits at rank one")
+		_check(_to(rank_two, "yarn_ranger"),
+			"AC3: rank-two Purling Ranger obtains a real scheduled turn")
+		if rank_two.current_actor_id() == "yarn_ranger":
+			_reject_without_spend(rank_two, PURLING_ID, 1, "tier-III rank-two Purling launch")
+	# A torn alternate arms part and an unequipped Purling never spend the turn or draw RNG.
+	var torn_config := _config(PURLING_ID, 3, 514045)
+	if not torn_config.is_empty():
+		torn_config["heroes"][2]["parts"]["arms"]["torn"] = true
+		var torn_created := StitchedRules.create(torn_config)
+		_check(bool(torn_created.get("ok", false)),
+			"AC3: torn tier-III Purling admitted as equipment")
+		if bool(torn_created.get("ok", false)):
+			var torn_battle: StitchedRules = torn_created["battle"]
+			_check(_to(torn_battle, "yarn_ranger"),
+				"AC3: torn tier-III Purling Ranger obtains a real scheduled turn")
+			if torn_battle.current_actor_id() == "yarn_ranger":
+				_reject_without_spend(torn_battle, PURLING_ID, 1, "torn tier-III Purling")
+	var bare := _battle("", 3, 514046)
+	_check(bare != null, "AC3: tier-III starter battle exists for the unequipped Purling check")
+	if bare != null and _to(bare, "yarn_ranger"):
+		_reject_without_spend(bare, PURLING_ID, 1, "unequipped tier-III Purling")
 
 
 ## The authentic seeded battle: the same four heroes and the same three foes, Ranger at rank
