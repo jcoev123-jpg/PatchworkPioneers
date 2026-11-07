@@ -143,8 +143,22 @@ func _run() -> void:
 		and guide.get_node("FeltPanel") is NinePatchRect
 		and (guide.get_node("FeltPanel") as NinePatchRect).texture != null,
 		"inherited Gothic theme contract and supplied felt art mount")
+	var expected_titles := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
+	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
+		and guide.page_scroll != null and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 4,
+		"real mounted 1280x720 guide provides four native tabs and scrollable pages")
+	var tab_bounds := Rect2()
+	for i in range(4):
+		var tab := guide.tab_buttons[i]
+		var bounds := tab.get_global_rect()
+		_check(tab.text == expected_titles[i] and tab.focus_mode == Control.FOCUS_ALL
+			and tab.mouse_default_cursor_shape == Control.CURSOR_POINTING_HAND
+			and root.get_visible_rect().encloses(bounds)
+			and (i == 0 or not bounds.intersects(tab_bounds)),
+			"fourth compact button fits and every tab is focusable at 1280x720: %d" % i)
+		tab_bounds = bounds
 	var texts := [
-		["Friendly ranks", "1 (front)", "4 (back)", "Foes", "2–3 foes",
+		["Four allied ranks", "1 (front)", "4 (back)", "Foes", "2–3 foes",
 			"fourth", "summon or split", "SPEED + 1d8", "seeded RNG",
 			"Ties favour heroes", "lower ranks", "one turn", "two-turn bosses",
 			"HEAD / ARMS / TORSO / LEGS", "one ability each", "launch ranks",
@@ -153,41 +167,68 @@ func _run() -> void:
 			"forfeits all rewards", "SNIPPED THREAD", "healing or guard",
 			"re-tied", "0 HP", "Hanging by a Thread", "still act",
 			"random non-torso part", "67%", "33%"],
-		["0–200", "100", "25% Steadfast", "45 Fray", "75% Unravelled",
-			"200 Fray", "Comes Apart", "150", "Begins at 100",
-			"Bright 76–100", "Dim 51–75", "Gloom 26–50",
-			"Dark 1–25", "Snuffed 0", "8 Candle per map node",
-			"S6 run integration", "NOT active", "S4 play"]
+		["0–200", "Reaching 100", "25%", "STEADFAST", "45 Fray",
+			"+10% damage", "every party member's Fray by 2", "floor ends",
+			"75%", "Unravelled", "below 50", "200 Fray", "Comes Apart",
+			"HP becomes 0", "Fray becomes 150", "already Hanging by a Thread",
+			"LOST", "0 HP", "still act", "random non-torso part",
+			"67%", "33%"],
+		["Begins at 100", "each map node costs 8 Candle", "clamped at 0",
+			"BRIGHT 76–100", "15% chance the party acts first", "no penalty",
+			"DIM 51–75", "+10% Fray gain", "+25% loot",
+			"GLOOM 26–50", "+20% Fray gain", "+5 ACC", "+10% damage", "+50% loot",
+			"DARK 1–25", "+30% Fray gain", "+10 ACC", "+15% damage", "+75% loot",
+			"SNUFFED 0", "+40% Fray gain", "+25% damage",
+			"25% chance foes act first", "+100% loot", "do not guarantee a drop",
+			"Choose ONE", "Mend heals 30% HP for each hero",
+			"Tell Tales reduces each hero's Fray by 25",
+			"Trim the Wick restores 50 Candle",
+			"Peddler candle stub restores 25 Candle",
+			"up to six spare parts", "Campfire or Sewing Circle", "never in a fight"]
 	]
-	for i in range(3):
+	for i in range(4):
 		if i > 0:
 			await _click(guide.tab_buttons[i])
 		_check(guide.page_index == i and guide.page_labels[i].is_visible_in_tree()
 			and guide.tab_buttons[i].button_pressed,
 			"actual tab %d reveals one selected page" % i)
 		var single := true
-		for j in range(3):
+		for j in range(4):
 			single = single and (guide.page_labels[j].visible == (i == j))
-		_check(single and _all_present(guide.page_text(i), texts[i]),
-			"page %d shows exact S4 rule/rank/numeric statements" % i)
+			single = single and (guide.tab_buttons[j].button_pressed == (i == j))
+		_check(single and _all_present(guide.page_labels[i].text, texts[i])
+			and guide.page_text(i) == guide.page_labels[i].text,
+			"mounted page %d renders exact current rules with no extra active page" % i)
+		var lower := guide.page_text(i).to_lower()
 		_check(guide.page_labels[i].get_theme_font_size("font_size") >= 18
-			and not guide.page_text(i).to_lower().contains("energy cost")
-			and not guide.page_text(i).to_lower().contains("draw a card"),
-			"legible body size and no obsolete deck/hand/energy copy on page %d" % i)
-	# The atlas trigger extends, rather than breaks, the original focus ring.
-	_check(guide.tab_buttons[2].focus_next == guide.tab_buttons[2].get_path_to(guide.atlas_button)
-		and guide.atlas_button.focus_next == guide.atlas_button.get_path_to(guide.close_button)
-		and guide.close_button.focus_next == guide.close_button.get_path_to(guide.tab_buttons[0])
-		and guide.tab_buttons[0].focus_previous == guide.tab_buttons[0].get_path_to(guide.close_button),
-		"three original tabs, atlas and Close form one focus ring")
-	# One keyboard-only trip around the guide ring must never focus the village.
+			and not lower.contains("energy cost") and not lower.contains("draw a card")
+			and not lower.contains("deck") and not lower.contains("hand of cards")
+			and not lower.contains("future s6") and not lower.contains("not active")
+			and not lower.contains("s4 play"),
+			"legible bone body and no retired/false future rules on page %d" % i)
+	_check(guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
+		and guide.page_scroll.get_v_scroll_bar().max_value > guide.page_scroll.size.y,
+		"long Candle stop reference scrolls vertically at 1280x720 without shrinking text")
+	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
+	var focus_ring: Array[Button] = guide.tab_buttons.duplicate()
+	focus_ring.append(guide.atlas_button)
+	focus_ring.append(guide.close_button)
+	for i in range(focus_ring.size()):
+		var current := focus_ring[i]
+		var next := focus_ring[(i + 1) % focus_ring.size()]
+		var previous := focus_ring[(i - 1 + focus_ring.size()) % focus_ring.size()]
+		_check(current.focus_next == current.get_path_to(next)
+			and current.focus_previous == current.get_path_to(previous),
+			"real six-control Tab/Shift-Tab ring links %s both ways" % current.name)
 	guide.tab_buttons[0].grab_focus()
-	await _key(KEY_TAB)
-	_check(root.gui_get_focus_owner() == guide.tab_buttons[1],
-		"Tab stays within the three-page guide")
-	await _key(KEY_TAB, true)
-	_check(root.gui_get_focus_owner() == guide.tab_buttons[0],
-		"Shift-Tab stays within the guide")
+	for i in range(1, focus_ring.size() + 1):
+		await _key(KEY_TAB)
+		_check(root.gui_get_focus_owner() == focus_ring[i % focus_ring.size()],
+			"Tab forward stays within guide, including atlas, Close and wrap %d" % i)
+	for i in range(focus_ring.size() - 1, -1, -1):
+		await _key(KEY_TAB, true)
+		_check(root.gui_get_focus_owner() == focus_ring[i],
+			"Shift-Tab reverse stays inside six-control ring %d" % i)
 	seed(501006)
 	var next_rng := randi()
 	seed(501006)

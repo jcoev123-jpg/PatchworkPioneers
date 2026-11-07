@@ -13,7 +13,7 @@ const BONE := Color("#f4e5cd")
 const BRASS := Color("#e0b977")
 const PAGES := [
 	[
-		"FRONT TO BACK  |  Friendly ranks are 1 (front) through 4 (back). Foes also occupy ranks 1–4. A fight begins with 2–3 foes; the fourth arrives only by summon or split.",
+		"FRONT TO BACK  |  Four allied ranks run 1 (front) through 4 (back). Foes also occupy ranks 1–4. A fight begins with 2–3 foes; the fourth arrives only by summon or split.",
 		"ROUND ORDER  |  Every round, seeded RNG rolls SPEED + 1d8 for each unit. Ties favour heroes, then lower ranks. Each unit gets one turn, except certain two-turn bosses.",
 		"EQUIPPED PARTS  |  HEAD / ARMS / TORSO / LEGS: four slots, one ability each. Every ability has legal launch ranks and target ranks.",
 		"OTHER ACTIONS  |  MOVE swaps with an adjacent ally. RE-TIE is available only after that hero's thread was snipped. Or PASS."
@@ -25,16 +25,29 @@ const PAGES := [
 		"FURTHER HITS  |  A further hit checks the seam: 67% to hold, 33% to lose the seam."
 	],
 	[
-		"FRAY  |  Fray ranges from 0–200. At 100, a resolve check gives 25% Steadfast (return to 45 Fray) or 75% Unravelled.",
-		"COMING APART  |  At 200 Fray: Comes Apart, then Fray becomes 150.",
-		"CANDLE  |  Begins at 100. Bright 76–100; Dim 51–75; Gloom 26–50; Dark 1–25; Snuffed 0.",
-		"FUTURE S6 INTEGRATION  |  Losing 8 Candle per map node is scheduled for S6 run integration. It is NOT active in current S4 play."
+		"FRAY  |  Fray ranges from 0–200. Reaching 100 triggers a resolve check.",
+		"STEADFAST  |  25% chance: return to 45 Fray, deal +10% damage, and reduce every party member's Fray by 2 on this hero's turns until the floor ends.",
+		"UNRAVELLED  |  75% chance at 100 Fray: Unravelled lasts until Fray falls below 50.",
+		"COMING APART  |  At 200 Fray, the hero Comes Apart: HP becomes 0 and Fray becomes 150. If already Hanging by a Thread, that hero is LOST.",
+		"HANGING BY A THREAD  |  At 0 HP, the hero can still act but tears one random non-torso part on first reaching 0 HP. Each later hit has a 67% chance to hold / 33% chance to be lost."
+	],
+	[
+		"CANDLE  |  Begins at 100. Entering each map node costs 8 Candle, clamped at 0. These bands describe your current run, not a way to change its light.",
+		"BRIGHT 76–100  |  15% chance the party acts first; no penalty.",
+		"DIM 51–75  |  +10% Fray gain; +25% loot.",
+		"GLOOM 26–50  |  +20% Fray gain; foes gain +5 ACC and +10% damage; +50% loot.",
+		"DARK 1–25  |  +30% Fray gain; foes gain +10 ACC and +15% damage; +75% loot.",
+		"SNUFFED 0  |  +40% Fray gain; foes gain +25% damage; 25% chance foes act first; +100% loot.",
+		"LOOT  |  These percentages modify loot when awarded; they do not guarantee a drop.",
+		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP for each hero; Tell Tales reduces each hero's Fray by 25; Trim the Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
+		"SEWING  |  The satchel holds up to six spare parts. Swap sewn HEAD, ARMS, TORSO or LEGS parts only at a Campfire or Sewing Circle, never in a fight."
 	]
 ]
-const TABS := ["Ranks & turns", "Seams & retreat", "Fray & candle"]
+const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
 
 var tab_buttons: Array[Button] = []
 var page_labels: Array[Label] = []
+var page_scroll: ScrollContainer
 var close_button: Button
 var atlas_button: Button
 var atlas_status: Label
@@ -82,6 +95,7 @@ func select_page(index: int) -> void:
 	if not _active or index < 0 or index >= page_labels.size():
 		return
 	page_index = index
+	page_scroll.scroll_vertical = 0
 	for i in range(page_labels.size()):
 		page_labels[i].visible = i == index
 		tab_buttons[i].button_pressed = i == index
@@ -324,16 +338,16 @@ func _build_view() -> void:
 	content.add_child(atlas_status)
 
 	# A single visible page at a time, with wrap and scroll as a smaller-screen
-	# fallback. At 1280x720 the 18px copy fits the stitched panel without scroll.
-	var scroller := ScrollContainer.new()
-	scroller.name = "GuidePageScroll"
-	scroller.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroller.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	content.add_child(scroller)
+	# fallback. Longer 18px pages scroll within the 1280x720 stitched panel.
+	page_scroll = ScrollContainer.new()
+	page_scroll.name = "GuidePageScroll"
+	page_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	content.add_child(page_scroll)
 	var pages := VBoxContainer.new()
 	pages.name = "GuidePages"
 	pages.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroller.add_child(pages)
+	page_scroll.add_child(pages)
 	for i in range(PAGES.size()):
 		var label := Label.new()
 		label.name = "GuidePage%d" % i

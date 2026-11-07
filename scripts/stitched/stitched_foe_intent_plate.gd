@@ -7,7 +7,7 @@ const PLATE_TEXTURE := preload("res://assets/paper/ui/hud_name_plate.png")
 const HEADING_FONT := preload("res://assets/fonts/LondrinaSolid-Regular.ttf")
 const BONE := Color("f5e5cd")
 const BRASS := Color("e5b86d")
-const PLATE_SIZE := Vector2(148, 64)
+const PLATE_SIZE := Vector2(140, 58)
 const ATTACK_TEXTURE := preload("res://assets/paper/ui/intent_attack.png")
 const DEFEND_TEXTURE := preload("res://assets/paper/ui/intent_defend.png")
 const BUFF_TEXTURE := preload("res://assets/paper/ui/intent_buff.png")
@@ -37,7 +37,7 @@ func _init() -> void:
 func _ready() -> void:
 	glyph = TextureRect.new()
 	glyph.name = "IntentGlyph"
-	glyph.position = Vector2(8, 8)
+	glyph.position = Vector2(6, 4)
 	glyph.size = Vector2(26, 26)
 	glyph.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	glyph.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
@@ -46,7 +46,7 @@ func _ready() -> void:
 	add_child(glyph)
 	primary = Label.new()
 	primary.name = "IntentText"
-	primary.position = Vector2(8, 4)
+	primary.position = Vector2(4, 2)
 	primary.size = Vector2(132, 29)
 	primary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	primary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -61,7 +61,7 @@ func _ready() -> void:
 	add_child(primary)
 	secondary = Label.new()
 	secondary.name = "IntentTarget"
-	secondary.position = Vector2(8, 36)
+	secondary.position = Vector2(4, 32)
 	secondary.size = Vector2(132, 24)
 	secondary.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	secondary.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -86,7 +86,7 @@ func clear_intent() -> void:
 		glyph.texture = null
 		glyph.visible = false
 	if primary != null:
-		primary.position.x = 8
+		primary.position.x = 4
 		primary.size.x = 132
 		primary.text = ""
 	if secondary != null:
@@ -167,8 +167,8 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	if glyph != null:
 		glyph.texture = _texture_for_kind(ability_kind)
 		glyph.visible = glyph.texture != null and not foe_id.is_empty()
-	primary.position.x = 38 if glyph != null and glyph.visible else 8
-	primary.size.x = 102 if glyph != null and glyph.visible else 132
+	primary.position.x = 36 if glyph != null and glyph.visible else 4
+	primary.size.x = 100 if glyph != null and glyph.visible else 132
 	primary.text = _fit_caption(heading, primary)
 	secondary.text = target
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""

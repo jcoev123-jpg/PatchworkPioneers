@@ -167,12 +167,15 @@ func _run() -> void:
     _check(guide.is_open() and guide.atlas_button != null
         and guide.atlas_button.text == "Parts & spoils"
         and guide.atlas_button.focus_mode == Control.FOCUS_ALL
-        and guide.tab_buttons.size() == 3,
-        "old three pages remain, alongside one new guide-level atlas action")
+        and guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4,
+        "four current guide pages coexist with one guide-level atlas action")
     _check(guide.page_text(0).contains("ROUND ORDER")
         and guide.page_text(1).contains("RETREAT")
-        and guide.page_text(2).contains("CANDLE"),
-        "all three untouched original guide pages retain their core statements")
+        and guide.page_text(2).contains("STEADFAST")
+        and guide.page_text(2).contains("UNRAVELLED")
+        and guide.page_text(3).contains("CANDLE")
+        and guide.page_text(3).contains("SNUFFED 0"),
+        "ranks and seams persist, Fray is page 2 and the live Candle bands are page 3")
     await _click(guide.atlas_button)
     var inspector := guide.part_atlas
     _check(inspector != null and inspector is StitchedPartInspector
