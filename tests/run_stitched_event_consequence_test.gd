@@ -4615,7 +4615,7 @@ func _test_min_fray_gates() -> void:
 		"AC3: choose(rally) refused when party is ineligible")
 
 	# --- AC4: Malformed min_fray values, structural invalid gates, and extra keys fail closed ---
-	var malformed_min_frays: Array = [0, -1, -100, 201, 999, 100.0, 1.5, true, false, "100", "", null, [100], {"min_fray": 100}]
+	var malformed_min_frays: Array = [0, -1, -100, 201, 999, 100.5, 1.5, true, false, "100", "", null, [100], {"min_fray": 100}]
 	for idx in range(malformed_min_frays.size()):
 		var bad_val: Variant = malformed_min_frays[idx]
 		for target_mode in ["hero", "party"]:
@@ -4654,6 +4654,19 @@ func _test_min_fray_gates() -> void:
 			var fallback_choice := "leave" if (idx % 2 == 0) else "valid_alt"
 			_check(bad_svc.choose(fallback_choice, snap_seamstress_100).get("ok") == true,
 				"AC3: %s claims after malformed min_fray %d (%s) refusal" % [fallback_choice, idx, target_mode])
+
+	# JSON parsers produce finite integral floats for integer values; verify 100.0 is valid:
+	for float_min_fray in [100.0, 1.0]:
+		var json_choice := _choice("json_gate", "JSON float min_fray.", {
+			"candle": 0, "fray": -10, "target": "party", "min_fray": float_min_fray,
+		})
+		var json_svc := RunStitchedEventConsequence.new(_event([json_choice, _choice("leave", "Leave.", _effect(0, 0, "party"))]))
+		var json_prev := json_svc.preview(snap_any_100)
+		_check(json_prev.get("ok") == true and _entry(json_prev, "json_gate").get("available") == true,
+			"AC3: integral float min_fray %s from JSON is valid" % str(float_min_fray))
+		var json_rec := json_svc.choose("json_gate", snap_any_100)
+		_check(json_rec.get("ok") == true and json_rec.get("candle") == 40,
+			"AC3: integral float min_fray %s from JSON claims correctly" % str(float_min_fray))
 
 	# Structural malformed cases with min_fray: unknown hero, unexpected extra keys, missing required fields:
 	var structural_bad_effects: Array = [
