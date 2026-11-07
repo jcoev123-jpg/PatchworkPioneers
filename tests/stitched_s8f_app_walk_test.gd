@@ -16,31 +16,12 @@ func _check(ok: bool, why: String) -> void:
 
 func _check_host_hud(walker: StitchedWalkScreen, session: StitchedRunSession) -> void:
 	_check(walker != null and session != null and session.walk != null and session.phase == "walk",
-		"host HUD checks a real mounted live session")
+		"host view checks a real mounted live session")
 	if walker == null or session == null or session.walk == null:
 		return
-	var authoritative := session.walk.snapshot()
-	var band := StitchedS1BEffects.candle_band(session.candle)
-	_check(walker.expected == authoritative
-		and walker.readout.text.contains(str(authoritative.corridor.name))
-		and walker.readout.text.contains("Step %d/%d" % [authoritative.step, authoritative.corridor.steps]),
-		"live HUD corridor and step use the active run Walk")
-	_check(walker.candle == session.candle
-		and walker.candle_readout.text == "CANDLE %d / %s" % [session.candle, str(band.name).to_upper()]
-		and is_equal_approx(walker.candle_meter.value, float(session.candle) / 100.0),
-		"hosted candle number, band and progress read the session")
-	_check(walker.whirr_readout.text == "WHIRR %d/100" % authoritative.whirr
-		and is_equal_approx(walker.whirr_meter.value, float(authoritative.whirr) / 100.0),
-		"hosted WHIRR reads Walk authority after actions")
-	_check(walker.fear_readout.text == "WREN FEAR %d/100" % session.kid_fear()
-		and is_equal_approx(walker.fear_meter.value, float(session.kid_fear()) / 100.0),
-		"hosted fear reads session's existing fear service")
-	for label in [walker.readout, walker.eye_readout, walker.whirr_readout, walker.candle_readout, walker.fear_readout]:
-		_check(label.get_theme_font_size("font_size") >= 18 and label.get_global_rect().end.y <= StitchedWalkScreen.VIEW.position.y,
-			"live captions remain legible inside the 1280x720 border")
-	for panel in walker.hud_panels:
-		_check(panel.texture != null and panel.get_global_rect().end.y <= StitchedWalkScreen.VIEW.position.y
-			and not panel.tooltip_text.is_empty(), "live status has authored sewn panel and accessible tooltip")
+	# The walk keeps its numbers hidden; it must still read the live run, not a copy.
+	_check(walker.expected == session.walk.snapshot() and walker.candle == session.candle
+		and walker.fear() == session.kid_fear(), "the hosted walk reads the active run's walk, candle and fear")
 
 
 func _run() -> void:
@@ -72,12 +53,8 @@ func _run() -> void:
 		var pristine := session.walk.snapshot()
 		var journal_count := session.journal.size()
 		walker.refresh()
-		walker.hud_panels[1].grab_focus()
 		_check(session.walk.snapshot() == pristine and session.journal.size() == journal_count,
-			"hosted refresh and HUD focus never spend RNG, state or journal")
-		walker.back_button.grab_focus()
-		_check(walker.back_button.has_focus() and walker.back_button.tooltip_text.contains("+5"),
-			"real LOOK BACK focus discloses WHIRR +5")
+			"a hosted refresh never spends RNG, state or journal")
 		walker.back_button.pressed.emit()
 		_check(session.is_consistent() and session.journal.size() == journal_count + 1
 			and session.walk.snapshot().whirr == pristine.whirr + 5 and session.walk.snapshot().looking_back,
