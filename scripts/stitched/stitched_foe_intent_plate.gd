@@ -176,9 +176,13 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 	secondary.text = target
 	var kind_detail := "Kind: " + ability_kind.to_upper() + " · " if not ability_kind.is_empty() else ""
 	var disclosed_name := heading if bool(intent.get("pass", false)) or bool(intent.get("stun", false)) else actual_name
-	tooltip_text = "%s · %s · %s%s%s\nCurrent intent; may change if ranks or statuses change" % [
+	# The exact BASE line above stays the source of the authored numbers; the pure
+	# summary below explains what those look-driven statuses actually threaten.
+	var threat := StitchedFoeThreatSummary.summary(intent)
+	tooltip_text = "%s · %s · %s%s%s%s\nCurrent intent; may change if ranks or statuses change" % [
 		str(intent.get("foe_name", "")), disclosed_name,
-		kind_detail, detail, "\n" + base_detail if not base_detail.is_empty() else ""]
+		kind_detail, detail, "\n" + base_detail if not base_detail.is_empty() else "",
+		"\n" + threat if not threat.is_empty() else ""]
 	visible = not foe_id.is_empty()
 
 
