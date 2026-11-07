@@ -1170,8 +1170,9 @@ func legal_targets() -> Dictionary:
 
 
 func submit_target(side: String, rank: int) -> Dictionary:
-	if _hand_pending in ["steady", "hold_back", "lift"] and side == "hero":
-		return submit_hand_action(_hand_pending, rank)
+	if not _hand_pending.is_empty() and not _hand_pending.begins_with("lift:") \
+			and hand_target_side(_hand_pending) == side:
+		return submit_hand_action(_hand_pending, rank, 0, side)
 	var key := side + "_" + str(rank)
 	if not _target_ranks.has(key) or _selected_part.is_empty():
 		return {"ok": false, "error": "target is not legal"}
@@ -1534,48 +1535,60 @@ func kid_fear() -> int:
 
 
 func _hand_action_name(action_id: String) -> String:
-	return str(StitchedKidHandActions.catalog().get("by_id", {}).get(action_id, {}).get("name", action_id.capitalize()))
+	return str(StitchedWrenGifts.gift(action_id).get("name", action_id.capitalize()))
+
+
+## S12: which figures a hand gift points at: "hero" (a doll), "foe", or "" (no target).
+static func hand_target_side(action_id: String) -> String:
+	return {"doll": "hero", "foe": "foe"}.get(str(StitchedWrenGifts.gift(action_id).get("target", "doll")), "")
+
+
+## The gifts in Wren's slots this fight (his four basic hands outside a run).
+func hand_slots() -> Array:
+	return battle.gift_slots() if battle != null else StitchedWrenGifts.basics()
 
 
 ## Wren's four free hand actions sit under the title, left of the turn order.
 func _build_hand_actions() -> void:
-	var book: Dictionary = StitchedKidHandActions.catalog()
 	var short := {"steady": "Steady", "shield_candle": "Shield", "hold_back": "Hold", "lift": "Lift"}
-	for index in StitchedKidHandActions.IDS.size():
-		var action_id: String = StitchedKidHandActions.IDS[index]
-		var button := _button(short[action_id], Rect2(26 + index * 106, 48, 100, 38),
-			func(): choose_hand_action(action_id))
+	var slots := hand_slots()
+	for index in slots.size():
+		var action_id: String = slots[index]
+		var button := _button(short.get(action_id, _hand_action_name(action_id).get_slice(" ", 0)),
+			Rect2(26 + index * 106, 48, 100, 38), func(): choose_hand_action(action_id))
 		button.name = "HandAction" + action_id.to_pascal_case()
-		CHROME.style_action_button(button, StitchedKidView.icon_path(action_id))
+		CHROME.style_action_button(button, StitchedWrenGifts.icon_path(action_id))
 		button.add_theme_font_size_override("font_size", 14)
 		var emblem := button.get_node_or_null("ActionEmblem")
 		if emblem != null:
 			emblem.position = Vector2(6, 5)
 			emblem.size = Vector2(28, 28)
 		button.tooltip_text = "%s (Wren's hand, free once a round)\n%s" % [_hand_action_name(action_id),
-			str(book.get("by_id", {}).get(action_id, {}).get("text", ""))]
+			str(StitchedWrenGifts.gift(action_id).get("text", ""))]
 		_hand_buttons[action_id] = button
 
 
-## Shield the Candle happens at once; the others wait for a doll (Ally button or figure),
-## and Lift then for Move front / Move back.
+## A gift with no target (Shield the Candle) happens at once; the others wait for a doll or a
+## foe (button or figure), and Lift then for Move front / Move back.
 func choose_hand_action(action_id: String) -> Dictionary:
-	if battle == null or not action_id in StitchedKidHandActions.IDS or not battle.hand_action_open():
+	if battle == null or not action_id in battle.gift_slots() or not battle.hand_action_open():
 		return {"ok": false, "error": "Wren's hand is not free"}
-	if action_id == "shield_candle":
+	var side := hand_target_side(action_id)
+	if side.is_empty():
 		return submit_hand_action(action_id)
 	_hand_pending = "" if _hand_pending == action_id else action_id
 	_selected_part = ""
-	_notice = "Wren · %s: pick one of his dolls (Ally button or figure). Esc cancels." % _hand_action_name(action_id) \
+	var whom := "one of his dolls (Ally button or figure)" if side == "hero" else "one foe (Foe button or figure)"
+	_notice = "Wren · %s: pick %s. Esc cancels." % [_hand_action_name(action_id), whom] \
 		if not _hand_pending.is_empty() else ""
 	_refresh()
 	return {"ok": true, "pending": _hand_pending}
 
 
-func submit_hand_action(action_id: String, rank: int = 0, direction: int = 0) -> Dictionary:
+func submit_hand_action(action_id: String, rank: int = 0, direction: int = 0, side: String = "hero") -> Dictionary:
 	if battle == null:
 		return {"ok": false, "error": "no battle"}
-	var target_id := str(_unit_at("hero", rank).get("id", "")) if rank > 0 else ""
+	var target_id := str(_unit_at(side, rank).get("id", "")) if rank > 0 else ""
 	if action_id == "lift" and direction == 0:
 		var refusal := battle.hand_action_check("lift", target_id, -1)
 		if not refusal.is_empty():
@@ -1606,12 +1619,13 @@ func _refresh_kid_view(cuts: Dictionary) -> void:
 		_hand_pending = ""
 	for action_id in _hand_buttons:
 		var button: Button = _hand_buttons[action_id]
-		button.disabled = not open
+		button.disabled = not open or battle.gift_spent(action_id)
 		button.modulate = Color(1.25, 1.1, 0.8) if _hand_pending.split(":")[0] == action_id else Color.WHITE
-	if _hand_pending in ["steady", "hold_back", "lift"]:
+	if not _hand_pending.is_empty() and not _hand_pending.begins_with("lift:"):
+		var side := hand_target_side(_hand_pending)
 		for rank in range(1, 5):
-			var key := "hero_" + str(rank)
-			var lit := _hand_target_ok(_hand_pending, str(_unit_at("hero", rank).get("id", "")))
+			var key := side + "_" + str(rank)
+			var lit := _hand_target_ok(_hand_pending, str(_unit_at(side, rank).get("id", "")))
 			if lit:
 				_target_ranks[key] = true
 			_target_buttons[key].disabled = not lit

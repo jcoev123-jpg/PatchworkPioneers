@@ -302,13 +302,13 @@ func _build_bar() -> void:
 
 
 func _build_hands() -> void:
-	var book: Dictionary = StitchedKidHandActions.catalog().get("by_id", {})
-	for index in StitchedKidHandActions.IDS.size():
-		var action_id: String = StitchedKidHandActions.IDS[index]
-		var entry: Dictionary = book.get(action_id, {})
+	var slots := engine.hand_slots()
+	for index in slots.size():
+		var action_id: String = slots[index]
+		var entry := StitchedWrenGifts.gift(action_id)
 		var button := TextureButton.new()
 		button.name = "Hand_" + action_id
-		button.texture_normal = _texture("res://assets/paper/kid/hand_%s.png" % action_id)
+		button.texture_normal = _texture(StitchedWrenGifts.icon_path(action_id))
 		button.ignore_texture_size = true
 		button.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
 		button.position = Vector2(1132 + (index % 2) * 60, BAR_TOP + 8 + (index / 2) * 58)
@@ -404,7 +404,7 @@ func choose_part(slot: String) -> Dictionary:
 
 
 func click_figure(side: String, rank: int) -> Dictionary:
-	if engine._selected_part.is_empty() and not engine._hand_pending in ["steady", "hold_back", "lift"]:
+	if engine._selected_part.is_empty() and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
 		log_label.text = "Pick a body part first."
 		return {"ok": false, "error": "no part chosen"}
 	return _act(engine.submit_target(side, rank))
@@ -523,7 +523,7 @@ func _refresh_bar() -> void:
 	more_buttons.re_tie.disabled = not cut
 	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
 	for action_id in hand_buttons:
-		hand_buttons[action_id].disabled = not hand_open
+		hand_buttons[action_id].disabled = not hand_open or battle.gift_spent(action_id)
 		hand_buttons[action_id].visible = not battle.is_over()
 	more_button.disabled = battle.is_over()
 	if battle.is_over():
@@ -539,7 +539,8 @@ func _refresh_bar() -> void:
 		if not line.begins_with("Round "):
 			shown_lines.append(line.replace("→ ", ""))
 	if not engine._hand_pending.is_empty():
-		log_label.text = "Wren reaches out: pick one of the dolls."
+		var at_foe := StitchedBattleScreen.hand_target_side(engine._hand_pending.get_slice(":", 0)) == "foe"
+		log_label.text = "Wren reaches out: pick one of the foes." if at_foe else "Wren reaches out: pick one of the dolls."
 	elif not engine._selected_part.is_empty():
 		log_label.text = "Pick a target."
 	else:
@@ -562,7 +563,7 @@ func _shade_parts() -> void:
 		var tone := Color.WHITE
 		if hand.disabled:
 			tone = Color(0.45, 0.42, 0.42, 0.85)
-		elif engine._hand_pending.begins_with(action_id):
+		elif engine._hand_pending.get_slice(":", 0) == action_id:
 			tone = Color(1.35, 1.12, 0.75)
 		elif hand.is_hovered() or hand.has_focus():
 			tone = Color(1.18, 1.08, 0.95)
@@ -740,12 +741,14 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey or not event.pressed or event.echo:
 		return
 	var slots := {KEY_1: "head", KEY_2: "arms", KEY_3: "torso", KEY_4: "legs"}
-	var hands := {KEY_Q: "steady", KEY_W: "shield_candle", KEY_E: "hold_back", KEY_R: "lift"}
+	var hand_keys := [KEY_Q, KEY_W, KEY_E, KEY_R]
+	var carried := engine.hand_slots()
 	if slots.has(event.keycode):
 		choose_part(slots[event.keycode])
-	elif hands.has(event.keycode):
-		if not hand_buttons[hands[event.keycode]].disabled:
-			_act(engine.choose_hand_action(hands[event.keycode]))
+	elif event.keycode in hand_keys and hand_keys.find(event.keycode) < carried.size():
+		var gift_id: String = carried[hand_keys.find(event.keycode)]
+		if hand_buttons.has(gift_id) and not hand_buttons[gift_id].disabled:
+			_act(engine.choose_hand_action(gift_id))
 	elif event.keycode == KEY_ESCAPE:
 		if more_panel.visible:
 			set_more_open(false)
