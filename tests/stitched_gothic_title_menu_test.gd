@@ -66,7 +66,11 @@ func _run() -> void:
 	root.add_child(app)
 	await process_frame
 	var ordinary: Array = [app.start_button, app.stitched_continue_button, app.base_button]
+	var available: Array = [app.start_button, app.base_button]
 	await _menu_layout(app, ordinary)
+	_check(app.stitched_continue_button.disabled and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+		and not app.start_button.disabled and not app.base_button.disabled,
+		"missing-save Continue has the original dark disabled face and cannot take focus")
 	_check([app.start_button.text, app.stitched_continue_button.text, app.base_button.text] ==
 		["New Run", "Continue Run", "Wren's Room"],
 		"all three live title labels have consistent title case")
@@ -91,10 +95,13 @@ func _run() -> void:
 		"title logo source image bytes are unchanged by paint-time tint")
 	_check(app.start_button.has_focus(), "ordinary boot focuses New Run")
 	var carry := _carry(app)
-	await _ring(app, ordinary)
-	await _click(app.stitched_continue_button)
+	await _ring(app, available)
+	await _disabled_click(app.stitched_continue_button)
+	_check(not app.stitched_continue_button.has_focus(), "missing-save Continue refuses focus")
+	app.stitched_continue_button.pressed.emit()
 	_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree()
-		and _carry(app) == carry and _no_legacy_wallet(app), "missing save fails closed via mouse Continue")
+		and _carry(app) == carry and _no_legacy_wallet(app),
+		"missing-save Continue rejects physical mouse and a stale signal without changing state")
 	await _click(app.start_button)
 	_check(app.stitched_run_panel != null and not app.title_view.visible
 		and app.stitched_run_session == null and app.stitched_run_draft.size() == 4,
@@ -134,9 +141,14 @@ func _run() -> void:
 		_check(StitchedRunSave.write_file(MENU_SAVE, session), "isolated valid save written")
 		app._return_stitched_run_title()
 		await process_frame
+		_check(not app.stitched_continue_button.disabled
+			and app.stitched_continue_button.focus_mode == Control.FOCUS_ALL,
+			"real saved four-doll run automatically enables Continue on return")
+		await _ring(app, ordinary)
 		app.stitched_continue_button.grab_focus()
 		app.stitched_continue_button.disabled = true
-		# Continue eligibility is unchanged; explicitly rebuild the existing ring for this forced state.
+		app.stitched_continue_button.focus_mode = Control.FOCUS_NONE
+		# A forced-disabled skin still keeps the original live action in the tree.
 		app._wire_stitched_title_focus()
 		await _menu_layout(app, ordinary)
 		await _disabled_click(app.stitched_continue_button)
@@ -147,8 +159,11 @@ func _run() -> void:
 		await _physical(KEY_TAB)
 		_check(app.start_button.has_focus(), "disabled title ring wraps without retired shortcuts")
 		_check(app.stitched_run_session == null and app.title_view.visible, "disabled mouse/keyboard Continue cannot load a valid save")
-		app.stitched_continue_button.disabled = false
-		app._wire_stitched_title_focus()
+		app._refresh_stitched_continue_eligibility()
+		_check(not app.stitched_continue_button.disabled
+			and app.stitched_continue_button.focus_mode == Control.FOCUS_ALL,
+			"reader, not a manual override, re-enables the genuine saved night")
+		await _ring(app, ordinary)
 		app.stitched_continue_button.grab_focus()
 		await _physical(KEY_SPACE)
 		_check(app.stitched_run_session != null and app.stitched_run_session.snapshot() == before
@@ -166,10 +181,40 @@ func _run() -> void:
 			"mouse Continue also restores the exact authentic saved run")
 	app.free()
 	await process_frame
+	if session != null:
+		# A second production App must authenticate a save before its first frame.
+		var fresh: Node = load("res://scenes/app.tscn").instantiate()
+		fresh.stitched_save_path = MENU_SAVE
+		root.add_child(fresh)
+		await process_frame
+		_check(not fresh.stitched_continue_button.disabled
+			and fresh.stitched_continue_button.focus_mode == Control.FOCUS_ALL
+			and fresh.stitched_run_session == null,
+			"newly mounted title authenticates an existing four-doll save on first appearance")
+		await _ring(fresh, [fresh.start_button, fresh.stitched_continue_button, fresh.base_button])
+		var pristine := _carry(fresh)
+		var tamper := FileAccess.open(MENU_SAVE, FileAccess.WRITE)
+		_check(tamper != null, "tamper fixture is writable after eligible title appears")
+		if tamper != null:
+			tamper.store_buffer(var_to_bytes({"version": "corrupt", "journal": []}))
+			tamper.close()
+		_check(StitchedRunSave.read_file(MENU_SAVE) == null,
+			"corrupt replacement is rejected by replaying saved-run reader")
+		await _click(fresh.stitched_continue_button)
+		_check(fresh.stitched_run_session == null and fresh.title_view.is_visible_in_tree()
+			and fresh.stitched_continue_button.disabled
+			and fresh.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+			and fresh.start_button.has_focus() and _carry(fresh) == pristine
+			and _no_legacy_wallet(fresh),
+			"replaced-between-display-and-click fails closed, transfers focus and preserves state")
+		await _ring(fresh, [fresh.start_button, fresh.base_button])
+		fresh.free()
+		await process_frame
 	DirAccess.remove_absolute(MENU_SAVE)
 
 	# Real Roadblock victory and Circle Leave earn all four optional title stops.
 	app = load("res://scenes/app.tscn").instantiate()
+	app.stitched_save_path = MENU_SAVE
 	root.add_child(app)
 	await process_frame
 	var stage: StitchedBattleScreen = await _mount(app)
@@ -183,11 +228,14 @@ func _run() -> void:
 		if app.stitched_sewing_panel != null:
 			app.stitched_sewing_panel.get_node("SewingLeave").pressed.emit()
 			await process_frame
-			var earned: Array = [app.start_button, app.stitched_continue_button, app.base_button,
+			var earned: Array = [app.start_button, app.base_button,
 				app.stitched_peddler_button, app.stitched_campfire_button,
 				app.stitched_postevent_button, app.stitched_unpicker_button]
-			_check(app._stitched_postvictory_stop_available, "authenticated earned stops are available")
-			await _menu_layout(app, earned)
+			_check(app._stitched_postvictory_stop_available and app.stitched_continue_button.disabled,
+				"authenticated earned stops are available without a valid Continue save")
+			await _menu_layout(app, [app.start_button, app.stitched_continue_button, app.base_button,
+				app.stitched_peddler_button, app.stitched_campfire_button,
+				app.stitched_postevent_button, app.stitched_unpicker_button])
 			var earned_carry := _carry(app)
 			await _ring(app, earned)
 			_check(_carry(app) == earned_carry, "earned focus traversal preserves all carried state")

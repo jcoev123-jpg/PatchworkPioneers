@@ -1,0 +1,777 @@
+extends SceneTree
+## Deterministic headless coverage for the three doll-scale Stitched roadside
+## stories appended to the native route-effect catalog
+## (res://data/events/stitched_route_effects.json): The Keyhole Choir, The
+## Compass of Loose Ends and The Veiled Wardrobe Mirror.
+##
+## EXPECTED, FUNDED_FINAL, UNDERFUNDED, CANDLE_SHORTS, KEYHOLE_FULL and
+## ANCHOR_TITLES are independent hardcoded copies of the authored stories and of
+## the funded settlement oracle; they never read the production catalog or the
+## consequence service back as their oracle. Only per-ID membership is asserted
+## on the catalog: no catalog total, no full ordered ID list and no fixed
+## insertion position, so peer batches can land in the same catalog without
+## clashing. Every preview row and receipt is compared against an exact
+## hardcoded dictionary, which also proves the ABSENCE of invented zero
+## gold/scraps keys on the choices that do not carry them. No RNG is seeded or
+## drawn by the rules under test; the fixed-seed guard only witnesses that.
+
+const EVENTS_PATH := "res://data/events/stitched_route_effects.json"
+const BASE_CANDLE := 40
+const BASE_GOLD := 60
+const BASE_SCRAPS := 4
+const PARTY_FRAYS := [["warden", 40], ["seamstress", 60], ["tinker", 20], ["yarn_ranger", 10]]
+## A distinct four-hero party that swaps the Yarn Ranger for the Lantern Monk, so
+## the canonical ranger gate is exercised without shrinking the party.
+const PARTY_WITHOUT_RANGER := [["warden", 40], ["seamstress", 60], ["tinker", 20], ["lantern_monk", 10]]
+
+## Independent literal copies of the three authored stories, including the exact
+## signed stitched_effect fields.
+const EXPECTED := {
+	"v3_keyhole_choir": {
+		"title": "The Keyhole Choir",
+		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
+		"choices": [
+			{"id": "follow_humming", "text": "Follow the warm humming (+16 candle, +7 fray each; requires room in the candle)", "effect": {"target": "party", "candle": 16, "fray": 7, "require_candle_room": true}},
+			{"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2}},
+			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
+		],
+	},
+	"v3_yarn_compass_spool": {
+		"title": "The Compass of Loose Ends",
+		"description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
+		"choices": [
+			{"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
+			{"id": "buy_quiet_bearing", "text": "Buy the safe bearing for 10 gold (-8 fray each)", "effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10}},
+			{"id": "leave", "text": "Leave the needle turning in circles", "effect": {"target": "party", "candle": 0, "fray": 0}},
+		],
+	},
+	"v3_veiled_wardrobe_mirror": {
+		"title": "The Veiled Wardrobe Mirror",
+		"description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
+		"choices": [
+			{"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true}},
+			{"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1}},
+			{"id": "leave", "text": "Pass without looking into the silver again", "effect": {"target": "party", "candle": 0, "fray": 0}},
+		],
+	},
+}
+
+## Independent funded oracle for the snapshot {candle 40, gold 60, scraps 4,
+## frays warden 40 / seamstress 60 / tinker 20 / yarn_ranger 10}: the exact
+## projected candle, the raw per-hero fray delta and the exact settled purse per
+## choice, each row also carrying its own hardcoded authored deltas for an
+## internal consistency check.
+const FUNDED_FINAL := {
+	"v3_keyhole_choir": {
+		"follow_humming": {"candle": 56, "candle_delta": 16, "fray": 7},
+		"buy_silence": {"candle": 40, "candle_delta": 0, "fray": -12, "scraps": 2, "scraps_delta": -2},
+		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
+	},
+	"v3_yarn_compass_spool": {
+		"follow_yarn_bolas": {"candle": 31, "candle_delta": -9, "fray": 6, "scraps": 6, "scraps_delta": 2},
+		"buy_quiet_bearing": {"candle": 40, "candle_delta": 0, "fray": -8, "gold": 50, "gold_delta": -10},
+		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
+	},
+	"v3_veiled_wardrobe_mirror": {
+		"lift_silver_seam": {"candle": 28, "candle_delta": -12, "fray": 10, "gold": 86, "gold_delta": 26},
+		"pin_lace_veil": {"candle": 40, "candle_delta": 0, "fray": -9, "scraps": 3, "scraps_delta": -1},
+		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
+	},
+}
+
+## One unit short of each paid price: only the paying purse is short, everything
+## else stays funded, and the free alternative plus Leave stay selectable on the
+## very same visit.
+const UNDERFUNDED := {
+	"v3_keyhole_choir": {
+		"choice_id": "buy_silence", "gold": 60, "scraps": 1,
+		"balance_key": "scraps", "balance": 1, "fray_delta": -12, "free_id": "follow_humming",
+	},
+	"v3_yarn_compass_spool": {
+		"choice_id": "buy_quiet_bearing", "gold": 9, "scraps": 4,
+		"balance_key": "gold", "balance": 9, "fray_delta": -8, "free_id": "follow_yarn_bolas",
+	},
+	"v3_veiled_wardrobe_mirror": {
+		"choice_id": "pin_lace_veil", "gold": 60, "scraps": 0,
+		"balance_key": "scraps", "balance": 0, "fray_delta": -9, "free_id": "lift_silver_seam",
+	},
+}
+
+## Insufficient-candle witnesses for the two require_full_candle debits: one
+## candle short is unavailable and refused; the exact price is claimable and
+## leaves candle 0.
+const CANDLE_SHORTS := [
+	{
+		"event_id": "v3_yarn_compass_spool",
+		"choice_id": "follow_yarn_bolas",
+		"short_candle": 8,
+		"funded_candle": 9,
+		"candle_delta": -9,
+		"fray_delta": 6,
+		"purse_key": "scraps",
+		"purse_delta_key": "scraps_delta",
+		"purse_base": BASE_SCRAPS,
+		"purse_delta": 2,
+	},
+	{
+		"event_id": "v3_veiled_wardrobe_mirror",
+		"choice_id": "lift_silver_seam",
+		"short_candle": 11,
+		"funded_candle": 12,
+		"candle_delta": -12,
+		"fray_delta": 10,
+		"purse_key": "gold",
+		"purse_delta_key": "gold_delta",
+		"purse_base": BASE_GOLD,
+		"purse_delta": 26,
+	},
+]
+
+## Earlier anchors that must remain in the catalog with their original titles.
+const ANCHOR_TITLES := {
+	"moth_infestation": "Moth Infestation",
+	"dye_vat": "The Dye Vat",
+	"frayed_debt_parcel": "Frayed Debt Parcel",
+	"needle_toll": "The Needle Toll",
+	"v3_glassfront_pin_cabinet": "The Glassfront Pin Cabinet",
+	"v3_moonblack_paperweight": "The Moonblack Paperweight",
+	"v3_cinder_brass_bedwarmer": "The Cinder-Brass Bedwarmer",
+}
+
+var failures: Array[String] = []
+var checks := 0
+var source_document: Dictionary = {}
+var source_snapshot: Dictionary = {}
+var source_by_id: Dictionary = {}
+var source_counts: Dictionary = {}
+var rng_guard: RandomNumberGenerator = null
+var guard_state := 0
+
+
+func _initialize() -> void:
+	rng_guard = RandomNumberGenerator.new()
+	rng_guard.seed = 5991794
+	guard_state = rng_guard.state
+	_load_source()
+	if source_document.is_empty():
+		_report()
+		return
+	_test_source_records()
+	_test_anchor_records()
+	_test_envelope_choices()
+	_test_funded_contract()
+	_test_underfunded_visits()
+	_test_missing_yarn_ranger()
+	_test_insufficient_candle_debits()
+	_test_full_candle_keyhole()
+	_test_unknown_choice_refusals()
+	_test_stale_effect_fails()
+	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
+	var before_draw: int = rng_guard.state
+	rng_guard.randi()
+	_check(rng_guard.state != before_draw,
+		"the fixed-seed RNG guard is live: an explicit draw advances its state")
+	_report()
+
+
+func _report() -> void:
+	for failure in failures:
+		printerr(failure)
+	print("v3_stitched_keyhole_compass_mirror_events_test: ",
+		"PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	quit(0 if failures.is_empty() else 1)
+
+
+func _check(condition: bool, message: String) -> void:
+	checks += 1
+	if not condition:
+		failures.append(message)
+
+
+func _load_source() -> void:
+	var file := FileAccess.open(EVENTS_PATH, FileAccess.READ)
+	_check(file != null, "stitched_route_effects.json opens through FileAccess")
+	if file == null:
+		return
+	var text := file.get_as_text()
+	file.close()
+	var parser := JSON.new()
+	var parsed: int = parser.parse(text)
+	_check(parsed == OK, "stitched_route_effects.json parses through JSON")
+	if parsed != OK:
+		return
+	_check(parser.data is Dictionary, "the route-effect catalog is a JSON object")
+	if not parser.data is Dictionary:
+		return
+	source_document = (parser.data as Dictionary).duplicate(true)
+	var events: Variant = source_document.get("events")
+	_check(events is Array, "the route-effect catalog carries an events array")
+	if not events is Array:
+		source_document = {}
+		return
+	for record in events:
+		if not record is Dictionary:
+			continue
+		var event_id: Variant = (record as Dictionary).get("id")
+		if not event_id is String:
+			continue
+		source_counts[event_id] = int(source_counts.get(event_id, 0)) + 1
+		if not source_by_id.has(event_id):
+			source_by_id[event_id] = record
+	source_snapshot = source_document.duplicate(true)
+
+
+## Each new record exists exactly once with only the native Event envelope,
+## its verbatim story, exactly three distinct choices carrying only
+## id/text/stitched_effect, and the exact signed effects.
+func _test_source_records() -> void:
+	for event_id in EXPECTED:
+		var contract: Dictionary = EXPECTED[event_id]
+		_check(int(source_counts.get(event_id, 0)) == 1,
+			"exactly one authored record for " + event_id)
+		if not source_by_id.has(event_id):
+			_check(false, "the authored record is present: " + event_id)
+			continue
+		var record: Dictionary = source_by_id[event_id]
+		_check(record.keys().size() == 4 and record.has("id") and record.has("title")
+			and record.has("description") and record.has("choices"),
+			"the new record uses only the native Event envelope: " + event_id)
+		_check(record.get("title") == contract["title"],
+			"the authored title matches: " + event_id)
+		_check(record.get("description") == contract["description"],
+			"the authored description matches: " + event_id)
+		var choices: Variant = record.get("choices")
+		if not choices is Array or (choices as Array).size() != 3:
+			_check(false, "the new record carries exactly three choices: " + event_id)
+			continue
+		var seen: Dictionary = {}
+		for choice in choices:
+			if not choice is Dictionary:
+				_check(false, "each new choice is an object: " + event_id)
+				continue
+			var authored: Dictionary = choice
+			_check(authored.keys().size() == 3 and authored.has("id")
+				and authored.has("text") and authored.has("stitched_effect"),
+				"each new choice uses only id/text/stitched_effect: " + event_id)
+			seen[authored.get("id")] = true
+		_check(seen.size() == 3, "the three new choice IDs are distinct: " + event_id)
+		var by_id := {}
+		for choice in choices:
+			by_id[(choice as Dictionary).get("id")] = choice
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			_check(by_id.has(choice_id),
+				"the record keeps its choice " + choice_id + ": " + event_id)
+			if not by_id.has(choice_id):
+				continue
+			var authored_choice: Dictionary = by_id[choice_id]
+			_check(authored_choice.get("text") == definition["text"],
+				"the authored choice text matches: " + event_id + " / " + choice_id)
+			var effect: Variant = authored_choice.get("stitched_effect")
+			if not effect is Dictionary:
+				_check(false, "the authored choice carries a stitched_effect: " + event_id + " / " + choice_id)
+				continue
+			var expected_effect: Dictionary = definition["effect"]
+			_check((effect as Dictionary).size() == expected_effect.size(),
+				"the effect carries exactly its authored keys: " + event_id + " / " + choice_id)
+			for key in expected_effect:
+				_check((effect as Dictionary).has(key)
+					and (effect as Dictionary)[key] == expected_effect[key],
+					"the authored effect field matches exactly: " + event_id + " / " + choice_id + " / " + str(key))
+
+
+## The named earlier anchors stay present with their original titles and choices.
+func _test_anchor_records() -> void:
+	for anchor_id in ANCHOR_TITLES:
+		_check(int(source_counts.get(anchor_id, 0)) == 1,
+			"the earlier anchor keeps exactly one record: " + anchor_id)
+		if not source_by_id.has(anchor_id):
+			continue
+		var record: Dictionary = source_by_id[anchor_id]
+		_check(record.get("title") == ANCHOR_TITLES[anchor_id],
+			"the anchor keeps its original title: " + anchor_id)
+		_check(record.get("choices") is Array
+			and (record.get("choices") as Array).size() >= 2,
+			"the anchor keeps its choices: " + anchor_id)
+
+
+## The shared envelope validator accepts every new record and each of its
+## choices claims exactly once against a fresh instance.
+func _test_envelope_choices() -> void:
+	for event_id in EXPECTED:
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		_check(RunEventChoice.new(record).is_valid(),
+			"the shipped envelope validator accepts the shipped record: " + event_id)
+		var contract: Dictionary = EXPECTED[event_id]
+		for choice_def in contract["choices"]:
+			var choice_id: String = (choice_def as Dictionary)["id"]
+			var envelope := RunEventChoice.new(record)
+			_check(envelope.choose(choice_id) == {
+				"ok": true, "event_id": event_id, "choice_id": choice_id,
+			}, "the envelope claims its authored choice: " + event_id + " / " + choice_id)
+			_check(envelope.is_claimed() and not envelope.is_valid(),
+				"the envelope claim latches once: " + event_id + " / " + choice_id)
+			_check(envelope.choose(choice_id) == {
+				"ok": false, "event_id": "", "choice_id": "",
+			}, "the envelope refuses a replay: " + event_id + " / " + choice_id)
+
+
+## Funded previews and claims agree with the independent oracle on all nine
+## choices; a settled visit cannot be replayed, previews close after the claim,
+## and neither the caller snapshot nor the record is ever mutated.
+func _test_funded_contract() -> void:
+	var settlements := 0
+	for event_id in EXPECTED:
+		var contract: Dictionary = EXPECTED[event_id]
+		var table: Dictionary = FUNDED_FINAL[event_id]
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+		for choice_def in contract["choices"]:
+			var definition: Dictionary = choice_def
+			var choice_id: String = definition["id"]
+			var row: Dictionary = table[choice_id]
+			_check(int(row["candle"]) == BASE_CANDLE + int(row["candle_delta"]),
+				"the funded candle agrees with its hardcoded delta: " + event_id + " / " + choice_id)
+			if row.has("scraps"):
+				_check(int(row["scraps"]) == BASE_SCRAPS + int(row["scraps_delta"]),
+					"the funded scraps agree with their hardcoded delta: " + event_id + " / " + choice_id)
+			if row.has("gold"):
+				_check(int(row["gold"]) == BASE_GOLD + int(row["gold_delta"]),
+					"the funded gold agree with its hardcoded delta: " + event_id + " / " + choice_id)
+			var snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+			var before: Dictionary = snapshot.duplicate(true)
+			var service := RunStitchedEventConsequence.new(record)
+			_check(service.is_valid() and not service.is_claimed(),
+				"a fresh visit opens: " + event_id + " / " + choice_id)
+			var preview: Dictionary = service.preview(snapshot)
+			_check(preview.get("ok") == true and preview.get("event_id") == event_id
+				and int(preview.get("candle")) == BASE_CANDLE,
+				"funded preview succeeds: " + event_id + " / " + choice_id)
+			_check(preview.get("choices", []).size() == 3,
+				"funded preview lists all three choices: " + event_id)
+			var entry := _entry(preview, choice_id)
+			_check(entry == _expected_entry(choice_id, row, PARTY_FRAYS),
+				"funded preview matches the hardcoded oracle exactly: " + event_id + " / " + choice_id)
+			var receipt: Dictionary = service.choose(choice_id, snapshot)
+			_check(receipt == _expected_receipt(event_id, choice_id, row, PARTY_FRAYS),
+				"funded claim settles the hardcoded oracle exactly: " + event_id + " / " + choice_id)
+			settlements += 1
+			_check(service.is_claimed() and not service.is_valid(),
+				"the claim latches exactly once: " + event_id + " / " + choice_id)
+			_check(service.choose(choice_id, snapshot) == _refusal(BASE_CANDLE),
+				"a settled choice cannot be replayed: " + event_id + " / " + choice_id)
+			_check(service.choose(_other_choice_id(contract, choice_id), snapshot) == _refusal(BASE_CANDLE),
+				"no alternate choice claims a spent visit: " + event_id + " / " + choice_id)
+			_check(service.preview(snapshot) == _denied_preview(),
+				"a spent visit offers no further preview: " + event_id + " / " + choice_id)
+			_check(snapshot == before and record == record_snapshot,
+				"a funded flow mutates neither snapshot nor record: " + event_id + " / " + choice_id)
+		_check(rng_guard.state == guard_state,
+			"the funded flows never touch the fixed-seed RNG: " + event_id)
+	_check(settlements == 9, "every one of the nine authored choices settles once when funded")
+
+
+## Each paid option one unit short previews unavailable with the caller's
+## unchanged balance, is refused without a claim or any balance change, and
+## Leave still succeeds on that same visit.
+func _test_underfunded_visits() -> void:
+	for event_id in UNDERFUNDED:
+		var plan: Dictionary = UNDERFUNDED[event_id]
+		var paid_id: String = plan["choice_id"]
+		var balance_key: String = plan["balance_key"]
+		var snapshot := _funded_snapshot(int(plan["gold"]), int(plan["scraps"]))
+		var before: Dictionary = snapshot.duplicate(true)
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+		var service := RunStitchedEventConsequence.new(record)
+		var preview: Dictionary = service.preview(snapshot)
+		_check(preview.get("ok") == true,
+			"an underfunded visit still previews: " + event_id)
+		var paid := _entry(preview, paid_id)
+		_check(not paid.is_empty(), "the underfunded paid choice keeps its slot: " + event_id)
+		if paid.is_empty():
+			continue
+		_check(paid.get("available") == false and int(paid.get("candle")) == BASE_CANDLE
+			and paid.get("fray") == {},
+			"the underfunded paid choice is unavailable without projection: " + event_id)
+		_check(int(paid.get("candle_delta")) == 0
+			and int(paid.get("fray_delta")) == int(plan["fray_delta"]),
+			"the unavailable paid choice still reports its authored deltas: " + event_id)
+		_check(paid.has(balance_key) and int(paid[balance_key]) == int(plan["balance"]),
+			"the unavailable paid choice reports the caller's unchanged balance: " + event_id)
+		_check(_entry(preview, String(plan["free_id"])).get("available") == true,
+			"the free alternative stays selectable on the underfunded visit: " + event_id)
+		_check(_entry(preview, "leave").get("available") == true,
+			"Leave stays selectable on the underfunded visit: " + event_id)
+		_check(service.choose(paid_id, snapshot) == _refusal(BASE_CANDLE),
+			"the underfunded paid choice is refused: " + event_id)
+		_check(service.is_valid() and not service.is_claimed(),
+			"a refused debit keeps the visit open and unclaimed: " + event_id)
+		_check(snapshot == before and record == record_snapshot,
+			"a refused debit changes no balance and no record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"a refused debit draws no RNG: " + event_id)
+		var leave: Dictionary = service.choose("leave", snapshot)
+		_check(leave == _expected_receipt(event_id, "leave", FUNDED_FINAL[event_id]["leave"], PARTY_FRAYS),
+			"Leave succeeds on the same visit after the refusal: " + event_id)
+		_check(service.is_claimed() and not service.is_valid(),
+			"the post-refusal Leave claim latches once: " + event_id)
+		_check(snapshot == before,
+			"the underfunded flow mutates no balance at all: " + event_id)
+
+
+## AC3: without the Yarn Ranger the compass's follow_yarn_bolas choice is
+## hidden from preview and refused without latching, while its paid alternative
+## and Leave remain; with the ranger in the party the same choice is available at
+## candle 40 and carries its written effects.
+func _test_missing_yarn_ranger() -> void:
+	var event_id := "v3_yarn_compass_spool"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+	var snapshot := _snapshot(BASE_CANDLE, BASE_GOLD, BASE_SCRAPS, PARTY_WITHOUT_RANGER)
+	var before: Dictionary = snapshot.duplicate(true)
+	var service := RunStitchedEventConsequence.new(record)
+	var preview: Dictionary = service.preview(snapshot)
+	_check(preview.get("ok") == true and preview.get("event_id") == event_id,
+		"the ranger-less compass visit still previews")
+	_check(preview.get("choices", []).size() == 2,
+		"the ranger-gated choice is hidden from the ranger-less preview")
+	_check(_entry(preview, "follow_yarn_bolas").is_empty(),
+		"the ranger-gated choice has no preview row at all")
+	_check(_entry(preview, "buy_quiet_bearing") == {
+		"choice_id": "buy_quiet_bearing", "target": "party", "hero_id": "",
+		"candle_delta": 0, "fray_delta": -8, "available": true,
+		"candle": BASE_CANDLE, "fray": _fray_map(PARTY_WITHOUT_RANGER, -8),
+		"gold_delta": -10, "gold": BASE_GOLD - 10,
+	}, "the paid alternative stays available and exact without the ranger")
+	_check(_entry(preview, "leave") == {
+		"choice_id": "leave", "target": "party", "hero_id": "",
+		"candle_delta": 0, "fray_delta": 0, "available": true,
+		"candle": BASE_CANDLE, "fray": {},
+	}, "Leave stays available without the ranger")
+	_check(service.choose("follow_yarn_bolas", snapshot) == _refusal(BASE_CANDLE),
+		"the ranger-gated choice is strictly refused when the ranger is absent")
+	_check(service.is_valid() and not service.is_claimed(),
+		"the absent-hero refusal consumes no claim")
+	_check(snapshot == before and record == record_snapshot,
+		"the absent-hero refusal mutates no snapshot and no record")
+	_check(rng_guard.state == guard_state,
+		"the absent-hero refusal draws no RNG")
+	var alternative: Dictionary = service.choose("buy_quiet_bearing", snapshot)
+	_check(alternative == _expected_receipt(event_id, "buy_quiet_bearing",
+		FUNDED_FINAL[event_id]["buy_quiet_bearing"], PARTY_WITHOUT_RANGER),
+		"the paid alternative still commits once without the ranger")
+	_check(service.is_claimed() and not service.is_valid(),
+		"the ranger-less alternative claim latches once")
+
+	var leave_service := RunStitchedEventConsequence.new(record)
+	var leave_snapshot := _snapshot(BASE_CANDLE, BASE_GOLD, BASE_SCRAPS, PARTY_WITHOUT_RANGER)
+	_check(leave_service.choose("follow_yarn_bolas", leave_snapshot) == _refusal(BASE_CANDLE),
+		"the ranger-gated choice is refused on an independent ranger-less visit")
+	_check(leave_service.choose("leave", leave_snapshot) == _expected_receipt(
+		event_id, "leave", FUNDED_FINAL[event_id]["leave"], PARTY_WITHOUT_RANGER),
+		"Leave still commits once on the ranger-less visit")
+
+	var ranger_snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	var ranger_before: Dictionary = ranger_snapshot.duplicate(true)
+	var ranger_service := RunStitchedEventConsequence.new(record)
+	var ranger_preview: Dictionary = ranger_service.preview(ranger_snapshot)
+	_check(ranger_preview.get("choices", []).size() == 3,
+		"the ranger-gated choice is available in a four-hero party")
+	_check(_entry(ranger_preview, "follow_yarn_bolas") == _expected_entry(
+		"follow_yarn_bolas", FUNDED_FINAL[event_id]["follow_yarn_bolas"], PARTY_FRAYS),
+		"the ranger-gated choice quotes its full candle cost and written effects at candle 40")
+	_check(ranger_snapshot == ranger_before,
+		"the ranger-present preview mutates no snapshot")
+
+
+## AC4 candle gate for the two require_full_candle debits: one candle short is
+## unavailable and refused without consuming the visit, RNG or snapshot; the
+## exact price claims and leaves candle 0; Leave still commits after a refusal.
+func _test_insufficient_candle_debits() -> void:
+	for witness in CANDLE_SHORTS:
+		var event_id: String = witness["event_id"]
+		var choice_id: String = witness["choice_id"]
+		var short_candle: int = witness["short_candle"]
+		var funded_candle: int = witness["funded_candle"]
+		var candle_delta: int = witness["candle_delta"]
+		var fray_delta: int = witness["fray_delta"]
+		var purse_key: String = witness["purse_key"]
+		var purse_delta_key: String = witness["purse_delta_key"]
+		var purse_base: int = witness["purse_base"]
+		var purse_delta: int = witness["purse_delta"]
+		_check(funded_candle == -candle_delta,
+			"the funded candle boundary is the exact authored price: " + event_id)
+
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+		var short_snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		short_snapshot["candle"] = short_candle
+		var short_before: Dictionary = short_snapshot.duplicate(true)
+		var short_service := RunStitchedEventConsequence.new(record)
+		var short_preview: Dictionary = short_service.preview(short_snapshot)
+		_check(short_preview.get("ok") == true and int(short_preview.get("candle")) == short_candle,
+			"the short-candle visit previews: " + event_id)
+		var short_entry := _entry(short_preview, choice_id)
+		_check(not short_entry.is_empty(), "the short-candle choice keeps its slot: " + event_id)
+		if short_entry.is_empty():
+			continue
+		_check(short_entry.get("available") == false
+			and int(short_entry.get("candle")) == short_candle
+			and int(short_entry.get("candle_delta")) == candle_delta
+			and int(short_entry.get("fray_delta")) == fray_delta
+			and short_entry.get("fray") == {}
+			and int(short_entry.get(purse_key)) == purse_base
+			and int(short_entry.get(purse_delta_key)) == purse_delta,
+			"one candle short makes the debit unavailable with unchanged purse and empty fray: " + event_id)
+		_check(_entry(short_preview, "leave").get("available") == true,
+			"Leave stays available at the short candle: " + event_id)
+		_check(short_service.choose(choice_id, short_snapshot) == _refusal(short_candle),
+			"one candle short strictly refuses the debit: " + event_id)
+		_check(short_service.is_valid() and not short_service.is_claimed(),
+			"the short-candle refusal consumes no claim: " + event_id)
+		_check(short_snapshot == short_before and record == record_snapshot,
+			"the short-candle refusal mutates no snapshot and no record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"the short-candle refusal draws no RNG: " + event_id)
+		var short_leave_expected := _expected_receipt(
+			event_id, "leave", FUNDED_FINAL[event_id]["leave"], PARTY_FRAYS)
+		short_leave_expected["candle"] = short_candle
+		_check(short_service.choose("leave", short_snapshot) == short_leave_expected,
+			"Leave still commits once after the short-candle refusal: " + event_id)
+		var funded_snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		funded_snapshot["candle"] = funded_candle
+		var funded_before: Dictionary = funded_snapshot.duplicate(true)
+		var funded_service := RunStitchedEventConsequence.new(record)
+		var funded_preview: Dictionary = funded_service.preview(funded_snapshot)
+		var funded_entry := _entry(funded_preview, choice_id)
+		_check(funded_entry.get("available") == true
+			and int(funded_entry.get("candle")) == 0
+			and int(funded_entry.get(purse_key)) == purse_base + purse_delta,
+			"the exact candle price makes the debit available and leaves candle 0: " + event_id)
+		var funded_receipt: Dictionary = funded_service.choose(choice_id, funded_snapshot)
+		var expected := _expected_receipt(event_id, choice_id,
+			FUNDED_FINAL[event_id][choice_id], PARTY_FRAYS)
+		expected["candle"] = 0
+		_check(funded_receipt == expected,
+			"the exact candle price settles the hardcoded oracle at candle 0: " + event_id)
+		_check(funded_service.choose(choice_id, funded_snapshot) == _refusal(funded_candle),
+			"the funded candle claim cannot be replayed: " + event_id)
+		_check(funded_snapshot == funded_before,
+			"the funded candle claim mutates no caller snapshot: " + event_id)
+
+
+## AC4 positive-candle gate: at candle 100 the keyhole's follow_humming choice is
+## unavailable and refused (no claim, no mutation, no RNG draw) while its paid
+## alternative and Leave stay claimable; at candle 99 it is available and clamps
+## to 100.
+func _test_full_candle_keyhole() -> void:
+	var event_id := "v3_keyhole_choir"
+	var choice_id := "follow_humming"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+
+	var snapshot_100 := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_100["candle"] = 100
+	var before_100: Dictionary = snapshot_100.duplicate(true)
+	var service_100 := RunStitchedEventConsequence.new(record)
+	var preview_100: Dictionary = service_100.preview(snapshot_100)
+	_check(preview_100.get("ok") == true and int(preview_100.get("candle")) == 100,
+		"the full-candle keyhole visit previews")
+	var entry_100 := _entry(preview_100, choice_id)
+	_check(entry_100.get("available") == false
+		and int(entry_100.get("candle")) == 100
+		and int(entry_100.get("candle_delta")) == 16
+		and int(entry_100.get("fray_delta")) == 7
+		and entry_100.get("fray") == {},
+		"a full candle quotes follow_humming unavailable with its authored deltas and empty fray")
+	_check(_entry(preview_100, "buy_silence").get("available") == true,
+		"buy_silence stays available at a full candle")
+	_check(_entry(preview_100, "leave").get("available") == true,
+		"Leave stays available at a full candle")
+	_check(service_100.choose(choice_id, snapshot_100) == _refusal(100),
+		"follow_humming is strictly refused at a full candle")
+	_check(service_100.is_valid() and not service_100.is_claimed(),
+		"the full-candle refusal consumes no claim")
+	_check(snapshot_100 == before_100 and record == record_snapshot,
+		"the full-candle refusal mutates no snapshot and no record")
+	_check(rng_guard.state == guard_state,
+		"the full-candle refusal draws no RNG")
+	var full_alt_expected := _expected_receipt(
+		event_id, "buy_silence", FUNDED_FINAL[event_id]["buy_silence"], PARTY_FRAYS)
+	full_alt_expected["candle"] = 100
+	_check(service_100.choose("buy_silence", snapshot_100) == full_alt_expected,
+		"the paid alternative still commits once after the full-candle refusal")
+	_check(service_100.is_claimed() and not service_100.is_valid(),
+		"the post-refusal alternative claim latches once")
+
+	var leave_service := RunStitchedEventConsequence.new(record)
+	var leave_snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	leave_snapshot["candle"] = 100
+	_check(leave_service.choose(choice_id, leave_snapshot) == _refusal(100),
+		"follow_humming is refused on an independent full-candle visit")
+	var leave_receipt: Dictionary = leave_service.choose("leave", leave_snapshot)
+	_check(leave_receipt == {
+		"ok": true, "event_id": event_id, "choice_id": "leave",
+		"target": "party", "hero_id": "", "candle": 100, "fray": {},
+	}, "Leave settles its minimal receipt at a full candle")
+
+	var snapshot_99 := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_99["candle"] = 99
+	var before_99: Dictionary = snapshot_99.duplicate(true)
+	var service_99 := RunStitchedEventConsequence.new(record)
+	var entry_99 := _entry(service_99.preview(snapshot_99), choice_id)
+	_check(entry_99.get("available") == true
+		and int(entry_99.get("candle")) == 100
+		and entry_99.get("fray") == _fray_map(PARTY_FRAYS, 7),
+		"candle 99 quotes follow_humming available, clamped to candle 100, fray +7 each")
+	var receipt_99: Dictionary = service_99.choose(choice_id, snapshot_99)
+	_check(receipt_99 == {
+		"ok": true, "event_id": event_id, "choice_id": choice_id,
+		"target": "party", "hero_id": "", "candle": 100,
+		"fray": _fray_map(PARTY_FRAYS, 7),
+	}, "candle 99 claims follow_humming settling the clamped candle 100 and its minimal receipt")
+	_check(service_99.is_claimed() and not service_99.is_valid(),
+		"the near-full claim latches once")
+	_check(snapshot_99 == before_99,
+		"the near-full claim mutates no caller snapshot")
+
+
+## An unknown choice ID is refused without a claim and Leave then succeeds on
+## the same visit.
+func _test_unknown_choice_refusals() -> void:
+	for event_id in EXPECTED:
+		var snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		var before: Dictionary = snapshot.duplicate(true)
+		var service := RunStitchedEventConsequence.new(
+			(source_by_id[event_id] as Dictionary).duplicate(true))
+		_check(service.choose("forged_choice", snapshot) == _refusal(BASE_CANDLE),
+			"an unknown choice ID is refused: " + event_id)
+		_check(service.is_valid() and not service.is_claimed(),
+			"an unknown choice keeps the visit open: " + event_id)
+		var leave: Dictionary = service.choose("leave", snapshot)
+		_check(leave == _expected_receipt(event_id, "leave",
+			FUNDED_FINAL[event_id]["leave"], PARTY_FRAYS),
+			"Leave succeeds after the forged refusal: " + event_id)
+		_check(service.is_claimed() and not service.is_valid(),
+			"the post-forged Leave claim latches once: " + event_id)
+		_check(snapshot == before,
+			"forged-ID flows mutate no snapshot: " + event_id)
+
+
+## A new choice carrying an unsupported extra effect key stays envelope-valid but
+## can never settle: no preview availability, no receipt, no claim consumed.
+func _test_stale_effect_fails() -> void:
+	for event_id in EXPECTED:
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var choices: Array = record["choices"]
+		var stale: Dictionary = choices[0]
+		var choice_id: String = stale["id"]
+		stale["outcome"] = {"gold": 1, "scraps": 1}
+		var snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		var before: Dictionary = snapshot.duplicate(true)
+		var service := RunStitchedEventConsequence.new(record)
+		_check(service.is_valid(), "a stale choice keeps the shared envelope valid: " + event_id)
+		var entry := _entry(service.preview(snapshot), choice_id)
+		_check(entry.get("available") == false and entry.get("candle_delta") == null
+			and entry.get("fray_delta") == null,
+			"an unsupported extra effect key makes the choice unsettleable: " + event_id)
+		_check(service.choose(choice_id, snapshot) == _refusal(BASE_CANDLE),
+			"an unsupported effect is refused without a receipt: " + event_id)
+		_check(service.is_valid() and not service.is_claimed(),
+			"the stale effect consumes no claim: " + event_id)
+		_check(snapshot == before,
+			"the stale-effect flow mutates no snapshot: " + event_id)
+		_check(service.choose("leave", snapshot).get("ok") == true,
+			"Leave still commits after a stale-effect refusal: " + event_id)
+
+
+func _funded_snapshot(gold: int, scraps: int) -> Dictionary:
+	return _snapshot(BASE_CANDLE, gold, scraps, PARTY_FRAYS)
+
+
+func _snapshot(candle: int, gold: int, scraps: int, frays: Array) -> Dictionary:
+	var party: Array = []
+	for pair in frays:
+		party.append({"id": pair[0], "fray": pair[1]})
+	return {"candle": candle, "party": party, "gold": gold, "scraps": scraps}
+
+
+func _fray_map(frays: Array, delta: int) -> Dictionary:
+	var intents: Dictionary = {}
+	if delta == 0:
+		return intents
+	for pair in frays:
+		intents[pair[0]] = delta
+	return intents
+
+
+func _expected_entry(choice_id: String, row: Dictionary, frays: Array) -> Dictionary:
+	var entry := {
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle_delta": int(row["candle_delta"]),
+		"fray_delta": int(row["fray"]),
+		"available": true,
+		"candle": int(row["candle"]),
+		"fray": _fray_map(frays, int(row["fray"])),
+	}
+	if row.has("scraps"):
+		entry["scraps_delta"] = int(row["scraps_delta"])
+		entry["scraps"] = int(row["scraps"])
+	if row.has("gold"):
+		entry["gold_delta"] = int(row["gold_delta"])
+		entry["gold"] = int(row["gold"])
+	return entry
+
+
+func _expected_receipt(event_id: String, choice_id: String, row: Dictionary, frays: Array) -> Dictionary:
+	var receipt := {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": int(row["candle"]),
+		"fray": _fray_map(frays, int(row["fray"])),
+	}
+	if row.has("scraps"):
+		receipt["scraps_delta"] = int(row["scraps_delta"])
+		receipt["scraps"] = int(row["scraps"])
+	if row.has("gold"):
+		receipt["gold_delta"] = int(row["gold_delta"])
+		receipt["gold"] = int(row["gold"])
+	return receipt
+
+
+func _entry(preview: Dictionary, choice_id: String) -> Dictionary:
+	for entry in preview.get("choices", []):
+		if entry is Dictionary and entry.get("choice_id") == choice_id:
+			return entry
+	return {}
+
+
+func _other_choice_id(contract: Dictionary, choice_id: String) -> String:
+	for choice_def in contract["choices"]:
+		var definition: Dictionary = choice_def
+		if definition["id"] != choice_id:
+			return definition["id"]
+	return ""
+
+
+func _refusal(candle: int) -> Dictionary:
+	return {
+		"ok": false,
+		"event_id": "",
+		"choice_id": "",
+		"target": "",
+		"hero_id": "",
+		"candle": candle,
+		"fray": {},
+	}
+
+
+func _denied_preview() -> Dictionary:
+	return {"ok": false, "event_id": "", "candle": 0, "choices": []}

@@ -308,8 +308,9 @@ func _build_title() -> void:
 	resume.text = "Continue Run"
 	resume.custom_minimum_size = Vector2(240, 56)
 	resume.pressed.connect(func():
-		if title_view.is_visible_in_tree() and stitched_run_session == null:
-			load_stitched_run(stitched_save_path))
+		if title_view.is_visible_in_tree() and stitched_run_session == null and not resume.disabled:
+			if not load_stitched_run(stitched_save_path):
+				_refresh_stitched_continue_eligibility())
 	box.add_child(resume)
 	base_button = Button.new()
 	# S9d: the base is Wren's bedroom whenever its painting ships; the village name only names the fallback.
@@ -373,7 +374,7 @@ func _build_title() -> void:
 	for button in [start_button, resume, base_button, stitched_peddler_button,
 			stitched_campfire_button, stitched_postevent_button, stitched_unpicker_button]:
 		_style_stitched_title_action(button)
-	_wire_stitched_title_focus()
+	_refresh_stitched_continue_eligibility()
 	start_button.grab_focus.call_deferred()
 	box.position -= box.get_combined_minimum_size() / 2.0
 
@@ -411,6 +412,23 @@ func _style_stitched_title_action(button: Button) -> void:
 	button.add_theme_constant_override("outline_size", 2)
 
 
+## Check the exact saved night only while the title is idle. The existing loader
+## replays the file again on activation, protecting against replacement or deletion.
+func _refresh_stitched_continue_eligibility() -> void:
+	if not is_instance_valid(title_view) or not title_view.visible \
+			or stitched_run_session != null or not is_instance_valid(stitched_continue_button):
+		return
+	var was_focused := stitched_continue_button.has_focus()
+	var eligible := not stitched_save_path.is_empty() \
+		and StitchedRunSave.read_file(stitched_save_path) != null
+	stitched_continue_button.disabled = not eligible
+	stitched_continue_button.focus_mode = Control.FOCUS_ALL if eligible else Control.FOCUS_NONE
+	stitched_continue_button.tooltip_text = "" if eligible else "No valid saved night to continue"
+	_wire_stitched_title_focus()
+	if not eligible and was_focused and start_button.is_visible_in_tree():
+		start_button.grab_focus()
+
+
 ## Include earned fixture stops only while their authenticated actions are eligible.
 func _wire_stitched_title_focus() -> void:
 	var actions: Array[Button] = []
@@ -428,6 +446,7 @@ func _wire_stitched_title_focus() -> void:
 
 ## Recheck after deferred cleanup so focus never lands on a retired stop.
 func _focus_stitched_title(preferred: Button) -> void:
+	_refresh_stitched_continue_eligibility()
 	var actions := [start_button, stitched_continue_button, base_button,
 		stitched_peddler_button, stitched_campfire_button,
 		stitched_postevent_button, stitched_unpicker_button]
@@ -4097,6 +4116,7 @@ func _base_back(source: WeakRef) -> void:
 	_tinker_setup_receipt = {}
 	if is_instance_valid(title_view):
 		title_view.show()
+		_refresh_stitched_continue_eligibility()
 	if is_instance_valid(base_button):
 		base_button.grab_focus()
 
@@ -4951,6 +4971,7 @@ func _return_stitched_run_title() -> void:
 		village.set_out_button.grab_focus()
 		return
 	title_view.show()
+	_refresh_stitched_continue_eligibility()
 	start_button.grab_focus()
 
 
