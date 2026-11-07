@@ -879,6 +879,12 @@ func _refresh() -> void:
 				var side := "hero" if str(targets[0]["side"]) == "hero" else "foe"
 				if not StitchedTargetForecast.for_rank(battle, acting, ability, side, rank).is_empty():
 					_target_ranks[side + "_" + str(rank)] = true
+	# A gift waiting for its doll or foe lights its targets on every view, corridor included.
+	if not _hand_pending.is_empty() and not _hand_pending.begins_with("lift:") and battle.hand_action_open():
+		var hand_side := hand_target_side(_hand_pending)
+		for rank in range(1, 5):
+			if _hand_target_ok(_hand_pending, str(_unit_at(hand_side, rank).get("id", ""))):
+				_target_ranks[hand_side + "_" + str(rank)] = true
 	_refresh_figure_hits()
 	_update_figure_lights()
 	for key in _target_buttons:
@@ -1621,15 +1627,7 @@ func _refresh_kid_view(cuts: Dictionary) -> void:
 		var button: Button = _hand_buttons[action_id]
 		button.disabled = not open or battle.gift_spent(action_id)
 		button.modulate = Color(1.25, 1.1, 0.8) if _hand_pending.split(":")[0] == action_id else Color.WHITE
-	if not _hand_pending.is_empty() and not _hand_pending.begins_with("lift:"):
-		var side := hand_target_side(_hand_pending)
-		for rank in range(1, 5):
-			var key := side + "_" + str(rank)
-			var lit := _hand_target_ok(_hand_pending, str(_unit_at(side, rank).get("id", "")))
-			if lit:
-				_target_ranks[key] = true
-			_target_buttons[key].disabled = not lit
-	elif _hand_pending.begins_with("lift:"):
+	if _hand_pending.begins_with("lift:"):
 		var hero_id := str(_unit_at("hero", int(_hand_pending.split(":")[1])).get("id", ""))
 		_action_buttons["move_front"].disabled = not battle.hand_action_check("lift", hero_id, -1).is_empty()
 		_action_buttons["move_back"].disabled = not battle.hand_action_check("lift", hero_id, 1).is_empty()

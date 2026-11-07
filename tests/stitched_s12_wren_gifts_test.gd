@@ -31,6 +31,7 @@ func _run() -> void:
 	_once_per_fight()
 	_profile()
 	await _session_offer_and_app()
+	await _corridor_targets()
 	if failures.is_empty():
 		print("stitched_s12_wren_gifts_test: PASS (%d checks)" % checks)
 		quit(0)
@@ -186,6 +187,11 @@ func _foe_gifts() -> void:
 	_next_round(battle)
 	receipt = battle.use_hand_action("tug", str(back.id), 0)
 	_check(bool(receipt.ok) and int(battle.get_unit(str(back.id)).rank) == 3, "Tug pulls a foe forward into the empty rank")
+	_next_round(battle)
+	var middle := _foe_at(battle, 2)
+	receipt = battle.use_hand_action("tug", str(back.id), 0)
+	_check(bool(receipt.ok) and int(battle.get_unit(str(back.id)).rank) == 2
+		and int(battle.get_unit(str(middle.id)).rank) == 3, "Tug trades places with the foe in the way")
 	var statuses := _battle(["pinch", "point", "tangle_thread", "tip_over"])
 	if statuses == null:
 		return
@@ -413,3 +419,30 @@ func _app_pick(session: StitchedRunSession, take: bool) -> void:
 	app.free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE))
+
+
+## A foe gift in the corridor fight lights foes to pick; a doll gift lights dolls.
+func _corridor_targets() -> void:
+	var config: Dictionary = StitchedBattleScreen.read_preview()
+	config["gifts"] = ["tug", "flick_button", "steady", "nightlight"]
+	var screen := StitchedBattleScreen.new()
+	screen.begin(config)
+	root.add_child(screen)
+	await process_frame
+	var fight := StitchedCorridorFight.attach(screen, "walls")
+	for step in range(20):
+		if screen.battle.current_side() == "hero":
+			break
+		screen.battle.pass_turn()
+		fight.refresh()
+	_check(bool(screen.choose_hand_action("tug").get("ok", false)), "corridor: Tug waits for a foe")
+	fight.refresh()
+	var lit: Array = screen.legal_targets().keys()
+	_check(not lit.is_empty() and lit.all(func(key): return str(key).begins_with("foe_")), "corridor: Tug lights foes only")
+	screen.choose_hand_action("tug")
+	_check(bool(screen.choose_hand_action("steady").get("ok", false)), "corridor: Steady waits for a doll")
+	fight.refresh()
+	lit = screen.legal_targets().keys()
+	_check(not lit.is_empty() and lit.all(func(key): return str(key).begins_with("hero_")), "corridor: Steady lights dolls only")
+	screen.queue_free()
+	await process_frame

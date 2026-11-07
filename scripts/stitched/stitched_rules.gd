@@ -420,7 +420,7 @@ func _foe_gift_check(action_id: String, foe: Dictionary) -> String:
 			if int(foe["statuses"].get("stun", 0)) > 0 or int(foe["statuses"].get("stun_resist", 0)) > 0:
 				return "that foe's strings are already slack"
 		"tug", "shove":
-			var plan := _shift_valid(foe, -1 if action_id == "tug" else 1)
+			var plan := _gift_shift_valid(foe, -1 if action_id == "tug" else 1)
 			if not bool(plan["ok"]):
 				return "that foe cannot be moved: " + str(plan["reason"])
 	return ""
@@ -486,9 +486,9 @@ func _resolve_gift(action_id: String, entry: Dictionary, target_id: String) -> D
 			var fell: Dictionary = _shift(unit, 1) if bool(_shift_valid(unit, 1)["ok"]) else {}
 			return {"status": "stun", "move": fell}
 		"tug":
-			return _shift(unit, -1)
+			return _gift_shift(unit, -1)
 		"shove":
-			return _shift(unit, 1)
+			return _gift_shift(unit, 1)
 		"flick_button":
 			var hit := {"damage": int(entry.get("damage", 4))}
 			_damage_target(unit, int(hit["damage"]), hit)
@@ -1754,6 +1754,37 @@ func _shift(unit: Dictionary, direction: int) -> Dictionary:
 			other["rank"] = from
 			swapped = str(other["id"])
 	unit["rank"] = destination
+	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
+
+
+## Wren's Tug and Shove move a foe one rank by hand: unlike a foe's own step, it trades places
+## with the foe in the way. A tangled foe on either end, or a scrap heap, blocks it.
+func _gift_shift_valid(foe: Dictionary, direction: int) -> Dictionary:
+	var destination := int(foe["rank"]) + direction
+	if destination < MIN_RANK or destination > MAX_RANK:
+		return {"ok": false, "reason": "there is no rank %d" % destination}
+	if int(foe["statuses"].get("tangled", 0)) > 0:
+		return {"ok": false, "reason": "tangled units cannot move"}
+	var other := _foe_at(destination)
+	if other.is_empty() and not _heap_at(destination).is_empty():
+		return {"ok": false, "reason": "a scrap heap is in the way"}
+	if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
+		return {"ok": false, "reason": "the foe in the way is tangled"}
+	return {"ok": true, "reason": "", "destination": destination}
+
+
+func _gift_shift(foe: Dictionary, direction: int) -> Dictionary:
+	var plan := _gift_shift_valid(foe, direction)
+	if not plan["ok"]:
+		return {"ok": false, "reason": str(plan["reason"])}
+	var destination := int(plan["destination"])
+	var from := int(foe["rank"])
+	var other := _foe_at(destination)
+	var swapped := ""
+	if not other.is_empty():
+		other["rank"] = from
+		swapped = str(other["id"])
+	foe["rank"] = destination
 	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
 
 
