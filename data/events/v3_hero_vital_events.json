@@ -726,6 +726,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_warden_dollhouse_shutter",
+      "title": "The Dollhouse Shutter",
+      "description": "A nursery shutter taller than the dolls has folded across a moonlit landing. The Warden braces its iron hinge with his broad patched shield while two tiny quilted figures tap from behind the slats.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "brace_shutter_hinge",
+          "text": "Spend 2 scraps padding the hinge (heal 5 HP; gain 1 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 5, "max_hp": 1 }
+        },
+        {
+          "id": "strip_shutter_brass",
+          "text": "Pull the brass latch free (lose 4 HP; gain 24 gold)",
+          "outcome": { "gold": 24, "scraps": 0, "hp": -4, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little figures behind the shutter",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_milkglass_shade",
+      "title": "The Milk-Glass Shade",
+      "description": "A giant frosted lamp shade lies across a midnight pantry, filled with the silhouettes of cloth moths. The Lantern Monk raises his warm amber lantern to a crack where they gather in silence.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "rewick_shade_light",
+          "text": "Pay 14 gold for a warm wick (heal 8 HP)",
+          "outcome": { "gold": -14, "scraps": 0, "hp": 8, "max_hp": 0 }
+        },
+        {
+          "id": "gather_shade_silk",
+          "text": "Pull silk from the sharp glass rim (lose 6 HP; gain 3 scraps)",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the moth shadows settle behind the glass",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_iron_bootjack",
+      "title": "The Iron Bootjack",
+      "description": "A rusted bootjack straddles the doll-sized hall like a crooked arch. The Scarecrow steadies it with his pitchfork while his black crow pecks at a torn straw perch beneath the iron heel.",
+      "required_hero": "scarecrow",
+      "choices": [
+        {
+          "id": "stitch_crow_perch",
+          "text": "Spend 2 scraps sewing a padded perch (heal 3 HP; gain 2 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 3, "max_hp": 2 }
+        },
+        {
+          "id": "trade_straw_frame",
+          "text": "Trade straw from your frame (lose 2 max HP; gain 26 gold)",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the crow guarding its iron perch",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }

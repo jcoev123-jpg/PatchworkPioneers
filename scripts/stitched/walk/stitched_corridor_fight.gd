@@ -60,6 +60,10 @@ var fray_bar: TextureProgressBar
 var log_label: Label
 var outcome_label: Label
 var hovered := ""
+## A local cursor only: engine.legal_targets() owns all legality and all commits.
+var _keyboard_targets: Array[String] = []
+var _keyboard_target := ""
+var _keyboard_stamp := ""
 var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
@@ -446,7 +450,7 @@ func _build_hands() -> void:
 		button.size = Vector2(56, 56)
 		button.focus_mode = Control.FOCUS_ALL
 		button.tooltip_text = "Wren: %s\n%s" % [str(entry.get("name", action_id.capitalize())), _plain(str(entry.get("text", "")))]
-		button.pressed.connect(func(): _act(engine.choose_hand_action(action_id)))
+		button.pressed.connect(func(): choose_hand(action_id))
 		for hover_signal in [button.mouse_entered, button.mouse_exited, button.focus_entered, button.focus_exited]:
 			hover_signal.connect(func(): _shade_parts())
 		add_child(button)
@@ -497,12 +501,19 @@ func add_more(key: String, title: String, callback: Callable) -> Button:
 
 
 func set_more_open(open: bool) -> void:
+	if open:
+		_clear_keyboard_target()
 	more_panel.visible = open
 	if open and not more_buttons.is_empty():
 		for key in more_buttons:
 			if not more_buttons[key].disabled:
 				more_buttons[key].grab_focus()
 				break
+
+
+func choose_hand(action_id: String) -> Dictionary:
+	_clear_keyboard_target()
+	return _act(engine.choose_hand_action(action_id))
 
 
 func _act(receipt: Dictionary) -> Dictionary:
@@ -518,6 +529,7 @@ func _act(receipt: Dictionary) -> Dictionary:
 
 ## Picks a body part; a part with a single possible target acts at once.
 func choose_part(slot: String) -> Dictionary:
+	_clear_keyboard_target()
 	if engine._selected_part == slot:
 		engine._selected_part = ""
 		engine._refresh()
@@ -544,6 +556,55 @@ func click_figure(side: String, rank: int) -> Dictionary:
 func finish() -> void:
 	if battle.is_over():
 		engine.exit_requested.emit()
+
+
+## All candidate keys come from the current engine projection; only a living unit
+## or an actual targetable scrap heap is represented. No rules are recomputed here.
+func _sync_keyboard_targets() -> bool:
+	var pending := not engine._selected_part.is_empty() or (
+		not engine._hand_pending.is_empty() and not engine._hand_pending.begins_with("lift:"))
+	var keys: Array[String] = []
+	if pending and not battle.is_over() and not more_panel.visible:
+		var authorized := engine.legal_targets()
+		for side in ["hero", "foe"]:
+			for rank in range(1, 5):
+				var key: String = side + "_" + str(rank)
+				if not authorized.has(key):
+					continue
+				var unit := engine._unit_at(side, rank)
+				if not unit.is_empty() and not bool(unit.get("dead", false)) and not bool(unit.get("lost", false)):
+					keys.append(key)
+				elif side == "foe" and not engine._heap_at(rank).is_empty():
+					keys.append(key)
+	var stamp := "%s|%s|%s|%s" % [
+		battle.current_actor_id(), engine._selected_part, engine._hand_pending, ",".join(keys)] if pending and not battle.is_over() and not more_panel.visible else ""
+	if _keyboard_stamp == stamp:
+		return false
+	_keyboard_stamp = stamp
+	_keyboard_targets = keys
+	_keyboard_target = ""
+	return true
+
+
+func _clear_keyboard_target() -> void:
+	_keyboard_targets.clear()
+	_keyboard_target = ""
+	_keyboard_stamp = ""
+
+
+## The existing FightLine is the only new instruction surface.
+func _target_hint() -> void:
+	if _keyboard_targets.is_empty() or more_panel.visible:
+		return
+	if _keyboard_target.is_empty():
+		log_label.text = "Arrows choose a target · Enter / Space confirms."
+		return
+	var side := _keyboard_target.get_slice("_", 0)
+	var rank := int(_keyboard_target.get_slice("_", 1))
+	var unit := engine._unit_at(side, rank)
+	var title := str(unit.get("name", "Scrap heap"))
+	log_label.text = "%s R%d · %s · Arrows change · Enter / Space confirms." % [
+		"Doll" if side == "hero" else "Foe", rank, title]
 
 
 func _hover(key: String, inside: bool) -> void:
@@ -610,6 +671,7 @@ func refresh() -> void:
 			hits[key].visible = plate.visible
 			hits[key].tooltip_text = _simple_detail(engine.status_detail(side, rank)) if plate.visible else ""
 	_refresh_intents()
+	_sync_keyboard_targets()
 	_refresh_bar()
 	_shade_figures()
 	_place_overlays()
@@ -667,8 +729,13 @@ func _refresh_bar() -> void:
 	_shade_parts()
 	var cut := hero_turn and battle.thread_cuts().has(str(shown.get("id", "")))
 	var hand_open := battle.hand_action_open() and not battle.is_over()
-	more_buttons.move_front.disabled = not (hero_turn and engine._can_move(-1)) and not engine._hand_pending.begins_with("lift:")
-	more_buttons.move_back.disabled = not (hero_turn and engine._can_move(1)) and not engine._hand_pending.begins_with("lift:")
+	var lifting := engine._hand_pending.begins_with("lift:")
+	var lift_id := str(engine._unit_at("hero", int(engine._hand_pending.get_slice(":", 1))).get("id", "")) if lifting else ""
+	# Even in Lift's More tray, only the rules-authorized direction is live.
+	more_buttons.move_front.disabled = not (battle.hand_action_check("lift", lift_id, -1).is_empty() if lifting
+		else hero_turn and engine._can_move(-1))
+	more_buttons.move_back.disabled = not (battle.hand_action_check("lift", lift_id, 1).is_empty() if lifting
+		else hero_turn and engine._can_move(1))
 	more_buttons.pass.disabled = not hero_turn
 	more_buttons.re_tie.disabled = not cut
 	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
@@ -695,6 +762,7 @@ func _refresh_bar() -> void:
 		log_label.text = "Pick a target."
 	else:
 		log_label.text = "  ·  ".join(shown_lines.slice(maxi(0, shown_lines.size() - 3)))
+	_target_hint()
 
 
 func _shade_parts() -> void:
@@ -732,10 +800,12 @@ func _shade_figures() -> void:
 			tone = Color(1.25, 1.12, 0.95) if targets.has(key) else Color(0.5, 0.48, 0.5)
 		if key == hovered and (not choosing or targets.has(key)):
 			tone = Color(1.4, 1.25, 1.0)
+		if key == _keyboard_target and targets.has(key):
+			tone = Color(1.75, 1.45, 0.85)
 		if stage.figure_nodes.has(key):
 			stage.figure_nodes[key].modulate = tone
 		var back: NinePatchRect = plates[key].get_node("Back")
-		back.self_modulate = Color(1.5, 1.2, 0.7) if key == actor_key else (Color(1.2, 1.1, 0.9) if targets.has(key) else Color.WHITE)
+		back.self_modulate = Color(1.8, 1.45, 0.75) if key == _keyboard_target and targets.has(key) else (Color(1.5, 1.2, 0.7) if key == actor_key else (Color(1.2, 1.1, 0.9) if targets.has(key) else Color.WHITE))
 		var title: Label = plates[key].get_node("Name")
 		title.add_theme_color_override("font_color", AMBER if key == actor_key or targets.has(key) else BONE)
 
@@ -828,6 +898,36 @@ func hush() -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey or event is InputEventMouseButton:
 		hush()
+	if not event is InputEventKey or not event.pressed or event.echo or battle == null or battle.is_over():
+		return
+	if not event.keycode in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
+		return
+	# Only pending rank targeting owns these keys. Native controls (including Lift's
+	# directional More actions and the finished Continue) retain their own input.
+	if more_panel.visible or (engine._selected_part.is_empty() and
+			(engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:"))):
+		return
+	_sync_keyboard_targets()
+	if event.keycode in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
+		if not _keyboard_targets.is_empty():
+			var direction := -1 if event.keycode in [KEY_LEFT, KEY_UP] else 1
+			var index := _keyboard_targets.find(_keyboard_target)
+			if index < 0:
+				index = 0 if direction > 0 else _keyboard_targets.size() - 1
+			else:
+				index = posmod(index + direction, _keyboard_targets.size())
+			_keyboard_target = _keyboard_targets[index]
+			_shade_figures()
+			_target_hint()
+	else:
+		# Re-read the live authority immediately before committing. A changed actor,
+		# vanished rank or revised legal set never spends a turn, hand or RNG.
+		_sync_keyboard_targets()
+		if not _keyboard_target.is_empty() and _keyboard_targets.has(_keyboard_target) \
+				and engine.legal_targets().has(_keyboard_target):
+			var chosen := _keyboard_target
+			click_figure(chosen.get_slice("_", 0), int(chosen.get_slice("_", 1)))
+	get_viewport().set_input_as_handled()
 
 
 func _state_signature() -> String:
@@ -845,6 +945,9 @@ func _process(_delta: float) -> void:
 	elif _state_signature() != _signature:
 		refresh()
 		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+	elif _sync_keyboard_targets():
+		_shade_figures()
+		_target_hint()
 	_place_overlays()
 
 
@@ -898,8 +1001,9 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode in hand_keys and hand_keys.find(event.keycode) < carried.size():
 		var gift_id: String = carried[hand_keys.find(event.keycode)]
 		if hand_buttons.has(gift_id) and not hand_buttons[gift_id].disabled:
-			_act(engine.choose_hand_action(gift_id))
+			choose_hand(gift_id)
 	elif event.keycode == KEY_ESCAPE:
+		_clear_keyboard_target()
 		if more_panel.visible:
 			set_more_open(false)
 		else:

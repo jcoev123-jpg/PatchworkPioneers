@@ -346,7 +346,7 @@ func _verify_threat_plates(stage: StitchedBattleScreen, foe_count: int) -> void:
 		var body := Rect2(Vector2.ZERO, ticket.size)
 		var heading := ticket.primary.get_rect()
 		var target := ticket.secondary.get_rect()
-		_verify_threat_caption(ticket.primary, 24)
+		_verify_threat_caption(ticket.primary, 24 if ticket.primary.text in ["PASS", "STUN"] else 16)
 		_verify_threat_caption(ticket.secondary, 18)
 		_check(body.encloses(heading) and body.encloses(target) and not heading.intersects(target),
 			"measured threat rows stay separate and enclosed by the compact sewn frame")

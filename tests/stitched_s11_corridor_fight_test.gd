@@ -43,7 +43,13 @@ func _verify_live_intents(fight: StitchedCorridorFight, expected: int) -> void:
 			and ticket.tooltip_text.contains(str(projected["foe_name"]))
 			and tag.text.begins_with("FOE R%d" % rank),
 			"mounted foe R%d has its own authored projection, ID/name and rank" % rank)
-		_check(ticket.size.x >= 170 and ticket.primary.get_theme_font_size("font_size") >= 24
+		var primary_font: Font = ticket.primary.get_theme_font("font")
+		var heading_px := ticket.primary.get_theme_font_size("font_size")
+		_check(ticket.size.x >= 170 and heading_px >= 16 and heading_px <= 24
+			and primary_font != null
+			and primary_font.get_string_size(ticket.primary.text,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, heading_px).x <= ticket.primary.size.x
+			and primary_font.get_height(heading_px) <= ticket.primary.size.y
 			and ticket.secondary.get_theme_font_size("font_size") >= 17
 			and ticket.get_global_rect().end.x <= 1280
 			and ticket.get_global_rect().position.y > fight.ribbon.get_global_rect().end.y

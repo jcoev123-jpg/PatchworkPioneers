@@ -26,6 +26,7 @@ func _run() -> void:
 	_rules_bonus()
 	_session_wear()
 	_double_stitch()
+	_visit_patches()
 	await _corridor_hoops()
 	for failure in failures:
 		printerr(failure)
@@ -221,6 +222,23 @@ func _double_stitch() -> void:
 	warden.parts.head.tier = 1
 	warden.parts.head.torn = true
 	_check(not session._double_stitch("warden", "head", 0).ok, "a torn patch must be mended first")
+
+
+func _visit_patches() -> void:
+	var session := StitchedRunSession.start(4)
+	var warden: Dictionary = session.heroes.filter(func(h): return h.id == "warden")[0]
+	var spare_id := "warden_head_helmet_rattle" if str(warden.parts.head.id) != "warden_head_helmet_rattle" else "warden_head_pot_helm_bonk"
+	session.satchel = [{"id": spare_id, "slot": "head", "tier": 1, "torn": false}]
+	session._actions.clear()
+	session._add_swaps(session._roster())
+	var swap: Dictionary = session._actions.filter(func(a): return a.arguments[0] == "warden")[0]
+	_check(swap.text.ends_with(str(session.catalog[spare_id].name)), "a swap names the spare, not its id")
+	_check(session.visit_action_part(swap) == {"id": spare_id, "slot": "head"}, "a swap shows the spare's patch")
+	_check(session.visit_action_part({"id": "mend", "arguments": ["warden", "arms"]}).id == str(warden.parts.arms.id),
+		"a mend shows the worn patch")
+	_check(session.visit_action_part({"id": "leave", "arguments": []}).is_empty(), "leaving shows no patch")
+	_check(StitchedSewnPatches.icon_path(spare_id, "head") == StitchedSewnPatches.ART + spare_id + ".png",
+		"every part has its own patch picture")
 
 
 func _corridor_hoops() -> void:

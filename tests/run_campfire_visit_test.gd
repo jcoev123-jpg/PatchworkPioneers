@@ -44,6 +44,7 @@ func _initialize() -> void:
 	_test_stitched_rejections_and_replay()
 	_test_stitched_actionable_quotes()
 	_test_stitched_quote_actual_totals()
+	_test_stitched_per_doll_quote()
 	_test_stitched_noop_refusals()
 	_test_stitched_lost_dolls_not_mended()
 	_test_swap_admission_and_quote()
@@ -869,6 +870,172 @@ func _test_stitched_noop_refusals() -> void:
 		"decided satchel visit closes swaps and advertises nothing")
 	_check(randi() == expected_next and local_rng.state == local_state,
 		"quotes and refused no-ops draw no RNG")
+
+
+func _doll_name(hero: Dictionary) -> String:
+	return str(hero.get("name", hero["id"]))
+
+
+## Independent oracle: the bracket text for a per-doll delta list ("" if none).
+func _bracket_oracle(party: Array, deltas: Array, fmt: String) -> String:
+	var parts: Array = []
+	for i in range(party.size()):
+		if int(deltas[i]) > 0:
+			parts.append("%s %s" % [_doll_name(party[i]), fmt % int(deltas[i])])
+	return "" if parts.is_empty() else " [" + ", ".join(parts) + "]"
+
+
+## Everything between the first "[" after `head` and its "]", or "" when the
+## clause is not followed by a bracket.
+func _bracket_after(text: String, head: String) -> String:
+	var start := text.find(head)
+	if start == -1:
+		return "<missing>"
+	var after := start + head.length()
+	if after >= text.length() or text[after] != " " or after + 1 >= text.length() \
+			or text[after + 1] != "[":
+		return ""
+	var close := text.find("]", after)
+	return text.substr(after, close - after + 1)
+
+
+## Per-doll beneficiary breakdown on the Mend and Tell Tales quote clauses.
+func _test_stitched_per_doll_quote() -> void:
+	seed(313131)
+	var expected_next := randi()
+	seed(313131)
+	var maxes := [40, 30, 50, 40]
+	var hps := [40, 15, 0, 40]
+	var frays := [0, 8, 75, 25]
+	var party := _stitched_party(hps, frays)
+	for i in range(4):
+		party[i]["max_hp"] = maxes[i]
+	var before := party.duplicate(true)
+	var mend_deltas: Array = [0, 9, 15, 0]
+	var tales_deltas: Array = [0, 8, 25, 25]
+	var names: Dictionary = {}
+	for hero in party:
+		names[_doll_name(hero)] = true
+	_check(names.size() == 4, "per-doll fixture has four distinct doll names")
+	var visit := RunCampfireVisit.new("camp_pd", party, "stitched", 60, 20)
+	var state := visit.read_state()
+	var quote: Dictionary = state["quote"]
+	var text: String = quote["text"]
+	_check(state["status"] == "stitched_open"
+		and quote["choices"] == ["mend", "tell_tales", "trim_the_wick", "leave"],
+		"per-doll fixture stays open with the unchanged ordered choice ids")
+	var mend_head := "Mend 30% max HP (+24 HP now)"
+	var tales_head := "Tell Tales up to 25 FRAY each (-58 FRAY now; -15 Wren FEAR now)"
+	_check(text.find(mend_head) != -1 and text.find(tales_head) != -1
+		and text.find("Trim the Wick up to 50 CANDLE (+40 now)") != -1
+		and text.find("Leave (free, no change)") != -1,
+		"original clauses and totals stay intact with FEAR and Wick")
+	var mend_bracket := _bracket_after(text, mend_head)
+	var tales_bracket := _bracket_after(text, tales_head)
+	_check(mend_bracket == _bracket_oracle(party, mend_deltas, "+%d HP") and mend_bracket != ""
+		and mend_bracket.find(_doll_name(party[1]) + " +9 HP") != -1
+		and mend_bracket.find(_doll_name(party[2]) + " +15 HP") != -1,
+		"Mend names only the wounded and Hanging dolls with exact HP, in roster order")
+	_check(mend_bracket.find(_doll_name(party[0])) == -1 and mend_bracket.find(_doll_name(party[3])) == -1
+		and mend_bracket.find(" +0") == -1,
+		"Mend lists no full-HP doll and no zero delta")
+	_check(tales_bracket == _bracket_oracle(party, tales_deltas, "-%d FRAY") and tales_bracket != ""
+		and tales_bracket.find(_doll_name(party[0])) == -1,
+		"Tell Tales names only dolls with FRAY, capped at 25, in roster order")
+	# Per-doll deltas sum to the unchanged totals and match fresh receipts.
+	var mend_visit := RunCampfireVisit.new("camp_pd_m", before.duplicate(true), "stitched", 60, 20)
+	var mend_receipt: Dictionary = mend_visit.select("mend", "camp_pd_m", before, 60, 20)
+	var mend_sum: int = 0
+	for i in range(4):
+		var gained: int = int(mend_receipt["heroes"][i]["hp"]) - int(before[i]["hp"])
+		_check(gained == int(mend_deltas[i]), "Mend receipt doll %d matches the quoted delta" % (i + 1))
+		mend_sum += gained
+	_check(mend_receipt.get("ok") == true and mend_sum == 24, "Mend receipt total equals quoted 24")
+	var tales_visit := RunCampfireVisit.new("camp_pd_t", before.duplicate(true), "stitched", 60, 20)
+	var tales_receipt: Dictionary = tales_visit.select("tell_tales", "camp_pd_t", before, 60, 20)
+	var tales_sum: int = 0
+	for i in range(4):
+		var relieved: int = int(before[i]["fray"]) - int(tales_receipt["heroes"][i]["fray"])
+		_check(relieved == int(tales_deltas[i]), "Tales receipt doll %d matches the quoted delta" % (i + 1))
+		tales_sum += relieved
+	_check(tales_receipt.get("ok") == true and tales_sum == 58 and tales_receipt["fear"] == 5,
+		"Tales receipt total equals quoted 58 and FEAR falls by 15")
+	var wick_visit := RunCampfireVisit.new("camp_pd_w", before.duplicate(true), "stitched", 60, 20)
+	var wick_receipt: Dictionary = wick_visit.select("trim_the_wick", "camp_pd_w", before, 60, 20)
+	_check(wick_receipt.get("ok") == true and wick_receipt["candle"] == 100
+		and wick_receipt["heroes"] == before and wick_receipt["fear"] == 20,
+		"Wick still restores exactly the quoted 40 and touches no doll")
+	# Quote reading mutates nothing and stays detached.
+	_check(visit.read_state() == state and party == before, "building the quote changes no state")
+	state["quote"]["text"] = "forged"
+	_check(visit.read_state()["quote"]["text"] == text, "per-doll quote snapshot is detached")
+	# FEAR omitted / 0 / 5 / 20 keep the same per-doll brackets.
+	for fear in [null, 0, 5, 20]:
+		var fear_visit := RunCampfireVisit.new("camp_pd_f", before.duplicate(true), "stitched", 60, fear)
+		var fear_text: String = fear_visit.read_state()["quote"]["text"]
+		var fear_relief := 0 if fear == null else mini(RunCampfireVisit.TALES_FEAR_RELIEF, fear)
+		var fear_head := "Tell Tales up to 25 FRAY each (-58 FRAY now" \
+			+ ("" if fear == null else "; -%d Wren FEAR now" % fear_relief) + ")"
+		_check(fear_text.find(fear_head) != -1
+			and _bracket_after(fear_text, fear_head) == tales_bracket,
+			"FEAR %s keeps the clause and the same per-doll Tales bracket" % str(fear))
+	# FEAR-only Tales: original FEAR wording, no empty bracket.
+	var only_fear := RunCampfireVisit.new("camp_pd_of", _stitched_party(FULL_HPS, NO_FRAY),
+		"stitched", 100, 20)
+	var only_text: String = only_fear.read_state()["quote"]["text"]
+	_check(only_text.find("Tell Tales up to 25 FRAY each (-0 FRAY now; -15 Wren FEAR now)") != -1
+		and only_text.find("[") == -1 and only_text.find("]") == -1,
+		"FEAR-only Tales keeps its FEAR text and shows no empty bracket")
+	# Unavailable choices are absent; no brackets at all when nobody benefits.
+	var quiet_text: String = _quote_for(FULL_HPS, NO_FRAY, 100)["text"]
+	_check(quiet_text.find("[") == -1 and quiet_text.find("Mend") == -1
+		and quiet_text.find("Tell Tales") == -1,
+		"no beneficiaries means no bracket and no unavailable clause")
+	# 0-FRAY doll has no Tales entry; full doll no Mend entry.
+	var mixed_text: String = _quote_for([40, 29, 26, 48], [0, 200, 0, 0], 70)["text"]
+	var mixed := _stitched_party([40, 29, 26, 48], [0, 200, 0, 0])
+	_check(mixed_text.find(_doll_name(mixed[1]) + " +1 HP]") != -1
+		and mixed_text.find(_doll_name(mixed[1]) + " -25 FRAY]") != -1
+		and mixed_text.find(_doll_name(mixed[0])) == -1,
+		"single beneficiary shows one entry for Mend and for Tales")
+	# LOST doll: excluded from Mend, still counted in Tales (existing semantics).
+	var lost := _lost_party([40, 15, 0, 12], [3], [0, 8, 75, 25])
+	for i in range(4):
+		lost[i]["max_hp"] = maxes[i]
+	var lost_visit:= RunCampfireVisit.new("camp_pd_l", lost, "stitched", 100)
+	var lost_text: String = lost_visit.read_state()["quote"]["text"]
+	var lost_mend := _mend_oracle(lost)
+	var lost_fray := _fray_oracle(lost)
+	var lost_mend_head := "Mend 30%% max HP (+%d HP now)" % lost_mend
+	var lost_tales_head := "Tell Tales up to 25 FRAY each (-%d FRAY now)" % lost_fray
+	var lost_mend_bracket := _bracket_after(lost_text, lost_mend_head)
+	var lost_tales_bracket := _bracket_after(lost_text, lost_tales_head)
+	_check(lost_mend == 24 and lost_fray == 58
+		and lost_mend_bracket == _bracket_oracle(lost, [0, 9, 15, 0], "+%d HP")
+		and lost_mend_bracket.find(_doll_name(lost[3])) == -1,
+		"LOST doll is absent from Mend and the Hanging doll shows its floor(30%) amount")
+	_check(lost_tales_bracket == _bracket_oracle(lost, [0, 8, 25, 25], "-%d FRAY")
+		and lost_tales_bracket.find(_doll_name(lost[3]) + " -25 FRAY") != -1,
+		"LOST doll's FRAY stays in the Tell Tales breakdown and total")
+	var lost_receipt: Dictionary = lost_visit.select("tell_tales", "camp_pd_l",
+		lost.duplicate(true), 100)
+	var lost_delta: int = 0
+	for i in range(4):
+		lost_delta += int(lost[i]["fray"]) - int(lost_receipt["heroes"][i]["fray"])
+	_check(lost_receipt.get("ok") == true and lost_delta == lost_fray,
+		"LOST doll's FRAY relief appears in the actual receipt")
+	# Refusals stay fully active on the new quote.
+	var refusal := {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
+	var held := visit.read_state()
+	_check(visit.select("mend", "camp_other", before, 60, 20) == refusal, "per-doll wrong node refused")
+	_check(visit.select("mend", "camp_pd", before, 59, 20) == refusal, "per-doll stale candle refused")
+	_check(visit.select("forged", "camp_pd", before, 60, 20) == refusal, "per-doll forged decision refused")
+	_check(visit.select("mend", "camp_pd", before, 60, 19) == refusal, "per-doll stale fear refused")
+	_check(visit.select("mend", "camp_pd", before, 60) == refusal, "per-doll missing fear refused")
+	_check(visit.read_state() == held, "refusals leave the per-doll visit open and unchanged")
+	_check(visit.select("mend", "camp_pd", before, 60, 20).get("ok") == true,
+		"the legal Mend still commits after the refusals")
+	_check(randi() == expected_next, "per-doll quotes and receipts draw no global RNG")
 
 
 ## A real four-rank roster where the listed ranks (0-based) are LOST dolls.

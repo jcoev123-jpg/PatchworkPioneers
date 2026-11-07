@@ -87,10 +87,10 @@ func _source_contract() -> void:
 					"acc": 86, "dmg": [3, 4], "crit": 0, "effects": {"exposed": 1},
 					"self_move": 0, "move": "attack2"},
 				{"id": "button_bulwark", "name": "Button Bulwark", "kind": "buff",
-					"launch": [1, 2], "target": [1], "target_side": "self", "multi": false,
+					"launch": [1, 2], "target": [1, 2], "target_side": "self", "multi": false,
 					"acc": 100, "dmg": [0, 0], "crit": 0, "effects": {"thorns": 2},
 					"self_move": 0, "move": "skill"}]}}),
-		"AC1: unrelated Guard Ragling source and stitched kit are exactly unchanged")
+		"AC1: Guard Ragling source unchanged except authorized Button Bulwark target [1,2]")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "ragling")
 	_check(not foe.is_empty() and foe.get("id") == "ragling" and foe.get("max_hp") == 12
 		and foe.get("speed") == 4 and foe.get("dodge") == 8 and foe.get("acc") == 0

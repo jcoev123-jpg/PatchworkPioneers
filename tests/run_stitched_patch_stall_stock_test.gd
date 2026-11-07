@@ -9,6 +9,12 @@ const COATS := {
 	"wool_patch_cloak": 5, "chain_stitched_coat": 7, "reinforced_patchcoat": 9,
 	"thick_felt_mantle": 10,
 }
+## Authored Stitched catalog quotes: budget vest 70, power mantle 130, the rest 100.
+const EXPECTED_PRICE := {
+	"quilted_coat": 100, "padded_vest": 100, "double_quilt_coat": 100, "scrap_lined_vest": 70,
+	"wool_patch_cloak": 100, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
+	"thick_felt_mantle": 130,
+}
 const PARTY := ["warden", "seamstress", "tinker", "yarn_ranger"]
 const NODE := "patch_stall_node"
 
@@ -91,14 +97,15 @@ func _run() -> void:
 		for record in coat_records:
 			coat_slots[record.id] = record.slot
 	for id in COATS:
-		_check(prices.has(id) and prices[id] == 100, "named coat %s is authored at 100 gold" % id)
+		_check(prices.has(id) and prices[id] == EXPECTED_PRICE[id],
+			"named coat %s is authored at %d gold" % [id, EXPECTED_PRICE[id]])
 		_check(coat_slots.get(id) == "COAT", "named coat %s is a COAT power" % id)
 	_check(not prices.is_empty(), "Stitched patch source is non-empty")
 
 	_check_membership_and_determinism(prices)
 	_check_every_coat_eligible()
-	_check_scarce(["quilted_coat"], "one")
-	_check_scarce(["padded_vest", "thick_felt_mantle"], "two")
+	_check_scarce(["scrap_lined_vest"], "one")
+	_check_scarce(["thick_felt_mantle", "padded_vest"], "two")
 	_check_all_owned()
 	_check_bad_inputs()
 	_check_visit_failures()
@@ -122,6 +129,8 @@ func _check_membership_and_determinism(prices: Dictionary) -> void:
 				"seed %d row is a strict id/price pair" % seed_value)
 			_check(prices.has(offer.id) and offer.price == prices[offer.id] and offer.price > 0,
 				"seed %d row %s carries its authored price" % [seed_value, offer.id])
+			_check(not EXPECTED_PRICE.has(offer.id) or offer.price == EXPECTED_PRICE[offer.id],
+				"seed %d row %s is quoted at its ID-specific coat price" % [seed_value, offer.id])
 			_check(not blocked.has(offer.id), "seed %d row %s is not card-era/rare/Heirloom" % [seed_value, offer.id])
 			_check(not seen.has(offer.id), "seed %d rows are distinct" % seed_value)
 			seen[offer.id] = true
@@ -148,7 +157,7 @@ func _check_membership_and_determinism(prices: Dictionary) -> void:
 
 
 func _check_every_coat_eligible() -> void:
-	# Each named coat, when the only unowned one, is offered once at 100 gold.
+	# Each named coat, when the only unowned one, is offered once at its authored price.
 	for id in COATS:
 		var owned := _others([id])
 		var snapshot := owned.duplicate(true)
@@ -159,7 +168,8 @@ func _check_every_coat_eligible() -> void:
 		_check(_ids(result.offers).count(id) == 1, "%s appears exactly once as the sole unowned coat" % id)
 		for offer in result.offers:
 			if offer.id == id:
-				_check(offer.price == 100, "%s is offered at the 100-gold quote" % id)
+				_check(offer.price == EXPECTED_PRICE[id],
+					"%s is offered at its %d-gold quote" % [id, EXPECTED_PRICE[id]])
 		_check(owned == snapshot, "%s fixture owned list is not mutated" % id)
 
 
@@ -181,7 +191,8 @@ func _check_scarce(unowned: Array, label: String) -> void:
 	for id in unowned:
 		_check(ids.count(id) == 1, "%s remaining: unowned %s appears once" % [label, id])
 	for offer in offers:
-		_check(offer.price == 100, "%s remaining: %s keeps its honest 100 price" % [label, offer.id])
+		_check(offer.price == EXPECTED_PRICE[offer.id],
+			"%s remaining: %s keeps its honest %d price" % [label, offer.id, EXPECTED_PRICE[offer.id]])
 		if not unowned.has(offer.id):
 			_check(owned.has(offer.id), "%s remaining: filler %s is truly owned" % [label, offer.id])
 	_check(owned == snapshot, "%s remaining: caller's owned IDs not mutated" % label)
@@ -214,15 +225,22 @@ func _check_scarce(unowned: Array, label: String) -> void:
 			_check(visit.read_state() == state and not visit.is_consumed(),
 				"%s remaining: refused filler buy leaves visit available" % label)
 
-	# One authentic 100-gold purchase of the real unowned patch, exactly once.
+	# One authentic purchase of the real unowned patch at its actual quote, exactly once.
 	var target: String = unowned[0]
+	var target_price := 0
+	for row in quote.offers:
+		if row.id == target:
+			target_price = int(row.price)
+	_check(target_price == EXPECTED_PRICE[target] and target_price <= gold,
+		"%s remaining: target %s quote is its real %d price and affordable at %d gold"
+		% [label, target, EXPECTED_PRICE[target], gold])
 	var bought := visit.buy_patch(target, state.visit_id, state.node_id, state.snapshot)
 	_check(bought.get("ok") == true and bought.decision == "buy_patch", "%s remaining: real purchase succeeds" % label)
 	if bought.get("ok") == true:
-		_check(bought.receipt == {"kind": "trinket", "id": target, "price": 100},
-			"%s remaining: receipt is the authentic 100-gold quote" % label)
-		_check(bought.ledger.gold == gold - 100 and bought.ledger.owned_patch_ids.count(target) == 1,
-			"%s remaining: charged once and owns the patch once" % label)
+		_check(bought.receipt == {"kind": "trinket", "id": target, "price": target_price},
+			"%s remaining: receipt is the authentic %d-gold quote" % [label, target_price])
+		_check(bought.ledger.gold == gold - target_price and bought.ledger.owned_patch_ids.count(target) == 1,
+			"%s remaining: charged %d once and owns the patch once" % [label, target_price])
 		_check(bought.ledger.party_ids == PARTY and not bought.ledger.has("deck"),
 			"%s remaining: ledger is card-free with the four heroes" % label)
 	_check(visit.is_consumed(), "%s remaining: visit consumed" % label)
@@ -395,15 +413,15 @@ func _check_visit_failures() -> void:
 		"stale, wrong-node and wrong-snapshot Leave refused")
 	_check(visit.read_state() == state and not visit.is_consumed(), "refused Leave attempts leave the visit open")
 
-	# Failed low-gold attempt, then free Leave and replay refusal.
-	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, 99, offers)
+	# Failed low-gold attempt (below the cheapest 70-gold coat), then free Leave and replay refusal.
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, 69, offers)
 	_check(poor.is_valid(), "low-gold visit opens")
 	var poor_state := poor.read_state()
 	var poor_quote := poor.quote()
 	var any_buyable := false
 	for row in poor_quote.offers:
 		any_buyable = any_buyable or row.can_buy
-	_check(not any_buyable and poor_quote.decisions == ["leave"], "99 gold quotes no buyable row and only Leave")
+	_check(not any_buyable and poor_quote.decisions == ["leave"], "69 gold quotes no buyable row and only Leave")
 	var short := poor.buy_patch(target, poor_state.visit_id, poor_state.node_id, poor_state.snapshot)
 	_check(short.get("ok") != true, "low-gold purchase refused")
 	_check(poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
@@ -411,7 +429,7 @@ func _check_visit_failures() -> void:
 	var left := poor.leave(poor_state.visit_id, poor_state.node_id, poor_state.snapshot)
 	_check(left.get("ok") == true and left.decision == "leave", "Leave is free at the Patch Stall")
 	if left.get("ok") == true:
-		_check(left.ledger.gold == 99 and left.ledger.owned_patch_ids == owned,
+		_check(left.ledger.gold == 69 and left.ledger.owned_patch_ids == owned,
 			"Leave keeps gold and owned patches unchanged")
 	_check(poor.is_consumed(), "Leave closes the visit")
 	_check(poor.leave(poor_state.visit_id, poor_state.node_id, poor_state.snapshot).get("ok") != true
