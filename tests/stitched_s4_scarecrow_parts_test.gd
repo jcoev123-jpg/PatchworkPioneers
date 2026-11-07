@@ -98,6 +98,7 @@ func _initialize() -> void:
 	_test_sack_glare_rank4_data()
 	_test_rank4_crows()
 	_test_rank4_crow_flock()
+	_test_crow_flock_mark_survives_for_dive()
 	_test_crow_flock_tier1_weak_reply()
 	_test_sack_glare_tier1_weak_reply()
 	_test_sack_glare_rank4()
@@ -220,6 +221,9 @@ func _test_catalog() -> void:
 			if id == STARTERS["head"] and tier == 2:
 				_check(ability == base,
 					"AC1: Sack Glare tier II intentionally matches the now-Weak-2 tier-I ability")
+			elif id == ALTERNATES["head"] and tier == 2:
+				_check(ability == base,
+					"AC1: Crow Flock tiers I and II intentionally share Weak 2/Mark 2")
 			else:
 				_check(tier == 1 or ability != base,
 					"AC1: tier %d improves a native ability for %s" % [tier, id])
@@ -532,14 +536,14 @@ func _test_leg_rank4_data() -> void:
 			_check(not StitchedParts.ranks_allowed(int(flock_ability["target_mask"]), rank),
 				"AC1: Crow Flock tier %d excludes enemy rank %d" % [flock_tier, rank])
 		var expected_weak := 2 if flock_tier < 3 else 3
-		var expected_mark: int = int(flock_tier)
+		var expected_mark: int = 2 if flock_tier < 3 else 3
 		_check(flock_ability["effects"] == {"weak": expected_weak, "mark": expected_mark},
 			"AC1: Crow Flock tier %d keeps Weak %d and Mark %d"
 				% [flock_tier, expected_weak, expected_mark])
 		_check(StitchedParts.stat_at_tier(flock, flock_tier) == {"crit": 4},
 			"AC1: Crow Flock tier %d keeps its crit stat" % flock_tier)
 	_check(flock["ability"]["launch"] == flock_launch
-		and flock["ability"]["effects"] == {"weak": 2, "mark": 1},
+		and flock["ability"]["effects"] == {"weak": 2, "mark": 2},
 		"AC1: tier reads never replace Crow Flock's base launch or potency")
 	var full_mask := StitchedParts.rank_mask([1, 2, 3, 4])
 	_check(full_mask == StitchedParts.ALL_RANKS_MASK,
@@ -1179,7 +1183,7 @@ func _crow_flock_tier1_reply_trial(seed_value: int) -> Dictionary:
 		if bool(receipt.get("hit", false)):
 			landed_count += 1
 			if _status_amount(statuses, "weak") != 2 \
-				or _status_amount(statuses, "mark") != 1 \
+				or _status_amount(statuses, "mark") != 2 \
 				or int(foe_now["statuses"].get("weak", 0)) < 1 \
 				or int(foe_now["statuses"].get("weak", 0)) > 2:
 				return {}
@@ -1258,6 +1262,149 @@ func _crow_flock_tier1_reply_trial(seed_value: int) -> Dictionary:
 		"after_expiry": weakened.state_snapshot(), "after_expiry_rng": weakened.rng_state(),
 		"control_after_expiry": control.state_snapshot(), "control_rng": control.rng_state(),
 	}
+
+
+## AC2: two genuine S2 4v3 turns, with the same Flock and real foe reply.
+## The twins diverge only when the control's Mark is erased after the rank-one
+## foe's first natural countdown; no status rules or hit rolls are stubbed.
+func _crow_flock_mark_dive_trial(seed_value: int) -> Dictionary:
+	var marked := _rank4_foe_battle(seed_value, ALTERNATES["head"], 1)
+	var cleared := _rank4_foe_battle(seed_value, ALTERNATES["head"], 1)
+	if marked == null or cleared == null \
+		or not _to(marked, "scarecrow") or not _to(cleared, "scarecrow"):
+		return {}
+	if marked.state_snapshot() != cleared.state_snapshot() \
+		or marked.get_heroes().size() != 4 or marked.get_foes().size() != 3 \
+		or marked.current_actor_id() != "scarecrow" \
+		or str(marked.get_unit("scarecrow")["parts"]["head"]["id"]) != ALTERNATES["head"] \
+		or str(marked.get_unit("scarecrow")["parts"]["legs"]["id"]) != STARTERS["legs"]:
+		return {}
+	var start := marked.state_snapshot()
+	var flock := marked.use_part(ALTERNATES["head"], 1)
+	var twin_flock := cleared.use_part(ALTERNATES["head"], 1)
+	if not bool(flock.get("ok", false)) or flock != twin_flock \
+		or flock.get("results", []).size() != 3 \
+		or marked.state_snapshot() != cleared.state_snapshot() \
+		or marked.rng_state() != cleared.rng_state() \
+		or marked.state_snapshot() == start:
+		return {}
+	var rank_one_hit: Dictionary = {}
+	var target_ids: Dictionary = {}
+	for receipt in flock["results"]:
+		var target_id := str(receipt.get("target", ""))
+		if target_ids.has(target_id) or not target_id in ENEMY_IDS:
+			return {}
+		target_ids[target_id] = true
+		if target_id == "fray_scavenger":
+			rank_one_hit = receipt
+	if target_ids.size() != 3 or rank_one_hit.is_empty() \
+		or not bool(rank_one_hit.get("hit", false)) \
+		or int(rank_one_hit.get("target_rank", 0)) != 1 \
+		or _status_amount(rank_one_hit.get("statuses", []), "mark") != 2 \
+		or _status_amount(rank_one_hit.get("statuses", []), "weak") != 2 \
+		or int(marked.get_unit("fray_scavenger")["statuses"].get("mark", 0)) != 2:
+		return {}
+	if not _to(marked, "fray_scavenger") or not _to(cleared, "fray_scavenger"):
+		return {}
+	var foe_first: Dictionary = marked.get_unit("fray_scavenger")
+	if int(foe_first.get("hp", 0)) <= 0 \
+		or int(foe_first["statuses"].get("mark", 0)) != 1 \
+		or int(foe_first["statuses"].get("weak", 0)) != 1 \
+		or marked.state_snapshot() != cleared.state_snapshot() \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	var expected_control := marked.state_snapshot()
+	for unit in expected_control["units"]:
+		if str(unit["id"]) == "fray_scavenger":
+			unit["statuses"].erase("mark")
+	# The only intervention: remove Mark after the first genuine foe-turn tick.
+	cleared._units["fray_scavenger"]["statuses"].erase("mark")
+	if cleared.state_snapshot() != expected_control \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	var reply := marked.use_foe_ability("sack_swing", 2)
+	var twin_reply := cleared.use_foe_ability("sack_swing", 2)
+	if not bool(reply.get("ok", false)) or reply != twin_reply \
+		or str(reply.get("actor", "")) != "fray_scavenger" \
+		or reply.get("results", []).size() != 1 \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	if not _to(marked, "scarecrow") or not _to(cleared, "scarecrow"):
+		return {}
+	var foe_before := marked.get_unit("fray_scavenger")
+	var twin_before := cleared.get_unit("fray_scavenger")
+	var hero_before := marked.get_unit("scarecrow")
+	if foe_before.is_empty() or twin_before.is_empty() or hero_before.is_empty() \
+		or int(foe_before.get("hp", 0)) <= 10 \
+		or int(hero_before.get("hp", 0)) <= 0 \
+		or int(foe_before["statuses"].get("mark", 0)) != 1 \
+		or int(twin_before["statuses"].get("mark", 0)) != 0 \
+		or int(foe_before["hp"]) != int(twin_before["hp"]) \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	var dive := marked.use_part(STARTERS["legs"], 1)
+	var twin_dive := cleared.use_part(STARTERS["legs"], 1)
+	if not bool(dive.get("ok", false)) or not bool(twin_dive.get("ok", false)) \
+		or str(dive.get("actor", "")) != "scarecrow" \
+		or str(dive.get("ability", "")) != "scarecrow_legs_crow_dive_move" \
+		or dive.get("results", []).size() != 1 or twin_dive.get("results", []).size() != 1:
+		return {}
+	var hit: Dictionary = dive["results"][0]
+	var plain_hit: Dictionary = twin_dive["results"][0]
+	var bonus := int(StitchedParts.ability_at_tier(_catalog()["by_id"][STARTERS["legs"]], 1)["mark_damage"])
+	if not bool(hit.get("hit", false)) or not bool(plain_hit.get("hit", false)) \
+		or str(hit.get("target", "")) != "fray_scavenger" \
+		or str(plain_hit.get("target", "")) != "fray_scavenger" \
+		or int(hit.get("roll", -1)) != int(plain_hit.get("roll", -2)) \
+		or bool(hit.get("crit", false)) != bool(plain_hit.get("crit", false)) \
+		or int(hit.get("damage", 0)) != int(plain_hit.get("damage", 0)) + bonus \
+		or bonus <= 0 \
+		or int(hit.get("target_hp", -1)) != int(foe_before["hp"]) - int(hit["damage"]) \
+		or int(plain_hit.get("target_hp", -1)) != int(twin_before["hp"]) - int(plain_hit["damage"]) \
+		or int(marked.get_unit("fray_scavenger")["hp"]) != int(hit["target_hp"]) \
+		or int(cleared.get_unit("fray_scavenger")["hp"]) != int(plain_hit["target_hp"]) \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	var dive_rng := marked.rng_state()
+	if not _to(marked, "fray_scavenger") or not _to(cleared, "fray_scavenger"):
+		return {}
+	var expired_foe := marked.get_unit("fray_scavenger")
+	if expired_foe.is_empty() or int(expired_foe.get("hp", 0)) <= 0 \
+		or expired_foe["statuses"].has("mark") \
+		or int(expired_foe["statuses"].get("mark", 0)) != 0 \
+		or marked.rng_state() != cleared.rng_state():
+		return {}
+	return {
+		"seed": seed_value, "flock": flock, "reply": reply,
+		"first_turn_mark": 1, "bonus": bonus,
+		"dive": dive, "control_dive": twin_dive,
+		"before_hp": int(foe_before["hp"]),
+		"marked_hp": int(hit["target_hp"]), "plain_hp": int(plain_hit["target_hp"]),
+		"marked_damage": int(hit["damage"]), "plain_damage": int(plain_hit["damage"]),
+		"dive_rng": dive_rng, "expiry_rng": marked.rng_state(),
+		"expired_mark": int(expired_foe["statuses"].get("mark", 0)),
+	}
+
+
+func _test_crow_flock_mark_survives_for_dive() -> void:
+	var witness: Dictionary = {}
+	for seed_value in range(501500, 501900):
+		witness = _crow_flock_mark_dive_trial(seed_value)
+		if not witness.is_empty():
+			break
+	_check(not witness.is_empty(),
+		"AC2: bounded fixed-seed authentic 4v3 Flock survives rank-one foe turn for legal Crow Dive")
+	if witness.is_empty():
+		return
+	_check(int(witness["first_turn_mark"]) == 1 and int(witness["expired_mark"]) == 0,
+		"AC2: Mark 2 ticks to 1 on first foe start and naturally expires at second without reapplication")
+	_check(int(witness["marked_damage"]) == int(witness["plain_damage"]) + int(witness["bonus"]) \
+		and int(witness["marked_hp"]) == int(witness["before_hp"]) - int(witness["marked_damage"]) \
+		and int(witness["plain_hp"]) == int(witness["before_hp"]) - int(witness["plain_damage"]),
+		"AC2: same hit/crit RNG yields exactly Crow Dive mark_damage extra real HP loss")
+	var replay := _crow_flock_mark_dive_trial(int(witness["seed"]))
+	_check(not replay.is_empty() and replay == witness,
+		"AC3: equal-seed real-turn Flock, foe attack, Dive, countdown and RNG all replay")
 
 
 func _test_crow_flock_tier1_weak_reply() -> void:

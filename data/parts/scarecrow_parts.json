@@ -283,7 +283,7 @@
         "crit": 0,
         "effects": {
           "weak": 2,
-          "mark": 1
+          "mark": 2
         },
         "self_move": 0,
         "move": "skill"
