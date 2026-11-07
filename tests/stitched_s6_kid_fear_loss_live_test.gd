@@ -194,7 +194,10 @@ func _carried_loss() -> void:
 
 
 func _replacement_loss() -> void:
-	var app: Node = await _first_loss(0)
+	# Seed 1690 re-derives the replacement witness on the Hook Drag reel: the opening Fight still
+	# loses exactly one doll and is won, its connected Shop leads to the connected Sewing Circle
+	# and on into a genuine onward Elite.
+	var app: Node = await _first_loss(1690)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null or session.phase != "map":
 		app.free()
@@ -208,7 +211,11 @@ func _replacement_loss() -> void:
 	var leave := _visit_button(app, "leave")
 	if leave != null:
 		leave.pressed.emit()
-	_check(session.choices().has("f03_n3") and _press_route(app, "f03_n3")
+	var circle_id := ""
+	for id in session.choices():
+		if session.map.get_node(id).type == "SewingCircle":
+			circle_id = id
+	_check(not circle_id.is_empty() and _press_route(app, circle_id)
 		and session.pending.service == "SewingCircle", "loss reaches the real connected Sewing Circle")
 	var offers := session.visit_actions().filter(func(action: Dictionary): return action.id == "replace")
 	_check(not offers.is_empty(), "genuine LOST identity has lawful replacement offers")
