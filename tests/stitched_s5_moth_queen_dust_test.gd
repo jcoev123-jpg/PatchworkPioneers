@@ -23,7 +23,7 @@ const DEVOUR := {
 }
 const VEIL := {
 	"id": "moth_veil", "name": "Moth Veil", "kind": "buff",
-	"launch": [1, 3], "target": [1, 3], "target_side": "self", "multi": false,
+	"launch": [1, 3], "target": [1, 2, 3, 4], "target_side": "ally", "multi": true,
 	"acc": 100, "dmg": [0, 0], "crit": 0, "effects": {"dodge": 8, "duration": 1},
 	"self_move": 0, "move": "skill",
 }
