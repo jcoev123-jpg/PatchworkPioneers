@@ -187,7 +187,7 @@ const EXPECTED := {
 		"acc": 90,
 		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
-		"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
+		"effects": [{"tangled": 2}, {"tangled": 2}, {"tangled": 3}],
 	},
 	"seamstress_bobbin_snag_spools": {
 		"name": "Bobbin Snag Spools", "slot": "legs", "stat_key": "dodge", "stat": [3, 4, 5],
@@ -198,9 +198,9 @@ const EXPECTED := {
 		"mark": [0, 0, 0],
 		"dmg": [[0, 0], [0, 0], [0, 0]],
 		"effects": [
-			{"mark": 1, "tangled": 1},
-			{"mark": 2, "tangled": 1},
-			{"mark": 3, "tangled": 1},
+			{"mark": 1, "tangled": 2},
+			{"mark": 2, "tangled": 2},
+			{"mark": 3, "tangled": 2},
 		],
 	},
 }
@@ -450,8 +450,12 @@ func _test_tiers() -> void:
 			for key in effects:
 				_check(int(effects[key]) >= _effect_value(previous_effects, str(key)),
 					"AC3: %s %s never falls between tiers" % [part_id, str(key)])
-			_check(dmg != previous_damage or effects != previous_effects,
-				"AC3: %s tier %d really overrides its own damage or effects" % [part_id, tier])
+			if part_id == "seamstress_tether_loop_spools" and tier == 2:
+				_check(_int_dict(part["tiers"]["2"]["ability"]["effects"]) == {"tangled": 2},
+					"AC3: tier-II Tether explicitly retains Tangled 2 while its speed stat rises")
+			else:
+				_check(dmg != previous_damage or effects != previous_effects,
+					"AC3: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_damage = dmg
 			previous_effects = effects
 
@@ -560,6 +564,8 @@ func _test_negatives() -> void:
 func _test_live_starters() -> void:
 	_thread_prick_witness()
 	_tether_loop_witness()
+	_test_snare_timelines()
+	_test_snare_rejections()
 	_heal_witness(false)
 	_heal_witness(true)
 
@@ -595,9 +601,9 @@ func _thread_prick_witness() -> void:
 		"AC2: the Bleed counter ticks down by one unit turn")
 
 
-## Tether Loop Tangles exactly one enemy for one of its turns.
+## Tether Loop retains Tangled through the foe's next real turn-start.
 func _tether_loop_witness() -> void:
-	var witness := _first_hit("seamstress_tether_loop_spools", 1)
+	var witness := _snare_witness("seamstress_tether_loop_spools", 1, true)
 	_check(not witness.is_empty(), "AC2: a fixed seed lands Tether Loop on the rank-1 foe")
 	if witness.is_empty():
 		return
@@ -608,14 +614,229 @@ func _tether_loop_witness() -> void:
 		"AC2: the receipt names the equipped Tether Loop part")
 	_check(str(result["target"]) == "fray_scavenger" and str(result["target_side"]) == "foe",
 		"AC2: Tether Loop picks exactly one enemy in the chosen rank")
-	_check(int(battle.get_unit("fray_scavenger")["statuses"].get("tangled", 0)) == 1,
-		"AC2: a landed Tether Loop leaves a real Tangled 1 on the foe")
+	_check(int(battle.get_unit("fray_scavenger")["statuses"].get("tangled", 0)) == 2,
+		"AC1: a landed tier-I Tether Loop leaves Tangled 2 on the foe")
 	_check(_has_status(result.get("statuses", []), "tangled"), "AC2: the receipt reports the applied Tangled status")
 	_check(int(battle.get_unit("fray_scavenger")["hp"]) == int(battle.get_unit("fray_scavenger")["max_hp"]),
 		"AC2: Tether Loop itself deals no damage")
 	_check(_to(battle, "fray_scavenger"), "AC2: the Tangled foe reaches its own seeded turn")
-	_check(not battle.get_unit("fray_scavenger")["statuses"].has("tangled"),
-		"AC2: Tangled 1 expires at the start of that one foe turn, not on a later hero")
+	_check(int(battle.get_unit("fray_scavenger")["statuses"].get("tangled", 0)) == 1,
+		"AC1: Tangled 2 falls to 1 at the foe's next actual turn-start")
+	var pass_result := battle.pass_turn()
+	_check(bool(pass_result.get("ok", false)), "AC1: the affected foe spends its own turn")
+	if bool(pass_result.get("ok", false)):
+		_check(_to(battle, "fray_scavenger"), "AC1: the same foe reaches its following actual turn")
+		_check(battle.current_actor_id() == "fray_scavenger"
+			and not battle.get_unit("fray_scavenger")["statuses"].has("tangled"),
+			"AC1: the following foe turn-start fully expires Tether Loop Tangled")
+
+
+## Real snare turns: tick-down happens at each target's start, not at cast time.
+## All trials equip the selected legs part in the four-hero preview and pass only
+## through the public battle actions on actual scheduled turns.
+func _snare_trial(part_id: String, tier: int, seed_value: int) -> Dictionary:
+	var kit := STARTER_PARTS.duplicate(true)
+	kit["legs"] = part_id
+	var battle := _build_battle(seed_value, tier, kit, false)
+	if battle == null or battle.get_heroes().size() != 4 or battle.get_foes().size() != 3:
+		return {}
+	if not _to(battle, "seamstress"):
+		return {}
+	var wearer := battle.get_unit("seamstress")
+	var foe := battle.get_unit("fray_scavenger")
+	if int(wearer.get("rank", 0)) != 2 or _worn_part_id(wearer, part_id) != part_id:
+		return {}
+	if int(foe.get("rank", 0)) != 1 or int(foe.get("hp", 0)) <= 0:
+		return {}
+	if foe["statuses"].has("tangled") or foe["statuses"].has("mark"):
+		return {}
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var receipt := battle.use_part(part_id, 1)
+	var results: Array = receipt.get("results", [])
+	if not bool(receipt.get("ok", false)) or results.size() != 1:
+		return {}
+	if str(receipt.get("actor", "")) != "seamstress" or str(receipt.get("part", "")) != part_id:
+		return {}
+	var result: Dictionary = results[0]
+	if str(result.get("target", "")) != "fray_scavenger" or str(result.get("target_side", "")) != "foe":
+		return {}
+	return {
+		"battle": battle, "receipt": receipt, "seed": seed_value,
+		"before": before, "rng_before": rng_before,
+		"before_foe": foe,
+	}
+
+
+func _snare_witness(part_id: String, tier: int, want_hit: bool) -> Dictionary:
+	var expected_tangled := 3 if part_id == "seamstress_tether_loop_spools" and tier == 3 else 2
+	for seed_value in range(1, 200):
+		var trial := _snare_trial(part_id, tier, seed_value)
+		if trial.is_empty():
+			continue
+		var hit: bool = bool(trial["receipt"]["results"][0].get("hit", false))
+		if hit != want_hit:
+			continue
+		var candidate_battle: StitchedRules = trial["battle"]
+		var foe: Dictionary = candidate_battle.get_unit("fray_scavenger")
+		# Select a witness that has not already entered the target's next turn.
+		if hit and int(foe["statuses"].get("tangled", 0)) != expected_tangled:
+			continue
+		if not hit and (foe["statuses"].has("tangled") or foe["statuses"].has("mark")):
+			continue
+		return trial
+	return {}
+
+
+func _test_snare_timelines() -> void:
+	for part_id in ["seamstress_tether_loop_spools", "seamstress_bobbin_snag_spools"]:
+		for tier in [1, 2, 3]:
+			var label := "%s tier %d" % [part_id, tier]
+			var expected_tangled := 3 if part_id == "seamstress_tether_loop_spools" and tier == 3 else 2
+			var expected_mark: int = tier if part_id == "seamstress_bobbin_snag_spools" else 0
+			var witness := _snare_witness(part_id, tier, true)
+			_check(not witness.is_empty(), "AC1/2: a real seeded four-hero battle lands " + label)
+			if witness.is_empty():
+				continue
+			var battle: StitchedRules = witness["battle"]
+			var receipt: Dictionary = witness["receipt"]
+			var result: Dictionary = receipt["results"][0]
+			var foe_before: Dictionary = witness["before_foe"]
+			var foe := battle.get_unit("fray_scavenger")
+			_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
+				and int(battle.get_unit("seamstress")["rank"]) == 2
+				and _worn_part_id(battle.get_unit("seamstress"), part_id) == part_id
+				and int(foe["rank"]) == 1 and int(foe_before["hp"]) > 0,
+				"AC1/2: " + label + " uses its legally equipped rank-2 actor and living rank-1 foe")
+			_check(bool(result.get("hit", false)) and result.has("roll") and result.has("hit_chance")
+				and int(result["roll"]) <= int(result["hit_chance"])
+				and str(receipt.get("ability", "")) == ("bobbin_snag" if expected_mark > 0 else "tether_loop")
+				and str(result["target"]) == "fray_scavenger" and str(result["target_side"]) == "foe",
+				"AC1/2: " + label + " has a real seeded hit roll, action and foe-side receipt")
+			_check(_status_duration(result.get("statuses", []), "tangled") == expected_tangled
+				and int(foe["statuses"].get("tangled", 0)) == expected_tangled,
+				"AC1/2: " + label + " receipts and applies Tangled " + str(expected_tangled))
+			_check(int(foe["hp"]) == int(foe_before["hp"]) and int(result.get("damage", -1)) == 0,
+				"AC1/2: " + label + " is a nondamaging snare")
+			if expected_mark > 0:
+				_check(_status_duration(result.get("statuses", []), "mark") == expected_mark
+					and int(foe["statuses"].get("mark", 0)) == expected_mark,
+					"AC2: " + label + " receipts and applies Mark " + str(expected_mark))
+			else:
+				_check(not foe["statuses"].has("mark") and not _has_status(result.get("statuses", []), "mark"),
+					"AC1: Tether Loop applies no Mark")
+			_check(witness["before"] != battle.state_snapshot()
+				and battle.current_actor_id() != "seamstress",
+				"AC3: " + label + " spends exactly the caster's real turn")
+			var replay := _snare_trial(part_id, tier, int(witness["seed"]))
+			_check(not replay.is_empty() and replay["receipt"] == receipt
+				and replay["before"] == witness["before"]
+				and replay["rng_before"] == witness["rng_before"]
+				and replay["battle"].state_snapshot() == battle.state_snapshot()
+				and replay["battle"].rng_state() == battle.rng_state(),
+				"AC3: " + label + " replays its seeded hit, complete state and RNG")
+			var reached := _to(battle, "fray_scavenger")
+			_check(reached and battle.current_actor_id() == "fray_scavenger",
+				"AC1/2: " + label + " reaches the targeted foe's actual next turn")
+			if not reached:
+				continue
+			_check(int(battle.get_unit("fray_scavenger")["statuses"].get("tangled", 0))
+				== expected_tangled - 1,
+				"AC1/2: " + label + " survives its first foe turn-start after exactly one tick")
+			var passed := battle.pass_turn()
+			_check(bool(passed.get("ok", false)), "AC1/2: " + label + " passes the affected foe turn")
+			if not bool(passed.get("ok", false)):
+				continue
+			var following := _to(battle, "fray_scavenger")
+			_check(following and battle.current_actor_id() == "fray_scavenger",
+				"AC1/2: " + label + " reaches the same foe's following turn")
+			if following:
+				_check(int(battle.get_unit("fray_scavenger")["statuses"].get("tangled", 0))
+					== expected_tangled - 2,
+					"AC1/2: " + label + " ticks again and expires after turn two for Tangled 2")
+			if not replay.is_empty():
+				var replay_battle: StitchedRules = replay["battle"]
+				var replay_reached := _to(replay_battle, "fray_scavenger")
+				var replay_passed := replay_battle.pass_turn() if replay_reached else {}
+				var replay_following := _to(replay_battle, "fray_scavenger") if bool(replay_passed.get("ok", false)) else false
+				_check(replay_reached and bool(replay_passed.get("ok", false)) and replay_following
+					and replay_battle.state_snapshot() == battle.state_snapshot()
+					and replay_battle.rng_state() == battle.rng_state(),
+					"AC3: " + label + " replays the same two natural foe turns and RNG")
+	# Every Bobbin tier must also have a genuine miss that cannot apply either status.
+	for tier in [1, 2, 3]:
+		var label := "Bobbin Snag tier %d miss" % tier
+		var miss := _snare_witness("seamstress_bobbin_snag_spools", tier, false)
+		_check(not miss.is_empty(), "AC2: a seeded natural " + label + " occurs")
+		if miss.is_empty():
+			continue
+		var battle: StitchedRules = miss["battle"]
+		var receipt: Dictionary = miss["receipt"]
+		var result: Dictionary = receipt["results"][0]
+		var foe := battle.get_unit("fray_scavenger")
+		_check(bool(receipt.get("ok", false)) and not bool(result.get("hit", true))
+			and result.has("roll") and result.has("hit_chance")
+			and int(result["roll"]) > int(result["hit_chance"]),
+			"AC2: " + label + " is an actual failed seeded hit roll")
+		_check(not foe["statuses"].has("mark") and not foe["statuses"].has("tangled")
+			and not _has_status(result.get("statuses", []), "mark")
+			and not _has_status(result.get("statuses", []), "tangled")
+			and int(foe["hp"]) == int(miss["before_foe"]["hp"]),
+			"AC2: " + label + " applies neither effect nor damage")
+		var replay := _snare_trial("seamstress_bobbin_snag_spools", tier, int(miss["seed"]))
+		_check(not replay.is_empty() and replay["receipt"] == receipt
+			and replay["battle"].state_snapshot() == battle.state_snapshot()
+			and replay["battle"].rng_state() == battle.rng_state(),
+			"AC3: " + label + " replays its miss, state and RNG")
+		var reached := _to(battle, "fray_scavenger")
+		_check(reached and not battle.get_unit("fray_scavenger")["statuses"].has("tangled")
+			and not battle.get_unit("fray_scavenger")["statuses"].has("mark"),
+			"AC2: " + label + " leaves its next natural foe turn unmarked and untangled")
+
+
+func _test_snare_rejections() -> void:
+	var kit := STARTER_PARTS.duplicate(true)
+	kit["legs"] = "seamstress_bobbin_snag_spools"
+	for tier in [1, 2, 3]:
+		var battle := _build_battle(17, tier, kit)
+		if battle == null:
+			continue
+		_check(_to(battle, "seamstress"), "AC3: equipped Bobbin Snag reaches its natural caster turn")
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var turn := battle.current_actor_id()
+		for rank in [0, 4, 5]:
+			var refused := battle.use_part("seamstress_bobbin_snag_spools", rank)
+			_check(not bool(refused.get("ok", false))
+				and battle.state_snapshot() == before and battle.rng_state() == rng
+				and battle.current_actor_id() == turn,
+				"AC3: tier %d Bobbin refuses invalid/ally-only rank %d without spending state or RNG" % [tier, rank])
+		var unequipped := battle.use_part("seamstress_tether_loop_spools", 1)
+		_check(not bool(unequipped.get("ok", false))
+			and battle.state_snapshot() == before and battle.rng_state() == rng,
+			"AC3: tier %d cannot cast the swapped-out Tether Loop" % tier)
+		var starter := _build_battle(17, tier, STARTER_PARTS)
+		if starter != null:
+			var starter_before := starter.state_snapshot()
+			var starter_rng := starter.rng_state()
+			_check(not bool(starter.use_part("seamstress_bobbin_snag_spools", 1).get("ok", false))
+				and starter.state_snapshot() == starter_before and starter.rng_state() == starter_rng,
+				"AC3: tier %d cannot cast Bobbin Snag until it is equipped" % tier)
+		var moved := _build_battle(23, tier, kit)
+		if moved == null:
+			continue
+		var step := moved.move(-1)
+		_check(bool(step.get("ok", false)) and int(moved.get_unit("seamstress")["rank"]) == 1,
+			"AC3: tier %d Bobbin caster makes a real Move into the illegal launch rank 1" % tier)
+		if not _to(moved, "seamstress"):
+			_check(false, "AC3: moved Bobbin caster gets its next natural turn")
+			continue
+		var moved_before := moved.state_snapshot()
+		var moved_rng := moved.rng_state()
+		var rejected := moved.use_part("seamstress_bobbin_snag_spools", 1)
+		_check(not bool(rejected.get("ok", false))
+			and moved.state_snapshot() == moved_before and moved.rng_state() == moved_rng,
+			"AC3: tier %d Bobbin rejects a rank-1 launch atomically" % tier)
 
 
 ## Mending Knot heals one living ally; Shielding Hem heals and Guards one living ally.

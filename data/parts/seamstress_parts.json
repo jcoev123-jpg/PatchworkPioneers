@@ -182,7 +182,7 @@
         "acc": 90,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"tangled": 1},
+        "effects": {"tangled": 2},
         "self_move": 0,
         "move": "skill"
       },
@@ -209,13 +209,13 @@
         "acc": 90,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"mark": 1, "tangled": 1},
+        "effects": {"mark": 1, "tangled": 2},
         "self_move": 0,
         "move": "skill"
       },
       "tiers": {
-        "2": {"stat": {"dodge": 4}, "ability": {"effects": {"mark": 2, "tangled": 1}}},
-        "3": {"stat": {"dodge": 5}, "ability": {"effects": {"mark": 3, "tangled": 1}}}
+        "2": {"stat": {"dodge": 4}, "ability": {"effects": {"mark": 2, "tangled": 2}}},
+        "3": {"stat": {"dodge": 5}, "ability": {"effects": {"mark": 3, "tangled": 2}}}
       },
       "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 1 and Tangled 1."
     }
