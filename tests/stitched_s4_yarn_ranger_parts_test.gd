@@ -54,7 +54,7 @@ const HEAD_SPECS := {
 		"target": [1, 2, 3],
 		"dmg": [[4, 6], [5, 8], [7, 10]],
 		"mark_damage": [0, 0, 0],
-		"effects": [{"exposed": 1}, {"exposed": 1}, {"exposed": 2}],
+		"effects": [{"exposed": 2}, {"exposed": 2}, {"exposed": 3}],
 	},
 	"yarn_ranger_head_needle_arrow": {
 		"ability": "yarn_ranger_head_needle_arrow_move",
@@ -119,6 +119,7 @@ func _initialize() -> void:
 	_test_reel_thread_rank_four_target()
 	_test_multi_tangled()
 	_test_tangled_next_turn()
+	_test_needle_nock_exposed_reply()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
 	_test_replay()
@@ -1911,3 +1912,301 @@ func _test_tangled_next_turn() -> void:
 			_check(mixed_seed >= 0,
 				"AC2: %s mixed-hit multi cast leaves only struck foes Tangled after their tick"
 					% part_id)
+
+
+## The same real S2 fixture authors the different doll whose ordinary scheduled attack must
+## still find the exposed foe: Warden's Iron Helm Bash (it only adds Weak, so the exposure is
+## never reapplied and the target takes no damage over time).
+func _preview_parts() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW_PATH))
+	if not parsed is Dictionary:
+		return {}
+	var built := StitchedParts.build_catalog(parsed.get("parts", []))
+	if not bool(built.get("ok", false)):
+		return {}
+	return built["by_id"]
+
+
+## One completely real Needle Nock witness for the requested tier: the equipped Ranger lands a
+## genuine seeded shot from her scheduled turn, the struck foe takes its own first scheduled
+## turn (ordinary StitchedRules turns only, never a private tick), Warden then lands a real
+## Iron Helm Bash on that same foe, and the foe keeps taking its natural turns until the
+## Exposed counter runs out. Returns {} unless every step happened as authored.
+func _needle_nock_reply_chain(tier: int, seed_value: int) -> Dictionary:
+	var head_id := STARTERS["head"]
+	var b := _battle(head_id, tier, seed_value)
+	if b == null or not _to(b, "yarn_ranger") or b.current_actor_id() != "yarn_ranger":
+		return {}
+	var ranger := b.get_unit("yarn_ranger")
+	var foe := b.get_unit("fray_scavenger")
+	if int(ranger["rank"]) != 3 or str(ranger["parts"]["head"]["id"]) != head_id \
+			or int(foe["rank"]) != 1 or int(foe["hp"]) <= 0:
+		return {}
+	var shot_before := b.state_snapshot()
+	var shot := b.use_part(head_id, 1)
+	var shot_after := b.state_snapshot()
+	var results: Array = shot.get("results", [])
+	if not bool(shot.get("ok", false)) or str(shot.get("action", "")) != "ability" \
+			or str(shot.get("actor", "")) != "yarn_ranger" or str(shot.get("part", "")) != head_id \
+			or str(shot.get("ability", "")) != "yarn_ranger_head_needle_nock_move" \
+			or results.size() != 1:
+		return {}
+	var hit: Dictionary = results[0]
+	if not bool(hit.get("hit", false)) or str(hit.get("target", "")) != "fray_scavenger" \
+			or str(hit.get("target_side", "")) != "foe" or int(hit.get("target_rank", 0)) != 1:
+		return {}
+	var exposed_after := int(b.get_unit("fray_scavenger")["statuses"].get("exposed", 0))
+	if exposed_after <= 0:
+		return {}
+	# Only ordinary scheduled turns from here on: the first real turn start of the victim ticks.
+	if not _to(b, "fray_scavenger") or b.current_actor_id() != "fray_scavenger":
+		return {}
+	var at_first_tick := int(b.get_unit("fray_scavenger")["statuses"].get("exposed", 0))
+	if at_first_tick != exposed_after - 1:
+		return {}
+	# A different doll's real scheduled turn must still find the seam open; nothing may have
+	# reapplied it in between.
+	if not _to(b, "warden") or b.current_actor_id() != "warden":
+		return {}
+	var warden := b.get_unit("warden")
+	var target := b.get_unit("fray_scavenger")
+	if int(warden["rank"]) != 1 or int(target["rank"]) != 1 or int(target["hp"]) <= 0:
+		return {}
+	var exposed_at_reply := int(target["statuses"].get("exposed", 0))
+	if exposed_at_reply != at_first_tick:
+		return {}
+	var hp_before := int(target["hp"])
+	var reply := b.use_part("warden_head_iron_helm", 1)
+	var reply_results: Array = reply.get("results", [])
+	if not bool(reply.get("ok", false)) or reply_results.size() != 1:
+		return {}
+	var landed: Dictionary = reply_results[0]
+	var damaged := int(landed.get("damage", 0))
+	if not bool(landed.get("hit", false)) or str(landed.get("target", "")) != "fray_scavenger" \
+			or damaged <= 0 or int(landed.get("target_hp", -1)) != hp_before - damaged:
+		return {}
+	var after_reply := b.get_unit("fray_scavenger")
+	if after_reply.is_empty() or int(after_reply["hp"]) <= 0:
+		return {}
+	# The counter now has to run out on the foe's later natural turn starts, unaided.
+	var expiry: Array = []
+	for _step in range(120):
+		if expiry.size() >= exposed_after - 1:
+			break
+		if b.is_over():
+			return {}
+		if b.current_actor_id() == "fray_scavenger":
+			expiry.append(int(b.get_unit("fray_scavenger")["statuses"].get("exposed", 0)))
+		if not bool(b.pass_turn().get("ok", false)):
+			return {}
+	if expiry.size() != exposed_after - 1:
+		return {}
+	return {
+		"ok": true,
+		"shot": shot,
+		"shot_before": shot_before,
+		"shot_after": shot_after,
+		"exposed_after": exposed_after,
+		"at_first_tick": at_first_tick,
+		"foe_statuses": target["statuses"].duplicate(true),
+		"foe_prot": int(target["prot"]),
+		"hp_before_reply": hp_before,
+		"exposed_at_reply": exposed_at_reply,
+		"reply": reply,
+		"reply_crit": bool(landed.get("crit", false)),
+		"reply_damage": damaged,
+		"reply_target_hp": int(landed.get("target_hp", -1)),
+		"warden_bonus": int(warden["dmg_bonus"]),
+		"warden_resolve": str(warden.get("resolve", "")),
+		"expiry": expiry,
+		"state": b.state_snapshot(),
+		"rng": b.rng_state(),
+	}
+
+
+## The task goal: Needle Nock's Exposed must survive the struck foe's own first turn so a real
+## ally can exploit it. At tiers I/II/III the catalog resolves Exposed 2/2/3; one bounded seed
+## per tier gives a genuine landed shot, the foe's first natural turn start leaves 1/1/2, a
+## different doll's real hit then deals exactly the documented 3/2 direct damage before PROT,
+## and the status expires at the foe's second/second/third natural tick with no reapplication.
+func _test_needle_nock_exposed_reply() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: real Ranger catalog available for Needle Nock timing")
+	if not bool(cat.get("ok", false)):
+		return
+	var head_id := STARTERS["head"]
+	var preview := _preview_parts()
+	var warden_head: Dictionary = preview.get("warden_head_iron_helm", {})
+	_check(not warden_head.is_empty(),
+		"AC2: the same real S2 fixture authors Warden's Iron Helm follow-up attack")
+	if warden_head.is_empty():
+		return
+	var warden_ability := StitchedParts.ability_at_tier(warden_head, 1)
+	# The authored file itself, not just the merged tier view: tier II stays a damage-only
+	# override, so I/II/III inherit exactly 2/2/3 and the part text is untouched.
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	var raw_record: Dictionary = {}
+	if raw is Dictionary:
+		for entry in raw.get("parts", []):
+			if entry is Dictionary and str(entry.get("id", "")) == head_id:
+				raw_record = entry
+	var raw_effects := int(raw_record.get("ability", {}).get("effects", {}).get("exposed", 0))
+	var t2_keys: Array = raw_record.get("tiers", {}).get("2", {}).get("ability", {}).keys()
+	var t3_ability: Dictionary = raw_record.get("tiers", {}).get("3", {}).get("ability", {})
+	var t3_dmg: Array = t3_ability.get("dmg", [])
+	var t3_effects := int(t3_ability.get("effects", {}).get("exposed", 0))
+	_check(not raw_record.is_empty() and raw_effects == 2 and t2_keys == ["dmg"]
+		and t3_dmg.size() == 2 and int(t3_dmg[0]) == 7 and int(t3_dmg[1]) == 10
+		and t3_effects == 3
+		and str(raw_record.get("text", "")) == "Nock a threaded needle and pierce a foe's defences, leaving it Exposed.",
+		"AC1: authored Needle Nock keeps a damage-only tier II so tiers I/II/III resolve Exposed 2/2/3")
+	for tier in [1, 2, 3]:
+		var expected := int(HEAD_SPECS[head_id]["effects"][tier - 1]["exposed"])
+		var ability := StitchedParts.ability_at_tier(cat["by_id"][head_id], tier)
+		_check(int(ability["effects"].get("exposed", 0)) == expected
+			and expected == [2, 2, 3][tier - 1],
+			"AC1: Needle Nock tier %d resolves Exposed %d for a real surviving reply"
+				% [tier, expected])
+		var chain: Dictionary = {}
+		var witness_seed := -1
+		for seed_value in range(510040, 510136):
+			chain = _needle_nock_reply_chain(tier, seed_value)
+			if not bool(chain.get("ok", false)) or int(chain["exposed_after"]) != expected:
+				continue
+			witness_seed = seed_value
+			break
+		_check(witness_seed >= 0,
+			"AC2: a bounded real seed shows tier %d Needle Nock Exposed %d surviving the foe's first turn and boosting a real ally hit"
+				% [tier, expected])
+		if witness_seed < 0:
+			continue
+		print("AC2 Needle Nock Exposed reply tier %d witness seed %d" % [tier, witness_seed])
+		var shot: Dictionary = chain["shot"]
+		var shot_result: Dictionary = shot["results"][0]
+		_check(str(shot_result.get("target", "")) == "fray_scavenger"
+			and int(shot_result.get("damage", 0)) > 0
+			and shot_result.get("statuses", []).any(
+				func(s): return str(s.get("status", "")) == "exposed" \
+					and int(s.get("duration", 0)) == expected)
+			and int(chain["exposed_after"]) == expected,
+			"AC2: tier %d landed Needle Nock really leaves Exposed %d on its legal rank-one foe"
+				% [tier, expected])
+		_check(int(chain["shot_after"]["turn_index"]) != int(chain["shot_before"]["turn_index"])
+			or int(chain["shot_after"]["round"]) != int(chain["shot_before"]["round"]),
+			"AC2: tier %d Needle Nock spends exactly the Ranger's real scheduled turn" % tier)
+		# The foe's own first scheduled turn start, not a private countdown call, must leave one
+		# point of Exposed for the following ally.
+		_check(int(chain["at_first_tick"]) == expected - 1,
+			"AC2: tier %d Exposed %d becomes %d at the struck foe's real first turn start"
+				% [tier, expected, expected - 1])
+		var statuses: Dictionary = chain["foe_statuses"]
+		_check(int(statuses.get("exposed", 0)) == expected - 1 and statuses.size() == 1,
+			"AC2: tier %d only the shot's own Exposed remains on the foe at the ally's turn"
+				% tier)
+		_check(str(chain["warden_resolve"]) == "",
+			"AC2: tier %d the Warden's reply is an ordinary attack with no resolve modifier" % tier)
+		# Warden's real Iron Helm Bash: reconstruct the raw roll from the authored range and its
+		# flat arms bonus, then require exactly the documented 3/2 before the PROT cut.
+		var bonus := int(chain["warden_bonus"])
+		var prot := int(chain["foe_prot"])
+		var damaged := int(chain["reply_damage"])
+		var base := -1
+		if bool(chain["reply_crit"]):
+			var crit_base := StitchedRules.crit_damage(int(warden_ability["dmg"][1])) + bonus
+			if StitchedRules.damage_after_modifiers(
+					crit_base, {}, {"exposed": 1}, false, 0, prot) == damaged:
+				base = crit_base
+		else:
+			for candidate in range(int(warden_ability["dmg"][0]) + bonus,
+					int(warden_ability["dmg"][1]) + bonus + 1):
+				if StitchedRules.damage_after_modifiers(
+						candidate, {}, {"exposed": 1}, false, 0, prot) == damaged:
+					base = candidate
+					break
+		_check(base >= 0,
+			"AC2: tier %d the Warden's real hit deals the exposed 3/2 damage before PROT" % tier)
+		if base >= 0:
+			var plain := StitchedRules.damage_after_modifiers(base, {}, {}, false, 0, prot)
+			_check(plain < damaged
+				and damaged == StitchedRules.damage_after_modifiers(
+					base, {}, {"exposed": 1}, false, 0, prot)
+				and int(chain["reply_target_hp"]) == int(chain["hp_before_reply"]) - damaged,
+				"AC2: tier %d the exploiting hit gains the documented 50%% over the unexposed hit"
+					% tier)
+		var expiry: Array = chain["expiry"]
+		var expected_expiry: Array = []
+		for step in range(expected - 1):
+			expected_expiry.append(maxi(0, expected - 1 - (step + 1)))
+		_check(expiry == expected_expiry,
+			"AC2: tier %d Exposed expires at the foe's natural tick %d and not earlier: %s"
+				% [tier, expected, str(expiry)])
+		_check(_needle_nock_reply_chain(tier, witness_seed) == chain,
+			"AC4: tier %d equal seed and actions replay identical receipts, states and RNG" % tier)
+	# A genuine seeded miss never exposes a foe but still spends the Ranger's legal action.
+	var miss_seed := -1
+	for seed_value in range(511040, 511120):
+		var missed := _battle(head_id, 1, seed_value)
+		if missed == null or not _to(missed, "yarn_ranger") \
+				or missed.current_actor_id() != "yarn_ranger":
+			continue
+		var before := missed.state_snapshot()
+		var shot := missed.use_part(head_id, 1)
+		var results: Array = shot.get("results", [])
+		if not bool(shot.get("ok", false)) or results.size() != 1 \
+				or bool(results[0].get("hit", false)):
+			continue
+		var any_exposed := false
+		for foe in missed.get_foes():
+			any_exposed = any_exposed or int(foe["statuses"].get("exposed", 0)) > 0
+		var spent := missed.state_snapshot() != before \
+			and missed.current_actor_id() != "yarn_ranger"
+		miss_seed = seed_value if not any_exposed and spent else -1
+		if miss_seed >= 0:
+			_check(int(results[0].get("damage", -1)) == 0
+				and str(results[0].get("target", "")) == "fray_scavenger",
+				"AC3: a genuine Needle Nock miss deals no damage to its legal target")
+			break
+	_check(miss_seed >= 0,
+		"AC3: a bounded real seed shows a genuine Needle Nock miss exposing no foe while spending the turn")
+	# Fail-closed refusals: torn, unequipped, rank-one launch, illegal target ranks and off-turn.
+	var torn_config := _config(head_id, 1, 512040)
+	if not torn_config.is_empty():
+		torn_config["heroes"][2]["parts"]["head"]["torn"] = true
+		var torn := StitchedRules.create(torn_config)
+		_check(bool(torn.get("ok", false)), "AC3: real torn Needle Nock admitted as equipment")
+		if bool(torn.get("ok", false)):
+			var torn_battle: StitchedRules = torn["battle"]
+			_check(_to(torn_battle, "yarn_ranger"),
+				"AC3: torn Needle Nock Ranger obtains a real scheduled turn")
+			if torn_battle.current_actor_id() == "yarn_ranger":
+				_reject_without_spend(torn_battle, head_id, 1, "torn Needle Nock")
+	var front := _rank_one_battle(head_id, 1, 512041)
+	_check(front != null, "AC3: real fixture allows rank-one Ranger with Needle Nock")
+	if front != null:
+		_check(int(front.get_unit("yarn_ranger")["rank"]) == 1 and _to(front, "yarn_ranger"),
+			"AC3: rank-one Needle Nock Ranger obtains a real scheduled turn")
+		if front.current_actor_id() == "yarn_ranger":
+			_check(int(front.get_unit("fray_scavenger")["rank"]) == 1
+				and int(front.get_unit("fray_scavenger")["hp"]) > 0,
+				"AC3: rank-one refusal still faces a living enemy at the legal target rank")
+			_reject_without_spend(front, head_id, 1, "rank-one Needle Nock launch")
+	var live := _battle(head_id, 1, 512042)
+	_check(live != null and _to(live, "yarn_ranger"),
+		"AC3: real Needle Nock battle reaches its scheduled turn for refusals")
+	if live != null and live.current_actor_id() == "yarn_ranger":
+		var statuses_before := {}
+		for foe in live.get_foes():
+			statuses_before[str(foe["id"])] = foe["statuses"].duplicate(true)
+		for bad_rank in [0, 4, 5]:
+			_reject_without_spend(live, head_id, bad_rank,
+				"Needle Nock enemy target rank %d" % bad_rank)
+		_reject_without_spend(live, "yarn_ranger_head_needle_arrow", 1,
+			"unequipped Needle Nock")
+		var untouched := true
+		for foe in live.get_foes():
+			untouched = untouched and foe["statuses"] == statuses_before[str(foe["id"])]
+		_check(untouched, "AC3: refused Needle Nock attempts expose no foe at all")
+		var legal := live.use_part(head_id, 1)
+		_check(bool(legal.get("ok", false)), "AC3: a legal Needle Nock still spends the turn")
+		if bool(legal.get("ok", false)):
+			_reject_without_spend(live, head_id, 1, "off-turn Needle Nock")
