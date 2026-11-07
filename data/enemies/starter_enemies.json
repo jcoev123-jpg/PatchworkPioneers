@@ -33,7 +33,7 @@
           "target_side": "enemy",
           "multi": false,
           "acc": 85,
-          "dmg": [3, 5],
+          "dmg": [4, 6],
           "crit": 0,
           "effects": {},
           "self_move": 0,

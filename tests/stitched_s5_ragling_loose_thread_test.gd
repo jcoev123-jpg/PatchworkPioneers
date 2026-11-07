@@ -6,7 +6,7 @@ const PREVIEW := "res://data/stitched/s2_preview.json"
 const STARTERS := "res://data/enemies/starter_enemies.json"
 const RAKE := {"id": "rag_rake", "name": "Rag Rake", "kind": "melee",
 	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [3, 5], "crit": 0, "effects": {},
+	"acc": 85, "dmg": [4, 6], "crit": 0, "effects": {},
 	"self_move": 0, "move": "attack"}
 const THREAD := {"id": "loose_thread", "name": "Loose Thread", "kind": "debuff",
 	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
@@ -26,6 +26,7 @@ func _initialize() -> void:
 	if bool(catalog.get("ok", false)) and data is Dictionary:
 		preview = data
 		_source_contract()
+		_rake_contract()
 		_seeded_contract()
 		_refusals()
 	for failure in failures:
@@ -70,7 +71,7 @@ func _source_contract() -> void:
 			"is_boss": false, "turns_per_round": 1, "trophy": "ragling_tatter_claw",
 			"abilities": [RAKE, THREAD]}}
 	_check(_same(raw, expected),
-		"AC1: full legacy Ragling record and complete two-move Stitched kit unchanged apart from Snip 1")
+		"AC1: full legacy Ragling record and two-move Stitched kit exact with only Rag Rake damage [4,6] changed")
 	_check(_same(neighbor, {"id": "ragling_guard", "name": "Guard Ragling", "max_hp": 12,
 		"art_path": "res://assets/paper/enemies/ragling_guard.png",
 		"intent": {"target": "front", "actions": [
@@ -192,6 +193,78 @@ func _shoot(seed_value: int) -> Dictionary:
 		"rng": b.rng_state(), "battle": b}
 
 
+func _rake_shoot(seed_value: int) -> Dictionary:
+	var b := _battle(seed_value)
+	if b == null or not _to(b, "ragling"):
+		_check(false, "AC2: Ragling reaches a genuine legal attack turn")
+		return {}
+	var actor := b.get_unit("ragling")
+	var target := b.get_unit("warden")
+	var ready := b.current_side() == "foe" and int(actor.get("rank", -1)) == 1 \
+		and int(target.get("rank", -1)) == 1 and int(target.get("hp", 0)) > 6 \
+		and b.thread_cuts().is_empty()
+	_check(ready, "AC2: four-hero/two-foe attack has a living front-rank target and legal launcher")
+	if not ready:
+		return {}
+	var receipt := b.use_foe_ability("rag_rake", 1)
+	_check(receipt.get("ok", false) and receipt.get("actor") == "ragling" \
+		and receipt.get("actor_side") == "foe" and receipt.get("ability") == "rag_rake" \
+		and receipt.get("results", []).size() == 1,
+		"AC2: actual foe ability dispatch returns one Rag Rake attack receipt")
+	if receipt.get("results", []).size() != 1:
+		return {}
+	var hit: Dictionary = receipt["results"][0]
+	var after := b.get_unit("warden")
+	_check(hit.get("target") == "warden" and hit.get("target_rank") == 1 \
+		and hit.has("roll") and hit.get("hit") == (int(hit.get("roll", 101)) <= int(hit.get("hit_chance", 0))),
+		"AC2: Rag Rake targets the actual front-rank doll and rolls to hit")
+	if hit.get("hit", false):
+		var allowed_damage: Array = []
+		for amount in range(4, 7):
+			var base := StitchedS1BEffects.enemy_damage(
+				amount + int(actor.get("dmg_bonus", 0)), b.candle())
+			allowed_damage.append(StitchedRules.damage_after_modifiers(
+				base, actor.get("statuses", {}), target.get("statuses", {}), false, 0,
+				int(target.get("prot", 0))))
+		var critical_base := StitchedS1BEffects.enemy_damage(
+			StitchedRules.crit_damage(6) + int(actor.get("dmg_bonus", 0)), b.candle())
+		var critical_damage := StitchedRules.damage_after_modifiers(
+			critical_base, actor.get("statuses", {}), target.get("statuses", {}), false, 0,
+			int(target.get("prot", 0)))
+		var rule_damage := int(hit.get("damage", -1)) == critical_damage if hit.get("crit", false) \
+			else allowed_damage.has(int(hit.get("damage", -1)))
+		_check(rule_damage and int(hit.get("damage", 0)) > 0 \
+			and int(target.get("hp", -1)) - int(after.get("hp", -1)) == int(hit.get("damage", 0)) \
+			and int(hit.get("target_hp", -1)) == int(after.get("hp", -1)) \
+			and not hit.has("snip") and not hit.has("fray_event") \
+			and b.thread_cuts().is_empty(),
+			"AC2: hit uses authored [4,6], true crit/PROT/candle rules and actual HP loss; no Thread effects")
+	else:
+		_check(int(hit.get("damage", -1)) == 0 and after == target \
+			and not hit.has("snip") and not hit.has("fray_event") \
+			and b.thread_cuts().is_empty(),
+			"AC2: missed Rag Rake does not damage, snip or fray")
+	return {"hit": bool(hit.get("hit", false)), "receipt": receipt,
+		"snapshot": b.state_snapshot(), "rng": b.rng_state()}
+
+
+func _rake_contract() -> void:
+	var witnessed := false
+	for seed_value in range(1, 65):
+		var first := _rake_shoot(seed_value)
+		if first.is_empty():
+			return
+		if not first["hit"]:
+			continue
+		witnessed = true
+		var again := _rake_shoot(seed_value)
+		_check(not again.is_empty() and first["receipt"] == again.get("receipt") \
+			and first["snapshot"] == again.get("snapshot") and first["rng"] == again.get("rng"),
+			"AC2: same legal Rag Rake seed/actions replay identical receipt, battle state and RNG")
+		break
+	_check(witnessed, "AC2: bounded real Rag Rake hit witness exists")
+
+
 func _seeded_contract() -> void:
 	var saw_hit := false
 	var saw_miss := false
@@ -241,6 +314,8 @@ func _refusals() -> void:
 	before = b.state_snapshot()
 	rng = b.rng_state()
 	_reject_unchanged(b, b.use_foe_ability("not_a_move", 1), before, rng, "unknown ability")
+	_reject_unchanged(b, b.use_foe_ability("rag_rake", 2), before, rng,
+		"Rag Rake cannot target rank two")
 	for rank in [0, 3, 4, 5]:
 		_reject_unchanged(b, b.use_foe_ability("loose_thread", rank), before, rng,
 			"illegal target rank %d" % rank)
