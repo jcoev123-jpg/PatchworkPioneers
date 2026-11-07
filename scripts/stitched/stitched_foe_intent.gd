@@ -38,11 +38,17 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 				or not battle._self_move_gate(actor, ability).is_empty():
 			continue
 		# A pulling strike reels the deepest reachable doll forward, so it scans the
-		# back rank first. Everything else keeps the nearest-legal-rank order.
+		# back rank first. A single-target attack authored to bite into a Marked doll
+		# hunts the closest already-Marked legal rank before falling back to the
+		# ordinary nearest-legal-rank order. Everything else keeps that same order.
 		var scan_ranks: Array[int] = [1, 2, 3, 4]
 		if str(ability.get("target_side", "")) == "enemy" \
 				and int(ability.get("effects", {}).get("pull", 0)) == 1:
 			scan_ranks = [4, 3, 2, 1]
+		elif _hunts_mark(ability):
+			var marked_rank := _nearest_marked_rank(battle, actor, ability)
+			if marked_rank > 0:
+				scan_ranks = [marked_rank]
 		for rank in scan_ranks:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
@@ -72,3 +78,26 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			result["pass"] = false
 			return result
 	return result
+
+
+## True for a single-target attack on the other side that is authored with a Mark bonus.
+## Multi-target actions, ally/self buffs, pulls and ordinary attacks keep their own rules.
+static func _hunts_mark(ability: Dictionary) -> bool:
+	if str(ability.get("target_side", "")) != "enemy" or bool(ability.get("multi", false)):
+		return false
+	if int(ability.get("mark_damage", 0)) <= 0:
+		return false
+	return int(ability.get("effects", {}).get("pull", 0)) != 1
+
+
+## Closest legal rank whose reached target already carries MARK (0 when none). The same
+## read-only legality authority is used, so a lost doll, an empty rank, a scrap heap or an
+## illegal rank can never be prioritised. Never mutates the battle or draws RNG.
+static func _nearest_marked_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			if int(target.get("statuses", {}).get("mark", 0)) > 0:
+				return rank
+	return 0

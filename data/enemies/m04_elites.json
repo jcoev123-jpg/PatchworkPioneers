@@ -635,7 +635,10 @@
           "acc": 85,
           "dmg": [3, 4],
           "crit": 0,
-          "effects": {},
+          "mark_damage": 3,
+          "effects": {
+            "mark": 3
+          },
           "self_move": 0,
           "move": "attack2"
         },

@@ -52,7 +52,7 @@ func _attack(spec: Dictionary) -> Dictionary:
 			"crit": 0, "effects": {"bleed": 2}, "self_move": 0, "move": "attack2"}
 	return {"id": "matriarch_burst", "name": "Matriarch Burst", "kind": "melee", "launch": [1, 4],
 		"target": [1, 2, 3], "target_side": "enemy", "multi": false, "acc": 85, "dmg": [3, 4],
-		"crit": 0, "effects": {}, "self_move": 0, "move": "attack2"}
+		"crit": 0, "mark_damage": 3, "effects": {"mark": 3}, "self_move": 0, "move": "attack2"}
 
 
 func _legacy(spec: Dictionary) -> Dictionary:
