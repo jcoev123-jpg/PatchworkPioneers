@@ -176,6 +176,7 @@ func preview_choices() -> Dictionary:
 	var protagonist: Dictionary = _party_by_id.get(_required_hero, {})
 	var protagonist_rank: int = int(protagonist.get("rank", 0))
 	var protagonist_max_hp: int = int(protagonist.get("max_hp", 0))
+	var protagonist_hp: int = int(protagonist.get("hp", 0))
 
 	var choice_entries: Array = []
 	for raw_choice: Variant in (raw_choices as Array):
@@ -187,6 +188,13 @@ func preview_choices() -> Dictionary:
 		var parsed_outcome: Dictionary = _parse_four_key_outcome(choice_dict.get("outcome"))
 
 		if not parsed_outcome.get("ok", false):
+			var unavail_proj: Dictionary = project_vital_consequence(
+				protagonist_hp,
+				protagonist_max_hp,
+				0,
+				0,
+				false
+			)
 			choice_entries.append({
 				"id": cid,
 				"choice_id": cid,
@@ -195,6 +203,9 @@ func preview_choices() -> Dictionary:
 				"scraps_delta": null,
 				"hp_delta": null,
 				"max_hp_delta": null,
+				"projected_max_hp": unavail_proj["projected_max_hp"],
+				"projected_hp": unavail_proj["projected_hp"],
+				"effective_hp_delta": unavail_proj["effective_hp_delta"],
 				"target_hero_id": _required_hero,
 				"target_hero_rank": protagonist_rank,
 				"available": false,
@@ -249,6 +260,14 @@ func preview_choices() -> Dictionary:
 		var proj_scraps: int = _wallet["scraps"] + scraps_delta if available else _wallet["scraps"]
 		var proj_wallet := {"gold": proj_gold, "scraps": proj_scraps}
 
+		var vitals_proj: Dictionary = project_vital_consequence(
+			protagonist_hp,
+			protagonist_max_hp,
+			hp_delta,
+			max_hp_delta,
+			available
+		)
+
 		choice_entries.append({
 			"id": cid,
 			"choice_id": cid,
@@ -257,6 +276,9 @@ func preview_choices() -> Dictionary:
 			"scraps_delta": scraps_delta,
 			"hp_delta": hp_delta,
 			"max_hp_delta": max_hp_delta,
+			"projected_max_hp": vitals_proj["projected_max_hp"],
+			"projected_hp": vitals_proj["projected_hp"],
+			"effective_hp_delta": vitals_proj["effective_hp_delta"],
 			"target_hero_id": _required_hero,
 			"target_hero_rank": protagonist_rank,
 			"available": available,
@@ -368,6 +390,7 @@ func choose(
 	# Max HP floor
 	var protagonist: Dictionary = _party_by_id.get(_required_hero, {})
 	var protagonist_max_hp: int = int(protagonist.get("max_hp", 0))
+	var protagonist_hp: int = int(protagonist.get("hp", 0))
 	var projected_max: int = protagonist_max_hp + max_hp_delta
 	if max_hp_delta > 0 and max_hp_delta > MAX_INT - protagonist_max_hp:
 		return _fail("integer overflow on max HP credit")
@@ -405,6 +428,14 @@ func choose(
 		"wallet": wallet_after.duplicate(true),
 	}
 
+	var vitals_proj: Dictionary = project_vital_consequence(
+		protagonist_hp,
+		protagonist_max_hp,
+		hp_delta,
+		max_hp_delta,
+		true
+	)
+
 	return {
 		"ok": true,
 		"error": "",
@@ -420,6 +451,9 @@ func choose(
 		"scraps_delta": scraps_delta,
 		"hp_delta": hp_delta,
 		"max_hp_delta": max_hp_delta,
+		"projected_max_hp": vitals_proj["projected_max_hp"],
+		"projected_hp": vitals_proj["projected_hp"],
+		"effective_hp_delta": vitals_proj["effective_hp_delta"],
 		"wallet_before": wallet_before,
 		"wallet": wallet_after,
 		"wallet_after": wallet_after,
@@ -734,3 +768,32 @@ static func is_wasted_paid_heal(
 	recipient: Variant = null
 ) -> bool:
 	return is_pure_paid_heal_at_full_hp(gold_delta, scraps_delta, hp_delta, max_hp_delta, recipient)
+
+
+## Calculates prospective HP and max HP projections for an authored vitality choice outcome.
+## When available is true:
+##   projected_max_hp = hero.max_hp + max_hp_delta
+##   projected_hp = clamp(hero.hp + hp_delta, 0, projected_max_hp)
+##   effective_hp_delta = projected_hp - hero.hp
+## When available is false:
+##   shows unchanged opening HP / max HP with effective_hp_delta = 0.
+static func project_vital_consequence(
+	opening_hp: int,
+	opening_max_hp: int,
+	hp_delta: int,
+	max_hp_delta: int,
+	available: bool
+) -> Dictionary:
+	if not available:
+		return {
+			"projected_max_hp": opening_max_hp,
+			"projected_hp": opening_hp,
+			"effective_hp_delta": 0,
+		}
+	var proj_max: int = opening_max_hp + max_hp_delta
+	var proj_hp: int = clampi(opening_hp + hp_delta, 0, proj_max)
+	return {
+		"projected_max_hp": proj_max,
+		"projected_hp": proj_hp,
+		"effective_hp_delta": proj_hp - opening_hp,
+	}
