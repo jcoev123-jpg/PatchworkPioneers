@@ -1103,6 +1103,78 @@
           "text": "Leave the crow watching the coal-dark mouth",
           "outcome": {"gold": 0, "scraps": 0} }
       ]
+    },
+    {
+      "id": "v3_seamstress_moonlit_sampler_frame",
+      "title": "The Moonlit Sampler",
+      "description": "A giant embroidery sampler blocks the doll-sized passage. In its unfinished heart, one red stitch beats faintly. The Seamstress draws near with her long needle as a small cloth hand pushes against the linen.",
+      "required_hero": "seamstress",
+      "hero_choice_ids": ["restitch_sampler_heart", "gather_sampler_floss"],
+      "choices": [
+        {
+          "id": "restitch_sampler_heart",
+          "text": "Spend 2 scraps stitching the heart shut (earn 30 gold)",
+          "outcome": {"gold": 30, "scraps": -2}
+        },
+        {
+          "id": "gather_sampler_floss",
+          "text": "Reel in two loose red threads (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little hand waiting behind the linen",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_brass_cufflink_clasp",
+      "title": "The Brass Cufflink",
+      "description": "An immense brass cufflink pins a child's sleeve across the passage. The Tinker's uneven goggles reveal a spring buried inside its clasp; each click draws the fabric tighter around a tiny trapped doll.",
+      "required_hero": "tinker",
+      "hero_choice_ids": ["purchase_cufflink_spring", "salvage_cufflink_gears"],
+      "choices": [
+        {
+          "id": "purchase_cufflink_spring",
+          "text": "Pay 18 gold for three spring-and-pin bundles (+3 scraps)",
+          "outcome": {"gold": -18, "scraps": 3}
+        },
+        {
+          "id": "salvage_cufflink_gears",
+          "text": "Spend 1 scrap opening the clasp (earn 24 gold)",
+          "outcome": {"gold": 24, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Slip past the sleeve without touching the clasp",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_coat_hanger_bridge",
+      "title": "The Crooked Coat Hanger",
+      "description": "A long iron coat hanger bridges a gap in the floorboards. The Button Golem sets its enormous brass-button fists beneath the hook while three patchwork coats sway above the darkness.",
+      "required_hero": "button_golem",
+      "hero_choice_ids": ["brace_hanger_bridge", "gather_hanger_hooks"],
+      "choices": [
+        {
+          "id": "brace_hanger_bridge",
+          "text": "Spend 2 scraps bracing the shaking hook (earn 29 gold)",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "gather_hanger_hooks",
+          "text": "Gather two brass hook-and-button bundles (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the three coats swinging over the gap",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
