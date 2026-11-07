@@ -12,7 +12,7 @@ const DUST := {
 const DIVE := {
 	"id": "queen_dive", "name": "Pin Crown Dive", "kind": "melee",
 	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {},
+	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2},
 	"self_move": 0, "move": "attack3",
 }
 const DEVOUR := {
@@ -57,6 +57,8 @@ func _initialize() -> void:
 			_check(witnesses[key] > 0, "non-vacuous seeded witness: " + key)
 		_test_invalid_launch(catalog)
 		_test_intent(catalog)
+		_test_dive(catalog)
+		_test_dive_intent(catalog)
 	if failures.is_empty():
 		print("stitched_s5_moth_queen_dust_test: PASS (", checks, " checks)")
 	else:
@@ -80,7 +82,8 @@ func _test_source(catalog: Dictionary) -> void:
 	var ids: Array = []
 	for record in records:
 		ids.append(record.get("id"))
-	_check(ids == ["patchwork_behemoth", "sewing_machine_colossus", "moth_queen"], "AC4: the three boss ids stay")
+	_check(ids.has("patchwork_behemoth") and ids.has("sewing_machine_colossus")
+		and ids.has("moth_queen"), "AC4: all three required boss ids stay")
 	var matches: Array = records.filter(func(record: Dictionary) -> bool: return record.get("id") == "moth_queen")
 	_check(matches.size() == 1, "AC1: exactly one Moth Queen record")
 	if matches.size() != 1:
@@ -93,7 +96,7 @@ func _test_source(catalog: Dictionary) -> void:
 	var expected := {"max_hp": 90, "speed": 6, "dodge": 10, "acc": 0, "prot": 4, "is_boss": true,
 		"turns_per_round": 2, "trophy": "moth_queen_wing_crown", "abilities": [DUST, DIVE, DEVOUR, VEIL]}
 	_check(queen.get("stitched") == JSON.parse_string(JSON.stringify(expected)),
-		"AC1: exact profile; Queen Dust is multi with Weak+Blind, other three moves unchanged")
+		"AC1: exact Queen profile: Dust/Devour/Veil preserved, Dive alone gains Tangled 2")
 	_check(ResourceLoader.exists("res://assets/paper/enemies/moth_queen.png")
 		and ResourceLoader.exists("res://assets/paper/stitched/icons/status_blind.png"),
 		"AC4: existing Queen sprite and Blind icon carry the move (no new art)")
@@ -109,6 +112,13 @@ func _test_source(catalog: Dictionary) -> void:
 		if validated.get("ok", false):
 			normalized.append(validated["ability"])
 	_check(foe.get("abilities") == normalized, "AC1: loader exposes the exact normalized legal kit")
+	var loaded_dive: Dictionary = {}
+	for ability in foe.get("abilities", []):
+		if str(ability["id"]) == "queen_dive":
+			loaded_dive = ability
+	_check(not loaded_dive.is_empty() and loaded_dive.get("effects") == {"tangled": 2}
+		and loaded_dive.get("launch") == [1, 3] and loaded_dive.get("target") == [1]
+		and loaded_dive.get("multi") == false, "AC1: loaded single-front Dive alone carries Tangled 2")
 	for boss_id in ["patchwork_behemoth", "sewing_machine_colossus"]:
 		_check(not StitchedEnemyCatalog.foe_for(catalog, boss_id).is_empty(), "AC4: other boss still loads: " + boss_id)
 
@@ -339,3 +349,178 @@ func _test_intent(catalog: Dictionary) -> void:
 			_check(StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen")).get("base_effects")
 				== {"weak": 1, "blind": 1}, "AC4: editing a projection cannot edit the live ability")
 		_check(projections[0] == projections[1], "AC4: intent projections replay identically")
+
+
+# ---------------------------------------------------------------- Queen Pin Crown Dive: authored Tangled 2, not a fabricated status.
+
+func _test_dive(catalog: Dictionary) -> void:
+	var witnesses := {"landed": 0, "miss": 0, "pinned_next_turn": 0}
+	for seed_value in range(1, 65):
+		var first := _dive_script(catalog, seed_value, witnesses)
+		var replay := _dive_script(catalog, seed_value, {})
+		_check(not first.is_empty() and first == replay,
+			"AC3: seeded Dive receipts, target statuses, turn state and RNG replay exactly")
+	for key in witnesses:
+		_check(int(witnesses[key]) > 0, "AC2: non-vacuous natural Dive witness: " + str(key))
+	var b := _battle(catalog, 71, ["ragling", "moth_queen"])
+	if b == null or not _reach(b, "moth_queen", []):
+		return
+	_check(int(b.get_unit("moth_queen")["rank"]) == 2,
+		"AC2: authentic second-rank Queen cannot launch Dive from rank 2")
+	var before := b.state_snapshot()
+	var rng := b.rng_state()
+	var refused := b.use_foe_ability("queen_dive", 1)
+	_check(not bool(refused.get("ok", true))
+		and refused.get("error") == "ability cannot launch from rank 2"
+		and before == b.state_snapshot() and rng == b.rng_state(),
+		"AC2: illegal Dive launch is state/turn/RNG-atomic")
+	var legal := b.use_foe_ability("queen_devour", 1)
+	_check(bool(legal.get("ok", false)) and legal.get("ability") == "queen_devour",
+		"AC2: rejected Dive leaves the real turn available for a legal action")
+
+
+func _dive_script(catalog: Dictionary, seed_value: int, witnesses: Dictionary) -> Dictionary:
+	var b := _battle(catalog, seed_value)
+	if b == null:
+		return {}
+	var receipts: Array = []
+	if not _reach(b, "moth_queen", receipts):
+		return {}
+	var queen := b.get_unit("moth_queen")
+	var front := b.get_unit("warden")
+	_check(int(queen["rank"]) == 1 and int(front["rank"]) == 1
+		and int(front["hp"]) > 0 and not bool(front["hanging"])
+		and front["statuses"].is_empty(),
+		"AC2: legal first-rank Queen and healthy front-rank Warden really exist")
+	var others: Dictionary = {}
+	for hero in b.get_heroes():
+		if str(hero["id"]) != "warden":
+			others[str(hero["id"])] = hero.duplicate(true)
+	for rank in [0, 2, 3, 4, 5]:
+		var snapshot := b.state_snapshot()
+		var rng := b.rng_state()
+		var invalid := b.use_foe_ability("queen_dive", rank)
+		_check(not bool(invalid.get("ok", true))
+			and invalid.get("error") == "no legal target in rank %d" % rank
+			and snapshot == b.state_snapshot() and rng == b.rng_state(),
+			"AC2: rank %d is not a Dive target; state, turn and RNG stay intact" % rank)
+		receipts.append(invalid)
+	var r := b.use_foe_ability("queen_dive", 1)
+	receipts.append(r)
+	_check(bool(r.get("ok", false)) and r.get("actor") == "moth_queen"
+		and r.get("ability") == "queen_dive" and r.get("results", []).size() == 1,
+		"AC2: canonical Dive resolves one actual front-doll target")
+	if not bool(r.get("ok", false)) or r.get("results", []).size() != 1:
+		return {}
+	var hit: Dictionary = r["results"][0]
+	var chance := StitchedRules.hit_chance(85 + int(queen["acc"]) +
+		int(b.candle_band()["enemy_acc"]), StitchedRules.effective_dodge(front),
+		int(queen["miss_streak"]))
+	_check(hit.get("target") == "warden" and hit.get("target_rank") == 1
+		and hit.get("hit_chance") == chance and hit.has("roll")
+		and bool(hit["hit"]) == (int(hit["roll"]) <= chance),
+		"AC2: natural seeded ACC 85 roll resolves against the real rank-one Warden")
+	for hero_id in others:
+		_check(b.get_unit(str(hero_id)) == others[hero_id],
+			"AC2: Dive leaves non-target doll " + str(hero_id) + " wholly unchanged")
+	var after := b.get_unit("warden")
+	if bool(hit["hit"]):
+		var bases: Array = [StitchedRules.crit_damage(8)] if bool(hit["crit"]) else [6, 7, 8]
+		var damages: Array = []
+		for base in bases:
+			var scaled := StitchedS1BEffects.enemy_damage(
+				int(base) + int(queen.get("dmg_bonus", 0)), b.candle())
+			damages.append(StitchedRules.damage_after_modifiers(
+				scaled, queen["statuses"], front["statuses"], false, 0, int(front["prot"])))
+		_check(damages.has(int(hit["damage"]))
+			and int(hit["target_hp"]) == int(front["hp"]) - int(hit["damage"])
+			and int(after["hp"]) == int(hit["target_hp"]),
+			"AC2: hit uses the unchanged 6-8 damage, crit, PROT and candle rules")
+		var remaining := 1 if b.current_actor_id() == "warden" else 2
+		_check(hit.get("statuses") == [{"status": "tangled", "duration": 2}]
+			and int(after["statuses"].get("tangled", 0)) == remaining,
+			"AC2: only a hit gives Tangled 2 (or 1 after immediate turn-start tick)")
+		if not witnesses.is_empty():
+			witnesses["landed"] += 1
+	else:
+		_check(int(hit["damage"]) == 0 and not bool(hit["crit"])
+			and hit.get("statuses") == [] and int(after["hp"]) == int(front["hp"])
+			and not after["statuses"].has("tangled"),
+			"AC2: a natural Dive miss applies neither damage nor Tangled")
+		if not witnesses.is_empty():
+			witnesses["miss"] += 1
+	if not _reach(b, "warden", receipts):
+		return {}
+	var victim := b.get_unit("warden")
+	if bool(hit["hit"]):
+		_check(int(victim["statuses"].get("tangled", 0)) == 1,
+			"AC2: Tangled 2 ticks to 1 at the victim's next turn and still pins movement")
+		var snapshot := b.state_snapshot()
+		var rng := b.rng_state()
+		var denied := b.move(1)
+		receipts.append(denied)
+		_check(not bool(denied.get("ok", true))
+			and denied.get("error") == "a tangled hero cannot move"
+			and snapshot == b.state_snapshot() and rng == b.rng_state(),
+			"AC2: legal adjacent rank 1-to-2 Move is refused without mutation or RNG spend")
+		if not witnesses.is_empty():
+			witnesses["pinned_next_turn"] += 1
+	else:
+		_check(not victim["statuses"].has("tangled"),
+			"AC2: naturally missed front doll remains free on its next turn")
+		var movement := b.move(1)
+		receipts.append(movement)
+		_check(bool(movement.get("ok", false)) and movement.get("from") == 1
+			and movement.get("to") == 2 and movement.get("swapped") != "",
+			"AC2: after a miss, the same adjacent move stays legal")
+	return {"receipts": receipts, "state": b.state_snapshot(),
+		"heroes": b.get_heroes().duplicate(true), "rng": b.rng_state()}
+
+
+func _test_dive_intent(catalog: Dictionary) -> void:
+	for seed_value in [3, 17, 29]:
+		var projections: Array = []
+		for attempt in range(2):
+			var b := _battle(catalog, seed_value)
+			if b == null:
+				return
+			var reached := false
+			for step in range(40):
+				if b.is_over():
+					break
+				if b.round_number() == 2 and b.current_actor_id() == "moth_queen":
+					reached = true
+					break
+				var passed := b.pass_turn()
+				_check(bool(passed.get("ok", false)),
+					"AC3: authentic passing reaches the next round without forced simulation")
+			_check(reached and b.round_number() == 2,
+				"AC3: actual second round rotates intent from Dust to Dive")
+			if not reached:
+				return
+			var snapshot := b.state_snapshot()
+			var rng := b.rng_state()
+			var intent := StitchedFoeIntent.choose(b, b.get_unit("moth_queen"))
+			_check(snapshot == b.state_snapshot() and rng == b.rng_state(),
+				"AC3: round-two intent projection consumes no state, turn or RNG")
+			_check(intent.get("foe_id") == "moth_queen"
+				and intent.get("ability_id") == "queen_dive"
+				and intent.get("ability_name") == "Pin Crown Dive"
+				and intent.get("ability_kind") == "melee"
+				and intent.get("target_rank") == 1
+				and intent.get("target_side") == "hero"
+				and intent.get("affected_ranks") == [1]
+				and intent.get("multi") == false
+				and intent.get("base_acc") == 85
+				and intent.get("base_damage") == [6, 8]
+				and intent.get("base_effects") == {"tangled": 2}
+				and not intent.get("pass", true),
+				"AC3: rotated intent discloses single front rank, unchanged numbers and Tangled 2")
+			projections.append(intent.duplicate(true))
+			intent["base_effects"]["tangled"] = 9
+			_check(StitchedFoeIntent.choose(b, b.get_unit("moth_queen"))
+				.get("base_effects") == {"tangled": 2}
+				and snapshot == b.state_snapshot() and rng == b.rng_state(),
+				"AC3: editing a projected Tangled status cannot modify the real kit or RNG")
+		_check(projections.size() == 2 and projections[0] == projections[1],
+			"AC3: two actual round-two projections exactly replay")
