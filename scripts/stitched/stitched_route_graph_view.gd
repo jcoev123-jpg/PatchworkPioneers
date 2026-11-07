@@ -262,7 +262,8 @@ func _refresh_inspection() -> void:
 	if _preview == null:
 		return
 	var exits: Array = []
-	if not inspected_route_id.is_empty() and _nodes.has(inspected_route_id):
+	var purpose := ""
+	if not inspected_route_id.is_empty()and _nodes.has(inspected_route_id):
 		exits = _nodes[inspected_route_id].get_meta("outgoing", []).duplicate(true)
 		var node: Control = _nodes[inspected_route_id]
 		_preview.text = "LIT F%02d P%d  →  %s" % [
@@ -270,11 +271,23 @@ func _refresh_inspection() -> void:
 			" / ".join(exits.map(func(target): return "F%02d P%d" % [
 				_floor_of_id(str(target)), _path_of_id(str(target))]))
 			if not exits.is_empty() else "FINAL SEAM"]
+		purpose = stop_purpose_for(str(node.get_meta("node_kind", "")))
+		if not purpose.is_empty():
+			_preview.text += "\n" + purpose
 		_preview.add_theme_color_override("font_color", AMBER)
 	else:
 		_preview.text = "FOCUS A LIT TICKET TO TRACE ITS NEXT SEAMS"
 		_preview.add_theme_color_override("font_color", BONE)
 	_preview.set_meta("preview_ids", exits)
+	_preview.set_meta("stop_purpose", purpose)
+
+
+## Truthful, price-free purpose of a split stop kind (legacy Rest/Shop are
+## aliased by the shared projection); empty for every other node kind.
+static func stop_purpose_for(kind: String) -> String:
+	var help := RunV3StopChoiceProjection.stitched_stop_help_for(
+		RunV3StopChoiceProjection.v3_kind_for(kind))
+	return str(help.get("lead", ""))
 
 
 func _style_node(id: String) -> void:

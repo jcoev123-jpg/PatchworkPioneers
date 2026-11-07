@@ -1,6 +1,7 @@
 extends "res://tests/stitched_s6_full_run_test.gd"
 ## S6 VIS-A: authenticated public route, service and terminal pages, not test-only UI.
 var _mouse_scroll_verified := false
+var _stop_witnesses := 0
 
 
 func _page(app: Node, expected_kind: String, label: String) -> Control:
@@ -342,6 +343,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 				== session.map.get_node(id).outgoing
 			and session.snapshot() == initial,
 			label + " mouse inspection matches " + id + " and draws no RNG")
+		await _assert_preview_purpose(graph, session, id, label + " ticket hover")
 		for other_id in choices:
 			if other_id != id:
 				_check(not graph.find_child("GraphNode_" + other_id, true, false).get_meta("inspected"),
@@ -356,6 +358,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 				== session.map.get_node(id).outgoing
 			and session.snapshot() == initial,
 			label + " keyboard focus highlights same node/links without mutating run")
+		await _assert_preview_purpose(graph, session, id, label + " ticket focus")
 		button.mouse_entered.emit()
 		button.mouse_exited.emit()
 		_check(graph.inspected_route_id == id,
@@ -367,6 +370,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids", []) == []
 			and session.snapshot() == initial,
 			label + " keyboard focus exit clears preview without a game action")
+		_assert_preview_default(graph, label + " ticket focus exit")
 	for id in choices:
 		var tile := graph.find_child("GraphNode_" + id, true, false) as VBoxContainer
 		var activate := tile.get_node("GraphNodeActivate") as Button
@@ -381,6 +385,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 				== session.map.get_node(id).outgoing
 			and session.snapshot() == initial,
 			label + " graph pointer hover previews exact authored outgoing seams without spending")
+		await _assert_preview_purpose(graph, session, id, label + " graph hover")
 		activate.mouse_exited.emit()
 		_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
 			label + " graph pointer exit clears preview without changing the run")
@@ -390,6 +395,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids")
 				== session.map.get_node(id).outgoing and session.snapshot() == initial,
 			label + " graph keyboard focus traces real outgoing edges without drawing RNG")
+		await _assert_preview_purpose(graph, session, id, label + " graph focus")
 		activate.mouse_entered.emit()
 		activate.mouse_exited.emit()
 		_check(graph.inspected_route_id == id,
@@ -401,6 +407,7 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 			and graph.find_child("RouteGraphPreview", true, false).get_meta("preview_ids") == []
 			and session.snapshot() == initial,
 			label + " graph blur restores empty preview with no spend")
+		_assert_preview_default(graph, label + " graph blur")
 	# One genuine wheel witness per run is sufficient; Godot's synthetic wheel
 	# button state is global and repeated separate Window mounts are not physical
 	# pointer sessions. Keyboard paging is still checked on every mounted atlas.
@@ -457,9 +464,81 @@ func _exercise_graph_inspection(app: Node, label: String) -> void:
 		_check(not cancel_button.has_focus() and graph.inspected_route_id.is_empty()
 			and session.snapshot() == initial,
 			label + " keyboard Escape cancels preview without route, wallet or RNG mutation")
+		_assert_preview_default(graph, label + " Escape")
 	graph.set_inspected_route("invented")
 	_check(graph.inspected_route_id.is_empty() and session.snapshot() == initial,
 		label + " nonexistent map focus cannot create a path or draw RNG")
+
+
+const _SPLIT_KINDS := ["Campfire", "SewingCircle", "Peddler", "Unpicker", "PatchStall"]
+const _NON_STOP_KINDS := ["Fight", "Elite", "Event", "Treasure", "Boss", "Mystery", "", "campfire"]
+
+
+## The visible preview of an inspected legal node: true floor/path, every real
+## outgoing seam, and the helper's lead only for the five split stops.
+func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRunSession,
+		id: String, label: String) -> void:
+	var node := session.map.get_node(id)
+	var preview := graph.find_child("RouteGraphPreview", true, false) as Label
+	_check(preview != null and not node.is_empty(), label + " has a real preview and node")
+	if preview == null or node.is_empty():
+		return
+	var text := preview.text
+	var kind := RunV3StopChoiceProjection.v3_kind_for(str(node.type))
+	var lead := str(RunV3StopChoiceProjection.stitched_stop_help_for(kind).get("lead", ""))
+	_check(("LIT F%02d P%d" % [node.floor, node.position + 1]) in text,
+		label + " preview keeps the inspected floor and path")
+	for target in node.outgoing:
+		var seam: Dictionary = session.map.get_node(str(target))
+		_check(("F%02d P%d" % [seam.floor, seam.position + 1]) in text,
+			label + " preview keeps outgoing seam " + str(target))
+	_check(preview.get_meta("preview_ids", []) == node.outgoing,
+		label + " preview_ids stay the exact outgoing IDs")
+	if lead.is_empty():
+		_check(str(preview.get_meta("stop_purpose", "x")) == "",
+			label + " " + str(node.type) + " gains no stop purpose")
+	else:
+		_stop_witnesses += 1
+		_check(lead in text and str(preview.get_meta("stop_purpose", "")) == lead,
+			label + " " + str(node.type) + " shows its stop purpose from the shared helper")
+	for other in _SPLIT_KINDS:
+		var other_lead := str(RunV3StopChoiceProjection.stitched_stop_help_for(other).get("lead", ""))
+		if other_lead != lead:
+			_check(not other_lead in text, label + " does not show the " + other + " purpose")
+	_check(not "GOLD" in text.to_upper() and not "STOCK" in text.to_upper(),
+		label + " invents no price or stock")
+	await process_frame
+	var scroll := graph.find_child("RouteGraphScroll", true, false) as Control
+	_check(scroll != null and scroll.get_global_rect().size.y >= 100
+		and preview.get_line_count() <= 2
+		and preview.get_global_rect().end.y <= (graph.get_global_rect().end.y + 1),
+		label + " preview keeps the atlas scroll at least 100px and inside the page")
+
+
+func _assert_preview_default(graph: StitchedRouteGraphView, label: String) -> void:
+	var preview := graph.find_child("RouteGraphPreview", true, false) as Label
+	_check(preview != null and preview.text == "FOCUS A LIT TICKET TO TRACE ITS NEXT SEAMS"
+		and str(preview.get_meta("stop_purpose", "x")) == "",
+		label + " restores the default preview with no stop purpose")
+
+
+func _check_stop_purpose_helper() -> void:
+	var seen: Dictionary = {}
+	for kind in _SPLIT_KINDS:
+		var purpose := StitchedRouteGraphView.stop_purpose_for(kind)
+		_check(not purpose.is_empty() and purpose == str(
+			RunV3StopChoiceProjection.stitched_stop_help_for(kind).lead)
+			and not seen.has(purpose), kind + " has its own distinct stop purpose")
+		seen[purpose] = true
+	_check(StitchedRouteGraphView.stop_purpose_for("Rest")
+		== StitchedRouteGraphView.stop_purpose_for("Campfire"),
+		"legacy Rest aliases to the Campfire purpose")
+	_check(StitchedRouteGraphView.stop_purpose_for("Shop")
+		== StitchedRouteGraphView.stop_purpose_for("Peddler"),
+		"legacy Shop aliases to the Peddler purpose")
+	for kind in _NON_STOP_KINDS:
+		_check(StitchedRouteGraphView.stop_purpose_for(kind).is_empty(),
+			"'" + kind + "' gains no split-stop purpose")
 
 
 ## S8f-enabled live app: graph admission is the same real entry used by tickets.
@@ -855,10 +934,14 @@ func _terminal(app: Node, mode: String) -> void:
 
 
 func _run() -> void:
+	_check_stop_purpose_helper()
 	await _graph_walk_and_rejections()
 	await _keyboard_route()
 	await _visit_kind("Event", false)
+	var witnesses_before := _stop_witnesses
 	await _visit_kind("SewingCircle", true)
+	_check(_stop_witnesses > witnesses_before,
+		"a genuine mounted legal SewingCircle stop showed its purpose by mouse and keyboard")
 	var win_app: Node = await _new_run(42)
 	if win_app.stitched_run_session != null:
 		_complete_route(win_app)
