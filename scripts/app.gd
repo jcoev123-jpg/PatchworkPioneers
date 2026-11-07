@@ -4366,37 +4366,23 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 	else:
 		title_view.hide()
 	var content := _stitched_run_page("Choose four pioneers")
-	var grid := GridContainer.new()
-	grid.columns = 2
-	content.add_child(grid)
-	var boxes: Array[CheckButton] = []
-	for id in StitchedPartyAdmission.HERO_IDS:
-		var check := CheckButton.new()
-		check.text = str(id).replace("_", " ").capitalize()
-		check.set_meta("hero_id", id)
-		check.button_pressed = id in stitched_run_draft
-		check.custom_minimum_size = Vector2(480, 48)
-		grid.add_child(check)
-		boxes.append(check)
-		check.toggled.connect(func(pressed: bool):
-			if pressed and not id in stitched_run_draft:
-				stitched_run_draft.append(id)
-			elif not pressed:
-				stitched_run_draft.erase(id))
-	_stitched_run_action(content, "Set out", func():
-		var selected: Array = []
-		for check in boxes:
-			if not is_instance_valid(check) or check.get_parent() != grid:
-				return
-			if check.button_pressed:
-				selected.append(check.get_meta("hero_id"))
-		if selected.size() != 4 or selected.size() != stitched_run_draft.size():
-			return
-		var selected_set := selected.duplicate()
-		var draft_set := stitched_run_draft.duplicate()
-		selected_set.sort()
-		draft_set.sort()
-		if selected_set != draft_set:
+	var picker := StitchedRunPartyPicker.new()
+	picker.name = "StitchedRunPartyPicker"
+	content.add_child(picker)
+	picker.build(stitched_run_draft)
+	# The two original public action indices must remain [Set out, Cancel].
+	var actions := HBoxContainer.new()
+	actions.name = "PickerActions"
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", 28)
+	content.add_child(actions)
+	var epoch := _stitched_run_epoch
+	var confirm := _stitched_run_action(actions, "Set out", func():
+		if epoch != _stitched_run_epoch or not is_instance_valid(picker) \
+				or not picker.is_visible_in_tree() or picker.get_parent() != content \
+				or not picker.tiles_match_draft() \
+				or picker.selected_ids() != stitched_run_draft \
+				or StitchedPartyAdmission.admit(stitched_run_draft).get("ok") != true:
 			return
 		var session := StitchedRunSession.start(run_seed, stitched_run_draft)
 		var gift_profile := _wren_gifts_profile()
@@ -4412,9 +4398,28 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 				_close_base(base_to_close)
 		_present_stitched_run()
 		_show_stitched_intro())
-	_stitched_run_action(content, "Cancel", _return_stitched_run_title)
-	stitched_run_buttons[0].grab_focus()
-
+	var cancel := _stitched_run_action(actions, "Cancel", _return_stitched_run_title)
+	picker.draft_changed.connect(func(picks: Array):
+		if epoch != _stitched_run_epoch or not is_instance_valid(picker) \
+				or picker.get_parent() != content or not picker.is_visible_in_tree() \
+				or not picker.tiles_match_draft() or picks != picker.selected_ids():
+			return
+		# Incomplete drafts may be edited; invalid, overfull and duplicate signals never reach App.
+		var seen := {}
+		for id in picks:
+			if not id is String or not id in StitchedPartyAdmission.HERO_IDS or seen.has(id):
+				return
+			seen[id] = true
+		if picks.size() > StitchedPartyAdmission.RANK_COUNT:
+			return
+		stitched_run_draft = picks.duplicate()
+		var enabled: bool = picks.size() == StitchedPartyAdmission.RANK_COUNT \
+			and StitchedPartyAdmission.admit(picks).get("ok") == true
+		confirm.disabled = not enabled
+		confirm.focus_mode = Control.FOCUS_ALL if enabled else Control.FOCUS_NONE
+		if not enabled and confirm.has_focus():
+			cancel.grab_focus())
+	confirm.grab_focus()
 
 ## S9c: one picture of Wren with his four dolls opens a New Run. It is a child of the first
 ## map page, so leaving that page removes it; the page's own buttons keep their order.
@@ -4602,9 +4607,7 @@ func _present_stitched_run() -> void:
 		recap.add_theme_font_size_override("font_size", 17)
 		recap.add_theme_color_override("font_color", Color("#e7d6b3"))
 		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
-		recap.text = "R%d / %s
-HP %d / %d  %s
-FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
+		recap.text = "R%d / %s\nHP %d / %d  %s\nFRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
 		card.add_child(recap)
 	if terminal:
 		_note_bedroom_run(session)
