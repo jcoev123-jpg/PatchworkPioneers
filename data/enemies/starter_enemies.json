@@ -124,7 +124,7 @@
           "name": "Button Bulwark",
           "kind": "buff",
           "launch": [1, 2],
-          "target": [1],
+          "target": [1, 2],
           "target_side": "self",
           "multi": false,
           "acc": 100,
