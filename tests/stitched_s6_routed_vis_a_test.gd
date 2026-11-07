@@ -15,6 +15,22 @@ func _page(app: Node, expected_kind: String, label: String) -> Control:
 		label + " displays an authored image without stealing pointer input")
 	var frame: NinePatchRect = page.find_child("StitchedFeltFrame", true, false)
 	_check(frame != null and frame.texture != null, label + " uses an authored nine-slice felt frame")
+	if expected_kind.begins_with("visit:"):
+		# A road stop stands in the corridor: the party at their ranks, one plain felt page, no numbers.
+		var stage := page.find_child("CorridorStage", true, false) as StitchedCorridorStage
+		_check(stage != null and stage.is_visible_in_tree() and stage.fighting, label + " stands in the corridor")
+		if stage != null:
+			for hero in app.stitched_run_session.heroes:
+				var figure: Sprite3D = stage.figure_nodes.get("hero_%d" % hero.rank)
+				_check((figure != null and figure.visible and stage.screen_point("hero_%d" % hero.rank).x < 640.0) != bool(hero.lost),
+					label + " shows " + str(hero.id) + " standing on the left unless lost")
+		_check(frame != null and frame.get_global_rect().position.x >= 640.0 and frame.get_global_rect().end.x <= 1280.0, label + " keeps its page right of the party")
+		_check(page.find_child("RunLedger", true, false) == null and page.find_child("FourHeroRecaps", true, false) == null,
+			label + " shows no ledger or doll numbers")
+		var story := page.find_child("RouteOrVisitStory", true, false) as Control
+		_check(story != null and story.is_visible_in_tree() and not app.stitched_run_session.visit_story().is_empty(),
+			label + " tells the stop's story: " + app.stitched_run_session.visit_story())
+		return page
 	var ledger: Label = page.find_child("RunLedger", true, false)
 	_check(ledger != null and "CANDLE" in ledger.text and "GOLD" in ledger.text
 		and "SCRAPS" in ledger.text and "SATCHEL" in ledger.text,

@@ -88,6 +88,13 @@ var _sealed: Dictionary = {}
 var _service: RefCounted
 var _actions: Array = []
 var _event_record: Dictionary = {}
+const VISIT_GREETINGS := {
+	"Campfire": "A thimble of wax burns low between the floorboards. The dolls can rest, talk, or trade places.",
+	"Peddler": "A peddler has spread a handkerchief of wares across the boards.",
+	"PatchStall": "Scraps of cloth hang from a matchbox stall. Every patch has its price.",
+	"Unpicker": "A thin figure with a seam ripper offers to unpick what the dark has sewn in.",
+	"SewingCircle": "Old needles stand in a ring. Torn parts can be mended here, and lost dolls replaced.",
+}
 var _replacement_visit: RunStitchedSewingReplacement
 var _kid_fear: StitchedKidFear
 ## S8f: with walks on, every non-boss node is reached through a seeded Walk on the run RNG.
@@ -567,6 +574,16 @@ func visit_actions() -> Array:
 	return _actions.duplicate(true) if phase == "visit" and is_consistent() else []
 
 
+## The road stop's story as the player reads it: the event's own words, or the host's greeting.
+func visit_story() -> String:
+	if phase != "visit":
+		return ""
+	var service := str(pending.get("service", ""))
+	if service == "Event" and str(_event_record.get("id", "")) == str(pending.get("event_id", "")):
+		return str(_event_record.get("description", ""))
+	return VISIT_GREETINGS.get(service, "Someone waits by the skirting board with something to offer.")
+
+
 func _walk_supply_offers() -> Array:
 	return [{"id": RunStitchedPeddlerWalkSupplies.STARCH, "price": PEDDLER_PRICE},
 		{"id": RunStitchedPeddlerWalkSupplies.SPARE_SPOOL, "price": PEDDLER_PRICE}]
@@ -585,14 +602,16 @@ func _open_visit(kind: String) -> bool:
 	var roster := _roster()
 	match kind:
 		"Campfire":
-			_service = RunCampfireVisit.new(id, roster, RunCampfireVisit.STITCHED, candle)
+			_service = RunCampfireVisit.new(id, roster, RunCampfireVisit.STITCHED, candle, kid_fear())
 			var state: Dictionary = _service.read_state()
 			if state.get("ok") != true:
 				return false
 			for decision in state.get("quote", {}).get("choices", []):
 				if decision == RunCampfireVisit.MEND and not roster.any(func(hero: Dictionary): return not hero.lost and hero.hp < hero.max_hp):
 					continue
-				if decision == RunCampfireVisit.TELL_TALES and not roster.any(func(hero: Dictionary): return not hero.lost and hero.fray > 0):
+				# Wren's FEAR alone makes Tell Tales worth offering; only a LOST doll's FRAY does not.
+				if decision == RunCampfireVisit.TELL_TALES and kid_fear() <= 0 \
+						and not roster.any(func(hero: Dictionary): return not hero.lost and hero.fray > 0):
 					continue
 				_offer(decision, str(decision).replace("_", " ").capitalize())
 			if not pending.get("swapped", false):
@@ -767,13 +786,22 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	var result: Dictionary = {}
 	var kind: String = pending.service
 	var displaced_patch := ""
+	var tell_tales_fear := false
 	match kind:
 		"Campfire":
 			if action_id == "swap":
 				var visit := RunStitchedSewingSwap.new(id, _living_roster(), satchel, catalog)
 				result = visit.swap(arguments[0], arguments[1], arguments[2], id, visit.read_state())
 			else:
-				result = _service.select(action_id, id, _service.read_state().heroes, candle)
+				var fear_before := kid_fear()
+				result = _service.select(action_id, id, _service.read_state().heroes, candle, fear_before)
+				if result.get("ok") == true:
+					# The service's FEAR must agree with exactly one ledger event before anything commits.
+					var fear_after := maxi(0, fear_before + StitchedKidFear.TELL_TALES_FEAR_DELTA) \
+						if action_id == RunCampfireVisit.TELL_TALES else fear_before
+					if typeof(result.get("fear")) != TYPE_INT or result.fear != fear_after:
+						return false
+					tell_tales_fear = action_id == RunCampfireVisit.TELL_TALES
 		"SewingCircle":
 			match action_id:
 				"swap":
@@ -857,6 +885,12 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	if result.get("ok") != true:
 		return false
 	_apply_receipt(result)
+	if tell_tales_fear:
+		# The run ledger is the only writer of Wren's FEAR; it must land on the service's capped value.
+		var relief := _kid_fear.apply_observed_event({"kind": "tell_tales"})
+		if relief.get("ok") != true or relief.get("fear") != result.get("fear"):
+			phase = "invalid"
+			return false
 	if displaced_patch != "":
 		# The replaced patch is unpicked: it stops being owned and yields exactly 1 scrap.
 		patches.erase(displaced_patch)
