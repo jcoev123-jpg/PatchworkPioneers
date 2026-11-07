@@ -5,6 +5,8 @@ extends Control
 signal close_requested
 
 const SLOTS := ["head", "arms", "torso", "legs"]
+const OWNERS := ["all", "warden", "seamstress", "tinker", "yarn_ranger", "any"]
+const OWNER_LABELS := ["All", "Warden", "Seamstress", "Tinker", "Yarn Ranger", "Spoils"]
 const STAT_LABELS := {
     "acc": "ACC", "crit": "CRIT", "dmg": "DMG", "max_hp": "MAX HP",
     "prot": "PROT", "speed": "SPEED", "dodge": "DODGE",
@@ -12,6 +14,7 @@ const STAT_LABELS := {
 const TIER_LABELS := ["I", "II", "III"]
 
 @onready var _rows: VBoxContainer = $CatalogPanel/PartScroll/PartRows
+@onready var _owner_filter: OptionButton = $CatalogPanel/OwnerFilter
 @onready var _status: Label = $CatalogPanel/StatusLabel
 @onready var _name: Label = $DetailsPanel/PartName
 @onready var _meta: Label = $DetailsPanel/PartMeta
@@ -26,6 +29,7 @@ const TIER_LABELS := ["I", "II", "III"]
 var selected_part_id: String = ""
 var selected_tier: int = 1
 var active_slot: String = "head"
+var selected_owner: String = "all"
 var _by_id: Dictionary = {}
 var _by_slot: Dictionary = {}
 var _slot_buttons: Dictionary = {}
@@ -41,6 +45,10 @@ func _ready() -> void:
         "legs": $CatalogPanel/SlotLegs,
     }
     _tier_buttons = [$DetailsPanel/TierI, $DetailsPanel/TierII, $DetailsPanel/TierIII]
+    for index in range(OWNERS.size()):
+        _owner_filter.add_item(OWNER_LABELS[index], index)
+    _owner_filter.focus_mode = Control.FOCUS_ALL
+    _owner_filter.item_selected.connect(_on_owner_chosen)
     for slot in SLOTS:
         var key: String = slot
         var button: Button = _slot_buttons[key]
@@ -71,6 +79,7 @@ func present_parts(entries: Variant) -> bool:
         _by_slot[str(part["slot"])].append(part)
     for slot in SLOTS:
         _by_slot[slot].sort_custom(_part_before)
+    _owner_filter.disabled = false
     for slot in SLOTS:
         if not _by_slot[slot].is_empty():
             return select_part(str(_by_slot[slot][0]["id"]))
@@ -78,22 +87,34 @@ func present_parts(entries: Variant) -> bool:
     return false
 
 
+## Change only which validated rows are visible. Reuse the selected part when
+## possible; otherwise select the first sorted row in the active slot.
+func select_owner(owner: String) -> bool:
+    if not owner in OWNERS or _by_id.is_empty():
+        return false
+    selected_owner = owner
+    _owner_filter.select(OWNERS.find(owner))
+    return select_slot(active_slot)
+
+
 ## Select a tab with no gameplay effect. A new part always starts at tier I.
 func select_slot(slot: String) -> bool:
     if not slot in SLOTS:
         return false
     active_slot = slot
-    if not _by_slot.has(slot) or _by_slot[slot].is_empty():
+    var visible := _visible_parts(slot)
+    if visible.is_empty():
         selected_part_id = ""
         selected_tier = 1
         _refresh_rows()
         _refresh_details()
         return true
-    if _by_id.has(selected_part_id) and str(_by_id[selected_part_id]["slot"]) == slot:
+    if _by_id.has(selected_part_id) and str(_by_id[selected_part_id]["slot"]) == slot and (
+            selected_owner == "all" or str(_by_id[selected_part_id]["owner"]) == selected_owner):
         _refresh_rows()
         _refresh_details()
         return true
-    return select_part(str(_by_slot[slot][0]["id"]))
+    return select_part(str(visible[0]["id"]))
 
 
 ## Selects an existing validated entry only; unknown IDs do not alter the display.
@@ -101,6 +122,8 @@ func select_part(part_id: String) -> bool:
     if not _by_id.has(part_id):
         return false
     var part: Dictionary = _by_id[part_id]
+    if selected_owner != "all" and str(part["owner"]) != selected_owner:
+        return false
     if selected_part_id != part_id:
         selected_tier = 1
     selected_part_id = part_id
@@ -128,6 +151,24 @@ func part_ids_in_slot(slot: String) -> Array[String]:
     return ids
 
 
+## Full-catalog part_ids_in_slot remains independent of the visible owner rows.
+func visible_part_ids_in_slot(slot: String) -> Array[String]:
+    var ids: Array[String] = []
+    for part in _visible_parts(slot):
+        ids.append(str(part["id"]))
+    return ids
+
+
+func _visible_parts(slot: String) -> Array:
+    var parts: Array = []
+    if not slot in SLOTS or not _by_slot.has(slot):
+        return parts
+    for part in _by_slot[slot]:
+        if selected_owner == "all" or str(part["owner"]) == selected_owner:
+            parts.append(part)
+    return parts
+
+
 func _part_before(a: Dictionary, b: Dictionary) -> bool:
     var left := str(a["name"]).to_lower()
     var right := str(b["name"]).to_lower()
@@ -143,6 +184,9 @@ func _clear(message: String) -> void:
     selected_part_id = ""
     selected_tier = 1
     active_slot = "head"
+    selected_owner = "all"
+    _owner_filter.select(0)
+    _owner_filter.disabled = true
     _status.text = message
     _refresh_rows()
     _refresh_details()
@@ -156,10 +200,11 @@ func _refresh_rows() -> void:
     for slot in SLOTS:
         var slot_button: Button = _slot_buttons[slot]
         slot_button.button_pressed = slot == active_slot
-        slot_button.disabled = not _by_slot.has(slot) or _by_slot[slot].is_empty()
+        slot_button.disabled = _visible_parts(slot).is_empty()
     if not _by_slot.has(active_slot):
         return
-    for part in _by_slot[active_slot]:
+    var visible := _visible_parts(active_slot)
+    for part in visible:
         var id := str(part["id"])
         var button := Button.new()
         button.name = "Part_" + id
@@ -173,7 +218,13 @@ func _refresh_rows() -> void:
         button.pressed.connect(_on_part_pressed.bind(id))
         _rows.add_child(button)
         _part_buttons[id] = button
-    _status.text = "%d parts / %s" % [_by_slot[active_slot].size(), active_slot.to_upper()]
+    _status.text = "%d parts / %s / %s" % [visible.size(), active_slot.to_upper(),
+        OWNER_LABELS[OWNERS.find(selected_owner)]]
+
+
+func _on_owner_chosen(index: int) -> void:
+    if index >= 0 and index < OWNERS.size():
+        select_owner(OWNERS[index])
 
 
 func _on_slot_pressed(slot: String) -> void:
