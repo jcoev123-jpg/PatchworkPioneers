@@ -715,8 +715,9 @@ func _open_visit(kind: String) -> bool:
 					continue
 				for slot in StitchedParts.SLOTS:
 					var worn: Dictionary = hero.parts[slot]
-					_offer("mend", "%s / Mend %s / %d scraps" % [hero.name, slot, SEWING_COST],
-						not hero.lost and worn.torn and scraps >= SEWING_COST, [hero.id, slot])
+					# Owner 11-08: only a torn patch the party can pay for shows a Mend row.
+					if worn.torn and scraps >= SEWING_COST:
+						_offer("mend", "%s / Mend %s / %d scraps" % [hero.name, slot, SEWING_COST], true, [hero.id, slot])
 					_offer("upgrade", "%s / Raise %s tier / %d scraps" % [hero.name, slot, SEWING_COST],
 						upgrade.read_state().get("ok") == true and not worn.torn and worn.tier < 3 and scraps >= SEWING_COST, [hero.id, slot])
 			_add_swaps(roster)

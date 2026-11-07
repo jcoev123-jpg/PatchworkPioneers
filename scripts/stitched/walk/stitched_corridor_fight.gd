@@ -35,14 +35,6 @@ var kid_view: StitchedKidView
 var chrome: Control
 var plates: Dictionary = {}
 var hits: Dictionary = {}
-## One read-only, image-backed projection for every possible foe rank.
-var intent_tickets: Dictionary = {}
-var intent_tags: Dictionary = {}
-var intent_projections: Dictionary = {}
-var intent_disclosure: NinePatchRect
-var intent_detail: Label
-var _intent_hover_rank := 0
-var _intent_focus_rank := 0
 var part_buttons: Dictionary = {}
 var more_buttons: Dictionary = {}
 ## Wren's hand: four small hands at the bar's right end, the slots later gifts will fill.
@@ -116,9 +108,10 @@ func _ready() -> void:
 	add_child(kid_view)
 	kid_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	kid_view.meter.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# Owner 11-08: no puppet hands or strings over the corridor fight; the fear jar stays.
+	kid_view.get_node("KidHandsLayer").visible = false
 	_build_plates()
 	_build_top()
-	_build_intents()
 	_build_bar()
 	_build_more()
 	_build_bark()
@@ -253,108 +246,6 @@ func _build_top() -> void:
 	outcome_label.name = "Outcome"
 	outcome_label.visible = false
 	add_child(outcome_label)
-
-
-## Four aligned sewn rank tickets above the 3D foes. This is a view of the actual
-## rules projection, not an alternate target or action surface.
-func _build_intents() -> void:
-	for rank in range(1, 5):
-		var plate := StitchedFoeIntentPlate.new()
-		plate.name = "FoeIntent_R%d" % rank
-		plate.position = Vector2(544 + (rank - 1) * 180, 133)
-		plate.size = Vector2(174, 62)
-		plate.mouse_entered.connect(func(): _intent_hover(rank, true))
-		plate.mouse_exited.connect(func(): _intent_hover(rank, false))
-		plate.focus_entered.connect(func(): _intent_focus(rank, true))
-		plate.focus_exited.connect(func(): _intent_focus(rank, false))
-		add_child(plate)
-		# Preserve the existing 24px name and 19px target line; give their
-		# text native width rather than scaling a tiny classic ticket.
-		plate.primary.size.x = 134
-		plate.secondary.size.x = 166
-		intent_tickets[rank] = plate
-		var tag := _label("", Rect2(plate.position.x + 4, 111, 166, 22), 18, AMBER)
-		tag.name = "FoeKind_R%d" % rank
-		tag.visible = false
-		add_child(tag)
-		intent_tags[rank] = tag
-	# Stock tooltip popups are suppressed by StitchedFoeIntentPlate. The
-	# authored felt and readable bone text disclose every unmodified detail.
-	intent_disclosure = _felt(Rect2(16, 114, 514, 142), Color("332330f8"))
-	intent_disclosure.name = "IntentDisclosure"
-	intent_disclosure.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	intent_disclosure.visible = false
-	add_child(intent_disclosure)
-	intent_detail = _label("", Rect2(14, 5, 486, 132), 18, BONE)
-	intent_detail.name = "FullIntent"
-	intent_detail.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-	intent_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	intent_disclosure.add_child(intent_detail)
-
-
-func _intent_hover(rank: int, inside: bool) -> void:
-	_intent_hover_rank = rank if inside else (0 if _intent_hover_rank == rank else _intent_hover_rank)
-	_refresh_intent_disclosure()
-
-
-func _intent_focus(rank: int, inside: bool) -> void:
-	_intent_focus_rank = rank if inside else (0 if _intent_focus_rank == rank else _intent_focus_rank)
-	_refresh_intent_disclosure()
-
-
-func _refresh_intents() -> void:
-	for rank in range(1, 5):
-		var unit: Dictionary = engine._unit_at("foe", rank)
-		var projection := StitchedFoeIntent.choose(battle, unit)
-		var plate: StitchedFoeIntentPlate = intent_tickets[rank]
-		plate.present_intent(projection, rank)
-		if not projection.is_empty():
-			# The inherited classic plaque assumes a 140px frame; restore
-			# the full native caption width for this wider corridor ticket.
-			plate.primary.size.x = plate.size.x - plate.primary.position.x - 6
-			var heading := "STUN" if bool(projection.get("stun", false)) else (
-				"PASS" if bool(projection.get("pass", false)) else
-				str(projection.get("ability_name", "")))
-			if projection.get("ability_kind", "") == "move" and not bool(projection.get("pass", false)):
-				heading = "MOVE " + heading
-			plate.primary.text = plate._fit_caption(heading, plate.primary)
-		if projection.is_empty():
-			intent_projections.erase(rank)
-		else:
-			intent_projections[rank] = projection
-			# A long multi-rank label must never become illegible microtext.
-			# Its compact spelling still contains EVERY affected rank.
-			if plate.secondary.get_theme_font_size("font_size") < 17:
-				var ranks := PackedStringArray()
-				for affected in projection.get("affected_ranks", []):
-					ranks.append(str(affected))
-				if not ranks.is_empty():
-					plate.secondary.text = ("%s R%s" % [
-						"HERO" if projection.get("target_side", "") == "hero" else "FOE",
-						",".join(ranks)])
-					plate.secondary.add_theme_font_size_override("font_size", 19)
-		var tag: Label = intent_tags[rank]
-		tag.visible = plate.visible
-		tag.text = "FOE R%d · %s" % [rank,
-			"NO ACTION" if bool(projection.get("pass", false)) else
-			str(projection.get("ability_kind", "")).to_upper()] if plate.visible else ""
-	_refresh_intent_disclosure()
-
-
-func _refresh_intent_disclosure() -> void:
-	for rank in intent_tickets:
-		var plate: StitchedFoeIntentPlate = intent_tickets[rank]
-		plate.set_inspected(false)
-	var rank := _intent_focus_rank if _intent_focus_rank > 0 else _intent_hover_rank
-	if not intent_tickets.has(rank) or not intent_tickets[rank].visible:
-		intent_disclosure.hide()
-		intent_detail.text = ""
-		return
-	var ticket: StitchedFoeIntentPlate = intent_tickets[rank]
-	ticket.set_inspected(true)
-	intent_detail.text = "FOE R%d · %s\n%s" % [
-		rank, str(intent_projections[rank].get("foe_name", "")), ticket.tooltip_text]
-	intent_disclosure.show()
 
 
 ## One bottom bar: the acting doll, its health and fray, and its four body parts.
@@ -679,7 +570,6 @@ func refresh() -> void:
 				numbers.text = str(int(heap.get("hp", 0)))
 			hits[key].visible = plate.visible
 			hits[key].tooltip_text = _simple_detail(engine.status_detail(side, rank)) if plate.visible else ""
-	_refresh_intents()
 	_sync_keyboard_targets()
 	_refresh_bar()
 	_shade_figures()

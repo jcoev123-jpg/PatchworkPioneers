@@ -97,6 +97,8 @@ var stitched_run_intro: Control
 var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
+## Which junction opening the party just walked into, for the walk's turn-in beat.
+var _stitched_arrive_side := ""
 const STITCHED_SAVE_PATH := "user://stitched_run.save"
 ## Playtest cheats (debug builds only; delete scripts/debug/ before the full game ships).
 const PLAYTEST_CHEATS_PATH := "res://scripts/debug/playtest_cheats.gd"
@@ -4503,6 +4505,9 @@ func _present_stitched_run() -> void:
 			walker.queue_free()
 			_present_stitched_run())
 		add_child(walker)
+		if walker.stage != null and not _stitched_arrive_side.is_empty():
+			walker.stage.arrive_from(_stitched_arrive_side, not walker.reduced_motion)
+		_stitched_arrive_side = ""
 		return
 	if session.phase == "battle":
 		_clear_stitched_run_panel()
@@ -4549,6 +4554,9 @@ func _present_stitched_run() -> void:
 			corridor.add_more("save", "Save run", func():
 				if stitched_run_session == session and stitched_run_battle == stage:
 					StitchedRunSave.write_file(stitched_save_path, session))
+		return
+	if session.phase == "map" and stitched_walks:
+		_present_stitched_junction(session)
 		return
 	var terminal := session.phase in ["victory", "defeat"]
 	var page_kind := session.phase
@@ -4706,6 +4714,46 @@ FRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fr
 	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
 	if session.phase == "map" and not session.gift_offer.is_empty():
+		_show_wren_gift_pick(session)
+
+
+## Owner 11-08: the road map is a junction in the corridor. Each legal stop stands in an
+## opening to the left, ahead or to the right; walking into one enters it at once.
+func _present_stitched_junction(session: StitchedRunSession) -> void:
+	_clear_stitched_run_panel()
+	var junction := StitchedCorridorJunction.new()
+	junction.name = "StitchedRunPage"
+	junction.set_meta("page_kind", "map")
+	add_child(junction)
+	stitched_run_panel = junction
+	var epoch := _stitched_run_epoch
+	var expected := session.snapshot()
+	var legal := session.choices()
+	var stops: Array = []
+	for id in legal:
+		var node := session.map.get_node(id)
+		stops.append({"id": id, "kind": str(node.type), "position": int(node.position)})
+	junction.present(session.walk_area(),
+		str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name), stops)
+	junction.chosen.connect(func(id: String):
+		if stitched_run_session != session or stitched_run_panel != junction \
+			or epoch != _stitched_run_epoch or not junction.is_visible_in_tree() \
+			or session.phase != "map" or not legal.has(id) or session.snapshot() != expected:
+			return
+		var side := str(junction.sides.get(id, "forward"))
+		if session.enter(id, expected):
+			_stitched_arrive_side = side
+			_present_stitched_run())
+	for id in junction.doors:
+		stitched_run_buttons.append(junction.doors[id])
+	stitched_run_buttons.append(junction.add_action("Save run", func():
+		if stitched_run_session == session and stitched_run_panel == junction:
+			StitchedRunSave.write_file(stitched_save_path, session)))
+	stitched_run_buttons.append(junction.add_action("Return to title", func():
+		if stitched_run_session == session and stitched_run_panel == junction:
+			_return_stitched_run_title()))
+	junction.focus_first()
+	if not session.gift_offer.is_empty():
 		_show_wren_gift_pick(session)
 
 
