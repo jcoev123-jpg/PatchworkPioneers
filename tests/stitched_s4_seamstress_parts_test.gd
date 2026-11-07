@@ -105,6 +105,9 @@ const NEEDLE_RANK4_FOE_RANKS := {
 	"moth_scribe": 4,
 }
 
+## The shipped legs starter whose tier III alone reaches enemy rank 4.
+const TETHER_LOOP_PART := "seamstress_tether_loop_spools"
+
 ## The authored acceptance contract, one row per part id, indexed by tier - 1.
 const EXPECTED := {
 	"seamstress_mending_knot_hat": {
@@ -183,6 +186,9 @@ const EXPECTED := {
 		"name": "Tether Loop Spools", "slot": "legs", "stat_key": "speed", "stat": [1, 2, 3],
 		"ability_id": "tether_loop", "ability_name": "Tether Loop", "kind": "debuff",
 		"launch": [2, 3], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
+		# Tether Loop is the one tier-scaled reach in this kit: tiers I and II stay on the
+		# front ranks [1, 2, 3] and ONLY tier III adds enemy rank 4.
+		"target_by_tier": [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]],
 		"multi": false,
 		"acc": 90,
 		"mark": [0, 0, 0],
@@ -223,6 +229,7 @@ func _initialize() -> void:
 	_test_rear_launch_masks()
 	_test_rear_rank_support()
 	_test_rear_illegal_forward_launch()
+	_test_rear_tether_reach()
 	_test_determinism()
 	if _failures.is_empty():
 		print("stitched_s4_seamstress_parts_test: PASS (", _checks, " checks)")
@@ -394,6 +401,11 @@ func _test_tiers() -> void:
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			var stat := StitchedParts.stat_at_tier(part, tier)
 			var tag := "%s tier %d" % [part_id, tier]
+			# Only the parts that author a per-tier reach (the Tether Loop's tier-III rear rank)
+			# deviate from their base target array; every other part keeps spec["target"].
+			var tier_target: Array = spec["target"]
+			if spec.has("target_by_tier"):
+				tier_target = spec["target_by_tier"][tier - 1]
 			_check(not ability.is_empty(), "AC3: " + tag + " resolves its ability")
 			if ability.is_empty():
 				continue
@@ -412,7 +424,7 @@ func _test_tiers() -> void:
 			_check(int(ability["crit"]) == 0 and int(ability["self_move"]) == 0,
 				"AC3: " + tag + " adds no crit or self move")
 			_check(_int_list(ability["launch"]) == _int_list(spec["launch"]), "AC3: " + tag + " launch ranks")
-			_check(_int_list(ability["target"]) == _int_list(spec["target"]), "AC3: " + tag + " target ranks")
+			_check(_int_list(ability["target"]) == _int_list(tier_target), "AC3: " + tag + " target ranks")
 			var launch_mask := int(ability["launch_mask"])
 			var target_mask := int(ability["target_mask"])
 			_check(launch_mask == StitchedParts.rank_mask(ability["launch"]) and launch_mask != 0,
@@ -424,7 +436,7 @@ func _test_tiers() -> void:
 			for rank in range(MIN_RANK, MAX_RANK + 1):
 				_check(StitchedParts.ranks_allowed(launch_mask, rank) == (rank in spec["launch"]),
 					"%s: rank %d launch legality" % [tag, rank])
-				_check(StitchedParts.ranks_allowed(target_mask, rank) == (rank in spec["target"]),
+				_check(StitchedParts.ranks_allowed(target_mask, rank) == (rank in tier_target),
 					"%s: rank %d target legality" % [tag, rank])
 			_check(_int_list(ability["dmg"]) == _int_list(spec["dmg"][tier - 1]),
 				"AC3: " + tag + " damage range " + str(spec["dmg"][tier - 1]))
@@ -1975,6 +1987,504 @@ func _test_rear_illegal_forward_launch() -> void:
 		"AC3: the illegal rank-1 launch preserved the snapshot, turn, round and seeded RNG")
 
 
+# ---------------------------------------------- AC1-AC4: tier-III Tether Loop rear-rank reach
+
+## Tier contract plus real battle witnesses for the one reach this slice adds: at stitch tier III
+## the equipped Tether Loop may snare the existing foe standing in enemy rank 4, while tiers I/II
+## stay on enemy ranks 1-3 and every refusal is atomic.
+func _test_rear_tether_reach() -> void:
+	_test_tether_reach_contract()
+	_test_rear_tether_hit()
+	_test_rear_tether_rejections()
+	_test_rear_tether_miss()
+
+
+## The authored and tier-resolved contract of the named legs part: only tier III adds rank 4.
+func _test_tether_reach_contract() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the Seamstress catalog loads for the Tether Loop reach contract")
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	_check(by_id.has(TETHER_LOOP_PART), "AC1: the catalog authors " + TETHER_LOOP_PART)
+	if not by_id.has(TETHER_LOOP_PART):
+		return
+	var part: Dictionary = by_id[TETHER_LOOP_PART]
+	_check(str(part["slot"]) == "legs" and str(part["owner"]) == OWNER,
+		"AC1: Tether Loop Spools stays the Seamstress's legs part")
+	_check(_int_dict(part["stat"]) == {"speed": 1},
+		"AC1: the authored Tether Loop Spools stat stays SPEED 1")
+	var base_ability: Dictionary = part["ability"]
+	_check(_int_list(base_ability["launch"]) == [2, 3] and _int_list(base_ability["target"]) == [1, 2, 3],
+		"AC1: the base Tether Loop record keeps launch 2-3 and target ranks 1-3")
+	# Tiers I and II: front ranks only, unchanged numbers, no rank-4 mask bit.
+	for tier in [1, 2]:
+		var ability := StitchedParts.ability_at_tier(part, tier)
+		var tag := "tier %d" % tier
+		_check(_int_list(ability["target"]) == [1, 2, 3],
+			"AC1: " + tag + " Tether Loop still targets only enemy ranks 1-3")
+		_check(not StitchedParts.ranks_allowed(int(ability["target_mask"]), MAX_RANK),
+			"AC1: " + tag + " Tether Loop has no rank-4 target bit")
+		_check(int(ability["target_mask"]) == StitchedParts.rank_mask([1, 2, 3]),
+			"AC1: " + tag + " Tether Loop derives its target mask from ranks 1-3")
+		_check(StitchedParts.ranks_allowed(int(ability["launch_mask"]), 2)
+			and StitchedParts.ranks_allowed(int(ability["launch_mask"]), 3)
+			and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), 1)
+			and not StitchedParts.ranks_allowed(int(ability["launch_mask"]), MAX_RANK),
+			"AC1: " + tag + " Tether Loop keeps the hero launch ranks 2-3")
+		_check(int(ability["acc"]) == 90 and _int_list(ability["dmg"]) == [0, 0]
+			and not bool(ability["multi"]) and str(ability["target_side"]) == "enemy"
+			and str(ability["move"]) == "skill",
+			"AC1: " + tag + " Tether Loop keeps ACC 90, zero damage, one enemy target and the skill pose")
+		_check(int(ability["effects"].get("tangled", 0)) == 2,
+			"AC1: " + tag + " Tether Loop applies Tangled 2")
+		_check(int(StitchedParts.stat_at_tier(part, tier).get("speed", 0)) == tier,
+			"AC1: " + tag + " Tether Loop Spools grants SPEED " + str(tier))
+	# Tier III: the one added reach, with its own derived mask.
+	var third := StitchedParts.ability_at_tier(part, 3)
+	_check(_int_list(third["target"]) == [1, 2, 3, 4],
+		"AC1: tier-III Tether Loop targets enemy ranks 1-4")
+	_check(int(third["target_mask"]) == StitchedParts.rank_mask([1, 2, 3, 4])
+		and StitchedParts.ranks_allowed(int(third["target_mask"]), MAX_RANK),
+		"AC1: tier-III Tether Loop derives a target mask with the rank-4 bit set")
+	for rank in [1, 2, 3]:
+		_check(StitchedParts.ranks_allowed(int(third["target_mask"]), rank),
+			"AC1: tier-III Tether Loop still targets enemy rank %d" % rank)
+	for rank in [0, 5]:
+		_check(not StitchedParts.ranks_allowed(int(third["target_mask"]), rank),
+			"AC1: tier-III Tether Loop never targets rank %d" % rank)
+	_check(_int_list(third["launch"]) == [2, 3] and int(third["acc"]) == 90
+		and _int_list(third["dmg"]) == [0, 0] and not bool(third["multi"])
+		and str(third["target_side"]) == "enemy" and str(third["move"]) == "skill"
+		and int(third["effects"].get("tangled", 0)) == 3
+		and int(StitchedParts.stat_at_tier(part, 3).get("speed", 0)) == 3,
+		"AC1: tier-III Tether Loop keeps launch 2-3, ACC 90, zero damage, Tangled 3 and SPEED 3")
+	# The authored override is narrow: only tier III authors a target array.
+	var raw: Variant = _read_json(PARTS_PATH)
+	if raw is Dictionary:
+		var document: Dictionary = raw
+		var raw_parts: Variant = document.get("parts", [])
+		var raw_part := _raw_part_for(raw_parts, TETHER_LOOP_PART)
+		_check(not raw_part.is_empty(), "AC1: the raw JSON authors the Tether Loop Spools record")
+		if not raw_part.is_empty():
+			var raw_base: Dictionary = raw_part.get("ability", {})
+			_check(_int_list(raw_base.get("launch")) == [2, 3]
+				and _int_list(raw_base.get("target")) == [1, 2, 3],
+				"AC1: the authored base Tether Loop record stays launch 2-3 / target ranks 1-3")
+			var raw_tiers: Dictionary = raw_part.get("tiers", {})
+			var raw_tier_two: Dictionary = raw_tiers.get("2", {})
+			var raw_tier_three: Dictionary = raw_tiers.get("3", {})
+			var raw_two_ability: Dictionary = raw_tier_two.get("ability", {})
+			var raw_three_ability: Dictionary = raw_tier_three.get("ability", {})
+			_check(not raw_two_ability.has("target"),
+				"AC1: tier-II authors no target override, so it keeps enemy ranks 1-3")
+			_check(int(raw_two_ability.get("effects", {}).get("tangled", 0)) == 2,
+				"AC1: the authored tier-II effects override stays Tangled 2")
+			_check(_int_list(raw_three_ability.get("target")) == [1, 2, 3, 4],
+				"AC1: the authored tier-III target override is the one rank-4 reach")
+			_check(int(raw_three_ability.get("effects", {}).get("tangled", 0)) == 3,
+				"AC1: the authored tier-III effects override is Tangled 3")
+			_check(not raw_three_ability.has("launch") and not raw_three_ability.has("acc")
+				and not raw_three_ability.has("dmg") and not raw_three_ability.has("move"),
+				"AC1: the tier-III override touches no launch, ACC, damage or pose")
+			_check(not raw_three_ability.has("target_mask"),
+				"AC1: the authored tier-III override never hard-codes a derived mask")
+	# The printed reach is truthful about Tangled 2 and the tier-III rank-4 extension.
+	var text := str(part["text"])
+	_check(text == "Loop trailing thread around one foe in ranks 1-3 for Tangled 2; at stitch tier III reach rank 4 with Tangled 3.",
+		"AC1: the Tether Loop text states Tangled 2 and the tier-III rank-4 reach")
+	_check(not text.contains("Tangled 1"),
+		"AC1: the Tether Loop text no longer claims Tangled 1")
+	_check(text.contains("rank 4") and text.contains("tier III") and text.contains("Tangled 3"),
+		"AC1: the Tether Loop text names its tier-III rank 4 and Tangled 3")
+	# The seven sibling records keep their exact tier-resolved target ranks and text.
+	for other_id in ALL_PART_IDS:
+		if other_id == TETHER_LOOP_PART:
+			continue
+		for tier in [1, 2, 3]:
+			_check(_int_list(StitchedParts.ability_at_tier(by_id[other_id], tier)["target"])
+				== _int_list(EXPECTED[other_id]["target"]),
+				"AC1: %s tier %d keeps its authored target ranks" % [other_id, tier])
+		_check(str(by_id[other_id]["text"]) == str(by_id[other_id]["text"]).strip_edges()
+			and not str(by_id[other_id]["text"]).is_empty(),
+			"AC1: the sibling " + other_id + " keeps nonempty rules text")
+
+
+## Builds the detached four-hero/three-foe fixture with the existing moth_scribe moved into enemy
+## rank 4 (rank 3 vacant) and attempts one real Tether Loop at enemy rank 4 on the Seamstress's
+## own rank-2 turn. Everything before the cast is captured for atomic-refusal comparisons.
+func _rear_tether_at(seed_value: int, tier: int, kit: Dictionary = STARTER_PARTS) -> Dictionary:
+	var battle := _build_battle(seed_value, tier, kit, false, true)
+	if battle == null:
+		return {}
+	if not _to(battle, "seamstress"):
+		return {}
+	var wearer := battle.get_unit("seamstress")
+	if int(wearer["rank"]) != 2:
+		return {}
+	if _worn_part_id(wearer, TETHER_LOOP_PART) != TETHER_LOOP_PART:
+		return {}
+	if int(wearer["parts"]["legs"]["tier"]) != tier:
+		return {}
+	var rear := battle.get_unit("moth_scribe")
+	if rear.is_empty() or int(rear["rank"]) != MAX_RANK or int(rear["hp"]) <= 0:
+		return {}
+	if not _no_foe_at(battle, 3):
+		return {}
+	var before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var foes_before: Dictionary = {}
+	for foe in battle.get_foes():
+		foes_before[str(foe["id"])] = foe.duplicate(true)
+	var ally_before := battle.get_unit("lantern_monk")
+	var receipt := battle.use_part(TETHER_LOOP_PART, MAX_RANK)
+	return {
+		"battle": battle, "receipt": receipt, "seed": seed_value,
+		"before": before, "rng_before": rng_before,
+		"foes_before": foes_before, "ally_before": ally_before,
+	}
+
+
+## A bounded fixed-seed scan for a genuine landed tier-III snare on the relocated rank-4 foe.
+func _rear_tether_hit_witness() -> Dictionary:
+	for seed_value in range(1, 300):
+		var trial := _rear_tether_at(seed_value, 3)
+		if trial.is_empty():
+			continue
+		var receipt: Dictionary = trial["receipt"]
+		var results: Array = receipt.get("results", [])
+		if not bool(receipt.get("ok", false)) or results.size() != 1:
+			continue
+		var result: Dictionary = results[0]
+		if not bool(result.get("hit", false)):
+			continue
+		if str(result.get("target", "")) != "moth_scribe" \
+				or int(result.get("target_rank", 0)) != MAX_RANK:
+			continue
+		var battle: StitchedRules = trial["battle"]
+		if int(battle.get_unit("moth_scribe")["statuses"].get("tangled", 0)) != 3:
+			continue
+		return trial
+	return {}
+
+
+## The real AC2 witness: a landed tier-III snare on the rank-4 foe, its first natural turn-start
+## tick to Tangled 2, its remaining natural ticks to expiry, and an exact equal-seed replay.
+func _test_rear_tether_hit() -> void:
+	var witness := _rear_tether_hit_witness()
+	_check(not witness.is_empty(),
+		"AC2: a fixed seed lands a real tier-III Tether Loop on the enemy rank-4 moth_scribe")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var receipt: Dictionary = witness["receipt"]
+	var result: Dictionary = receipt["results"][0]
+	var foes_before: Dictionary = witness["foes_before"]
+	var before: Dictionary = witness["before"]
+	# Real preconditions: a genuine 4v3 fight, a legally equipped rank-2 caster and a living rear foe.
+	_check(battle.get_heroes().size() == 4 and battle.get_foes().size() == 3,
+		"AC2: the rear reach is proven in a genuine four-hero / three-foe battle")
+	_check(_worn_part_id(battle.get_unit("seamstress"), TETHER_LOOP_PART) == TETHER_LOOP_PART
+		and int(battle.get_unit("seamstress")["rank"]) == 2,
+		"AC2: the equipped, untorn Tether Loop acts from the legal rank-2 hero seat")
+	_check(int(battle.get_unit("moth_scribe")["rank"]) == MAX_RANK and int(battle.get_unit("moth_scribe")["hp"]) > 0,
+		"AC2: the existing moth_scribe really stands alive in enemy rank 4")
+	_check(_no_foe_at(battle, 3),
+		"AC2: enemy rank 3 is vacant, so rank 4 is the only rear target")
+	# The action receipt itself.
+	_check(bool(receipt.get("ok", false)),
+		"AC2: the tier-III rank-4 use_part call is an accepted real action")
+	_check(str(receipt.get("action", "")) == "ability"
+		and str(receipt.get("actor", "")) == "seamstress"
+		and str(receipt.get("part", "")) == TETHER_LOOP_PART
+		and str(receipt.get("ability", "")) == "tether_loop",
+		"AC2: the receipt names the Seamstress's equipped tier-III tether_loop action")
+	_check(receipt["results"].size() == 1
+		and str(result.get("target", "")) == "moth_scribe"
+		and str(result.get("target_side", "")) == "foe"
+		and int(result.get("target_rank", 0)) == MAX_RANK,
+		"AC2: the receipt resolves exactly one enemy result on the rank-4 moth_scribe")
+	_check(bool(result.get("hit", false)) and result.has("roll") and result.has("hit_chance")
+		and int(result["roll"]) <= int(result["hit_chance"]),
+		"AC2: the snare is a genuine seeded hit roll, not a forced hit")
+	# Tangled 3 only on the target; no damage; the other foes and the allied rear hero untouched.
+	_check(_status_duration(result.get("statuses", []), "tangled") == 3,
+		"AC2: the receipt reports Tangled 3")
+	_check(int(battle.get_unit("moth_scribe")["statuses"].get("tangled", 0)) == 3,
+		"AC2: the rank-4 moth_scribe really carries Tangled 3 after the hit")
+	_check(int(result.get("damage", -1)) == 0
+		and int(result.get("target_hp", -1)) == int(foes_before["moth_scribe"]["hp"]),
+		"AC2: the snare deals no damage to the rank-4 foe")
+	for foe_id in foes_before:
+		if str(foe_id) == "moth_scribe":
+			continue
+		var foe_after := battle.get_unit(str(foe_id))
+		var foe_before: Dictionary = foes_before[foe_id]
+		_check(int(foe_after["hp"]) == int(foe_before["hp"])
+			and foe_after["statuses"] == foe_before["statuses"],
+			"AC2: the other foe " + str(foe_id) + " keeps its HP and statuses")
+	var ally_after := battle.get_unit("lantern_monk")
+	var ally_before: Dictionary = witness["ally_before"]
+	_check(ally_after == ally_before,
+		"AC2: the allied lantern_monk in hero rank 4 is untouched by the enemy-side snare")
+	_check(battle.current_actor_id() != "seamstress" and before != battle.state_snapshot(),
+		"AC2: the accepted snare spends exactly the Seamstress's own turn")
+	# Same seed, same kit and same legal sequence: identical receipt, state, order and RNG.
+	var replay := _rear_tether_at(int(witness["seed"]), 3)
+	_check(not replay.is_empty()
+		and replay["receipt"] == receipt
+		and replay["before"] == before
+		and replay["rng_before"] == witness["rng_before"]
+		and replay["battle"].state_snapshot() == battle.state_snapshot()
+		and replay["battle"].rng_state() == battle.rng_state()
+		and replay["battle"].turn_order() == battle.turn_order(),
+		"AC4: the same seed replays the identical rank-4 receipt, foe statuses, turn order and RNG")
+	# The foe's own scheduled turn start ticks Tangled 3 -> 2, then the remaining natural ticks expire it.
+	var reached := _to(battle, "moth_scribe")
+	_check(reached and battle.current_actor_id() == "moth_scribe",
+		"AC2: the snarled rank-4 foe reaches its own naturally scheduled turn")
+	if not reached:
+		return
+	_check(int(battle.get_unit("moth_scribe")["statuses"].get("tangled", 0)) == 2,
+		"AC2: its first actual turn-start reduces Tangled 3 to 2")
+	_check(int(battle.get_unit("moth_scribe")["hp"]) == int(foes_before["moth_scribe"]["hp"]),
+		"AC2: the tick still deals no damage")
+	var expected_tick := 1
+	for tick in range(2):
+		var passed := battle.pass_turn()
+		_check(bool(passed.get("ok", false)),
+			"AC2: the snarled foe spends its real turn for tick %d" % expected_tick)
+		if not bool(passed.get("ok", false)):
+			return
+		var following := _to(battle, "moth_scribe")
+		_check(following and battle.current_actor_id() == "moth_scribe",
+			"AC2: the same foe reaches its following scheduled turn for tick %d" % expected_tick)
+		if not following:
+			return
+		var live := battle.get_unit("moth_scribe")
+		if int(live["hp"]) <= 0 or bool(live["dead"]):
+			_check(false, "AC2: the rank-4 foe must survive its natural ticks")
+			return
+		var tangled := int(live["statuses"].get("tangled", 0))
+		_check(tangled == expected_tick,
+			"AC2: the foe's natural turn-start ticks Tangled down to %d" % expected_tick)
+		expected_tick -= 1
+	_check(not battle.get_unit("moth_scribe")["statuses"].has("tangled"),
+		"AC2: the tier-III Tangled 3 expires after its third natural foe turn-start")
+
+
+## Every illegal tier-III rank-4 cast and the early-tier rank-4 refusal are atomic, and a legal
+## tier-III miss still spends the turn.
+func _test_rear_tether_rejections() -> void:
+	# Tiers I and II against the same occupied enemy rank 4.
+	for tier in [1, 2]:
+		var battle := _build_battle(37, tier, STARTER_PARTS, false, true)
+		_check(battle != null, "AC3: the relocated fixture builds for tier-%d Tether Loop" % tier)
+		if battle == null:
+			continue
+		_check(_to(battle, "seamstress") and int(battle.get_unit("seamstress")["rank"]) == 2,
+			"AC3: tier-%d Tether Loop reaches a real rank-2 caster turn" % tier)
+		_check(int(battle.get_unit("moth_scribe")["rank"]) == MAX_RANK
+			and not _no_foe_at(battle, MAX_RANK),
+			"AC3: enemy rank 4 really holds the living moth_scribe for the tier-%d refusal" % tier)
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var actor := battle.current_actor_id()
+		var refused := battle.use_part(TETHER_LOOP_PART, MAX_RANK)
+		_check(not bool(refused.get("ok", false))
+			and str(refused.get("error", "")).contains("no legal target in rank 4"),
+			"AC3: tier-%d Tether Loop refuses the occupied enemy rank 4" % tier)
+		_check(before == battle.state_snapshot() and rng == battle.rng_state()
+			and actor == battle.current_actor_id(),
+			"AC3: the tier-%d rank-4 refusal spends no state, turn or RNG" % tier)
+		_check(not battle.get_unit("moth_scribe")["statuses"].has("tangled"),
+			"AC3: the tier-%d rank-4 refusal leaves the rear foe untangled" % tier)
+		# The untouched turn still casts the legal front-rank snare.
+		var legal := battle.use_part(TETHER_LOOP_PART, 1)
+		var legal_results: Array = legal.get("results", [])
+		_check(bool(legal.get("ok", false)) and legal_results.size() == 1
+			and int(legal_results[0].get("target_rank", -1)) == 1,
+			"AC3: after the tier-%d refusal the same turn still acts on enemy rank 1" % tier)
+	# Tier III: the vacant enemy rank 3 and the out-of-range ranks stay atomic.
+	var battle := _build_battle(41, 3, STARTER_PARTS, false, true)
+	_check(battle != null, "AC3: the relocated fixture builds for the tier-III negatives")
+	if battle != null:
+		_check(_to(battle, "seamstress"), "AC3: the tier-III caster reaches her own real turn")
+		var before := battle.state_snapshot()
+		var rng := battle.rng_state()
+		var actor := battle.current_actor_id()
+		for bad_rank in [3, 0, 5]:
+			var refused := battle.use_part(TETHER_LOOP_PART, bad_rank)
+			_check(not bool(refused.get("ok", false))
+				and str(refused.get("error", "")).contains("no legal target in rank %d" % bad_rank),
+				"AC3: tier-III Tether Loop refuses the illegal or vacant rank %d" % bad_rank)
+			_check(before == battle.state_snapshot() and rng == battle.rng_state()
+				and actor == battle.current_actor_id(),
+				"AC3: the tier-III rank-%d refusal preserved snapshot, actor and RNG" % bad_rank)
+		_check(not battle.get_unit("moth_scribe")["statuses"].has("tangled")
+			and not battle.get_unit("fray_scavenger")["statuses"].has("tangled"),
+			"AC3: the tier-III illegal ranks applied no Tangled anywhere")
+		# Ally-side misuse: in the shipped layout enemy rank 4 is empty and the allied hero stands there.
+		var shipped := _build_battle(41, 3, STARTER_PARTS, false, false)
+		_check(shipped != null, "AC3: the shipped three-foe layout builds for the ally-side refusal")
+		if shipped != null and _to(shipped, "seamstress"):
+			var ally_before := shipped.get_unit("lantern_monk")
+			_check(int(ally_before["rank"]) == MAX_RANK and _no_foe_at(shipped, MAX_RANK),
+				"AC3: the ally-side witness has the lantern_monk in hero rank 4 and no foe there")
+			var shipped_state := shipped.state_snapshot()
+			var shipped_rng := shipped.rng_state()
+			var ally_refused := shipped.use_part(TETHER_LOOP_PART, MAX_RANK)
+			_check(not bool(ally_refused.get("ok", false))
+				and str(ally_refused.get("error", "")).contains("no legal target in rank 4"),
+				"AC3: tier-III Tether Loop never reaches across the side boundary to the allied rank 4")
+			_check(shipped_state == shipped.state_snapshot() and shipped_rng == shipped.rng_state()
+				and shipped.current_actor_id() == "seamstress"
+				and shipped.get_unit("lantern_monk") == ally_before,
+				"AC3: the ally-side refusal spends nothing and leaves the ally untouched")
+		else:
+			_check(false, "AC3: the ally-side witness reaches a real Seamstress turn")
+		# Unequipped: the alternative Bobbin Snag legs grant no Tether Loop action.
+		var other_kit := STARTER_PARTS.duplicate(true)
+		other_kit["legs"] = "seamstress_bobbin_snag_spools"
+		var unequipped := _build_battle(43, 3, other_kit, false, true)
+		_check(unequipped != null, "AC3: the relocated fixture builds with the other legs part")
+		if unequipped != null and _to(unequipped, "seamstress"):
+			var unequipped_state := unequipped.state_snapshot()
+			var unequipped_rng := unequipped.rng_state()
+			var refused := unequipped.use_part(TETHER_LOOP_PART, MAX_RANK)
+			_check(not bool(refused.get("ok", false))
+				and str(refused.get("error", "")).contains("not equipped"),
+				"AC3: an unequipped Tether Loop is refused at the rear rank")
+			_check(unequipped_state == unequipped.state_snapshot()
+				and unequipped_rng == unequipped.rng_state()
+				and unequipped.current_actor_id() == "seamstress",
+				"AC3: the unequipped refusal spends no state, turn or RNG")
+		# Torn: the same worn descriptor refuses its ability through the real equipment path.
+		var torn_kit := STARTER_PARTS.duplicate(true)
+		torn_kit["legs"] = {"id": TETHER_LOOP_PART, "tier": 3, "torn": true}
+		var torn := _build_battle(43, 3, torn_kit, false, true)
+		_check(torn != null, "AC3: the relocated fixture builds with a torn legs descriptor")
+		if torn != null:
+			_check(bool(torn.get_unit("seamstress")["parts"]["legs"]["torn"]),
+				"AC3: the torn witness really wears the torn Tether Loop")
+			if _to(torn, "seamstress"):
+				var torn_state := torn.state_snapshot()
+				var torn_rng := torn.rng_state()
+				var refused := torn.use_part(TETHER_LOOP_PART, MAX_RANK)
+				_check(not bool(refused.get("ok", false))
+					and str(refused.get("error", "")).contains("torn"),
+					"AC3: a torn Tether Loop is refused at the rear rank")
+				_check(torn_state == torn.state_snapshot() and torn_rng == torn.rng_state()
+					and torn.current_actor_id() == "seamstress",
+					"AC3: the torn refusal spends no state, turn or RNG")
+		# Wrong launch: after a real Move into hero rank 1, the rear cast fails before any roll.
+		var moved := _build_battle(47, 3, STARTER_PARTS, false, true)
+		if moved != null and _to(moved, "seamstress"):
+			var step := moved.move(-1)
+			_check(bool(step.get("ok", false)) and int(moved.get_unit("seamstress")["rank"]) == 1,
+				"AC3: a real Move puts the tier-III Seamstress into the illegal launch rank 1")
+			if _to(moved, "seamstress"):
+				var moved_state := moved.state_snapshot()
+				var moved_rng := moved.rng_state()
+				var refused := moved.use_part(TETHER_LOOP_PART, MAX_RANK)
+				_check(not bool(refused.get("ok", false))
+					and str(refused.get("error", "")).contains("cannot launch from rank 1"),
+					"AC3: tier-III Tether Loop refuses the rear cast from launch rank 1")
+				_check(moved_state == moved.state_snapshot() and moved_rng == moved.rng_state()
+					and moved.current_actor_id() == "seamstress",
+					"AC3: the wrong-launch refusal spends no state, turn or RNG")
+			else:
+				_check(false, "AC3: the moved tier-III Seamstress reaches her next real turn")
+		else:
+			_check(false, "AC3: the wrong-launch witness reaches the Seamstress's real turn")
+	# Off-turn: after a real use the wearer cannot act during a foe turn.
+	var off := _build_battle(53, 3, STARTER_PARTS, false, true)
+	if off != null and _to(off, "seamstress"):
+		var legal_cast := off.use_part(TETHER_LOOP_PART, MAX_RANK)
+		_check(bool(legal_cast.get("ok", false)),
+			"AC3: the off-turn witness first spends a real legal tier-III snare")
+		_check(_to_side(off, "foe"), "AC3: a real foe turn follows the legal snare")
+		if off.current_side() == "foe":
+			var off_state := off.state_snapshot()
+			var off_rng := off.rng_state()
+			var actor := off.current_actor_id()
+			var refused := off.use_part(TETHER_LOOP_PART, MAX_RANK)
+			_check(not bool(refused.get("ok", false))
+				and str(refused.get("error", "")).contains("not a hero turn"),
+				"AC3: the tier-III rear snare is refused off-turn")
+			_check(off_state == off.state_snapshot() and off_rng == off.rng_state()
+				and actor == off.current_actor_id(),
+				"AC3: the off-turn refusal spends no state, turn or RNG")
+	else:
+		_check(false, "AC3: the off-turn witness reaches the Seamstress's real turn")
+
+
+## A bounded fixed-seed scan for a genuine tier-III miss at enemy rank 4: the legal attempt spends
+## the turn but never tangles any foe.
+func _rear_tether_miss_witness() -> Dictionary:
+	for seed_value in range(1, 400):
+		var trial := _rear_tether_at(seed_value, 3)
+		if trial.is_empty():
+			continue
+		var receipt: Dictionary = trial["receipt"]
+		var results: Array = receipt.get("results", [])
+		if not bool(receipt.get("ok", false)) or results.size() != 1:
+			continue
+		var result: Dictionary = results[0]
+		if bool(result.get("hit", true)):
+			continue
+		if str(result.get("target", "")) != "moth_scribe":
+			continue
+		var battle: StitchedRules = trial["battle"]
+		var tangled := false
+		for foe in battle.get_foes():
+			if foe["statuses"].has("tangled"):
+				tangled = true
+		if tangled:
+			continue
+		return trial
+	return {}
+
+
+## AC3: a real tier-III miss at the rear rank spends the turn but applies no Tangled or damage.
+func _test_rear_tether_miss() -> void:
+	var witness := _rear_tether_miss_witness()
+	_check(not witness.is_empty(),
+		"AC3: a fixed seed produces a genuine tier-III Tether Loop miss on the rank-4 foe")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var receipt: Dictionary = witness["receipt"]
+	var result: Dictionary = receipt["results"][0]
+	var before: Dictionary = witness["before"]
+	_check(bool(receipt.get("ok", false))
+		and str(result.get("target", "")) == "moth_scribe"
+		and int(result.get("target_rank", 0)) == MAX_RANK,
+		"AC3: the miss is a legal real action aimed at the rank-4 moth_scribe")
+	_check(not bool(result.get("hit", true)) and result.has("roll") and result.has("hit_chance")
+		and int(result["roll"]) > int(result["hit_chance"]),
+		"AC3: the miss is an actual failed seeded hit roll, not a rejected helper")
+	_check(int(result.get("damage", -1)) == 0
+		and not _has_status(result.get("statuses", []), "tangled"),
+		"AC3: the missed snare reports no damage and no Tangled")
+	for foe in battle.get_foes():
+		_check(not foe["statuses"].has("tangled"),
+			"AC3: the miss leaves " + str(foe["id"]) + " untangled")
+	var rear := battle.get_unit("moth_scribe")
+	_check(int(rear["hp"]) == int(witness["foes_before"]["moth_scribe"]["hp"])
+		and int(result.get("target_hp", -1)) == int(rear["hp"]),
+		"AC3: the missed rear snare leaves the moth_scribe's HP untouched")
+	_check(battle.current_actor_id() != "seamstress" and before != battle.state_snapshot(),
+		"AC3: the legal miss still spends exactly the Seamstress's turn")
+	var replay := _rear_tether_at(int(witness["seed"]), 3)
+	_check(not replay.is_empty()
+		and replay["receipt"] == receipt
+		and replay["battle"].state_snapshot() == battle.state_snapshot()
+		and replay["battle"].rng_state() == battle.rng_state(),
+		"AC4: the same seed replays the identical rear-rank miss, state and RNG")
+
+
 # ---------------------------------------------------------------- AC3: determinism and tracing
 
 func _test_determinism() -> void:
@@ -2063,7 +2573,13 @@ func _preview_config(seed_value: int, tier: int, kit: Dictionary) -> Dictionary:
 	if str(seamstress.get("id", "")) != "seamstress" or not seamstress.get("parts") is Dictionary:
 		return {}
 	for slot in kit:
-		seamstress["parts"][slot] = {"id": str(kit[slot]), "tier": tier}
+		var worn: Variant = kit[slot]
+		# A plain part id wears it at the requested tier; a dictionary lets one witness wear a
+		# deliberately torn descriptor through the same validated equipment path.
+		if worn is Dictionary:
+			seamstress["parts"][slot] = worn.duplicate(true)
+		else:
+			seamstress["parts"][slot] = {"id": str(worn), "tier": tier}
 	# Deterministic schedule: only the Seamstress is fast, so she opens every round and the other
 	# units pass in a stable seeded order.
 	seamstress["speed"] = 40
