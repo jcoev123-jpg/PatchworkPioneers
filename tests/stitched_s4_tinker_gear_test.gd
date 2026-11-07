@@ -26,6 +26,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_every_tier_in_real_combat()
+	_test_scrap_bomb_exposed()
 	_test_back_rank_shots()
 	_test_cog_shot_rear_foe()
 	_test_casing_ward_rank_four()
@@ -300,9 +301,9 @@ func _test_catalog() -> void:
 		_check(int(StitchedParts.stat_at_tier(cog_part, tier).get("acc", 0)) == 4,
 			"AC4: tier %d Cog Shot head stat stays ACC +4" % tier)
 	var expected_shots := {
-		"tinker_head_cog_shot": {"acc": [91, 91, 95], "dmg": [[4, 6], [5, 8], [7, 10]], "mark": [2, 3, 3], "multi": false, "target": [1, 2, 3, 4]},
-		"tinker_arms_scrap_bomb": {"acc": [90, 92, 95], "dmg": [[3, 4], [4, 6], [5, 7]], "mark": [0, 0, 0], "multi": true, "target": [1, 2, 3]},
-		"tinker_arms_overload": {"acc": [90, 90, 94], "dmg": [[3, 5], [4, 7], [5, 9]], "mark": [0, 0, 0], "multi": false, "target": [1, 2, 3, 4]},
+		"tinker_head_cog_shot": {"acc": [91, 91, 95], "dmg": [[4, 6], [5, 8], [7, 10]], "mark": [2, 3, 3], "exposed": [0, 0, 0], "multi": false, "target": [1, 2, 3, 4]},
+		"tinker_arms_scrap_bomb": {"acc": [90, 92, 95], "dmg": [[3, 4], [4, 6], [5, 7]], "mark": [0, 0, 0], "exposed": [1, 1, 1], "multi": true, "target": [1, 2, 3]},
+		"tinker_arms_overload": {"acc": [90, 90, 94], "dmg": [[3, 5], [4, 7], [5, 9]], "mark": [0, 0, 0], "exposed": [0, 0, 0], "multi": false, "target": [1, 2, 3, 4]},
 	}
 	for id in expected_shots:
 		var expected_shot: Dictionary = expected_shots[id]
@@ -311,6 +312,7 @@ func _test_catalog() -> void:
 			_check(int(shot["acc"]) == int(expected_shot["acc"][tier - 1])
 				and shot["dmg"] == expected_shot["dmg"][tier - 1]
 				and int(shot["effects"].get("mark", 0)) == int(expected_shot["mark"][tier - 1])
+				and int(shot["effects"].get("exposed", 0)) == int(expected_shot["exposed"][tier - 1])
 				and bool(shot["multi"]) == bool(expected_shot["multi"])
 				and shot["target"] == expected_shot["target"]
 				and int(shot["target_mask"]) == StitchedParts.rank_mask(expected_shot["target"])
@@ -318,6 +320,46 @@ func _test_catalog() -> void:
 				and str(shot["target_side"]) == "enemy"
 				and str(shot["move"]) == "attack2",
 				"AC1: tier %d numbers, authored target ranks and attack2 pose stay authored for %s" % [tier, id])
+	# AC1: Scrap Bomb is Tinker's starter arms part. Its one new authored effect is a one-turn
+	# Exposed 1 applied by each landed shot; every number, reach, stat, accuracy, pose and the
+	# absence of Mark stays exactly as shipped at all three stitch tiers.
+	var bomb_part: Dictionary = accepted["by_id"][STARTERS["arms"]]
+	var bomb_text := "Scatter scrap across every living foe in ranks one through three; each landed shot leaves that foe Exposed 1 for one turn, and no scrap ever reaches a fourth rank."
+	_check(str(bomb_part["name"]) == "Scrap Bomb" and str(bomb_part["slot"]) == "arms"
+		and str(bomb_part["owner"]) == "tinker" and bomb_part["stat"] == {"dmg": 1}
+		and str(bomb_part["text"]) == bomb_text,
+		"AC1: Scrap Bomb keeps its named arms part, damage +1 stat and one-time setup rules text")
+	_check(str(bomb_part["ability"]["id"]) == "tinker_scrap_bomb_move"
+		and str(bomb_part["ability"]["name"]) == "Scrap Bomb"
+		and str(bomb_part["ability"]["kind"]) == "ranged"
+		and str(bomb_part["ability"]["target_side"]) == "enemy"
+		and bool(bomb_part["ability"]["multi"]) and int(bomb_part["ability"]["crit"]) == 0
+		and int(bomb_part["ability"]["mark_damage"]) == 0
+		and bomb_part["ability"]["effects"] == {"exposed": 1}
+		and str(bomb_part["ability"]["move"]) == "attack2",
+		"AC1: base Scrap Bomb authors only Exposed 1 with no Mark, crit or mark_damage")
+	_check(bomb_part["ability"]["launch"] == [3, 4] and int(bomb_part["ability"]["launch_mask"]) == StitchedParts.rank_mask([3, 4]),
+		"AC1: Scrap Bomb launches from hero ranks 3-4 only")
+	_check(bomb_part["ability"]["target"] == [1, 2, 3]
+		and int(bomb_part["ability"]["target_mask"]) == StitchedParts.rank_mask([1, 2, 3]),
+		"AC1: Scrap Bomb targets living enemy ranks 1-3 only, never a fourth rank")
+	for tier in [1, 2, 3]:
+		var tier_bomb := StitchedParts.ability_at_tier(bomb_part, tier)
+		_check(int(tier_bomb["acc"]) == [90, 92, 95][tier - 1]
+			and tier_bomb["dmg"] == [[3, 4], [4, 6], [5, 7]][tier - 1]
+			and bool(tier_bomb["multi"]) and tier_bomb["launch"] == [3, 4]
+			and tier_bomb["target"] == [1, 2, 3]
+			and int(tier_bomb["target_mask"]) == StitchedParts.rank_mask([1, 2, 3])
+			and int(tier_bomb["mark_damage"]) == 0
+			and tier_bomb["effects"] == {"exposed": 1}
+			and not tier_bomb["effects"].has("mark")
+			and str(tier_bomb["move"]) == "attack2",
+			"AC1: tier %d Scrap Bomb keeps its original ACC/damage/reach and adds only Exposed 1" % tier)
+		_check(int(StitchedParts.stat_at_tier(bomb_part, tier).get("dmg", 0)) == 1,
+			"AC1: tier %d Scrap Bomb arms stat stays damage +1" % tier)
+		_check(tier_bomb["effects"] == bomb_part["ability"]["effects"],
+			"AC1: tier %d Scrap Bomb inherits and never increases the base Exposed 1" % tier)
+
 	for id in ALL_IDS:
 		var part: Dictionary = accepted["by_id"][id]
 		var copied := part.duplicate(true)
@@ -373,6 +415,16 @@ func _test_every_tier_in_real_combat() -> void:
 					seen[str(hit["target"])] = true
 					_check(str(hit["target_side"]) == "foe" and int(hit["target_rank"]) <= 3,
 						"AC2: Scrap Bomb only hits legal enemy ranks 1-3")
+					var exposed_receipt := false
+					for status in hit.get("statuses", []):
+						if str(status.get("status", "")) == "exposed" and int(status.get("duration", 0)) == 1:
+							exposed_receipt = true
+					if bool(hit.get("hit", false)):
+						_check(exposed_receipt,
+							"AC1: tier %d landed Scrap Bomb receipt applies Exposed 1 after its damage" % tier)
+					else:
+						_check(not exposed_receipt and int(hit.get("damage", 0)) == 0,
+							"AC2: tier %d missed Scrap Bomb applies no Exposed and no damage" % tier)
 				_check(results.size() == 3 and seen.size() == 3 and seen.has("fray_scavenger") and seen.has("scissor_crab") and seen.has("moth_scribe") and b.get_foes().size() == 3,
 					"AC2: Scrap Bomb receipts target all three living foes exactly once")
 			elif id == "tinker_legs_spare_screws":
@@ -403,6 +455,364 @@ func _test_every_tier_in_real_combat() -> void:
 		_check(int(hit_witness[id]) > 0,
 			"AC2: nonvacuous seeded hit/status witness for " + id)
 
+
+## Builds the same seeded preview battle with the shipped Scrap Bomb ability's effects removed
+## in test memory only. Everything else (seed, equipment, RNG, rolls) stays identical, so the
+## control's immediate damage proves the real blast does not buff its own shot.
+func _scrap_bomb_control_battle(seed_value: int) -> StitchedRules:
+	var config := _config(STARTERS["arms"], 1, seed_value)
+	if config.is_empty():
+		return null
+	for part in config["parts"]:
+		if str(part.get("id", "")) == STARTERS["arms"]:
+			part["ability"]["effects"] = {}
+	var result := StitchedRules.create(config)
+	if not bool(result.get("ok", false)):
+		return null
+	return result["battle"] as StitchedRules
+
+
+## AC2/AC3 witness: on Tinker's genuine scheduled turn in the shipped 4v3 preview, Scrap Bomb
+## makes one attempt against each living foe in enemy ranks 1-3. Landed shots apply Exposed 1
+## after their own damage, a miss applies nothing, and the vacant rank 4 refuses before any
+## spend. A later hero in the same round then lands a real rank-3 Needle Pin on the still-Exposed
+## Moth Scribe; an equal-seed twin with only that Exposed removed deals exactly the already
+## existing 50% less. Returns {} unless every precondition holds.
+func _scrap_bomb_exposed_witness(seed_value: int) -> Dictionary:
+	var foe_ids: Array = ["fray_scavenger", "scissor_crab", "moth_scribe"]
+	var battle := _battle(STARTERS["arms"], 1, seed_value)
+	if battle == null or not _to(battle, "tinker"):
+		return {}
+	if int(battle.get_unit("tinker")["rank"]) < 3:
+		return {}
+	if str(battle.get_unit("tinker")["parts"]["arms"]["id"]) != STARTERS["arms"]:
+		return {}
+	if battle.get_foes().size() != 3:
+		return {}
+	var rank := 1
+	var hp_before: Dictionary = {}
+	for foe_id in foe_ids:
+		var foe := battle.get_unit(foe_id)
+		if foe.is_empty() or bool(foe.get("dead", true)) or int(foe.get("hp", 0)) <= 0:
+			return {}
+		if int(foe.get("rank", 0)) != rank:
+			return {}
+		hp_before[foe_id] = int(foe["hp"])
+		rank += 1
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var actor_before := battle.current_actor_id()
+	# The normal preview leaves enemy rank 4 empty; the blast still refuses it without a spend.
+	var rank_four := battle.use_part(STARTERS["arms"], 4)
+	if bool(rank_four.get("ok", false)) or not str(rank_four.get("error", "")).contains("rank 4"):
+		return {}
+	if before != battle.state_snapshot() or rng != battle.rng_state():
+		return {}
+	var after_rank_four := battle.state_snapshot()
+	var rng_after_rank_four := battle.rng_state()
+	var shot := battle.use_part(STARTERS["arms"], 1)
+	if not bool(shot.get("ok", false)):
+		return {}
+	var after_shot := battle.state_snapshot()
+	var rng_after_shot := battle.rng_state()
+	if str(shot.get("action", "")) != "ability" or str(shot.get("actor", "")) != "tinker" \
+			or str(shot.get("part", "")) != STARTERS["arms"] \
+			or str(shot.get("ability", "")) != "tinker_scrap_bomb_move":
+		return {}
+	var results: Array = shot.get("results", [])
+	if results.size() != 3:
+		return {}
+	var seen: Dictionary = {}
+	var hits := 0
+	var misses := 0
+	var exposed_hits: Array = []
+	var live_after: Dictionary = {}
+	for hit in results:
+		var target_id := str(hit.get("target", ""))
+		if not target_id in foe_ids or seen.has(target_id):
+			return {}
+		seen[target_id] = true
+		if str(hit.get("target_side", "")) != "foe":
+			return {}
+		if int(hit.get("target_rank", 0)) != foe_ids.find(target_id) + 1:
+			return {}
+		var target := battle.get_unit(target_id)
+		var exposed_receipt := -1
+		var status_count := 0
+		for status in hit.get("statuses", []):
+			status_count += 1
+			if str(status.get("status", "")) == "exposed":
+				exposed_receipt = int(status.get("duration", 0))
+		if bool(hit.get("hit", false)):
+			hits += 1
+			if int(hit.get("damage", 0)) <= 0 or exposed_receipt != 1 or status_count != 1:
+				return {}
+			if int(hit.get("target_hp", -1)) != int(target["hp"]):
+				return {}
+			if int(target["hp"]) != int(hp_before[target_id]) - int(hit["damage"]):
+				return {}
+			if int(target["statuses"].get("exposed", 0)) != 1:
+				return {}
+			live_after[target_id] = 1
+			exposed_hits.append(target_id)
+		else:
+			misses += 1
+			if int(hit.get("damage", 0)) != 0 or int(hit.get("target_hp", -1)) != int(hp_before[target_id]):
+				return {}
+			if exposed_receipt != -1 or not hit.get("statuses", []).is_empty():
+				return {}
+			if int(target["hp"]) != int(hp_before[target_id]):
+				return {}
+			if int(target["statuses"].get("exposed", 0)) != 0:
+				return {}
+			live_after[target_id] = 0
+	if seen.size() != 3 or hits == 0 or misses == 0:
+		return {}
+	if not exposed_hits.has("moth_scribe"):
+		return {}
+	if int(battle.get_unit("moth_scribe")["statuses"].get("exposed", 0)) != 1:
+		return {}
+	if battle.is_over() or battle.current_actor_id() == "tinker":
+		return {}
+	var round_after := battle.round_number()
+	var after_bomb := battle.state_snapshot()
+	var order := battle.turn_order()
+	var turn_index := int(after_bomb.get("turn_index", 0))
+	var follow := ""
+	for index in range(turn_index, order.size()):
+		var next_id := str(order[index])
+		if next_id == "moth_scribe":
+			break
+		if next_id == "seamstress" or next_id == "lantern_monk":
+			follow = next_id
+			break
+	if follow.is_empty():
+		return {}
+	if str(battle.get_unit(follow)["parts"]["head"]["id"]) != "any_head_needle_pin":
+		return {}
+	# Equal-seed control blasts: the real shot's own immediate damage must match a twin whose
+	# ability carries no Exposed effect, so the status can only follow the hit.
+	var control := _scrap_bomb_control_battle(seed_value)
+	if control == null or not _to(control, "tinker"):
+		return {}
+	var control_shot := control.use_part(STARTERS["arms"], 1)
+	if not bool(control_shot.get("ok", false)) or control_shot.get("results", []).size() != 3:
+		return {}
+	for foe_id in foe_ids:
+		if int(control.get_unit(foe_id)["statuses"].get("exposed", 0)) != 0:
+			return {}
+	# Equal-seed twin for the follow-up: identical blast, then only the Exposed is removed.
+	var twin := _battle(STARTERS["arms"], 1, seed_value)
+	if twin == null or not _to(twin, "tinker"):
+		return {}
+	var twin_shot := twin.use_part(STARTERS["arms"], 1)
+	if twin_shot != shot:
+		return {}
+	twin._units["moth_scribe"]["statuses"].erase("exposed")
+	if int(twin.get_unit("moth_scribe")["statuses"].get("exposed", 0)) != 0:
+		return {}
+	if not _to(battle, follow) or not _to(twin, follow):
+		return {}
+	if battle.round_number() != round_after or twin.round_number() != round_after:
+		return {}
+	var round_before_follow := battle.round_number()
+	if int(battle.get_unit("moth_scribe")["statuses"].get("exposed", 0)) != 1:
+		return {}
+	if int(twin.get_unit("moth_scribe")["statuses"].get("exposed", 0)) != 0:
+		return {}
+	var pre_follow_rng := battle.rng_state()
+	if pre_follow_rng != twin.rng_state():
+		return {}
+	var moth_before_follow := battle.get_unit("moth_scribe")
+	var charged := battle.use_part("any_head_needle_pin", 3)
+	var plain := twin.use_part("any_head_needle_pin", 3)
+	if not bool(charged.get("ok", false)) or not bool(plain.get("ok", false)):
+		return {}
+	if charged.get("results", []).size() != 1 or plain.get("results", []).size() != 1:
+		return {}
+	var charged_hit: Dictionary = charged["results"][0]
+	var plain_hit: Dictionary = plain["results"][0]
+	if str(charged_hit.get("target", "")) != "moth_scribe" or int(charged_hit.get("target_rank", 0)) != 3:
+		return {}
+	if str(plain_hit.get("target", "")) != "moth_scribe" or int(plain_hit.get("target_rank", 0)) != 3:
+		return {}
+	if not bool(charged_hit.get("hit", false)) or not bool(plain_hit.get("hit", false)):
+		return {}
+	if int(charged_hit.get("roll", 0)) != int(plain_hit.get("roll", -1)) \
+			or bool(charged_hit.get("crit", false)) != bool(plain_hit.get("crit", false)):
+		return {}
+	if int(charged_hit.get("damage", 0)) <= int(plain_hit.get("damage", 0)):
+		return {}
+	return {
+		"battle": battle,
+		"twin": twin,
+		"control": control,
+		"foe_ids": foe_ids,
+		"hp_before": hp_before,
+		"live_after": live_after,
+		"before": before,
+		"rng": rng,
+		"actor_before": actor_before,
+		"rank_four": rank_four,
+		"after_rank_four": after_rank_four,
+		"rng_after_rank_four": rng_after_rank_four,
+		"shot": shot,
+		"after_shot": after_shot,
+		"rng_after_shot": rng_after_shot,
+		"hits": hits,
+		"misses": misses,
+		"round_after": round_after,
+		"round_before_follow": round_before_follow,
+		"follow": follow,
+		"control_shot": control_shot,
+		"charged": charged,
+		"plain": plain,
+		"charged_hit": charged_hit,
+		"plain_hit": plain_hit,
+		"moth_before_follow": moth_before_follow,
+		"pre_follow_rng": pre_follow_rng,
+		"end_snapshot": battle.state_snapshot(),
+		"rng_after": battle.rng_state(),
+	}
+
+
+## AC1/AC2/AC3: the shipped 4v3 preview, three living foes in ranks 1-3, one real Scrap Bomb
+## on Tinker's scheduled turn from hero rank 3, a genuine miss with no status or damage, a real
+## subsequent Needle Pin that takes exactly the already-existing 50% Exposed bonus, an
+## identical effects-free damage control, a living rank-4 foe left untouched, and an equal-seed
+## replay of every receipt, status, HP value and RNG position.
+func _test_scrap_bomb_exposed() -> void:
+	var witness: Dictionary = {}
+	var witness_seed := 0
+	for seed_value in range(499000, 499400):
+		witness = _scrap_bomb_exposed_witness(seed_value)
+		if not witness.is_empty():
+			witness_seed = seed_value
+			break
+	_check(not witness.is_empty(), "AC2: real seeded Scrap Bomb Exposed witness exists in the shipped S2 preview")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var shot: Dictionary = witness["shot"]
+	var results: Array = shot["results"]
+	var foe_ids: Array = witness["foe_ids"]
+	_check(str(witness["actor_before"]) == "tinker" and battle.get_heroes().size() == 4 and battle.get_foes().size() == 3
+		and witness["before"] != witness["after_shot"]
+		and int(witness["rng"]) != int(witness["rng_after_shot"]),
+		"AC2: the blast spends Tinker's genuine scheduled turn in the real four-hero/three-foe preview")
+	_check(int(battle.get_unit("tinker")["rank"]) >= 3
+		and str(battle.get_unit("tinker")["parts"]["arms"]["id"]) == STARTERS["arms"],
+		"AC2: equipped rank-3/4 Tinker really launches the shipped Scrap Bomb")
+	_check(not bool(witness["rank_four"].get("ok", false))
+		and str(witness["rank_four"].get("error", "")).contains("rank 4")
+		and witness["before"] == witness["after_rank_four"]
+		and int(witness["rng"]) == int(witness["rng_after_rank_four"]),
+		"AC2: Scrap Bomb refuses the vacant enemy rank 4 before any state, turn or RNG spend")
+	_check(int(witness["hits"]) > 0 and int(witness["misses"]) > 0,
+		"AC2: the witness genuinely contains landed and missed blast attempts")
+	var seen: Dictionary = {}
+	var landed := 0
+	var missed := 0
+	for hit in results:
+		var target_id := str(hit["target"])
+		seen[target_id] = true
+		_check(str(hit.get("target_side", "")) == "foe"
+			and int(hit.get("target_rank", 0)) == foe_ids.find(target_id) + 1
+			and not str(hit.get("target", "")).begins_with("warden")
+			and not str(hit.get("target", "")).begins_with("seamstress")
+			and not str(hit.get("target", "")).begins_with("lantern_monk")
+			and str(hit.get("target", "")) != "tinker",
+			"AC2: each blast receipt is one living enemy in ranks 1-3, never an ally")
+		var exposed_receipt := -1
+		for status in hit.get("statuses", []):
+			if str(status.get("status", "")) == "exposed":
+				exposed_receipt = int(status.get("duration", 0))
+		if bool(hit.get("hit", false)):
+			landed += 1
+			_check(exposed_receipt == 1 and int(witness["live_after"][target_id]) == 1
+				and int(hit.get("damage", 0)) > 0,
+				"AC3: a landed blast hit applies Exposed 1 after dealing its original damage")
+		else:
+			missed += 1
+			_check(exposed_receipt == -1 and int(hit.get("damage", 0)) == 0
+				and int(witness["live_after"][target_id]) == 0
+				and int(battle.get_unit(target_id)["hp"]) == int(witness["hp_before"][target_id]),
+				"AC3: a missed blast applies no Exposed and no damage")
+	_check(results.size() == 3 and seen.size() == 3 and landed > 0 and missed > 0,
+		"AC2: Scrap Bomb gives each living foe exactly one attempt with no extra action or foe")
+	# The blast's own immediate damage is unchanged: an equal-seed battle whose ability carries
+	# no Exposed effect takes identical hit rolls, crits, damage and HP.
+	var control: StitchedRules = witness["control"]
+	var control_results: Array = witness["control_shot"]["results"]
+	var control_clean := control_results.size() == results.size()
+	for index in range(mini(control_results.size(), results.size())):
+		var real_hit: Dictionary = results[index]
+		var control_hit: Dictionary = control_results[index]
+		control_clean = control_clean and str(control_hit["target"]) == str(real_hit["target"]) \
+			and bool(control_hit.get("hit", false)) == bool(real_hit.get("hit", false)) \
+			and bool(control_hit.get("crit", false)) == bool(real_hit.get("crit", false)) \
+			and int(control_hit.get("roll", 0)) == int(real_hit.get("roll", 0)) \
+			and int(control_hit.get("damage", 0)) == int(real_hit.get("damage", 0)) \
+			and int(control_hit.get("target_hp", -1)) == int(real_hit.get("target_hp", -2))
+	for foe_id in foe_ids:
+		control_clean = control_clean and int(control.get_unit(foe_id)["statuses"].get("exposed", 0)) == 0
+	_check(control_clean,
+		"AC3: the same-seed no-Exposed control proves the blast's immediate damage is original")
+	# A real follow-up in the same round: a hero lands Needle Pin on the still-Exposed Moth
+	# Scribe; the twin with only that Exposed removed takes exactly 50% less.
+	var charged_hit: Dictionary = witness["charged_hit"]
+	var plain_hit: Dictionary = witness["plain_hit"]
+	var moth_before: Dictionary = witness["moth_before_follow"]
+	_check(str(witness["follow"]) in ["seamstress", "lantern_monk"]
+		and str(witness["charged"].get("actor", "")) == str(witness["follow"])
+		and str(witness["charged"].get("part", "")) == "any_head_needle_pin"
+		and str(witness["charged"].get("ability", "")) == "needle_pin"
+		and int(witness["round_before_follow"]) == int(witness["round_after"]),
+		"AC3: an eligible real hero in the same round lands the follow-up direct hit on the exposed foe")
+	_check(str(charged_hit.get("target", "")) == "moth_scribe"
+		and bool(charged_hit.get("hit", false)) and bool(plain_hit.get("hit", false))
+		and int(charged_hit.get("roll", 0)) == int(plain_hit.get("roll", -1))
+		and bool(charged_hit.get("crit", false)) == bool(plain_hit.get("crit", false)),
+		"AC3: exposed and twin follow-up use the identical seeded hit and crit rolls")
+	var expected_damage := StitchedRules.damage_after_modifiers(
+		int(plain_hit.get("damage", 0)), {}, {"exposed": 1}, false, 0, int(moth_before.get("prot", 0))
+	)
+	_check(int(charged_hit.get("damage", 0)) == expected_damage
+		and int(charged_hit.get("damage", 0)) > int(plain_hit.get("damage", 0))
+		and int(moth_before["statuses"].get("mark", 0)) == 0,
+		"AC3: the existing 50% Exposed modifier alone raises the follow-up damage")
+	_check(int(battle.get_unit("moth_scribe")["hp"]) == int(moth_before.get("hp", 0)) - int(charged_hit.get("damage", 0))
+		and int(charged_hit.get("target_hp", -1)) == int(battle.get_unit("moth_scribe")["hp"]),
+		"AC3: the real Moth Scribe loses exactly the receipted follow-up damage")
+	# A living foe in rank 4 is outside the authored reach: it is never hit, damaged or exposed.
+	var rear := _rear_foe_battle(1, witness_seed)
+	var rear_ready := rear != null and _to(rear, "tinker")
+	_check(rear_ready, "AC2: rank-4 untouched witness reaches a real Tinker turn")
+	if rear_ready:
+		var moth_before_rear := rear.get_unit("moth_scribe")
+		_check(int(moth_before_rear.get("rank", 0)) == 4
+			and rear.get_foes().all(func(foe): return int(foe["rank"]) != 3),
+			"AC2: only the existing Moth Scribe stands in enemy rank 4 and rank 3 is empty")
+		var rear_shot := rear.use_part(STARTERS["arms"], 1)
+		var rear_targets: Dictionary = {}
+		for hit in rear_shot.get("results", []):
+			rear_targets[str(hit["target"])] = true
+		var moth_after_rear := rear.get_unit("moth_scribe")
+		_check(bool(rear_shot.get("ok", false)) and rear_shot.get("results", []).size() == 2
+			and rear_targets.has("fray_scavenger") and rear_targets.has("scissor_crab")
+			and not rear_targets.has("moth_scribe")
+			and int(moth_after_rear.get("hp", -1)) == int(moth_before_rear.get("hp", 0))
+			and int(moth_after_rear.get("statuses", {}).get("exposed", 0)) == 0,
+			"AC2: a living foe in rank 4 stays untouched by the blast")
+	# Same seed, equipment and action replay every receipt, status, HP value and RNG position.
+	var replay := _scrap_bomb_exposed_witness(witness_seed)
+	_check(not replay.is_empty(), "AC3: the Scrap Bomb Exposed witness replays at seed %d" % witness_seed)
+	if not replay.is_empty():
+		_check(replay["shot"] == shot and replay["charged"] == witness["charged"]
+			and replay["plain"] == witness["plain"]
+			and replay["end_snapshot"] == witness["end_snapshot"]
+			and int(replay["rng_after"]) == int(witness["rng_after"]),
+			"AC3: equal-seed replay reproduces every receipt, status, HP value and exact RNG")
 
 ## AC2 witness: a real seeded 4v3 battle where rank-3 Tinker swaps backward with Spare Screws,
 ## survives to his next scheduled turn and fires the named shot from hero rank 4.

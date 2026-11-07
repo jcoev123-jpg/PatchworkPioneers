@@ -52,6 +52,49 @@ static func style_button(button: BaseButton) -> void:
 	button.focus_mode = Control.FOCUS_ALL
 
 
+static func style_rank_plate(button: Button) -> void:
+	# Name/rank is the first thing the eye should read. An inset dark sewn
+	# name-plate, unlike the brighter action buttons, preserves bone-ink
+	# contrast even when the target/focus highlight is active.
+	var rank_face := FontVariation.new()
+	rank_face.base_font = RANK_FONT
+	rank_face.spacing_top = -2
+	rank_face.spacing_bottom = -2
+	button.add_theme_font_override("font", rank_face)
+	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+		var tint := Color("4a343e") if state in ["normal", "disabled"] else (
+			Color("65414b") if state == "pressed" else Color("614550"))
+		button.add_theme_stylebox_override(state,
+			_box(NAME_PLATE, tint, 8.0, state == "focus"))
+	button.add_theme_color_override("font_color", BONE)
+	button.add_theme_color_override("font_hover_color", Color("fff1d7"))
+	button.add_theme_color_override("font_focus_color", Color("fff1d7"))
+	button.add_theme_color_override("font_disabled_color", BONE)
+	button.add_theme_color_override("font_outline_color", Color("21181f"))
+	button.add_theme_constant_override("outline_size", 2)
+	button.alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+
+static func present_rank_name(button: Button, rank: int, full_name: String) -> void:
+	# Measure the actual loaded face, not a guessed character count. Ordinary
+	# four-rank names must fit the independent 148px input face at >=16px.
+	# Extremely long authored names keep their *full* text for focus/hover
+	# disclosure rather than painting into the adjoining rank.
+	var title := "R%d  %s" % [rank, full_name]
+	var face: Font = button.get_theme_font("font")
+	var size_used := 18
+	var available := button.size.x - 10.0
+	if face != null:
+		while size_used > 16 and face.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, size_used).x > available:
+			size_used -= 1
+	button.add_theme_font_size_override("font_size", size_used)
+	button.text = title
+	var fits := face == null or face.get_string_size(title,
+		HORIZONTAL_ALIGNMENT_LEFT, -1, size_used).x <= available
+	button.clip_text = not fits
+	button.text_overrun_behavior = TextServer.OVERRUN_NO_TRIMMING if fits else TextServer.OVERRUN_TRIM_ELLIPSIS
+
+
 static func style_action_button(button: Button, icon_path: String) -> void:
 	# A non-interactive authored image beside the real Button text. This keeps
 	# the original mouse rect, pressed connection, focus and sewn style states.
@@ -120,7 +163,7 @@ static func _meter(parent: Control, title: String, rectangle: Rect2, tint: Color
 	frame.texture = BAR_FRAME
 	# Keep the stitched frame in the bar band, not over the caption above.
 	frame.position = rectangle.position - Vector2(1, 1)
-	frame.size = rectangle.size + Vector2(2, 2)
+	frame.size = rectangle.size + Vector2(2, 1)
 	frame.patch_margin_left = 7
 	frame.patch_margin_right = 7
 	frame.patch_margin_top = 4
@@ -345,7 +388,7 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	caption_font.spacing_top = -3
 	caption_font.spacing_bottom = -2
 	var is_hero := side == "hero"
-	var hp := _meter(root, "HPFill", Rect2(11, 17, 74 if is_hero else 148, 7),
+	var hp := _meter(root, "HPFill", Rect2(11, 17, 74 if is_hero else 148, 8),
 		Color("af655b"))
 	var hp_caption := Label.new()
 	hp_caption.name = "HPReadout"
@@ -365,10 +408,10 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 	hp_caption.size = Vector2(74 if is_hero else 149, 16)
 	var output := {"root": root, "hp": hp, "hp_text": hp_caption}
 	if is_hero:
-		var fray := _meter(root, "FrayFill", Rect2(90, 17, 69, 7), Color("d7a560"))
+		var fray := _meter(root, "FrayFill", Rect2(90, 17, 69, 8), Color("d7a560"))
 		var caption := Label.new()
 		caption.name = "FrayReadout"
-		caption.position = Vector2(87, 0)
+		caption.position = Vector2(86, 0)
 		caption.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		caption.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		caption.clip_text = false
