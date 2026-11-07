@@ -366,10 +366,18 @@ func _finish_walk() -> bool:
 		for hero in heroes:
 			if hero.id != doll.id:
 				continue
-			hero.hp = mini(doll.hp, hero.max_hp)
 			for slot in hero.parts:
 				if doll.parts.get(slot) is Dictionary and doll.parts[slot].torn:
 					hero.parts[slot].torn = true
+			# Walk tears can remove an equipped max-HP bonus. Recompute the actual
+			# worn-part cap before passing this survivor to the next battle.
+			var maximum: int = hero.base_max_hp
+			for worn in hero.parts.values():
+				if not worn.torn:
+					maximum += int(StitchedParts.stat_at_tier(catalog[worn.id], worn.tier).get("max_hp", 0))
+			hero.max_hp = maximum
+			hero.hp = mini(doll.hp, maximum)
+			hero.hanging = hero.hp == 0 and not hero.lost
 			var gained: int = doll.fray - int(hero.get("fray", 0)) - (20 if doll.id in cut else 0)
 			if gained > 0:
 				walk_carry.append({"kind": "fray", "target": doll.id, "amount": gained})
