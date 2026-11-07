@@ -89,7 +89,7 @@
       "description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
       "choices": [
         {"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "stitched_effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
-        {"id": "buy_quiet_bearing", "text": "Buy the safe bearing for 10 gold (-8 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10}},
+        {"id": "buy_quiet_bearing", "text": "Trade gold for a quiet bearing to calm the dolls", "stitched_effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10, "min_fray": 1}},
         {"id": "leave", "text": "Leave the needle turning in circles", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
