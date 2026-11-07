@@ -27,6 +27,9 @@ func _init() -> void:
 		_test_constructor_rejects()
 		_test_lost_hero_cannot_swap()
 		_test_lost_hero_receipts_and_variants()
+		_test_direct_worn_quote_with_empty_satchel()
+		_test_direct_worn_exchange()
+		_test_direct_worn_rejections()
 	_check(rng.state == rng_state_before, "seeded RNG state must be unchanged")
 	if failures.is_empty():
 		print("run_stitched_sewing_swap_test: PASS")
@@ -453,6 +456,317 @@ func _test_lost_hero_receipts_and_variants() -> void:
 	odd[0]["lost"] = "true"
 	var odd_svc := _service(odd)
 	_check(bool(odd_svc.quote()["heroes"][0]["slots"][1]["can_swap"]), "string lost value is not treated as LOST")
+
+
+## Four heroes with distinct arms (warden shield catch I, seamstress scissor claw II, tinker torn shield
+## catch, fourth hero rivet pummel I) from the real catalogs.
+func _direct_party() -> Array:
+	var heroes := _party()
+	heroes[1]["parts"]["arms"] = _worn("scissor_crab_claw_arm", 2)
+	return heroes
+
+
+func _is_lost_flag(hero: Dictionary) -> bool:
+	return typeof(hero.get("lost")) == TYPE_BOOL and bool(hero["lost"])
+
+
+## Independent oracle for the quoted direct offers: other, non-LOST heroes whose same-slot part is
+## untorn, in roster order; nothing when the asking hero is LOST or its own part is torn.
+func _expected_worn_offer_ids(heroes: Array, hero_index: int, slot: String) -> Array:
+	var out: Array = []
+	var me: Dictionary = heroes[hero_index]
+	if _is_lost_flag(me) or bool(me["parts"][slot]["torn"]):
+		return out
+	for index in range(heroes.size()):
+		if index == hero_index:
+			continue
+		var other: Dictionary = heroes[index]
+		if _is_lost_flag(other) or bool(other["parts"][slot]["torn"]):
+			continue
+		out.append(str(other["id"]))
+	return out
+
+
+func _expected_stat_delta(worn_id: String, worn_tier: int, incoming_id: String, incoming_tier: int) -> Dictionary:
+	var worn_stat: Dictionary = StitchedParts.stat_at_tier(catalog[worn_id], worn_tier)
+	var incoming_stat: Dictionary = StitchedParts.stat_at_tier(catalog[incoming_id], incoming_tier)
+	var keys: Dictionary = {}
+	for key in worn_stat:
+		keys[key] = true
+	for key in incoming_stat:
+		keys[key] = true
+	var delta: Dictionary = {}
+	for key in keys:
+		var change := int(incoming_stat.get(key, 0)) - int(worn_stat.get(key, 0))
+		if change != 0:
+			delta[str(key)] = change
+	return delta
+
+
+func _check_direct_offer(offer: Dictionary, worn_id: String, worn_tier: int, incoming_id: String, incoming_tier: int, label: String) -> void:
+	var worn_entry: Dictionary = catalog[worn_id]
+	var incoming_entry: Dictionary = catalog[incoming_id]
+	var part: Dictionary = offer["part"]
+	_check(str(part["id"]) == incoming_id and int(part["tier"]) == incoming_tier and not bool(part["torn"]) and str(part["name"]) == str(incoming_entry["name"]), label + ": incoming part identity, tier and name")
+	_check(part["stat"] == StitchedParts.stat_at_tier(incoming_entry, incoming_tier), label + ": incoming stat is the real tier stat")
+	_check(part["ability"] == StitchedParts.ability_at_tier(incoming_entry, incoming_tier), label + ": incoming ability is the real tier ability")
+	var comparison: Dictionary = offer["comparison"]
+	var before: Dictionary = StitchedParts.ability_at_tier(worn_entry, worn_tier)
+	var after: Dictionary = StitchedParts.ability_at_tier(incoming_entry, incoming_tier)
+	_check(not before.is_empty() and not after.is_empty(), label + ": both real abilities resolve")
+	for field in ["name", "launch", "target", "target_side", "dmg", "acc", "crit", "effects", "self_move"]:
+		if before.has(field):
+			_check(comparison["ability_before"].get(field) == before[field], label + ": ability_before " + field)
+		if after.has(field):
+			_check(comparison["ability_after"].get(field) == after[field], label + ": ability_after " + field)
+	_check(comparison["stat_delta"] == _expected_stat_delta(worn_id, worn_tier, incoming_id, incoming_tier), label + ": signed stat delta from real projections")
+
+
+func _test_direct_worn_quote_with_empty_satchel() -> void:
+	var heroes := _direct_party()
+	var ids: Array = []
+	for hero in heroes:
+		ids.append(str(hero["id"]))
+	var svc := RunStitchedSewingSwap.new(NODE, heroes, [], catalog)
+	var state := svc.read_state()
+	_check(bool(state["ok"]) and state["satchel"].is_empty() and state["heroes"].size() == 4, "direct fixture: four heroes and an empty satchel")
+	_check(str(catalog["warden_arms_shield_catch"]["slot"]) == "arms" and str(catalog["scissor_crab_claw_arm"]["slot"]) == "arms" and str(catalog["warden_arms_rivet_pummel"]["slot"]) == "arms", "direct fixture: all three arms parts are real arms parts")
+	var quote := svc.quote()
+	_check(bool(quote["ok"]) and quote["satchel_count"] == 0 and quote["satchel"].is_empty(), "direct quote: empty satchel")
+	_check(_snap(quote["state"]) == _snap(state), "direct quote carries the authoritative state")
+	var warden_arms: Dictionary = quote["heroes"][0]["slots"][1]
+	_check(str(warden_arms["slot"]) == "arms" and str(warden_arms["worn"]["id"]) == "warden_arms_shield_catch", "direct quote: warden arms worn part")
+	_check(warden_arms["offers"].is_empty() and str(warden_arms["blocked"]).is_empty() and bool(warden_arms["can_swap"]), "empty satchel: no satchel offers but can_swap through direct offers")
+	var offers: Array = warden_arms["worn_offers"]
+	_check(offers.size() == 2, "warden arms has two direct offers (torn tinker hidden)")
+	if offers.size() == 2:
+		_check(str(offers[0]["hero_id"]) == ids[1] and str(offers[1]["hero_id"]) == ids[3], "direct offers follow roster order and hide the torn tinker and self")
+		_check_direct_offer(offers[0], "warden_arms_shield_catch", 1, "scissor_crab_claw_arm", 2, "warden<-seamstress")
+		_check_direct_offer(offers[1], "warden_arms_shield_catch", 1, "warden_arms_rivet_pummel", 1, "warden<-fourth")
+	var seamstress_offers: Array = quote["heroes"][1]["slots"][1]["worn_offers"]
+	_check(seamstress_offers.size() == 2, "seamstress arms has two direct offers")
+	if seamstress_offers.size() == 2:
+		_check(str(seamstress_offers[0]["hero_id"]) == ids[0] and str(seamstress_offers[1]["hero_id"]) == ids[3], "seamstress offers: warden then fourth hero")
+		_check_direct_offer(seamstress_offers[0], "scissor_crab_claw_arm", 2, "warden_arms_shield_catch", 1, "seamstress<-warden")
+	var tinker_arms: Dictionary = quote["heroes"][2]["slots"][1]
+	_check(not bool(tinker_arms["can_swap"]) and tinker_arms["worn_offers"].is_empty() and tinker_arms["offers"].is_empty() and not str(tinker_arms["blocked"]).is_empty(), "torn tinker arms: blocked with no offers of either kind")
+
+	# Every slot of every hero matches the independent oracle, for a plain and a LOST-variant roster.
+	var lost_heroes := _direct_party()
+	lost_heroes[3]["lost"] = true
+	for roster in [heroes, lost_heroes]:
+		var rsvc := RunStitchedSewingSwap.new(NODE, roster, [], catalog)
+		var rquote := rsvc.quote()
+		var total := 0
+		for hero_index in range(roster.size()):
+			for slot_index in range(StitchedParts.SLOTS.size()):
+				var slot: String = StitchedParts.SLOTS[slot_index]
+				var slot_quote: Dictionary = rquote["heroes"][hero_index]["slots"][slot_index]
+				var expected_ids := _expected_worn_offer_ids(roster, hero_index, slot)
+				var got_ids: Array = []
+				for offer in slot_quote["worn_offers"]:
+					got_ids.append(str(offer["hero_id"]))
+					_check(str(offer["part"]["slot"]) == slot and str(offer["hero_id"]) != str(roster[hero_index]["id"]), "direct offer is same-slot and never self")
+				total += got_ids.size()
+				_check(got_ids == expected_ids, "direct offers match the oracle for hero %d slot %s" % [hero_index, slot])
+				_check(bool(slot_quote["can_swap"]) == (not expected_ids.is_empty()), "can_swap equals direct availability with an empty satchel (hero %d %s)" % [hero_index, slot])
+		_check(total > 0, "oracle comparison is not vacuous")
+	var lost_quote := RunStitchedSewingSwap.new(NODE, lost_heroes, [], catalog).quote()
+	_check(str(lost_quote["heroes"][3]["slots"][1]["blocked"]) == "hero is lost" and lost_quote["heroes"][3]["slots"][1]["worn_offers"].is_empty(), "a LOST hero gets no direct offers")
+	var lost_ids: Array = []
+	for offer in lost_quote["heroes"][0]["slots"][1]["worn_offers"]:
+		lost_ids.append(str(offer["hero_id"]))
+	_check(lost_ids == [ids[1]], "a LOST hero is hidden from others' direct offers")
+
+	# With spares present the satchel offers keep their old shape and direct offers appear beside them.
+	var full := RunStitchedSewingSwap.new(NODE, _direct_party(), _satchel(), catalog).quote()
+	var full_arms: Dictionary = full["heroes"][0]["slots"][1]
+	_check(full_arms["offers"].size() == 1 and int(full_arms["offers"][0]["satchel_index"]) == 0 and str(full_arms["offers"][0]["part"]["id"]) == "scissor_crab_claw_arm", "satchel offers are preserved unchanged")
+	_check(full_arms["worn_offers"].size() == 2 and bool(full_arms["can_swap"]), "direct offers coexist with satchel offers")
+
+	# The quote is a detached copy and a closed visit lists no direct offers.
+	var detached := svc.quote()
+	detached["heroes"][0]["slots"][1]["worn_offers"].clear()
+	_check(svc.quote()["heroes"][0]["slots"][1]["worn_offers"].size() == 2, "quote worn_offers are detached copies")
+	var closing := svc.leave(NODE, state)
+	_check(bool(closing["ok"]), "leave closes the direct fixture visit")
+	var closed := svc.quote()
+	var closed_direct := 0
+	var closed_swappable := 0
+	for hero_quote in closed["heroes"]:
+		for slot_quote in hero_quote["slots"]:
+			closed_direct += slot_quote["worn_offers"].size()
+			if bool(slot_quote["can_swap"]):
+				closed_swappable += 1
+	_check(closed["heroes"].size() == 4 and closed_direct == 0 and closed_swappable == 0, "closed visit lists no direct offers")
+
+
+func _test_direct_worn_exchange() -> void:
+	seed(777)
+	var expected_next := randi()
+	seed(777)
+	var heroes := _direct_party()
+	var ids: Array = []
+	for hero in heroes:
+		ids.append(str(hero["id"]))
+	var svc := RunStitchedSewingSwap.new(NODE, heroes, [], catalog)
+	var state := svc.read_state()
+	var snap := _snap(state)
+	var result := svc.exchange_worn(ids[0], ids[1], "arms", NODE, state)
+	_check(bool(result["ok"]) and str(result["action"]) == "exchange_worn" and str(result["error"]).is_empty(), "direct exchange succeeds at the exact snapshot")
+	if not bool(result["ok"]):
+		return
+	var original_a := _worn("warden_arms_shield_catch", 1)
+	var original_b := _worn("scissor_crab_claw_arm", 2)
+	var expected := state.duplicate(true)
+	expected["version"] = 1
+	expected["heroes"][0]["parts"]["arms"] = original_b
+	expected["heroes"][1]["parts"]["arms"] = original_a
+	_check(_snap(result["state"]) == _snap(expected), "only the two arms records traded; everything else, satchel included, is equal")
+	_check(_snap(svc.read_state()) == _snap(expected), "read_state matches the receipt state")
+	_check(int(result["state"]["version"]) == int(state["version"]) + 1, "version advanced exactly once")
+	_check(result["state"]["satchel"].is_empty() and result["satchel"].is_empty(), "satchel length stays zero")
+	_check(str(result["slot"]) == "arms" and str(result["hero_a_id"]) == ids[0] and str(result["hero_b_id"]) == ids[1] and str(result["node_id"]) == NODE, "receipt names slot, both wearers and node")
+	_check(result["worn_before"][ids[0]] == original_a and result["worn_before"][ids[1]] == original_b, "receipt worn_before records")
+	_check(result["worn_after"][ids[0]] == original_b and result["worn_after"][ids[1]] == original_a, "receipt worn_after records: each original part, tier included, went to the other wearer")
+	_check(_snap(result["source_state"]) == snap, "receipt carries the source snapshot")
+	_check(result["changed_heroes"].size() == 2 and str(result["changed_heroes"][0]["id"]) == ids[0] and str(result["changed_heroes"][1]["id"]) == ids[1], "changed_heroes lists exactly the two wearers")
+	if result["changed_heroes"].size() == 2:
+		_check(_snap(result["changed_heroes"][0]) == _snap(expected["heroes"][0]) and _snap(result["changed_heroes"][1]) == _snap(expected["heroes"][1]), "changed heroes are the complete updated records")
+	for index in [2, 3]:
+		_check(_snap(result["state"]["heroes"][index]) == _snap(state["heroes"][index]), "uninvolved hero %d is unchanged" % index)
+	for index in [0, 1]:
+		var after_hero: Dictionary = result["state"]["heroes"][index]
+		var before_hero: Dictionary = state["heroes"][index]
+		_check(after_hero["hp"] == before_hero["hp"] and after_hero["fray"] == before_hero["fray"] and after_hero["rank"] == before_hero["rank"] and _snap(after_hero["statuses"]) == _snap(before_hero["statuses"]), "hero %d keeps HP, fray, rank and statuses" % index)
+		for slot in ["head", "torso", "legs"]:
+			_check(_snap(after_hero["parts"][slot]) == _snap(before_hero["parts"][slot]), "hero %d keeps its %s" % [index, slot])
+	_check(_instance_ids(result["state"]) == _instance_ids(state), "no part instance created or lost")
+	for forbidden in ["gold", "scrap", "fee", "cost", "rng"]:
+		_check(not result.has(forbidden), "exchange receipt has no " + forbidden)
+
+	# The receipt is detached from the service.
+	result["state"]["heroes"][0]["parts"]["arms"]["id"] = "moth_swarm_wings"
+	result["changed_heroes"][0]["hp"] = 999
+	result["worn_after"][ids[0]]["tier"] = 3
+	result["source_state"]["version"] = 42
+	result["satchel"].append({})
+	_check(_snap(svc.read_state()) == _snap(expected), "mutating the receipt does not touch the service")
+
+	# Replays with the old snapshots fail; the fresh quote shows the traded parts.
+	var after_snap := _snap(svc.read_state())
+	_expect_reject(svc, "replay of the original snapshot", svc.exchange_worn(ids[0], ids[1], "arms", NODE, state))
+	_check(_snap(svc.read_state()) == after_snap, "replay changed nothing")
+	var fresh := svc.quote()
+	var warden_arms: Dictionary = fresh["heroes"][0]["slots"][1]
+	_check(str(warden_arms["worn"]["id"]) == "scissor_crab_claw_arm" and int(warden_arms["worn"]["tier"]) == 2, "fresh quote shows the claw on the warden")
+	var back_offers: Array = warden_arms["worn_offers"]
+	_check(back_offers.size() == 2 and str(back_offers[0]["hero_id"]) == ids[1], "fresh quote still offers the seamstress")
+	if back_offers.size() == 2:
+		_check_direct_offer(back_offers[0], "scissor_crab_claw_arm", 2, "warden_arms_shield_catch", 1, "requote warden<-seamstress")
+
+	# Exchanging back on the fresh snapshot (given in the reverse order) restores the original gear.
+	var fresh_state: Dictionary = fresh["state"]
+	var back := svc.exchange_worn(ids[1], ids[0], "arms", NODE, fresh_state)
+	_check(bool(back["ok"]) and int(back["state"]["version"]) == 2, "exchange back succeeds and advances the version once more")
+	if bool(back["ok"]):
+		var restored := state.duplicate(true)
+		restored["version"] = 2
+		_check(_snap(back["state"]) == _snap(restored), "exchanging back restores the original equipment")
+		_check(back["changed_heroes"].size() == 2 and str(back["changed_heroes"][0]["id"]) == ids[1], "reverse-order receipt lists the wearers in argument order")
+		_check(_snap(back["source_state"]) == _snap(fresh_state), "exchange back carries the fresh source snapshot")
+
+	# A different slot between two intact wearers works in the same visit (head: pot helm <-> rattle).
+	var head_state := svc.read_state()
+	var head := svc.exchange_worn(ids[0], ids[1], "head", NODE, head_state)
+	_check(bool(head["ok"]) and head["worn_after"][ids[0]] == _worn("warden_head_helmet_rattle") and head["worn_after"][ids[1]] == _worn("warden_head_pot_helm_bonk"), "head exchange trades the two distinct helms")
+	var left := svc.leave(NODE, svc.read_state())
+	_check(bool(left["ok"]), "leave works after direct exchanges")
+
+	# No global RNG draw happened anywhere in this test.
+	_check(randi() == expected_next, "the exchange consumed no random numbers")
+
+
+func _test_direct_worn_rejections() -> void:
+	var heroes := _direct_party()
+	var ids: Array = []
+	for hero in heroes:
+		ids.append(str(hero["id"]))
+	var svc := RunStitchedSewingSwap.new(NODE, heroes, [], catalog)
+	var state := svc.read_state()
+	var snap := _snap(state)
+	var stale := state.duplicate(true)
+	stale["version"] = int(stale["version"]) + 1
+	var forged_hp := state.duplicate(true)
+	forged_hp["heroes"][0]["hp"] = 1
+	var forged_part := state.duplicate(true)
+	forged_part["heroes"][1]["parts"]["arms"]["tier"] = 3
+	var forged_open := state.duplicate(true)
+	forged_open["open"] = false
+	var bad_calls := {
+		"same hero": svc.exchange_worn(ids[0], ids[0], "arms", NODE, state),
+		"unknown first hero": svc.exchange_worn("ghost", ids[1], "arms", NODE, state),
+		"unknown second hero": svc.exchange_worn(ids[0], "ghost", "arms", NODE, state),
+		"non-string first hero": svc.exchange_worn(3, ids[1], "arms", NODE, state),
+		"non-string second hero": svc.exchange_worn(ids[0], null, "arms", NODE, state),
+		"unknown slot": svc.exchange_worn(ids[0], ids[1], "wings", NODE, state),
+		"non-string slot": svc.exchange_worn(ids[0], ids[1], 1, NODE, state),
+		"empty slot": svc.exchange_worn(ids[0], ids[1], "", NODE, state),
+		"torn second wearer": svc.exchange_worn(ids[0], ids[2], "arms", NODE, state),
+		"torn first wearer": svc.exchange_worn(ids[2], ids[0], "arms", NODE, state),
+		"stale state": svc.exchange_worn(ids[0], ids[1], "arms", NODE, stale),
+		"forged hero field": svc.exchange_worn(ids[0], ids[1], "arms", NODE, forged_hp),
+		"forged part tier": svc.exchange_worn(ids[0], ids[1], "arms", NODE, forged_part),
+		"forged open flag": svc.exchange_worn(ids[0], ids[1], "arms", NODE, forged_open),
+		"null state": svc.exchange_worn(ids[0], ids[1], "arms", NODE, null),
+		"array state": svc.exchange_worn(ids[0], ids[1], "arms", NODE, []),
+		"empty state": svc.exchange_worn(ids[0], ids[1], "arms", NODE, {}),
+		"wrong node": svc.exchange_worn(ids[0], ids[1], "arms", "other_node", state),
+		"non-string node": svc.exchange_worn(ids[0], ids[1], "arms", 7, state),
+	}
+	for label in bad_calls:
+		_expect_reject(svc, "exchange_worn " + str(label), bad_calls[label])
+	_check(_snap(svc.read_state()) == snap, "every rejected exchange left the state unchanged")
+	_check(int(svc.read_state()["version"]) == 0 and bool(svc.read_state()["open"]), "rejections neither advance the version nor close the visit")
+	_check(str(bad_calls["same hero"]["error"]) != "", "same-hero refusal explains itself")
+	_check(_snap(bad_calls["torn second wearer"]["state"]) == snap, "failure result reports the unchanged state")
+	# Torn is per slot: the torn tinker arms block only arms, while its intact head still trades.
+	var head_ok := svc.exchange_worn(ids[0], ids[2], "head", NODE, state)
+	_check(bool(head_ok["ok"]) and head_ok["state"]["heroes"][2]["parts"]["arms"]["torn"] == true, "torn arms do not block an intact head exchange and stay torn")
+
+	# A LOST wearer on either side is refused; the same slot between living heroes still works.
+	var lost_heroes := _direct_party()
+	lost_heroes[1]["lost"] = true
+	var lost_svc := RunStitchedSewingSwap.new(NODE, lost_heroes, [], catalog)
+	var lost_state := lost_svc.read_state()
+	var lost_snap := _snap(lost_state)
+	var lost_a := lost_svc.exchange_worn(ids[0], ids[1], "arms", NODE, lost_state)
+	var lost_b := lost_svc.exchange_worn(ids[1], ids[0], "arms", NODE, lost_state)
+	_check(not bool(lost_a["ok"]) and str(lost_a["error"]) == "hero is lost", "exchange with a LOST second hero is refused")
+	_check(not bool(lost_b["ok"]) and str(lost_b["error"]) == "hero is lost", "exchange with a LOST first hero is refused")
+	_check(_snap(lost_svc.read_state()) == lost_snap, "LOST refusals changed nothing")
+	_check(bool(lost_svc.exchange_worn(ids[0], ids[3], "arms", NODE, lost_state)["ok"]), "living heroes still exchange beside a LOST one")
+
+	# A 0-HP hanging hero is not LOST and may exchange.
+	var hanging_heroes := _direct_party()
+	hanging_heroes[0]["hp"] = 0
+	hanging_heroes[0]["hanging"] = true
+	var hanging_svc := RunStitchedSewingSwap.new(NODE, hanging_heroes, [], catalog)
+	_check(bool(hanging_svc.exchange_worn(ids[0], ids[1], "arms", NODE, hanging_svc.read_state())["ok"]), "a hanging 0-HP hero is not LOST and may exchange")
+
+	# A closed visit refuses every exchange, with the pre-leave and the closed snapshot alike.
+	var closed_svc := RunStitchedSewingSwap.new(NODE, _direct_party(), [], catalog)
+	var open_state := closed_svc.read_state()
+	var left := closed_svc.leave(NODE, open_state)
+	_check(bool(left["ok"]), "leave closes the visit for the closed-visit checks")
+	var closed_snap := _snap(closed_svc.read_state())
+	_expect_reject(closed_svc, "exchange after leave (closed state)", closed_svc.exchange_worn(ids[0], ids[1], "arms", NODE, left["state"]))
+	_expect_reject(closed_svc, "exchange after leave (pre-leave state)", closed_svc.exchange_worn(ids[0], ids[1], "arms", NODE, open_state))
+	_check(_snap(closed_svc.read_state()) == closed_snap, "post-leave exchanges changed nothing")
+
+	# An invalid visit is unusable.
+	var broken := RunStitchedSewingSwap.new(NODE, [], [], catalog)
+	_expect_reject(broken, "exchange on an unusable visit", broken.exchange_worn(ids[0], ids[1], "arms", NODE, broken.read_state()))
 
 
 func _count_offers(hero_quote: Dictionary) -> int:

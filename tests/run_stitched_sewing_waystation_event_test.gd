@@ -183,6 +183,9 @@ func _test_ac1_preview_actionability_and_post_toll_check() -> void:
 	var lost_heroes := _party(3, false)
 	lost_heroes[0]["parts"]["head"]["tier"] = 1 # hero_a can upgrade
 	lost_heroes[0]["lost"] = true # but hero_a is lost
+	# Direct exchange between living dolls is now an action, so only one doll stays living.
+	lost_heroes[1]["lost"] = true
+	lost_heroes[2]["lost"] = true
 	var lost_event := RunStitchedSewingWaystationEvent.new(
 		"v3_threadmill_sewing_circle",
 		NODE,
@@ -282,11 +285,16 @@ func _test_ac3_unaffordable_actionless_trades_and_leave() -> void:
 	# Subcase 1: Moonlace scraps=2, satchel=[], all tier III untorn.
 	# Toll takes 2 scraps -> 0 scraps post-toll. No upgrade, no mend, no swap.
 	var tier3_heroes := _party(3, false)
+	# Direct wearer-to-wearer exchange now counts as a Sewing Circle action, so the truly actionless
+	# fixture keeps a single living doll (the other three are LOST and cannot trade).
+	var tier3_solo := _party(3, false)
+	for solo_index in [1, 2, 3]:
+		tier3_solo[solo_index]["lost"] = true
 	var empty_satchel: Array = []
 	var m_actionless := RunStitchedSewingWaystationEvent.new(
 		"v3_moonlace_darning_parlor",
 		NODE,
-		tier3_heroes,
+		tier3_solo,
 		empty_satchel,
 		{"gold": 0, "scraps": 2},
 		catalog,
@@ -320,7 +328,7 @@ func _test_ac3_unaffordable_actionless_trades_and_leave() -> void:
 	var m_leave_visit := RunStitchedSewingWaystationEvent.new(
 		"v3_moonlace_darning_parlor",
 		NODE,
-		tier3_heroes,
+		tier3_solo,
 		empty_satchel,
 		{"gold": 0, "scraps": 2},
 		catalog,
@@ -332,6 +340,21 @@ func _test_ac3_unaffordable_actionless_trades_and_leave() -> void:
 	_check(leave_claim.get("wallet", {}).get("gold") == 0 and leave_claim.get("wallet", {}).get("scraps") == 2, "AC3: Leave leaves wallet unchanged")
 	_check((leave_claim.get("service_request", {}) as Dictionary).is_empty(), "AC3: Leave returns empty service_request")
 	_check(m_leave_visit.is_claimed(), "AC3: Leave latches the visit")
+
+	# Witness: with two or more living untorn same-slot wearers, a direct exchange is an action even
+	# with an empty satchel and nothing to mend or upgrade.
+	var m_direct := RunStitchedSewingWaystationEvent.new(
+		"v3_moonlace_darning_parlor",
+		NODE,
+		tier3_heroes,
+		empty_satchel,
+		{"gold": 0, "scraps": 2},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var paid_direct := _find_choice(m_direct.preview_choices().get("choices", []), "sew_at_parlor")
+	_check(bool(paid_direct.get("available", false)), "AC3: Direct wearer exchange makes the Sewing Circle choice available with an empty satchel")
 
 	# Subcase 2: Threadmill gold=11, scraps=10 cannot fund 12 gold toll
 	var t_unaffordable := RunStitchedSewingWaystationEvent.new(

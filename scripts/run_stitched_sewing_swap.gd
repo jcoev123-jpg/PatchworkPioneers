@@ -16,7 +16,10 @@ extends RefCounted
 ## statuses, stats and position survive untouched.
 ##
 ## API: read_state(), quote(), swap(hero_id, slot, satchel_index, expected_node_id, expected_state),
-## leave(expected_node_id, expected_state). Every mutation must present the node id and the exact
+## exchange_worn(hero_a_id, hero_b_id, slot, expected_node_id, expected_state),
+## leave(expected_node_id, expected_state). exchange_worn trades the intact same-slot worn parts of
+## two different living heroes directly (satchel untouched, even if empty); quote() lists these as
+## "worn_offers" per slot beside the satchel "offers". Every mutation must present the node id and the exact
 ## state last published (read_state() or the previous receipt's "state"); a stale or forged state,
 ## wrong node, a closed visit or any illegal request fails with {"ok": false, "error": ...} and
 ## changes nothing. A successful swap returns a complete receipt (changed hero, satchel, source
@@ -86,12 +89,29 @@ func quote() -> Dictionary:
 							"part": offer_part,
 							"comparison": _comparison(_summary(worn, slot), offer_part),
 						})
+			# Direct wearer-to-wearer exchange opportunities, in stable roster order.
+			var worn_offers: Array = []
+			if blocked.is_empty():
+				for other in _heroes:
+					if str(other["id"]) == str(hero["id"]) or _is_lost(other):
+						continue
+					var other_worn: Dictionary = other["parts"][slot]
+					if bool(other_worn["torn"]):
+						continue
+					var incoming_part := _summary(other_worn, slot)
+					worn_offers.append({
+						"hero_id": str(other["id"]),
+						"name": str(other.get("name", other["id"])),
+						"part": incoming_part,
+						"comparison": _comparison(_summary(worn, slot), incoming_part),
+					})
 			slots.append({
 				"slot": slot,
 				"worn": _summary(worn, slot),
-				"can_swap": blocked.is_empty() and not offers.is_empty(),
+				"can_swap": blocked.is_empty() and (not offers.is_empty() or not worn_offers.is_empty()),
 				"blocked": blocked,
 				"offers": offers,
+				"worn_offers": worn_offers,
 			})
 		hero_quotes.append({"hero_id": str(hero["id"]), "name": str(hero.get("name", hero["id"])), "slots": slots})
 	var spares: Array = []
@@ -159,6 +179,62 @@ func swap(hero_id: Variant, slot: Variant, satchel_index: Variant, expected_node
 		"satchel_before": before["satchel"][int(satchel_index)],
 		"satchel_after": outgoing.duplicate(true),
 		"changed_heroes": [after["heroes"][hero_index]],
+		"satchel": after["satchel"],
+		"source_state": before,
+		"state": after,
+	}
+
+
+## Directly exchanges the intact parts two DIFFERENT living heroes wear in the same slot. Each
+## original {id, tier, torn} record goes, unchanged, to the other wearer: no empty slot, satchel
+## change, gold/scrap, HP/fray/rank change or RNG. Uses the same node/snapshot gate and advances
+## the version exactly once; any refusal changes nothing.
+func exchange_worn(hero_a_id: Variant, hero_b_id: Variant, slot: Variant, expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	var gate := _gate(expected_node_id, expected_state)
+	if not gate.is_empty():
+		return _fail(gate)
+	if typeof(hero_a_id) != TYPE_STRING or typeof(hero_b_id) != TYPE_STRING or typeof(slot) != TYPE_STRING:
+		return _fail("hero ids and slot must be strings")
+	if str(hero_a_id) == str(hero_b_id):
+		return _fail("an exchange needs two different heroes")
+	if not str(slot) in StitchedParts.SLOTS:
+		return _fail("unknown slot: " + str(slot))
+	var index_a := -1
+	var index_b := -1
+	for index in range(_heroes.size()):
+		if str(_heroes[index]["id"]) == str(hero_a_id):
+			index_a = index
+		elif str(_heroes[index]["id"]) == str(hero_b_id):
+			index_b = index
+	if index_a < 0:
+		return _fail("unknown hero: " + str(hero_a_id))
+	if index_b < 0:
+		return _fail("unknown hero: " + str(hero_b_id))
+	if _is_lost(_heroes[index_a]) or _is_lost(_heroes[index_b]):
+		return _fail("hero is lost")
+	var slot_key := str(slot)
+	var worn_a: Dictionary = _heroes[index_a]["parts"][slot_key]
+	var worn_b: Dictionary = _heroes[index_b]["parts"][slot_key]
+	if bool(worn_a["torn"]) or bool(worn_b["torn"]):
+		return _fail("worn part is torn: mend it before exchanging it")
+	var before := read_state()
+	var record_a := {"id": str(worn_a["id"]), "tier": int(worn_a["tier"]), "torn": bool(worn_a["torn"])}
+	var record_b := {"id": str(worn_b["id"]), "tier": int(worn_b["tier"]), "torn": bool(worn_b["torn"])}
+	_heroes[index_a]["parts"][slot_key] = record_b.duplicate(true)
+	_heroes[index_b]["parts"][slot_key] = record_a.duplicate(true)
+	_version += 1
+	var after := read_state()
+	return {
+		"ok": true,
+		"error": "",
+		"action": "exchange_worn",
+		"node_id": _node_id,
+		"slot": slot_key,
+		"hero_a_id": str(hero_a_id),
+		"hero_b_id": str(hero_b_id),
+		"worn_before": {str(hero_a_id): record_a.duplicate(true), str(hero_b_id): record_b.duplicate(true)},
+		"worn_after": {str(hero_a_id): record_b.duplicate(true), str(hero_b_id): record_a.duplicate(true)},
+		"changed_heroes": [after["heroes"][index_a], after["heroes"][index_b]],
 		"satchel": after["satchel"],
 		"source_state": before,
 		"state": after,
