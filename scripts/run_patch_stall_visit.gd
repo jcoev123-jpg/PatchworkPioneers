@@ -12,6 +12,9 @@ var _purchases: RunShopPurchases
 ## True only for the opt-in card-free four-hero Stitched visit.
 var _stitched: bool = false
 
+## Authored COAT effect source for the advisory Stitched benefit preview.
+const COAT_PATCHES_PATH := "res://data/patches/m04_coat_patches.json"
+
 
 ## Opt-in card-free four-hero Stitched Patch Stall. The run owner authenticates
 ## the node and supplies the three prepared priced patch offers; this visit never
@@ -114,9 +117,11 @@ func quote() -> Dictionary:
 	# three priced rows are never hidden or reordered.
 	if _stitched:
 		var rows: Array = []
+		var coat_bonuses := _authored_coat_bonuses()
 		var any_buyable := false
 		for offer in offers:
 			var row: Dictionary = offer.duplicate(true)
+			_add_coat_preview(row, coat_bonuses)
 			var blocked := _blocked_reason(row)
 			row["can_buy"] = blocked.is_empty()
 			row["blocked"] = blocked
@@ -129,6 +134,36 @@ func quote() -> Dictionary:
 		"offers": offers,
 		"decisions": decisions
 	}
+
+
+## Authored COAT max-HP bonuses by patch ID, read from the real catalog; never a
+## second balance table. A missing, malformed or non-COAT record yields no entry.
+static func _authored_coat_bonuses() -> Dictionary:
+	var bonuses := {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(COAT_PATCHES_PATH))
+	if typeof(parsed) != TYPE_ARRAY:
+		return bonuses
+	for record in parsed:
+		if typeof(record) != TYPE_DICTIONARY or typeof(record.get("id")) != TYPE_STRING \
+				or record.get("slot") != "COAT":
+			continue
+		var bonus: Variant = record.get("max_hp_bonus")
+		if (typeof(bonus) != TYPE_INT and typeof(bonus) != TYPE_FLOAT) \
+				or not is_finite(float(bonus)) or floor(float(bonus)) != float(bonus) or int(bonus) <= 0:
+			continue
+		bonuses[record["id"]] = int(bonus)
+	return bonuses
+
+
+## Advisory equip preview for a recognized ordinary COAT row only. The bonus
+## applies on equip, never on purchase; nothing here touches stock or gold.
+static func _add_coat_preview(row: Dictionary, coat_bonuses: Dictionary) -> void:
+	var id: Variant = row.get("id")
+	if typeof(id) != TYPE_STRING or not coat_bonuses.has(id):
+		return
+	row["slot"] = "COAT"
+	row["max_hp_bonus"] = coat_bonuses[id]
+	row["effect_text"] = "Equip: +%d max HP" % coat_bonuses[id]
 
 
 ## Stitched availability of one quoted row from the service-held gold and its

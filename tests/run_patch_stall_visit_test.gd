@@ -159,6 +159,149 @@ func _run() -> void:
 	_check(rng.state == rng_state, "visit creation and actions do not consume global or run RNG")
 	_run_four_hero_stitched()
 	_run_open_stitched()
+	_run_coat_preview()
+
+
+## Authored COAT max-HP bonuses straight from the real catalog file.
+func _authored_coats() -> Dictionary:
+	var coats := {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/patches/m04_coat_patches.json"))
+	_check(parsed is Array and not parsed.is_empty(), "authored COAT catalog parses and is non-empty")
+	if not parsed is Array:
+		return coats
+	for record in parsed:
+		if record.get("slot") == "COAT":
+			coats[record.id] = int(record.max_hp_bonus)
+	return coats
+
+
+func _coat_row(coats: Dictionary, id: String, price: int, sold: bool, can_buy: bool, blocked: String) -> Dictionary:
+	return {"id": id, "price": price, "sold": sold, "can_buy": can_buy, "blocked": blocked,
+		"slot": "COAT", "max_hp_bonus": coats[id], "effect_text": "Equip: +%d max HP" % coats[id]}
+
+
+## Stitched Patch Stall: ordinary COAT rows preview their authored equip-time
+## max-HP bonus (advisory only); other rows, order, prices and gating are unchanged.
+func _run_coat_preview() -> void:
+	var coats := _authored_coats()
+	var named := ["quilted_coat", "padded_vest", "double_quilt_coat", "scrap_lined_vest",
+		"wool_patch_cloak", "chain_stitched_coat", "reinforced_patchcoat", "thick_felt_mantle"]
+	for id in named:
+		_check(coats.has(id), "authored COAT catalog names " + id)
+	_check(coats.get("quilted_coat") == 6 and coats.get("padded_vest") == 4 and coats.get("thick_felt_mantle") == 10,
+		"authored COAT rows hold 6, 4 and 10 for quilted_coat, padded_vest and thick_felt_mantle")
+	if not (coats.has("quilted_coat") and coats.has("padded_vest") and coats.has("thick_felt_mantle")):
+		return
+	seed(31337)
+	var expected_global := randi()
+	seed(31337)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 424242
+	var rng_state := rng.state
+	var party := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var offers := [{"id": "quilted_coat", "price": 100}, {"id": "padded_vest", "price": 100},
+		{"id": "thick_felt_mantle", "price": 100}]
+
+	# Open, affordable: exact quote, authored values, same order and gating.
+	var visit := RunPatchStallVisit.open_stitched("node_c", party, [], 150, offers)
+	var state := visit.read_state()
+	var quote := visit.quote()
+	_check(visit.is_valid() and quote == {"offers": [
+			_coat_row(coats, "quilted_coat", 100, false, true, ""),
+			_coat_row(coats, "padded_vest", 100, false, true, ""),
+			_coat_row(coats, "thick_felt_mantle", 100, false, true, "")],
+		"decisions": ["buy_patch", "leave"]}, "COAT quote adds authored equip benefits in source order")
+	_check(quote.offers.size() == 3 and quote.offers[0].max_hp_bonus == 6 and quote.offers[0].effect_text == "Equip: +6 max HP"
+		and quote.offers[1].max_hp_bonus == 4 and quote.offers[1].effect_text == "Equip: +4 max HP"
+		and quote.offers[2].max_hp_bonus == 10 and quote.offers[2].effect_text == "Equip: +10 max HP"
+		and quote.offers[0].slot == "COAT" and quote.offers[1].slot == "COAT" and quote.offers[2].slot == "COAT",
+		"quilted_coat +6, padded_vest +4 and thick_felt_mantle +10 max HP")
+	_check(quote.offers[0].max_hp_bonus is int and quote.offers[0].effect_text is String, "preview fields have int and String types")
+	_check(visit.quote() == quote and visit.read_state() == state and not visit.is_consumed(), "quote is repeatable and read-only")
+	# Detached: editing a returned preview never reaches the service.
+	var detached := visit.quote()
+	detached.offers[0].max_hp_bonus = 99
+	detached.offers[0].effect_text = "forged"
+	detached.offers.pop_back()
+	_check(visit.quote() == quote, "COAT preview rows are detached from the service")
+	_check(visit.preview_purchase("padded_vest", state.visit_id, "node_c", state.snapshot)
+		== {"kind": "trinket", "id": "padded_vest", "price": 100}, "COAT preview does not change the purchase receipt")
+
+	# Buying spends exactly the price and adds only the patch; no HP/effect applied.
+	var buy := visit.buy_patch("thick_felt_mantle", state.visit_id, "node_c", state.snapshot)
+	_check(buy.ok and buy.receipt == {"kind": "trinket", "id": "thick_felt_mantle", "price": 100}
+		and buy.ledger == {"party_ids": party, "owned_patch_ids": ["thick_felt_mantle"], "gold": 50},
+		"buying a previewed COAT patch spends exactly 100 and only adds the patch")
+	_check(visit.quote() == {"offers": [], "decisions": []} and visit.is_consumed(), "closed COAT visit advertises nothing")
+
+	# Every authored named coat uses its own value, in any slot of a three-row visit.
+	var fillers := [{"id": "button_eye", "price": 100}, {"id": "pincushion_arm", "price": 100}]
+	for id in named:
+		if not coats.has(id):
+			continue
+		var each := RunPatchStallVisit.open_stitched("node_c", party, [], 100, [{"id": id, "price": 100}] + fillers)
+		var rows: Array = each.quote().offers
+		_check(each.is_valid() and rows.size() == 3 and rows[0] == _coat_row(coats, id, 100, false, true, "")
+			and rows[1] == {"id": "button_eye", "price": 100, "sold": false, "can_buy": true, "blocked": ""}
+			and rows[2] == {"id": "pincushion_arm", "price": 100, "sold": false, "can_buy": true, "blocked": ""},
+			"coat preview uses its own authored value and leaves non-COAT rows bare: " + id)
+	var distinct := {}
+	for id in named:
+		distinct[coats.get(id, -1)] = true
+	_check(distinct.size() > 1, "named coats do not share one uniform bonus")
+
+	# SOLD row keeps a truthful preview; Buy stays refused, Leave stays possible.
+	var sold := RunPatchStallVisit.open_stitched("node_c", party, ["padded_vest"], 100, offers)
+	var sold_state := sold.read_state()
+	var sold_quote := sold.quote()
+	_check(sold_quote == {"offers": [
+			_coat_row(coats, "quilted_coat", 100, false, true, ""),
+			_coat_row(coats, "padded_vest", 100, true, false, "already owned"),
+			_coat_row(coats, "thick_felt_mantle", 100, false, true, "")],
+		"decisions": ["buy_patch", "leave"]}, "SOLD COAT row still shows its authored +4 preview")
+	_check(not sold.buy_patch("padded_vest", sold_state.visit_id, "node_c", sold_state.snapshot).ok
+		and sold.preview_purchase("padded_vest", sold_state.visit_id, "node_c", sold_state.snapshot).is_empty()
+		and sold.read_state() == sold_state and sold.quote() == sold_quote and not sold.is_consumed(),
+		"SOLD COAT row is refused and changes nothing")
+	var all_sold := RunPatchStallVisit.open_stitched("node_c", party, ["quilted_coat", "padded_vest", "thick_felt_mantle"], 500, offers)
+	var all_sold_state := all_sold.read_state()
+	_check(all_sold.quote() == {"offers": [
+			_coat_row(coats, "quilted_coat", 100, true, false, "already owned"),
+			_coat_row(coats, "padded_vest", 100, true, false, "already owned"),
+			_coat_row(coats, "thick_felt_mantle", 100, true, false, "already owned")],
+		"decisions": ["leave"]}, "all-SOLD COAT quote keeps previews and offers only Leave")
+	_check(all_sold.leave(all_sold_state.visit_id, "node_c", all_sold_state.snapshot).ok and all_sold.is_consumed(),
+		"all-SOLD COAT visit can still Leave")
+
+	# Unaffordable row: truthful preview, Buy refused, Leave possible and spends nothing.
+	var poor := RunPatchStallVisit.open_stitched("node_c", party, [], 99, offers)
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	_check(poor_quote == {"offers": [
+			_coat_row(coats, "quilted_coat", 100, false, false, "not enough gold"),
+			_coat_row(coats, "padded_vest", 100, false, false, "not enough gold"),
+			_coat_row(coats, "thick_felt_mantle", 100, false, false, "not enough gold")],
+		"decisions": ["leave"]}, "unaffordable COAT rows keep their previews and only Leave")
+	for id in ["quilted_coat", "padded_vest", "thick_felt_mantle"]:
+		_check(not poor.buy_patch(id, poor_state.visit_id, "node_c", poor_state.snapshot).ok
+			and poor.preview_purchase(id, poor_state.visit_id, "node_c", poor_state.snapshot).is_empty(),
+			"unaffordable COAT buy refused and not previewable " + id)
+	_check(poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"unaffordable COAT attempts change nothing")
+	var poor_leave := poor.leave(poor_state.visit_id, "node_c", poor_state.snapshot)
+	_check(poor_leave.ok and poor_leave.ledger == {"party_ids": party, "owned_patch_ids": [], "gold": 99}
+		and poor.quote() == {"offers": [], "decisions": []}, "unaffordable COAT visit still Leaves without spending")
+
+	# A closed visit advertises no preview at all.
+	var left := RunPatchStallVisit.open_stitched("node_c", party, [], 150, offers)
+	var left_state := left.read_state()
+	_check(left.leave(left_state.visit_id, "node_c", left_state.snapshot).ok
+		and left.quote() == {"offers": [], "decisions": []}, "closed COAT visit quotes no offers or previews")
+
+	# Caller data is untouched and no RNG advances.
+	_check(offers == [{"id": "quilted_coat", "price": 100}, {"id": "padded_vest", "price": 100},
+		{"id": "thick_felt_mantle", "price": 100}], "prepared offers passed in gain no preview fields")
+	_check(rng.state == rng_state and randi() == expected_global, "COAT preview draws no run or global RNG")
 
 
 ## Four-hero Stitched Patch Stall: warden, seamstress, tinker, lantern_monk, an
@@ -415,7 +558,8 @@ func _run_open_stitched() -> void:
 	_check(state.visit_id != twin.read_state().visit_id, "stitched visits have distinct identities")
 	var quote := visit.quote()
 	_check(quote == {"offers": [
-			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": true, "blocked": ""},
+			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": true, "blocked": "",
+				"slot": "COAT", "max_hp_bonus": 6, "effect_text": "Equip: +6 max HP"},
 			{"id": "button_eye", "price": 100, "sold": false, "can_buy": true, "blocked": ""},
 			{"id": "pincushion_arm", "price": 100, "sold": false, "can_buy": true, "blocked": ""}],
 		"decisions": ["buy_patch", "leave"]}, "stitched quote is three authored patches plus Buy Patch/Leave")
@@ -533,8 +677,9 @@ func _check_stitched_decision_gating(authored: Dictionary, party: Array) -> void
 	_check(mixed_quote == {"offers": [
 			{"id": "stitched_badge", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"},
 			{"id": "button_eye", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"},
-			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": true, "blocked": ""}],
-		"decisions": ["buy_patch", "leave"]}, "mixed owned/unowned exact-100 quote keeps three rows and Buy Patch")
+			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": true, "blocked": "",
+				"slot": "COAT", "max_hp_bonus": 6, "effect_text": "Equip: +6 max HP"}],
+		"decisions": ["buy_patch", "leave"]}, "mixed owned/unownedexact-100 quote keeps three rows and Buy Patch")
 	for sold_id in mixed_owned:
 		_check(not mixed.buy_patch(sold_id, mixed_state.visit_id, "node_g", mixed_state.snapshot).ok
 			and mixed.preview_purchase(sold_id, mixed_state.visit_id, "node_g", mixed_state.snapshot).is_empty(),
@@ -558,8 +703,9 @@ func _check_stitched_decision_gating(authored: Dictionary, party: Array) -> void
 	_check(poor.is_valid() and poor_quote == {"offers": [
 			{"id": "stitched_badge", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold"},
 			{"id": "button_eye", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold"},
-			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold"}],
-		"decisions": ["leave"]}, "99-gold quote keeps three priced rows but only Leave")
+			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold",
+				"slot": "COAT", "max_hp_bonus": 6, "effect_text": "Equip: +6 max HP"}],
+		"decisions": ["leave"]}, "99-gold quotekeeps three priced rows but only Leave")
 	for id in ids:
 		_check(not poor.buy_patch(id, poor_state.visit_id, "node_g", poor_state.snapshot).ok
 			and poor.preview_purchase(id, poor_state.visit_id, "node_g", poor_state.snapshot).is_empty(),
@@ -578,8 +724,9 @@ func _check_stitched_decision_gating(authored: Dictionary, party: Array) -> void
 	_check(all_owned.is_valid() and all_quote == {"offers": [
 			{"id": "stitched_badge", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"},
 			{"id": "button_eye", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"},
-			{"id": "quilted_coat", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"}],
-		"decisions": ["leave"]}, "all-owned quote keeps sold rows but only Leave")
+			{"id": "quilted_coat", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned",
+				"slot": "COAT", "max_hp_bonus": 6, "effect_text": "Equip: +6 max HP"}],
+		"decisions": ["leave"]}, "all-owned quotekeeps sold rows but only Leave")
 	for id in ids:
 		_check(not all_owned.buy_patch(id, all_state.visit_id, "node_g", all_state.snapshot).ok
 			and all_owned.preview_purchase(id, all_state.visit_id, "node_g", all_state.snapshot).is_empty(),
@@ -608,7 +755,8 @@ func _check_stitched_decision_gating(authored: Dictionary, party: Array) -> void
 	var avail_quote := avail_visit.quote()
 	_check(avail_visit.is_valid() and avail_quote == {"offers": [
 			{"id": "stitched_badge", "price": 100, "sold": true, "can_buy": false, "blocked": "already owned"},
-			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold"},
+			{"id": "quilted_coat", "price": 100, "sold": false, "can_buy": false, "blocked": "not enough gold",
+				"slot": "COAT", "max_hp_bonus": 6, "effect_text": "Equip: +6 max HP"},
 			{"id": "button_eye", "price": 60, "sold": false, "can_buy": true, "blocked": ""}],
 		"decisions": ["buy_patch", "leave"]}, "mixed sold/unaffordable/affordable rows keep order and flags")
 	_check(avail_quote.offers.size() == 3 and avail_quote.offers[0].can_buy is bool and avail_quote.offers[0].blocked is String,
