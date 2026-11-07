@@ -815,9 +815,11 @@ func _run() -> void:
 	_check(app.base_button.get_child_count() == 1
 		and app.base_button.get_child(0).mouse_filter == Control.MOUSE_FILTER_IGNORE,
 		"village action is sewn, never a bare control")
-	var focus_style := app.base_button.get_theme_stylebox("focus") as StyleBoxFlat
-	_check(focus_style != null and focus_style.border_width_top >= 3
-		and focus_style.border_color.a == 1.0, "village action shows an opaque keyboard focus ring")
+	var focus_style := app.base_button.get_theme_stylebox("focus") as StyleBoxTexture
+	_check(focus_style != null and focus_style.texture != null
+		and focus_style.texture.resource_path == "res://assets/paper/ui/reward_button.png"
+		and not focus_style.draw_center and focus_style.expand_margin_top >= 3
+		and focus_style.modulate_color.a == 1.0, "village action shows an opaque authored keyboard focus ring")
 	var pristine := _title_snapshot(app)
 	seed(151151)
 	var expected_global := randi()
