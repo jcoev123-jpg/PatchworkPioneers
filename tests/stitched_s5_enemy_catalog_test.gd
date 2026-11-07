@@ -630,7 +630,7 @@ func _test_spool_kit(catalog: Dictionary) -> void:
 			"dmg": [4, 5], "crit": 0, "mark_damage": 3, "effects": {"weak": 1},
 			"self_move": 0, "move": "attack2"},
 		{"id": "spool_curse", "name": "Spool Curse", "kind": "debuff", "launch": [1, 4],
-			"target": [1, 2, 3, 4], "target_side": "enemy", "multi": false, "acc": 90,
+			"target": [1, 2, 3, 4], "target_side": "enemy", "multi": true, "acc": 90,
 			"dmg": [0, 0], "crit": 0, "effects": {"exposed": 2},
 			"self_move": 0, "move": "skill"},
 		{"id": "thread_tag", "name": "Thread Tag", "kind": "debuff", "launch": [1, 2, 3, 4],
@@ -730,12 +730,31 @@ func _test_spool_combat(catalog: Dictionary) -> int:
 			_check(receipt.get("ok", false), "Hexer AC2: next legal action commits through StitchedRules")
 			if actor["id"] != "spool_hexer":
 				continue
-			_check(not before.is_empty() and receipt.get("results", []).size() == 1,
-				"Hexer AC2: real single hero target and receipt exist")
-			if before.is_empty() or receipt.get("results", []).size() != 1:
+			# Spool Curse alone reaches the whole living line; its separate receipt per doll is
+			# the only place a Hexer action may return more than one hero result.
+			var line_wide := str(receipt.get("ability", "")) == "spool_curse"
+			var expected_results: int = targets.size() if line_wide else 1
+			_check(not before.is_empty() and receipt.get("results", []).size() == expected_results,
+				"Hexer AC2: real hero target count and one receipt per living legal doll")
+			if before.is_empty() or receipt.get("results", []).size() != expected_results:
+				continue
+			cycle.append(receipt["ability"])
+			if line_wide:
+				var cursed_ranks: Array = []
+				for result in receipt["results"]:
+					cursed_ranks.append(int(result["target_rank"]))
+					var doll := battle.get_unit(str(result["target"]))
+					var curse_statuses: Array = (
+						[{"status": "exposed", "duration": 2}] if bool(result["hit"]) else [])
+					_check(result["statuses"] == curse_statuses and int(result["damage"]) == 0
+						and not bool(result["crit"]) and int(result["target_hp"]) == int(doll["hp"]),
+						"Hexer AC2: only a confirmed curse hit applies Exposed 2 with no direct damage")
+					_check((int(doll["statuses"].get("exposed", 0)) > 0) == bool(result["hit"]),
+						"Hexer AC2: curse exposure matches the actual doll state")
+				_check(cursed_ranks == [1, 2, 3, 4],
+					"Hexer AC2: the curse receipt covers the whole living four-rank line")
 				continue
 			var hit: Dictionary = receipt["results"][0]
-			cycle.append(receipt["ability"])
 			if receipt["ability"] == "thread_tag":
 				_check(hit.has("roll") and hit["hit_chance"] == StitchedRules.hit_chance(
 					90 + int(actor["acc"]) + int(battle.candle_band()["enemy_acc"]),
@@ -830,6 +849,16 @@ func _test_spool_live_intents(catalog: Dictionary, seed_value: int) -> void:
 					and legal.get("affected_ranks") == [target_rank] and before == battle.state_snapshot(),
 					"Hexer AC3: read-only next-legal tag targets hero rank %d" % target_rank)
 			battle._units = units_before
+		elif ability == "spool_curse":
+			_check(intent["multi"] and intent["affected_ranks"] == [1, 2, 3, 4]
+				and intent["target_side"] == "hero" and intent["target_rank"] == 1
+				and intent["base_acc"] == 90 and intent["base_damage"] == [0, 0]
+				and intent["base_effects"] == {"exposed": 2}
+				and ticket.glyph.texture == StitchedFoeIntentPlate.DEBUFF_TEXTURE,
+				"Hexer AC3: the curse announces its whole living line, zero damage and Exposed 2")
+			_check(ticket.secondary.text == "HERO RANKS 1,2,3,4"
+				and ticket.tooltip_text.contains("ALL legal HERO ranks 1, 2, 3, 4"),
+				"Hexer AC3: the live intent plate names every cursed doll rank")
 		elif ability == "hex_bolt":
 			_check(intent["base_damage"] == [4, 5] and intent["base_effects"] == {"weak": 1}
 				and intent["base_acc"] == 88 and ticket.glyph.texture == StitchedFoeIntentPlate.ATTACK_TEXTURE

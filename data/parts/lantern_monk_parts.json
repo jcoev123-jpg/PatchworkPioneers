@@ -225,6 +225,12 @@
         },
         "3": {
           "ability": {
+            "launch": [
+              1,
+              2,
+              3,
+              4
+            ],
             "effects": {
               "guard": 4
             }
