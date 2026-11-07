@@ -27,8 +27,8 @@ const EXPECTED := {
 		"title": "The Glassfront Pin Cabinet",
 		"description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
 		"choices": [
-			{"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3}},
-			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2}},
+			{"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
+			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_candle_room": true}},
 			{"id": "leave", "text": "Let the cabinet's velvet drawers close", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -37,7 +37,7 @@ const EXPECTED := {
 		"description": "A moonblack glass paperweight pins a torn house plan to the floorboards; a small cream-felt mapkeeper waits beneath its cold reflection, holding an ink-stained spool.",
 		"choices": [
 			{"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16}},
-			{"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23}},
+			{"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the black glass holding down the plan", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -46,7 +46,7 @@ const EXPECTED := {
 		"description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
 		"choices": [
 			{"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (requires candle below 100, +22 candle, +5 fray each)", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true}},
-			{"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2}},
+			{"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -138,6 +138,8 @@ func _initialize() -> void:
 	_test_unknown_choice_refusals()
 	_test_stale_effect_fails()
 	_test_full_candle_bedwarmer()
+	_test_full_candle_pin_cabinet()
+	_test_negative_candle_boundaries()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	_report()
 
@@ -537,6 +539,273 @@ func _test_full_candle_bedwarmer() -> void:
 		"replay refusal on near-full claim")
 	_check(snapshot_99 == before_99,
 		"claim mutates no caller snapshot")
+
+
+## Authentic full-candle witness for the Pin Cabinet (AC3): at candle 100 with scraps >= 2,
+## "brace_wick_with_pins" is unavailable (preserving opening candle/scraps and empty fray intent),
+## choose() refuses without consuming the visit or mutating state, and alternate choices
+## ("salvage_loose_pinheads" and "leave") remain claimable. At near-full candle 99,
+## bracing with pins remains available and claims clamped candle 100 with scraps -2 and fray -4.
+func _test_full_candle_pin_cabinet() -> void:
+	var event_id := "v3_glassfront_pin_cabinet"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 223344
+	var guard_state: int = rng_guard.state
+
+	# 1. Full candle 100 with ample scraps (4)
+	var snapshot_100 := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_100["candle"] = 100
+	var before_100: Dictionary = snapshot_100.duplicate(true)
+	var service_100 := RunStitchedEventConsequence.new(record)
+	_check(service_100.is_valid() and not service_100.is_claimed(),
+		"a fresh full-candle pin cabinet visit opens")
+	var preview_100: Dictionary = service_100.preview(snapshot_100)
+	_check(preview_100.get("ok") == true and int(preview_100.get("candle")) == 100,
+		"full-candle pin cabinet preview succeeds")
+	var brace_entry := _entry(preview_100, "brace_wick_with_pins")
+	_check(brace_entry.get("available") == false
+		and int(brace_entry.get("candle")) == 100
+		and int(brace_entry.get("candle_delta")) == 15
+		and int(brace_entry.get("scraps")) == BASE_SCRAPS
+		and int(brace_entry.get("scraps_delta")) == -2
+		and int(brace_entry.get("fray_delta")) == -4
+		and brace_entry.get("fray") == {},
+		"full candle quotes brace_wick_with_pins unavailable with original deltas, base scraps, and empty fray")
+	_check(_entry(preview_100, "salvage_loose_pinheads").get("available") == true,
+		"salvage_loose_pinheads remains available at candle 100")
+	_check(_entry(preview_100, "leave").get("available") == true,
+		"leave remains available at candle 100 for pin cabinet")
+
+	# choose("brace_wick_with_pins") refuses at candle 100 without latching or mutating state/RNG
+	var refusal: Dictionary = service_100.choose("brace_wick_with_pins", snapshot_100)
+	_check(refusal == _refusal(100),
+		"brace_wick_with_pins is refused at candle 100 with uniform refusal shape")
+	_check(service_100.is_valid() and not service_100.is_claimed(),
+		"refusal on full candle leaves pin cabinet unclaimed and open")
+	_check(snapshot_100 == before_100,
+		"refusal on full candle mutates no caller snapshot")
+	_check(record == record_snapshot,
+		"refusal on full candle mutates no source record")
+	_check(rng_guard.state == guard_state,
+		"brace_wick_with_pins refusal draws no RNG")
+
+	# Alternative choice succeeds on the same visit after refusal
+	var salvage_receipt: Dictionary = service_100.choose("salvage_loose_pinheads", snapshot_100)
+	_check(salvage_receipt.get("ok") == true
+		and int(salvage_receipt.get("candle")) == 92
+		and int(salvage_receipt.get("scraps")) == BASE_SCRAPS + 3
+		and salvage_receipt.get("fray") == _fray_map(4),
+		"salvage_loose_pinheads claims successfully on the same visit after brace refusal")
+	_check(service_100.is_claimed() and not service_100.is_valid(),
+		"visit latches once after alternative salvage claim")
+
+	# Independent full-candle visit where leave succeeds after refusal
+	var service_leave := RunStitchedEventConsequence.new(record)
+	var snapshot_leave := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+	snapshot_leave["candle"] = 100
+	_check(service_leave.choose("brace_wick_with_pins", snapshot_leave) == _refusal(100),
+		"brace_wick_with_pins refusal on second independent visit")
+	var leave_receipt: Dictionary = service_leave.choose("leave", snapshot_leave)
+	var expected_leave := {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": "leave",
+		"target": "party",
+		"hero_id": "",
+		"candle": 100,
+		"fray": {},
+	}
+	_check(leave_receipt == expected_leave,
+		"leave succeeds after brace_wick_with_pins refusal at candle 100")
+
+	# 2. Near-full candle 99 with exact scraps (2)
+	var snapshot_99 := _funded_snapshot(BASE_GOLD, 2)
+	snapshot_99["candle"] = 99
+	var before_99: Dictionary = snapshot_99.duplicate(true)
+	var service_99 := RunStitchedEventConsequence.new(record)
+	var preview_99: Dictionary = service_99.preview(snapshot_99)
+	var brace_99 := _entry(preview_99, "brace_wick_with_pins")
+	_check(brace_99.get("available") == true
+		and int(brace_99.get("candle")) == 100
+		and int(brace_99.get("scraps")) == 0
+		and brace_99.get("fray") == _fray_map(-4),
+		"candle 99 with scraps 2 quotes brace_wick_with_pins available, clamped candle 100, scraps 0, fray -4")
+	var receipt_99: Dictionary = service_99.choose("brace_wick_with_pins", snapshot_99)
+	_check(receipt_99.get("ok") == true
+		and int(receipt_99.get("candle")) == 100
+		and int(receipt_99.get("scraps")) == 0
+		and int(receipt_99.get("scraps_delta")) == -2
+		and receipt_99.get("fray") == _fray_map(-4),
+		"candle 99 with scraps 2 claims brace_wick_with_pins settling clamped candle 100, scraps 0, fray -4")
+	_check(service_99.is_claimed() and not service_99.is_valid(),
+		"visit latches after funded near-full claim for pin cabinet")
+	_check(service_99.choose("brace_wick_with_pins", snapshot_99) == _refusal(99),
+		"replay refusal on near-full claim for pin cabinet")
+	_check(snapshot_99 == before_99,
+		"claim mutates no caller snapshot for pin cabinet")
+
+
+## Authentic negative-candle boundaries (AC2):
+## 7/8 for v3_glassfront_pin_cabinet.salvage_loose_pinheads (-8 candle, +3 scraps, +4 fray)
+## 9/10 for v3_moonblack_paperweight.lift_shadowed_map (-10 candle, +23 gold, +7 fray)
+## 11/12 for v3_cinder_brass_bedwarmer.sift_cooling_ashes (-12 candle, +2 scraps, -6 fray)
+## Verifies underpriced snapshot makes choice unavailable and choose() refuses without
+## claim, state mutation or RNG use; exactly funded boundary makes it available and
+## returns original correct receipt. Leave remains claimable after denial.
+func _test_negative_candle_boundaries() -> void:
+	var boundaries := [
+		{
+			"event_id": "v3_glassfront_pin_cabinet",
+			"choice_id": "salvage_loose_pinheads",
+			"under_candle": 7,
+			"funded_candle": 8,
+			"candle_delta": -8,
+			"fray_delta": 4,
+			"wallet_key": "scraps",
+			"wallet_delta_key": "scraps_delta",
+			"wallet_base": BASE_SCRAPS,
+			"wallet_delta": 3,
+		},
+		{
+			"event_id": "v3_moonblack_paperweight",
+			"choice_id": "lift_shadowed_map",
+			"under_candle": 9,
+			"funded_candle": 10,
+			"candle_delta": -10,
+			"fray_delta": 7,
+			"wallet_key": "gold",
+			"wallet_delta_key": "gold_delta",
+			"wallet_base": BASE_GOLD,
+			"wallet_delta": 23,
+		},
+		{
+			"event_id": "v3_cinder_brass_bedwarmer",
+			"choice_id": "sift_cooling_ashes",
+			"under_candle": 11,
+			"funded_candle": 12,
+			"candle_delta": -12,
+			"fray_delta": -6,
+			"wallet_key": "scraps",
+			"wallet_delta_key": "scraps_delta",
+			"wallet_base": BASE_SCRAPS,
+			"wallet_delta": 2,
+		},
+	]
+
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 556677
+	var guard_state: int = rng_guard.state
+
+	for b in boundaries:
+		var event_id: String = b["event_id"]
+		var choice_id: String = b["choice_id"]
+		var under_candle: int = b["under_candle"]
+		var funded_candle: int = b["funded_candle"]
+		var candle_delta: int = b["candle_delta"]
+		var fray_delta: int = b["fray_delta"]
+		var wallet_key: String = b["wallet_key"]
+		var wallet_delta_key: String = b["wallet_delta_key"]
+		var wallet_base: int = b["wallet_base"]
+		var wallet_delta: int = b["wallet_delta"]
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+
+		# 1. Underfunded candle boundary
+		var snapshot_under := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		snapshot_under["candle"] = under_candle
+		var before_under: Dictionary = snapshot_under.duplicate(true)
+		var service_under := RunStitchedEventConsequence.new(record)
+		_check(service_under.is_valid() and not service_under.is_claimed(),
+			"fresh visit opens for underfunded boundary: " + event_id + " candle " + str(under_candle))
+		var preview_under: Dictionary = service_under.preview(snapshot_under)
+		_check(preview_under.get("ok") == true and int(preview_under.get("candle")) == under_candle,
+			"preview ok for underfunded boundary: " + event_id + " candle " + str(under_candle))
+		var entry_under := _entry(preview_under, choice_id)
+		_check(entry_under.get("available") == false
+			and int(entry_under.get("candle")) == under_candle
+			and int(entry_under.get("candle_delta")) == candle_delta
+			and int(entry_under.get("fray_delta")) == fray_delta
+			and entry_under.get("fray") == {}
+			and int(entry_under.get(wallet_key)) == wallet_base
+			and int(entry_under.get(wallet_delta_key)) == wallet_delta,
+			"underpriced candle " + str(under_candle) + " makes choice unavailable with unchanged base purse and empty fray: " + event_id + " / " + choice_id)
+		_check(_entry(preview_under, "leave").get("available") == true,
+			"leave remains available at underfunded candle: " + event_id)
+
+		var refusal: Dictionary = service_under.choose(choice_id, snapshot_under)
+		_check(refusal == _refusal(under_candle),
+			"underfunded choice refused with exact base candle: " + event_id + " candle " + str(under_candle))
+		_check(service_under.is_valid() and not service_under.is_claimed(),
+			"underfunded choice refusal leaves visit unclaimed: " + event_id)
+		_check(snapshot_under == before_under,
+			"refusal mutates no caller snapshot: " + event_id)
+		_check(record == record_snapshot,
+			"refusal mutates no source record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"refusal draws no RNG: " + event_id)
+
+		# Leave succeeds on the same visit after refusal
+		var leave_rec: Dictionary = service_under.choose("leave", snapshot_under)
+		var expected_leave := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": "leave",
+			"target": "party",
+			"hero_id": "",
+			"candle": under_candle,
+			"fray": {},
+		}
+		_check(leave_rec == expected_leave,
+			"leave succeeds after underfunded negative candle refusal: " + event_id + " candle " + str(under_candle))
+		_check(service_under.is_claimed() and not service_under.is_valid(),
+			"visit latches after post-refusal Leave: " + event_id)
+		_check(snapshot_under == before_under,
+			"post-refusal Leave mutates no wallet/candle state: " + event_id)
+
+		# 2. Exactly funded candle boundary
+		var snapshot_funded := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		snapshot_funded["candle"] = funded_candle
+		var before_funded: Dictionary = snapshot_funded.duplicate(true)
+		var service_funded := RunStitchedEventConsequence.new(record)
+		_check(service_funded.is_valid() and not service_funded.is_claimed(),
+			"fresh visit opens for funded boundary: " + event_id + " candle " + str(funded_candle))
+		var preview_funded: Dictionary = service_funded.preview(snapshot_funded)
+		_check(preview_funded.get("ok") == true and int(preview_funded.get("candle")) == funded_candle,
+			"preview ok for funded boundary: " + event_id + " candle " + str(funded_candle))
+		var entry_funded := _entry(preview_funded, choice_id)
+		_check(entry_funded.get("available") == true
+			and int(entry_funded.get("candle")) == 0
+			and int(entry_funded.get("candle_delta")) == candle_delta
+			and int(entry_funded.get("fray_delta")) == fray_delta
+			and entry_funded.get("fray") == _fray_map(fray_delta)
+			and int(entry_funded.get(wallet_key)) == wallet_base + wallet_delta
+			and int(entry_funded.get(wallet_delta_key)) == wallet_delta,
+			"funded candle " + str(funded_candle) + " makes choice available leaving candle 0: " + event_id + " / " + choice_id)
+
+		var receipt_funded: Dictionary = service_funded.choose(choice_id, snapshot_funded)
+		var expected_receipt := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": choice_id,
+			"target": "party",
+			"hero_id": "",
+			"candle": 0,
+			"fray": _fray_map(fray_delta),
+		}
+		expected_receipt[wallet_delta_key] = wallet_delta
+		expected_receipt[wallet_key] = wallet_base + wallet_delta
+		_check(receipt_funded == expected_receipt,
+			"funded choice claims leaving candle 0 with correct purse/fray receipt: " + event_id + " / " + choice_id)
+		_check(service_funded.is_claimed() and not service_funded.is_valid(),
+			"visit latches after funded boundary claim: " + event_id)
+		_check(service_funded.choose(choice_id, snapshot_funded) == _refusal(funded_candle),
+			"replay refused after funded claim: " + event_id)
+		_check(snapshot_funded == before_funded,
+			"funded claim mutates no caller snapshot: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"funded claim draws no RNG: " + event_id)
 
 
 func _funded_snapshot(gold: int, scraps: int) -> Dictionary:
