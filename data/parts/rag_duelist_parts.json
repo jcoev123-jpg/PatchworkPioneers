@@ -19,7 +19,7 @@
         "acc": 95,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"exposed": 1},
+        "effects": {"exposed": 2},
         "self_move": 0,
         "move": "skill"
       },
@@ -27,7 +27,7 @@
         "2": {"ability": {"effects": {"exposed": 2, "mark": 1}}},
         "3": {"ability": {"effects": {"exposed": 3, "mark": 2}}}
       },
-      "text": "Feint from ranks 1-2 at one foe in ranks 1-3 and leave it Exposed, deeper at each stitch tier; stitch tiers II and III also Mark its seam for follow-up."
+      "text": "Feint from ranks 1-2 at one foe in ranks 1-3: Exposed 2 at stitch tiers I-II, Exposed 3 at tier III. Tiers II-III also Mark its seam for follow-up."
     },
     {
       "id": "rag_duelist_head_tattered_snare",
