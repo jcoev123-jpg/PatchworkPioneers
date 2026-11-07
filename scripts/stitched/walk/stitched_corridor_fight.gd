@@ -424,9 +424,10 @@ func refresh() -> void:
 			var where := stage.fight_point(side, rank)
 			if standing:
 				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss else FOE_HEIGHT)
-				stage.place(key, _figure_art(str(unit.id)), where, tall)
+				# Doll and foe art is all drawn facing right; foes turn round to face the party.
+				stage.place(key, _figure_art(str(unit.id)), where, tall).flip_h = side == "foe"
 			elif not heap.is_empty():
-				stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT)
+				stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT).flip_h = false
 			elif stage.figure_nodes.has(key):
 				stage.figure_nodes[key].visible = false
 			var plate: Control = plates[key]
@@ -447,7 +448,7 @@ func refresh() -> void:
 				hp.value = float(heap.get("hp", 0))
 				numbers.text = str(int(heap.get("hp", 0)))
 			hits[key].visible = plate.visible
-			hits[key].tooltip_text = engine.status_detail(side, rank) if plate.visible else ""
+			hits[key].tooltip_text = _simple_detail(engine.status_detail(side, rank)) if plate.visible else ""
 	_refresh_bar()
 	_shade_figures()
 	_place_overlays()
@@ -657,6 +658,12 @@ func _process(_delta: float) -> void:
 
 
 ## Each new action gets a short beat: the actor lunges toward the other side, its targets flinch.
+## The classic hover detail, minus the hidden-mechanic numbers (fray stays a bar, never a count).
+static func _simple_detail(detail: String) -> String:
+	var plain := RegEx.create_from_string(r"\s*·?\s*FRAY\s*\d+\s*/\s*\d+").sub(detail, "", true)
+	return plain.replace("STATUS: none", "").strip_edges()
+
+
 func _play_new_receipts() -> void:
 	var fresh := engine.receipts.slice(_seen_receipts)
 	_seen_receipts = engine.receipts.size()

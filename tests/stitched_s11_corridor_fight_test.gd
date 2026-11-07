@@ -49,6 +49,15 @@ func _run() -> void:
 			_check(plate.position.y + plate.size.y <= StitchedCorridorFight.BAR_TOP and plate.position.x > -60.0
 				and plate.position.x < 1280.0, key + " plate stays on screen above the bar")
 			_check(fight.hits[key].size.x > 20.0 and fight.hits[key].size.y > 40.0, key + " can be clicked")
+	_check(fight.stage.figure_nodes["foe_1"].flip_h and not fight.stage.figure_nodes["hero_1"].flip_h,
+		"foes turn round to face the party")
+	for key in fight.hits:
+		_check(not fight.hits[key].tooltip_text.contains("FRAY") and not fight.hits[key].tooltip_text.contains("/200"),
+			key + " hover shows no fray count: " + fight.hits[key].tooltip_text)
+	_check(StitchedCorridorFight._simple_detail("R3 Tinker · HP 29/29 · FRAY 0/200
+STATUS: none") == "R3 Tinker · HP 29/29",
+		"hover detail keeps name and health only: " + StitchedCorridorFight._simple_detail("R3 Tinker · HP 29/29 · FRAY 0/200
+STATUS: none"))
 	_check(fight.part_buttons.size() == 4 and fight.candle_icon.texture != null, "four body parts and the candle")
 	var hidden_numbers := ["fray", "candle", "fear", "whirr"]
 	for label in fight.find_children("*", "Label", true, false):
