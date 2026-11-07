@@ -1328,15 +1328,17 @@ func _enter_turn() -> void:
 		if not _can_act(unit):
 			_turn_index += 1
 			continue
+		# Relief belongs to an actionable Steadfast turn, never a Stun skip or
+		# a Bleed-fatal start. This entry point runs once before the command.
+		if str(unit["side"]) == "hero" and str(unit.get("resolve", "")) == "steadfast":
+			for hero in _units_of_side("hero"):
+				if not bool(hero["lost"]):
+					_change_fray(hero, -2)
 		return
 
 
 ## Start-of-turn status tick. Returns true when the turn is consumed (stun or bleed death).
 func _tick_turn_start(unit: Dictionary) -> bool:
-	if str(unit["side"]) == "hero" and str(unit.get("resolve", "")) == "steadfast":
-		for hero in _units_of_side("hero"):
-			if not bool(hero["lost"]):
-				_change_fray(hero, -2)
 	var statuses: Dictionary = unit["statuses"]
 	var stunned := int(statuses.get("stun", 0)) > 0
 	if stunned:

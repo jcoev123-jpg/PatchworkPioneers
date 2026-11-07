@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_enemy_modifiers()
 	_test_reckless_guard()
 	_test_stun_clock()
+	_test_steadfast_turn_gate()
 	_test_mode_independence()
 	if failures.is_empty():
 		print("stitched_s1b_rules_test: PASS (", checks, " checks)")
@@ -565,7 +566,7 @@ func _test_mode_independence() -> void:
 
 # An accepted witness always goes through the public, seeded four-hero/three-foe
 # combat actions. Failed hits and turns skipped before observation are not counted.
-func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false, guard: bool = false) -> Dictionary:
+func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false, guard: bool = false, steadfast: bool = false) -> Dictionary:
 	var config := _config(seed_value)
 	var timed := {"stun": 1, "bleed": 2, "weak": 2, "exposed": 2}
 	if victim_side == "foe":
@@ -590,6 +591,16 @@ func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false
 	var b: StitchedRules = built["battle"]
 	if b.get_heroes().size() != 4 or b.get_foes().size() != 3:
 		return {}
+	if steadfast:
+		if victim_side != "hero" or guard:
+			return {}
+		# Resolve through the seeded public FRAY transaction, not planted state.
+		var resolved := b.apply_fray_event("warden", 100)
+		if str(resolved.get("transition", "")) != "steadfast":
+			return {}
+		for ally_id in ["seamstress", "tinker", "monk"]:
+			if not bool(b.apply_fray_event(ally_id, 13)["ok"]):
+				return {}
 	var victim_id := "foe_0" if victim_side == "foe" else ("seamstress" if guard else "warden")
 	var guard_receipt: Dictionary = {}
 	if guard:
@@ -610,6 +621,10 @@ func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false
 	if not bool(hit.get("hit", false)) or str(hit.get("target", "")) != victim_id:
 		return {}
 	var before := b.get_unit(victim_id)
+	var fray_before: Dictionary = {}
+	if steadfast:
+		for hero in b.get_heroes():
+			fray_before[str(hero["id"])] = int(hero["fray"])
 	var statuses: Dictionary = before["statuses"]
 	for key in timed:
 		if int(statuses.get(key, 0)) != int(timed[key]):
@@ -647,6 +662,7 @@ func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false
 	var after := b.get_unit(victim_id)
 	var trace := {
 		"seed": seed_value, "victim_side": victim_side, "lethal": lethal, "guard": guard,
+		"steadfast": steadfast, "fray_before": fray_before,
 		"guard_receipt": guard_receipt, "attack": attack, "wrong": wrong,
 		"actors": actors, "receipts": receipts, "states": states,
 		"orders": orders, "rng_states": rngs, "final_snapshot": b.state_snapshot(),
@@ -654,6 +670,7 @@ func _stun_clock_case(seed_value: int, victim_side: String, lethal: bool = false
 	}
 	return {
 		"battle": b, "before": before, "after": after, "atomic": atomic,
+		"fray_before": fray_before,
 		"trace": trace, "hit": hit, "actors": actors, "guard": guard_receipt,
 	}
 
@@ -806,3 +823,131 @@ func _test_stun_clock() -> void:
 		refused_seen = true
 		break
 	_check(refused_seen, "AC3: a second landed Stun is nonvacuously refused by resistance")
+
+
+# All three gate paths use public turn actions, actual seeded Steadfast
+# resolution and genuine landed foe Stun/Bleed, never injected statuses.
+func _steadfast_action_case(seed_value: int, command: String) -> Dictionary:
+	var b := _battle(seed_value)
+	if b == null:
+		return {}
+	# A turn already entered at battle creation cannot retroactively grant relief.
+	if b.current_actor_id() == "warden":
+		if not bool(b.pass_turn().get("ok", false)):
+			return {}
+	var resolve_receipt := b.apply_fray_event("warden", 100)
+	if str(resolve_receipt.get("transition", "")) != "steadfast":
+		return {}
+	for ally_id in ["seamstress", "tinker", "monk"]:
+		var amount := 9 if ally_id == "seamstress" else (1 if ally_id == "tinker" else 2)
+		if not bool(b.apply_fray_event(ally_id, amount).get("ok", false)):
+			return {}
+	var before: Dictionary = {}
+	for hero in b.get_heroes():
+		before[str(hero["id"])] = int(hero["fray"])
+	if not _to(b, "warden"):
+		return {}
+	var entered: Dictionary = {}
+	for hero in b.get_heroes():
+		entered[str(hero["id"])] = int(hero["fray"])
+	var entry_snapshot := _snapshot(b)
+	var entry_rng := b.rng_state()
+	var receipt := b.pass_turn() if command == "pass" else b.use_part("s1b_test_head", 1)
+	if not bool(receipt.get("ok", false)):
+		return {}
+	if command == "ability" and (receipt.get("results", []).is_empty()
+			or not bool(receipt["results"][0].get("hit", false))):
+		return {}
+	var after: Dictionary = {}
+	for hero in b.get_heroes():
+		after[str(hero["id"])] = int(hero["fray"])
+	return {
+		"seed": seed_value, "command": command,
+		"resolve": resolve_receipt, "before": before, "entered": entered, "after": after,
+		"entry_snapshot": entry_snapshot, "entry_rng": entry_rng,
+		"receipt": receipt, "post_snapshot": _snapshot(b), "post_rng": b.rng_state(),
+	}
+
+
+func _test_steadfast_turn_gate() -> void:
+	for lethal in [false, true]:
+		var witnessed := false
+		for seed_value in range(1, 260):
+			var sample := _stun_clock_case(seed_value, "hero", lethal, false, true)
+			if sample.is_empty():
+				continue
+			var b: StitchedRules = sample["battle"]
+			var before: Dictionary = sample["before"]
+			var after: Dictionary = sample["after"]
+			var fray_before: Dictionary = sample["fray_before"]
+			_check(bool(sample["hit"].get("hit", false)) and str(sample["hit"]["target"]) == "warden"
+				and str(before["resolve"]) == "steadfast" and int(before["hp"]) > 0
+				and int(before["statuses"].get("stun", 0)) == 1 and bool(sample["atomic"]),
+				"AC1/2: seeded Steadfast resolve, real landed foe Stun and atomic refusal")
+			_check(int(fray_before.get("seamstress", 0)) > 2
+				and int(fray_before.get("tinker", 0)) > 0
+				and int(fray_before.get("monk", 0)) > 0,
+				"AC1/2: three positive wounded-ally baselines before the skipped turn")
+			for hero_id in ["warden", "seamstress", "tinker", "monk"]:
+				var expected := int(fray_before[hero_id])
+				if lethal and hero_id != "warden":
+					expected += 8
+				_check(int(b.get_unit(hero_id)["fray"]) == expected,
+					"AC2: Bleed/Hanging adds only eight ally FRAY, no relief " + hero_id
+					if lethal else "AC1: Stun skip never relieves " + hero_id)
+			_check(not (str(after["id"]) in sample["actors"])
+				and not bool(after["lost"]) and int(after["statuses"].get("stun", 0)) == 0,
+				"AC1/2: Steadfast actor was auto-skipped after consuming Stun")
+			if lethal:
+				var torn := 0
+				for slot in ["head", "arms", "legs"]:
+					if bool(after["parts"][slot]["torn"]):
+						torn += 1
+				_check(int(before["hp"]) == 2 and int(after["hp"]) == 0
+					and bool(after["hanging"]) and torn == 1
+					and int(after["statuses"].get("stun_resist", 0)) == 0,
+					"AC2: lethal Bleed Hangs with exactly one tear and no phantom resist")
+			else:
+				_check(int(after["hp"]) == int(before["hp"]) - 2
+					and int(after["statuses"].get("bleed", 0)) == 1
+					and int(after["statuses"].get("weak", 0)) == 1
+					and int(after["statuses"].get("exposed", 0)) == 1
+					and int(after["statuses"].get("stun_resist", 0)) == 1,
+					"AC1: Bleed, Weak, Exposed tick once and fresh Stun resist persists")
+			var again := _stun_clock_case(seed_value, "hero", lethal, false, true)
+			_check(not again.is_empty() and sample["trace"] == again.get("trace", {}),
+				"AC1/2: full seeded skipped/fatal snapshots, receipts, order and RNG replay")
+			witnessed = true
+			break
+		_check(witnessed, "AC1/2: nonvacuous seeded Steadfast " + ("fatal" if lethal else "Stun") + " witness")
+	for command in ["pass", "ability"]:
+		var witnessed := false
+		for seed_value in range(1, 260):
+			var sample := _steadfast_action_case(seed_value, command)
+			if sample.is_empty():
+				continue
+			var before: Dictionary = sample["before"]
+			var entered: Dictionary = sample["entered"]
+			var after: Dictionary = sample["after"]
+			_check(str(sample["resolve"]["transition"]) == "steadfast"
+				and int(before["seamstress"]) > 2
+				and int(before["tinker"]) == 1 and int(before["monk"]) == 2,
+				"AC3: seeded actionable Steadfast and positive/floor ally preconditions")
+			for hero_id in ["warden", "seamstress", "tinker", "monk"]:
+				_check(int(entered[hero_id]) == maxi(0, int(before[hero_id]) - 2),
+					"AC3: relief exactly once at actionable entry, floored " + hero_id)
+				if hero_id != "warden":
+					_check(int(after[hero_id]) == int(entered[hero_id]),
+						"AC3: " + command + " gives no second party relief to " + hero_id)
+			var attack_relief := 0
+			if command == "ability":
+				var hit: Dictionary = sample["receipt"]["results"][0]
+				attack_relief = int(hit.get("fray_relief", 0)) + int(hit.get("kill_fray_relief", 0))
+			_check(int(after["warden"]) == int(entered["warden"]) - attack_relief,
+				"AC3: " + command + " gives no second passive relief on acting Steadfast")
+			var again := _steadfast_action_case(seed_value, command)
+			_check(not again.is_empty() and sample == again,
+				"AC3: actionable " + command + " full snapshot, receipt and RNG replay")
+			witnessed = true
+			break
+		_check(witnessed, "AC3: nonvacuous seeded actionable Steadfast " + command)
