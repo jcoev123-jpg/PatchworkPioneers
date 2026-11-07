@@ -41,6 +41,8 @@ var eye_profile := "neutral"
 var stage: StitchedCorridorStage
 var switch_buttons: Array[Button] = []
 var pocket_buttons: Array[Button] = []
+var drawer_toggle: Button
+var drawer_open := false
 var forward_button: Button
 var back_button: Button
 var exit_button: Button
@@ -183,13 +185,16 @@ func _ready() -> void:
 	feedback = _label(Rect2(240, 560, 800, 40), "Borrow a doll's eyes, then walk on.", 20)
 	feedback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	forward_button = _button("WALK ON", Rect2(500, 610, 280, 66), 30, func(): command("forward"))
-	back_button = _button("LOOK BACK", Rect2(796, 620, 190, 48), 21, func(): command("look_back"))
+	forward_button = _button("WALK ON", Rect2(500, 610, 280, 66), 30, func(): _use_primary("forward"))
+	back_button = _button("LOOK BACK", Rect2(796, 620, 190, 48), 21, func(): _use_primary("look_back"))
+	drawer_toggle = _button("DOLLS & POCKETS", Rect2(24, 414, 250, 48), 19, _toggle_drawer)
+	drawer_toggle.name = "DollsAndPocketsToggle"
+	drawer_toggle.tooltip_text = "Show or hide doll switches and carried pocket items"
 	for index in 4:
-		switch_buttons.append(_button("", Rect2(24, 474 + index * 54, 250, 46), 18, func():
-			command("switch", {"target": expected.dolls[index].id})))
+		switch_buttons.append(_button("", Rect2(24, 474 + index * 54, 250, 46), 18, func(): _use_switch(index)))
 	for index in 2:
 		pocket_buttons.append(_button("", Rect2(1010, 582 + index * 56, 246, 48), 19, func(): _use_pocket(index)))
+	_set_drawer(false, false)
 	exit_button = _button("TITLE", Rect2(1110, 18, 150, 44), 19, func(): exit_requested.emit())
 	_build_event_panel()
 	bark_label = _label(Rect2(140, 506, 1000, 48), "", 22)
@@ -290,15 +295,84 @@ func pocket_target(item: String) -> String:
 	return str(expected.viewpoint)
 
 
+## A disabled or wrong-phase button cannot bypass the normal Control input gate
+## just because a lingering pressed signal is delivered by another UI script.
+func _use_primary(kind: String) -> void:
+	if walk == null or expected.get("phase") != "walking":
+		return
+	var button: Button = forward_button if kind == "forward" else back_button
+	if not button.is_visible_in_tree() or button.disabled:
+		return
+	command(kind)
+
+
+## Only the six currently revealed, enabled controls can generate transactions.
+## Their signals may still be emitted while hidden (e.g. an old focused button).
+func _use_switch(index: int) -> void:
+	if not drawer_open or expected.get("phase") != "walking" or index < 0 \
+		or index >= switch_buttons.size() or index >= expected.dolls.size():
+		return
+	var button := switch_buttons[index]
+	if not button.is_visible_in_tree() or button.disabled:
+		return
+	command("switch", {"target": expected.dolls[index].id})
+
+
 func _use_pocket(slot: int) -> void:
+	if not drawer_open or expected.get("phase") != "walking" or slot < 0 or slot >= pocket_buttons.size():
+		return
+	var button := pocket_buttons[slot]
+	if not button.is_visible_in_tree() or button.disabled:
+		return
 	var pocket: Array = expected.pockets[expected.viewpoint]
 	if slot < pocket.size():
 		command("use_item", {"slot": slot, "target": pocket_target(str(pocket[slot]))})
 
 
+## Presentation state only. Neither opening nor dismissing touches the Walk rules,
+## the saved session, its receipts or its deterministic RNG.
+func _toggle_drawer() -> void:
+	if drawer_toggle.is_visible_in_tree() and not drawer_toggle.disabled:
+		_set_drawer(not drawer_open)
+
+
+func _set_drawer(open: bool, move_focus: bool = true) -> void:
+	drawer_open = open and expected.get("phase") == "walking"
+	for button in switch_buttons + pocket_buttons:
+		if not drawer_open and button.has_focus():
+			button.release_focus()
+		button.visible = drawer_open
+		button.focus_mode = Control.FOCUS_ALL if drawer_open else Control.FOCUS_NONE
+	if drawer_toggle == null:
+		return
+	var walking: bool = expected.get("phase") == "walking"
+	if not walking and drawer_toggle.has_focus():
+		drawer_toggle.release_focus()
+	drawer_toggle.visible = walking
+	drawer_toggle.disabled = not walking
+	drawer_toggle.focus_mode = Control.FOCUS_ALL if walking else Control.FOCUS_NONE
+	drawer_toggle.text = "CLOSE DRAWER" if drawer_open else "DOLLS & POCKETS"
+	if move_focus and drawer_toggle.is_visible_in_tree():
+		if drawer_open:
+			for button in switch_buttons + pocket_buttons:
+				if not button.disabled:
+					button.grab_focus()
+					break
+		else:
+			drawer_toggle.grab_focus()
+
+
+func _unhandled_key_input(event: InputEvent) -> void:
+	if drawer_open and is_visible_in_tree() and event is InputEventKey \
+		and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
+		_set_drawer(false)
+		get_viewport().set_input_as_handled()
+
+
 func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> Dictionary:
 	if walk == null:
 		return {"ok": false, "error": "not_started"}
+	var previous_step: int = int(expected.step)
 	var request := {"kind": kind, "actor": expected.viewpoint}
 	if kind == "forward" and walk.tug_unresolved():
 		request = {"kind": "tug", "actor": expected.viewpoint, "target": expected.tug.id, "choice": "yield"}
@@ -307,9 +381,18 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 		else walk.act(request, expected if snapshot == null else snapshot)
 	receipts.append(receipt.duplicate(true))
 	if host != null and host.walk == null:
+		# The hosted session has moved beyond Walk; this screen still owns the
+		# completed rules snapshot until the live route unmounts its view.
+		expected = walk.snapshot()
+		_set_drawer(false, false)
 		walk_finished.emit()
 		return receipt
 	expected = walk.snapshot() if host != null else receipt.snapshot.duplicate(true)
+	if drawer_open and receipt.ok and (kind in ["switch", "use_item"] \
+		or (kind == "forward" and int(expected.step) != previous_step)):
+		_set_drawer(false)
+	elif expected.phase != "walking":
+		_set_drawer(false, false)
 	if is_node_ready():
 		hush()
 		var animate: bool = receipt.ok and not reduced_motion
@@ -406,6 +489,8 @@ func _stop_travel() -> void:
 
 
 func refresh(animate: bool = false) -> void:
+	if expected.get("phase") != "walking":
+		_set_drawer(false, false)
 	_stop_travel()
 	var band := StitchedS1BEffects.candle_band(clampi(candle, 0, 100))
 	var depth: int = BAND_DEPTH[band.name]
@@ -464,6 +549,10 @@ func refresh(animate: bool = false) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if drawer_toggle != null and drawer_toggle.has_focus() and event is InputEventKey \
+		and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
+		_toggle_drawer()
+		get_viewport().set_input_as_handled()
 	if walk != null and (event is InputEventKey or event is InputEventMouseButton or event is InputEventMouseMotion):
 		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 
@@ -592,6 +681,23 @@ func _place_figure_controls() -> void:
 			snip_buttons[id].position = at + Vector2(-55, 56)
 
 
+## Old event controls can outlive their event for the rest of the frame.
+## Validate the displayed current target before delegating an accepted choice.
+func _use_event_choice(request: Dictionary) -> void:
+	if expected.get("phase") != "walking" or expected.looking_back or not event_panel.is_visible_in_tree():
+		return
+	if request.kind == "curio":
+		var curio := current_curio()
+		if curio.is_empty() or curio.instance != request.target or not request.choice in walk.curio_choices(curio.instance):
+			return
+	elif request.kind == "tug":
+		if not walk.tug_unresolved() or request.target != expected.tug.id:
+			return
+	else:
+		return
+	command(request.kind, request)
+
+
 ## The in-corridor event: a curio on this step, or the tug holding the rear doll.
 func _show_event() -> void:
 	for button in event_buttons:
@@ -623,5 +729,5 @@ func _show_event() -> void:
 		var request: Dictionary = choices[index][1]
 		var width := (580.0 - 12.0 * (choices.size() - 1)) / choices.size()
 		var button := _button(choices[index][0], Rect2(20 + index * (width + 12), 118, width, 44), 19,
-			func(): command(request.kind, request), event_panel)
+			func(): _use_event_choice(request), event_panel)
 		event_buttons.append(button)
