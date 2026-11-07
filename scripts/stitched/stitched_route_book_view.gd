@@ -126,7 +126,7 @@ func _felt_page(page_name: String, width: float) -> VBoxContainer:
 		skin.content_margin_right = 16
 		skin.content_margin_top = 12
 		skin.content_margin_bottom = 12
-		skin.modulate_color = Color(0.66, 0.53, 0.53, 0.98)
+		skin.modulate_color = Color(0.34, 0.30, 0.36, 0.98)
 		panel.add_theme_stylebox_override("panel", skin)
 	add_child(panel)
 	var body := VBoxContainer.new()

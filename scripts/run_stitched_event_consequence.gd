@@ -78,6 +78,7 @@ const CANDLE_MIN := 0
 const CANDLE_MAX := 100
 const FRAY_MIN := 0
 const FRAY_MAX := 200
+const FRAY_GAIN_OBSERVATION_THRESHOLD := 10
 const MIN_FRAY_MIN := 1
 const MIN_FRAY_MAX := 200
 const MIN_PARTY_SIZE := 1
@@ -116,6 +117,9 @@ var _choice: RunEventChoice = null
 var _event: Dictionary = {}
 var _catalog: Dictionary = {"ok": false, "by_id": {}}
 var _valid: bool = false
+var _claimed_choice_id: String = ""
+var _claimed_snapshot: Dictionary = {}
+var _claimed_receipt: Dictionary = {}
 
 
 func _init(event_record: Variant = null, catalog: Variant = null) -> void:
@@ -130,6 +134,9 @@ func _init(event_record: Variant = null, catalog: Variant = null) -> void:
 	if catalog != null:
 		_catalog = _parse_catalog(catalog)
 	_valid = true
+	_claimed_choice_id = ""
+	_claimed_snapshot = {}
+	_claimed_receipt = {}
 
 
 ## True only while this offering is schema-valid and still unclaimed.
@@ -276,7 +283,253 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if has_hp:
 		receipt["hp_delta"] = int(parsed_effect["hp"])
 		receipt["hp"] = _hp_intents(base_state, parsed_effect)
+	_claimed_choice_id = target_id
+	_claimed_snapshot = base_state.duplicate(true)
+	_claimed_receipt = receipt.duplicate(true)
 	return receipt
+
+
+## Named pure post-settlement helper: inspects an authentic successful choice
+## receipt from this service, the opening Event snapshot and a detached
+## authoritative after-settlement roster, validates identities and eligibility,
+## then returns stable-order detached {"kind": "fray_gain", "hero_id": ID, "amount": int}
+## observations for actual gains >= 10 only.
+## Fray relief, gains <= 9, already-lost dolls and non-qualifying near-cap gains
+## emit no observations.
+## Rejections, unclaimed/forged receipts, wrong-event, repeated-choice or
+## mismatched-roster receipts return an empty array without mutating inputs.
+func post_settlement_fear_observations(
+	receipt: Variant,
+	opening_snapshot_or_after_roster: Variant,
+	after_roster_arg: Variant = null
+) -> Array[Dictionary]:
+	var empty_result: Array[Dictionary] = []
+	if not _valid or not _choice.is_claimed():
+		return empty_result
+	if typeof(receipt) != TYPE_DICTIONARY:
+		return empty_result
+	var receipt_dict: Dictionary = receipt
+	if not bool(receipt_dict.get("ok", false)):
+		return empty_result
+	if str(receipt_dict.get("event_id", "")) != str(_event.get("id", "")):
+		return empty_result
+	if not _is_nonblank_string(receipt_dict.get("choice_id")):
+		return empty_result
+	var claimed_choice: String = receipt_dict.get("choice_id", "")
+	if claimed_choice != _claimed_choice_id:
+		return empty_result
+	if not receipt_dict.has("target") or not receipt_dict.has("fray") or not receipt_dict.has("candle"):
+		return empty_result
+	var target: Variant = receipt_dict.get("target")
+	if target != TARGET_PARTY and target != TARGET_HERO:
+		return empty_result
+	if target == TARGET_HERO:
+		var hero_id_val: Variant = receipt_dict.get("hero_id")
+		if not _is_nonblank_string(hero_id_val) or not CANONICAL_HERO_IDS.has(hero_id_val):
+			return empty_result
+	var raw_fray_intents: Variant = receipt_dict.get("fray")
+	if typeof(raw_fray_intents) != TYPE_DICTIONARY:
+		return empty_result
+	var fray_intents: Dictionary = raw_fray_intents
+
+	# Verify key fields match claimed receipt
+	if not _claimed_receipt.is_empty():
+		for key in ["event_id", "choice_id", "target", "hero_id", "candle", "fray"]:
+			if receipt_dict.get(key) != _claimed_receipt.get(key):
+				return empty_result
+
+	# Resolve opening_snapshot and after_roster
+	var opening_snapshot: Variant = null
+	var after_roster: Variant = null
+	if after_roster_arg != null:
+		opening_snapshot = opening_snapshot_or_after_roster
+		after_roster = after_roster_arg
+	else:
+		opening_snapshot = _claimed_snapshot
+		after_roster = opening_snapshot_or_after_roster
+
+	if opening_snapshot == null or after_roster == null:
+		return empty_result
+
+	var parsed_snap: Dictionary = _parse_opening_snapshot(opening_snapshot)
+	if not bool(parsed_snap.get("ok", false)):
+		return empty_result
+	var opening_party: Array = parsed_snap["snapshot"]["party"]
+
+	# Verify opening party matches captured claimed snapshot (including id, fray, lost and order)
+	if _claimed_snapshot.is_empty() or not _claimed_snapshot.has("party"):
+		return empty_result
+	var claimed_party: Array = _claimed_snapshot["party"]
+	if opening_party.size() != claimed_party.size():
+		return empty_result
+	for i in range(opening_party.size()):
+		var op_entry: Dictionary = opening_party[i]
+		var cp_entry: Dictionary = claimed_party[i]
+		if str(op_entry.get("id", "")) != str(cp_entry.get("id", "")):
+			return empty_result
+		if int(op_entry.get("fray", -1)) != int(cp_entry.get("fray", -1)):
+			return empty_result
+		if bool(op_entry.get("lost", false)) != bool(cp_entry.get("lost", false)):
+			return empty_result
+
+	var parsed_after: Dictionary = _parse_after_roster(after_roster)
+	if not bool(parsed_after.get("ok", false)):
+		return empty_result
+	var after_by_id: Dictionary = parsed_after["by_id"]
+
+	if after_by_id.size() != claimed_party.size():
+		return empty_result
+	for hero in claimed_party:
+		if not after_by_id.has(hero["id"]):
+			return empty_result
+
+	if target == TARGET_HERO:
+		var target_hero: String = str(receipt_dict.get("hero_id", ""))
+		var found_active := false
+		for hero in claimed_party:
+			if hero["id"] == target_hero and not bool(hero.get("lost", false)):
+				found_active = true
+				break
+		if not found_active:
+			return empty_result
+
+	var observations: Array[Dictionary] = []
+	for hero_entry in claimed_party:
+		var hero_id: String = hero_entry["id"]
+		if bool(hero_entry.get("lost", false)):
+			continue
+		var after_hero: Dictionary = after_by_id[hero_id]
+		if bool(after_hero.get("lost", false)):
+			continue
+
+		if not fray_intents.has(hero_id):
+			continue
+		var intended_fray_read: Dictionary = _read_signed_int(fray_intents[hero_id])
+		if not bool(intended_fray_read.get("ok", false)):
+			return empty_result
+		var intended_fray: int = int(intended_fray_read["value"])
+		if intended_fray <= 0:
+			continue
+
+		var before_fray: int = int(hero_entry["fray"])
+		var after_fray: int = int(after_hero["fray"])
+		var actual_gain: int = after_fray - before_fray
+		if actual_gain >= FRAY_GAIN_OBSERVATION_THRESHOLD:
+			observations.append({
+				"kind": "fray_gain",
+				"hero_id": hero_id,
+				"amount": actual_gain,
+			})
+
+	return observations
+
+
+func derive_fear_observations(
+	receipt: Variant,
+	opening_snapshot_or_after_roster: Variant,
+	after_roster_arg: Variant = null
+) -> Array[Dictionary]:
+	return post_settlement_fear_observations(receipt, opening_snapshot_or_after_roster, after_roster_arg)
+
+
+func fear_observations(
+	receipt: Variant,
+	opening_snapshot_or_after_roster: Variant,
+	after_roster_arg: Variant = null
+) -> Array[Dictionary]:
+	return post_settlement_fear_observations(receipt, opening_snapshot_or_after_roster, after_roster_arg)
+
+
+func derive_fray_fear_observations(
+	receipt: Variant,
+	opening_snapshot_or_after_roster: Variant,
+	after_roster_arg: Variant = null
+) -> Array[Dictionary]:
+	return post_settlement_fear_observations(receipt, opening_snapshot_or_after_roster, after_roster_arg)
+
+
+func post_settlement_observations(
+	receipt: Variant,
+	opening_snapshot_or_after_roster: Variant,
+	after_roster_arg: Variant = null
+) -> Array[Dictionary]:
+	return post_settlement_fear_observations(receipt, opening_snapshot_or_after_roster, after_roster_arg)
+
+
+func _parse_opening_snapshot(snapshot: Variant) -> Dictionary:
+	if typeof(snapshot) == TYPE_ARRAY:
+		return _parse_snapshot({"candle": 50, "party": (snapshot as Array).duplicate(true)})
+	if typeof(snapshot) == TYPE_DICTIONARY:
+		var d: Dictionary = snapshot
+		if d.has("party") and not d.has("candle"):
+			var with_candle := d.duplicate(true)
+			with_candle["candle"] = 50
+			return _parse_snapshot(with_candle)
+	return _parse_snapshot(snapshot)
+
+
+func _parse_after_roster(after_roster: Variant) -> Dictionary:
+	var list: Array = []
+	if typeof(after_roster) == TYPE_ARRAY:
+		list = after_roster
+	elif typeof(after_roster) == TYPE_DICTIONARY:
+		var d: Dictionary = after_roster
+		if d.has("party") and typeof(d["party"]) == TYPE_ARRAY:
+			list = d["party"]
+		elif d.has("heroes") and typeof(d["heroes"]) == TYPE_ARRAY:
+			list = d["heroes"]
+		else:
+			return {"ok": false}
+	else:
+		return {"ok": false}
+
+	if list.size() < MIN_PARTY_SIZE or list.size() > MAX_PARTY_SIZE:
+		return {"ok": false}
+
+	var by_id: Dictionary = {}
+	for item in list:
+		var hero_id := ""
+		var fray_val := -1
+		var is_lost := false
+		if typeof(item) == TYPE_DICTIONARY:
+			var dict: Dictionary = item
+			if not dict.has("id") or not dict.has("fray"):
+				return {"ok": false}
+			var raw_id: Variant = dict.get("id")
+			if not _is_nonblank_string(raw_id) or not CANONICAL_HERO_IDS.has(raw_id):
+				return {"ok": false}
+			hero_id = str(raw_id)
+			var fray_read := _read_signed_int(dict.get("fray"))
+			if not bool(fray_read.get("ok", false)):
+				return {"ok": false}
+			fray_val = int(fray_read["value"])
+			if dict.has("lost"):
+				var raw_lost: Variant = dict.get("lost")
+				if typeof(raw_lost) != TYPE_BOOL:
+					return {"ok": false}
+				is_lost = bool(raw_lost)
+		elif typeof(item) == TYPE_OBJECT and item != null:
+			var raw_id: Variant = item.get("id")
+			if not _is_nonblank_string(raw_id) or not CANONICAL_HERO_IDS.has(raw_id):
+				return {"ok": false}
+			hero_id = str(raw_id)
+			var fray_read := _read_signed_int(item.get("fray"))
+			if not bool(fray_read.get("ok", false)):
+				return {"ok": false}
+			fray_val = int(fray_read["value"])
+			var raw_lost: Variant = item.get("lost")
+			if raw_lost != null and typeof(raw_lost) == TYPE_BOOL:
+				is_lost = bool(raw_lost)
+		else:
+			return {"ok": false}
+
+		if fray_val < FRAY_MIN or fray_val > FRAY_MAX:
+			return {"ok": false}
+		if by_id.has(hero_id):
+			return {"ok": false}
+		by_id[hero_id] = {"id": hero_id, "fray": fray_val, "lost": is_lost}
+
+	return {"ok": true, "by_id": by_id}
 
 
 ## Candle arithmetic shared by preview and commit: clamp to 0..100 without

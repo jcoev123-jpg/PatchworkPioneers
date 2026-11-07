@@ -100,15 +100,16 @@
         "acc": 90,
         "dmg": [1, 2],
         "crit": 0,
+        "mark_damage": 2,
         "effects": {"bleed": 3},
         "self_move": 0,
         "move": "attack2"
       },
       "tiers": {
-        "2": {"stat": {"dmg": 2}, "ability": {"dmg": [2, 3], "effects": {"bleed": 4}}},
-        "3": {"stat": {"dmg": 3}, "ability": {"dmg": [3, 4], "effects": {"bleed": 5}}}
+        "2": {"stat": {"dmg": 2}, "ability": {"dmg": [2, 3], "mark_damage": 3, "effects": {"bleed": 4}}},
+        "3": {"stat": {"dmg": 3}, "ability": {"dmg": [3, 4], "mark_damage": 4, "effects": {"bleed": 5}}}
       },
-      "text": "Shower each living foe in enemy ranks 1-4 once from hero ranks 1-4: 1-2 damage and Bleed 3 on every struck foe."
+      "text": "Shower each living foe in enemy ranks 1-4 once from hero ranks 1-4: 1-2 damage and Bleed 3 on every struck foe, plus 2 bonus damage to a foe already Marked."
     },
     {
       "id": "seamstress_shielding_hem_coat",

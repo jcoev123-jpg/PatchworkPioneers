@@ -379,4 +379,21 @@ const SEEDS := [
 	696883, # v3_puppet_box_office (outside the bounded fallback)
 	889642, # v3_seamstress_thread_cart (outside the bounded fallback)
 	520082, # v3_tinker_thunder_spool_dock (outside the bounded fallback)
+	# Genuine six-Event map/toll witness for the Inkblack Unpicker Van on the
+	# current sorted generic pool: RunMap.generate -> six-Event walk -> paid
+	# Warden RunNeedleToll -> one sorted-pool draw. The live fixture oracle
+	# re-derives the ID, route and before/after RNG state from this seed.
+	658687, # v3_inkblack_unpicker_van
+	# Cycle 580 authentic six-Event map, paid Warden toll and single sorted
+	# generic-pool draw witnesses recovered from the bounded live search.
+	187513, # v3_copper_moth_almanac
+	307276, # v3_crooked_bobbin_bell
+	344489, # v3_bellflower_patch_barge
+	394702, # v3_lullaby_stitch_chapel
+	449569, # v3_bedpost_thimble_lift
+	# Independently re-derived beyond the bounded search: exact six-Event
+	# routes, paid Warden toll and verified RNG before/after the sorted draw.
+	611280, # lantern_moth_clearing
+	853385, # v3_seamstress_mourning_veil_pulley
+	1339475, # v3_seamstress_crimson_bell_cord
 ]
