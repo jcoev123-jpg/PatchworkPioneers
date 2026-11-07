@@ -987,7 +987,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		var raw_require_full_candle: Variant = effect.get("require_full_candle")
 		if typeof(raw_require_full_candle) != TYPE_BOOL or not bool(raw_require_full_candle):
 			return {"ok": false}
-		if typeof(effect.get("candle")) != TYPE_INT or candle_delta >= 0:
+		if candle_delta >= 0:
 			return {"ok": false}
 	if has_require_candle_room:
 		var raw_require_candle_room: Variant = effect.get("require_candle_room")
