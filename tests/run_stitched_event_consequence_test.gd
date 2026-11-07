@@ -62,6 +62,9 @@ func _initialize() -> void:
 	_test_require_candle_room_shipped_bedwarmer()
 	_test_require_candle_room_fixtures_and_lost_dolls()
 	_test_require_candle_room_schema_and_rejections()
+	_test_wren_fear_ac1_projections()
+	_test_wren_fear_ac2_refusals_and_alternatives()
+	_test_wren_fear_ac3_shapes_and_invariants()
 	_finish()
 
 
@@ -115,6 +118,26 @@ func _scraps_effect(candle: int, fray: int, scraps: Variant,
 	if target == "hero":
 		effect["hero_id"] = hero_id
 	return effect
+
+
+func _fear_effect(candle: int, fray: int, fear: Variant,
+		target: String = "party", hero_id: String = "") -> Dictionary:
+	var effect := {"candle": candle, "fray": fray, "target": target, "fear": fear}
+	if target == "hero":
+		effect["hero_id"] = hero_id
+	return effect
+
+
+func _fear_snapshot(candle: int, wren_fear: Variant, hero_pairs: Array) -> Dictionary:
+	var snapshot := _snapshot(candle, hero_pairs)
+	snapshot["wren_fear"] = wren_fear
+	return snapshot
+
+
+func _fear_four(candle: int, wren_fear: Variant, frays: Array) -> Dictionary:
+	var snapshot := _four(candle, frays)
+	snapshot["wren_fear"] = wren_fear
+	return snapshot
 
 
 ## The documented sample bargain: +25 candle and -25 fray, plus a hero-targeted
@@ -6445,6 +6468,518 @@ func _test_require_candle_room_schema_and_rejections() -> void:
 		var leave_rec := svc.choose("leave", snap_40)
 		_check(leave_rec.get("ok") == true and int(leave_rec.get("candle")) == 40,
 			"AC4: leave claims after structural error %d" % idx)
+
+
+func _test_wren_fear_ac1_projections() -> void:
+	# AC1: Authentic choice with native signed fear and a valid 0..100 Wren snapshot yields a single
+	# kid fear_delta plus projected fear in both preview and committed receipt:
+	# 40+5=45, 40-8=32, 99+5=100 and 2-5=0.
+	# The focused test proves this for target=party and hero without multiplying by party count.
+
+	var cases: Array = [
+		{"base": 40, "delta": 5, "expected": 45, "label": "40 + 5 = 45"},
+		{"base": 40, "delta": -8, "expected": 32, "label": "40 - 8 = 32"},
+		{"base": 99, "delta": 5, "expected": 100, "label": "99 + 5 = 100 (upper clamp)"},
+		{"base": 2, "delta": -5, "expected": 0, "label": "2 - 5 = 0 (lower clamp)"},
+		{"base": 40, "delta": 0, "expected": 40, "label": "40 + 0 = 40 (zero delta)"},
+	]
+
+	# Test across party sizes: 1, 2, 3, and 4 canonical heroes.
+	var party_fixtures: Array = [
+		{"name": "1-hero", "pairs": [["warden", 50]]},
+		{"name": "2-hero", "pairs": [["warden", 50], ["seamstress", 60]]},
+		{"name": "3-hero", "pairs": [["warden", 50], ["seamstress", 60], ["tinker", 70]]},
+		{"name": "4-hero", "pairs": [["warden", 50], ["seamstress", 60], ["tinker", 70], ["button_golem", 80]]},
+	]
+
+	for p_fix in party_fixtures:
+		var p_name: String = p_fix["name"]
+		var pairs: Array = p_fix["pairs"]
+		var hero_count: int = pairs.size()
+
+		for case_def in cases:
+			var base_fear: int = case_def["base"]
+			var fear_delta: int = case_def["delta"]
+			var expected_fear: int = case_def["expected"]
+			var c_label: String = case_def["label"]
+
+			# 1. Party target
+			var ev_party := _event([
+				_choice("fear_opt", "Endure the fear.", _fear_effect(15, 0, fear_delta, "party")),
+				_choice("leave", "Leave.", _effect(0, 0, "party")),
+			], "ev_fear_party_" + p_name)
+
+			var snap_party := _fear_snapshot(45, base_fear, pairs)
+			var svc_party := RunStitchedEventConsequence.new(ev_party)
+			_check(svc_party.is_valid() and not svc_party.is_claimed(), "AC1: (%s, %s) party service initialized valid and unclaimed" % [p_name, c_label])
+
+			var prev_party := svc_party.preview(snap_party)
+			_check(prev_party.get("ok") == true, "AC1: (%s, %s) party preview ok" % [p_name, c_label])
+			var entry_party := _entry(prev_party, "fear_opt")
+			_check(entry_party.get("available") == true, "AC1: (%s, %s) party entry available" % [p_name, c_label])
+			_check(entry_party.get("fear_delta") == fear_delta, "AC1: (%s, %s) preview raw fear_delta matches authored" % [p_name, c_label])
+			_check(entry_party.get("fear") == expected_fear, "AC1: (%s, %s) preview projected fear clamped to expected (scalar, not multiplied by party size %d)" % [p_name, c_label, hero_count])
+			_check(entry_party.get("candle") == 60, "AC1: (%s, %s) candle projected correctly" % [p_name, c_label])
+			_check(entry_party.get("fray") == {}, "AC1: (%s, %s) fear never written into hero fray map" % [p_name, c_label])
+
+			var rec_party := svc_party.choose("fear_opt", snap_party)
+			_check(rec_party.get("ok") == true, "AC1: (%s, %s) party choose succeeded" % [p_name, c_label])
+			_check(svc_party.is_claimed() == true, "AC1: (%s, %s) service is now claimed" % [p_name, c_label])
+			_check(not svc_party.is_valid(), "AC1: (%s, %s) service is not valid after claim" % [p_name, c_label])
+			_check(rec_party.get("fear_delta") == fear_delta, "AC1: (%s, %s) receipt raw fear_delta matches authored" % [p_name, c_label])
+			_check(rec_party.get("fear") == expected_fear, "AC1: (%s, %s) receipt projected fear matches preview" % [p_name, c_label])
+			_check(rec_party.get("fear_delta") == entry_party.get("fear_delta"), "AC1: (%s, %s) preview/choose fear_delta equality" % [p_name, c_label])
+			_check(rec_party.get("fear") == entry_party.get("fear"), "AC1: (%s, %s) preview/choose fear equality" % [p_name, c_label])
+			_check(rec_party.get("fray") == {}, "AC1: (%s, %s) receipt fray map is empty" % [p_name, c_label])
+			_check(_receipt_keys(rec_party) == ["candle", "choice_id", "event_id", "fear", "fear_delta", "fray", "hero_id", "ok", "target"],
+				"AC1: (%s, %s) receipt has exact fear consequence keys" % [p_name, c_label])
+
+			# Replay rejected
+			_assert_rejected(svc_party, "fear_opt", snap_party, 45, "AC1: (%s, %s) party replay rejected" % [p_name, c_label])
+			_assert_rejected(svc_party, "leave", snap_party, 45, "AC1: (%s, %s) alternative replay rejected" % [p_name, c_label])
+
+			# 2. Hero target
+			var ev_hero := _event([
+				_choice("fear_opt", "Endure the fear.", _fear_effect(15, 0, fear_delta, "hero", "warden")),
+				_choice("leave", "Leave.", _effect(0, 0, "hero", "warden")),
+			], "ev_fear_hero_" + p_name)
+
+			var snap_hero := _fear_snapshot(45, base_fear, pairs)
+			var svc_hero := RunStitchedEventConsequence.new(ev_hero)
+			var prev_hero := svc_hero.preview(snap_hero)
+			var entry_hero := _entry(prev_hero, "fear_opt")
+			_check(entry_hero.get("available") == true, "AC1: (%s, %s) hero entry available" % [p_name, c_label])
+			_check(entry_hero.get("fear_delta") == fear_delta, "AC1: (%s, %s) hero preview fear_delta matches" % [p_name, c_label])
+			_check(entry_hero.get("fear") == expected_fear, "AC1: (%s, %s) hero preview projected fear matches" % [p_name, c_label])
+			_check(entry_hero.get("hero_id") == "warden", "AC1: (%s, %s) hero target names warden" % [p_name, c_label])
+
+			var rec_hero := svc_hero.choose("fear_opt", snap_hero)
+			_check(rec_hero.get("ok") == true, "AC1: (%s, %s) hero choose succeeded" % [p_name, c_label])
+			_check(rec_hero.get("fear_delta") == fear_delta, "AC1: (%s, %s) hero receipt fear_delta matches" % [p_name, c_label])
+			_check(rec_hero.get("fear") == expected_fear, "AC1: (%s, %s) hero receipt fear matches" % [p_name, c_label])
+			_check(rec_hero.get("fear_delta") == entry_hero.get("fear_delta"), "AC1: (%s, %s) hero preview/choose fear_delta equality" % [p_name, c_label])
+			_check(rec_hero.get("fear") == entry_hero.get("fear"), "AC1: (%s, %s) hero preview/choose fear equality" % [p_name, c_label])
+			_check(rec_hero.get("hero_id") == "warden", "AC1: (%s, %s) hero receipt names warden" % [p_name, c_label])
+
+
+func _test_wren_fear_ac2_refusals_and_alternatives() -> void:
+	# AC2: Missing/invalid Wren input or malformed authored fear refuses only the affected choice;
+	# valid alternative still commits and rejections preserve the one claim, snapshots,
+	# global and supplied RNG. Focused refusal/retry tests prove this.
+
+	var test_pairs: Array = [["warden", 50], ["seamstress", 60], ["tinker", 70], ["button_golem", 80]]
+
+	# 1. Missing wren_fear in snapshot: refuses only fear choice; valid alternative commits.
+	var missing_snap := _snapshot(50, test_pairs)
+	var missing_before := missing_snap.duplicate(true)
+	var ev_mixed := _event([
+		_choice("fear_choice", "Face the terror.", _fear_effect(10, 0, 5, "party")),
+		_choice("hero_fear_choice", "Warden faces terror.", _fear_effect(10, 0, -8, "hero", "warden")),
+		_choice("leave", "Walk away.", _effect(0, 0, "party")),
+	], "ev_wren_missing_test")
+
+	var svc_missing := RunStitchedEventConsequence.new(ev_mixed)
+	var prev_missing := svc_missing.preview(missing_snap)
+	_check(prev_missing.get("ok") == true, "AC2: preview ok with missing wren_fear on mixed event")
+	var entry_fear_party := _entry(prev_missing, "fear_choice")
+	_check(entry_fear_party.get("available") == false
+		and entry_fear_party.get("fear_delta") == 5
+		and entry_fear_party.get("fear") == null
+		and entry_fear_party.get("candle") == 50
+		and entry_fear_party.get("fray") == {},
+		"AC2: missing wren_fear makes fear choice unavailable with null projected fear and unchanged candle")
+	var entry_fear_hero := _entry(prev_missing, "hero_fear_choice")
+	_check(entry_fear_hero.get("available") == false
+		and entry_fear_hero.get("fear_delta") == -8
+		and entry_fear_hero.get("fear") == null,
+		"AC2: missing wren_fear makes hero-targeted fear choice unavailable")
+	var entry_leave := _entry(prev_missing, "leave")
+	_check(entry_leave.get("available") == true and entry_leave.get("candle") == 50,
+		"AC2: valid alternative Leave remains available when snapshot lacks wren_fear")
+
+	# Rejections do not consume claim or mutate snapshot
+	_assert_rejected(svc_missing, "fear_choice", missing_snap, 50, "AC2: missing wren_fear choose party rejected")
+	_check(not svc_missing.is_claimed(), "AC2: service still unclaimed after fear_choice refusal")
+	_check(missing_snap == missing_before, "AC2: snapshot untouched after fear_choice refusal")
+
+	_assert_rejected(svc_missing, "hero_fear_choice", missing_snap, 50, "AC2: missing wren_fear choose hero rejected")
+	_check(not svc_missing.is_claimed(), "AC2: service still unclaimed after hero_fear_choice refusal")
+	_check(missing_snap == missing_before, "AC2: snapshot untouched after hero_fear_choice refusal")
+
+	# Alternative commits
+	var rec_leave := svc_missing.choose("leave", missing_snap)
+	_check(rec_leave.get("ok") == true and rec_leave.get("candle") == 50,
+		"AC2: alternative Leave commits successfully after fear refusals")
+	_check(svc_missing.is_claimed() == true, "AC2: service claimed after Leave commit")
+	_assert_rejected(svc_missing, "leave", missing_snap, 50, "AC2: replay Leave rejected after claim")
+	_check(missing_snap == missing_before, "AC2: snapshot untouched after commit and replay")
+
+	# 2. Invalid wren_fear values in snapshot:
+	# Exercise: 101, -1, float (40.5, 40.0), string ("40"), bool (true, false), null, array, dict.
+	var invalid_wren_fear_values: Array = [
+		101, -1, 40.5, 40.0, "40", true, false, null, [], {}, 9223372036854775807, -9223372036854775807
+	]
+
+	for idx in range(invalid_wren_fear_values.size()):
+		var bad_fear_val: Variant = invalid_wren_fear_values[idx]
+		var bad_snap := _fear_snapshot(50, bad_fear_val, test_pairs)
+		var bad_snap_before := bad_snap.duplicate(true)
+
+		var svc_bad_snap := RunStitchedEventConsequence.new(ev_mixed)
+		var prev_bad := svc_bad_snap.preview(bad_snap)
+		_check(prev_bad.get("ok") == true, "AC2: invalid wren_fear %d preflights successfully" % idx)
+
+		var bad_entry := _entry(prev_bad, "fear_choice")
+		_check(bad_entry.get("available") == false
+			and bad_entry.get("fear_delta") == 5
+			and bad_entry.get("candle") == 50
+			and bad_entry.get("fray") == {},
+			"AC2: invalid wren_fear %d makes fear choice unavailable with authored fear_delta" % idx)
+
+		var alt_entry := _entry(prev_bad, "leave")
+		_check(alt_entry.get("available") == true and alt_entry.get("candle") == 50,
+			"AC2: invalid wren_fear %d leaves alternative available" % idx)
+
+		_assert_rejected(svc_bad_snap, "fear_choice", bad_snap, 50, "AC2: invalid wren_fear %d choose rejected" % idx)
+		_check(not svc_bad_snap.is_claimed(), "AC2: invalid wren_fear %d does not latch visit" % idx)
+		_check(bad_snap == bad_snap_before, "AC2: invalid wren_fear %d leaves snapshot untouched" % idx)
+
+		# Alternative commits on the same instance
+		var alt_rec := svc_bad_snap.choose("leave", bad_snap)
+		_check(alt_rec.get("ok") == true and alt_rec.get("candle") == 50,
+			"AC2: alternative commits on invalid wren_fear %d instance" % idx)
+		_check(svc_bad_snap.is_claimed() == true, "AC2: invalid wren_fear %d latches after alt commit" % idx)
+		_assert_rejected(svc_bad_snap, "leave", bad_snap, 50, "AC2: replay rejected after alt commit on %d" % idx)
+		_check(bad_snap == bad_snap_before, "AC2: snapshot still untouched after alt commit on %d" % idx)
+
+	# 3. Malformed authored fear in stitched_effect:
+	# Exercise: float (5.5, 5.0), string ("5"), bool (true, false), null, array, dict.
+	var malformed_fear_effects: Array = [
+		5.5, 5.0, "5", true, false, null, [5], {"delta": 5}
+	]
+
+	var valid_snap_40 := _fear_snapshot(50, 40, test_pairs)
+	var snap_40_before := valid_snap_40.duplicate(true)
+
+	for idx in range(malformed_fear_effects.size()):
+		var bad_effect_fear: Variant = malformed_fear_effects[idx]
+		var ev_malformed := _event([
+			_choice("broken_fear", "Corrupt delta.", {
+				"candle": 10, "fray": 0, "target": "party", "fear": bad_effect_fear
+			}),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "ev_malformed_fear_%d" % idx)
+
+		var svc_malformed := RunStitchedEventConsequence.new(ev_malformed)
+		var prev_mal := svc_malformed.preview(valid_snap_40)
+		_check(prev_mal.get("ok") == true, "AC2: malformed fear effect %d preflights" % idx)
+
+		var broken_entry := _entry(prev_mal, "broken_fear")
+		_check(broken_entry.get("available") == false
+			and broken_entry.get("candle_delta") == null
+			and broken_entry.get("fray_delta") == null
+			and not broken_entry.has("fear_delta")
+			and not broken_entry.has("fear"),
+			"AC2: malformed fear effect %d has null deltas and no fear keys" % idx)
+
+		_check(_entry(prev_mal, "leave").get("available") == true,
+			"AC2: malformed fear effect %d leaves valid alternative available" % idx)
+
+		_assert_rejected(svc_malformed, "broken_fear", valid_snap_40, 50,
+			"AC2: malformed fear effect %d choose rejected" % idx)
+		_check(not svc_malformed.is_claimed(), "AC2: malformed fear effect %d does not latch" % idx)
+		_check(valid_snap_40 == snap_40_before, "AC2: malformed fear effect %d leaves snapshot untouched" % idx)
+
+		var leave_rec := svc_malformed.choose("leave", valid_snap_40)
+		_check(leave_rec.get("ok") == true and leave_rec.get("candle") == 50,
+			"AC2: alternative commits after malformed fear effect %d refusal" % idx)
+		_check(svc_malformed.is_claimed() == true, "AC2: latched after alternative commit on %d" % idx)
+		_assert_rejected(svc_malformed, "leave", valid_snap_40, 50, "AC2: replay after alternative commit on %d" % idx)
+
+	# 4. Structural errors alongside fear:
+	var structural_fear_errors: Array = [
+		{"id": "party_with_hero", "text": "Party with hero_id.", "stitched_effect": {
+			"candle": 0, "fray": 0, "target": "party", "hero_id": "warden", "fear": 5
+		}},
+		{"id": "hero_missing_id", "text": "Hero missing hero_id.", "stitched_effect": {
+			"candle": 0, "fray": 0, "target": "hero", "fear": 5
+		}},
+		{"id": "extra_key_fear", "text": "Extra key with fear.", "stitched_effect": {
+			"candle": 0, "fray": 0, "target": "party", "fear": 5, "unknown_field": 123
+		}},
+	]
+
+	for idx in range(structural_fear_errors.size()):
+		var err_choice: Dictionary = structural_fear_errors[idx]
+		var svc_struct := RunStitchedEventConsequence.new(_event([
+			err_choice,
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		]))
+		var prev_struct := svc_struct.preview(valid_snap_40)
+		var err_entry := _entry(prev_struct, err_choice["id"])
+		_check(prev_struct.get("ok") == true
+			and err_entry.get("available") == false
+			and err_entry.get("candle_delta") == null
+			and err_entry.get("fray_delta") == null,
+			"AC2: structural fear error %d (%s) is malformed with null deltas" % [idx, err_choice["id"]])
+		_assert_rejected(svc_struct, err_choice["id"], valid_snap_40, 50,
+			"AC2: structural fear error %d (%s) rejected" % [idx, err_choice["id"]])
+		var struct_leave := svc_struct.choose("leave", valid_snap_40)
+		_check(struct_leave.get("ok") == true, "AC2: leave claims after structural error %d" % idx)
+
+	# 5. Global and supplied RNG preservation:
+	seed(20261108)
+	var expected_global_rng := randi()
+	seed(20261108)
+
+	var control_rng := RandomNumberGenerator.new()
+	control_rng.seed = 987654321
+	var expected_supplied_rng := control_rng.randi()
+
+	var test_rng := RandomNumberGenerator.new()
+	test_rng.seed = 987654321
+
+	var rng_service := RunStitchedEventConsequence.new(ev_mixed)
+	rng_service.preview(missing_snap)
+	rng_service.choose("fear_choice", missing_snap)
+	rng_service.preview(valid_snap_40)
+	var rng_leave_rec := rng_service.choose("leave", valid_snap_40)
+	_check(rng_leave_rec.get("ok") == true, "AC2: RNG test leave committed")
+
+	_check(randi() == expected_global_rng, "AC2: global RNG was never drawn during fear previews, refusals or choose")
+	_check(test_rng.randi() == expected_supplied_rng, "AC2: supplied RNG was never drawn during fear operations")
+
+	# 6. Input detachment and returned receipt mutation:
+	var detach_snap := _fear_snapshot(50, 40, test_pairs)
+	var detach_svc := RunStitchedEventConsequence.new(_event([
+		_choice("fear_opt", "Gain fear.", _fear_effect(10, 0, 5, "party")),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_detach_fear"))
+
+	var detach_receipt := detach_svc.choose("fear_opt", detach_snap)
+	_check(detach_receipt.get("ok") == true and detach_receipt.get("fear") == 45, "AC2: detach choice committed")
+
+	# Mutate returned receipt
+	detach_receipt["fear"] = 999
+	detach_receipt["fear_delta"] = -999
+	detach_receipt["fray"]["warden"] = 100
+
+	# Ensure second query / post_settlement helper fails closed on altered receipt
+	var obs_altered := detach_svc.post_settlement_fear_observations(detach_receipt, detach_snap, [
+		{"id": "warden", "fray": 60},
+		{"id": "seamstress", "fray": 60},
+		{"id": "tinker", "fray": 70},
+		{"id": "button_golem", "fray": 80},
+	])
+	_check(obs_altered.is_empty(), "AC2: altered returned receipt fails closed in post_settlement_fear_observations")
+
+
+func _test_wren_fear_ac3_shapes_and_invariants() -> void:
+	# AC3: Fear-free choices retain their prior preview/receipt shapes, all existing admission/gating
+	# and negative cases keep working, and fray-driven Wren observations still pass.
+	# Focused existing suite and applicable regressions prove this.
+
+	var test_pairs: Array = [["warden", 50], ["seamstress", 60], ["tinker", 70], ["button_golem", 80]]
+	var legacy_preview_keys := ["available", "candle", "candle_delta", "choice_id", "fray", "fray_delta", "hero_id", "target"]
+	legacy_preview_keys.sort()
+	var legacy_receipt_keys := ["candle", "choice_id", "event_id", "fray", "hero_id", "ok", "target"]
+	legacy_receipt_keys.sort()
+
+	# 1. Pure fear-free event with snapshot containing wren_fear:
+	var snap_with_fear := _fear_snapshot(50, 40, test_pairs)
+	var legacy_svc := RunStitchedEventConsequence.new(_bargain_event())
+	var legacy_prev := legacy_svc.preview(snap_with_fear)
+	_check(legacy_prev.get("ok") == true, "AC3: legacy event preflights with wren_fear in snapshot")
+
+	for entry in legacy_prev.get("choices", []):
+		_check(_receipt_keys(entry) == legacy_preview_keys,
+			"AC3: fear-free choices retain exact 8-key preview shape even when snapshot supplies wren_fear")
+
+	var legacy_rec := legacy_svc.choose("bargain", snap_with_fear)
+	_check(legacy_rec.get("ok") == true, "AC3: legacy choice claims successfully")
+	_check(_receipt_keys(legacy_rec) == legacy_receipt_keys,
+		"AC3: fear-free choice retains exact 7-key receipt shape without fear/fear_delta")
+
+	# 2. Mixed event with fear-bearing and fear-free choices:
+	var mixed_ev := _event([
+		_choice("fear_opt", "Gain fear.", _fear_effect(10, 0, 5, "party")),
+		_choice("free_opt", "Free option.", _effect(10, -10, "party")),
+	], "ev_mixed_shape_test")
+
+	var mixed_svc := RunStitchedEventConsequence.new(mixed_ev)
+	var mixed_prev := mixed_svc.preview(snap_with_fear)
+	var mixed_fear_entry := _entry(mixed_prev, "fear_opt")
+	var mixed_free_entry := _entry(mixed_prev, "free_opt")
+
+	var expected_fear_preview_keys := legacy_preview_keys.duplicate()
+	expected_fear_preview_keys.append("fear")
+	expected_fear_preview_keys.append("fear_delta")
+	expected_fear_preview_keys.sort()
+
+	_check(_receipt_keys(mixed_fear_entry) == expected_fear_preview_keys,
+		"AC3: fear-bearing choice in mixed event has fear and fear_delta in preview")
+	_check(_receipt_keys(mixed_free_entry) == legacy_preview_keys,
+		"AC3: fear-free choice in mixed event retains exact 8-key preview without fear keys")
+
+	# Choosing fear-free option on mixed event yields exact 7-key receipt:
+	var mixed_free_rec := mixed_svc.choose("free_opt", snap_with_fear)
+	_check(mixed_free_rec.get("ok") == true, "AC3: free choice on mixed event claimed")
+	_check(_receipt_keys(mixed_free_rec) == legacy_receipt_keys,
+		"AC3: free choice receipt on mixed event has exact 7-key receipt shape")
+
+	# 3. Gating integration with fear choices:
+	# A. required_hero gate:
+	var req_hero_ev := _event([
+		_choice("scarecrow_fear", "Scarecrow courage.", {
+			"candle": 0, "fray": 0, "target": "party", "fear": -10, "required_hero": "scarecrow"
+		}),
+		_choice("warden_fear", "Warden courage.", {
+			"candle": 0, "fray": 0, "target": "party", "fear": -10, "required_hero": "warden"
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_req_hero_fear")
+
+	var req_svc := RunStitchedEventConsequence.new(req_hero_ev)
+	var req_prev := req_svc.preview(snap_with_fear)
+	_check(_entry(req_prev, "scarecrow_fear").is_empty(), "AC3: scarecrow fear choice hidden when scarecrow absent")
+	_check(_entry(req_prev, "warden_fear").get("available") == true, "AC3: warden fear choice available when warden present")
+	_assert_rejected(req_svc, "scarecrow_fear", snap_with_fear, 50, "AC3: scarecrow fear choice rejected on choose")
+
+	var warden_rec := req_svc.choose("warden_fear", snap_with_fear)
+	_check(warden_rec.get("ok") == true and warden_rec.get("fear") == 30 and warden_rec.get("fear_delta") == -10,
+		"AC3: required_hero fear choice commits with projected fear 40 - 10 = 30")
+
+	# B. min_fray gate:
+	var min_fray_ev := _event([
+		_choice("calm_fear", "Soothe high fray.", {
+			"candle": 0, "fray": -10, "target": "party", "fear": 5, "min_fray": 65
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_min_fray_fear")
+
+	var low_fray_snap := _fear_snapshot(50, 40, [["warden", 10], ["seamstress", 20]])
+	var svc_low_fray := RunStitchedEventConsequence.new(min_fray_ev)
+	_check(_entry(svc_low_fray.preview(low_fray_snap), "calm_fear").get("available") == false,
+		"AC3: min_fray fear choice unavailable when all fray < 65")
+	_assert_rejected(svc_low_fray, "calm_fear", low_fray_snap, 50, "AC3: min_fray fear choice rejected when fray < 65")
+
+	var high_fray_snap := _fear_snapshot(50, 40, [["warden", 10], ["seamstress", 70]])
+	var svc_high_fray := RunStitchedEventConsequence.new(min_fray_ev)
+	_check(_entry(svc_high_fray.preview(high_fray_snap), "calm_fear").get("available") == true,
+		"AC3: min_fray fear choice available when one hero has fray >= 65")
+	var high_fray_rec := svc_high_fray.choose("calm_fear", high_fray_snap)
+	_check(high_fray_rec.get("ok") == true and high_fray_rec.get("fear") == 45,
+		"AC3: min_fray fear choice claims with projected fear 45")
+
+	# C. Candle band gate:
+	var band_ev := _event([
+		_choice("bright_fear", "Bright flame dread.", {
+			"candle": 0, "fray": 0, "target": "party", "fear": -5, "required_candle_band": "bright"
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_band_fear")
+
+	var gloom_snap := _fear_snapshot(40, 40, test_pairs)
+	var svc_gloom := RunStitchedEventConsequence.new(band_ev)
+	_check(_entry(svc_gloom.preview(gloom_snap), "bright_fear").get("available") == false,
+		"AC3: bright band fear choice unavailable at gloom candle 40")
+	_assert_rejected(svc_gloom, "bright_fear", gloom_snap, 40, "AC3: bright band fear choice rejected at candle 40")
+
+	var bright_snap := _fear_snapshot(85, 40, test_pairs)
+	var svc_bright := RunStitchedEventConsequence.new(band_ev)
+	_check(_entry(svc_bright.preview(bright_snap), "bright_fear").get("available") == true,
+		"AC3: bright band fear choice available at bright candle 85")
+	var bright_rec := svc_bright.choose("bright_fear", bright_snap)
+	_check(bright_rec.get("ok") == true and bright_rec.get("fear") == 35,
+		"AC3: bright band fear choice claims with projected fear 35")
+
+	# D. Candle room gate:
+	var room_ev := _event([
+		_choice("room_fear", "Room fear.", {
+			"candle": 10, "fray": 0, "target": "party", "fear": 5, "require_candle_room": true
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_room_fear")
+
+	var full_candle_snap := _fear_snapshot(100, 40, test_pairs)
+	var svc_full := RunStitchedEventConsequence.new(room_ev)
+	_check(_entry(svc_full.preview(full_candle_snap), "room_fear").get("available") == false,
+		"AC3: candle room fear choice unavailable at candle 100")
+	_assert_rejected(svc_full, "room_fear", full_candle_snap, 100, "AC3: candle room fear choice rejected at 100")
+
+	# E. Combination with wallet and HP:
+	var combo_ev := _event([
+		_choice("combo_fear", "Rich and terrifying.", {
+			"candle": 5, "fray": 0, "target": "party", "fear": 7, "gold": -10, "scraps": 3, "hp": 2
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_combo_fear")
+
+	var combo_snap := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 20},
+			{"id": "seamstress", "fray": 30},
+		],
+		"gold": 25,
+		"scraps": 5,
+		"wren_fear": 40,
+	}
+	var svc_combo := RunStitchedEventConsequence.new(combo_ev)
+	var prev_combo := svc_combo.preview(combo_snap)
+	var combo_entry := _entry(prev_combo, "combo_fear")
+	_check(combo_entry.get("available") == true
+		and combo_entry.get("fear") == 47
+		and combo_entry.get("fear_delta") == 7
+		and combo_entry.get("gold") == 15
+		and combo_entry.get("scraps") == 8
+		and combo_entry.get("hp") == {"warden": 2, "seamstress": 2},
+		"AC3: combination of fear + gold + scraps + hp projects all values properly")
+
+	var combo_rec := svc_combo.choose("combo_fear", combo_snap)
+	_check(combo_rec.get("ok") == true
+		and combo_rec.get("fear") == 47
+		and combo_rec.get("fear_delta") == 7
+		and combo_rec.get("gold") == 15
+		and combo_rec.get("scraps") == 8
+		and combo_rec.get("hp") == {"warden": 2, "seamstress": 2},
+		"AC3: combination of fear + gold + scraps + hp commits with all receipt keys")
+
+	# 4. Fray-driven Wren observations with a fear-bearing choice:
+	var obs_ev := _event([
+		_choice("fray_and_fear", "Horror and fray.", {
+			"candle": 0, "fray": 20, "target": "party", "fear": 5
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "ev_obs_fear")
+
+	var obs_snap := _fear_four(50, 40, [30, 30, 30, 30])
+	var obs_svc := RunStitchedEventConsequence.new(obs_ev)
+	var obs_rec := obs_svc.choose("fray_and_fear", obs_snap)
+	_check(obs_rec.get("ok") == true and obs_rec.get("fear") == 45, "AC3: fray and fear choice claimed")
+
+	var after_roster := [
+		{"id": "warden", "fray": 50},
+		{"id": "seamstress", "fray": 50},
+		{"id": "tinker", "fray": 50},
+		{"id": "button_golem", "fray": 50},
+	]
+	var observations := obs_svc.post_settlement_fear_observations(obs_rec, obs_snap, after_roster)
+	_check(observations.size() == 4, "AC3: fray-driven observations pass for all 4 dolls on fear-bearing receipt")
+	for obs in observations:
+		_check(obs.get("kind") == "fray_gain" and obs.get("amount") == 20,
+			"AC3: observation kind is fray_gain and amount is 20: " + str(obs.get("hero_id")))
+
+	# Fail closed when receipt's fear or fear_delta is altered:
+	var altered_fear_rec := obs_rec.duplicate(true)
+	altered_fear_rec["fear"] = 80
+	_check(obs_svc.post_settlement_fear_observations(altered_fear_rec, obs_snap, after_roster).is_empty(),
+		"AC3: post_settlement_fear_observations fails closed when fear is altered")
+
+	var altered_fear_delta_rec := obs_rec.duplicate(true)
+	altered_fear_delta_rec["fear_delta"] = 15
+	_check(obs_svc.post_settlement_fear_observations(altered_fear_delta_rec, obs_snap, after_roster).is_empty(),
+		"AC3: post_settlement_fear_observations fails closed when fear_delta is altered")
 
 
 
