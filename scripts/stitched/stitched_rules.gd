@@ -349,7 +349,7 @@ func gift_spent(gift_id: String) -> bool:
 
 
 func eyes_covered(hero_id: String) -> bool:
-	return int(_covered.get(hero_id, 0)) == _round
+	return _covered.has(hero_id) and int(_covered[hero_id]) == _round
 
 
 ## Why a hand action would be refused right now ("" when legal); changes nothing. A doll
