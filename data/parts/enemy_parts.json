@@ -1623,7 +1623,7 @@
         "id": "behemoth_heart",
         "name": "Behemoth Heart",
         "kind": "heal",
-        "launch": [1, 4],
+        "launch": [1, 2, 3, 4],
         "target": [1, 2, 3, 4],
         "target_side": "ally",
         "multi": false,
