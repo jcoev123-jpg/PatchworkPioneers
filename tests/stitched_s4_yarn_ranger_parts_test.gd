@@ -26,7 +26,7 @@ const BOLAS_ID := "yarn_ranger_arms_wool_bolas"
 const BOLAS_LAUNCH := [2, 3, 4]
 const BOLAS_SPECS := {
 	"dmg": [[2, 4], [3, 5], [4, 7]],
-	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
+	"effects": [{"tangled": 2}, {"tangled": 3}, {"tangled": 4}],
 }
 const PURLING_ID := "yarn_ranger_arms_purling_barrage"
 const PURLING_LAUNCH := [3, 4]
@@ -38,14 +38,14 @@ const SNARE_ID := "yarn_ranger_torso_snare_net"
 const SNARE_LAUNCH := [2, 3, 4]
 const SNARE_SPECS := {
 	"acc": [94, 97, 100],
-	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3}],
+	"effects": [{"tangled": 2}, {"tangled": 3}, {"tangled": 4}],
 }
 const REEL_ID := "yarn_ranger_legs_reel_thread"
 const REEL_LAUNCH := [2, 3, 4]
 const REEL_TARGET := [2, 3, 4]
 const REEL_SPECS := {
 	"acc": [94, 97, 100],
-	"effects": [{"tangled": 1}, {"tangled": 2}, {"tangled": 3, "mark": 1}],
+	"effects": [{"tangled": 2}, {"tangled": 3}, {"tangled": 4, "mark": 1}],
 }
 const HEAD_SPECS := {
 	"yarn_ranger_head_needle_nock": {
@@ -68,12 +68,12 @@ const HEAD_SPECS := {
 const UNCHANGED_PARTS := {
 	"yarn_ranger_arms_wool_bolas": {
 		"launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy", "multi": false,
-		"acc": 92, "dmg": [2, 4], "effects": {"tangled": 1}, "move": "attack",
+		"acc": 92, "dmg": [2, 4], "effects": {"tangled": 2}, "move": "attack",
 		"stat": {"dmg": 1},
 	},
 	"yarn_ranger_legs_reel_thread": {
 		"launch": [2, 3, 4], "target": [2, 3, 4], "side": "enemy", "multi": false,
-		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
+		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 2}, "move": "skill",
 		"stat": {"speed": 1},
 	},
 	"yarn_ranger_torso_hood_knit": {
@@ -88,12 +88,12 @@ const UNCHANGED_PARTS := {
 	},
 	"yarn_ranger_torso_snare_net": {
 		"launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy", "multi": true,
-		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 1}, "move": "skill",
+		"acc": 94, "dmg": [0, 0], "effects": {"tangled": 2}, "move": "skill",
 		"stat": {"prot": 5, "max_hp": 3},
 	},
 	"yarn_ranger_legs_endless_skein": {
 		"launch": [2, 3], "target": [1, 2, 3], "side": "enemy", "multi": true,
-		"acc": 94, "dmg": [3, 5], "effects": {"tangled": 1}, "move": "attack2",
+		"acc": 94, "dmg": [3, 5], "effects": {"tangled": 2}, "move": "attack2",
 		"stat": {"dodge": 4, "speed": 1},
 	},
 }
@@ -118,6 +118,7 @@ func _initialize() -> void:
 	_test_rank_four_reel_thread_launch()
 	_test_reel_thread_rank_four_target()
 	_test_multi_tangled()
+	_test_tangled_next_turn()
 	_test_guard_interception()
 	_test_invalid_and_no_spend()
 	_test_replay()
@@ -1758,3 +1759,155 @@ func _test_replay() -> void:
 		"AC3: seeded four-action Ranger replay equals all receipts, snapshot and RNG")
 	for receipt in first.get("receipts", []):
 		_check(bool(receipt.get("ok", false)), "AC3: each real replayed action was legal")
+
+
+## The four binding abilities use the existing start-of-turn countdown: landing two
+## Tangled must still leave one at the victim's first real scheduled turn. Compare
+## per-foe hit/miss receipts with actual state, not fabricated rolls or flags.
+func _tangled_tick_trial(part_id: String, seed_value: int) -> Dictionary:
+	var b := _battle(part_id, 1, seed_value)
+	if b == null or not _to(b, "yarn_ranger"):
+		return {}
+	var multi: bool = part_id == SNARE_ID or part_id == ALTERNATES["legs"]
+	var selected := ["fray_scavenger"]
+	var rank := 1
+	if part_id == REEL_ID:
+		selected = ["scissor_crab"]
+		rank = 2
+	elif multi:
+		selected = ["fray_scavenger", "scissor_crab", "moth_scribe"]
+	var foe_ranks := {"fray_scavenger": 1, "scissor_crab": 2, "moth_scribe": 3}
+	var ranger := b.get_unit("yarn_ranger")
+	if b.get_heroes().size() != 4 or b.get_foes().size() != 3 \
+			or int(ranger.get("rank", 0)) != 3 or b.current_actor_id() != "yarn_ranger":
+		return {}
+	for foe_id in foe_ranks:
+		var foe := b.get_unit(foe_id)
+		if foe.is_empty() or int(foe.get("rank", 0)) != int(foe_ranks[foe_id]) \
+				or int(foe.get("hp", 0)) <= 0 \
+				or int(foe.get("statuses", {}).get("tangled", 0)) != 0:
+			return {}
+	var before := b.state_snapshot()
+	var receipt := b.use_part(part_id, rank)
+	var results: Array = receipt.get("results", [])
+	if not bool(receipt.get("ok", false)) or str(receipt.get("action", "")) != "ability" \
+			or str(receipt.get("actor", "")) != "yarn_ranger" \
+			or str(receipt.get("part", "")) != part_id \
+			or results.size() != selected.size() or b.state_snapshot() == before:
+		return {}
+	var hits := {}
+	var misses := {}
+	for result in results:
+		var foe_id := str(result.get("target", ""))
+		if not foe_id in selected or hits.has(foe_id) or misses.has(foe_id) \
+				or str(result.get("target_side", "")) != "foe" \
+				or int(result.get("target_rank", 0)) != int(foe_ranks[foe_id]):
+			return {}
+		var status := int(b.get_unit(foe_id)["statuses"].get("tangled", 0))
+		if bool(result.get("hit", false)):
+			if not result.get("statuses", []).any(
+					func(s): return str(s.get("status", "")) == "tangled" \
+						and int(s.get("duration", 0)) == 2) \
+					or not status in [1, 2]:
+				return {}
+			hits[foe_id] = true
+		else:
+			if result.get("statuses", []).any(
+					func(s): return str(s.get("status", "")) == "tangled") or status != 0:
+				return {}
+			misses[foe_id] = true
+	if hits.size() + misses.size() != selected.size():
+		return {}
+	# Non-selected foes are not collateral victims of the single-target bindings.
+	for foe_id in foe_ranks:
+		if not foe_id in selected and int(b.get_unit(foe_id)["statuses"].get("tangled", 0)) != 0:
+			return {}
+	# pass_turn enters the following actor's turn and performs its real status tick.
+	# Capture each struck/missed foe on its FIRST upcoming turn, even across rounds.
+	var pending := selected.duplicate()
+	var at_tick := {}
+	for _step in range(55):
+		if b.is_over():
+			return {}
+		var actor := b.current_actor_id()
+		if actor in pending:
+			at_tick[actor] = int(b.get_unit(actor)["statuses"].get("tangled", 0))
+			pending.erase(actor)
+		if pending.is_empty():
+			break
+		if not bool(b.pass_turn().get("ok", false)):
+			return {}
+	if not pending.is_empty():
+		return {}
+	for foe_id in selected:
+		if int(at_tick.get(foe_id, -1)) != (1 if hits.has(foe_id) else 0):
+			return {}
+	return {
+		"receipt": receipt, "hits": hits.keys(), "misses": misses.keys(),
+		"at_tick": at_tick, "state": b.state_snapshot(), "rng": b.rng_state(),
+	}
+
+
+func _test_tangled_next_turn() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: real Ranger catalog available for Tangled turn witnesses")
+	if not bool(cat.get("ok", false)):
+		return
+	for part_id in [BOLAS_ID, REEL_ID, SNARE_ID, ALTERNATES["legs"]]:
+		var part: Dictionary = cat["by_id"][part_id]
+		for tier in [1, 2, 3]:
+			var ability := StitchedParts.ability_at_tier(part, tier)
+			_check(int(ability["effects"].get("tangled", -1)) == tier + 1
+				and (part_id != REEL_ID or tier != 3 or int(ability["effects"].get("mark", 0)) == 1),
+				"AC1: %s tier %d has exact Tangled %d, keeping tier-III Reel Mark"
+					% [part_id, tier, tier + 1])
+		var valid_rank := 2 if part_id == REEL_ID else 1
+		var front := _rank_one_battle(part_id, 1, 509120)
+		_check(front != null, "AC3: real rank-one launch refusal battle exists for " + part_id)
+		if front != null:
+			_check(int(front.get_unit("yarn_ranger").get("rank", 0)) == 1
+				and _to(front, "yarn_ranger"),
+				"AC3: real rank-one Ranger reaches her turn for " + part_id)
+			if front.current_actor_id() == "yarn_ranger":
+				_reject_without_spend(front, part_id, valid_rank, part_id + " illegal rank-one launch")
+		var invalid := _battle(part_id, 1, 509121)
+		_check(invalid != null, "AC3: real target-refusal battle exists for " + part_id)
+		if invalid != null:
+			_check(_to(invalid, "yarn_ranger"),
+				"AC3: Ranger reaches target-refusal turn for " + part_id)
+			if invalid.current_actor_id() == "yarn_ranger":
+				for bad_target in [0, 5, 1 if part_id == REEL_ID else 4]:
+					_reject_without_spend(invalid, part_id, bad_target,
+						part_id + " illegal enemy rank %d" % bad_target)
+		var multi: bool = part_id == SNARE_ID or part_id == ALTERNATES["legs"]
+		var hit_seed := -1
+		var miss_seed := -1
+		var mixed_seed := -1
+		for seed_value in range(509200, 509300):
+			var trial := _tangled_tick_trial(part_id, seed_value)
+			_check(not trial.is_empty(),
+				"AC2: %s seed %d resolves legal foes and first real Tangled tick" % [part_id, seed_value])
+			if trial.is_empty():
+				continue
+			if hit_seed < 0 and not trial["hits"].is_empty():
+				hit_seed = seed_value
+				_check(trial == _tangled_tick_trial(part_id, seed_value),
+					"AC3: %s landed seed %d replays exact receipts, next-turn state and RNG"
+						% [part_id, seed_value])
+			if miss_seed < 0 and not trial["misses"].is_empty():
+				miss_seed = seed_value
+				_check(trial == _tangled_tick_trial(part_id, seed_value),
+					"AC3: %s natural miss seed %d replays exact receipts, state and RNG"
+						% [part_id, seed_value])
+			if multi and mixed_seed < 0 and not trial["hits"].is_empty() \
+					and not trial["misses"].is_empty():
+				mixed_seed = seed_value
+			if hit_seed >= 0 and miss_seed >= 0 and (not multi or mixed_seed >= 0):
+				break
+		_check(hit_seed >= 0 and miss_seed >= 0,
+			"AC2: %s has real tier-I hits (Tangled 1 next turn) and misses (no Tangled)"
+				% part_id)
+		if multi:
+			_check(mixed_seed >= 0,
+				"AC2: %s mixed-hit multi cast leaves only struck foes Tangled after their tick"
+					% part_id)
