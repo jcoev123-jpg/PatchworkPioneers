@@ -511,9 +511,14 @@ func _booth_no_curse(f: Dictionary) -> void:
 		"curse-free genuine route keeps regular RNG-backed generic wallet Event")
 	if is_instance_valid(app.wallet_event_panel):
 		var panel: LiveEventChoicePanel = app.wallet_event_panel
+		# A generic wallet Event may also be an authored service waystation: its
+		# service choice legitimately mounts a Campfire/Unpicker/Sewing Circle,
+		# so ordinary return-to-route coverage must claim a real non-service
+		# wallet choice instead. Service settlement keeps its own live tests.
+		var service_id := str(panel._selector.get_event().get("service_choice_id", ""))
 		var enabled: Array[Button] = []
 		for button in panel.get_choice_buttons():
-			if not button.disabled:
+			if not button.disabled and panel._bound_choices.get(button) != service_id:
 				enabled.append(button)
 		_check(not enabled.is_empty(), "ordinary Event remains playable")
 		if not enabled.is_empty():
