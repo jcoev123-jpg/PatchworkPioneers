@@ -28,6 +28,7 @@ func _init() -> void:
 		_test_tier_one_claw_witness()
 		_test_detachment()
 		_test_authentic_swap()
+		_test_comparison()
 		_test_refusals()
 	_check(rng.state == rng_state_before, "seeded RNG state must be unchanged")
 	_check(randi() == global_expected, "global RNG must not advance")
@@ -325,6 +326,111 @@ func _test_authentic_swap() -> void:
 	_check(new_arms["worn"]["ability"] == _expected_ability("scissor_crab_claw_arm", 2), "post-swap worn claw shows the full tier II ability")
 	_check(new_arms["offers"][0]["part"]["ability"] == _expected_ability("needle_wasp_stinger", 1), "post-swap spare stinger shows the full tier I ability")
 	_check(int(requote["version"]) == int(source["version"]) + 1, "quote reports the new version")
+
+
+const COMPARISON_FIELDS := ["name", "launch", "target", "target_side", "dmg", "acc", "crit", "effects", "self_move"]
+
+
+func _expected_view(id: String, tier: int) -> Dictionary:
+	var ability := _expected_ability(id, tier)
+	var view: Dictionary = {}
+	for field in COMPARISON_FIELDS:
+		view[field] = ability[field]
+	return view
+
+
+func _comparison_of(quote: Dictionary, hero_id: String, slot: String, offer_index: int = 0) -> Dictionary:
+	var slot_quote := _slot_quote(quote, hero_id, slot)
+	if slot_quote.is_empty() or slot_quote["offers"].size() <= offer_index:
+		return {}
+	var offer: Dictionary = slot_quote["offers"][offer_index]
+	return offer.get("comparison", {}) if offer.get("comparison") is Dictionary else {}
+
+
+func _test_comparison() -> void:
+	var svc := _service()
+	var quote := svc.quote()
+	var arms: Dictionary = _slot_quote(quote, "doll_1", "arms")
+	_check(str(arms["worn"]["id"]) == "needle_wasp_stinger" and int(arms["worn"]["tier"]) == 1, "comparison precondition: tier I stinger worn")
+	_check(str(arms["offers"][0]["part"]["id"]) == "scissor_crab_claw_arm" and int(arms["offers"][0]["part"]["tier"]) == 2, "comparison precondition: tier II claw offered")
+	var comparison := _comparison_of(quote, "doll_1", "arms")
+	_check(not comparison.is_empty(), "arms offer publishes a comparison")
+	if comparison.is_empty():
+		return
+	_check(comparison.keys().size() == 3, "comparison has only before, after and stat_delta")
+	var before: Dictionary = comparison["ability_before"]
+	var after: Dictionary = comparison["ability_after"]
+	_check(before == _expected_view("needle_wasp_stinger", 1), "ability_before is the tier I stinger view")
+	_check(after == _expected_view("scissor_crab_claw_arm", 2), "ability_after is the tier II claw view")
+	_check(int(before["acc"]) == 88 and int(after["acc"]) == 90, "ACC 88 -> 90")
+	_check(before["dmg"] == [4, 6] and after["dmg"] == [5, 8], "damage [4,6] -> [5,8]")
+	_check(before["effects"] == {"bleed": 2} and after["effects"] == {"bleed": 3}, "Bleed 2 -> 3")
+	_check(before["launch"] == [1, 3] and after["launch"] == [1, 2], "launch [1,3] -> [1,2]")
+	_check(before["target"] == [1] and after["target"] == [1, 2], "target [1] -> [1,2]")
+	_check(str(before["name"]) == "Wasp Sting" and str(after["name"]) == "Snip", "ability names")
+	_check(str(after["target_side"]) == "enemy" and int(after["self_move"]) == 0 and int(after["crit"]) == 0, "side, self move and crit are carried")
+	_check(comparison["stat_delta"] == {"dmg": -1}, "stat_delta is {dmg:-1}")
+	# worn and offer summaries keep their complete existing fields
+	_check_summary(arms["worn"], "needle_wasp_stinger", 1, "arms", false, "comparison worn")
+	_check_summary(arms["offers"][0]["part"], "scissor_crab_claw_arm", 2, "arms", false, "comparison offer")
+
+	# generic stat keys: a missing key counts as 0 and an unchanged key is omitted
+	var legs := _comparison_of(quote, "doll_1", "legs")
+	_check(legs["stat_delta"] == {"speed": 3, "dodge": 2}, "legs: dodge 5 -> 7 and missing speed -> 3")
+	_check(legs["ability_before"] == _expected_view("moth_swarm_wings", 1) and legs["ability_after"] == _expected_view("spool_stalker_thread_legs", 3), "legs ability views at their tiers")
+	var legs_two := _comparison_of(quote, "doll_2", "legs")
+	_check(legs_two["stat_delta"] == {"speed": 2, "dodge": 4}, "doll 2 legs: tier I -> III gives speed +2, dodge +4")
+	var reverse_legs_svc := _service([], [_spare("moth_swarm_wings", "legs", 1)])
+	var reverse_legs := _comparison_of(reverse_legs_svc.quote(), "doll_2", "legs")
+	_check(reverse_legs["stat_delta"] == {"speed": -1, "dodge": 2}, "absent incoming key goes negative: speed -1, dodge +2")
+	var torso := _comparison_of(quote, "doll_1", "torso")
+	_check(torso["stat_delta"].is_empty(), "equal prot 10 -> 10 leaves stat_delta empty")
+	_check(torso["ability_before"]["effects"] == {"guard": 2} and torso["ability_after"]["effects"] == {"guard": 3}, "ability change is reported despite equal stats")
+	var same_head := _comparison_of(quote, "doll_2", "head")
+	_check(same_head["stat_delta"].is_empty() and same_head["ability_before"] == same_head["ability_after"], "identical part and tier: empty delta, equal abilities")
+
+	# (d) mutating a returned comparison never alters another quote or the service
+	var state_snap := _snap(svc.read_state())
+	var fresh_snap := _snap(svc.quote())
+	comparison["ability_before"]["dmg"][0] = 99
+	comparison["ability_after"]["launch"].append(4)
+	comparison["ability_after"]["effects"]["bleed"] = 99
+	comparison["ability_before"]["effects"]["poison"] = 5
+	comparison["stat_delta"]["dmg"] = 50
+	comparison["stat_delta"]["acc"] = 1
+	var again := svc.quote()
+	_check(_snap(again) == fresh_snap, "re-quote unaffected by mutating a returned comparison")
+	_check(_snap(svc.read_state()) == state_snap, "service state unaffected by mutating a comparison")
+	var again_comparison := _comparison_of(again, "doll_1", "arms")
+	_check(again_comparison["stat_delta"] == {"dmg": -1} and again_comparison["ability_before"]["dmg"] == [4, 6], "fresh comparison keeps authored numbers")
+	_check(again_comparison["ability_after"]["effects"] == {"bleed": 3} and again_comparison["ability_after"]["launch"] == [1, 2], "fresh comparison after-ability unchanged")
+	_check(_snap(catalog) == catalog_before, "catalog unchanged by comparison mutation")
+	# a comparison never shares containers with its own part summaries
+	var arms_again := _slot_quote(again, "doll_1", "arms")
+	again_comparison["ability_before"]["effects"]["bleed"] = 7
+	again_comparison["ability_after"]["dmg"][1] = 1
+	_check(arms_again["worn"]["ability"]["effects"] == {"bleed": 2} and arms_again["offers"][0]["part"]["ability"]["dmg"] == [5, 8], "comparison is detached from the part summaries")
+
+	# (b) reverse comparison after a genuine same-node swap
+	var swap_svc := _service()
+	var swap_quote := swap_svc.quote()
+	var receipt := swap_svc.swap("doll_1", "arms", 0, NODE, swap_quote["state"])
+	_check(bool(receipt["ok"]), "comparison swap succeeds: " + str(receipt.get("error")))
+	if not bool(receipt["ok"]):
+		return
+	var requote := swap_svc.quote()
+	var new_arms := _slot_quote(requote, "doll_1", "arms")
+	_check(str(new_arms["worn"]["id"]) == "scissor_crab_claw_arm" and str(new_arms["offers"][0]["part"]["id"]) == "needle_wasp_stinger", "after the swap the claw is worn and the stinger is offered")
+	_check(int(new_arms["offers"][0]["satchel_index"]) == 0, "returned stinger sits at the same satchel index")
+	var reverse := _comparison_of(requote, "doll_1", "arms")
+	_check(reverse["ability_before"] == _expected_view("scissor_crab_claw_arm", 2), "reverse ability_before is the tier II claw")
+	_check(reverse["ability_after"] == _expected_view("needle_wasp_stinger", 1), "reverse ability_after is the tier I stinger")
+	_check(reverse["stat_delta"] == {"dmg": 1}, "reverse stat_delta is {dmg:1}")
+	_check(int(reverse["ability_before"]["acc"]) == 90 and int(reverse["ability_after"]["acc"]) == 88, "reverse ACC 90 -> 88")
+	_check(reverse["ability_before"]["dmg"] == [5, 8] and reverse["ability_after"]["dmg"] == [4, 6], "reverse damage [5,8] -> [4,6]")
+	# unrelated offers keep their comparisons after the swap
+	_check(_comparison_of(requote, "doll_1", "legs")["stat_delta"] == {"speed": 3, "dodge": 2}, "unrelated legs comparison unchanged by the arms swap")
+	_check(_snap(swap_svc.quote()) == _snap(requote), "quoting twice after the swap is stable")
 
 
 func _expect_refusal(svc: RunStitchedSewingSwap, result: Dictionary, label: String) -> void:
