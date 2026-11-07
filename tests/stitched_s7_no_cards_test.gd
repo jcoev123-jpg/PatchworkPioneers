@@ -3,6 +3,24 @@ extends "res://tests/stitched_s7_title_continue_test.gd"
 const NO_CARDS_SAVE := "user://stitched_s7_no_cards_test.save"
 
 
+func _disabled_click(button: Button) -> void:
+	_check(button.is_visible_in_tree() and button.disabled
+		and button.focus_mode == Control.FOCUS_NONE,
+		"missing-save Continue is mounted but ineligible for a physical mouse press")
+	var point := button.get_global_rect().get_center()
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await process_frame
+	for down in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = down
+		root.push_input(event, true)
+		await process_frame
+
+
 func _old_card_surfaces_dormant(app: Node) -> bool:
 	# Dormant fields may exist for old regressions, but no old screen or wallet is live.
 	if not _no_legacy_wallet(app) or app.party_picker != null or app.reward_choice_panel != null:
@@ -61,7 +79,8 @@ func _run() -> void:
 		"the three visible title actions use consistent title case")
 
 	# Genuine keyboard and pointer Continue attempts must not load corrupt/stale state.
-	await _click(app.stitched_continue_button)
+	await _disabled_click(app.stitched_continue_button)
+	app.stitched_continue_button.pressed.emit()
 	_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree()
 		and _carry(app) == baseline and _old_card_surfaces_dormant(app),
 		"missing-save Continue is atomic on the live mouse callback")
@@ -70,11 +89,16 @@ func _run() -> void:
 	if file != null:
 		file.store_buffer(var_to_bytes({"version": "invalid", "state": {}}))
 		file.close()
-	app.stitched_continue_button.grab_focus()
-	await _physical(KEY_SPACE)
-	_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree()
+	_check(StitchedRunSave.read_file(NO_CARDS_SAVE) == null,
+		"malformed journal fixture cannot authenticate a Continue run")
+	app._refresh_stitched_continue_eligibility()
+	await _ring(app, [app.start_button, app.base_button])
+	app.stitched_continue_button.pressed.emit()
+	_check(app.stitched_continue_button.disabled
+		and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+		and app.stitched_run_session == null and app.title_view.is_visible_in_tree()
 		and _carry(app) == baseline and _old_card_surfaces_dormant(app),
-		"malformed-save Continue is atomic on the live keyboard callback")
+		"malformed-save Continue signal and keyboard ring fail closed without a card route")
 
 	# Wren's room replaces rather than exposes the hidden retired card Path panels.
 	await _click(app.base_button)

@@ -104,7 +104,7 @@ func _click(button: Button) -> void:
 
 
 func _ring(app: Node, buttons: Array) -> void:
-	_check(buttons.size() >= 3, "nonempty mounted title ring")
+	_check(buttons.size() >= 2, "nonempty mounted title ring with two live actions")
 	buttons[0].grab_focus()
 	for direction in [1, -1]:
 		for step in range(1, buttons.size() + 1):
@@ -138,6 +138,7 @@ func _run() -> void:
 		"actual mounted title inherits the production Gothic Londrina title face")
 	var actions: Array = [app.start_button, app.stitched_continue_button,
 		app.base_button]
+	var available: Array = [app.start_button, app.base_button]
 	_check(shell._actions == actions, "shell binds exactly three default production actions")
 	var visible_actions: Array = []
 	for child in app.title_view.get_children():
@@ -151,7 +152,8 @@ func _run() -> void:
 	var previous := Rect2()
 	for button: Button in actions:
 		var rect := button.get_global_rect()
-		_check(button.is_visible_in_tree() and not button.disabled and rect.has_area()
+		_check(button.is_visible_in_tree() and button.disabled == (button == app.stitched_continue_button)
+			and rect.has_area()
 			and viewport.encloses(rect) and rect.size.y == 56
 			and button.custom_minimum_size.y == 56,
 			"visible readable 56px action: " + button.text)
@@ -173,6 +175,10 @@ func _run() -> void:
 				and surface.texture != null
 				and surface.texture.resource_path == "res://assets/paper/ui/reward_button.png",
 				"authored title-only " + state + " style: " + button.text)
+	_check(app.stitched_continue_button.disabled and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+		and not app.stitched_continue_button.has_focus() and not app.start_button.disabled
+		and not app.base_button.disabled,
+		"missing configured save disables visible Continue without disabling other actions")
 	var carry := _carry(app)
 	for button in [app.stitched_fight_button]:
 		button.pressed.emit()
@@ -180,18 +186,17 @@ func _run() -> void:
 		and app.stitched_run_panel == null and app.title_view.is_visible_in_tree()
 		and _carry(app) == carry and _no_legacy_wallet(app),
 		"disabled shortcut signals have no authority, spend or RNG draw")
-	await _ring(app, actions)
+	await _ring(app, available)
 	_check(_carry(app) == carry and _no_legacy_wallet(app), "focus and display do not spend or draw")
-	app.stitched_continue_button.grab_focus()
-	await _physical(KEY_SPACE)
+	_check(not app.stitched_continue_button.has_focus(), "disabled Continue cannot take programmatic focus")
+	app.stitched_continue_button.pressed.emit()
 	_check(app.stitched_run_session == null and app.title_view.visible and _carry(app) == carry,
-		"missing save cannot start or mutate a run")
+		"missing save rejects stale Continue signal without run, wallet or RNG mutation")
 	var file := FileAccess.open(TEST_SAVE, FileAccess.WRITE)
 	file.store_buffer(var_to_bytes({"version": "malformed", "state": {}}))
 	file.close()
-	await _physical(KEY_SPACE)
-	_check(app.stitched_run_session == null and app.title_view.visible and _carry(app) == carry,
-		"malformed save fails closed through original Continue callback")
+	_check(StitchedRunSave.read_file(TEST_SAVE) == null,
+		"corrupt fixture fails the genuine saved-journal reader")
 	app.base_button.grab_focus()
 	await _physical(KEY_SPACE)
 	_check(is_instance_valid(app.base_screen) and app.base_screen.has_open_village(),
@@ -199,8 +204,11 @@ func _run() -> void:
 	if is_instance_valid(app.base_screen):
 		app.base_screen.back_button.pressed.emit()
 	await process_frame
-	_check(app.base_button.has_focus() and app.title_view.is_visible_in_tree(),
-		"base Back restores a visible eligible title action")
+	_check(app.base_button.has_focus() and app.title_view.is_visible_in_tree()
+		and app.stitched_continue_button.disabled and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+		and app.stitched_run_session == null and _carry(app) == carry,
+		"bedroom Back revalidates corrupt save, keeps Continue unfocusable and resources unchanged")
+	await _ring(app, available)
 	app.start_button.grab_focus()
 	await _physical(KEY_SPACE)
 	_check(app.stitched_run_panel != null and app.stitched_run_session == null,
@@ -240,15 +248,45 @@ func _run() -> void:
 			and app.stitched_event_panel == null and app._stitched_roadblock_win_count == 0,
 			"four-doll routed New Run needs no Roadblock receipt")
 		app.title_view.show()
-		await _ring(app, actions)
+		await _ring(app, available)
 		shell._process(1.25)
 		app.stitched_continue_button.pressed.emit()
 		app.title_view.hide()
 		_check(app.stitched_run_session == session and session.snapshot() == before,
 			"live display, focus and rejected Continue preserve RNG and receipts")
 		_check(StitchedRunSave.write_file(TEST_SAVE, session), "isolated valid save written")
+		var oracle := StitchedRunSave.read_file(TEST_SAVE)
+		_check(oracle != null and oracle.snapshot() == before and oracle.journal == session.journal,
+			"authentic save reader restores four-doll, journal and seeded RNG oracle")
 		app._return_stitched_run_title()
 		await process_frame
+		_check(not app.stitched_continue_button.disabled
+			and app.stitched_continue_button.focus_mode == Control.FOCUS_ALL,
+			"live return refresh enables the verified saved night")
+		await _ring(app, actions)
+		# The enabled title is only a hint: a vanished file must fail on final load.
+		DirAccess.remove_absolute(TEST_SAVE)
+		app.stitched_continue_button.grab_focus()
+		await _physical(KEY_ENTER)
+		_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree()
+			and app.stitched_continue_button.disabled
+			and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE
+			and app.start_button.has_focus() and _carry(app) == carry,
+			"deleted-between-display-and-Enter fails closed and transfers focus to New Run")
+		await _ring(app, available)
+		_check(StitchedRunSave.write_file(TEST_SAVE, session),
+			"valid snapshot can be written again after the failed race")
+		app.base_button.pressed.emit()
+		await process_frame
+		_check(is_instance_valid(app.base_screen), "bedroom still reachable after failed load")
+		if is_instance_valid(app.base_screen):
+			app.base_screen.back_button.pressed.emit()
+		await process_frame
+		_check(not app.stitched_continue_button.disabled
+			and app.stitched_continue_button.focus_mode == Control.FOCUS_ALL
+			and app.stitched_run_session == null,
+			"next normal bedroom-to-title refresh restores eligible Continue")
+		await _ring(app, actions)
 		app.stitched_continue_button.grab_focus()
 		await _physical(KEY_SPACE)
 		_check(app.stitched_run_session != null and app.stitched_run_session.snapshot() == before

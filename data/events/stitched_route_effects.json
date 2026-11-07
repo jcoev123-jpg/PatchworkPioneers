@@ -72,6 +72,36 @@
         {"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "stitched_effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
         {"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
+    },
+    {
+      "id": "v3_keyhole_choir",
+      "title": "The Keyhole Choir",
+      "description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
+      "choices": [
+        {"id": "follow_humming", "text": "Follow the warm humming (+16 candle, +7 fray each; requires room in the candle)", "stitched_effect": {"target": "party", "candle": 16, "fray": 7, "require_candle_room": true}},
+        {"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2}},
+        {"id": "leave", "text": "Leave the little choir singing behind the door", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "v3_yarn_compass_spool",
+      "title": "The Compass of Loose Ends",
+      "description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
+      "choices": [
+        {"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "stitched_effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
+        {"id": "buy_quiet_bearing", "text": "Buy the safe bearing for 10 gold (-8 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10}},
+        {"id": "leave", "text": "Leave the needle turning in circles", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
+    },
+    {
+      "id": "v3_veiled_wardrobe_mirror",
+      "title": "The Veiled Wardrobe Mirror",
+      "description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
+      "choices": [
+        {"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "stitched_effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true}},
+        {"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1}},
+        {"id": "leave", "text": "Pass without looking into the silver again", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
+      ]
     }
   ]
 }

@@ -129,7 +129,9 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(SAVE_PATH)
 	DirAccess.remove_absolute(SAVE_PATH + ".tmp")
-	var app := _app(24)
+	# Seed 68: the appended doll-scale route-effect stories shift the sorted Event pool's
+	# single draw, so this witness seed must reach a lawful Event Leave and a next Fight.
+	var app := _app(68)
 	await process_frame
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
@@ -143,8 +145,8 @@ func _run() -> void:
 		return
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
-	_check(session != null and session.seed_value == 24 and session.heroes.size() == 4 and session.walks_enabled,
-		"seed 24 uses four selected dolls and Walk travel")
+	_check(session != null and session.seed_value == 68 and session.heroes.size() == 4 and session.walks_enabled,
+		"seed 68 uses four selected dolls and Walk travel")
 	if session == null:
 		_finish(app)
 		return

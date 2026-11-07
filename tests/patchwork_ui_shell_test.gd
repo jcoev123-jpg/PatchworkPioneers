@@ -3,6 +3,7 @@ extends SceneTree
 
 var failures: Array[String] = []
 var checks := 0
+const SHELL_SAVE := "user://patchwork_ui_shell_test.save"
 
 
 func _initialize() -> void:
@@ -63,8 +64,10 @@ const GOTHIC_AMBER := Color("e6ad58")
 
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	DirAccess.remove_absolute(SHELL_SAVE)
 	var scene := load("res://scenes/app.tscn") as PackedScene
 	var app = scene.instantiate()
+	app.stitched_save_path = SHELL_SAVE
 	root.add_child(app)
 	await process_frame
 	var shell = app.get_node("PatchworkUIShell")
@@ -172,7 +175,8 @@ func _run() -> void:
 	var previous_action := Rect2()
 	for button in [app.start_button, app.stitched_continue_button, app.base_button]:
 		var hit: Rect2 = button.get_global_rect()
-		_check(button.is_visible_in_tree() and not button.disabled and viewport.encloses(hit)
+		_check(button.is_visible_in_tree() and button.disabled == (button == app.stitched_continue_button)
+			and viewport.encloses(hit)
 			and hit.size.y == 56 and (not previous_action.has_area() or previous_action.end.y <= hit.position.y),
 			"three visible nonoverlapping 56px mouse bounds: " + button.text)
 		previous_action = hit
@@ -333,8 +337,10 @@ func _run() -> void:
 		and app.run_map == null and app.run_rng == null and app.title_view.is_visible_in_tree(),
 		"dormant shortcut signals cannot enter a game")
 	_check(app.start_button.has_focus() and shell.visible, "initial focused title with backdrop")
+	_check(app.stitched_continue_button.disabled and app.stitched_continue_button.focus_mode == Control.FOCUS_NONE,
+		"missing-save Continue stays visible but out of the keyboard focus cycle")
 	await _key(KEY_TAB)
-	_check(app.stitched_continue_button.has_focus(), "physical Tab retains title focus cycle")
+	_check(app.base_button.has_focus(), "physical Tab skips unavailable Continue to reach the bedroom")
 	app.start_button.grab_focus()
 	await _key(KEY_SPACE)
 	_check(app.stitched_run_panel != null and not shell.visible,
@@ -355,19 +361,20 @@ func _run() -> void:
 	_check(app.base_screen == null and shell.visible and app.title_view.is_visible_in_tree()
 		and app.base_button.has_focus() and app.run_map == null and app.run_rng == null,
 		"village Back restores the focused title without starting a run")
-	# Focus cycles over all three live title actions with the picture mounted.
+	# All three actions stay drawn, but only the two eligible ones cycle through focus.
 	app.base_button.grab_focus()
 	await _key(KEY_TAB)
-	_check(app.start_button.has_focus(), "Tab wraps from village to New Run, skipping dormant controls")
+	_check(app.start_button.has_focus(), "Tab wraps from bedroom to New Run, skipping dormant controls")
 	await _key(KEY_TAB)
-	_check(app.stitched_continue_button.has_focus(), "Tab reaches Continue on the sewn title")
+	_check(app.base_button.has_focus(), "Tab skips disabled Continue on the sewn title")
 	await _key(KEY_TAB)
-	_check(app.base_button.has_focus(), "Tab reaches Quilt village on the sewn title")
+	_check(app.start_button.has_focus(), "Tab wraps through both eligible title actions")
 	app.free()
 	# All V1 screens mount real downstream Controls with the same inherited theme.
 	var boot = root.get_node("LiveWebPlaytestBoot")
 	for screen in boot.SCREENS:
 		app = scene.instantiate()
+		app.stitched_save_path = SHELL_SAVE
 		root.add_child(app)
 		await process_frame
 		_check(await boot.enter_preview(app, screen), "nonempty real preview precondition: " + screen)
@@ -388,6 +395,7 @@ func _run() -> void:
 		_check(app.get_node("PatchworkUIShell").visible == (screen == "title"), "title decoration visibility: " + screen)
 		app.free()
 	_check(var_to_str(master) == master_before, "mounted visits leave the master Theme unchanged")
+	DirAccess.remove_absolute(SHELL_SAVE)
 	for failure in failures:
 		printerr(failure)
 	print("patchwork_ui_shell_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")

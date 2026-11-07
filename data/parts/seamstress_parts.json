@@ -209,7 +209,7 @@
         "acc": 90,
         "dmg": [0, 0],
         "crit": 0,
-        "effects": {"mark": 1, "tangled": 2},
+        "effects": {"mark": 2, "tangled": 2},
         "self_move": 0,
         "move": "skill"
       },

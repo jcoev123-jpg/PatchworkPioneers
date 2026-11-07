@@ -271,7 +271,12 @@ func _refresh_inspection() -> void:
 			" / ".join(exits.map(func(target): return "F%02d P%d" % [
 				_floor_of_id(str(target)), _path_of_id(str(target))]))
 			if not exits.is_empty() else "FINAL SEAM"]
-		purpose = stop_purpose_for(str(node.get_meta("node_kind", "")))
+		var node_kind := str(node.get_meta("node_kind", ""))
+		purpose = stop_purpose_for(node_kind)
+		# A Campfire swaps its generic lead for the compact recovery hint.
+		var hint := campfire_recovery_hint_for(node_kind)
+		if not hint.is_empty():
+			purpose = hint
 		if not purpose.is_empty():
 			_preview.text += "\n" + purpose
 		_preview.add_theme_color_override("font_color", AMBER)
@@ -288,6 +293,17 @@ static func stop_purpose_for(kind: String) -> String:
 	var help := RunV3StopChoiceProjection.stitched_stop_help_for(
 		RunV3StopChoiceProjection.v3_kind_for(kind))
 	return str(help.get("lead", ""))
+
+
+## Read-only, price-free hint of the ONE recovery a Campfire offers, built
+## from the authoritative service constants. Empty for every other kind
+## (legacy Rest aliases to Campfire). It promises no actual gain.
+static func campfire_recovery_hint_for(kind: String) -> String:
+	if RunV3StopChoiceProjection.v3_kind_for(kind) != "Campfire":
+		return ""
+	return "Possible, pick one: Mend %d%% HP / Tales -%d FRAY / Wick +%d CANDLE, max %d" % [
+		RunCampfireVisit.MEND_HEAL_PERCENT, RunCampfireVisit.TALES_FRAY_REDUCTION,
+		RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
 
 
 func _style_node(id: String) -> void:
