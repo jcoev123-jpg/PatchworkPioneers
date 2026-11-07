@@ -52,6 +52,195 @@ func _finish_visit(app: Node) -> bool:
 	return true
 
 
+## First seeded route whose opening choices include a Rest node, i.e. an authentic Campfire.
+func _campfire_route() -> Array:
+	for seed_number in range(300):
+		var map_rng := RandomNumberGenerator.new()
+		map_rng.seed = seed_number
+		var generated := RunMap.new()
+		if not generated.generate(map_rng):
+			continue
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).type == "Rest":
+				return [seed_number, node_id]
+	return []
+
+
+## Test-only setup: Wren's FEAR is seeded through the public StitchedKidFear observed-event API
+## (not a claim of battle-earned FEAR), then the run is routed into the real Campfire.
+func _tales_setup(route: Array, fear_target: int, frays: Array, resolves: Array, options: Dictionary = {}) -> StitchedRunSession:
+	var session := StitchedRunSession.start(route[0])
+	if session == null:
+		return null
+	var remaining := fear_target
+	while remaining >= 15:
+		session._kid_fear.apply_observed_event({"kind": "lost"})
+		remaining -= 15
+	while remaining >= 5:
+		session._kid_fear.apply_observed_event({"kind": "hanging"})
+		remaining -= 5
+	while remaining >= 2:
+		session._kid_fear.apply_observed_event({"kind": "fray", "amount": 10})
+		remaining -= 2
+	for index in 4:
+		session.heroes[index].fray = int(frays[index])
+		session.heroes[index].resolve = str(resolves[index])
+	if options.get("hurt", false):
+		session.heroes[0].hp = maxi(1, session.heroes[0].max_hp - 10)
+	if options.get("spare", false):
+		var slot: String = StitchedParts.SLOTS[0]
+		session.satchel.append({"id": session.heroes[1].parts[slot].id, "slot": slot, "tier": 1, "torn": false})
+	session._seal()
+	if session.kid_fear() != fear_target or not session.enter(route[1], session.snapshot()):
+		return null
+	return session
+
+
+func _enabled_ids(session: StitchedRunSession) -> Array:
+	var ids: Array = []
+	for action in session.visit_actions():
+		if action.enabled:
+			ids.append(action.id)
+	return ids
+
+
+func _fray_of(session: StitchedRunSession) -> Dictionary:
+	var result := {}
+	for hero in session.heroes:
+		result[hero.id] = [hero.fray, hero.resolve]
+	return result
+
+
+func _exercise_campfire_tell_tales() -> void:
+	var route := _campfire_route()
+	_check(route.size() == 2, "a seeded route reaches an authentic Campfire")
+	if route.size() != 2:
+		return
+	var untouched_rng := StitchedRunSession.start(route[0]).rng.state
+	var zeros := [0, 0, 0, 0]
+	var blank := ["", "", "", ""]
+
+	# AC1: FEAR alone offers Tell Tales (capped quote); no FEAR and no FRAY does not.
+	var fear_only := _tales_setup(route, 20, zeros, blank)
+	_check(fear_only != null and fear_only.phase == "visit" and fear_only.candle == 92,
+		"FEAR-only Campfire opens through the run with the ordinary -8 CANDLE debit")
+	if fear_only == null:
+		return
+	var offered := _enabled_ids(fear_only)
+	_check(offered.has("tell_tales") and offered.has("leave") and not offered.has("mend"),
+		"four zero-FRAY dolls with positive FEAR still offer enabled Tell Tales and Leave")
+	_check(str(fear_only._service.read_state().quote.text).contains("-15 Wren FEAR now"),
+		"live quote reports the 15 FEAR relief")
+	var capped := _tales_setup(route, 5, zeros, blank)
+	_check(capped != null and str(capped._service.read_state().quote.text).contains("-5 Wren FEAR now"),
+		"live quote reports FEAR relief capped by the actual FEAR")
+	var calm := _tales_setup(route, 0, zeros, blank)
+	_check(calm != null and calm.visit_actions().size() > 0 and _enabled_ids(calm).has("leave")
+		and not calm.visit_actions().any(func(action: Dictionary): return action.id == "tell_tales"),
+		"zero FEAR and zero FRAY omit Tell Tales")
+
+	# AC2: FEAR-only commit.
+	var before := fear_only.snapshot()
+	var sequence: int = fear_only._kid_fear.get_sequence()
+	var gold_before := fear_only.gold
+	var scraps_before := fear_only.scraps
+	_check(fear_only.choose_visit("tell_tales", [], before), "FEAR-only Tell Tales is accepted")
+	var oracle := StitchedKidFear.new(20)
+	var event := oracle.apply_observed_event({"kind": "tell_tales"})
+	_check(fear_only.kid_fear() == 5 and fear_only.kid_fear() == event.fear
+		and fear_only._kid_fear.get_sequence() == sequence + 1,
+		"one ledger event lowers FEAR by 15 and agrees with the standalone ledger")
+	_check(fear_only.heroes == before.heroes and fear_only.satchel == before.satchel
+		and fear_only.gold == gold_before and fear_only.scraps == scraps_before and fear_only.candle == 92
+		and fear_only.rng.state == untouched_rng,
+		"FEAR-only relief leaves dolls, gear, wallet, CANDLE and the run RNG alone")
+	_check(fear_only.phase == "map" and fear_only.receipts.size() == 1
+		and fear_only.receipts[0].decision == "tell_tales" and fear_only.receipts[0].steps.size() == 1
+		and fear_only.is_consistent(), "one stop receipt seals the committed choice")
+
+	# AC2: mixed FRAY and FEAR below 15, resolve cleared strictly below 50.
+	var mixed := _tales_setup(route, 5, [0, 60, 75, 130], ["", "frantic", "bitter", "hollow"])
+	_check(mixed != null and _enabled_ids(mixed).has("tell_tales"), "mixed FRAY and FEAR offers Tell Tales")
+	if mixed != null:
+		var mixed_before := mixed.snapshot()
+		var mixed_sequence: int = mixed._kid_fear.get_sequence()
+		_check(mixed.choose_visit("tell_tales", [], mixed_before), "mixed Tell Tales is accepted")
+		var expected := {}
+		var ids: Array = []
+		for hero in mixed_before.heroes:
+			ids.append(hero.id)
+		var after_fray := [0, 35, 50, 105]
+		var after_resolve := ["", "", "bitter", "hollow"]
+		for index in 4:
+			expected[ids[index]] = [after_fray[index], after_resolve[index]]
+		_check(_fray_of(mixed) == expected and mixed.kid_fear() == 0 and mixed._kid_fear.get_sequence() == mixed_sequence + 1,
+			"every doll loses min(25, FRAY), Wren loses min(15, FEAR) once, and resolve clears only below 50")
+
+	# AC2: a queued Lose the Strings survives the relief.
+	var strings := _tales_setup(route, 100, zeros, blank)
+	_check(strings != null and strings._kid_fear.has_pending_lost_strings(), "FEAR 100 queues Lose the Strings")
+	if strings != null:
+		_check(strings.choose_visit("tell_tales", [], strings.snapshot()) and strings.kid_fear() == 85
+			and strings._kid_fear.has_pending_lost_strings(), "Tell Tales at FEAR 100 keeps the queued interruption")
+
+	# AC3: stale, forged and replayed attempts are neutral.
+	var guarded := _tales_setup(route, 20, [0, 10, 0, 0], blank)
+	if guarded != null:
+		var start := guarded.snapshot()
+		var guarded_sequence: int = guarded._kid_fear.get_sequence()
+		var stale := start.duplicate(true)
+		stale.candle = 99
+		var stale_fear := start.duplicate(true)
+		stale_fear.kid_fear.fear = 0
+		var refusals := [
+			guarded.choose_visit("tell_tales", [], stale), guarded.choose_visit("tell_tales", [], stale_fear),
+			guarded.choose_visit("tell_tales", [], {}), guarded.choose_visit("forged", [], start),
+			guarded.choose_visit("tell_tales", ["extra"], start), guarded.choose_visit("mend", [], start)]
+		_check(refusals.all(func(accepted: bool): return not accepted) and guarded.snapshot() == start
+			and guarded._kid_fear.get_sequence() == guarded_sequence and guarded.rng.state == untouched_rng,
+			"stale, forged and unoffered Campfire attempts change no FRAY, FEAR, wallet, CANDLE, RNG or receipt")
+		_check(guarded.choose_visit("tell_tales", [], start), "the authentic Tell Tales is still accepted")
+		var done := guarded.snapshot()
+		_check(not guarded.choose_visit("tell_tales", [], start) and not guarded.choose_visit("tell_tales", [], done)
+			and not guarded.choose_visit("leave", [], done) and guarded.snapshot() == done
+			and guarded.receipts.size() == 1 and guarded._kid_fear.get_sequence() == guarded_sequence + 1
+			and guarded.kid_fear() == 5, "replayed Tell Tales or Leave cannot repeat the relief")
+
+	# AC3: other accepted choices never emit the Tell Tales event.
+	for choice in ["trim_the_wick", "leave", "mend", "swap"]:
+		var other := _tales_setup(route, 20, [0, 10, 0, 0], blank, {"hurt": choice == "mend", "spare": choice == "swap"})
+		_check(other != null, choice + " setup reaches the Campfire")
+		if other == null:
+			continue
+		var other_before := other.snapshot()
+		var other_sequence: int = other._kid_fear.get_sequence()
+		var index := -1
+		for position in other.visit_actions().size():
+			if other.visit_actions()[position].id == choice and other.visit_actions()[position].enabled:
+				index = position
+		_check(index >= 0, choice + " is an eligible Campfire decision")
+		if index < 0:
+			continue
+		var action: Dictionary = other.visit_actions()[index]
+		_check(other.choose_visit(choice, action.arguments, other_before), choice + " is accepted")
+		if choice == "swap":
+			_check(other.phase == "visit" and other.choose_visit("leave", [], other.snapshot()),
+				"Leave after a swap closes the Campfire")
+		_check(other.kid_fear() == 20 and other._kid_fear.get_sequence() == other_sequence
+			and other._kid_fear.state_snapshot().fear == 20 and other.rng.state == untouched_rng,
+			choice + " leaves FEAR, the ledger sequence and the RNG unchanged")
+		_check(other.heroes[1].fray == 10, choice + " leaves FRAY untouched")
+
+	# Fixed-seed repeatability.
+	var first := _tales_setup(route, 20, [0, 60, 75, 130], ["", "frantic", "bitter", "hollow"])
+	var second := _tales_setup(route, 20, [0, 60, 75, 130], ["", "frantic", "bitter", "hollow"])
+	_check(first != null and second != null and first.choose_visit("tell_tales", [], first.snapshot())
+		and second.choose_visit("tell_tales", [], second.snapshot())
+		and first.snapshot() == second.snapshot() and first.journal == second.journal
+		and first.rng.state == untouched_rng,
+		"two identical seeded setups commit identical Tell Tales results without a fresh RNG call")
+
+
 func _run() -> void:
 	var app: Node = await _new_run(42)
 	var session: StitchedRunSession = app.stitched_run_session
@@ -106,6 +295,7 @@ func _run() -> void:
 	await _exercise_partial_carry()
 	await _exercise_picker()
 	await _exercise_village_entry()
+	_exercise_campfire_tell_tales()
 	for message in failures:
 		printerr(message)
 	print("stitched_s6_full_run_test: %d checks, %d failures" % [checks, failures.size()])
