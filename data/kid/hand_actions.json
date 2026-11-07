@@ -7,7 +7,7 @@
 			"name": "Steady",
 			"target": "doll",
 			"fray": -8,
-			"text": "Wren cups one doll in both hands until its stitching stops trembling: -8 fray."
+			"text": "Wren cups one doll in both hands until its stitching stops trembling."
 		},
 		{
 			"id": "shield_candle",

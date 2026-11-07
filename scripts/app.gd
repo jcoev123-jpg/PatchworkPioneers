@@ -4733,20 +4733,21 @@ func _show_wren_gift_pick(session: StitchedRunSession, chosen: String = "") -> v
 	var strip := NinePatchRect.new()
 	strip.name = "WrenGiftStrip"
 	strip.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
-	strip.patch_margin_left = 24
-	strip.patch_margin_right = 24
-	strip.patch_margin_top = 24
-	strip.patch_margin_bottom = 24
+	# Wide nine-slice margins keep the felt's inner stitching whole; the words sit inside it.
+	strip.patch_margin_left = 80
+	strip.patch_margin_top = 80
+	strip.patch_margin_right = 116
+	strip.patch_margin_bottom = 110
 	var full := not chosen.is_empty()
 	var shown: Array = session.gift_slots if full else session.gift_offer
-	strip.size = Vector2(maxi(shown.size(), 3) * 300 + 80, 560)
-	strip.position = Vector2((1280 - strip.size.x) / 2, 80)
-	strip.modulate.a = 0.95
+	strip.size = Vector2(1240, 690)
+	strip.position = Vector2(20, 12)
+	strip.modulate.a = 0.96
 	veil.add_child(strip)
 	var content := VBoxContainer.new()
 	content.name = "WrenGiftText"
-	content.position = Vector2(40, 30)
-	content.size = strip.size - Vector2(80, 60)
+	content.position = Vector2(92, 86)
+	content.size = Vector2(1020, 470)
 	content.add_theme_constant_override("separation", 12)
 	strip.add_child(content)
 	_stitched_run_caption(content, "WREN'S HANDS ARE FULL" if full else "WREN FINDS SOMETHING NEW", 26).name = "WrenGiftHeading"
@@ -4755,6 +4756,7 @@ func _show_wren_gift_pick(session: StitchedRunSession, chosen: String = "") -> v
 	var row := HBoxContainer.new()
 	row.name = "WrenGiftCards"
 	row.add_theme_constant_override("separation", 20)
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	content.add_child(row)
 	var take := func(gift_id: String, swap_out: String):
@@ -4765,14 +4767,14 @@ func _show_wren_gift_pick(session: StitchedRunSession, chosen: String = "") -> v
 	for id in shown:
 		var card := VBoxContainer.new()
 		card.name = "WrenGift_" + str(id)
-		card.custom_minimum_size = Vector2(280, 0)
+		card.custom_minimum_size = Vector2(240, 0)
 		card.add_theme_constant_override("separation", 6)
 		row.add_child(card)
 		var hand := TextureRect.new()
 		hand.name = "WrenGiftHand"
 		hand.set_meta("art_path", StitchedWrenGifts.icon_path(id))
 		hand.texture = _stitched_run_texture(StitchedWrenGifts.icon_path(id))
-		hand.custom_minimum_size = Vector2(280, 150)
+		hand.custom_minimum_size = Vector2(240, 130)
 		hand.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		hand.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		hand.mouse_filter = Control.MOUSE_FILTER_IGNORE
