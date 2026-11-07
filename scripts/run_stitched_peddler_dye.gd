@@ -17,6 +17,8 @@ const MODE := "stitched"
 const DYE := "dye"
 const BUY_DYE := "buy_dye"
 const LEAVE := "leave"
+## Projection of the established Walk rules for a USED dye (never applied here).
+const EFFECT_TEXT := "Use during the Walk: prevent foes' first strike in the next fight; skip 1 curio trap."
 const HERO_COUNT := 4
 const MIN_RANK := 1
 const MAX_RANK := 4
@@ -192,6 +194,7 @@ func quote() -> Dictionary:
 		"can_buy": can_buy,
 		"blocked": blocked,
 		"choices": choices,
+		"effect_text": EFFECT_TEXT,
 	}
 
 

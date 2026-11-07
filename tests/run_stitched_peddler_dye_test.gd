@@ -19,6 +19,7 @@ func _initialize() -> void:
 	seed(616161)
 	_test_admission_and_isolation()
 	_test_quotes()
+	_test_effect_text_forecast()
 	_test_purchase_and_leave()
 	_test_refusals()
 	_test_lost_and_full()
@@ -232,6 +233,15 @@ func _assert_quote(visit: RunStitchedPeddlerDye, gold: int, choices: Array,
 		and quote.get("node_id") == NODE and quote.get("mode") == MODE,
 		label + ": choices, can_buy, blocked, price and eligible IDs are honest")
 	_check(quote.get("choices").has("leave"), label + ": free Leave is always offered")
+	var text = quote.get("effect_text")
+	_check(typeof(text) == TYPE_STRING and not String(text).is_empty(),
+		label + ": quote carries a nonempty effect_text")
+	var lowered := String(text).to_lower()
+	_check(lowered.contains("walk") and lowered.contains("next fight")
+		and lowered.contains("first strike") and lowered.contains("1 curio trap"),
+		label + ": effect_text ties Walk use, next fight, first strike and one curio trap")
+	_check(quote.keys().size() == 11 and not quote.has("effect"),
+		label + ": only the one effect_text key was added to the quote")
 	_check(visit.read_state() == before and visit.is_open(),
 		label + ": quoting changes nothing")
 
@@ -266,6 +276,58 @@ func _test_quotes() -> void:
 		and closed_quote.get("choices", ["x"]).is_empty()
 		and not closed_quote.has("can_buy"),
 		"a closed visit quotes no choices and no purchase")
+
+
+## AC1-AC3: the effect_text mirrors the real Walk dye flags, is identical on
+## affordable, poor and full quotes, is detached, and a buy applies no effect.
+func _test_effect_text_forecast() -> void:
+	var flags := StitchedWalkRules._future_effects("dye")
+	_check(flags == {"skip_next_fight_first_strike": true, "skip_one_curio_trap": true},
+		"the real Walk dye effects are exactly the two established true flags")
+	var full := {"rag_duelist": ["dye", "dye"], "warden": ["starch", "pins"],
+		"seamstress": ["dye", "dye"], "tinker": ["pins", "spare_spool"]}
+	var rich := _open(500)
+	var poor := _open(0)
+	var packed := _open(500, PRICE, NODE, null, full)
+	var rich_quote := rich.quote()
+	var expected_text: String = rich_quote.get("effect_text", "")
+	_check(not expected_text.is_empty(), "precondition: the affordable quote has effect_text")
+	for visit in [poor, packed]:
+		var other: Dictionary = visit.quote()
+		_check(other.get("effect_text") == expected_text and other.get("price") == PRICE
+			and other.get("can_buy") == false and other.get("choices") == ["leave"]
+			and other.get("blocked") != "",
+			"poor and full-pocket quotes keep the same text, price and Leave-only choices")
+	_check(rich_quote.get("can_buy") == true and rich_quote.get("choices") == ["buy_dye", "leave"]
+		and rich_quote.get("blocked") == "",
+		"the affordable quote still offers Buy and Leave with no blocked reason")
+	# No invented guaranteed benefit: the text is conditional on later use.
+	_check(expected_text.begins_with("Use during the Walk"),
+		"the text states the benefit applies only when the dye is used in the Walk")
+	# Detachment: mutating a returned quote changes nothing afterwards.
+	var state_before := rich.read_state()
+	rich_quote["effect_text"] = "free dye now"
+	rich_quote["price"] = 1
+	rich_quote["choices"].clear()
+	_check(rich.quote().get("effect_text") == expected_text and rich.quote().get("price") == PRICE
+		and rich.quote().get("choices") == ["buy_dye", "leave"]
+		and rich.read_state() == state_before and rich.is_open(),
+		"mutating a returned quote changes neither the next quote nor read_state")
+	# A buy only appends the item string; no Walk effect is applied or reported.
+	var paid := rich.buy_dye("warden", NODE, rich.read_state())
+	_check(paid.get("ok") == true and paid.get("charged_gold") == PRICE
+		and paid.get("pocket_after") == ["starch", "dye"]
+		and not paid.has("effect_text") and not paid.has("effects")
+		and not paid.has("skip_next_fight_first_strike")
+		and not paid.has("skip_one_curio_trap"),
+		"a buy charges once, appends one dye string and applies no future effect")
+	_check(rich.quote().get("ok", true) == false and rich.quote().get("choices", ["x"]).is_empty()
+		and not rich.quote().has("effect_text"),
+		"a consumed visit quotes nothing, including no effect_text")
+	var left := _open(500)
+	left.leave(NODE, left.read_state())
+	_check(not left.quote().has("effect_text") and not _open(300, 0).quote().has("effect_text"),
+		"closed and invalid visits carry no effect_text")
 
 
 ## AC2: an exact-snapshot buy appends one dye to one pocket only, charges the
