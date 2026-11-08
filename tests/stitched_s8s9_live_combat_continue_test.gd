@@ -189,6 +189,82 @@ func _foe_receipts_since(session: StitchedRunSession, start: int) -> int:
 	return count
 
 
+## True only when the receipt holds this patch effect's own landed entry: never a
+## resisted roll and never a refused status.
+func _landed_status(statuses: Array, effect: String, amount: int) -> bool:
+	for entry in statuses:
+		if str(entry.get("status", "")) == effect and not entry.has("resisted") \
+				and not bool(entry.get("refused", false)) \
+				and int(entry.get("duration", 0)) >= amount:
+			return true
+	return false
+
+
+## True when the receipt records the effect as shrugged off by an S15 foe resist roll.
+func _resisted_status(statuses: Array, effect: String) -> bool:
+	for entry in statuses:
+		if str(entry.get("status", "")) == effect and entry.has("resisted"):
+			return true
+	return false
+
+
+## True only for a receipt entry stamped with this very patch id (heal, steal, cleanse
+## and regen report the patch that produced them explicitly).
+func _patch_entry(statuses: Array, patch_id: String, effect: String) -> bool:
+	for entry in statuses:
+		if str(entry.get("status", "")) == effect and str(entry.get("patch", "")) == patch_id:
+			return true
+	return false
+
+
+## S15-aware witness: the sewn patch really executed on its correct target or actor.
+## A hit with the patches list alone is not enough, a resisted or refused status entry
+## never counts, and the live unit must still carry (or have settled) the effect itself.
+func _patch_witness(patch: Dictionary, receipt: Dictionary, struck: Dictionary, actor: Dictionary) -> bool:
+	if receipt.is_empty() or struck.is_empty() or actor.is_empty() \
+			or str(struck.get("side", "")) != "foe" or bool(struck.get("dead", false)) \
+			or int(struck.get("hp", 0)) <= 0:
+		return false
+	var statuses: Array = receipt.get("statuses", [])
+	var effect := str(patch.get("effect", ""))
+	var amount := int(patch.get("amount", 0))
+	var patch_id := str(patch.get("id", ""))
+	if effect == "regen":
+		return _patch_entry(statuses, patch_id, "regen") \
+			and int(struck.get("statuses", {}).get("regen", 0)) >= amount
+	if effect == "cleanse":
+		if not _patch_entry(statuses, patch_id, "cleanse"):
+			return false
+		for key in ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stun", "rot"]:
+			if int(struck.get("statuses", {}).get(key, 0)) > 0:
+				return false
+		return true
+	if effect == "steal":
+		for entry in statuses:
+			if str(entry.get("status", "")) == "steal" and str(entry.get("patch", "")) == patch_id \
+					and int(entry.get("amount", 0)) > 0:
+					return true
+		return false
+	if effect == "heal":
+		return _patch_entry(statuses, patch_id, "heal") \
+			and int(receipt.get("target_hp", -1)) == int(struck.get("hp", -2))
+	if effect == "guard":
+		for entry in statuses:
+			if str(entry.get("status", "")) == "guard" \
+					and str(entry.get("guards", "")) == str(struck.get("id", "")) \
+					and int(entry.get("duration", 0)) >= amount:
+				return int(actor.get("statuses", {}).get("guard", 0)) >= amount
+		return false
+	if effect == "pull" or effect == "push":
+		var shift: Dictionary = receipt.get("shift", {})
+		return bool(shift.get("ok", false)) and not _resisted_status(statuses, effect) \
+			and int(struck.get("rank", -1)) == int(shift.get("to", -2))
+	if effect == "chain":
+		return bool(receipt.get("chained", false))
+	return _landed_status(statuses, effect, amount) and not _resisted_status(statuses, effect) \
+		and int(struck.get("statuses", {}).get(effect, 0)) >= amount
+
+
 ## One legal fixed S14 signature action through the mounted part buttons and hit
 ## targets only. With preferred_slot set, only that limb may commit.
 func _mounted_commit(corridor: StitchedCorridorFight, session: StitchedRunSession,
@@ -273,6 +349,7 @@ func _run() -> void:
 	_check(session != null and session.seed_value == 3785 and session.heroes.size() == 4
 		and session.walks_enabled and session.s14_enabled and session.is_consistent(),
 		"seed 3785 runs four dolls with Walks and fixed S14 signatures")
+
 	if session == null:
 		_finish(app)
 		return
@@ -282,6 +359,7 @@ func _run() -> void:
 		_finish(app)
 		return
 	await process_frame
+
 	if _junction(app, "post-intro") == null:
 		_finish(app)
 		return
@@ -349,6 +427,7 @@ func _run() -> void:
 		and session.journal.back().get("id") == "collect_gutter_offcuts"
 		and session.is_consistent(),
 		"one authenticated consequential Event receipt grants exactly one scrap and one ability patch")
+
 	var event_settled := session.snapshot()
 	_check(not session.choose_visit("collect_gutter_offcuts", [], before_event)
 		and session.snapshot() == event_settled and session.rng.state == event_settled.rng,
@@ -384,6 +463,7 @@ func _run() -> void:
 	var battle: StitchedRunSession.RankedBattle = session.battle
 	_check(battle.get_foes().size() in [2, 3],
 		"the seeded corridor Fight fields 2-3 live foes, not a fixture mob")
+
 	var fight_start := session.journal.size()
 	# Continue is not offered before a real outcome; its hidden signal cannot exit or spend.
 	var before_early := _state(session, screen)
@@ -439,6 +519,7 @@ func _run() -> void:
 				break
 			attacks += 1
 		await process_frame
+
 	_check(battle.is_over() and battle.outcome() == "victory" and turns < 250 and attacks > 0,
 		"four dolls genuinely win the seeded corridor Fight through mounted controls only")
 	if not battle.is_over() or battle.outcome() != "victory":
@@ -465,6 +546,7 @@ func _run() -> void:
 		and session.ability_inventory.size() == inventory_before_settle.size() + 1
 		and session.scraps == scraps_before + int(receipt.get("reward", {}).get("scraps", 0)),
 		"the victory settlement journals exactly its real random award: one new ability patch and its scraps")
+
 	if _junction(app, "post-victory") == null:
 		_finish(app)
 		return
@@ -516,6 +598,7 @@ func _run() -> void:
 			"ability": signature, "replace": 0}
 		and live_sockets.has(patch_uid) and session.is_consistent(),
 		"one authenticated socket sews the awarded patch onto the warden's head signature for two scraps")
+
 	var leave := _visit_button(app, "leave")
 	_check(leave != null and session.visit_actions().any(func(action: Dictionary):
 			return action.id == "leave" and action.enabled),
@@ -545,6 +628,7 @@ func _run() -> void:
 		_finish(app)
 		return
 	await process_frame
+
 	if not await _walk_to_stop(app, second_id, 4):
 		_finish(app)
 		return
@@ -558,14 +642,89 @@ func _run() -> void:
 		and battle2.state_snapshot().get("s14", {}).get("sockets", {}) \
 		.get("warden", {}).get(signature, []) == [patch_id],
 		"the live second battle carries the sewn patch on the warden's head signature")
-	# Pass other dolls until the warden's mounted head signature lands the sewn patch.
+	# S15: the awarded patch must be a live entry of the current validated patch catalog;
+	# catalog growth is checked by ID presence (the mildew rot patch), never by totals.
+	var patch_catalog := StitchedS14Abilities.patches()
+	var patch_record: Dictionary = patch_catalog.get("by_id", {}).get(patch_id, {})
+	var spore: Dictionary = patch_catalog.get("by_id", {}).get("silk_mildew_spore", {})
+	_check(not patch_record.is_empty() and not spore.is_empty()
+		and str(spore.get("effect", "")) == "rot"
+		and str(patch_record.get("rarity", "")) in StitchedS14Abilities.RARITIES
+		and str(patch_record.get("effect", "")) in StitchedS14Abilities.EFFECTS
+		and int(patch_record.get("amount", 0)) > 0,
+		"the awarded patch is a live entry of the validated S15-aware patch catalog")
+	if patch_record.is_empty() or spore.is_empty():
+		_finish(app)
+		return
+	# S9a: one real mounted Wren hand action at an available doll turn. The no-target
+	# Shield the Candle basic commits straight from its own pressed signal.
+	var hand_id := "shield_candle"
+	var hand_button: TextureButton = corridor2.hand_buttons.get(hand_id)
+	_check(battle2.current_side() == "hero" and battle2.hand_action_open()
+		and hand_button != null and not hand_button.disabled and hand_button.is_visible_in_tree(),
+		"the second Fight opens on a doll turn with the mounted free-hand control enabled")
+	if battle2.current_side() != "hero" or not battle2.hand_action_open() \
+			or hand_button == null or hand_button.disabled:
+		_finish(app)
+		return
+
+	var hand_round := battle2.round_number()
+	var hand_actor := str(battle2.current_actor_id())
+	var hand_turn := int(battle2.state_snapshot()["turn_index"])
+	var hand_journal := session.journal.size()
+	var hand_receipt_count := battle2.hand_receipts().size()
+	if not _press(hand_button, "mounted Wren Shield the Candle hand action"):
+		_finish(app)
+		return
+	await process_frame
+	var hand_receipts_now: Array = battle2.hand_receipts()
+	var hand_receipt: Dictionary = hand_receipts_now.back() if not hand_receipts_now.is_empty() else {}
+	_check(not battle2.hand_action_open()
+		and battle2.round_number() == hand_round and battle2.candle_shielded()
+		and session.journal.size() == hand_journal + 1
+		and session.journal.back() == {"action": "battle", "method": "use_hand_action",
+			"arguments": [hand_id, "", 0]}
+		and hand_receipts_now.size() == hand_receipt_count + 1
+		and bool(hand_receipt.get("ok")) and str(hand_receipt.get("hand_action", "")) == hand_id
+		and int(hand_receipt.get("round", -1)) == hand_round
+		and int(hand_receipt.get("fear", -1)) == session.kid_fear()
+		and str(battle2.current_actor_id()) == hand_actor
+		and int(battle2.state_snapshot()["turn_index"]) == hand_turn
+		and session.is_consistent(),
+		"one real mounted hand action spends exactly the round's free hand, never the doll's turn")
+
+	# Replayed, forged and stale hand requests refuse atomically: no journal command, no
+	# extra receipt, no RNG draw and no state mutation in that same round.
+	var after_hand := _state(session, screen2)
+	var replayed_hand := battle2.use_hand_action(hand_id, "", 0)
+	var forged_hand := battle2.use_hand_action("forged_hand", "", 0)
+	var stale_hand := battle2.use_hand_action(hand_id, "warden", 0)
+	var stale_direction := battle2.use_hand_action(hand_id, "", 1)
+	_check(not replayed_hand.get("ok", true) and not forged_hand.get("ok", true)
+		and not stale_hand.get("ok", true) and not stale_direction.get("ok", true)
+		and session.journal.size() == hand_journal + 1
+		and battle2.hand_receipts().size() == hand_receipt_count + 1
+		and session.rng.state == after_hand.run_rng
+		and _state(session, screen2) == after_hand and session.is_consistent(),
+		"replayed, forged and stale hand requests refuse without journal, RNG or state drift")
+	# Pass other dolls until the warden's mounted head signature lands the sewn patch with
+	# a genuinely applied effect: under the S15 resist contracts a mere hit, a patches list
+	# or a resisted status entry is not a witness; bounded lawful mounted turns may be needed.
 	var confirmed: Dictionary = {}
 	var cast_turns := 0
-	while not battle2.is_over() and cast_turns < 250:
+	var unwitnessed_casts := 0
+	var hand_reopen_checked := false
+	while confirmed.is_empty() and not battle2.is_over() and cast_turns < 250:
 		cast_turns += 1
 		if battle2.current_side() != "hero":
 			_check(false, "the second engine returns to a playable doll turn")
 			break
+		# A new round lawfully reopens the free hand budget; it is never a duplicate spend.
+		if not hand_reopen_checked and battle2.round_number() != hand_round:
+			_check(battle2.hand_action_check(hand_id, "", 0) \
+					!= "Wren's hand action is spent this round",
+				"a new round reopens the free hand budget: the spend is never a replay")
+			hand_reopen_checked = true
 		var actor_id := str(battle2.get_unit(battle2.current_actor_id()).get("id", ""))
 		var commit := {}
 		if actor_id == "warden":
@@ -573,28 +732,37 @@ func _run() -> void:
 		if commit.is_empty():
 			if not _press(corridor2.more_button, "second corridor More for Pass") \
 					or not _press(corridor2.more_buttons["pass"], "mounted Pass awaiting the warden"):
-				break
+					break
 		else:
 			_check(commit.ok and str(commit.signature) == signature,
 				"the warden's mounted head button commits its own fixed S14 signature")
-			if commit.ok:
+			if not commit.ok:
+				break
+			if not commit.results.is_empty():
 				var struck: Dictionary = commit.results[0]
-				if bool(struck.get("hit")) and (struck.get("patches", []) as Array).has(patch_id):
+				var struck_live: Dictionary = session.battle.get_unit(str(struck.get("target", "")))
+
+				if bool(struck.get("hit")) and (struck.get("patches", []) as Array).has(patch_id) \
+						and _patch_witness(patch_record, struck, struck_live, \
+							session.battle.get_unit("warden")):
 					confirmed = commit
 					break
+			unwitnessed_casts += 1
 		await process_frame
+	var struck_receipt: Dictionary = confirmed.results[0] if not confirmed.is_empty() else {}
+	var struck_unit: Dictionary = session.battle.get_unit(str(confirmed.struck)) if not confirmed.is_empty() else {}
 	_check(not confirmed.is_empty() and confirmed.ok
 		and str(confirmed.signature) == signature
-		and bool(confirmed.results[0].get("hit"))
-		and confirmed.results[0].get("patches", []) == [patch_id]
-		and not (confirmed.results[0].get("statuses", []) as Array).is_empty()
-		and str(session.battle.get_unit(str(confirmed.struck)).get("side", "")) == "foe",
-		"the sewn-on patch rides the warden's legal fixed head signature onto the struck foe with real statuses")
+		and bool(struck_receipt.get("hit"))
+		and struck_receipt.get("patches", []) == [patch_id]
+		and _patch_witness(patch_record, struck_receipt, struck_unit, \
+			session.battle.get_unit("warden"))
+		and str(struck_unit.get("side", "")) == "foe",
+		"the sewn-on patch rides the warden's legal fixed head signature onto a live foe and truly applies its effect (%d unwitnessed casts)" % unwitnessed_casts)
 	if confirmed.is_empty():
 		_finish(app)
 		return
-	print("S8S9_LIVE_COMBAT seed=3785 patch=%s signature=%s struck=%s" % [
-		patch_id, signature, str(confirmed.struck)])
+
 	# The next doll cannot replay the warden's already-spent head part.
 	var warden_head_part := str(battle2.get_unit("warden").get("parts", {}).get("head", {}).get("id", ""))
 	var next_actor := str(battle2.get_unit(battle2.current_actor_id()).get("id", ""))
@@ -603,17 +771,40 @@ func _run() -> void:
 	_check(next_actor != "warden" and duplicate.get("ok") == false
 		and _state(session, screen2) == before_duplicate and session.is_consistent(),
 		"another doll cannot spend the warden's head part: the replay is refused without drift")
-	# Save only through the live corridor control, then compare the next mounted command.
+	# Save only through the live corridor control, after the real hand and patch evidence,
+	# then compare the next mounted command.
 	_press(corridor2.more_button, "corridor More for Save")
 	_check(corridor2.more_panel.visible, "Save is on the mounted More panel")
 	_press(corridor2.more_buttons["save"], "corridor Save run")
 	var saved := _state(session, screen2)
+	var saved_hand: Dictionary = saved.battle.get("hand", {})
+	var saved_fear: Dictionary = saved.snapshot.get("kid_fear", {})
+	var saved_heroes: Array = saved.snapshot.get("heroes", [])
+	var saved_gold := int(saved.snapshot.get("gold", -1))
+	var saved_scraps := int(saved.snapshot.get("scraps", -1))
+	var saved_candle := int(saved.snapshot.get("candle", -1))
 	var document := StitchedRunSave.read_file(SAVE_PATH)
+	var saved_document: Dictionary = document.snapshot() if document != null else {}
 	_check(FileAccess.file_exists(SAVE_PATH) and document != null
-		and document.snapshot() == saved.snapshot and document.journal == saved.journal
+		and saved_document == saved.snapshot and document.journal == saved.journal
 		and document.rng.state == saved.run_rng
-		and saved.battle.get("s14", {}).get("sockets", {}).get("warden", {}).get(signature, []) == [patch_id],
-		"mid-Fight save captures the full battle, sewn sockets, journal and RNG")
+		and saved.battle.get("s14", {}).get("sockets", {}).get("warden", {}).get(signature, []) == [patch_id]
+		and not saved_hand.is_empty()
+		and int(saved_hand.get("round_used", -1)) == hand_round
+		and int(saved_hand.get("shield_round", -2)) == hand_round
+		and (saved_hand.get("spent", [false]) as Array).is_empty()
+		and (saved_hand.get("receipts", []) as Array).size() == hand_receipt_count + 1
+		and str((saved_hand.get("receipts", [{}]) as Array)[0].get("hand_action", "")) == hand_id
+		and saved_document.get("battle", {}).get("hand", {}) == saved_hand
+		and saved_document.get("kid_fear", {}) == saved_fear
+		and saved_document.get("heroes", []) == saved_heroes
+		and int(saved_document.get("gold", -2)) == saved_gold
+		and int(saved_document.get("scraps", -2)) == saved_scraps
+		and int(saved_document.get("candle", -2)) == saved_candle
+		and saved_document.get("s14", {}).get("sockets", {}) \
+			== saved.snapshot.get("s14", {}).get("sockets", {}),
+		"mid-Fight save captures the battle hand budget and receipts, sewn sockets, fear, limb conditions, currencies, journal and RNG")
+
 	var prior_count := session.journal.size()
 	if not corridor2.more_panel.visible:
 		_press(corridor2.more_button, "uninterrupted More for next Pass")
@@ -630,6 +821,7 @@ func _run() -> void:
 	var fresh := _app(999)
 	await process_frame
 	await process_frame
+
 	_check(fresh.title_view.visible and fresh.stitched_run_session == null,
 		"fresh independent application starts at title")
 	_press(fresh.stitched_continue_button, "fresh title Continue")
@@ -642,8 +834,14 @@ func _run() -> void:
 	_check(restored != session and restored.snapshot() == saved.snapshot and restored.journal == saved.journal
 		and restored.rng.state == saved.run_rng and restored.battle.state_snapshot() == saved.battle
 		and restored.battle.state_snapshot().get("s14", {}).get("sockets", {}).get("warden", {}) \
-		.get(signature, []) == [patch_id],
-		"Continue restores the exact run, battle, sewn sockets, journal and RNG")
+		.get(signature, []) == [patch_id]
+		and restored.battle.state_snapshot().get("hand", {}) == saved_hand
+		and restored.battle.hand_receipts() == (saved_hand.get("receipts", []) as Array)
+		and restored.kid_fear() == int(saved_fear.get("fear", -1))
+		and restored.heroes == saved_heroes
+		and restored.gold == saved_gold and restored.scraps == saved_scraps
+		and restored.candle == saved_candle,
+		"Continue restores the exact run, battle, hand budget and receipts, sewn sockets, fear, limb conditions, currencies, journal and RNG")
 	var restored_screen: StitchedBattleScreen = restored_corridor.engine
 	var before_restored_count := restored.journal.size()
 	_press(restored_corridor.more_button, "resumed More for next Pass")
@@ -651,8 +849,11 @@ func _run() -> void:
 	await process_frame
 	_check(restored.snapshot() == expected and restored.rng.state == expected.rng
 		and restored.journal.slice(before_restored_count) == expected_journal
-		and restored_screen.receipts == expected_receipts and restored.is_consistent(),
-		"resumed next mounted action exactly matches uninterrupted combat, foe turns and RNG")
+		and restored_screen.receipts == expected_receipts and restored.is_consistent()
+		and restored.battle.state_snapshot().get("hand", {}) \
+			== expected.get("battle", {}).get("hand", {}),
+		"resumed next mounted action exactly matches uninterrupted combat, hand budget, foe turns and RNG")
+
 	_finish(fresh)
 
 
