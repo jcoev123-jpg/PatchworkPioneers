@@ -56,6 +56,29 @@ func _key(code: Key) -> void:
 		await _key_event(code, down)
 
 
+## Godot's real joypad events, not a direct call to the picker or a fake toggle.
+func _joy_event(button: JoyButton, down: bool) -> void:
+	var event := InputEventJoypadButton.new()
+	event.device = 0
+	event.button_index = button
+	event.pressed = down
+	event.pressure = 1.0 if down else 0.0
+	Input.parse_input_event(event)
+	await process_frame
+
+
+func _shoulder(button: JoyButton) -> void:
+	await _joy_event(button, true)
+	await _joy_event(button, false)
+
+
+func _pad_accept() -> void:
+	# Project's native ui_accept maps joypad south/A to the original Button.
+	await _joy_event(JOY_BUTTON_A, true)
+	await _joy_event(JOY_BUTTON_A, false)
+	await process_frame
+
+
 func _picker(app: Node) -> StitchedRunPartyPicker:
 	if not is_instance_valid(app.stitched_run_panel):
 		_check(false, "production picker exists")
@@ -510,6 +533,194 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 	return fresh
 
 
+## Shoulder buttons traverse the real current GridContainer positions. Native
+## joypad A must use the original Button toggled path, not a synthetic signal.
+## Return a new title-mounted picker for all pre-existing regression scenarios.
+func _exercise_shoulders(app: Node, picker: StitchedRunPartyPicker) -> StitchedRunPartyPicker:
+	var originals: Dictionary = picker.tiles.duplicate()
+	var actions: Array[Button] = app.stitched_run_buttons.duplicate()
+	var action_children: int = actions[0].get_parent().get_child_count()
+	var page_children: int = app.stitched_run_panel.get_child_count()
+	var initial: Array = _visual_tile_ids(picker)
+	var initial_picks: Array = picker.selected_ids()
+	var receipts: Array = []
+	picker.draft_changed.connect(func(picks: Array) -> void: receipts.append(picks.duplicate()))
+	var wallet_before := [app.session_gold, app.run_scraps]
+	seed(44319)
+	var expected_global := randi()
+	seed(44319)
+	_check(initial.size() == 8 and picker.get_child_count() == 8
+		and initial == StitchedPartyAdmission.HERO_IDS
+		and actions.size() == 2 and actions[0].text == "Set out" and actions[1].text == "Cancel"
+		and app.stitched_run_panel.get_meta("page_kind", "") == "picker",
+		"controller witness starts on eight genuine original tiles and the real page actions")
+	var native_accept := InputEventJoypadButton.new()
+	native_accept.button_index = JOY_BUTTON_A
+	native_accept.pressed = true
+	var keyboard_accept := InputEventKey.new()
+	keyboard_accept.keycode = KEY_ENTER
+	keyboard_accept.pressed = true
+	var space_accept := InputEventKey.new()
+	space_accept.keycode = KEY_SPACE
+	space_accept.pressed = true
+	_check(InputMap.event_is_action(native_accept, "ui_accept")
+		and InputMap.event_is_action(keyboard_accept, "ui_accept")
+		and InputMap.event_is_action(space_accept, "ui_accept"),
+		"the actual native ui_accept maps joypad A while retaining Enter and Space")
+	# A non-press and repeated down do not produce extra movement.
+	originals[initial[0]].grab_focus()
+	await _joy_event(JOY_BUTTON_RIGHT_SHOULDER, false)
+	_check(originals[initial[0]].has_focus(), "shoulder release without press never moves focus")
+	await _joy_event(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(originals[initial[1]].has_focus(), "first right-shoulder down enters next pictured tile")
+	await _joy_event(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(originals[initial[1]].has_focus(), "held/repeated right-shoulder down cannot move twice")
+	await _joy_event(JOY_BUTTON_RIGHT_SHOULDER, false)
+	for i in range(1, 8):
+		await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+		_check(root.gui_get_focus_owner() == originals[initial[(i + 1) % 8]],
+			"right-shoulder edge %d follows original row-major visual child and wraps" % (i + 1))
+	for i in range(8):
+		await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+		_check(root.gui_get_focus_owner() == originals[initial[(7 - i + 8) % 8]],
+			"left-shoulder edge %d follows original row-major visual child and wraps" % (i + 1))
+	_check(receipts.is_empty() and picker.selected_ids() == initial_picks
+		and app.stitched_run_draft == initial_picks and picker.tiles_match_draft(),
+		"all sixteen shoulder edges and repeats move focus only, with no draft receipt")
+	# Both existing page actions are valid entry points but must never activate.
+	actions[0].grab_focus()
+	await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+	_check(originals[initial[0]].has_focus() and app.stitched_run_session == null,
+		"right shoulder from focused original Set out enters first tile without starting")
+	actions[1].grab_focus()
+	await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+	_check(originals[initial[7]].has_focus() and app.stitched_run_panel.is_visible_in_tree(),
+		"left shoulder from focused original Cancel enters last tile without cancelling")
+	# Focus in the page but not an authenticated tile/action must be ignored.
+	var heading := app.stitched_run_panel.find_child("StitchedPageHeading", true, false) as Label
+	if heading != null:
+		var old_mode := heading.focus_mode
+		heading.focus_mode = Control.FOCUS_ALL
+		heading.grab_focus()
+		_check(heading.has_focus(), "negative shoulder witness genuinely focuses the existing heading")
+		await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+		_check(heading.has_focus() and receipts.is_empty(),
+			"shoulder ignores a different real page control, not just null focus")
+		heading.focus_mode = old_mode
+	root.gui_release_focus()
+	_check(root.gui_get_focus_owner() == null, "controller null-focus witness is genuine")
+	await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+	_check(root.gui_get_focus_owner() == null, "shoulder cannot invent focus from nowhere")
+	originals[initial[0]].grab_focus()
+	var epoch: int = app._stitched_run_epoch
+	app._stitched_run_epoch += 1
+	await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+	_check(originals[initial[0]].has_focus() and receipts.is_empty(),
+		"stale picker epoch refuses shoulder navigation")
+	app._stitched_run_epoch = epoch
+	app.stitched_run_panel.set_meta("page_kind", "other")
+	await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+	_check(originals[initial[0]].has_focus() and receipts.is_empty(),
+		"non-picker page kind refuses shoulder navigation")
+	app.stitched_run_panel.set_meta("page_kind", "picker")
+	picker.hide()
+	await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+	_check(receipts.is_empty() and picker.selected_ids() == initial_picks,
+		"hidden picker never changes its draft from shoulders")
+	picker.show()
+	await process_frame
+	originals["warden"].grab_focus()
+	# South/A is the native ui_accept event on the currently focused tile.
+	await _pad_accept()
+	var incomplete := ["seamstress", "tinker", "lantern_monk"]
+	_check(picker.selected_ids() == incomplete and app.stitched_run_draft == incomplete
+		and not originals["warden"].button_pressed and receipts == [incomplete]
+		and actions[0].disabled and actions[0].focus_mode == Control.FOCUS_NONE,
+		"native joypad Accept unchecks the focused Warden with exactly one authentic draft_changed")
+	_check_order(picker, incomplete,
+		["warden", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
+		"shoulder incomplete draft visual order")
+	originals["warden"].grab_focus()
+	var incomplete_order: Array = _visual_tile_ids(picker)
+	for i in range(8):
+		await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+		var source: int = incomplete_order.find("warden")
+		_check(root.gui_get_focus_owner() == originals[incomplete_order[(source + i + 1) % 8]],
+			"incomplete reflow shoulder edge %d follows latest real child position" % (i + 1))
+	originals["rag_duelist"].grab_focus()
+	await _pad_accept()
+	var four := ["seamstress", "tinker", "lantern_monk", "rag_duelist"]
+	var admission := StitchedPartyAdmission.admit(four)
+	_check(admission.get("ok") == true and admission.get("hero_ids", []) != four
+		and picker.selected_ids() == four and app.stitched_run_draft == four
+		and originals["rag_duelist"].button_pressed and receipts == [incomplete, four]
+		and not actions[0].disabled and picker.tiles_match_draft(),
+		"second native joypad Accept checks original Rag tile once and restores four admitted picks")
+	_check_order(picker, admission.get("hero_ids", []),
+		["warden", "scarecrow", "yarn_ranger", "button_golem"],
+		"shoulder four-doll canonical reflow")
+	var canonical_order: Array = _visual_tile_ids(picker)
+	originals[canonical_order[0]].grab_focus()
+	for i in range(8):
+		await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+		_check(root.gui_get_focus_owner() == originals[canonical_order[(7 - i + 8) % 8]],
+			"canonical reflow left-shoulder edge %d follows pictured order" % (i + 1))
+	for i in range(8):
+		await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+		_check(root.gui_get_focus_owner() == originals[canonical_order[(i + 1) % 8]],
+			"canonical reflow right-shoulder edge %d follows pictured order" % (i + 1))
+	originals["scarecrow"].grab_focus()
+	await _pad_accept()
+	_check(not originals["scarecrow"].button_pressed and picker.selected_ids() == four
+		and app.stitched_run_draft == four and receipts == [incomplete, four]
+		and picker.displayed_rank_ids() == admission.get("hero_ids", []),
+		"native joypad Accept on fifth doll cannot evict a chosen quartet or emit a draft")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(picker.tiles[id] == originals[id] and originals[id].get_parent() == picker
+			and originals[id].get_child_count() == 2
+			and originals[id].get_node("Portrait").get_meta("art_path")
+				== "res://assets/paper/heroes/" + id + ".png"
+			and originals[id].get_node("DollName") is Label,
+			"controller retains original portrait/name Button and art path for " + id)
+	_check(picker.get_child_count() == 8 and actions[0].get_parent().get_child_count() == action_children
+		and app.stitched_run_panel.get_child_count() == page_children
+		and app.stitched_run_buttons == actions
+		and app.stitched_run_session == null and app.run_rng == null and app.run_map == null
+		and app.deck == null and app.run_deck.is_empty()
+		and [app.session_gold, app.run_scraps] == wallet_before
+		and not FileAccess.file_exists(SAVE) and randi() == expected_global,
+		"all focus browsing and native selection remain child, save, wallet and RNG neutral")
+	# The same original Set out Button must admit the canonical rank order.
+	await _mouse(actions[0])
+	var session: StitchedRunSession = app.stitched_run_session
+	var expected := StitchedRunSession.start(7311, four)
+	var actual_ranks: Array = []
+	if session != null:
+		for hero in session.heroes:
+			actual_ranks.append(hero.id)
+	_check(session != null and expected != null and session.is_consistent()
+		and session.picks == four and actual_ranks == admission.get("hero_ids", [])
+		and session.snapshot() == expected.snapshot() and app.stitched_run_intro != null,
+		"original Set out starts identical seeded session from controller-chosen canonical ranks")
+	app._return_stitched_run_title()
+	await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
+	await process_frame
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and app.stitched_run_draft.is_empty()
+		and app.start_button.has_focus(),
+		"removed/retired picker cannot capture a shoulder or reactivate a run")
+	await _shoulder(JOY_BUTTON_LEFT_SHOULDER)
+	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus()
+		and app.stitched_run_panel == null and not FileAccess.file_exists(SAVE),
+		"title shoulder input never reopens the picker or changes save")
+	await _mouse(app.start_button)
+	var fresh := _picker(app)
+	_check(fresh != null and fresh != picker
+		and fresh.selected_ids() == StitchedRunSession.DEFAULT_PICKS,
+		"controller exercise returns fresh authored defaults for existing regressions")
+	return fresh
+
+
 ## Exercise physical top-row digits on the actual title-mounted picker. A fresh
 ## picker is returned so the existing pointer, focus, Warden and replay tests
 ## still drive their original production route and controls.
@@ -682,6 +893,12 @@ func _run() -> void:
 		_finish()
 		return
 	await process_frame
+	_default(picker, app)
+	picker = await _exercise_shoulders(app, picker)
+	if picker == null:
+		app.free()
+		_finish()
+		return
 	_default(picker, app)
 	picker = await _exercise_number_shortcuts(app, picker)
 	if picker == null:
