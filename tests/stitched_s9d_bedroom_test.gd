@@ -56,8 +56,10 @@ func _ended(phase: String) -> StitchedRunSession:
 func _record_rules() -> void:
 	var fresh := StitchedBedroomRecord.fresh()
 	_check(StitchedBedroomRecord.valid(fresh), "first night record is valid")
-	_check(StitchedBedroomRecord.after_run(fresh, StitchedRunSession.start(42)) == fresh,
-		"a run still on the road does not end a night")
+	var unfinished := StitchedRunSession.start(42)
+	unfinished.heroes[0].parts.arms.torn = true
+	_check(StitchedBedroomRecord.after_run(fresh, unfinished) == fresh,
+		"a run still on the road does not end a night even with a torn arm")
 	var lost := StitchedBedroomRecord.after_run(fresh, _ended("defeat"))
 	_check(lost.nights == 1 and lost.outcome == "defeat" and lost.dolls.size() == 4,
 		"a lost run ends one night and remembers the four dolls")
@@ -66,6 +68,42 @@ func _record_rules() -> void:
 	var won := StitchedBedroomRecord.after_run(lost, _ended("victory"))
 	_check(won.nights == 2 and won.outcome == "victory" and not won.dolls.warden.lost,
 		"the next night replaces the last party")
+	var torn_session := StitchedRunSession.start(42)
+	_check(torn_session.heroes.size() == StitchedPartyAdmission.RANK_COUNT
+		and str(torn_session.heroes[0].id) == "warden"
+		and str(torn_session.heroes[1].id) == "seamstress"
+		and str(torn_session.heroes[2].id) == "tinker",
+		"seeded outing contains the actual first four participating dolls")
+	for hero in torn_session.heroes:
+		_check(int(hero.hp) > 0 and hero.parts.has("arms") and hero.parts.has("legs"),
+			"worn limbs exist on a positive-HP outing participant")
+	torn_session.heroes[0].parts.arms.torn = true
+	torn_session.heroes[1].parts.legs.torn = true
+	torn_session.heroes[2].parts.arms.torn = true
+	torn_session.heroes[2].parts.legs.torn = true
+	torn_session.heroes[0].fray = 177
+	torn_session.phase = "victory"
+	var torn_record := StitchedBedroomRecord.after_run(fresh, torn_session)
+	_check(torn_record.nights == 1 and torn_record.outcome == "victory"
+		and torn_record.deepest == clampi(torn_session.map.get_current_floor(), 0, StitchedBedroomRecord.FLOORS)
+		and torn_record.dolls.size() == torn_session.heroes.size()
+		and torn_record.dolls.warden.fray == 177,
+		"one completed torn night preserves outcome, depth, fray and real participants")
+	_check(torn_record.dolls.warden.get("torn_slots", []) == ["arms"]
+		and torn_record.dolls.seamstress.get("torn_slots", []) == ["legs"]
+		and torn_record.dolls.tinker.get("torn_slots", []) == ["arms", "legs"]
+		and not torn_record.dolls.lantern_monk.has("torn_slots")
+		and not torn_record.dolls.has("scarecrow"),
+		"actual worn tears are captured in stable slot order; intact/stayed home stay intact")
+	var detached := StitchedBedroomRecord.after_run(torn_record, StitchedRunSession.start(42))
+	_check(detached == torn_record and detached.nights == 1,
+		"unfinished next outing neither counts nor changes torn history")
+	detached.dolls.warden.torn_slots.clear()
+	_check(torn_record.dolls.warden.torn_slots == ["arms"],
+		"returning an unchanged history still deep-copies recorded tears")
+	torn_session.heroes[0].parts.arms.torn = false
+	_check(torn_record.dolls.warden.torn_slots == ["arms"],
+		"source run mutations cannot rewrite a completed last outing")
 	var broken := fresh.duplicate(true)
 	broken.dolls = {"not_a_doll": {"fray": 0, "lost": false, "hanging": false}}
 	_check(not StitchedBedroomRecord.valid(broken), "unknown dolls are refused")
@@ -73,7 +111,42 @@ func _record_rules() -> void:
 	_check(StitchedBedroomRecord.load_file(TEST_SAVE) == fresh, "no file is a first night")
 	_check(StitchedBedroomRecord.save_file(TEST_SAVE, lost) and StitchedBedroomRecord.load_file(TEST_SAVE) == lost,
 		"the record survives a save and load")
+	_check(StitchedBedroomRecord.save_file(TEST_SAVE, torn_record)
+		and StitchedBedroomRecord.load_file(TEST_SAVE) == torn_record,
+		"the same v1 save/load round trip preserves all three torn-slot combinations")
+	var legacy := lost.duplicate(true)
+	_check(StitchedBedroomRecord.valid(legacy) and not legacy.dolls.tinker.has("torn_slots"),
+		"older v1 aftermath has no optional tear field")
 	var file := FileAccess.open(TEST_SAVE, FileAccess.WRITE)
+	file.store_string(JSON.stringify(legacy))
+	file.close()
+	_check(StitchedBedroomRecord.load_file(TEST_SAVE) == legacy,
+		"legacy v1 JSON without torn_slots loads with all its old conditions intact")
+	for malformed in [["torso"], ["head"], ["arms", "arms"], [42], ["legs", false], "arms", 42]:
+		var invalid := torn_record.duplicate(true)
+		invalid.dolls.warden["torn_slots"] = malformed
+		_check(not StitchedBedroomRecord.valid(invalid)
+			and not StitchedBedroomRecord.save_file(TEST_SAVE, invalid),
+			"unknown, repeated or malformed optional torn_slots fail closed: %s" % str(malformed))
+		file = FileAccess.open(TEST_SAVE, FileAccess.WRITE)
+		file.store_string(JSON.stringify(invalid))
+		file.close()
+		_check(StitchedBedroomRecord.load_file(TEST_SAVE) == fresh,
+			"tampered v1 JSON cannot load fabricated torn slots: %s" % str(malformed))
+	var file_empty_slots := torn_record.duplicate(true)
+	file_empty_slots.dolls.warden.torn_slots = []
+	_check(StitchedBedroomRecord.valid(file_empty_slots),
+		"optional empty tear list is valid and does not fabricate an injury")
+	file = FileAccess.open(TEST_SAVE, FileAccess.WRITE)
+	file.store_string(JSON.stringify(torn_record.duplicate(true).merged({"version": 20}, true)))
+	file.close()
+	_check(StitchedBedroomRecord.load_file(TEST_SAVE) == fresh,
+		"incorrect bedroom record versions fail closed")
+	file = FileAccess.open(TEST_SAVE, FileAccess.WRITE)
+	file.store_string("not json!!")
+	file.close()
+	_check(StitchedBedroomRecord.load_file(TEST_SAVE) == fresh, "invalid JSON fails closed")
+	file = FileAccess.open(TEST_SAVE, FileAccess.WRITE)
 	file.store_string("{\"version\": 1, \"nights\": -3}")
 	file.close()
 	_check(StitchedBedroomRecord.load_file(TEST_SAVE) == fresh, "a broken file is a first night")
@@ -174,6 +247,77 @@ func _room_rules() -> void:
 		and ledger.status_labels.warden.text == "LOST"
 		and not ledger.status_labels.has("seamstress"),
 		"tin shows only dolls actually lost; hanging does not count")
+	# Recorded surviving tears outrank even deep Fray, on the same authored shelf art.
+	var torn_session := StitchedRunSession.start(42)
+	torn_session.phase = "defeat"
+	torn_session.heroes[0].parts.arms.torn = true
+	torn_session.heroes[0].fray = 165
+	torn_session.heroes[1].parts.legs.torn = true
+	torn_session.heroes[2].parts.arms.torn = true
+	torn_session.heroes[2].parts.legs.torn = true
+	torn_session.heroes[3].fray = 110
+	var torn_record := StitchedBedroomRecord.after_run(StitchedBedroomRecord.fresh(), torn_session)
+	room.present(torn_record)
+	for id in ["warden", "seamstress", "tinker"]:
+		_check(room.doll_pose(id) == "side"
+			and room.dolls[id].texture != null
+			and is_equal_approx(room.dolls[id].rotation, -PI * 0.5)
+			and not room.dolls[id].flip_h
+			and room.dolls[id].get_meta("pose") == "side",
+			"surviving %s with real torn limb lies on its existing shelf portrait" % id)
+	_check(room.doll_pose("lantern_monk") == "slumped"
+		and room.doll_pose("scarecrow") == "upright",
+		"intact frayed and never-selected dolls keep original shelf poses")
+	room.spot("shelf").focus_entered.emit()
+	_check(ledger.visible and ledger.status_labels.warden.text == "FRAY 165/200\nTORN ARM"
+		and ledger.status_labels.seamstress.text == "FRAY 0/200\nTORN LEG"
+		and ledger.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG"
+		and ledger.status_labels.lantern_monk.text == "FRAY 110/200\nSLUMPED"
+		and ledger.status_labels.scarecrow.text == "STAYED HOME",
+		"shelf keyboard readout names exact torn limbs, above Fray 150, without inventing injuries")
+	room.spot("shelf").focus_exited.emit()
+	room.spot("shelf").mouse_entered.emit()
+	_check(ledger.visible and ledger.status_labels.warden.text.ends_with("TORN ARM")
+		and ledger.status_labels.tinker.text.ends_with("TORN ARM, LEG"),
+		"existing shelf hover presents the same qualitative injuries as focus")
+	room.spot("shelf").mouse_exited.emit()
+	room.spot("tin").focus_entered.emit()
+	_check(ledger.entry_order.is_empty() and ledger.empty_label.text == "No dolls lost on the last outing",
+		"a living torn survivor never appears in the tin")
+	room.spot("tin").focus_exited.emit()
+	var outranked := torn_record.duplicate(true)
+	outranked.dolls.warden.lost = true
+	outranked.dolls.seamstress.hanging = true
+	room.present(outranked)
+	_check(room.doll_pose("warden") == "tin" and room.doll_pose("seamstress") == "side"
+		and room.dolls.warden.get_meta("pose") == "tin",
+		"LOST beats torn; HANGING keeps its side pose when also torn")
+	room.spot("shelf").focus_entered.emit()
+	_check(ledger.status_labels.warden.text == "LOST"
+		and ledger.status_labels.seamstress.text == "HANGING BY A THREAD",
+		"LOST and HANGING status labels take precedence over torn slots")
+	room.spot("shelf").focus_exited.emit()
+	room.spot("tin").mouse_entered.emit()
+	_check(ledger.entry_order == ["warden"] and not ledger.status_labels.has("tinker"),
+		"only actual LOST appears in the tin despite other torn participants")
+	room.spot("tin").mouse_exited.emit()
+	var legacy := record.duplicate(true)
+	_check(StitchedBedroomRecord.save_file(TEST_SAVE, legacy),
+		"older v1 unmodified record saves through the bedroom file boundary")
+	var loaded_legacy := StitchedBedroomRecord.load_file(TEST_SAVE)
+	DirAccess.remove_absolute(TEST_SAVE)
+	_check(loaded_legacy == legacy and not loaded_legacy.dolls.tinker.has("torn_slots"),
+		"the legacy fixture reloads without inventing a missing tear")
+	room.present(loaded_legacy)
+	_check(room.doll_pose("tinker") == "slumped"
+		and room.doll_pose("lantern_monk") == "wall",
+		"legacy v1 record without optional tear keys retains old fray poses")
+	room.spot("shelf").mouse_entered.emit()
+	_check(ledger.status_labels.tinker.text == "FRAY 120/200\nSLUMPED"
+		and ledger.status_labels.lantern_monk.text == "FRAY 160/200\nFACING WALL",
+		"legacy v1 shelf labels remain unchanged")
+	room.spot("shelf").mouse_exited.emit()
+	room.spot("tin").mouse_entered.emit()
 	record = StitchedBedroomRecord.after_run(record, _ended("victory"))
 	room.present(record)
 	_check(room.is_morning() and room.backdrop.texture.resource_path == StitchedBedroom.MORNING_ART,
@@ -477,11 +621,27 @@ func _live_base(app: Node) -> void:
 	_check(session != null and not is_instance_valid(app.base_screen), "the door opens onto a run")
 	if session == null:
 		return
+	# Mutate the actual worn parts on the live selected party before the normal
+	# win sealing and end-of-run callback; no test-only bedroom injection.
+	_check(session.heroes.size() == StitchedPartyAdmission.RANK_COUNT
+		and session.heroes[0].id == "warden" and session.heroes[1].id == "seamstress",
+		"mounted run has the actual selected Wren dolls")
+	_check(int(session.heroes[0].hp) > 0 and int(session.heroes[1].hp) > 0
+		and session.heroes[0].parts.has("arms") and session.heroes[1].parts.has("legs"),
+		"mounted torn participants are alive and wear the real selected limbs")
+	session.heroes[0].parts.arms.torn = true
+	session.heroes[1].parts.legs.torn = true
+	session.heroes[2].parts.arms.torn = true
+	session.heroes[2].parts.legs.torn = true
 	session.phase = "victory"
 	session._seal()
 	app._present_stitched_run()
 	await process_frame
-	_check(app.bedroom_record.nights == 1 and app.bedroom_record.outcome == "victory", "the won night is counted once")
+	_check(app.bedroom_record.nights == 1 and app.bedroom_record.outcome == "victory"
+		and app.bedroom_record.dolls.warden.get("torn_slots", []) == ["arms"]
+		and app.bedroom_record.dolls.seamstress.get("torn_slots", []) == ["legs"]
+		and app.bedroom_record.dolls.tinker.get("torn_slots", []) == ["arms", "legs"],
+		"real run completion counts once and captures three living torn conditions")
 	app._present_stitched_run()
 	_check(app.bedroom_record.nights == 1, "redrawing the end page does not count again")
 	var back: Button = null
@@ -503,8 +663,32 @@ func _live_base(app: Node) -> void:
 		"mounted victory tin reports no losses after the actual return")
 	view.bedroom.spot("shelf").grab_focus()
 	await process_frame
-	_check(view.bedroom.inspector.status_labels.warden.text == "FRAY 0/200",
-		"mounted victory shelf reads the current last-outing record")
+	_check(view.bedroom.spot("shelf").has_focus() and view.bedroom.inspector.visible
+		and view.bedroom.inspector.status_labels.warden.text == "FRAY 0/200\nTORN ARM"
+		and view.bedroom.inspector.status_labels.seamstress.text == "FRAY 0/200\nTORN LEG"
+		and view.bedroom.inspector.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG"
+		and view.bedroom.inspector.status_labels.lantern_monk.text == "FRAY 0/200",
+		"real return shelf keyboard inspection reads the live torn and intact history")
+	_check(view.bedroom.record == app.bedroom_record
+		and view.bedroom.doll_pose("warden") == "side"
+		and view.bedroom.doll_pose("seamstress") == "side"
+		and view.bedroom.doll_pose("tinker") == "side"
+		and view.bedroom.dolls.warden.texture != null
+		and is_equal_approx(view.bedroom.dolls.warden.rotation, -PI * 0.5)
+		and view.bedroom.doll_pose("lantern_monk") == "upright",
+		"actual mounted record drives the original rotated shelf portraits")
+	view.bedroom.spot("door").grab_focus()
+	await process_frame
+	await _mouse_move(view.bedroom.spot("shelf").get_global_rect().get_center())
+	_check(view.bedroom.inspector.visible
+		and view.bedroom.inspector.status_labels.warden.text == "FRAY 0/200\nTORN ARM"
+		and view.bedroom.inspector.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG",
+		"real mouse motion over returned shelf shows identical live injury labels")
+	await _mouse_move(view.bedroom.spot("tin").get_global_rect().get_center())
+	_check(view.bedroom.inspector.visible and view.bedroom.inspector.entry_order.is_empty()
+		and view.bedroom.inspector.empty_label.text == "No dolls lost on the last outing",
+		"real mouse hover over returned tin never mistakes torn living dolls for losses")
+	await _mouse_move(Vector2(700, 610))
 	await _shot("after_win")
 	view.back_button.pressed.emit()
 	await process_frame

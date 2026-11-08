@@ -60,6 +60,8 @@ func _initialize() -> void:
 	_test_tales_clears_unravelled_below_threshold()
 	_test_tales_resolve_clear_forecast()
 	_test_stitched_mend_ends_hanging()
+	_test_mend_repairs_torn_worn_parts()
+	_test_mend_torn_availability()
 	_finish()
 
 
@@ -861,6 +863,9 @@ func _test_stitched_noop_refusals() -> void:
 	for hero in party:
 		hero["hp"] = hero["max_hp"]
 		hero["fray"] = 0
+		# A torn worn part is now a Mend benefit; this fixture models "no benefit".
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
 	var swap_visit := RunCampfireVisit.open_stitched_with_satchel("camp_noop3", party, 100,
 		_swap_satchel(), _swap_catalog())
 	var swap_before := swap_visit.read_state()
@@ -1168,6 +1173,9 @@ func _test_stitched_lost_dolls_not_mended() -> void:
 	for hero in swap_party:
 		hero["hp"] = hero["max_hp"]
 		hero["fray"] = 0
+		# Only the lost doll's HP deficit is under test, so no living part is torn.
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
 	swap_party[0]["hp"] = 0
 	swap_party[0]["lost"] = true
 	var swap_visit := RunCampfireVisit.open_stitched_with_satchel("camp_lost_s", swap_party, 100,
@@ -1538,9 +1546,16 @@ func _test_swap_exchanges_and_decisions() -> void:
 		and mend["candle"] == 40,
 		"Mend still heals floor(30%) in an opted-in visit")
 	for i in range(4):
-		_check(mend["heroes"][i]["parts"] == mend_latest["heroes"][i]["parts"]
+		# Mend also mends the rank-4 doll's torn tier-III arm; nothing else changes.
+		var mend_expected_parts: Dictionary = mend_latest["heroes"][i]["parts"].duplicate(true)
+		for mend_slot in mend_expected_parts:
+			mend_expected_parts[mend_slot]["torn"] = false
+		_check(mend["heroes"][i]["parts"] == mend_expected_parts
 			and mend["heroes"][i]["fray"] == base[i]["fray"],
-			"Mend keeps hero %d equipment and fray" % i)
+			"Mend keeps hero %d equipment ids and tiers and fray, clearing only torn" % i)
+	_check(mend_latest["heroes"][3]["parts"]["arms"]["torn"] == true
+		and mend["heroes"][3]["parts"]["arms"] == _worn(ARMS_RIVET, 3, false),
+		"Mend mends the golem's torn arm and keeps its id and tier")
 	_check(mend.get("satchel") == mend_latest["satchel"]
 		and mend["satchel"][2] == _spare(LEGS_SHIELD, 2, "legs"),
 		"Mend receipt carries the swapped satchel")
@@ -1729,7 +1744,11 @@ func _test_exchange_worn_parts() -> void:
 		and mend.get("fear") == EW_FEAR and mend.get("satchel") == [],
 		"Mend still works after exchanges")
 	for i in range(4):
-		_check(mend["heroes"][i]["parts"] == expected[i]["parts"],
+		# Mend keeps the exchanged ids and tiers; it only mends the golem's torn arm.
+		var kept_parts: Dictionary = expected[i]["parts"].duplicate(true)
+		for kept_slot in kept_parts:
+			kept_parts[kept_slot]["torn"] = false
+		_check(mend["heroes"][i]["parts"] == kept_parts,
 			"Mend keeps hero %d exchanged equipment" % i)
 	_check(mend["heroes"][2]["hp"] == 7 and mend["heroes"][2].get("hanging") == false,
 		"Mend heals the Hanging doll floor(30%) and ends Hanging")
@@ -2510,3 +2529,165 @@ func _test_stitched_mend_ends_hanging() -> void:
 		and plain_receipt["heroes"][1]["hanging"] == false,
 		"absent hanging key stays absent and explicit false stays false")
 	_check(randi() == expected_next, "Hanging quotes, refusals and Mend draw no global RNG")
+
+
+const TORN_NODE := "camp_torn"
+const TORN_FEAR := 45
+const TORN_FRAYS: Array = [30, 25, 10, 200]
+
+
+## Four real dolls with complete worn slots: rank 1 intact, rank 2 full health
+## with torn arms, rank 3 injured with torn legs, rank 4 LOST with torn parts.
+func _torn_party(hps: Array = [40, 30, 10, 0], frays: Array = TORN_FRAYS) -> Array:
+	var party := _swap_party()
+	for i in range(4):
+		party[i]["hp"] = hps[i]
+		party[i]["fray"] = frays[i]
+		for slot in party[i]["parts"]:
+			party[i]["parts"][slot]["torn"] = false
+	party[1]["parts"]["arms"]["torn"] = true
+	party[2]["parts"]["legs"]["torn"] = true
+	party[3]["lost"] = true
+	party[3]["parts"]["head"]["torn"] = true
+	party[3]["parts"]["arms"]["torn"] = true
+	return party
+
+
+func _torn_flags(heroes: Array) -> Array:
+	var flags: Array = []
+	for hero in heroes:
+		var row: Dictionary = {}
+		for slot in ["head", "arms", "torso", "legs"]:
+			row[slot] = hero["parts"][slot]["torn"]
+		flags.append(row)
+	return flags
+
+
+func _test_mend_repairs_torn_worn_parts() -> void:
+	seed(970031)
+	var expected_next := randi()
+	seed(970031)
+	var refusal := {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
+	# AC1: a full-health living roster with one torn arm still offers Mend.
+	var arm_only := _torn_party([40, 30, 26, 0], NO_FRAY)
+	arm_only[2]["parts"]["legs"]["torn"] = false
+	_check(arm_only[1]["hp"] == arm_only[1]["max_hp"] and arm_only[1]["parts"]["arms"]["torn"] == true
+		and arm_only[0]["hp"] == arm_only[0]["max_hp"] and arm_only[2]["hp"] == arm_only[2]["max_hp"],
+		"full-health fixture really carries one torn living arm")
+	var arm_visit := RunCampfireVisit.new("camp_arm", arm_only, "stitched", 100)
+	_check(arm_visit.read_state()["quote"]["choices"] == ["mend", "leave"]
+		and arm_visit.read_state()["quote"]["text"].find("Mend") != -1,
+		"a torn arm alone advertises Mend at full health and full candle")
+	# Fixture for the full receipt checks.
+	var source := _torn_party()
+	var original := source.duplicate(true)
+	var visit := RunCampfireVisit.new(TORN_NODE, source, "stitched", 40, TORN_FEAR)
+	var open := visit.read_state()
+	_check(open.get("status") == "stitched_open" and open.get("heroes") == original
+		and open["quote"]["choices"][0] == "mend" and open.get("fear") == TORN_FEAR,
+		"torn-part fixture opens as a genuine four-doll Stitched Campfire offering Mend")
+	_check(_torn_flags(original) == [
+			{"head": false, "arms": false, "torso": false, "legs": false},
+			{"head": false, "arms": true, "torso": false, "legs": false},
+			{"head": false, "arms": false, "torso": false, "legs": true},
+			{"head": true, "arms": true, "torso": false, "legs": false}],
+		"fixture has intact, torn-arms, torn-legs and LOST torn dolls")
+	# Refusals keep state and the single decision; Leave stays offered.
+	_assert_fear_refused(visit, "mend", "camp_other", original, 40, TORN_FEAR, "torn wrong node")
+	var stale := original.duplicate(true)
+	stale[1]["parts"]["arms"]["torn"] = false
+	_assert_fear_refused(visit, "mend", TORN_NODE, stale, 40, TORN_FEAR, "torn stale roster")
+	_assert_fear_refused(visit, "mend", TORN_NODE, original, 41, TORN_FEAR, "torn stale candle")
+	_check(visit.read_state() == open and "leave" in visit.read_state()["quote"]["choices"],
+		"refusals leave the open visit and Leave available")
+	var receipt := visit.select("mend", TORN_NODE, original, 40, TORN_FEAR)
+	var expected := original.duplicate(true)
+	expected[2]["hp"] = 17
+	expected[1]["parts"]["arms"]["torn"] = false
+	expected[2]["parts"]["legs"]["torn"] = false
+	_check(receipt.get("ok") == true and receipt.get("decision") == "mend"
+		and receipt.get("node_id") == TORN_NODE and receipt.get("heroes") == expected
+		and receipt.get("candle") == 40 and receipt.get("fear") == TORN_FEAR,
+		"Mend receipt is the exact post-state with only HP and torn flags changed")
+	_check(receipt.keys().size() == 6 and not receipt.has("wallet") and not receipt.has("gold"),
+		"receipt carries no wallet or extra ledger")
+	var healed: Array = receipt["heroes"]
+	_check(healed[1]["parts"]["arms"] == _worn(ARMS_RIVET, 1, false)
+		and healed[2]["parts"]["legs"] == _worn(LEGS_RIM, 3, false)
+		and healed[2]["hp"] == 17 and healed[1]["hp"] == 30 and healed[0] == original[0],
+		"torn slots keep part id and tier; floor(30%) heal and cap are unchanged")
+	_check(healed[3] == original[3] and healed[3]["parts"]["head"]["torn"] == true
+		and healed[3]["parts"]["arms"]["torn"] == true and healed[3]["hp"] == 0,
+		"the LOST doll keeps its torn parts and 0 HP exactly")
+	for i in range(4):
+		_check(healed[i]["fray"] == original[i]["fray"] and healed[i]["id"] == original[i]["id"]
+			and healed[i]["position"] == original[i]["position"],
+			"Mend leaves hero %d id, position and fray alone" % i)
+	var decided := visit.read_state()
+	_check(decided["status"] == "stitched_decided" and decided["heroes"] == expected
+		and decided["candle"] == 40 and decided["fear"] == TORN_FEAR
+		and decided["quote"]["choices"] == [],
+		"the decision is consumed with candle and FEAR unchanged")
+	# The detached receipt and source never rewrite held state.
+	receipt["heroes"][1]["parts"]["arms"]["torn"] = true
+	receipt["heroes"][3]["parts"]["legs"]["torn"] = true
+	source[1]["parts"]["arms"]["torn"] = false
+	_check(visit.read_state() == decided,
+		"mutating the receipt or the source cannot alter the committed visit")
+	_assert_fear_refused(visit, "mend", TORN_NODE, expected, 40, TORN_FEAR, "torn replay of Mend")
+	_assert_fear_refused(visit, "leave", TORN_NODE, expected, 40, TORN_FEAR, "torn Leave after Mend")
+	# Leave remains available after refusals and changes nothing.
+	var leave_visit := RunCampfireVisit.new("camp_tl", original.duplicate(true), "stitched", 40)
+	_assert_stitched_refused(leave_visit, "mend", "camp_wrong", original, 40, "torn Leave visit wrong node")
+	var left := leave_visit.select("leave", "camp_tl", original, 40)
+	_check(left.get("ok") == true and left["heroes"] == original,
+		"Leave after a refusal commits and mends nothing")
+	_check(randi() == expected_next, "torn-part quotes, refusals and Mend draw no global RNG")
+
+
+func _test_mend_torn_availability() -> void:
+	# No torn part and full health: Mend stays hidden and is refused.
+	var clean := _torn_party([40, 30, 26, 0], NO_FRAY)
+	for hero in clean:
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
+	clean[3]["parts"]["head"]["torn"] = true
+	var clean_visit := RunCampfireVisit.new("camp_clean", clean, "stitched", 100)
+	_check(clean_visit.read_state()["quote"]["choices"] == ["leave"],
+		"full health with no living torn part (only a LOST doll's tear) hides Mend")
+	_assert_stitched_refused(clean_visit, "mend", "camp_clean", clean, 100, "Mend with nothing to mend")
+	var none := _torn_party([40, 30, 26, 0], NO_FRAY)
+	for hero in none:
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
+	_check(RunCampfireVisit.new("camp_none", none, "stitched", 100).read_state()["quote"]["choices"] == ["leave"],
+		"full health and no torn parts at all hides Mend")
+	# Injured HP with intact parts: ordinary exact 30% heal, flags untouched.
+	var hurt := _torn_party([35, 18, 0, 0])
+	for hero in hurt:
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
+	var hurt_original := hurt.duplicate(true)
+	var hurt_visit := RunCampfireVisit.new("camp_hurt", hurt, "stitched", 100)
+	var hurt_receipt := hurt_visit.select("mend", "camp_hurt", hurt_original, 100)
+	var hurt_expected := hurt_original.duplicate(true)
+	hurt_expected[0]["hp"] = 40
+	hurt_expected[1]["hp"] = 27
+	hurt_expected[2]["hp"] = 7
+	_check(hurt_receipt.get("ok") == true and hurt_receipt["heroes"] == hurt_expected,
+		"injured HP with intact parts still heals exactly floor(30%) and changes no part")
+	# Older fixtures without a parts dictionary: unchanged, no dictionary invented.
+	var old := _stitched_party([35, 18, 0, 48], [30, 25, 10, 200])
+	var old_original := old.duplicate(true)
+	var old_receipt := RunCampfireVisit.new("camp_old", old, "stitched", 40).select(
+		"mend", "camp_old", old_original, 40)
+	var old_expected := old_original.duplicate(true)
+	old_expected[0]["hp"] = 40
+	old_expected[1]["hp"] = 27
+	old_expected[2]["hp"] = 7
+	_check(old_receipt.get("ok") == true and old_receipt["heroes"] == old_expected
+		and not old_receipt["heroes"][0].has("parts"),
+		"older fixtures without parts heal as before and gain no parts dictionary")
+	var old_full := _stitched_party(FULL_HPS, NO_FRAY)
+	_check(RunCampfireVisit.new("camp_old_full", old_full, "stitched", 100).read_state()["quote"]["choices"] == ["leave"],
+		"a full-health older fixture without parts still hides Mend")

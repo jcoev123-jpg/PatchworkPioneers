@@ -206,6 +206,8 @@ func doll_pose(id: String) -> String:
 		return "tin"
 	if doll.get("hanging", false):
 		return "side"
+	if not doll.get("torn_slots", []).is_empty():
+		return "side"
 	var fray := int(doll.get("fray", 0))
 	return "wall" if fray >= 150 else "slumped" if fray >= 100 else "upright"
 
