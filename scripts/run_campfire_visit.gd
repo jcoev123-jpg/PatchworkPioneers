@@ -28,6 +28,8 @@ const TALES_FRAY_REDUCTION := 25
 ## An Unravelled resolve persists until FRAY is strictly below this value.
 const RESOLVE_CLEAR_BELOW := 50
 const WICK_CANDLE_RESTORE := 50
+## Worn slots of a doll (S14); Mend clears a torn flag on any of them.
+const WORN_SLOTS: Array = ["head", "arms", "torso", "legs"]
 ## Opt-in Wren FEAR (STITCHED_DESIGN 9c): Tell Tales also soothes 15 FEAR.
 const FEAR_MAX := 100
 const TALES_FEAR_RELIEF := 15
@@ -298,6 +300,13 @@ func select(decision: Variant, expected_node_id: Variant,
 				# is cleared; an absent key is never fabricated.
 				if hero.get("hanging", false) == true and int(hero["hp"]) > 0:
 					hero["hanging"] = false
+				# Stitches torn at 0 HP are mended too: only an explicit
+				# torn == true on a worn slot is cleared; id and tier stay.
+				if typeof(hero.get("parts")) == TYPE_DICTIONARY:
+					for slot in WORN_SLOTS:
+						var worn: Variant = hero["parts"].get(slot)
+						if typeof(worn) == TYPE_DICTIONARY and worn.get("torn", false) == true:
+							worn["torn"] = false
 		TELL_TALES:
 			for hero in updated:
 				# A LOST doll's whole record (FRAY and resolve) is preserved.
@@ -357,10 +366,25 @@ func _mend_changes_party() -> bool:
 		var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
 		if mini(max_hp, hp + amount) > hp:
 			return true
+		if _has_torn_worn_part(hero):
+			return true
 	return false
 
 
-## Only an explicit lost == true marks a LOST doll; a missing or false flag is
+## True when a worn slot record carries an explicit torn == true. Heroes that do
+## not carry a parts dictionary (older fixtures) have nothing to mend.
+static func _has_torn_worn_part(hero: Variant) -> bool:
+	if typeof(hero) != TYPE_DICTIONARY or typeof(hero.get("parts")) != TYPE_DICTIONARY:
+		return false
+	var parts: Dictionary = hero["parts"]
+	for slot in WORN_SLOTS:
+		var record: Variant = parts.get(slot)
+		if typeof(record) == TYPE_DICTIONARY and record.get("torn", false) == true:
+			return true
+	return false
+
+
+## Only an explicitlost == true marks a LOST doll; a missing or false flag is
 ## a non-lost hero (a Hanging 0-HP hero is not lost and stays healable).
 static func _is_lost_hero(hero: Variant) -> bool:
 	return typeof(hero) == TYPE_DICTIONARY and hero.get("lost", false) == true
