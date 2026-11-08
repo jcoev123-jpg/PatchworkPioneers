@@ -14,6 +14,7 @@ func _initialize() -> void:
 	_catalogs()
 	_combat()
 	_foe_push_pull()
+	_chain_thread()
 	_death_door()
 	_doors()
 	_sewing_circle_sockets()
@@ -626,3 +627,128 @@ func _foe_push_pull() -> void:
 	var outside := invalid.use_ability("warden_legs_rim_toss", 4)
 	_check(not outside.get("ok", true) and original == invalid.state_snapshot()
 		and rng_before == invalid.rng_state(), "illegal target mask never commits state or RNG")
+
+
+## Chain Thread is a second phase of a real hero action, not one jump per
+## primary target; movement cannot change the original successor identity.
+func _chain_thread() -> void:
+	var bomb_sockets := {"tinker": {"tinker_arms_scrap_bomb": ["gold_chain_thread"]}}
+	var bomb := _battle(55, bomb_sockets)
+	var plain := _battle(55)
+	if bomb == null or plain == null:
+		return
+	var foes := bomb.get_foes()
+	_check(foes.size() >= 2 and foes.all(func(foe: Dictionary) -> bool:
+		return not foe.dead and int(foe.hp) > 0), "chain bomb has multiple real living foes")
+	if foes.size() < 2:
+		return
+	var gold_result := _shift_turn(bomb, "tinker", "tinker_arms_scrap_bomb", 2)
+	var plain_result := _shift_turn(plain, "tinker", "tinker_arms_scrap_bomb", 2)
+	var seen := {}
+	for hit in gold_result.get("results", []):
+		seen[hit.target] = int(seen.get(hit.target, 0)) + 1
+		_check(not hit.get("chained", false) and hit.statuses.filter(func(s: Dictionary) -> bool:
+			return s.get("status") == "exposed").size() <= 1,
+			"each bomb primary has no duplicate chain or Exposed stamp")
+	_check(gold_result.get("ok", false) and plain_result.get("ok", false)
+		and gold_result.results == plain_result.results and gold_result.results.size() == foes.size()
+		and seen.size() == foes.size() and seen.values().all(func(count: int) -> bool: return count == 1)
+		and bomb.current_actor_id() == "warden",
+		"gold multi-hit bomb has exactly one unmodified base result per foe and spends one action")
+	for foe in foes:
+		_check(bomb.get_unit(foe.id).hp == plain.get_unit(foe.id).hp
+			and bomb.get_unit(foe.id).statuses == plain.get_unit(foe.id).statuses,
+			"chain bomb does not double damage or reapply primary status to " + str(foe.id))
+	_check(bomb.rng_state() == plain.rng_state(),
+		"gold multi-hit bomb draws exactly the same RNG as unsocketed Scrap Bomb")
+
+	for movement in ["", "wool_heel_knot", "wool_hook_stitch"]:
+		var ids := ["gold_chain_thread"]
+		if not movement.is_empty():
+			ids.append(movement)
+		var sockets := {"warden": {"warden_head_pot_helm_command": ids}}
+		var battle := _battle(55, sockets)
+		if battle == null:
+			return
+		var first := battle._foe_at(2)
+		var successor := battle._foe_at(3)
+		var prior_front := battle._foe_at(1)
+		_check(not first.is_empty() and not successor.is_empty() and first.id != successor.id,
+			"chain single-target precondition: real distinct living adjacent foes")
+		if first.is_empty() or successor.is_empty():
+			return
+		var result := _shift_turn(battle, "warden", "warden_head_pot_helm_command", 2)
+		_check(result.get("ok", false) and result.results.size() == 2
+			and result.results[0].target == first.id and result.results[0].hit
+			and result.results[1].target == successor.id and result.results[1].get("chained", false)
+			and result.results[1].hit and battle.current_actor_id() == "seamstress",
+			"gold chain " + movement + " follows just the originally adjacent distinct foe")
+		_check(battle.get_unit(first.id).statuses.get("mark", 0) > 0
+			and battle.get_unit(successor.id).statuses.get("mark", 0) > 0,
+			"authored Mark lands on both successful hits with " + movement)
+		if not movement.is_empty() and result.results.size() == 2:
+			_check(result.results[1].get("shift", {}).get("ok", false),
+				"second successful Chain Thread hit retains its movement patch " + movement)
+			_check(result.results[0].get("shift", {}).get("swapped") ==
+				(str(successor.id) if movement == "wool_heel_knot" else str(prior_front.id)),
+				"socket movement actually fires before chain selection " + movement)
+
+	var paired_sockets := {"warden": {"warden_head_pot_helm_command":
+		["gold_chain_thread", "wool_heel_knot"]}}
+	var original := _battle(55, paired_sockets)
+	var replay := _battle(55, paired_sockets)
+	if original == null or replay == null:
+		return
+	var first_cast := _shift_turn(original, "warden", "warden_head_pot_helm_command", 2)
+	var second_cast := _shift_turn(replay, "warden", "warden_head_pot_helm_command", 2)
+	_check(first_cast == second_cast and original.state_snapshot() == replay.state_snapshot()
+		and original.rng_state() == replay.rng_state(),
+		"equal-seed chain plus movement replay preserves receipts, full state and RNG")
+
+	var chain_only := {"warden": {"warden_head_pot_helm_command": ["gold_chain_thread"]}}
+	for scenario in ["miss", "no_successor", "rank_mask"]:
+		var chained := _battle(55, chain_only)
+		var baseline := _battle(55)
+		if chained == null or baseline == null:
+			return
+		var rank := 2
+		if scenario == "miss":
+			chained._units["warden"].statuses["blind"] = 1
+			baseline._units["warden"].statuses["blind"] = 1
+		elif scenario == "no_successor":
+			for instance in [chained, baseline]:
+				var last: Dictionary = instance._foe_at(3)
+				_check(not last.is_empty(), "real last foe exists before lethal no-successor setup")
+				if not last.is_empty():
+					instance._damage_target(last, int(last.hp), {})
+		else:
+			# Move the originally next foe out to rank four, beyond Pot Helm's
+			# authored target mask, before selecting the rank-two primary.
+			for instance in [chained, baseline]:
+				var last: Dictionary = instance._foe_at(3)
+				_check(not last.is_empty(), "rank-mask setup has a real back foe")
+				if not last.is_empty():
+					var moved: Dictionary = instance._gift_shift(last, 1)
+					_check(moved.get("ok", false) and int(last.rank) == 4,
+						"authentic shift makes next foe rank-ineligible")
+		var with_chain := _shift_turn(chained, "warden", "warden_head_pot_helm_command", rank)
+		var without := _shift_turn(baseline, "warden", "warden_head_pot_helm_command", rank)
+		_check(with_chain.get("ok", false) and without.get("ok", false)
+			and with_chain.results.size() == 1 and with_chain.results == without.results
+			and chained.rng_state() == baseline.rng_state(),
+			"chain " + scenario + " adds no hit or extra RNG")
+		if scenario == "miss":
+			_check(not with_chain.results[0].hit and not with_chain.results[0].has("chained"),
+				"blind primary miss cannot launch chain")
+
+	var invalid := _config(55)
+	invalid.s14_sockets = {"warden": {"warden_head_pot_helm_command":
+		["gold_chain_thread", "made_up_patch"]}}
+	_check(not StitchedRules.create(invalid).ok, "unknown socket still fails closed")
+	var masked := _battle(55, chain_only)
+	if masked != null:
+		masked._order = ["warden", "seamstress"]
+		masked._turn_index = 0
+		var before := masked.state_snapshot()
+		_check(not masked.use_ability("warden_head_pot_helm_command", 4).ok
+			and before == masked.state_snapshot(), "illegal chain target mask refuses without state or RNG")

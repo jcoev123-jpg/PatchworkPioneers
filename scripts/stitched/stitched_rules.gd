@@ -1565,6 +1565,26 @@ func _resolve_ability(
 	actor: Dictionary, ability: Dictionary, targets: Array, part_id: String
 ) -> Dictionary:
 	var results: Array = []
+	# Record identities before any hit or socketed push/pull changes foe ranks.
+	# In particular, a multi-target ability must not chain back into its own
+	# already-selected primary targets.
+	var primary_ids: Dictionary = {}
+	for target in targets:
+		primary_ids[str(target.id)] = true
+	var original_foes: Array = []
+	var chain_enabled := false
+	if _s14 and str(actor.side) == "hero" and str(ability.target_side) == "enemy":
+		for rank in range(MIN_RANK, MAX_RANK + 1):
+			var foe := _foe_at(rank)
+			if not foe.is_empty():
+				original_foes.append({"id": str(foe.id), "rank": rank})
+		var attached: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
+		var catalog := StitchedS14Abilities.patches()
+		for patch_id in attached:
+			if str(catalog.by_id[patch_id].effect) == "chain":
+				chain_enabled = true
+				break
+	var chain_anchor := ""
 	for target in targets:
 		if str(target["side"]) == "foe" and (bool(target["dead"]) or int(target["hp"]) <= 0):
 			continue
@@ -1575,25 +1595,36 @@ func _resolve_ability(
 		results.append(hit_result)
 		if _s14 and str(actor.side) == "hero" and hit_result.hit:
 			_s14_apply_patches(actor, ability, hit_result)
-			var patched: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
-			var catalog := StitchedS14Abilities.patches()
-			var chain := false
-			for patch_id in patched:
-				if catalog.by_id[patch_id].effect == "chain":
-					chain = true
-			if chain and str(ability.target_side) == "enemy":
-				var original: Dictionary = _units.get(str(hit_result.target), {})
-				if not original.is_empty():
-					for rank in range(int(original.rank) + 1, MAX_RANK + 1):
-						var next := _foe_at(rank)
-						if next.is_empty() or not StitchedParts.ranks_allowed(int(ability.target_mask), rank):
-							continue
-						var chained := _resolve_single(actor, ability, next)
-						chained["chained"] = true
-						results.append(chained)
-						if chained.hit:
-							_s14_apply_patches(actor, ability, chained)
-						break
+			if chain_enabled and chain_anchor.is_empty():
+				chain_anchor = str(target.id)
+	# Resolve at most one extra hit after ALL primaries. The successor is the
+	# originally next eligible foe, not the unit now in that rank after a swap.
+	# If that successor died, moved out of range or disappeared, do not consume
+	# another hit roll or fall through to a different foe.
+	if not chain_anchor.is_empty():
+		var anchor_rank := 0
+		for entry in original_foes:
+			if str(entry.id) == chain_anchor:
+				anchor_rank = int(entry.rank)
+				break
+		for entry in original_foes:
+			var original_rank := int(entry.rank)
+			var next_id := str(entry.id)
+			if original_rank <= anchor_rank or primary_ids.has(next_id) \
+					or not StitchedParts.ranks_allowed(int(ability.target_mask), original_rank):
+				continue
+			var successor: Dictionary = _units.get(next_id, {})
+			if not successor.is_empty() and not bool(successor.dead) and int(successor.hp) > 0 \
+					and str(successor.side) == "foe" \
+					and StitchedParts.ranks_allowed(int(ability.target_mask), int(successor.rank)):
+				var current: Dictionary = _foe_at(int(successor.rank))
+				if not current.is_empty() and str(current.id) == next_id:
+					var chained := _resolve_single(actor, ability, successor)
+					chained["chained"] = true
+					results.append(chained)
+					if chained.hit:
+						_s14_apply_patches(actor, ability, chained)
+			break
 	var receipt := {
 		"ok": true,
 		"action": "ability",
