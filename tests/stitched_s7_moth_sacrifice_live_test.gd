@@ -6,13 +6,14 @@ const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
 # second spare at the f02_n0 Peddler, and enters the f03_n0 Event (pinned to the Moth).
 # Re-derived for the S14 fixed kits: the old 588735 fight no longer rolls a part drop.
 const RICH_SEED := 25
-# The genuine unpinned floor-one Moth selector was remeasured under S14 at seed 3242.
-# Keep a short deterministic fallback, and verify the actual selected Event before claiming it.
+# The genuine unpinned floor-one Moth is searched at run time from seed 3242 (owner 11-08): each Event
+# pack shifts the selector, and with ~140 Events a 64-seed window often missed it.
+const LiveWitness := preload("res://tests/live_witness.gd")
 const POOR_SEED := 3242
 const FIRST_NODE := "f01_n1"
 const SHOP_NODE := "f02_n0"
 const MOTH_NODE := "f03_n0"
-const POOR_SEARCH := 64
+const POOR_SEARCH := 4000
 var settled_branches := 0
 
 
@@ -342,22 +343,15 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 ## [seed, node] of the first run from POOR_SEED that meets the Moth on floor one.
 ## One session per candidate seed is enough: the standing Event selector draws its
 ## record from the run RNG before reading any node id, so every floor-one Event of a
-## seed reaches the same authored Event. The same session is reused for `enter`.
+## seed reaches the same authored Event. The map-only search skips seeds with no
+## floor-one Event before paying for a session.
 func _poor_witness() -> Array:
-	for seed_number in range(POOR_SEED, POOR_SEED + POOR_SEARCH):
-		var session := StitchedRunSession.start(seed_number)
-		if session == null:
-			continue
-		var first_event := ""
-		for id in session.choices():
-			if session.map.get_node(str(id)).type == "Event":
-				first_event = str(id)
-				break
-		if first_event.is_empty():
-			continue
-		if session.enter(first_event, session.snapshot()) \
+	for candidate in LiveWitness.candidates(["Event"], POOR_SEED, 1, [], POOR_SEARCH):
+		var session := StitchedRunSession.start(int(candidate[0]))
+		var first_event := str(candidate[1][0])
+		if session != null and session.enter(first_event, session.snapshot()) \
 				and session.pending.get("event_id") == "moth_infestation":
-			return [seed_number, first_event]
+			return [candidate[0], first_event]
 	return [POOR_SEED, ""]
 
 
