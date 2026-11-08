@@ -935,6 +935,68 @@ func _replacement(lost_id: String, candidate_id: String) -> Dictionary:
 	return receipt
 
 
+func _unsew_service(node_id: String) -> RunStitchedSewingAbilityUnsew:
+	return RunStitchedSewingAbilityUnsew.new(node_id, _party_ids(), ability_inventory, ability_sockets)
+
+
+## Free Sewing Circle release of one owned effect patch from a living doll's signature.
+## The accepted service is the only authority; any refusal leaves the run untouched.
+func _unsew(arguments: Array) -> Dictionary:
+	if not s14_enabled or arguments.size() != 3 or typeof(arguments[0]) != TYPE_STRING \
+			or typeof(arguments[1]) != TYPE_STRING or typeof(arguments[2]) != TYPE_INT:
+		return {"ok": false}
+	var hero_id: String = arguments[0]
+	var ability_id: String = arguments[1]
+	var uid: int = arguments[2]
+	var living := false
+	for hero in heroes:
+		if hero.id == hero_id and not hero.lost:
+			living = true
+	if not living:
+		return {"ok": false}
+	var node_id := str(pending.get("node_id", ""))
+	var service := _unsew_service(node_id)
+	var source := service.read_state()
+	if source.get("ok") != true:
+		return {"ok": false}
+	var receipt := service.unsew(hero_id, ability_id, uid, node_id, source)
+	if receipt.get("ok") != true or receipt.get("action") != "unsew" or receipt.get("node_id") != node_id \
+			or receipt.get("hero_id") != hero_id or receipt.get("ability_id") != ability_id \
+			or receipt.get("uid") != uid or receipt.get("source_state") != source \
+			or not receipt.get("state") is Dictionary or not receipt.state.get("sockets") is Dictionary:
+		return {"ok": false}
+	# Exactly that one binding is released; the item inventory and every other binding stay equal.
+	var expected_sockets: Dictionary = ability_sockets.duplicate(true)
+	expected_sockets[hero_id][ability_id].erase(uid)
+	if receipt.state.sockets != expected_sockets or receipt.state.get("inventory") != ability_inventory:
+		return {"ok": false}
+	return receipt
+
+
+## One compact row per sewn effect patch of a living doll's real signature. The service must
+## accept the whole current ledger, otherwise nothing is advertised.
+func _add_unsews(roster: Array, node_id: String) -> void:
+	if not s14_enabled or ability_sockets.is_empty():
+		return
+	if _unsew_service(node_id).read_state().get("ok") != true:
+		return
+	var patch_records: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+	for hero in roster:
+		if hero.lost or not ability_sockets.has(hero.id):
+			continue
+		for ability_id in ability_sockets[hero.id]:
+			var signature := StitchedS14Abilities.ability(str(hero.id), str(ability_id))
+			if signature.is_empty():
+				continue
+			for uid in ability_sockets[hero.id][ability_id]:
+				for item in ability_inventory:
+					if item.uid != uid:
+						continue
+					var patch_name := str(patch_records.get(item.id, {}).get("name", item.id))
+					_offer("unsew", "%s / Unsew %s from %s" % [hero.name, patch_name,
+						str(signature.get("name", ability_id))], true, [str(hero.id), str(ability_id), int(uid)])
+
+
 func visit_actions() -> Array:
 	return _actions.duplicate(true) if phase == "visit" and is_consistent() else []
 
@@ -1027,6 +1089,7 @@ func _open_visit(kind: String) -> bool:
 					for candidate in quote.candidates:
 						_offer("replace", "Stitch %s into rank %d" % [candidate.name, lost.rank], true,
 							[candidate.candidate_id, lost.hero_id])
+			_add_unsews(roster, id)
 			_offer("leave", "Leave Sewing Circle")
 		"Peddler":
 			_service = RunPeddlerVisit.open_stitched_candle(id, candle, gold, PEDDLER_PRICE)
@@ -1244,6 +1307,8 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 					result = {"ok": true}
 				"replace":
 					result = _replacement(arguments[1], arguments[0])
+				"unsew":
+					result = _unsew(arguments)
 		"Peddler":
 			match action_id:
 				"buy_starch", "buy_spare_spool":
@@ -1335,7 +1400,7 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	if not event_patch.is_empty():
 		visit_command["ability_patch"] = event_patch
 	journal.append(visit_command)
-	if action_id == "swap" or (kind == "SewingCircle" and action_id in ["mend", "upgrade", "replace", "double_stitch"]):
+	if action_id == "swap" or (kind == "SewingCircle" and action_id in ["mend", "upgrade", "replace", "double_stitch", "unsew"]):
 		_open_visit(kind)
 	elif not result.get("service_request", {}).is_empty():
 		_open_visit(result.service_request.stop_type)
@@ -1360,6 +1425,10 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 
 
 func _apply_receipt(result: Dictionary) -> void:
+	if result.get("action") == "unsew":
+		# Only the released binding moves. The item inventory, serial, wallet, dolls and RNG stay put.
+		ability_sockets = result.state.sockets.duplicate(true)
+		return
 	if result.get("action") == "replace":
 		# Accept the authenticated service's single changed slot, without replaying
 		# loss, moving gear, healing survivors or recomputing their state.
