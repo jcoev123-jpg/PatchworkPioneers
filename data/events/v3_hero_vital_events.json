@@ -1185,6 +1185,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_rag_duelist_mourning_hatbox",
+      "title": "The Mourning Hatbox",
+      "description": "A towering plum-velvet hatbox bars the doll-sized passage beneath the floor. Inside, a feathered duelling mask hangs from red thread; the Rag Duelist's needle rapier fits the brass clasp.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "sew_hatband_seam",
+          "text": "Spend spare thread sewing the hatband into stronger seams.",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 4, "max_hp": 2 }
+        },
+        {
+          "id": "sell_warm_hat_lining",
+          "text": "Trade warm stuffing from the lining for the milliner's purse.",
+          "outcome": { "gold": 23, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Close the heavy lid and pass on.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_star_pierced_colander",
+      "title": "The Star-Pierced Colander",
+      "description": "An enormous iron colander hangs over a narrow pantry corridor. Moths gather on its underside and candlelight pours through the pinholes like cold stars as the Lantern Monk raises his patched lamp.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "buy_star_lining",
+          "text": "Pay for a lining of light; mend and strengthen your seams.",
+          "outcome": { "gold": -16, "scraps": 0, "hp": 5, "max_hp": 1 }
+        },
+        {
+          "id": "unpick_moonlit_seam",
+          "text": "Unpick a lasting seam to gather the moths' silver thread.",
+          "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the moth shadows settle in the iron bowl.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_warden_iron_hearth_trivet",
+      "title": "The Iron Hearth Trivet",
+      "description": "A black iron trivet rests upright across an old fireplace passage like a crooked gate. The Warden braces a burning foot with his huge quilted shield while a tiny stitched watcher peers from the cold ashes.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "pad_trivet_foot",
+          "text": "Pad the iron foot with spare thread; mend the shield seam.",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 6, "max_hp": 1 }
+        },
+        {
+          "id": "pry_hot_hearth_nails",
+          "text": "Pry loose the hot brass nails for coin; scorch your stuffing.",
+          "outcome": { "gold": 26, "scraps": 0, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Lower the shield and leave the ashes undisturbed.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
