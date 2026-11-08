@@ -74,6 +74,13 @@ var lesson_kits: Variant = null
 var lesson_patches: Variant = null
 var page_index := 0
 var _active := false
+# Button-down edges only; retain across hide/reopen to reject held/stale input.
+var _held_gamepad_buttons: Dictionary = {}
+const GUIDE_GAMEPAD_BUTTONS := [
+	JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_RIGHT_SHOULDER,
+	JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT,
+	JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN, JOY_BUTTON_B,
+]
 
 
 func _ready() -> void:
@@ -144,13 +151,25 @@ func _request_close() -> void:
 
 
 func _input(event: InputEvent) -> void:
+	# Keep button-down edge state even while hidden. A held/repeated input
+	# cannot become a fresh page turn or B when reopening the modal.
+	if event is InputEventJoypadButton:
+		var joy := event as InputEventJoypadButton
+		if GUIDE_GAMEPAD_BUTTONS.has(joy.button_index):
+			if not joy.pressed:
+				_held_gamepad_buttons.erase(joy.button_index)
+				return
+			if _held_gamepad_buttons.has(joy.button_index):
+				if _active and is_visible_in_tree():
+					get_viewport().set_input_as_handled()
+				return
+			_held_gamepad_buttons[joy.button_index] = true
 	if not _active or not is_visible_in_tree():
 		return
 	if event is InputEventKey:
 		var key_event := event as InputEventKey
 		if not key_event.pressed or key_event.echo:
-			# A key repeat is not a fresh page turn; consume its directional
-			# GUI focus movement too while the guide owns focus.
+			# Key echoes are not fresh page turns; block repeated GUI arrows.
 			if not _atlas_is_open() and (event.is_action("ui_left") or event.is_action("ui_right")):
 				get_viewport().set_input_as_handled()
 			return
@@ -166,25 +185,46 @@ func _input(event: InputEvent) -> void:
 				_request_close()
 			return
 	elif event is InputEventJoypadButton:
-		if not event.pressed:
+		var button := (event as InputEventJoypadButton).button_index
+		if button == JOY_BUTTON_B:
+			get_viewport().set_input_as_handled()
+			if _atlas_is_open():
+				_close_part_atlas(true)
+			else:
+				_request_close()
+			return
+		if button == JOY_BUTTON_DPAD_UP or button == JOY_BUTTON_DPAD_DOWN:
+			# Vertical focus stays in the inspector's existing enabled ring.
+			get_viewport().set_input_as_handled()
+			if _atlas_is_open():
+				_cycle_atlas_focus(button == JOY_BUTTON_DPAD_UP)
+			return
+		if _atlas_is_open():
+			if button in [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_RIGHT_SHOULDER,
+					JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT]:
+				get_viewport().set_input_as_handled()
 			return
 	else:
 		return
-	# The inspector owns its own navigation. Only fresh, pressed directional
-	# actions (not releases, key repeats or events while hidden) turn pages.
+	# The nested atlas never turns a guide page.
 	if _atlas_is_open():
 		return
 	var direction := 0
-	if event.is_action_pressed("ui_right"):
-		direction = 1
-	elif event.is_action_pressed("ui_left"):
-		direction = -1
+	if event is InputEventJoypadButton:
+		match (event as InputEventJoypadButton).button_index:
+			JOY_BUTTON_RIGHT_SHOULDER:
+				direction = 1
+			JOY_BUTTON_LEFT_SHOULDER:
+				direction = -1
+	if direction == 0:
+		if event.is_action_pressed("ui_right"):
+			direction = 1
+		elif event.is_action_pressed("ui_left"):
+			direction = -1
 	if direction != 0:
 		get_viewport().set_input_as_handled()
 		select_page(posmod(page_index + direction, tab_buttons.size()))
 		tab_buttons[page_index].grab_focus()
-
-
 
 func _on_visibility_changed() -> void:
 	if not is_visible_in_tree():

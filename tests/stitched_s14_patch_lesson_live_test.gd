@@ -8,6 +8,8 @@ var failures: Array[String] = []
 var checks := 0
 var view: BaseScreen
 var original_bedroom_enabled := true
+var guide_close_calls := 0
+var leaked_host_calls := 0
 
 
 func _initialize() -> void:
@@ -36,6 +38,16 @@ func _key(key: Key, shifted: bool = false) -> void:
 		event.pressed = pressed
 		root.push_input(event, true)
 		await process_frame
+
+
+## Inject individual controller edges through the live scene tree.
+func _pad(button: JoyButton, pressed: bool) -> void:
+	var event := InputEventJoypadButton.new()
+	event.device = 0
+	event.button_index = button
+	event.pressed = pressed
+	root.push_input(event, true)
+	await process_frame
 
 
 func _click(button: Button) -> void:
@@ -307,7 +319,104 @@ func _run() -> void:
 	_check(not guide.is_open() and root.gui_get_focus_owner() == drawings
 		and not drawings.disabled,
 		"Escape dismisses and restores the live Drawings focus")
-	_check(randi() == browse_rng, "the whole guide browse consumed no global RNG")
+	# Mounted, controller-only route: real bedroom hotspot -> existing guide
+	# -> validated nested atlas -> one-level-at-a-time B -> Drawings.
+	guide.close_requested.connect(func() -> void: guide_close_calls += 1)
+	view.back_requested.connect(func() -> void: leaked_host_calls += 1)
+	view.set_out_requested.connect(func() -> void: leaked_host_calls += 1)
+	view.path_choice_requested.connect(func(_id: String) -> void: leaked_host_calls += 1)
+	var original_record := room.record.duplicate(true)
+	var original_wallet := view.wallet_label.text
+	var original_paths := [view.selected_path_id(), view.selected_tinker_path_id(),
+		view.selected_warden_path_id(), view._set_out_pending, view._back_pending]
+	var close_before := guide_close_calls
+	await _pad(JOY_BUTTON_B, true)
+	await _pad(JOY_BUTTON_B, false)
+	await _pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	await _pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	_check(not guide.is_open() and guide_close_calls == close_before,
+		"hidden guide ignores controller B and shoulder")
+	drawings.grab_focus()
+	await _key(KEY_ENTER)
+	_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
+		"focused real bedroom Drawings opens guide through existing activation")
+	await _pad(JOY_BUTTON_LEFT_SHOULDER, true)
+	_check(guide.page_index == 3 and root.gui_get_focus_owner() == guide.tab_buttons[3],
+		"left shoulder wraps focused page from first to last")
+	await _pad(JOY_BUTTON_LEFT_SHOULDER, true)
+	_check(guide.page_index == 3, "held shoulder event cannot double-page")
+	await _pad(JOY_BUTTON_LEFT_SHOULDER, false)
+	await _pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(guide.page_index == 0 and root.gui_get_focus_owner() == guide.tab_buttons[0],
+		"right shoulder wraps page from last to first")
+	await _pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	await _click(guide.atlas_button)
+	_check(guide._atlas_is_open() and guide.part_atlas.is_visible_in_tree()
+		and root.gui_get_focus_owner() == guide.part_atlas.get_node("CloseButton"),
+		"existing Parts & spoils button opens live validated nested atlas")
+	if guide._atlas_is_open():
+		var inspector := guide.part_atlas
+		var ring := guide._atlas_focus_buttons()
+		_check(ring.size() > 7 and ring[0] == inspector.get_node("CloseButton")
+			and ring.has(inspector.get_node("CatalogPanel/OwnerFilter"))
+			and ring.has(inspector.get_node("DetailsPanel/TierIII")),
+			"mounted nested atlas exposes enabled owner, slots, rows and tier ring")
+		var selected_id := inspector.selected_part_id
+		var selected_tier := inspector.selected_tier
+		var selected_owner := inspector.selected_owner
+		await _pad(JOY_BUTTON_DPAD_UP, true)
+		_check(root.gui_get_focus_owner() == ring[ring.size() - 1],
+			"up wraps atlas focus from Close to last enabled tier")
+		await _pad(JOY_BUTTON_DPAD_UP, false)
+		await _pad(JOY_BUTTON_DPAD_DOWN, true)
+		_check(root.gui_get_focus_owner() == ring[0],
+			"down wraps atlas focus from last tier to Close")
+		await _pad(JOY_BUTTON_DPAD_DOWN, false)
+		var page_before := guide.page_index
+		await _pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+		await _pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+		await _pad(JOY_BUTTON_LEFT_SHOULDER, true)
+		await _pad(JOY_BUTTON_LEFT_SHOULDER, false)
+		await _pad(JOY_BUTTON_Y, true)
+		await _pad(JOY_BUTTON_Y, false)
+		_check(guide.page_index == page_before
+			and root.gui_get_focus_owner() == ring[0]
+			and inspector.selected_part_id == selected_id
+			and inspector.selected_tier == selected_tier
+			and inspector.selected_owner == selected_owner,
+			"nested controller focus never selects, equips or changes guide page")
+		await _pad(JOY_BUTTON_B, true)
+		_check(not guide._atlas_is_open() and guide.is_open()
+			and root.gui_get_focus_owner() == guide.atlas_button
+			and inspector.selected_part_id.is_empty()
+			and inspector.get_node("DetailsPanel/PatchPreview").texture == null
+			and inspector.get_node("DetailsPanel/TierBorderPreview").texture == null
+			and guide_close_calls == close_before,
+			"first B dismisses only atlas, clears stale data and restores Parts focus")
+		await _pad(JOY_BUTTON_B, true)
+		_check(guide.is_open() and root.gui_get_focus_owner() == guide.atlas_button
+			and guide_close_calls == close_before,
+			"held B does not leak into second modal close")
+		await _pad(JOY_BUTTON_B, false)
+		await _pad(JOY_BUTTON_B, true)
+		_check(not guide.is_open() and not guide._atlas_is_open()
+			and root.gui_get_focus_owner() == drawings and not drawings.disabled
+			and guide_close_calls == close_before + 1,
+			"fresh second B closes only guide with one signal, returns Drawings focus")
+		await _pad(JOY_BUTTON_B, false)
+		await _click(drawings)
+		_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
+			"Drawings reopens only guide with no stale nested inspector")
+		await _pad(JOY_BUTTON_B, true)
+		_check(not guide.is_open() and root.gui_get_focus_owner() == drawings
+			and guide_close_calls == close_before + 2,
+			"B from guide alone returns directly to Drawings once")
+		await _pad(JOY_BUTTON_B, false)
+	_check(room.record == original_record and view.wallet_label.text == original_wallet
+		and [view.selected_path_id(), view.selected_tinker_path_id(),
+			view.selected_warden_path_id(), view._set_out_pending, view._back_pending] == original_paths
+		and leaked_host_calls == 0 and randi() == browse_rng,
+		"controller route changes no bedroom record, wallet, choices, callbacks or RNG")
 	view.queue_free()
 	await _frames()
 	_finish()
