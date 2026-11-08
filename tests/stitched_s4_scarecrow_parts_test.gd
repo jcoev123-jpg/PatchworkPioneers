@@ -129,8 +129,32 @@ const STRAW_PADDING_MATERIALS := [
 const STRAW_WRAP_MATERIALS := [
 	"denim", "straw", "burlap", "torso", "patch", "pumpkin-orange", "stitches",
 ]
-const HARVEST_FRIGHT_TEXT := "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, " \
+## S14: the two crow alternates are worn cloth patches too. Their base copy names only the sewn
+## felt silhouettes and feather-and-pitchfork cuff a player sees; the retired part-granted combat
+## text is no longer advertised.
+const CROW_FLOCK_PATCH_TEXT := "Three black felt crow silhouettes perch across a burlap brow patch, " \
+	+ "fastened with pumpkin-orange cross-stitches."
+const HARVEST_FRIGHT_PATCH_TEXT := "A fan of black crow feathers is sewn along the Scarecrow's denim " \
+	+ "pitchfork cuff, with loose straw bound by pumpkin-orange stitches."
+## The exact sentences the two crow alternates used to advertise as part-cast moves.
+const CROW_FLOCK_OLD_TEXT := "Call crows across foe ranks one to four; Weak and Mark each struck foe."
+const HARVEST_FRIGHT_OLD_TEXT := "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, " \
 	+ "leaving Weak on hits; at stitch tier III it also reaches rank 4."
+## Complete combat words the S14 sewn-cloth crow-alternate descriptions must never promise, matched
+## on whole tokens so "stitches" can never trip a "hit" check by accident.
+const CROW_PATCH_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "foe", "foes", "enemy", "enemies", "target", "targets",
+	"attack", "attacks", "hit", "hits", "damage", "strike", "strikes", "cast", "casts",
+	"status", "statuses", "weak", "mark", "marked", "reach", "reaches", "turn", "turns",
+	"ability", "abilities", "move", "moves", "action", "effect", "effects",
+]
+## The visible cloth each crow-alternate sentence must place on the Scarecrow.
+const CROW_FLOCK_MATERIALS := [
+	"felt", "crow", "silhouettes", "burlap", "brow", "pumpkin-orange", "cross-stitches",
+]
+const HARVEST_FRIGHT_MATERIALS := [
+	"feathers", "denim", "pitchfork", "cuff", "straw", "pumpkin-orange", "stitches",
+]
 var failures: Array[String] = []
 var checks := 0
 
@@ -140,6 +164,7 @@ func _initialize() -> void:
 	_test_starter_patch_appearance_text()
 	_test_crow_leg_patch_appearance_text()
 	_test_torso_patch_appearance_text()
+	_test_alternate_crow_patch_text()
 	_test_each_tier()
 	_test_area_and_effects()
 	_test_guard_and_dodge()
@@ -514,6 +539,78 @@ func _test_torso_patch_appearance_text() -> void:
 		"AC2: 'stitches' never trips the whole-word gate, and plain cloth prose passes it")
 
 
+## AC1/AC2: both crow alternates keep their IDs, names, Scarecrow owner and head/arms slots, while
+## their base copy now describes the sewn felt crow brow patch and the feather-and-pitchfork cuff a
+## player actually sees. Neither sentence may advertise a retired part-granted attack, a status, a
+## target, rank, damage or stitch-tier mechanic, and each patch still fails closed when its
+## description is blanked.
+func _test_alternate_crow_patch_text() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: Scarecrow catalog loads for the crow alternate patch copy")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		ALTERNATES["head"]: {
+			"name": "Crow Flock", "slot": "head", "text": CROW_FLOCK_PATCH_TEXT,
+			"old": CROW_FLOCK_OLD_TEXT, "materials": CROW_FLOCK_MATERIALS,
+		},
+		ALTERNATES["arms"]: {
+			"name": "Harvest Fright", "slot": "arms", "text": HARVEST_FRIGHT_PATCH_TEXT,
+			"old": HARVEST_FRIGHT_OLD_TEXT, "materials": HARVEST_FRIGHT_MATERIALS,
+		},
+	}
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: crow alternate patch keeps its named ID: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["slot"]) == str(spec["slot"]) and str(part["owner"]) == "scarecrow"
+			and str(part["name"]) == str(spec["name"]),
+			"AC1: crow alternate keeps its slot, Scarecrow owner and name: " + id)
+		var text := str(part.get("text", ""))
+		var shipped := text
+		_check(not text.is_empty(), "AC2: crow alternate base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: crow alternate base copy is the exact sewn-cloth sentence: " + id)
+		_check(text != str(spec["old"]) and not text.contains(str(spec["old"])),
+			"AC2: crow alternate no longer carries its retired part-action sentence: " + id)
+		var violation := _crow_patch_violation(text)
+		_check(violation.is_empty(),
+			"AC2: crow alternate copy promises no rank/tier/status/action/number: %s (%s)"
+				% [id, violation])
+		var words := _whole_words(text)
+		var lowered := text.to_lower()
+		for material in spec["materials"]:
+			var token := str(material)
+			# "pumpkin-orange" and "cross-stitches" are hyphenated cloth terms, so they are matched
+			# literally; every single-word material is matched whole so it cannot pass by accident.
+			var named := lowered.contains(token) if token.contains("-") else token in words
+			_check(named, "AC2: crow alternate copy names its sewn cloth '%s': %s" % [token, id])
+		# Fail-closed: the shipped catalog still refuses a patch copy with blank text, and the
+		# in-memory duplicate never mutates the loaded catalog.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+		_check(str(cat["by_id"][id]["text"]) == shipped,
+			"AC3: blanking a duplicate leaves the shipped %s copy untouched" % id)
+	_check(CROW_FLOCK_OLD_TEXT != CROW_FLOCK_PATCH_TEXT,
+		"AC2: the retired Crow Flock cast sentence genuinely differs from its patch copy")
+	_check(HARVEST_FRIGHT_OLD_TEXT != HARVEST_FRIGHT_PATCH_TEXT,
+		"AC2: the retired Harvest Fright sweep sentence genuinely differs from its patch copy")
+	# The whole-word gate itself is proven, not vacuous: both retired instructions really fail it,
+	# a plain digit really fails it, while the sewn-cloth words never trip on accidental substrings.
+	for retired in [CROW_FLOCK_OLD_TEXT, HARVEST_FRIGHT_OLD_TEXT]:
+		_check(not _crow_patch_violation(str(retired)).is_empty(),
+			"AC2: the retired part-action sentence fails the prose gate: " + str(retired))
+	_check(not _crow_patch_violation("The patch reaches 3 seams.").is_empty(),
+		"AC2: a stated digit fails the crow patch prose gate")
+	_check(_whole_words(CROW_FLOCK_PATCH_TEXT).has("stitches")
+		and _crow_patch_violation("Black felt stitched on a burlap brow.").is_empty(),
+		"AC2: 'stitches' never trips the whole-word gate, and plain cloth prose passes it")
+
+
 func _test_each_tier() -> void:
 	var hit_witness: Dictionary = {}
 	var damage_witness: Dictionary = {}
@@ -727,8 +824,8 @@ func _test_leg_rank4_data() -> void:
 		and int(flock["ability"]["target_mask"]) == flock_target_mask
 		and flock_target_mask == StitchedParts.ALL_RANKS_MASK,
 		"AC1: Crow Flock base target is exactly all four enemy ranks")
-	_check(str(flock["text"]) == "Call crows across foe ranks one to four; Weak and Mark each struck foe.",
-		"AC1: Crow Flock text states its four-foe reach")
+	_check(str(flock["text"]) == CROW_FLOCK_PATCH_TEXT,
+		"AC1: Crow Flock base copy describes its sewn felt crow brow patch, not the retired cast")
 	for flock_tier in [1, 2, 3]:
 		var flock_ability := StitchedParts.ability_at_tier(flock, flock_tier)
 		_check(bool(StitchedParts.validate_ability(flock_ability).get("ok", false)),
@@ -1886,12 +1983,18 @@ func _test_harvest_fright_rank4_data() -> void:
 			and _int_effects(raw_tier3.get("effects")) == {"weak": 4}
 			and raw_tier3.keys().size() == 3,
 			"AC1: the authored tier-III override adds only the enemy rank 1-4 target list")
-	_check(str(part["text"]) == HARVEST_FRIGHT_TEXT,
-		"AC1: Harvest Fright text states its front-three reach and the tier-III rank-four reach")
-	var text := str(part["text"]).to_lower()
-	_check(text.contains("tier iii") and text.contains("rank 4")
-		and text.contains("ranks 1-3") and text.contains("on hits"),
-		"AC1: Harvest Fright text credits rank 4 only to tier III and Weak only to landed hits")
+	_check(str(part["text"]) == HARVEST_FRIGHT_PATCH_TEXT,
+		"AC1: Harvest Fright base copy describes its sewn feather cuff, not the retired sweep")
+	var text := str(part["text"])
+	var words := _whole_words(text)
+	var lowered := text.to_lower()
+	_check(lowered.contains("pumpkin-orange") and words.has("feathers") and words.has("denim")
+		and words.has("pitchfork") and words.has("cuff") and words.has("straw")
+		and words.has("stitches"),
+		"AC1: Harvest Fright text names its feathers, denim pitchfork cuff, straw and stitches")
+	_check(not lowered.contains("tier iii") and not lowered.contains("rank")
+		and not lowered.contains("weak") and not lowered.contains("on hits"),
+		"AC1: Harvest Fright text claims no tier, rank, Weak or landed-hit behaviour")
 
 
 ## AC2/AC3, the task goal: the real three-foe S2 preview with only the already-present Moth
@@ -2118,6 +2221,22 @@ func _torso_prose_violation(text: String) -> String:
 	var words := _whole_words(text)
 	for word in TORSO_PATCH_FORBIDDEN_WORDS:
 		if str(word) in words:
+			return "retired combat word: " + str(word)
+	return ""
+
+
+## The S14 prose-only gate for the two crow-alternate patches: the sentence must be nonblank, state
+## no digit and promise no complete retired combat word. Returns the first violation, or "" when it
+## passes.
+func _crow_patch_violation(text: String) -> String:
+	if text.strip_edges().is_empty():
+		return "blank text"
+	for index in range(text.length()):
+		var code := text.unicode_at(index)
+		if code >= 48 and code <= 57:
+			return "digit"
+	for word in _whole_words(text):
+		if CROW_PATCH_FORBIDDEN_WORDS.has(str(word)):
 			return "retired combat word: " + str(word)
 	return ""
 
