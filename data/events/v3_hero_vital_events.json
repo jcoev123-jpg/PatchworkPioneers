@@ -864,6 +864,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_button_golem_wardrobe_latch_oath",
+      "title": "The Wardrobe-Latch Oath",
+      "description": "Inside the wall of a sleeping house, a wardrobe latch looms like a barred bridge. A tiny button-eyed caretaker holds out a bent brass staple; the Button Golem's chest-buttons answer with a dull knock.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "sew_latch_to_chest",
+          "text": "Sew the warding latch into the Golem's chest (stronger seams; spend scraps)",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 5, "max_hp": 2 }
+        },
+        {
+          "id": "break_chest_stud",
+          "text": "Give the caretaker a chest stud (gold now; weaker seams ahead)",
+          "outcome": { "gold": 32, "scraps": 0, "hp": 0, "max_hp": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the wardrobe door settle in silence",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_loom_bridge_knot",
+      "title": "The Loom-Bridge Knot",
+      "description": "A fallen handloom spans a black gap between floorboards, its wool warp a bridge no wider than a doll's foot. The Yarn Ranger hooks her giant braided bolas around the last sound beam while unseen feet tug below.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "bind_bolas_bridge",
+          "text": "Bind your bolas into a lasting safety seam (stronger stuffing; spend gold)",
+          "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "snip_mooring",
+          "text": "Cut away the mooring wool (gain scraps; suffer a wound)",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Cross another way and leave the loom to creak",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_tuning_fork_oath",
+      "title": "The Tuning-Fork Oath",
+      "description": "A silver tuning fork lodged in an old stair rings whenever the hallway candle shivers. The Rag Duelist's needle rapier hums in reply, and a cape-shaped shadow holds out a crooked spool of red thread.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "take_fork_oath",
+          "text": "Sew the echo into your cape (heal and reinforce it; spend scraps)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 6, "max_hp": 2 }
+        },
+        {
+          "id": "pawn_cape_resonance",
+          "text": "Trade the cape's strongest thread (gain gold; lose lasting padding)",
+          "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Sheathe the rapier and let the note fade",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
