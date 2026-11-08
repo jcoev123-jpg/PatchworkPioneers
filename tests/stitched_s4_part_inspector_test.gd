@@ -58,9 +58,26 @@ func _maker_matches(panel: Control, id: String) -> bool:
     return meta.contains("\nTHREAD: " + maker.to_upper())
 
 
-func _cloth_copy(panel: Control, slot: String) -> bool:
-    var text := _line(panel, "PartText")
-    return text == ("Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." % slot.to_upper())
+func _cloth_copy(panel: StitchedPartInspector, slot: String) -> bool:
+    if not panel._by_id.has(panel.selected_part_id):
+        return false
+    var part: Dictionary = panel._by_id[panel.selected_part_id]
+    if str(part["slot"]) != slot:
+        return false
+    var owner := str(part["owner"])
+    var expected := "Cloth for %s. Moves stay with the doll." % slot.to_upper()
+    if StitchedSewnPatches.is_foe_patch(panel.selected_part_id):
+        expected = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot.to_upper()
+    elif not StitchedSewnPatches.favoured_slot(owner).is_empty():
+        expected = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
+            slot.to_upper(), owner.replace("_", " ").capitalize(),
+            StitchedSewnPatches.favoured_slot(owner).to_upper(),
+        ]
+    var label := panel.get_node("DetailsPanel/PartText") as Label
+    return label != null and label.get_line_count() >= 1 and label.get_line_count() <= 3 \
+        and label.get_visible_line_count() == label.get_line_count() \
+        and _line(panel, "PartText") == expected
+
 
 
 func _assert_helm(panel: StitchedPartInspector, tier: int) -> void:
@@ -248,9 +265,25 @@ func _run() -> void:
             "mixed satchel retains all owner types and does not demand a full hero kit")
         _check(panel.select_part("any_torso_felt_coat") and _cloth_copy(panel, "torso")
             and _no_retired_readouts(panel)
+            and not StitchedSewnPatches.is_foe_patch("any_torso_felt_coat")
+            and _line(panel, "PartText") == "Cloth for TORSO. Moves stay with the doll."
+            and not _line(panel, "PartText").contains("fray")
+            and not _line(panel, "PartText").contains("favours")
             and _line(panel, "PartMeta").contains("OWNER: any")
             and _line(panel, "PartMeta").contains("ID: any_torso_felt_coat"),
-            "foreign torso keeps genuine identity without promising a heal or stat bonus")
+            "neutral Spoils torso has no invented maker seam or foe-fray warning")
+        var unregistered: Dictionary = warden_parts[0].duplicate(true)
+        unregistered["owner"] = "unregistered_maker"
+        _check(panel.present_parts([unregistered])
+            and panel.select_part(str(unregistered["id"]))
+            and _cloth_copy(panel, str(unregistered["slot"]))
+            and _line(panel, "PartText") ==
+                "Cloth for %s. Moves stay with the doll." % str(unregistered["slot"]).to_upper()
+            and _line(panel, "PartMeta").contains("OWNER: unregistered_maker")
+            and not _line(panel, "PartText").contains("favours")
+            and not _line(panel, "PartText").contains("fray")
+            and _no_retired_readouts(panel),
+            "valid unfamiliar maker shows plain cloth only, no guessed seam or foe warning")
         _check(not panel.present_parts([{"id": "invalid"}]) and
             panel.selected_part_id.is_empty() and head_rows.get_child_count() == 0 and
             _line(panel, "NumbersLine").is_empty() and _empty_preview(panel),
@@ -349,9 +382,9 @@ func _test_live_owners(packed: PackedScene) -> void:
         and preview.focus_mode == Control.FOCUS_NONE
         and border.focus_mode == Control.FOCUS_NONE
         and preview.get_global_rect() == border.get_global_rect()
-        and preview.get_global_rect().size == Vector2(96, 96)
+        and preview.get_global_rect().size == Vector2(176, 176)
         and root.get_visible_rect().encloses(preview.get_global_rect()),
-        "shipped 96px aligned transparent art layers are passive and within viewport")
+        "enlarged aligned transparent patch layers stay passive and within viewport")
     for owner in ["warden", "seamstress", "tinker", "yarn_ranger",
             "lantern_monk", "button_golem", "rag_duelist", "any"]:
         var idx := StitchedPartInspector.OWNERS.find(owner)
@@ -426,6 +459,25 @@ func _test_live_owners(packed: PackedScene) -> void:
             and panel.active_slot == "legs" and not panel.selected_part_id.is_empty()
             and panel.selected_tier == 1,
             "owner " + owner + " can change slot and resets on a different part")
+    _check(StitchedSewnPatches.favoured_slot("warden") == "torso"
+        and StitchedSewnPatches.favoured_slot("seamstress") == "arms"
+        and StitchedSewnPatches.is_foe_patch("scissor_crab_claw_arm"),
+        "S13 favoured seams and foe identity come from the authoritative data")
+    _check(panel.select_owner("warden") and panel.select_part("warden_head_pot_helm_bonk")
+        and _line(panel, "PartText") == "Cloth for HEAD; Warden favours TORSO. Moves stay with the doll.",
+        "Warden head cloth points to its maker's real TORSO seam, not a part move")
+    _check(panel.select_owner("seamstress") and panel.select_part("seamstress_mending_knot_hat")
+        and _line(panel, "PartText") == "Cloth for HEAD; Seamstress favours ARMS. Moves stay with the doll.",
+        "changing maker updates HEAD copy to Seamstress's ARMS seam")
+    _check(panel.select_owner("any") and panel.select_part("scissor_crab_claw_arm")
+        and _line(panel, "PartText") ==
+            "Foe cloth for ARMS; may fray a doll outside its favoured seam. Moves stay with the doll."
+        and not _line(panel, "PartText").contains("Warden")
+        and not _line(panel, "PartText").contains("Seamstress"),
+        "foe chafing is conditional on future wearer, never the Spoils maker filter")
+    _check(panel.select_owner("all") and panel.select_part("warden_head_pot_helm_bonk")
+        and _cloth_copy(panel, "head") and not _line(panel, "PartText").contains("may fray"),
+        "returning to a hero-made patch clears previous foe warnings")
     _test_bobbin_patch_copy(panel, source)
     _check(panel.select_owner("all") and panel.visible_part_ids_in_slot("head") == all_head
         and panel.select_part("felt_bulwark_button_shield"),

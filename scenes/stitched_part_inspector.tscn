@@ -39,7 +39,7 @@ offset_top = 82.0
 offset_right = 950.0
 offset_bottom = 107.0
 theme_override_font_sizes/font_size = 17
-text = "An unaltered record of sewn-in strengths, ranks and rites"
+text = "REFERENCE ONLY  •  Cloth and stitching, not a source of moves"
 
 [node name="CloseButton" type="Button" parent="."]
 layout_mode = 0
@@ -187,25 +187,25 @@ text = "Choose a supplied part to inspect its stitches."
 [node name="PartText" type="Label" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 26.0
-offset_top = 116.0
+offset_top = 134.0
 offset_right = 708.0
-offset_bottom = 177.0
+offset_bottom = 222.0
 theme_override_font_sizes/font_size = 20
 autowrap_mode = 3
 
 [node name="Divider" type="HSeparator" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 25.0
-offset_top = 188.0
+offset_top = 230.0
 offset_right = 713.0
-offset_bottom = 197.0
+offset_bottom = 239.0
 
 [node name="TierHeading" type="Label" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 27.0
-offset_top = 204.0
+offset_top = 245.0
 offset_right = 391.0
-offset_bottom = 234.0
+offset_bottom = 275.0
 theme_type_variation = &"PatchHeading"
 theme_override_font_sizes/font_size = 23
 text = "STITCH FINISH"
@@ -213,9 +213,9 @@ text = "STITCH FINISH"
 [node name="TierI" type="Button" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 25.0
-offset_top = 243.0
+offset_top = 284.0
 offset_right = 153.0
-offset_bottom = 287.0
+offset_bottom = 328.0
 focus_mode = 2
 toggle_mode = true
 text = "Plain"
@@ -223,9 +223,9 @@ text = "Plain"
 [node name="TierII" type="Button" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 163.0
-offset_top = 243.0
+offset_top = 284.0
 offset_right = 291.0
-offset_bottom = 287.0
+offset_bottom = 328.0
 focus_mode = 2
 toggle_mode = true
 text = "Double"
@@ -233,19 +233,19 @@ text = "Double"
 [node name="TierIII" type="Button" parent="DetailsPanel"]
 layout_mode = 0
 offset_left = 301.0
-offset_top = 243.0
+offset_top = 284.0
 offset_right = 429.0
-offset_bottom = 287.0
+offset_bottom = 328.0
 focus_mode = 2
 toggle_mode = true
 text = "Gold thread"
 
 [node name="PatchPreview" type="TextureRect" parent="DetailsPanel"]
 layout_mode = 0
-offset_left = 542.0
-offset_top = 201.0
-offset_right = 638.0
-offset_bottom = 297.0
+offset_left = 505.0
+offset_top = 244.0
+offset_right = 681.0
+offset_bottom = 420.0
 focus_mode = 0
 mouse_filter = 2
 expand_mode = 1
@@ -253,10 +253,10 @@ stretch_mode = 5
 
 [node name="TierBorderPreview" type="TextureRect" parent="DetailsPanel"]
 layout_mode = 0
-offset_left = 542.0
-offset_top = 201.0
-offset_right = 638.0
-offset_bottom = 297.0
+offset_left = 505.0
+offset_top = 244.0
+offset_right = 681.0
+offset_bottom = 420.0
 focus_mode = 0
 mouse_filter = 2
 expand_mode = 1

@@ -276,7 +276,17 @@ func _refresh_details() -> void:
         _meta.text += "\nTHREAD: " + maker_thread.to_upper()
     # Legacy part ability, tier prose, ranks and numeric modifiers are not
     # promises of moves granted by wearing a cloth patch (S14 fixed doll kits).
-    _text.text = "Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." % slot
+    var favoured := StitchedSewnPatches.favoured_slot(str(part["owner"]))
+    if StitchedSewnPatches.is_foe_patch(selected_part_id):
+        # The owner here is the maker, never the doll that might wear these spoils.
+        _text.text = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot
+    elif not favoured.is_empty():
+        var maker := str(part["owner"]).replace("_", " ").capitalize()
+        _text.text = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
+            slot, maker, favoured.to_upper(),
+        ]
+    else:
+        _text.text = "Cloth for %s. Moves stay with the doll." % slot
     _stat.text = ""
     _ability.text = ""
     _ranks.text = ""
