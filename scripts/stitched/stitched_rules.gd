@@ -1429,9 +1429,10 @@ func _enter_turn() -> void:
 ## Start-of-turn status tick. Returns true when the turn is consumed (stun or bleed death).
 func _tick_turn_start(unit: Dictionary) -> bool:
 	var statuses: Dictionary = unit["statuses"]
-	if _s14 and str(unit.side) == "hero" and int(unit.hp) > 0 and int(statuses.get("regen", 0)) > 0:
+	if _s14 and int(unit.hp) > 0 and int(statuses.get("regen", 0)) > 0:
 		unit.hp = mini(int(unit.max_hp), int(unit.hp) + 2)
-		unit.death_hits = 0
+		if str(unit.side) == "hero":
+			unit.death_hits = 0
 		statuses.regen -= 1
 		if statuses.regen <= 0:
 			statuses.erase("regen")
