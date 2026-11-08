@@ -160,7 +160,8 @@ func _test_authored_spool() -> void:
 	var lash := {
 		"id": "snare_lash", "name": "Snare Lash", "kind": "melee",
 		"launch": [1, 3], "target": [1, 2, 3], "target_side": "enemy", "multi": false,
-		"acc": 88, "dmg": [4, 5], "crit": 0, "mark_damage": 3, "effects": {"tangled": 1},
+		"acc": 88, "dmg": [4, 5], "crit": 0, "mark_damage": 3,
+		"effects": {"tangled": 1, "snip": 1},
 		"self_move": 0, "move": "attack2",
 	}
 	var snare := {
@@ -221,9 +222,9 @@ func _test_authored_spool() -> void:
 		"AC1: Spool Snare reaches ranks 2/3/4 with authored pull 1, Fray 6 and Mark 3")
 	_check(not lash_selected.is_empty() and lash_selected.get("target") == [1, 2, 3]
 		and int(lash_selected.get("mark_damage", 0)) == 3
-		and lash_selected.get("effects") == {"tangled": 1}
+		and lash_selected.get("effects") == {"tangled": 1, "snip": 1}
 		and int(lash_selected.get("acc", 0)) == 88 and lash_selected.get("dmg") == [4, 5],
-		"AC1: Snare Lash reaches ranks 1/2/3 and keeps Tangled 1, ACC 88 and damage 4-5")
+		"AC1: Snare Lash reaches ranks 1/2/3 and keeps Tangled 1, ACC 88 and damage 4-5, now with Snip 1")
 	var anchor_foe := StitchedEnemyCatalog.foe_for(catalog, ZIPPER)
 	var anchor_ids: Array = []
 	for ability in anchor_foe.get("abilities", []):
