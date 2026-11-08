@@ -277,8 +277,8 @@ func _scenario(choice: String, candle_override: int = -1,
 		and q["choices"][2]["available"] == true and not leave.disabled,
 		"exact ordered three-effect quote with always-enabled Leave")
 	_check(gold.disabled == (before["gold"] < 10) \
-		and wick.disabled == (before["scraps"] < 1 or before["candle"] == 100),
-		"quote-controlled affordability and full-wick no-effect admission")
+		and wick.disabled == (before["scraps"] < 1 or before["candle"] > 75),
+		"quote-controlled affordability and full-wick-gain admission")
 	_forgeries(app, opened)
 	var button: Button = gold if choice == "pay_gold" else wick if choice == "mend_wick" else leave
 	var selected_available: bool = not button.disabled
@@ -392,20 +392,31 @@ func _run() -> void:
 	var replayed: Dictionary = await _scenario("pay_gold")
 	_check(not bought.is_empty() and bought == replayed,
 		"fresh seeded mounted route deterministically replays entry and choice ledgers")
-	var repaired: Dictionary = await _scenario("mend_wick")
+	var repaired: Dictionary = await _scenario("mend_wick", 83)
+	_check(repaired.get("before_entry", {}).get("candle") == 83 \
+		and repaired.get("before", {}).get("candle") == 75 \
+		and repaired.get("after", {}).get("candle") == 100 \
+		and repaired.get("after", {}).get("scraps") == 0,
+		"entry candle 83 -> 75 admits mend_wick: spends 1 scrap for full +25 -> 100")
+	var refused_76: Dictionary = await _scenario("mend_wick", 84)
+	_check(refused_76.get("before_entry", {}).get("candle") == 84 \
+		and refused_76.get("before", {}).get("candle") == 76 \
+		and refused_76.get("after", {}).get("candle") == 76 \
+		and refused_76.get("after", {}).get("scraps") == 1,
+		"entry candle 84 -> 76 disables mend_wick: Leave keeps 76 candle and 1 scrap")
 	var left: Dictionary = await _scenario("leave")
 	var capped: Dictionary = await _scenario("mend_wick", 100)
 	var partial_cap: Dictionary = await _scenario("mend_wick", 96)
 	_check(capped.get("before_entry", {}).get("candle") == 100 \
 		and capped.get("before", {}).get("candle") == 92 \
-		and capped.get("after", {}).get("candle") == 100 \
-		and capped.get("after", {}).get("scraps") == 0,
-		"full wick pays entry 100 -> 92 before one scrap restores it to 100")
+		and capped.get("after", {}).get("candle") == 92 \
+		and capped.get("after", {}).get("scraps") == 1,
+		"100 pays entry 100 -> 92, mend_wick refused without paying scrap, Leave keeps 92 candle and 1 scrap")
 	_check(partial_cap.get("before_entry", {}).get("candle") == 96 \
 		and partial_cap.get("before", {}).get("candle") == 88 \
-		and partial_cap.get("after", {}).get("candle") == 100 \
-		and partial_cap.get("after", {}).get("scraps") == 0,
-		"96 pays entry to 88 before one scrap restores and clamps candle to 100")
+		and partial_cap.get("after", {}).get("candle") == 88 \
+		and partial_cap.get("after", {}).get("scraps") == 1,
+		"96 pays entry 96 -> 88, mend_wick refused without paying scrap, Leave keeps 88 candle and 1 scrap")
 	for candle in [100, 96, 4, 0]:
 		var zero_or_left := await _scenario("leave", candle)
 		_check(zero_or_left.get("before_entry", {}).get("candle") == candle \
@@ -418,9 +429,15 @@ func _run() -> void:
 		and zero_mend.get("next_roadblock_candle") == 17,
 		"zero-candle entry permits the authored 25-point Mend Wick (0 -> 25 -> 17 next Roadblock)")
 	var short_gold: Dictionary = await _scenario("pay_gold", -1, -1, 9)
-	var short_scraps: Dictionary = await _scenario("mend_wick", -1, 0)
+	var short_scraps: Dictionary = await _scenario("mend_wick", 83, 0)
+	_check(short_scraps.get("before_entry", {}).get("candle") == 83 \
+		and short_scraps.get("before", {}).get("candle") == 75 \
+		and short_scraps.get("after", {}).get("candle") == 75 \
+		and short_scraps.get("after", {}).get("scraps") == 0,
+		"0 scraps disables mend_wick at 75 candle: Leave keeps 75 candle and 0 scraps")
 	_check(not bought.is_empty() and not repaired.is_empty() and not left.is_empty() \
-		and not capped.is_empty() and not short_gold.is_empty() and not short_scraps.is_empty(),
+		and not capped.is_empty() and not short_gold.is_empty() and not short_scraps.is_empty() \
+		and not refused_76.is_empty() and not partial_cap.is_empty() and not zero_mend.is_empty(),
 		"all real-play choice witnesses completed")
 	if failures.is_empty():
 		print("stitched_s6_ferry_event_live_test: PASS (", checks, " checks)")
