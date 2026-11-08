@@ -1323,6 +1323,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_seamstress_black_veil_rail",
+      "title": "The Black-Veil Rail",
+      "description": "A mourning veil stretches between giant bent upholstery hooks across the narrow candlelit corridor. The Seamstress sees a half-finished hem that tugs at her own stitches.",
+      "required_hero": "seamstress",
+      "choices": [
+        {
+          "id": "reinforce_veil_hem",
+          "text": "Weave the veil into stronger seams",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "sell_veil_lining",
+          "text": "Trade some of your lining for gold",
+          "outcome": { "gold": 36, "scraps": 0, "hp": 0, "max_hp": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the mourning veil hanging",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_horseshoe_magnet",
+      "title": "The Horseshoe Magnet",
+      "description": "An iron horseshoe magnet hangs low over the hall, drawing fallen needles from the felt floor in slow arcs. The Tinker spots an unclaimed coil wedged inside the iron.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "brace_magnet_ribs",
+          "text": "Buy an iron brace for sturdier seams",
+          "outcome": { "gold": -20, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "strip_magnet_pins",
+          "text": "Trade some of your frame for loose scrap",
+          "outcome": { "gold": 0, "scraps": 4, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the scattered needles settle",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_broken_blind_cord",
+      "title": "The Broken Blind Cord",
+      "description": "A snapped window-blind cord loops down from the foggy rafters into a tiny paperbird's nest. The Yarn Ranger can hear the nest creak against a frayed anchor.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "retie_cord_roost",
+          "text": "Sew the cord into a lasting shoulder roost",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 4, "max_hp": 2 }
+        },
+        {
+          "id": "cut_cord_from_frame",
+          "text": "Trade some of your padding for a purse",
+          "outcome": { "gold": 30, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the paperbird sheltered above",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
