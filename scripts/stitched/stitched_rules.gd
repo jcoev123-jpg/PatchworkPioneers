@@ -1786,8 +1786,11 @@ func _apply_effects(
 				receipt["tear"] = _tear_random(target)
 			continue
 		if key == "push" or key == "pull":
+			var direction := 1 if key == "push" else -1
 			if str(target["side"]) == "hero":
-				receipt["shift"] = _shift(target, 1 if key == "push" else -1)
+				receipt["shift"] = _shift(target, direction)
+			elif _s14 and str(target["side"]) == "foe":
+				receipt["shift"] = _gift_shift(target, direction)
 			continue
 		if key == "heal":
 			if str(target["side"]) == "hero" and not bool(target["lost"]):

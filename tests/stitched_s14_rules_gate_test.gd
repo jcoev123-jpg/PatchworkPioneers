@@ -13,6 +13,7 @@ func _check(ok: bool, label: String) -> void:
 func _initialize() -> void:
 	_catalogs()
 	_combat()
+	_foe_push_pull()
 	_death_door()
 	_doors()
 	_sewing_circle_sockets()
@@ -415,3 +416,213 @@ func _session_replay() -> void:
 	var mid := StitchedRunSave.restore(StitchedRunSave.capture(session))
 	_check(mid != null and mid.snapshot() == session.snapshot(),
 		"live S14 midbattle snapshot replays from authentic map journal")
+
+
+## Seeded, real S14 signature dispatch. Check the *struck* unit's identity and
+## rank, not just a successful ability receipt: swap/refusal never rolls again.
+func _shift_battle(seed_number: int, picks: Array, sockets: Dictionary = {}) -> StitchedRules:
+	var config := StitchedRunSession.starter_config(picks)
+	_check(not config.is_empty(), "S14 movement fixture admits its real four-doll party")
+	if config.is_empty():
+		return null
+	config["seed"] = seed_number
+	config["s14"] = true
+	config["s14_sockets"] = sockets
+	var built := StitchedRules.create(config)
+	_check(built.ok and built.battle != null, "S14 movement fixture builds from authored kits and foes")
+	return built.battle if built.ok else null
+
+
+func _shift_turn(battle: StitchedRules, hero_id: String, ability_id: String, target_rank: int) -> Dictionary:
+	# Preserve real use_ability validation/hit/receipts rather than calling _apply_effects.
+	battle._order = [hero_id, "warden" if hero_id != "warden" else "seamstress"]
+	battle._turn_index = 0
+	return battle.use_ability(ability_id, target_rank)
+
+
+func _shift_hit(receipt: Dictionary) -> Dictionary:
+	if not receipt.get("ok", false) or receipt.get("results", []).size() != 1:
+		return {}
+	return receipt.results[0]
+
+
+func _foe_push_pull() -> void:
+	var picks := StitchedRunSession.DEFAULT_PICKS
+	var push := _battle(83)
+	if push == null:
+		return
+	var front: Dictionary = push._foe_at(1)
+	var second: Dictionary = push._foe_at(2)
+	_check(not front.is_empty() and not second.is_empty() and front.id != second.id,
+		"Rim Toss precondition: distinct living foes occupy first and second ranks")
+	if front.is_empty() or second.is_empty():
+		return
+	var pushed := _shift_hit(_shift_turn(push, "warden", "warden_legs_rim_toss", 1))
+	var move: Dictionary = pushed.get("shift", {})
+	_check(pushed.get("hit", false) and pushed.get("target") == front.id
+		and move.get("ok", false) and move.get("from") == 1 and move.get("to") == 2
+		and move.get("swapped") == second.id and push.get_unit(front.id).rank == 2
+		and push.get_unit(second.id).rank == 1,
+		"authored Rim Toss pushes the hit living foe and swaps an occupied foe rank")
+
+	var scarecrow := _shift_battle(82, ["warden", "scarecrow", "tinker", "lantern_monk"])
+	if scarecrow == null:
+		return
+	var pulled_foe: Dictionary = scarecrow._foe_at(2)
+	var ahead: Dictionary = scarecrow._foe_at(1)
+	_check(not pulled_foe.is_empty() and not ahead.is_empty(),
+		"Startle Step precondition: living foes occupy first and second ranks")
+	if pulled_foe.is_empty() or ahead.is_empty():
+		return
+	var pulled := _shift_hit(_shift_turn(scarecrow, "scarecrow", "scarecrow_legs_startle_step", 2))
+	var pull: Dictionary = pulled.get("shift", {})
+	_check(pulled.get("hit", false) and pulled.get("target") == pulled_foe.id
+		and pull.get("ok", false) and pull.get("from") == 2 and pull.get("to") == 1
+		and pull.get("swapped") == ahead.id and scarecrow.get_unit(pulled_foe.id).rank == 1
+		and scarecrow.get_unit(ahead.id).rank == 2,
+		"authored Startle Step pulls the hit living foe and swaps an occupied foe rank")
+
+	# The same enemy-targeted *signature* gains one movement direction from
+	# each socket; compare the no-socket RNG stream with the identical hit.
+	for patch_id in ["wool_hook_stitch", "wool_heel_knot"]:
+		var signed := {"warden": {"warden_head_pot_helm_command": [patch_id]}}
+		var patched := _shift_battle(55, picks, signed)
+		var baseline := _battle(55)
+		if patched == null or baseline == null:
+			return
+		var direction := -1 if patch_id == "wool_hook_stitch" else 1
+		var victim: Dictionary = patched._foe_at(2)
+		var neighbor: Dictionary = patched._foe_at(2 + direction)
+		_check(not victim.is_empty() and not neighbor.is_empty(),
+			"socket precondition: two distinct living enemy ranks are present")
+		if victim.is_empty() or neighbor.is_empty():
+			return
+		var before_rng := patched.rng_state()
+		var baseline_before_rng := baseline.rng_state()
+		var attached := _shift_hit(_shift_turn(patched, "warden", "warden_head_pot_helm_command", 2))
+		var without := _shift_hit(_shift_turn(baseline, "warden", "warden_head_pot_helm_command", 2))
+		var shifted: Dictionary = attached.get("shift", {})
+		_check(attached.get("hit", false) and attached.get("target") == victim.id
+			and shifted.get("ok", false) and shifted.get("from") == 2
+			and shifted.get("to") == 2 + direction and shifted.get("swapped") == neighbor.id
+			and patched.get_unit(victim.id).rank == 2 + direction
+			and patched.get_unit(neighbor.id).rank == 2
+			and patched.get_unit(victim.id).statuses.get("mark", 0) > 0,
+			"enemy-targeted " + patch_id + " moves the struck foe without losing authored Mark")
+		_check(before_rng == baseline_before_rng,
+			"socketed and plain authored abilities start with identical seeded RNG")
+		_check(without.get("hit", false) and not without.has("shift")
+			and baseline.get_unit(victim.id).rank == 2
+			and baseline.rng_state() == patched.rng_state(),
+			"socket movement consumes no extra RNG compared with the same seeded signature hit")
+
+	# An ally-targeted signature heals the actual allied recipient and the
+	# same movement patches still shift that ally, not an opposing foe.
+	for patch_id in ["wool_hook_stitch", "wool_heel_knot"]:
+		var sockets := {"seamstress": {"seamstress_head_mending_knot": [patch_id]}}
+		var ally := _shift_battle(24, picks, sockets)
+		if ally == null:
+			return
+		var patient: Dictionary = ally._units["tinker"]
+		patient.hp -= 7
+		var before_hp := int(patient.hp)
+		var original_foes := ally.get_foes()
+		var direction := -1 if patch_id == "wool_hook_stitch" else 1
+		var other: Dictionary = ally._hero_at(3 + direction)
+		_check(not other.is_empty() and patient.rank == 3 and original_foes.size() == 3,
+			"ally socket precondition: injured real ally and distinct swap neighbor exist")
+		if other.is_empty() or original_foes.size() != 3:
+			return
+		var result := _shift_hit(_shift_turn(ally, "seamstress", "seamstress_head_mending_knot", 3))
+		var shift: Dictionary = result.get("shift", {})
+		_check(result.get("hit", false) and result.get("target") == "tinker"
+			and shift.get("ok", false) and shift.get("swapped") == other.id
+			and ally.get_unit("tinker").rank == 3 + direction
+			and ally.get_unit(other.id).rank == 3 and ally.get_unit("tinker").hp > before_hp
+			and ally.get_foes().all(func(foe: Dictionary) -> bool:
+				return int(foe.rank) == int(original_foes.filter(func(old: Dictionary) -> bool:
+					return old.id == foe.id)[0].rank)),
+			"ally-targeted " + patch_id + " heals and shifts the ally, never the foe")
+
+	# Blind guarantees a miss through the actual hit gate (not a fake
+	# _apply_effects call); no authored or socket movement may follow.
+	var miss := _shift_battle(55, picks,
+		{"warden": {"warden_head_pot_helm_command": ["wool_heel_knot"]}})
+	if miss == null:
+		return
+	var missed_foe: Dictionary = miss._foe_at(2)
+	_check(not missed_foe.is_empty(), "miss precondition: struck foe exists")
+	if missed_foe.is_empty():
+		return
+	miss._units["warden"].statuses["blind"] = 1
+	var missed := _shift_hit(_shift_turn(miss, "warden", "warden_head_pot_helm_command", 2))
+	_check(not missed.get("hit", true) and not missed.has("shift")
+		and miss.get_unit(missed_foe.id).rank == 2
+		and miss.get_unit(missed_foe.id).statuses.get("mark", 0) == 0,
+		"blinded signature misses and socketed push does not move or Mark a foe")
+
+	# A Tangled destination foe cannot be traded past, and a Tangled target
+	# cannot move. Both are confirmed hits, not failed validations.
+	for tangle_target in [false, true]:
+		var tangled := _shift_battle(55, picks,
+			{"warden": {"warden_head_pot_helm_command": ["wool_heel_knot"]}})
+		if tangled == null:
+			return
+		var unit: Dictionary = tangled._foe_at(2 if tangle_target else 3)
+		var source: Dictionary = tangled._foe_at(2)
+		unit.statuses["tangled"] = 2
+		var blocked := _shift_hit(_shift_turn(tangled, "warden", "warden_head_pot_helm_command", 2))
+		_check(blocked.get("hit", false) and not blocked.get("shift", {}).get("ok", true)
+			and tangled.get_unit(source.id).rank == 2 and tangled.get_unit(unit.id).rank == (2 if tangle_target else 3),
+			"Tangled " + ("target" if tangle_target else "neighbor") + " blocks a confirmed push")
+
+	var heaped := _shift_battle(55, picks,
+		{"warden": {"warden_head_pot_helm_command": ["wool_heel_knot"]}})
+	if heaped == null:
+		return
+	var heap_target: Dictionary = heaped._foe_at(2)
+	var fallen: Dictionary = heaped._foe_at(3)
+	var death := {}
+	heaped._damage_target(fallen, int(fallen.hp), death)
+	_check(death.has("heap") and not heaped._heap_at(3).is_empty()
+		and not heap_target.is_empty(), "heap precondition: actual defeated foe leaves rank-three scrap")
+	var heap_hit := _shift_hit(_shift_turn(heaped, "warden", "warden_head_pot_helm_command", 2))
+	_check(heap_hit.get("hit", false) and not heap_hit.get("shift", {}).get("ok", true)
+		and heaped.get_unit(heap_target.id).rank == 2 and not heaped._heap_at(3).is_empty(),
+		"occupied scrap heap blocks a confirmed socket push")
+
+	var boundary_pull := _shift_battle(55, picks,
+		{"warden": {"warden_head_pot_helm_command": ["wool_hook_stitch"]}})
+	if boundary_pull == null:
+		return
+	var first_foe: Dictionary = boundary_pull._foe_at(1)
+	var pulled_edge := _shift_hit(_shift_turn(boundary_pull, "warden", "warden_head_pot_helm_command", 1))
+	_check(pulled_edge.get("hit", false) and not pulled_edge.get("shift", {}).get("ok", true)
+		and boundary_pull.get_unit(first_foe.id).rank == 1,
+		"rank-one foe cannot be pulled across front boundary")
+	var boundary_push := _shift_battle(55, picks,
+		{"tinker": {"tinker_head_cog_shot": ["wool_heel_knot"]}})
+	if boundary_push == null:
+		return
+	var back_foe: Dictionary = boundary_push._foe_at(3)
+	var advance: Dictionary = boundary_push._gift_shift(back_foe, 1)
+	_check(advance.get("ok", false) and back_foe.rank == 4 and boundary_push._foe_at(4).id == back_foe.id,
+		"back boundary precondition: Wren's valid foe shift places a living foe in rank four")
+	var pushed_edge := _shift_hit(_shift_turn(boundary_push, "tinker", "tinker_head_cog_shot", 4))
+	_check(pushed_edge.get("hit", false) and not pushed_edge.get("shift", {}).get("ok", true)
+		and boundary_push.get_unit(back_foe.id).rank == 4,
+		"rank-four foe cannot be pushed beyond back boundary")
+
+	var invalid := _shift_battle(55, picks)
+	if invalid == null:
+		return
+	invalid._order = ["warden", "seamstress"]
+	invalid._turn_index = 0
+	var original := invalid.state_snapshot()
+	var rng_before := invalid.rng_state()
+	var forged := invalid.use_ability("not_a_signature", 2)
+	_check(not forged.get("ok", true) and original == invalid.state_snapshot()
+		and rng_before == invalid.rng_state(), "invalid signature never commits state or RNG")
+	var outside := invalid.use_ability("warden_legs_rim_toss", 4)
+	_check(not outside.get("ok", true) and original == invalid.state_snapshot()
+		and rng_before == invalid.rng_state(), "illegal target mask never commits state or RNG")
