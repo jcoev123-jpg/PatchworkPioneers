@@ -9,8 +9,9 @@ extends RefCounted
 ##   inventory      [{"uid": positive int, "id": authored patch id, "rarity": the catalog rarity}]
 ##   sockets        {hero_id: {ability_id: [uid, ...]}}; every uid owned and sewn at most once, and
 ##                  each hero loadout (mapped uid -> patch id) passes StitchedS14Abilities.valid_loadout
-## There is NO price: this service never touches scraps, gold, parts or any RNG, and it never
-## re-sews the released patch anywhere else. Several different unsewings may follow in one open
+## There is NO price: this service never touches scraps, gold, parts or any RNG. unsew() releases a
+## patch (it stays owned) and sew() binds an owned, unbound patch onto a legal signature; several
+## operations may follow in one open
 ## visit; leave() ends it. Every mutation must present the node id and the exact state last
 ## published (read_state() or the previous receipt's "state"); a refusal changes nothing.
 ## Live wiring (run session, journal, save) is a later task; nothing here touches the live run.
@@ -90,6 +91,61 @@ func unsew(hero_id: Variant, ability_id: Variant, uid: Variant, expected_node_id
 		"uid": uid_value,
 		"item": item,
 		"sockets_before": before["sockets"][hero_key][ability_key].duplicate(),
+		"sockets_after": after["sockets"][hero_key][ability_key].duplicate(),
+		"source_state": before,
+		"state": after,
+	}
+
+
+## Sews one owned, currently unbound patch onto one party hero's real signature ability. A patch that is
+## still bound anywhere must first be released with unsew(). The inventory record is never touched.
+func sew(hero_id: Variant, ability_id: Variant, uid: Variant, expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	var gate := _gate(expected_node_id, expected_state)
+	if not gate.is_empty():
+		return _fail(gate)
+	if typeof(hero_id) != TYPE_STRING or typeof(ability_id) != TYPE_STRING or typeof(uid) != TYPE_INT:
+		return _fail("hero id and ability id must be strings and uid an integer")
+	var hero_key: String = hero_id
+	var ability_key: String = ability_id
+	var uid_value: int = uid
+	if not hero_key in _hero_ids:
+		return _fail("unknown hero: " + hero_key)
+	if StitchedS14Abilities.ability(hero_key, ability_key).is_empty():
+		return _fail("unknown signature ability for that hero: " + ability_key)
+	var item_index := _item_index(uid_value)
+	if item_index < 0:
+		return _fail("unowned patch uid")
+	for bound_hero in _sockets:
+		for bound_ability in _sockets[bound_hero]:
+			for bound_uid in _sockets[bound_hero][bound_ability]:
+				if int(bound_uid) == uid_value:
+					return _fail("that patch is already sewn; unsew it first")
+	var before := read_state()
+	var item: Dictionary = _inventory[item_index].duplicate(true)
+	var candidate: Dictionary = _sockets.duplicate(true)
+	if not candidate.has(hero_key):
+		candidate[hero_key] = {}
+	if not candidate[hero_key].has(ability_key):
+		candidate[hero_key][ability_key] = []
+	var sockets_before: Array = candidate[hero_key][ability_key].duplicate()
+	candidate[hero_key][ability_key].append(uid_value)
+	if not _loadout_ok(hero_key, candidate[hero_key]):
+		return _fail("no free socket for that patch on this signature")
+	_sockets = candidate
+	_version += 1
+	var after := read_state()
+	if JSON.stringify(after.get("inventory"), "", true) != JSON.stringify(_source.get("inventory"), "", true):
+		return _fail("inventory drifted from its source snapshot")
+	return {
+		"ok": true,
+		"error": "",
+		"action": "sew",
+		"node_id": _node_id,
+		"hero_id": hero_key,
+		"ability_id": ability_key,
+		"uid": uid_value,
+		"item": item,
+		"sockets_before": sockets_before,
 		"sockets_after": after["sockets"][hero_key][ability_key].duplicate(),
 		"source_state": before,
 		"state": after,
