@@ -9,9 +9,58 @@ func _visit_button(app: Node, id: String, arguments: Array = []) -> Button:
 	var actions: Array = app.stitched_run_session.visit_actions()
 	for index in actions.size():
 		if actions[index].id == id and actions[index].arguments == arguments:
-			return app.stitched_run_buttons[index]
-	_check(false, "mounted visit has requested action " + id + str(arguments))
+			var button: Button = app.stitched_run_buttons[index] if index < app.stitched_run_buttons.size() else null
+			if is_instance_valid(button) and is_instance_valid(app.stitched_run_panel) \
+					and app.stitched_run_panel.is_ancestor_of(button) and button.is_visible_in_tree() \
+					and button.get_meta("action_id", "") == id \
+					and button.get_meta("action_arguments", []) == arguments:
+				return button
+	_check(false, "current mounted visit has requested action " + id + str(arguments)
+		+ " at " + str(app.stitched_run_session.phase))
 	return null
+
+
+## A transition detaches old page controls immediately, but new mounted controls
+## may not be ready until a subsequent frame under parallel test load. Re-query
+## both the session projection and current page for an exact, visible generation;
+## no blind sleep, replay shortcut, or test-only purchase is involved.
+func _await_controls(app: Node, phase: String, service: String = "") -> bool:
+	for attempt in range(12):
+		var session: StitchedRunSession = app.stitched_run_session
+		if session != null and session.phase == phase \
+				and (phase != "visit" or str(session.pending.get("service", "")) == service) \
+				and is_instance_valid(app.stitched_run_panel) and app.stitched_run_panel.is_visible_in_tree():
+			var actions: Array = session.visit_actions() if phase == "visit" else session.choices()
+			var ready: bool = not actions.is_empty() and app.stitched_run_buttons.size() == actions.size() + 2
+			if ready:
+				for index in actions.size():
+					var button: Button = app.stitched_run_buttons[index]
+					if not is_instance_valid(button) or not button.is_visible_in_tree() \
+							or not app.stitched_run_panel.is_ancestor_of(button):
+						ready = false
+						break
+					if phase == "visit" and (button.get_meta("action_id", "") != actions[index].id \
+							or button.get_meta("action_arguments", []) != actions[index].arguments):
+						ready = false
+						break
+					if phase == "map" and button.get_meta("route_id", "") != actions[index]:
+						ready = false
+						break
+			if ready:
+				for index in [actions.size(), actions.size() + 1]:
+					var button: Button = app.stitched_run_buttons[index]
+					if not is_instance_valid(button) or not button.is_visible_in_tree() \
+							or not app.stitched_run_panel.is_ancestor_of(button):
+						ready = false
+						break
+			if ready:
+				return true
+		await process_frame
+	var live: StitchedRunSession = app.stitched_run_session
+	_check(false, "timed out waiting for newly mounted " + phase + " " + service
+		+ " controls; actual phase=" + ("null" if live == null else str(live.phase))
+		+ " and button count=" + str(app.stitched_run_buttons.size()))
+	return false
 
 
 func _stuffing_controls(app: Node) -> void:
@@ -64,6 +113,8 @@ func _stuffing_controls(app: Node) -> void:
 
 func _save_reload(app: Node, label: String, stale_button: Button = null) -> void:
 	var session: StitchedRunSession = app.stitched_run_session
+	if not await _await_controls(app, session.phase, str(session.pending.get("service", "")) if session.phase == "visit" else ""):
+		return
 	var before := session.snapshot()
 	var count := session.visit_actions().size() if session.phase == "visit" else session.choices().size()
 	app.stitched_save_path = SAVE_PATH
@@ -74,10 +125,12 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 	app.stitched_run_buttons[count + 1].pressed.emit()
 	_check(app.stitched_run_session != session and app.stitched_run_session.snapshot() == before,
 		label + " reloads a detached exact state including pockets and seeded RNG")
-	if stale_button != null:
+	if stale_button != null and is_instance_valid(stale_button):
 		stale_button.pressed.emit()
 		_check(app.stitched_run_session.snapshot() == before,
 			"pre-reload callback cannot authorize the restored visit")
+	_check(await _await_controls(app, session.phase, str(session.pending.get("service", "")) if session.phase == "visit" else ""),
+		label + " rebuilds new mounted Save/Reload controls")
 	var continued: Node = load("res://scenes/app.tscn").instantiate()
 	continued.stitched_save_path = SAVE_PATH
 	root.add_child(continued)
@@ -119,6 +172,8 @@ func _reject_choices(session: StitchedRunSession) -> void:
 
 func _buy(app: Node, hero_id: String) -> void:
 	var session: StitchedRunSession = app.stitched_run_session
+	if not await _await_controls(app, "visit", "Peddler"):
+		return
 	var button := _visit_button(app, "buy_fresh_stuffing", [hero_id])
 	_check(button != null and not button.disabled and session.gold >= 10, "earned wallet and living pocket admit a real buy")
 	if button == null or button.disabled:
@@ -211,6 +266,8 @@ func _earned_cap_route() -> void:
 	var shops := 0
 	var fights := 0
 	for id in ["f01_n1", "f02_n1", "f03_n1", "f04_n1", "f05_n1", "f06_n1", "f07_n0", "f08_n0"]:
+		if not await _await_controls(app, "map"):
+			break
 		_check(session.choices().has(id) and _press_route(app, id), "seeded connected control enters " + id)
 		if session.phase == "battle":
 			var stage: StitchedBattleScreen = app.stitched_run_battle
@@ -222,6 +279,8 @@ func _earned_cap_route() -> void:
 			stage._action_buttons["exit"].pressed.emit()
 			fights += 1
 		elif session.phase == "visit" and session.pending.service == "Peddler":
+			if not await _await_controls(app, "visit", "Peddler"):
+				break
 			shops += 1
 			_stuffing_controls(app)
 			_reject_choices(session)
@@ -274,7 +333,9 @@ func _poor_shop() -> void:
 	var app: Node = await _new_run(witness.seed)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session != null:
+		_check(await _await_controls(app, "map"), "unaffordable opening has fresh mounted route controls")
 		_check(_press_route(app, witness.id) and session.gold == 0, "opening Shop has the normal empty wallet")
+		_check(await _await_controls(app, "visit", "Peddler"), "unaffordable Shop has fresh mounted choices")
 		_stuffing_controls(app)
 		var before := session.snapshot()
 		var forged := StitchedRunSave.capture(session)
@@ -307,6 +368,7 @@ func _lost_shop() -> void:
 	for id in session.choices():
 		if session.map.get_node(id).type == "Fight":
 			fight_id = id
+	_check(await _await_controls(app, "map"), "LOST witness has fresh mounted route controls")
 	_check(not fight_id.is_empty() and _press_route(app, fight_id), "LOST witness enters a genuine fight")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
 	if stage == null:
@@ -324,8 +386,10 @@ func _lost_shop() -> void:
 	for id in session.choices():
 		if session.map.get_node(id).type == "Shop":
 			shop_id = id
+	_check(await _await_controls(app, "map"), "post-LOST battle mounts fresh route controls")
 	_check(not shop_id.is_empty() and _press_route(app, shop_id), "earned LOST roster reaches its connected Shop")
 	if session.phase == "visit" and session.pending.service == "Peddler":
+		_check(await _await_controls(app, "visit", "Peddler"), "LOST Shop mounts fresh choice controls")
 		_stuffing_controls(app)
 		await _save_reload(app, "LOST Peddler")
 		session = app.stitched_run_session
