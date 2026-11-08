@@ -1196,6 +1196,14 @@ func _build_foe(entry: Variant, rank: int) -> Dictionary:
 	var turns := _positive_int(entry.get("turns_per_round", 1))
 	if turns < 1 or turns > 2:
 		return {"ok": false, "error": "foe " + unit_id + " may take one or two turns", "unit": {}}
+	# An optional authored Drain trait restores actual HP this foe removes with a confirmed
+	# direct attack. It is strictly a boolean; anything else fails closed instead of
+	# becoming a truthy free heal.
+	var drain := false
+	if entry.has("drain"):
+		if not entry["drain"] is bool:
+			return {"ok": false, "error": "foe " + unit_id + " drain must be a boolean", "unit": {}}
+		drain = bool(entry["drain"])
 	# Only a boss may take the two-turn exception; an ordinary foe always acts once a round.
 	if turns > 1 and not bool(is_boss):
 		return {
@@ -1254,6 +1262,8 @@ func _build_foe(entry: Variant, rank: int) -> Dictionary:
 		"guard_target": "",
 		"dodge_buff": {},
 	}
+	if drain:
+		unit["drain"] = true
 	return {"ok": true, "error": "", "unit": unit}
 
 
@@ -1806,6 +1816,7 @@ func _resolve_attack(
 	)
 	receipt["hit_chance"] = chance
 	var hit := false
+	var direct_loss := 0
 	if blinded:
 		actor_statuses.erase("blind")
 		receipt["blinded"] = true
@@ -1848,7 +1859,12 @@ func _resolve_attack(
 			int(target.get("prot", 0))
 		)
 		receipt["damage"] = damage
+		var target_hp_before := int(target["hp"])
 		_damage_target(target, damage, receipt)
+		# Drain reads actual HP removed from the struck unit, after every modifier, Guard
+		# interception and the HP floor: never advertised damage and never overkill. It is
+		# settled only after reaction damage below, so a counter-slain source cannot heal.
+		direct_loss = maxi(0, target_hp_before - int(target["hp"]))
 		if critical and str(actor["side"]) == "foe" and str(target["side"]) == "hero" and not bool(target["lost"]):
 			receipt["enemy_crit_fray"] = _change_fray(target, 10)
 		if str(actor["side"]) == "hero" and receipt.has("heap"):
@@ -1867,6 +1883,18 @@ func _resolve_attack(
 	# only an actually DEAD foe or LOST doll stops the reaction chain.
 	if riposte > 0 and int(target["hp"]) > 0 and not bool(actor["dead"]) and not bool(actor["lost"]):
 		_damage_attacker(actor, riposte, receipt, "riposte")
+	# Authored Drain: a still-living drainer restores the HP its confirmed direct hit actually
+	# removed, capped by its missing HP. A miss, a zero-damage effect, a full-HP foe, a heap,
+	# a target already at 0 HP, or a source slain by Thorns/Riposte above heals nothing. This
+	# settlement draws no RNG and never revives a dead or LOST unit.
+	if direct_loss > 0 and bool(actor.get("drain", false)) and str(actor["side"]) == "foe" \
+			and str(target["side"]) != "heap" and not bool(actor["dead"]) \
+			and not bool(actor["lost"]) and int(actor["hp"]) > 0:
+		var missing := maxi(0, int(actor["max_hp"]) - int(actor["hp"]))
+		var restored := mini(missing, direct_loss)
+		if restored > 0:
+			actor["hp"] = int(actor["hp"]) + restored
+			receipt["drain"] = restored
 
 
 func _apply_effects(
