@@ -57,6 +57,7 @@ static func kits(document: Variant = null) -> Dictionary:
 			return {}
 	if from_file:
 		_kits_cache = result
+		return result.duplicate(true)
 	return result
 
 
@@ -102,6 +103,7 @@ static func patches(document: Variant = null) -> Dictionary:
 	var result := {"by_id": entries, "weights": weights.duplicate(true)}
 	if from_file:
 		_patches_cache = result
+		return result.duplicate(true)
 	return result
 
 

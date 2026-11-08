@@ -76,6 +76,56 @@ func _catalogs() -> void:
 	var kits := StitchedS14Abilities.kits()
 	var patches := StitchedS14Abilities.patches()
 	var doors := StitchedS14SideDoors.catalog()
+	## The first file-backed reads in this process are public results too: forged
+	## nested kit effects, patch effects and source weights in them, and in warm
+	## re-reads, can never reach the cached authored catalog.
+	var head: Dictionary = kits.warden.head
+	var expected_mark: Variant = head.effects.mark
+	var expected_effect: String = patches.by_id.cotton_red_lint.effect
+	var expected_fight: Array = patches.weights.fight.duplicate()
+	head.effects["mark"] = 99
+	patches.by_id.cotton_red_lint.effect = "steal"
+	patches.weights.fight[0] = 100
+	var rekit := StitchedS14Abilities.kits()
+	var repatch := StitchedS14Abilities.patches()
+	_check(rekit.warden.head.effects.mark == expected_mark and rekit.warden.head != head,
+		"first kits() read mutations never leak into a fresh read")
+	_check(repatch.by_id.cotton_red_lint.effect == expected_effect
+		and repatch.weights.fight == expected_fight
+		and repatch.by_id.cotton_red_lint != patches.by_id.cotton_red_lint,
+		"first patches() read mutations never leak into a fresh read")
+	rekit.warden.head.effects["mark"] = 77
+	repatch.by_id.cotton_red_lint.effect = "blind"
+	repatch.weights.fight[1] = 100
+	var third_kit := StitchedS14Abilities.kits()
+	var third_patch := StitchedS14Abilities.patches()
+	_check(third_kit.warden.head.effects.mark == expected_mark
+		and third_kit.warden.head != rekit.warden.head,
+		"warm kits() read mutations never leak into a third read")
+	_check(third_patch.by_id.cotton_red_lint.effect == expected_effect
+		and third_patch.weights.fight == expected_fight
+		and third_patch.by_id.cotton_red_lint != repatch.by_id.cotton_red_lint,
+		"warm patches() read mutations never leak into a third read")
+	var command := StitchedS14Abilities.ability("warden", "warden_head_pot_helm_command")
+	_check(not command.is_empty() and command.effects.mark == expected_mark,
+		"ability() still serves the authored head command after mutation attempts")
+	_check(StitchedS14Abilities.socket_limit(["gold_chain_thread", "wool_mark_thread"]) == 2
+		and StitchedS14Abilities.socket_limit(["cotton_red_lint", "wool_mark_thread"]) == 1,
+		"legal socket limits still follow the authored catalog after mutation attempts")
+	var rng_a := RandomNumberGenerator.new()
+	rng_a.seed = 8123
+	var draws_a: Array = []
+	for index in 5:
+		draws_a.append(StitchedS14Abilities.draw_patch(rng_a, "fight"))
+	var rng_b := RandomNumberGenerator.new()
+	rng_b.seed = 8123
+	var draws_b: Array = []
+	for index in 5:
+		draws_b.append(StitchedS14Abilities.draw_patch(rng_b, "fight"))
+	_check(draws_a == draws_b and rng_a.state == rng_b.state,
+		"same-seed patch draws stay authored with no extra RNG consumption")
+	kits = StitchedS14Abilities.kits()
+	patches = StitchedS14Abilities.patches()
 	_check(kits.size() == StitchedPartyAdmission.HERO_IDS.size(), "all eight fixed hero kits exist")
 	var abilities := {}
 	for hero_id in StitchedPartyAdmission.HERO_IDS:
