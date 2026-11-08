@@ -38,6 +38,67 @@ const LEG_PATCH_OLD_SENTENCES := [
 	"Repair a little HP and tune your joints for one turn of temporary Dodge.",
 	"Scatter spare screws, gain temporary Dodge, and swap one rank backward.",
 ]
+## S14: Tinker's two remaining alternate patches (head and torso) are worn cloth too, so their
+## base copy describes the sewn copper, cloth and buttons a player sees. The retired part-granted
+## Weak/Mark and ally-Guard instructions below are no longer advertised; those legacy S4 payloads
+## stay for compatibility while the fixed moves live in data/stitched/s14_hero_abilities.json.
+const SPRING_CLAMP_TEXT := "A small copper spring clamp catches the rim of one mismatched goggle, pinned to mustard cloth by moss-green thread and a crooked brass button."
+const GEAR_BRACE_TEXT := "Two dented copper braces cross a moss-green chest patch, sewn down with heavy mustard stitches and a pair of tarnished brass buttons."
+## The exact sentences the two alternate patches used to advertise as part-cast moves.
+const ALT_PATCH_OLD_SENTENCES := [
+	"Clamp an enemy's seam and leave it Weak; a reinforced clamp also Marks the seam so Overload bites deeper.",
+	"Guard one living ally in ranks one through four, taking the hits aimed at it for 2 turns at stitch tier I, 3 at tier II and 4 at tier III; tiers I and II cast from hero ranks one through three, tier III also from rank four.",
+]
+## Whole-word stems that would turn a patch description back into an old skill, status, rank,
+## turn, tier or retired-card promise. Matched against the lowercased words of the copy.
+const ALT_PATCH_FORBIDDEN_STEMS := [
+	"weak", "mark", "overload", "guard", "rank", "turn", "tier", "heal", "damage", "attack",
+	"card", "cost", "hp",
+]
+## Pre-change snapshot of every non-text field on the two revised records, taken from the shipped
+## version-1 JSON. Only their "text" may differ, so this before-image proves the stat, ability,
+## tier, rank and pose data still match exactly.
+const ALT_PATCH_NON_TEXT_SNAPSHOT := {
+	"tinker_head_spring_clamp": {
+		"id": "tinker_head_spring_clamp",
+		"name": "Spring Clamp",
+		"slot": "head",
+		"owner": "tinker",
+		"stat": {"crit": 4},
+		"ability": {
+			"id": "tinker_spring_clamp_move", "name": "Spring Clamp", "kind": "ranged",
+			"launch": [2, 3], "target": [1, 2, 3], "target_side": "enemy", "multi": false,
+			"acc": 90, "dmg": [3, 5], "crit": 0, "mark_damage": 0,
+			"effects": {"weak": 2}, "self_move": 0, "move": "attack",
+		},
+		"tiers": {
+			"2": {"ability": {"dmg": [4, 7], "effects": {"weak": 2, "mark": 1}}},
+			"3": {"ability": {"acc": 94, "dmg": [5, 9], "effects": {"weak": 2, "mark": 2}}},
+		},
+	},
+	"tinker_torso_gear_brace": {
+		"id": "tinker_torso_gear_brace",
+		"name": "Gear Brace",
+		"slot": "torso",
+		"owner": "tinker",
+		"stat": {"max_hp": 5, "prot": 5},
+		"ability": {
+			"id": "tinker_gear_brace_move", "name": "Gear Brace", "kind": "guard",
+			"launch": [1, 2, 3], "target": [1, 2, 3, 4], "target_side": "ally", "multi": false,
+			"acc": 100, "dmg": [0, 0], "crit": 0, "mark_damage": 0,
+			"effects": {"guard": 2}, "self_move": 0, "move": "guard",
+		},
+		"tiers": {
+			"2": {"ability": {"effects": {"guard": 3}}, "stat": {"max_hp": 7, "prot": 6}},
+			"3": {
+				"ability": {"launch": [1, 2, 3, 4], "effects": {"guard": 4}},
+				"stat": {"max_hp": 9, "prot": 8},
+			},
+		},
+	},
+}
+## Temporary user:// copy used only to prove the real catalog reader refuses blank patch text.
+const TEMP_CATALOG_PATH := "user://stitched_s4_tinker_blank_text_catalog.json"
 const PATCH_FORBIDDEN_WORDS := [
 	"rank", "hit", "mark", "thorns", "guard", "heal", "damage", "crit", "card", "cost",
 	"activate", "attack",
@@ -50,6 +111,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_starter_patch_appearance_text()
 	_test_leg_patch_appearance_text()
+	_test_alternate_patch_appearance_text()
 	_test_spring_clamp_catalog()
 	_test_spring_clamp_mark_setup()
 	_test_spring_clamp_next_foe_attack()
@@ -566,6 +628,194 @@ func _test_leg_patch_appearance_text() -> void:
 		for raw_part in accepted["parts"]:
 			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
 		_check(not lingering, "AC2: no Tinker part still carries the retired leg sentence: " + str(retired))
+
+
+## The on-disk record exactly as authored, before StitchedParts derives any rank mask.
+func _raw_part(part_id: String) -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	if not parsed is Dictionary:
+		return {}
+	for entry in parsed.get("parts", []):
+		if str(entry.get("id", "")) == part_id:
+			return entry
+	return {}
+
+
+## Lowercased alphabet-only words of a description, so punctuation and hyphens separate tokens.
+func _patch_words(text: String) -> Array:
+	var words: Array = []
+	var current := ""
+	var lowered := text.to_lower()
+	var alphabet := "abcdefghijklmnopqrstuvwxyz"
+	for index in range(lowered.length()):
+		var character := lowered[index]
+		if alphabet.contains(character):
+			current += character
+		elif not current.is_empty():
+			words.append(current)
+			current = ""
+	if not current.is_empty():
+		words.append(current)
+	return words
+
+
+## Whole-word stem matches only: "mismatched" and "stitches" stay cloth, while a real "marks",
+## "guards" or "overloads" would still be caught.
+func _banned_patch_words(text: String) -> Array:
+	var banned: Array = []
+	for word in _patch_words(text):
+		for stem in ALT_PATCH_FORBIDDEN_STEMS:
+			if word.begins_with(stem):
+				banned.append(word)
+				break
+	return banned
+
+
+## A parsed JSON record with its text removed and whole numbers normalized to int, so the
+## before/after comparison proves only the copy changed and not one stat, tier, rank or pose.
+func _non_text_snapshot(value: Variant) -> Variant:
+	if value is Dictionary:
+		var copy := {}
+		for key in value:
+			if str(key) == "text":
+				continue
+			copy[key] = _non_text_snapshot(value[key])
+		return copy
+	if value is Array:
+		var items: Array = []
+		for item in value:
+			items.append(_non_text_snapshot(item))
+		return items
+	if value is float and value == floorf(value):
+		return int(value)
+	return value
+
+
+## AC1/AC2/AC3: Tinker's two remaining alternate patches now describe the cloth sewn onto the
+## doll instead of advertising the part-granted Weak/Mark or ally-Guard instruction that S14's
+## fixed move kit replaced. Each keeps its named ID, name, owner and slot, the copy is exactly the
+## authored sentence, the six other Tinker records keep their own exact copy, blank text fails the
+## real load_catalog path, and every non-text value matches the version-1 before-image.
+func _test_alternate_patch_appearance_text() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)), "AC1: StitchedParts.load_catalog accepts Tinker for the alternate patch copy")
+	if not bool(accepted.get("ok", false)):
+		return
+	var expected := {
+		ALTERNATES["head"]: {
+			"name": "Spring Clamp", "slot": "head", "text": SPRING_CLAMP_TEXT,
+			"visual": ["copper", "goggle", "mustard", "thread"],
+			"old_text": ALT_PATCH_OLD_SENTENCES[0],
+		},
+		ALTERNATES["torso"]: {
+			"name": "Gear Brace", "slot": "torso", "text": GEAR_BRACE_TEXT,
+			"visual": ["copper", "moss-green", "mustard stitches", "brass buttons"],
+			"old_text": ALT_PATCH_OLD_SENTENCES[1],
+		},
+	}
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		var part: Dictionary = accepted["by_id"].get(id, {})
+		var record := _raw_part(id)
+		_check(not part.is_empty() and not record.is_empty()
+			and str(record.get("id", "")) == id and str(part.get("id", "")) == id,
+			"AC1: alternate patch keeps its named ID in the raw JSON and the loaded catalog: " + id)
+		if part.is_empty() or record.is_empty():
+			continue
+		_check(str(record["name"]) == str(part["name"]) and str(record["name"]) == str(spec["name"])
+			and str(record["slot"]) == str(part["slot"]) and str(record["slot"]) == str(spec["slot"])
+			and str(record["owner"]) == "tinker" and str(part["owner"]) == "tinker",
+			"AC1: alternate patch keeps its name, slot and Tinker owner: " + id)
+		var text := str(record.get("text", ""))
+		_check(not text.is_empty() and not str(part.get("text", "")).is_empty(),
+			"AC2: alternate patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]) and str(part.get("text", "")) == text,
+			"AC1: alternate patch base copy is the exact sewn-patch sentence: " + id)
+		_check(text != str(spec["old_text"]) and not text.to_lower().contains(str(spec["old_text"]).to_lower()),
+			"AC2: alternate patch no longer carries its retired part-action instruction: " + id)
+		# Positive: the copy names the visible sewn patch pieces, not a combat effect.
+		var visual_ok := true
+		for phrase in spec["visual"]:
+			visual_ok = visual_ok and text.to_lower().contains(str(phrase))
+		_check(visual_ok, "AC2: alternate patch copy names its visible sewn patch pieces: " + id)
+		# Negative: no old skill, status, rank, turn, tier or retired-card vocabulary.
+		var banned := _banned_patch_words(text)
+		_check(banned.is_empty(),
+			"AC2: alternate patch copy promises no old skill/status/rank/turn/tier/card vocabulary: %s%s"
+				% [id, "" if banned.is_empty() else " (" + str(banned) + ")"])
+		# The guard is genuinely live: the exact sentence this patch used to print still trips it.
+		_check(not _banned_patch_words(str(spec["old_text"])).is_empty(),
+			"AC2: the vocabulary guard really flags the retired sentence: " + id)
+		_check(_non_text_snapshot(record) == _non_text_snapshot(ALT_PATCH_NON_TEXT_SNAPSHOT[id]),
+			"AC3: alternate patch changes only its text; stat, ability, tiers, ranks and pose stay authored: " + id)
+		# Fail-closed: an in-memory duplicate with blank text is still refused and never mutates the source.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+		_check(str(part.get("text", "")) == text,
+			"AC2: blank-copy validation leaves the loaded source record unchanged: " + id)
+		_test_blank_text_catalog_rejected(id)
+	# The six records outside this task keep their exact authored copy in the raw JSON and catalog.
+	var unchanged := {
+		"tinker_head_cog_shot": COG_SHOT_TEXT,
+		"tinker_arms_scrap_bomb":
+			"Brass washers and bent pins bulge from the Tinker's stitched sleeve; its rust-red seams hold the scrap in place.",
+		"tinker_torso_casing_ward": CASING_WARD_TEXT,
+		"tinker_legs_tune_up": TUNE_UP_TEXT,
+		"tinker_arms_overload":
+			"Copper coils run from the Tinker's scrap pack to a patched gauntlet, each loop bound down with mustard thread.",
+		"tinker_legs_spare_screws": SPARE_SCREWS_TEXT,
+	}
+	for id in unchanged:
+		var raw := _raw_part(id)
+		var loaded: Dictionary = accepted["by_id"].get(id, {})
+		_check(not raw.is_empty() and not loaded.is_empty()
+			and str(raw.get("text", "")) == str(unchanged[id])
+			and str(loaded.get("text", "")) == str(unchanged[id]),
+			"AC3: the untouched Tinker record keeps its exact authored copy: " + id)
+	# The two retired instructions are gone from every Tinker record.
+	for retired in ALT_PATCH_OLD_SENTENCES:
+		var lingering := false
+		for raw_part in accepted["parts"]:
+			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
+		_check(not lingering, "AC2: no Tinker part still carries the retired alternate-patch sentence: " + str(retired))
+
+
+## Fail-closed through the real catalog reader: a temporary user:// copy of the shipped Tinker
+## catalog with one record's text blanked must fail StitchedParts.load_catalog, and the shipped
+## file itself is never touched.
+func _test_blank_text_catalog_rejected(part_id: String) -> void:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	if not parsed is Dictionary:
+		_check(false, "AC3: shipped Tinker JSON parses for the blank-text catalog witness")
+		return
+	var blanked: Dictionary = parsed.duplicate(true)
+	var replaced := 0
+	for index in range(blanked["parts"].size()):
+		if str(blanked["parts"][index].get("id", "")) == part_id:
+			blanked["parts"][index]["text"] = ""
+			replaced += 1
+	_check(replaced == 1, "AC3: the blank-text catalog witness edits exactly one record: " + part_id)
+	if replaced != 1:
+		return
+	var file := FileAccess.open(TEMP_CATALOG_PATH, FileAccess.WRITE)
+	if file == null:
+		_check(false, "AC3: the blank-text catalog witness can write its temporary user:// copy")
+		return
+	file.store_string(JSON.stringify(blanked))
+	file.close()
+	var rejected := StitchedParts.load_catalog(TEMP_CATALOG_PATH)
+	_check(not bool(rejected.get("ok", false)) and str(rejected.get("error", "")).contains("rules text"),
+		"AC3: StitchedParts.load_catalog refuses a Tinker catalog whose %s text is blank" % part_id)
+	var temp_dir := DirAccess.open(TEMP_CATALOG_PATH.get_base_dir())
+	if temp_dir != null:
+		temp_dir.remove(TEMP_CATALOG_PATH.get_file())
+	_check(not FileAccess.file_exists(TEMP_CATALOG_PATH),
+		"AC3: the temporary blank-text catalog is removed after the fail-closed check")
+	var genuine := _catalog()
+	_check(bool(genuine.get("ok", false)),
+		"AC3: the shipped Tinker catalog still loads after the blank-text check")
 
 
 func _test_every_tier_in_real_combat() -> void:
@@ -1823,15 +2073,11 @@ func _test_gear_brace_catalog() -> void:
 	_check(str(part["name"]) == "Gear Brace" and str(part["slot"]) == "torso"
 		and str(part["owner"]) == "tinker" and part["stat"] == {"max_hp": 5, "prot": 5},
 		"AC1: Gear Brace stays Tinker's named torso part with its authored base stat")
-	var gear_text := "Guard one living ally in ranks one through four, taking the hits aimed at it for 2 turns at stitch tier I, 3 at tier II and 4 at tier III; tiers I and II cast from hero ranks one through three, tier III also from rank four."
-	_check(str(part["text"]) == gear_text,
-		"AC1: Gear Brace carries its revised, truthful rules text")
-	var lowered := str(part["text"]).to_lower()
-	_check(lowered.contains("ranks one through three") and lowered.contains("rank four")
-		and lowered.contains("2 turns") and lowered.contains("3 at tier ii")
-		and lowered.contains("4 at tier iii")
-		and not lowered.contains("card") and not lowered.contains("block"),
-		"AC1: Gear Brace's text explains both launch reaches and the 2/3/4 Guard ladder without a card cost or Block")
+	var gear_text := GEAR_BRACE_TEXT
+	_check(str(part["text"]) == gear_text and not str(part["text"]).is_empty(),
+		"AC1: Gear Brace prints its authored sewn-patch copy, not the retired rank/tier Guard ladder")
+	_check(_banned_patch_words(gear_text).is_empty(),
+		"AC2: Gear Brace's sewn-patch copy promises no Guard, rank, turn or tier rule; the 2/3/4 Guard ladder and rank-4 launch stay proven by the authored tier checks below")
 	_check(str(part["ability"]["id"]) == "tinker_gear_brace_move"
 		and str(part["ability"]["name"]) == "Gear Brace"
 		and str(part["ability"]["kind"]) == "guard"
@@ -2622,9 +2868,10 @@ func _test_spring_clamp_catalog() -> void:
 	_check(str(clamp_part["name"]) == "Spring Clamp" and str(clamp_part["slot"]) == "head"
 		and str(clamp_part["owner"]) == "tinker" and clamp_part["stat"] == {"crit": 4},
 		"AC1: Spring Clamp stays Tinker's crit +4 HEAD part")
-	_check(str(clamp_part["text"]).contains("Weak") and str(clamp_part["text"]).contains("Mark")
-		and str(clamp_part["text"]) != "Clamp an enemy's seam and leave it Weak.",
-		"AC1: Spring Clamp's short text now distinguishes the tier-I Weak clamp from the upgraded Weak-plus-Mark clamp")
+	_check(str(clamp_part["text"]) == SPRING_CLAMP_TEXT and not str(clamp_part["text"]).is_empty(),
+		"AC1: Spring Clamp prints its authored sewn-patch copy instead of the retired Weak/Mark instruction")
+	_check(_banned_patch_words(str(clamp_part["text"])).is_empty(),
+		"AC2: Spring Clamp's sewn-patch copy promises no Weak, Mark, Overload, rank, turn or tier rule")
 	var expected_effects := [{"weak": 2}, {"weak": 2, "mark": 1}, {"weak": 2, "mark": 2}]
 	var expected_weak := [2, 2, 2]
 	var expected_mark := [0, 1, 2]
