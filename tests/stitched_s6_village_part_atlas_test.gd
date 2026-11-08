@@ -10,6 +10,25 @@ const YARN_RANGER := "res://data/parts/yarn_ranger_parts.json"
 const LANTERN_MONK := "res://data/parts/lantern_monk_parts.json"
 const BUTTON_GOLEM := "res://data/parts/button_golem_parts.json"
 const RAG_DUELIST := "res://data/parts/rag_duelist_parts.json"
+const SCARECROW := "res://data/parts/scarecrow_parts.json"
+const SCARECROW_PATCHES := {
+    "head": [
+        {"id": "scarecrow_head_sack_glare", "name": "Sack Glare", "thread": "indigo"},
+        {"id": "scarecrow_head_crow_flock", "name": "Crow Flock", "thread": "ash"},
+    ],
+    "arms": [
+        {"id": "scarecrow_arms_fork_jab", "name": "Fork Jab", "thread": "bone"},
+        {"id": "scarecrow_arms_harvest_fright", "name": "Harvest Fright", "thread": "crimson"},
+    ],
+    "torso": [
+        {"id": "scarecrow_torso_straw_padding", "name": "Straw Padding", "thread": "ash"},
+        {"id": "scarecrow_torso_straw_wrap", "name": "Straw Wrap", "thread": "indigo"},
+    ],
+    "legs": [
+        {"id": "scarecrow_legs_crow_dive", "name": "Crow Dive", "thread": "crimson"},
+        {"id": "scarecrow_legs_crow_peck", "name": "Crow Peck", "thread": "bone"},
+    ],
+}
 const RAG_PATCHES := {
     "head": [
         {"id": "rag_duelist_head_feather_feint", "name": "Feather Feint", "thread": "crimson"},
@@ -28,7 +47,7 @@ const RAG_PATCHES := {
         {"id": "rag_duelist_legs_cape_flourish", "name": "Cape Flourish", "thread": "indigo"},
     ],
 }
-const SOURCES := [WARDEN, SEAMSTRESS, TINKER, YARN_RANGER, FOES, LANTERN_MONK, BUTTON_GOLEM, RAG_DUELIST]
+const SOURCES := [WARDEN, SEAMSTRESS, TINKER, YARN_RANGER, FOES, LANTERN_MONK, BUTTON_GOLEM, RAG_DUELIST, SCARECROW]
 
 var failures: Array[String] = []
 var checks := 0
@@ -334,6 +353,101 @@ func _browse_rag_duelist(inspector: StitchedPartInspector, owner_filter: OptionB
             "Rag-only slot refuses foreign ID and retired combat readouts: " + slot)
 
 
+## The Scarecrow is an existing maker, not an equip action. Prove all eight
+## source records through the real owner, slot and row controls with exact art.
+func _browse_scarecrow(inspector: StitchedPartInspector, owner_filter: OptionButton,
+        all_slots: Dictionary) -> void:
+    var catalog := StitchedParts.load_catalog(SCARECROW)
+    _check(bool(catalog.get("ok", false)), "Scarecrow authored source independently validates")
+    if not bool(catalog.get("ok", false)):
+        return
+    var by_id: Dictionary = catalog["by_id"]
+    _check(_owner_label(owner_filter, "scarecrow", "Scarecrow"),
+        "Scarecrow is a named option in the existing owner dropdown")
+    var owner_index := StitchedPartInspector.OWNERS.find("scarecrow")
+    if owner_index < 0:
+        return
+    owner_filter.select(owner_index)
+    owner_filter.item_selected.emit(owner_index)
+    _check(inspector.selected_owner == "scarecrow" and not owner_filter.disabled
+        and owner_filter.get_selected_id() == owner_index,
+        "mounted dropdown filters real Scarecrow parts")
+    _check(StitchedSewnPatches.border_path(1).is_empty()
+        and not StitchedSewnPatches.border_path(2).is_empty()
+        and not StitchedSewnPatches.border_path(3).is_empty(),
+        "authored Plain, Double and Gold thread borders are available")
+    for slot in StitchedPartInspector.SLOTS:
+        var source_ids: Array[String] = []
+        for part in catalog["parts"]:
+            if str(part["slot"]) == slot:
+                source_ids.append(str(part["id"]))
+        _check(source_ids.size() == 2,
+            "independent Scarecrow source has two sewn cloth entries in " + slot)
+        var slot_button := inspector.get_node("CatalogPanel/Slot" + slot.capitalize()) as Button
+        await _click(slot_button)
+        var visible := inspector.visible_part_ids_in_slot(slot)
+        var rows := inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer
+        var source_matches := visible.size() == source_ids.size()
+        for id in visible:
+            source_matches = source_matches and source_ids.has(id)
+        _check(inspector.active_slot == slot and slot_button.button_pressed
+            and visible.size() == 2 and source_matches
+            and rows.get_child_count() == visible.size()
+            and inspector.part_ids_in_slot(slot) == all_slots[slot],
+            "physical %s slot shows only two real Scarecrow rows, full index intact" % slot)
+        for expected in SCARECROW_PATCHES[slot]:
+            var id := str(expected["id"])
+            var name := str(expected["name"])
+            var thread := str(expected["thread"])
+            _check(by_id.has(id) and source_ids.has(id) and visible.has(id),
+                "independent source and mounted %s tab both contain %s" % [slot, id])
+            if not by_id.has(id):
+                continue
+            var part: Dictionary = by_id[id]
+            _check(str(part["name"]) == name and str(part["slot"]) == slot
+                and str(part["owner"]) == "scarecrow"
+                and StitchedSewnPatches.thread_of(id) == thread,
+                "Scarecrow authored name, slot, owner and maker thread: " + id)
+            var row := rows.get_node_or_null("Part_" + id) as Button
+            _check(row != null and row.is_visible_in_tree()
+                and row.text == "%s   /   scarecrow" % name,
+                "authentic Scarecrow part has a clickable existing row: " + id)
+            if row == null:
+                continue
+            await _click(row)
+            _check(inspector.selected_part_id == id and inspector.active_slot == slot
+                and inspector.selected_owner == "scarecrow" and inspector.selected_tier == 1
+                and _line(inspector, "PartName") == name
+                and _line(inspector, "PartMeta").contains("SLOT: " + slot.to_upper())
+                and _line(inspector, "PartMeta").contains("OWNER: scarecrow")
+                and _line(inspector, "PartMeta").contains("ID: " + id)
+                and _line(inspector, "PartMeta").contains("THREAD: " + thread.to_upper())
+                and _no_retired_readouts(inspector) and _cloth_copy(inspector, slot),
+                "clicking real Scarecrow row shows authored identity without old combat data: " + id)
+            var icon := "res://assets/paper/stitched/patches/" + id + ".png"
+            _check(ResourceLoader.exists(icon)
+                and StitchedSewnPatches.icon_path(id, slot) == icon
+                and _texture_path(_preview(inspector)) == icon
+                and _preview(inspector).visible,
+                "Scarecrow uses its exact sewn-patch PNG rather than fallback: " + id)
+            _source_witness(inspector, part)
+            # The witness rebuilds the button rows: wait for the new layout
+            # before finding and clicking the next real row.
+            await _frames()
+            if id == "scarecrow_head_sack_glare" or id == "scarecrow_arms_fork_jab":
+                for tier in [1, 2, 3]:
+                    await _source_tier(inspector, part, tier)
+        _check(_no_retired_readouts(inspector) and _cloth_copy(inspector, slot),
+            "switching Scarecrow slots never exposes retired abilities or numbers: " + slot)
+    var selected := inspector.selected_part_id
+    _check(not inspector.select_part("warden_head_pot_helm_bonk")
+        and not inspector.select_owner("unknown_maker")
+        and not inspector.select_part("fictional_scarecrow_patch")
+        and inspector.selected_part_id == selected
+        and inspector.selected_owner == "scarecrow",
+        "Scarecrow-only view refuses foreign and unknown part IDs or forged owners")
+
+
 func _run() -> void:
     root.size = Vector2i(1280, 720)
     var originals: Dictionary = {}
@@ -362,6 +476,10 @@ func _run() -> void:
             "rag_duelist_torso_cape_parry", "rag_duelist_torso_duelist_reprise",
             "rag_duelist_legs_cape_slip", "rag_duelist_legs_cape_flourish"]:
         _check(actual_ids.has(id), "validated source actually contains witness " + id)
+    for slot in StitchedPartInspector.SLOTS:
+        for expected in SCARECROW_PATCHES[slot]:
+            _check(actual_ids.has(str(expected["id"])),
+                "combined validated catalogs include Scarecrow " + str(expected["id"]))
     view = VILLAGE.instantiate() as BaseScreen
     root.add_child(view)
     await _frames()
@@ -429,6 +547,7 @@ func _run() -> void:
         and _owner_label(owner_filter, "button_golem", "Button Golem")
         and _owner_label(owner_filter, "rag_duelist", "Rag Duelist")
         and _owner_label(owner_filter, "any", "Spoils")
+        and _owner_label(owner_filter, "scarecrow", "Scarecrow")
         and owner_filter.focus_mode == Control.FOCUS_ALL
         and root.get_visible_rect().encloses(owner_filter.get_global_rect()),
         "Gothic owner filter has named groups without assuming a global count or Spoils index")
@@ -439,8 +558,9 @@ func _run() -> void:
     var all_sources_once := true
     for path in SOURCES:
         all_sources_once = all_sources_once and guide.catalog_paths.count(path) == 1
-    _check(all_sources_once and inspector.selected_owner == "all",
-        "live guide includes each named validated source exactly once and defaults to All")
+    _check(all_sources_once and guide.catalog_paths.size() > 8
+        and guide.catalog_paths[8] == SCARECROW and inspector.selected_owner == "all",
+        "live guide appends the Scarecrow source at index 8 once, preserving every old index")
     var all_head := inspector.part_ids_in_slot("head")
     var all_slots: Dictionary = {}
     for slot in StitchedPartInspector.SLOTS:
@@ -481,6 +601,7 @@ func _run() -> void:
     await _browse_new_maker(inspector, owner_filter, "button_golem", BUTTON_GOLEM,
         "button_golem_head_loose_pop", "button_golem_arms_button_fist", all_slots)
     await _browse_rag_duelist(inspector, owner_filter, all_slots)
+    await _browse_scarecrow(inspector, owner_filter, all_slots)
     _check(inspector.select_owner("all") and
         inspector.visible_part_ids_in_slot("head") == all_head,
         "All recovers original combined index after browsing the added makers")
@@ -632,13 +753,13 @@ func _run() -> void:
         "new-missing-source tests begin with a cleared, closed atlas")
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree()
-        and inspector.select_part("rag_duelist_head_feather_feint")
+        and inspector.select_part("scarecrow_head_sack_glare")
         and _texture_path(_preview(inspector)) ==
-            "res://assets/paper/stitched/patches/rag_duelist_head_feather_feint.png",
-        "real Rag cloth is displayed successfully before the missing-source retry")
+            "res://assets/paper/stitched/patches/scarecrow_head_sack_glare.png",
+        "authentic Scarecrow cloth is displayed before missing-source retry")
     await _key(KEY_ESCAPE)
     _check(not inspector.visible and inspector.selected_part_id.is_empty(),
-        "Rag cloth clears before failed re-open")
+        "Scarecrow cloth clears before failed re-open")
     seed(568263)
     var new_failure_expected_draw := randi()
     seed(568263)
@@ -646,7 +767,8 @@ func _run() -> void:
     for injection in [
             [5, LANTERN_MONK, "lantern_monk_head_moth_wink"],
             [6, BUTTON_GOLEM, "button_golem_head_loose_pop"],
-            [7, RAG_DUELIST, "rag_duelist_head_feather_feint"]]:
+            [7, RAG_DUELIST, "rag_duelist_head_feather_feint"],
+            [8, SCARECROW, "scarecrow_head_sack_glare"]]:
         var index: int = injection[0]
         var authentic_path: String = injection[1]
         var authentic_id: String = injection[2]
@@ -658,7 +780,9 @@ func _run() -> void:
             and inspector.part_ids_in_slot("head").is_empty()
             and inspector.visible_part_ids_in_slot("head").is_empty()
             and (inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
-            and not inspector.select_part(authentic_id) and not inspector.select_tier(2)
+            and not inspector.select_part(authentic_id)
+            and not inspector.select_part("scarecrow_head_sack_glare")
+            and not inspector.select_owner("scarecrow") and not inspector.select_tier(2)
             and _line(inspector, "PartText").is_empty() and _no_retired_readouts(inspector)
             and _preview(inspector).texture == null and _border(inspector).texture == null
             and guide._atlas_focus_buttons().is_empty()
@@ -670,6 +794,8 @@ func _run() -> void:
         await _click(guide.atlas_button)
         _check(inspector.is_visible_in_tree() and inspector.select_part(authentic_id)
             and inspector.selected_owner == "all"
+            and _texture_path(_preview(inspector)) ==
+                StitchedSewnPatches.icon_path(authentic_id, str(inspector.active_slot))
             and guide.get_children().filter(func(node: Node) -> bool:
                 return node is StitchedPartInspector).size() == 1,
             "restored real maker at index %d reloads once, including its authored ID" % index)
