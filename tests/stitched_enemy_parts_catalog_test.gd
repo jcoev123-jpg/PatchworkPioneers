@@ -54,7 +54,7 @@ const EXPECTED_PARTS := {
 		"slot": "arms",
 		"ability": "snip",
 		"ability_name": "Snip",
-		"text": "Clip a front foe and open a bleeding seam.",
+		"text": "A dull pewter V-shaped scissor pincer is stitched across a cornflower-blue gingham sleeve, fixed by a marigold button and wine-brown thread.",
 	},
 	"moth_swarm_wings": {
 		"enemy": "moth_swarm",
@@ -62,7 +62,7 @@ const EXPECTED_PARTS := {
 		"slot": "legs",
 		"ability": "flutter_back",
 		"ability_name": "Flutter Back",
-		"text": "Flutter one rank back and briefly gain Dodge.",
+		"text": "Notched parchment-gold moth wings spread across a petrol-teal boot patch, held by dusty-raspberry cross-stitches and a loose thread knot.",
 	},
 	"felt_bulwark_button_shield": {
 		"enemy": "felt_bulwark",
@@ -77,6 +77,37 @@ const EXPECTED_PARTS := {
 var _failures: Array[String] = []
 var _checks := 0
 
+## S14 (owner 2026-11-08): the two authored trophies now read as the sewn-cloth patch a doll
+## actually wears. These independent literals witness the catalog data, so a silent reword in
+## either the JSON or EXPECTED_PARTS still fails. Each list names the visual motifs the patch
+## must show; the retired S4 combat promises are checked separately below.
+const APPEARANCE_PARTS := {
+	"scissor_crab_claw_arm": {
+		"name": "Scissor Claw",
+		"slot": "arms",
+		"text": "A dull pewter V-shaped scissor pincer is stitched across a cornflower-blue gingham sleeve, fixed by a marigold button and wine-brown thread.",
+		"motifs": ["pewter", "gingham", "sleeve", "marigold", "thread"],
+	},
+	"moth_swarm_wings": {
+		"name": "Tatter Wings",
+		"slot": "legs",
+		"text": "Notched parchment-gold moth wings spread across a petrol-teal boot patch, held by dusty-raspberry cross-stitches and a loose thread knot.",
+		"motifs": ["notched", "parchment-gold", "petrol-teal", "boot", "cross-stitches"],
+	},
+}
+## The exact superseded S4 sentences. The promise matcher must positively detect both, so a
+## matcher that silently stopped matching could not green the new descriptions by accident.
+const SUPERSEDED_TEXTS := [
+	"Clip a front foe and open a bleeding seam.",
+	"Flutter one rank back and briefly gain Dodge.",
+]
+## Whole-word ranked-combat and tier promises that a worn patch description must not make.
+## "Stitched", "thread" and "boot" are deliberately allowed: they describe the cloth itself.
+const COMBAT_PROMISE_WORDS := [
+	"foe", "enemy", "ally", "rank", "attack", "damage", "bleed", "dodge", "move",
+	"turn", "tier", "card", "guard", "heal",
+]
+
 
 func _initialize() -> void:
 	var parts := _load_parts()
@@ -86,6 +117,7 @@ func _initialize() -> void:
 		_test_ac1_membership(by_id, roster)
 		_test_ac2_ranks_and_behaviour(by_id)
 		_test_ac3_tiers(by_id)
+		_test_s14_sewn_cloth_appearance(by_id)
 		_test_lint_gland_all_enemy_ranks()
 		_test_quill_mail_middle_rank_launch(roster)
 	if _failures.is_empty():
@@ -636,6 +668,89 @@ func _check_damage_ranges(part: Dictionary, label: String) -> void:
 			"%s: tier %d damage must not fall below the previous tier" % [label, tier])
 		previous_min = int(dmg[0])
 		previous_max = int(dmg[1])
+
+
+# ---------------------------------------------------------------- S14 sewn-cloth trophies
+
+## S14: Scissor Claw and Tatter Wings are worn doll patches, so their text describes cloth and
+## colour instead of advertising the retired S4 body-part moves. The test reads the same parsed
+## catalog as the rest of this file, keyed by the two literal ids, and proves the descriptions
+## carry their motifs, avoid whole-word combat/tier promises and digits, differ from each other,
+## and that an empty or whitespace-only base text still fails StitchedParts.validate_part.
+func _test_s14_sewn_cloth_appearance(by_id: Dictionary) -> void:
+	var descriptions: Dictionary = {}
+	for part_id in APPEARANCE_PARTS:
+		var spec: Dictionary = APPEARANCE_PARTS[part_id]
+		var part := _required_part(by_id, part_id)
+		if part.is_empty():
+			continue
+		var label := "S14 " + str(part_id)
+		_check(str(part.get("id", "")) == part_id, label + ": keeps its literal id")
+		_check(str(part.get("name", "")) == str(spec["name"]),
+			label + ": is still named " + str(spec["name"]))
+		_check(str(part.get("slot", "")) == str(spec["slot"]),
+			label + ": still fills the " + str(spec["slot"]) + " slot")
+		_check(str(part.get("owner", "")) == "any", label + ": is still owner any")
+
+		var text := str(part.get("text", ""))
+		_check(text == str(spec["text"]), label + ": carries its exact sewn-cloth sentence")
+		descriptions[part_id] = text
+		for motif in spec["motifs"]:
+			_check(text.to_lower().contains(str(motif)),
+				"%s: the patch description names %s" % [label, str(motif)])
+		_check(not _has_combat_promise(text),
+			label + ": makes no ranked-combat or tier promise: " + text)
+		_check(not _has_digit(text), label + ": carries no numeric digits: " + text)
+
+		# The loaded catalog itself must validate, so the blank-text witnesses below are real.
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			label + ": the loaded record validates before the negative witnesses")
+		for blank in ["", "   ", " \n\t "]:
+			var broken: Dictionary = part.duplicate(true)
+			broken["text"] = blank
+			var result := StitchedParts.validate_part(broken)
+			_check(not bool(result.get("ok", false)),
+				label + ": blank text %s still fails validation" % JSON.stringify(blank))
+		_check(str(part.get("text", "")) == text,
+			label + ": the negative witnesses never mutate the loaded catalog")
+
+	if descriptions.size() == APPEARANCE_PARTS.size():
+		_check(str(descriptions["scissor_crab_claw_arm"])
+			!= str(descriptions["moth_swarm_wings"]),
+			"S14 AC2: the two patch descriptions differ from each other")
+	else:
+		_check(false, "S14 AC2: both named patches were read before comparing their text")
+
+	# Positive witness: the same matcher flags the two superseded combat sentences.
+	for old_text in SUPERSEDED_TEXTS:
+		_check(_has_combat_promise(str(old_text)),
+			"S14 AC2: the promise matcher detects the superseded text: " + str(old_text))
+
+
+## Whole-word match over lowercased ASCII letter runs, so hyphenated cloth words such as
+## "parchment-gold" split cleanly and "shaped" never matches a banned stem by accident.
+func _has_combat_promise(text: String) -> bool:
+	var lower := text.to_lower()
+	var current := ""
+	for index in range(lower.length()):
+		var code := lower.unicode_at(index)
+		if code >= 97 and code <= 122:
+			current += lower[index]
+		elif not current.is_empty():
+			if current in COMBAT_PROMISE_WORDS:
+				return true
+			current = ""
+	if not current.is_empty() and current in COMBAT_PROMISE_WORDS:
+		return true
+	return false
+
+
+func _has_digit(text: String) -> bool:
+	for index in range(text.length()):
+		var code := text.unicode_at(index)
+		if code >= 48 and code <= 57:
+			return true
+	return false
 
 
 # ---------------------------------------------------------------- Thread Biter Lint Gland
