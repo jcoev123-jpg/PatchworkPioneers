@@ -143,9 +143,25 @@ func _no_retired_readouts(inspector: StitchedPartInspector) -> bool:
 
 
 func _cloth_copy(inspector: StitchedPartInspector, slot: String) -> bool:
-    return _line(inspector, "PartText") == (
-        "Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." %
-        slot.to_upper())
+    if not inspector._by_id.has(inspector.selected_part_id):
+        return false
+    var part: Dictionary = inspector._by_id[inspector.selected_part_id]
+    if str(part["slot"]) != slot:
+        return false
+    var owner := str(part["owner"])
+    var expected := "Cloth for %s. Moves stay with the doll." % slot.to_upper()
+    if StitchedSewnPatches.is_foe_patch(inspector.selected_part_id):
+        expected = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot.to_upper()
+    elif not StitchedSewnPatches.favoured_slot(owner).is_empty():
+        expected = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
+            slot.to_upper(), owner.replace("_", " ").capitalize(),
+            StitchedSewnPatches.favoured_slot(owner).to_upper(),
+        ]
+    var label := inspector.get_node("DetailsPanel/PartText") as Label
+    return label != null and label.get_line_count() >= 1 and label.get_line_count() <= 3 \
+        and label.get_visible_line_count() == label.get_line_count() \
+        and _line(inspector, "PartText") == expected
+
 
 
 func _maker_matches(inspector: StitchedPartInspector, id: String) -> bool:
@@ -552,7 +568,7 @@ func _run() -> void:
         and root.get_visible_rect().encloses(owner_filter.get_global_rect()),
         "Gothic owner filter has named groups without assuming a global count or Spoils index")
     _check(_no_retired_readouts(inspector)
-        and _preview(inspector).get_global_rect().size == Vector2(96, 96)
+        and _preview(inspector).get_global_rect().size == Vector2(176, 176)
         and root.get_visible_rect().encloses(_preview(inspector).get_global_rect()),
         "real mounted Reliquary has passive readable patch art and no attack projections")
     var all_sources_once := true
@@ -625,23 +641,41 @@ func _run() -> void:
         and (inspector.get_node("DetailsPanel/TierII") as Button).text == "Double"
         and (inspector.get_node("DetailsPanel/TierIII") as Button).text == "Gold thread"
         and _preview(inspector).get_global_rect() == _border(inspector).get_global_rect()
-        and _preview(inspector).get_global_rect().size == Vector2(96, 96)
+        and _preview(inspector).get_global_rect().size == Vector2(176, 176)
         and _preview(inspector).mouse_filter == Control.MOUSE_FILTER_IGNORE
         and _border(inspector).mouse_filter == Control.MOUSE_FILTER_IGNORE
         and _preview(inspector).focus_mode == Control.FOCUS_NONE
         and _border(inspector).focus_mode == Control.FOCUS_NONE,
-        "real mounted inspector retains three focusable stitch finishes and passive aligned 96px art")
+        "real mounted inspector retains three focusable stitch finishes and passive enlarged art")
+    _check(StitchedSewnPatches.favoured_slot("warden") == "torso"
+        and StitchedSewnPatches.favoured_slot("seamstress") == "arms"
+        and StitchedSewnPatches.is_foe_patch("scissor_crab_claw_arm"),
+        "mounted guidance uses authored S13 maker favours and foe identity")
     _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden")
+    _check(_line(inspector, "PartText") == "Cloth for HEAD; Warden favours TORSO. Moves stay with the doll.",
+        "mounted Warden head clearly favours TORSO, not a granted move")
+    _check(inspector.select_owner("seamstress") and inspector.select_part("seamstress_mending_knot_hat")
+        and _line(inspector, "PartText") == "Cloth for HEAD; Seamstress favours ARMS. Moves stay with the doll.",
+        "mounted owner switch replaces Warden seam with Seamstress ARMS guidance")
+    _check(inspector.select_owner("all") and inspector.select_part("warden_head_pot_helm_bonk")
+        and _cloth_copy(inspector, "head"),
+        "All restores maker-specific Warden copy after owner switch")
     await _tier(inspector, "warden_head_pot_helm_bonk", 1)
     await _tier(inspector, "warden_head_pot_helm_bonk", 3)
     _witness(inspector, "scissor_crab_claw_arm", "Scissor Claw", "arms", "any")
+    _check(_line(inspector, "PartText") ==
+        "Foe cloth for ARMS; may fray a doll outside its favoured seam. Moves stay with the doll."
+        and not _line(inspector, "PartText").contains("Warden")
+        and not _line(inspector, "PartText").contains("Seamstress"),
+        "mounted foe part describes only conditional wearer fray, never a guessed doll")
     await _tier(inspector, "scissor_crab_claw_arm", 1)
     await _tier(inspector, "scissor_crab_claw_arm", 2)
     _witness(inspector, "moth_swarm_wings", "Tatter Wings", "legs", "any")
     await _tier(inspector, "moth_swarm_wings", 3)
     _witness(inspector, "felt_bulwark_button_shield", "Button Shield Torso", "torso", "any")
-    _check(_no_retired_readouts(inspector) and _cloth_copy(inspector, "torso"),
-        "foe torso cloth does not promise former ally guard or zero-damage move")
+    _check(_no_retired_readouts(inspector) and _cloth_copy(inspector, "torso")
+        and _line(inspector, "PartText").contains("may fray a doll outside its favoured seam"),
+        "foe torso cloth warns conditionally without promising old ally guard or damage")
     _check(not inspector.select_part("fictional_part")
         and inspector.selected_part_id == "felt_bulwark_button_shield"
         and not inspector.select_tier(0) and not inspector.select_tier(4),
@@ -697,8 +731,10 @@ func _run() -> void:
         "inspector pointer Close clears its catalog and restores guide focus and modal guard")
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree() and guide.part_atlas == inspector
-        and inspector.select_part("scissor_crab_claw_arm"),
-        "re-entry uses one refreshed inspector and genuine foreign source")
+        and inspector.select_part("scissor_crab_claw_arm")
+        and _cloth_copy(inspector, "arms")
+        and _line(inspector, "PartText").contains("may fray a doll outside its favoured seam"),
+        "re-entry restores the foe warning with the new selection, not stale hero copy")
     await _key(KEY_ESCAPE)
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and root.gui_get_focus_owner() == guide.atlas_button,
@@ -722,9 +758,10 @@ func _run() -> void:
     guide.catalog_paths[4] = FOES
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree() and inspector.select_part("moth_swarm_wings")
+        and _cloth_copy(inspector, "legs")
         and guide.get_children().filter(func(node: Node) -> bool:
             return node is StitchedPartInspector).size() == 1,
-        "valid retry after a failed read restores authentic catalog exactly once")
+        "valid retry restores current foe leg copy and authentic catalog exactly once")
     await _key(KEY_ESCAPE)
     _check(not inspector.visible and inspector.selected_part_id.is_empty(),
         "valid foe retry can close without retaining parts")
@@ -744,6 +781,8 @@ func _run() -> void:
     await _click(guide.atlas_button)
     _check(inspector.is_visible_in_tree()
         and inspector.select_part("seamstress_mending_knot_hat")
+        and _cloth_copy(inspector, "head")
+        and not _line(inspector, "PartText").contains("may fray")
         and inspector.selected_owner == "all"
         and guide.get_children().filter(func(node: Node) -> bool:
             return node is StitchedPartInspector).size() == 1,
@@ -796,6 +835,7 @@ func _run() -> void:
             and inspector.selected_owner == "all"
             and _texture_path(_preview(inspector)) ==
                 StitchedSewnPatches.icon_path(authentic_id, str(inspector.active_slot))
+            and _cloth_copy(inspector, str(inspector.active_slot))
             and guide.get_children().filter(func(node: Node) -> bool:
                 return node is StitchedPartInspector).size() == 1,
             "restored real maker at index %d reloads once, including its authored ID" % index)
