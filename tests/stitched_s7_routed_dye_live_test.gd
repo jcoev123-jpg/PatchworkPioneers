@@ -1,21 +1,157 @@
 extends "res://tests/stitched_s6_routed_vis_a_test.gd"
 ## Earned wallets and genuine generated Shops, driven through New Run controls.
 
-const SAVE_PATH := "user://stitched_s7_routed_dye_live.save"
+## A parallel lane can run this same suite in another Godot process sharing
+## the same user:// directory: a process-unique public save path keeps another
+## lane's seals from racing this one's mounted Save/Reload/Continue generation.
+var SAVE_PATH := "user://stitched_s7_routed_dye_live_%d.save" % OS.get_process_id()
 const LiveWitness := preload("res://tests/live_witness.gd")
 var wounded_purchases := 0
 
 
+## A returned control must belong to the CURRENT generation: exact projection
+## metadata, parentage, text and enabled state on the owned live page, so a
+## retired or out-of-sync button is never handed back as a usable action.
 func _visit_button(app: Node, id: String, arguments: Array = []) -> Button:
-	var actions: Array = app.stitched_run_session.visit_actions()
+	var session: StitchedRunSession = app.stitched_run_session
+	var actions: Array = session.visit_actions() if session != null and session.phase == "visit" else []
 	for index in actions.size():
 		if actions[index].id == id and actions[index].arguments == arguments:
-			return app.stitched_run_buttons[index]
-	_check(false, "mounted visit has requested action " + id + str(arguments))
+			var button: Button = app.stitched_run_buttons[index] if index < app.stitched_run_buttons.size() else null
+			if is_instance_valid(button) and is_instance_valid(app.stitched_run_panel) \
+					and app.stitched_run_panel.is_ancestor_of(button) and button.is_visible_in_tree() \
+					and button.get_meta("action_id", "") == id \
+					and button.get_meta("action_arguments", []) == arguments \
+					and button.text == str(actions[index].text) \
+					and button.disabled == not bool(actions[index].enabled):
+				return button
+	_check(false, "current mounted visit has requested action " + id + str(arguments) + "; "
+		+ _mount_evidence(app, "visit", str(session.pending.get("service", "")) if session != null else ""))
 	return null
 
 
+## Explicit wanted-versus-mounted evidence for a mount that did not hold:
+## the CURRENT phase, node, service and page, every projected action and every
+## mounted control, so a failed wait names the exact mismatched generation
+## instead of leaving a later press to throw a SCRIPT ERROR on a stale button.
+func _mount_evidence(app: Node, phase: String, service: String) -> String:
+	var session: StitchedRunSession = app.stitched_run_session
+	var text := "wanted phase=" + phase + " service=" + service + "; actual phase="
+	if session == null:
+		text += "null"
+	else:
+		text += str(session.phase)
+		var names: Array = []
+		var entries: Array = session.visit_actions() if session.phase == "visit" else session.choices()
+		for entry in entries:
+			if entry is Dictionary:
+				names.append(str(entry.id) + str(entry.arguments) + ("on" if bool(entry.enabled) else "off"))
+			else:
+				names.append(str(entry))
+		text += " node=" + str(session.map.get_current_node_id()) \
+			+ " pending=" + str(session.pending).substr(0, 160) \
+			+ " projected=" + str(names).substr(0, 360)
+	var panel: Control = app.stitched_run_panel
+	if not is_instance_valid(panel):
+		text += " panel=none"
+	else:
+		text += " panel=" + str(panel.get_meta("page_kind", str(panel.name))) \
+			+ " parented=" + str(panel.get_parent() == app) \
+			+ " visible=" + str(panel.is_visible_in_tree())
+	var buttons: Array[Button] = app.stitched_run_buttons
+	text += " buttons=" + str(buttons.size()) + " ["
+	for index in mini(buttons.size(), 8):
+		var button: Button = buttons[index]
+		if is_instance_valid(button):
+			text += "\"" + button.text + "\""
+			if button.has_meta("action_id"):
+				text += "=action:" + str(button.get_meta("action_id")) + str(button.get_meta("action_arguments", []))
+			elif button.has_meta("route_id"):
+				text += "=route:" + str(button.get_meta("route_id"))
+			text += ("/on" if not button.disabled else "/off")
+		else:
+			text += "freed"
+		if index < mini(buttons.size(), 8) - 1:
+			text += ", "
+	text += "]"
+	return text
+
+
+func _nav_pair_valid(panel: Control, buttons: Array[Button], first: int) -> bool:
+	if buttons.size() < first + 2:
+		return false
+	var save: Button = buttons[first]
+	var reload: Button = buttons[first + 1]
+	return is_instance_valid(save) and is_instance_valid(reload) \
+		and save.text == "Save run" and reload.text == "Reload saved run" \
+		and not save.disabled and not reload.disabled \
+		and save.is_visible_in_tree() and reload.is_visible_in_tree() \
+		and panel.is_ancestor_of(save) and panel.is_ancestor_of(reload)
+
+
+## The CURRENT generation's own page: an owned, visible page of the wanted phase
+## and service whose projected actions or route tickets each have a live
+## parented button with matching metadata, text and enabled state, plus its
+## genuine Save/Reload pair. A replaced panel or foreign projection never passes.
+func _mount_valid(app: Node, phase: String, service: String = "") -> bool:
+	var session: StitchedRunSession = app.stitched_run_session
+	if session == null or session.phase != phase:
+		return false
+	var panel: Control = app.stitched_run_panel
+	if not is_instance_valid(panel) or not panel.is_visible_in_tree() or panel.get_parent() != app:
+		return false
+	var buttons: Array[Button] = app.stitched_run_buttons
+	if phase == "visit":
+		if str(session.pending.get("service", "")) != service \
+				or str(session.pending.get("node_id", "")) != session.map.get_current_node_id() \
+				or str(panel.get_meta("page_kind", "")) != "visit:" + service:
+			return false
+		var actions: Array = session.visit_actions()
+		if actions.is_empty() or buttons.size() != actions.size() + 2:
+			return false
+		for index in actions.size():
+			var button := buttons[index]
+			if not is_instance_valid(button) or not panel.is_ancestor_of(button) \
+					or not button.is_visible_in_tree() \
+					or button.get_meta("action_id", "") != str(actions[index].id) \
+					or button.get_meta("action_arguments", []) != actions[index].arguments \
+					or button.text != str(actions[index].text) \
+					or button.disabled == bool(actions[index].enabled):
+				return false
+		return _nav_pair_valid(panel, buttons, actions.size())
+	if phase == "map" and str(panel.get_meta("page_kind", "")) == "map":
+		var legal: Array = session.choices()
+		if legal.is_empty() or buttons.size() != legal.size() + 2:
+			return false
+		for index in legal.size():
+			var button := buttons[index]
+			if not is_instance_valid(button) or not panel.is_ancestor_of(button) \
+					or not button.is_visible_in_tree() or button.disabled \
+					or button.get_meta("route_id", "") != str(legal[index]):
+				return false
+		return _nav_pair_valid(panel, buttons, legal.size())
+	return false
+
+
+## A synchronous transition swaps its generation at once, but under parallel
+## lane load the replacement can take a later frame to become the owned
+## visible projection of the CURRENT session. Bounded frame polling re-proves
+## the whole generation every attempt; a timeout fails clearly with phase,
+## node, service and projected-versus-mounted evidence and stops the branch.
+func _await_mount(app: Node, phase: String, service: String = "", label: String = "") -> bool:
+	for attempt in range(18):
+		if _mount_valid(app, phase, service):
+			return true
+		await process_frame
+	_check(false, (label if not label.is_empty() else "live " + phase + " " + service) \
+		+ " never mounted its current generation within 18 frames; " \
+		+ _mount_evidence(app, phase, service))
+	return false
+
+
 func _dye_controls(app: Node) -> void:
+	if not await _await_mount(app, "visit", "Peddler", "Peddler dye controls"):
+		return
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session.phase == "visit" and session.pending.service == "Peddler"
 		and session.map.get_node(session.pending.node_id).type == "Shop",
@@ -60,7 +196,8 @@ func _dye_controls(app: Node) -> void:
 		_check(_visit_button(app, "buy_pins", [hero.id]) != null, "existing per-doll pins stock is intact")
 		_check(_visit_button(app, "buy_thimble_tonic", [hero.id]) != null, "existing per-doll tonic stock is intact")
 		if not hero.lost and int(hero.statuses.get("bleed", 0)) > 0 and session.gold >= 10:
-			_check(not _visit_button(app, "bandage", [hero.id]).disabled, "existing eligible bandage remains buyable")
+			var bandage := _visit_button(app, "bandage", [hero.id])
+			_check(bandage != null and not bandage.disabled, "existing eligible bandage remains buyable")
 
 
 func _sealed_oracle(session: StitchedRunSession) -> Dictionary:
@@ -280,6 +417,8 @@ func _reject_choices(session: StitchedRunSession) -> void:
 
 
 func _buy(app: Node, hero_id: String) -> void:
+	if not await _await_mount(app, "visit", "Peddler", "dye buy for " + hero_id):
+		return
 	var session: StitchedRunSession = app.stitched_run_session
 	var button := _visit_button(app, "buy_dye", [hero_id])
 	_check(button != null and not button.disabled and session.gold >= 10, "earned wallet and living pocket admit a real buy")
@@ -375,6 +514,11 @@ func _earned_cap_route() -> void:
 	var paid_buys := 0
 	var paid_shop_ids: Array[String] = []
 	for id in ["f01_n1", "f02_n1", "f03_n1", "f04_n1", "f05_n1", "f06_n1", "f07_n0", "f08_n0"]:
+		if not await _await_mount(app, "map", "", "cap route to " + id):
+			app.free()
+			await process_frame
+			return
+		session = app.stitched_run_session
 		_check(session.choices().has(id) and _press_route(app, id), "seeded connected control enters " + id)
 		if session.phase == "battle":
 			var stage: StitchedBattleScreen = app.stitched_run_battle
@@ -387,14 +531,14 @@ func _earned_cap_route() -> void:
 			fights += 1
 		elif session.phase == "visit" and session.pending.service == "Peddler":
 			shops += 1
-			_dye_controls(app)
+			await _dye_controls(app)
 			_reject_choices(session)
 			if shops <= 2:
 				_check(fights == 3 and session.gold >= 10, "three genuine victories funded this purchase")
 				var stale_button := _visit_button(app, "buy_dye", ["warden"])
 				await _save_reload(app, "open Peddler", stale_button)
 				session = app.stitched_run_session
-				_dye_controls(app)
+				await _dye_controls(app)
 				var before_paid := session.snapshot().duplicate(true)
 				var journal_before := session.journal.size()
 				var receipts_before := session.receipts.size()
@@ -421,11 +565,21 @@ func _earned_cap_route() -> void:
 				_check(session.pockets.warden == ["dye", "dye"] and session.gold >= 10,
 					"full-pocket refusal is witnessed with an otherwise affordable wallet")
 				var before := session.snapshot()
-				_visit_button(app, "leave").pressed.emit()
+				var leave_button := _visit_button(app, "leave")
+				if leave_button == null:
+					app.free()
+					await process_frame
+					return
+				leave_button.pressed.emit()
 				_check(session.phase == "map" and session.gold == before.gold and session.pockets == before.pockets
 					and session.rng.state == before.rng and session.map.export_state() == before.map,
 					"free Leave closes the full-pocket Shop without any spend or RNG draw")
 		else:
+			var stop_service := str(session.pending.get("service", ""))
+			if not await _await_mount(app, "visit", stop_service, "ordinary stop " + id):
+				app.free()
+				await process_frame
+				return
 			_check(_finish_visit(app) and session.phase == "map", "ordinary mounted stop continues the connected route")
 	var dye_entries: Array = session.journal.filter(func(command: Dictionary): return command.get("action") == "visit" and command.get("id") == "buy_dye" and command.get("arguments") == ["warden"])
 	_check(paid_buys == 2 and paid_shop_ids.size() == 2 and paid_shop_ids[0] != paid_shop_ids[1]
@@ -440,6 +594,10 @@ func _earned_cap_route() -> void:
 		var onward_pockets := session.pockets.duplicate(true)
 		var onward_gold := session.gold
 		var stale := session.snapshot()
+		if not await _await_mount(app, "map", "", "onward ownership route"):
+			app.free()
+			await process_frame
+			return
 		_check(_press_route(app, next_choices[0]) and session.pockets == onward_pockets and session.gold == onward_gold,
 			"continued real next-node play retains both owned dye")
 		var entered := session.snapshot()
@@ -461,8 +619,12 @@ func _poor_shop() -> void:
 	var app: Node = await _new_run(witness.seed)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session != null:
+		if not await _await_mount(app, "map", "", "poor Shop route"):
+			app.free()
+			await process_frame
+			return
 		_check(_press_route(app, witness.id) and session.gold == 0, "opening Shop has the normal empty wallet")
-		_dye_controls(app)
+		await _dye_controls(app)
 		var before := session.snapshot()
 		var forged := StitchedRunSave.capture(session)
 		forged.journal.append({"action": "visit", "id": "buy_dye", "arguments": [session.heroes[0].id]})
@@ -470,13 +632,19 @@ func _poor_shop() -> void:
 		_check(StitchedRunSave.restore(forged) == null and session.snapshot() == before,
 			"rehashed unaffordable purchase command fails replay without mutating the live visit")
 		var old_dye := _visit_button(app, "buy_dye", [session.heroes[0].id])
-		_visit_button(app, "leave").pressed.emit()
+		var leave_button := _visit_button(app, "leave")
+		if leave_button == null:
+			app.free()
+			await process_frame
+			return
+		leave_button.pressed.emit()
 		_check(session.phase == "map" and session.gold == 0 and session.pockets == before.pockets
 			and session.rng.state == before.rng, "unaffordable Shop still has a free usable Leave")
 		var left := session.snapshot()
-		old_dye.pressed.emit()
-		_check(not session.choose_visit("buy_dye", [session.heroes[0].id], before)
-			and session.snapshot() == left, "Leave closes competing dye callbacks without any spend")
+		if old_dye != null:
+			old_dye.pressed.emit()
+			_check(not session.choose_visit("buy_dye", [session.heroes[0].id], before)
+				and session.snapshot() == left, "Leave closes competing dye callbacks without any spend")
 	app.free()
 	await process_frame
 
@@ -491,19 +659,31 @@ func _lost_shop() -> void:
 	var app: Node = witness.app
 	var session: StitchedRunSession = app.stitched_run_session
 	var circle_id := str(witness.route[2])
+	if not await _await_mount(app, "map", "", "LOST roster route to its Shop"):
+		app.free()
+		await process_frame
+		return
 	_check(_press_route(app, str(witness.route[1])), "earned LOST roster reaches its connected Shop")
 	if session.phase == "visit" and session.pending.service == "Peddler":
-		_dye_controls(app)
+		await _dye_controls(app)
 		await _save_reload(app, "LOST Peddler")
 		session = app.stitched_run_session
-		_dye_controls(app)
+		await _dye_controls(app)
 		var living := session.heroes.filter(func(hero: Dictionary): return not hero.lost)
 		_check(living.size() > 0 and session.heroes.any(func(hero: Dictionary): return hero.lost), "living and LOST controls both have witnesses")
 		if not living.is_empty():
 			await _buy(app, living[0].id)
 			session = app.stitched_run_session
+			if not await _await_mount(app, "map", "", "owned dye route to the Sewing Circle"):
+				app.free()
+				await process_frame
+				return
 			_check(session.choices().has(circle_id) and _press_route(app, circle_id)
 				and session.pending.service == "SewingCircle", "owned dye continue into a genuine Sewing Circle")
+			if not await _await_mount(app, "visit", "SewingCircle", "LOST Sewing Circle replacement"):
+				app.free()
+				await process_frame
+				return
 			var replacements := session.visit_actions().filter(func(action: Dictionary): return action.id == "replace" and action.enabled)
 			_check(not replacements.is_empty(), "genuine LOST doll has a mounted replacement choice")
 			if not replacements.is_empty():
@@ -512,7 +692,12 @@ func _lost_shop() -> void:
 				var expected := before.duplicate(true)
 				expected.erase(action.arguments[1])
 				expected[action.arguments[0]] = []
-				_visit_button(app, action.id, action.arguments).pressed.emit()
+				var replace_button := _visit_button(app, action.id, action.arguments)
+				if replace_button == null:
+					app.free()
+					await process_frame
+					return
+				replace_button.pressed.emit()
 				_check(session.pockets == expected and session.pockets.size() == 4
 					and session.pockets[living[0].id] == ["dye"],
 					"replacement removes the retired ID, starts an empty new pocket and preserves survivors' dye")
