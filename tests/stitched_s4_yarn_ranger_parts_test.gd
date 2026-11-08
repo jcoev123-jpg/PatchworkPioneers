@@ -20,6 +20,14 @@ const IDS := [
 	"yarn_ranger_head_needle_arrow", "yarn_ranger_arms_purling_barrage",
 	"yarn_ranger_torso_snare_net", "yarn_ranger_legs_endless_skein",
 ]
+## S14 sewn-patch identity: these two starter patches describe the doll's stitched look instead
+## of advertising the pre-S14 move the legacy ability fields still carry.
+const SEWN_PATCH_TEXT := {
+	"yarn_ranger_head_needle_nock":
+		"A teal yarn knot holds a spare knitting needle against the Ranger's moss-green hood.",
+	"yarn_ranger_torso_hood_knit":
+		"Pale wool loops edge the Ranger's ear-tipped hood, with mismatched stitches over the shoulders.",
+}
 
 const HEAD_LAUNCH := [2, 3, 4]
 const BOLAS_ID := "yarn_ranger_arms_wool_bolas"
@@ -109,6 +117,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_sewn_patch_text()
 	_test_head_launch_tiers()
 	_test_arms_launch_tiers()
 	_test_purling_launch_tiers()
@@ -2166,6 +2175,35 @@ func _test_reel_thread_rank_four_target() -> void:
 			print("AC2 Reel Thread rank-four foe tier %d witness seed %d" % [tier, witness_seed])
 
 
+## S14 sewn-patch identity: the two starter patches describe the doll's stitched look instead of
+## advertising the obsolete pre-S14 move their legacy ability fields still carry. Lookups go
+## through the loaded catalog's named IDs, never array positions.
+func _test_sewn_patch_text() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	var head_id := "yarn_ranger_head_needle_nock"
+	var torso_id := "yarn_ranger_torso_hood_knit"
+	var head: Dictionary = cat["by_id"].get(head_id, {})
+	var torso: Dictionary = cat["by_id"].get(torso_id, {})
+	_check(not head.is_empty() and str(head["owner"]) == "yarn_ranger"
+		and str(head["name"]) == "Needle Nock" and str(head["slot"]) == "head"
+		and str(head.get("text", "")) == SEWN_PATCH_TEXT[head_id],
+		"AC1: Needle Nock keeps its named Yarn Ranger head identity and the exact S14 sewn-patch text")
+	var head_text := str(head.get("text", "")).to_lower()
+	_check(not head_text.contains("pierce") and not head_text.contains("exposed")
+		and not head_text.contains("foe") and not head_text.contains("nock a threaded"),
+		"AC1: Needle Nock's text promises no enemy strike or Exposed effect")
+	_check(not torso.is_empty() and str(torso["owner"]) == "yarn_ranger"
+		and str(torso["name"]) == "Hood Knit" and str(torso["slot"]) == "torso"
+		and str(torso.get("text", "")) == SEWN_PATCH_TEXT[torso_id],
+		"AC2: Hood Knit keeps its named Yarn Ranger torso identity and the exact S14 sewn-patch text")
+	var torso_text := str(torso.get("text", "")).to_lower()
+	_check(not torso_text.contains("guard") and not torso_text.contains("block")
+		and not torso_text.contains("draw") and not torso_text.contains("ally"),
+		"AC2: Hood Knit's text promises no ally Guard, Block or draw action")
+
+
 func _test_catalog() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: complete Yarn Ranger JSON validates with StitchedParts")
@@ -2826,7 +2864,7 @@ func _test_needle_nock_exposed_reply() -> void:
 	_check(not raw_record.is_empty() and raw_effects == 2 and t2_keys == ["dmg"]
 		and t3_dmg.size() == 2 and int(t3_dmg[0]) == 7 and int(t3_dmg[1]) == 10
 		and t3_effects == 3
-		and str(raw_record.get("text", "")) == "Nock a threaded needle and pierce a foe's defences, leaving it Exposed.",
+		and str(raw_record.get("text", "")) == SEWN_PATCH_TEXT[head_id],
 		"AC1: authored Needle Nock keeps a damage-only tier II so tiers I/II/III resolve Exposed 2/2/3")
 	for tier in [1, 2, 3]:
 		var expected := int(HEAD_SPECS[head_id]["effects"][tier - 1]["exposed"])
