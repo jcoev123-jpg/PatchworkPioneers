@@ -933,6 +933,120 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_ashwarm_thermos",
+      "title": "The Ash-Warm Thermos",
+      "description": "A child's thermos taller than the little dolls blocks the corridor. Its soot-red shell bears scratched golden stars, and a round button-eyed keeper cups a fading ember beneath its loose lid.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "sew_ember_hem",
+          "text": "Share the last warmth and stitch its ember into a stronger seam.",
+          "outcome": {
+            "gold": 0,
+            "scraps": -2,
+            "hp": 6,
+            "max_hp": 2
+          }
+        },
+        {
+          "id": "pawn_copper_lid",
+          "text": "Trade the copper lid for coin; the warm padding goes with it.",
+          "outcome": {
+            "gold": 25,
+            "scraps": 0,
+            "hp": 0,
+            "max_hp": -2
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Let the little keeper shelter its final coal.",
+          "outcome": {
+            "gold": 0,
+            "scraps": 0,
+            "hp": 0,
+            "max_hp": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_soot_collectors_dustpan",
+      "title": "The Soot-Collector's Dustpan",
+      "description": "A rust-rimmed household dustpan leans against the black corridor wall like an iron roof. Little button eyes peer out of its soot while a broom with loose red-yarn bristles sweeps by itself.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "bind_broom_bristles",
+          "text": "Let the Tinker rethread the broom and reinforce a worn seam.",
+          "outcome": {
+            "gold": -15,
+            "scraps": 0,
+            "hp": 5,
+            "max_hp": 2
+          }
+        },
+        {
+          "id": "sift_mourning_ash",
+          "text": "Search the ash for loose scraps; breathe in its choking dust.",
+          "outcome": {
+            "gold": 0,
+            "scraps": 3,
+            "hp": -7,
+            "max_hp": 0
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the broom to sweep the same patch of shadow.",
+          "outcome": {
+            "gold": 0,
+            "scraps": 0,
+            "hp": 0,
+            "max_hp": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_lost_faces_rolling_pin",
+      "title": "The Rolling Pin of Lost Faces",
+      "description": "A wooden rolling pin as broad as a handcart lies across the hall. Tiny faces have pressed themselves into the worn grain, and its iron axle rocks while no hand comes near.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "brace_the_roller",
+          "text": "Have the Button Golem bind the iron axle into a lasting brace.",
+          "outcome": {
+            "gold": 0,
+            "scraps": -3,
+            "hp": 4,
+            "max_hp": 3
+          }
+        },
+        {
+          "id": "sell_iron_axle",
+          "text": "Trade away the stout axle for coin and lose some padding.",
+          "outcome": {
+            "gold": 28,
+            "scraps": 0,
+            "hp": 0,
+            "max_hp": -3
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Step around the roller before it turns again.",
+          "outcome": {
+            "gold": 0,
+            "scraps": 0,
+            "hp": 0,
+            "max_hp": 0
+          }
+        }
+      ]
     }
   ]
 }
