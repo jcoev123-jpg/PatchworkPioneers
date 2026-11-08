@@ -9,7 +9,8 @@ extends RefCounted
 ##      "required_hero": "...", "scraps": int, "gold": int, "hp": int,
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
 ##      "min_fray": 1..200, "required_candle_band": "bright"|...,
-##      "required_candle_bands": ["dark", "snuffed"]|..., "fear": int}
+##      "required_candle_bands": ["dark", "snuffed"]|..., "fear": int,
+##      "min_active_heroes": 1..4}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -22,6 +23,10 @@ extends RefCounted
 ## has fray >= min_fray. When `required_hero` is present on a party target, only
 ## that named hero can satisfy `min_fray` (companions cannot substitute).
 ## For `target: "hero"`, only the named `hero_id` is checked.
+## `min_active_heroes` is an optional native integer 1..4 admission gate on
+## `stitched_effect`, requiring that at least that many distinct non-LOST canonical
+## heroes are present in the snapshot party for the choice to be available in
+## `preview()` or claimable in `choose()`.
 ## `required_candle_band` is an optional native String admission gate on
 ## `stitched_effect` equal to one of the five lowercase band names defined by
 ## StitchedS1BEffects ("snuffed", "dark", "gloom", "dim", "bright"). When present,
@@ -89,6 +94,8 @@ const FRAY_MAX := 200
 const FRAY_GAIN_OBSERVATION_THRESHOLD := 10
 const MIN_FRAY_MIN := 1
 const MIN_FRAY_MAX := 200
+const MIN_ACTIVE_HEROES_MIN := 1
+const MIN_ACTIVE_HEROES_MAX := 4
 const MIN_PARTY_SIZE := 1
 const MAX_PARTY_SIZE := 4
 const SATCHEL_MIN := 0
@@ -245,6 +252,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if not _meets_candle_band(base_candle, parsed_effect):
 		return _rejection(base_candle)
 	if not _meets_min_fray(base_state, parsed_effect):
+		return _rejection(base_candle)
+	if not _meets_min_active_heroes(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _can_afford_candle(base_candle, parsed_effect):
 		return _rejection(base_candle)
@@ -640,6 +649,33 @@ func _meets_min_fray(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
 	return false
 
 
+## Shared active hero count from a parsed snapshot: counts only distinct
+## canonical heroes whose lost flag is not true.
+func _active_hero_count(base_state: Dictionary) -> int:
+	var count := 0
+	var seen := {}
+	var party: Array = base_state.get("party", [])
+	for hero in party:
+		var hero_id: String = String(hero.get("id", ""))
+		if hero_id.is_empty() or seen.has(hero_id):
+			continue
+		seen[hero_id] = true
+		if not bool(hero.get("lost", false)):
+			count += 1
+	return count
+
+
+## Shared surviving-party admission gate for preview and commit when
+## `min_active_heroes` is present on `stitched_effect`.
+## Qualifies iff the number of non-LOST distinct heroes in the snapshot party
+## is at least `min_active_heroes`.
+func _meets_min_active_heroes(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("has_min_active_heroes", false):
+		return true
+	var min_required: int = int(parsed_effect.get("min_active_heroes", 0))
+	return _active_hero_count(base_state) >= min_required
+
+
 ## Shared party-scraps arithmetic for preview and commit: requires a valid
 ## snapshot scraps balance, refuses debits below 0, and refuses positive deltas
 ## that would exceed signed 64-bit MAX_INT.
@@ -750,6 +786,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if not _meets_candle_band(int(base_state["candle"]), parsed_effect):
 		return entry
 	if not _meets_min_fray(base_state, parsed_effect):
+		return entry
+	if not _meets_min_active_heroes(base_state, parsed_effect):
 		return entry
 	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
 		return entry
@@ -988,9 +1026,9 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 
 ## Strict opt-in outcome parse: a choice of exactly {id, text, stitched_effect}
 ## whose effect is
-## {candle, fray, target[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle]}
+## {candle, fray, target[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle][, min_active_heroes]}
 ## for "party" or
-## {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle]}
+## {candle, fray, target, hero_id[, required_hero][, scraps][, gold][, part][, hp][, require_full_candle][, min_active_heroes]}
 ## for "hero", with signed integer candle, fray and optional scraps/gold/hp,
 ## canonical hero_id / optional required_hero, optional part
 ## {"id": String, "tier": native int 1..3} whose id resolves in the validated
@@ -1022,6 +1060,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_required_candle_band: bool = effect.has("required_candle_band")
 	var has_required_candle_bands: bool = effect.has("required_candle_bands")
 	var has_fear: bool = effect.has("fear")
+	var has_min_active_heroes: bool = effect.has("min_active_heroes")
 	if has_required_candle_band and has_required_candle_bands:
 		return {"ok": false}
 	if has_require_full_candle and has_require_candle_room:
@@ -1038,6 +1077,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_required_candle_band else 0)
 		+ (1 if has_required_candle_bands else 0)
 		+ (1 if has_fear else 0)
+		+ (1 if has_min_active_heroes else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -1125,6 +1165,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"has_required_candle_bands": has_required_candle_bands,
 		"required_candle_bands": required_candle_bands,
 		"has_fear": has_fear,
+		"has_min_active_heroes": has_min_active_heroes,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
@@ -1159,6 +1200,14 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if min_fray_val < MIN_FRAY_MIN or min_fray_val > MIN_FRAY_MAX:
 			return {"ok": false}
 		parsed["min_fray"] = min_fray_val
+	if has_min_active_heroes:
+		var raw_min_active: Variant = effect.get("min_active_heroes")
+		if typeof(raw_min_active) != TYPE_INT:
+			return {"ok": false}
+		var min_active_val: int = int(raw_min_active)
+		if min_active_val < MIN_ACTIVE_HEROES_MIN or min_active_val > MIN_ACTIVE_HEROES_MAX:
+			return {"ok": false}
+		parsed["min_active_heroes"] = min_active_val
 	return parsed
 
 

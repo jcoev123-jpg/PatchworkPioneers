@@ -49,7 +49,7 @@ const EXPECTED := {
 		"title": "The Veiled Wardrobe Mirror",
 		"description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
 		"choices": [
-			{"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true}},
+			{"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true, "min_active_heroes": 2}},
 			{"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
 			{"id": "leave", "text": "Pass without looking into the silver again", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
@@ -168,6 +168,7 @@ func _initialize() -> void:
 	_test_stale_effect_fails()
 	_test_compass_fray_gates()
 	_test_paid_fray_relief_gates()
+	_test_mirror_surviving_party_gate()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	var before_draw: int = rng_guard.state
 	rng_guard.randi()
@@ -219,7 +220,13 @@ func _load_source() -> void:
 			continue
 		source_counts[event_id] = int(source_counts.get(event_id, 0)) + 1
 		if not source_by_id.has(event_id):
-			source_by_id[event_id] = record
+			var rec_copy: Dictionary = (record as Dictionary).duplicate(true)
+			for choice in rec_copy.get("choices", []):
+				if choice is Dictionary and choice.has("stitched_effect") and choice["stitched_effect"] is Dictionary:
+					var eff: Dictionary = choice["stitched_effect"]
+					if eff.has("min_active_heroes") and typeof(eff["min_active_heroes"]) == TYPE_FLOAT and floor(eff["min_active_heroes"]) == eff["min_active_heroes"]:
+						eff["min_active_heroes"] = int(eff["min_active_heroes"])
+			source_by_id[event_id] = rec_copy
 	source_snapshot = source_document.duplicate(true)
 
 
@@ -1284,3 +1291,400 @@ func _refusal(candle: int) -> Dictionary:
 
 func _denied_preview() -> Dictionary:
 	return {"ok": false, "event_id": "", "candle": 0, "choices": []}
+
+
+## AC1 / AC2 / AC3 / AC4: Veiled Wardrobe Mirror surviving-party gate on lift_silver_seam.
+## Requires at least 2 non-LOST distinct heroes.
+## 1. Four survivors: candle 40, gold 60, scraps 4 -> candle 28, gold 86, raw +10 fray intent for all 4.
+## 2. Three survivors: 3 living + 1 lost -> candle 28, gold 86, raw +10 fray for the 3 living IDs only.
+## 3. Two survivors: 2 living + 2 lost -> candle 28, gold 86, raw +10 fray for the 2 living IDs only.
+## 4. Candle affordability boundary: candle 11 unavailable, candle 12 available and projects 0.
+## 5. One survivor: (1 living + 3 lost) or solitary -> unavailable, refused, Leave succeeds.
+## 6. Malformed min_active_heroes injections: 0, 5, -1, true, "2", 2.0, null and unexpected key.
+## 7. Ungated sibling preservation: choices without gate remain byte-for-byte compatible.
+func _test_mirror_surviving_party_gate() -> void:
+	var event_id := "v3_veiled_wardrobe_mirror"
+	var choice_id := "lift_silver_seam"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+
+	# --- 1. Four survivors: Warden, Seamstress, Tinker, Yarn Ranger ---
+	var snap_four := {
+		"candle": 40,
+		"gold": 60,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 10},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 30},
+			{"id": "yarn_ranger", "fray": 40},
+		],
+	}
+	var before_four: Dictionary = snap_four.duplicate(true)
+	var svc_four := RunStitchedEventConsequence.new(record)
+	var prev_four: Dictionary = svc_four.preview(snap_four)
+	_check(prev_four.get("ok") == true and prev_four.get("event_id") == event_id,
+		"four-survivor mirror visit previews")
+	var entry_four := _entry(prev_four, choice_id)
+	_check(not entry_four.is_empty() and entry_four.get("available") == true,
+		"four-survivor salvage choice is available")
+	var expected_fray_four := {
+		"warden": 10, "seamstress": 10, "tinker": 10, "yarn_ranger": 10,
+	}
+	_check(int(entry_four.get("candle")) == 28
+		and int(entry_four.get("candle_delta")) == -12
+		and int(entry_four.get("fray_delta")) == 10
+		and int(entry_four.get("gold")) == 86
+		and int(entry_four.get("gold_delta")) == 26
+		and entry_four.get("fray") == expected_fray_four,
+		"four-survivor preview quotes candle 28, gold 86, and raw +10 fray for all four")
+	var rec_four: Dictionary = svc_four.choose(choice_id, snap_four)
+	var expected_rec_four := {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": 28,
+		"fray": expected_fray_four,
+		"gold_delta": 26,
+		"gold": 86,
+	}
+	_check(rec_four == expected_rec_four,
+		"four-survivor claim settles exact receipt (40->28 candle, 60->86 gold, +10 fray for four)")
+	_check(not rec_four.has("min_active_heroes") and not rec_four.has("scraps") and not rec_four.has("hp"),
+		"four-survivor receipt has no extra keys")
+	_check(svc_four.is_claimed() and not svc_four.is_valid(),
+		"four-survivor claim latches once")
+	_check(svc_four.choose(choice_id, snap_four) == _refusal(40),
+		"four-survivor replay refused")
+	_check(svc_four.choose("leave", snap_four) == _refusal(40),
+		"four-survivor alternate choice refused after latch")
+	_check(snap_four == before_four and record == record_snapshot,
+		"four-survivor flow mutates no caller snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"four-survivor flow draws no RNG")
+
+	# Deterministic replay check for four survivors
+	var svc_four_replay := RunStitchedEventConsequence.new(record)
+	_check(svc_four_replay.preview(snap_four) == prev_four,
+		"four-survivor deterministic replay preview matches")
+	_check(svc_four_replay.choose(choice_id, snap_four) == rec_four,
+		"four-survivor deterministic replay receipt matches")
+
+	# --- 2. Three survivors: 3 living + 1 LOST ---
+	var snap_three := {
+		"candle": 40,
+		"gold": 60,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 10},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 30},
+			{"id": "yarn_ranger", "fray": 40, "lost": true},
+		],
+	}
+	var before_three: Dictionary = snap_three.duplicate(true)
+	var svc_three := RunStitchedEventConsequence.new(record)
+	var prev_three: Dictionary = svc_three.preview(snap_three)
+	_check(prev_three.get("ok") == true, "three-survivor mirror visit previews")
+	var entry_three := _entry(prev_three, choice_id)
+	_check(not entry_three.is_empty() and entry_three.get("available") == true,
+		"three-survivor salvage choice is available")
+	var expected_fray_three := {
+		"warden": 10, "seamstress": 10, "tinker": 10,
+	}
+	_check(int(entry_three.get("candle")) == 28
+		and int(entry_three.get("gold")) == 86
+		and entry_three.get("fray") == expected_fray_three,
+		"three-survivor preview quotes candle 28, gold 86, and raw +10 fray for the three active dolls only")
+	var rec_three: Dictionary = svc_three.choose(choice_id, snap_three)
+	_check(rec_three == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": 28,
+		"fray": expected_fray_three,
+		"gold_delta": 26,
+		"gold": 86,
+	}, "three-survivor claim settles exact receipt with only 3 living hero IDs in fray map")
+	_check(not (rec_three.get("fray") as Dictionary).has("yarn_ranger"),
+		"three-survivor fray map excludes LOST doll")
+	_check(snap_three == before_three and record == record_snapshot,
+		"three-survivor flow mutates no caller snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"three-survivor flow draws no RNG")
+
+	# --- 3. Two survivors: 2 living + 2 LOST ---
+	# Candidate non-lost doll included (fray 0, non-lost identity, counts as active)
+	var snap_two := {
+		"candle": 40,
+		"gold": 60,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 15},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 50, "lost": true},
+			{"id": "yarn_ranger", "fray": 50, "lost": true},
+		],
+	}
+	var before_two: Dictionary = snap_two.duplicate(true)
+	var svc_two := RunStitchedEventConsequence.new(record)
+	var prev_two: Dictionary = svc_two.preview(snap_two)
+	_check(prev_two.get("ok") == true, "two-survivor mirror visit previews")
+	var entry_two := _entry(prev_two, choice_id)
+	_check(not entry_two.is_empty() and entry_two.get("available") == true,
+		"two-survivor salvage choice is available")
+	var expected_fray_two := {
+		"warden": 10, "seamstress": 10,
+	}
+	_check(int(entry_two.get("candle")) == 28
+		and int(entry_two.get("gold")) == 86
+		and entry_two.get("fray") == expected_fray_two,
+		"two-survivor preview quotes candle 28, gold 86, and fray map for only the two active dolls")
+	var rec_two: Dictionary = svc_two.choose(choice_id, snap_two)
+	_check(rec_two == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": 28,
+		"fray": expected_fray_two,
+		"gold_delta": 26,
+		"gold": 86,
+	}, "two-survivor claim settles exact receipt with only 2 living hero IDs in fray map")
+	_check(snap_two == before_two and record == record_snapshot,
+		"two-survivor flow mutates no caller snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"two-survivor flow draws no RNG")
+
+	# --- 4. Two survivors candle affordability boundary: candle 11 vs 12 ---
+	var snap_two_c11 := snap_two.duplicate(true)
+	snap_two_c11["candle"] = 11
+	var before_two_c11: Dictionary = snap_two_c11.duplicate(true)
+	var svc_two_c11 := RunStitchedEventConsequence.new(record)
+	var prev_two_c11: Dictionary = svc_two_c11.preview(snap_two_c11)
+	_check(prev_two_c11.get("ok") == true, "two-survivor candle 11 visit previews")
+	var entry_two_c11 := _entry(prev_two_c11, choice_id)
+	_check(not entry_two_c11.is_empty() and entry_two_c11.get("available") == false,
+		"two-survivor candle 11 makes salvage unavailable via require_full_candle")
+	_check(int(entry_two_c11.get("candle")) == 11 and entry_two_c11.get("fray") == {},
+		"two-survivor candle 11 quotes caller candle 11 and empty fray")
+	_check(svc_two_c11.choose(choice_id, snap_two_c11) == _refusal(11),
+		"two-survivor candle 11 direct choose refused")
+	_check(svc_two_c11.is_valid() and not svc_two_c11.is_claimed(),
+		"two-survivor candle 11 refusal does not latch")
+	_check(snap_two_c11 == before_two_c11, "candle 11 snapshot unchanged")
+	_check(rng_guard.state == guard_state, "candle 11 refusal draws no RNG")
+
+	var snap_two_c12 := snap_two.duplicate(true)
+	snap_two_c12["candle"] = 12
+	var before_two_c12: Dictionary = snap_two_c12.duplicate(true)
+	var svc_two_c12 := RunStitchedEventConsequence.new(record)
+	var prev_two_c12: Dictionary = svc_two_c12.preview(snap_two_c12)
+	_check(prev_two_c12.get("ok") == true, "two-survivor candle 12 visit previews")
+	var entry_two_c12 := _entry(prev_two_c12, choice_id)
+	_check(not entry_two_c12.is_empty() and entry_two_c12.get("available") == true,
+		"two-survivor candle 12 makes salvage available")
+	_check(int(entry_two_c12.get("candle")) == 0 and int(entry_two_c12.get("gold")) == 86,
+		"two-survivor candle 12 projects candle 0 and gold 86")
+	var rec_two_c12: Dictionary = svc_two_c12.choose(choice_id, snap_two_c12)
+	_check(rec_two_c12 == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": 0,
+		"fray": expected_fray_two,
+		"gold_delta": 26,
+		"gold": 86,
+	}, "two-survivor candle 12 settles exact receipt at candle 0 and gold 86")
+	_check(snap_two_c12 == before_two_c12, "candle 12 snapshot unchanged")
+	_check(rng_guard.state == guard_state, "candle 12 claim draws no RNG")
+
+	# --- 5. One survivor: (1 living + 3 LOST) AND solitary doll ---
+	var snap_one_of_four := {
+		"candle": 40,
+		"gold": 60,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 15},
+			{"id": "seamstress", "fray": 20, "lost": true},
+			{"id": "tinker", "fray": 30, "lost": true},
+			{"id": "yarn_ranger", "fray": 40, "lost": true},
+		],
+	}
+	var before_one_of_four: Dictionary = snap_one_of_four.duplicate(true)
+	var svc_one_of_four := RunStitchedEventConsequence.new(record)
+	var prev_one_of_four: Dictionary = svc_one_of_four.preview(snap_one_of_four)
+	_check(prev_one_of_four.get("ok") == true, "one-survivor (1 living + 3 lost) visit previews")
+	var entry_one_of_four := _entry(prev_one_of_four, choice_id)
+	_check(not entry_one_of_four.is_empty() and entry_one_of_four.get("available") == false,
+		"one-survivor (1 living + 3 lost) salvage choice is unavailable")
+	_check(int(entry_one_of_four.get("candle")) == 40
+		and int(entry_one_of_four.get("gold")) == 60
+		and int(entry_one_of_four.get("candle_delta")) == -12
+		and int(entry_one_of_four.get("fray_delta")) == 10
+		and int(entry_one_of_four.get("gold_delta")) == 26
+		and entry_one_of_four.get("fray") == {},
+		"one-survivor unavailable choice quotes caller state, deltas, and empty fray")
+	var veil_entry := _entry(prev_one_of_four, "pin_lace_veil")
+	_check(not veil_entry.is_empty() and veil_entry.get("available") == true,
+		"one-survivor pin_lace_veil stays available with living warden fray 15 and scraps 4")
+	_check(_entry(prev_one_of_four, "leave").get("available") == true,
+		"one-survivor leave stays available")
+	_check(svc_one_of_four.choose(choice_id, snap_one_of_four) == _refusal(40),
+		"one-survivor direct salvage choose is refused with unchanged 7-key refusal")
+	_check(svc_one_of_four.is_valid() and not svc_one_of_four.is_claimed(),
+		"one-survivor refusal leaves visit open and unclaimed")
+	_check(snap_one_of_four == before_one_of_four and record == record_snapshot,
+		"one-survivor refusal mutates no snapshot or record")
+	_check(rng_guard.state == guard_state, "one-survivor refusal draws no RNG")
+	var leave_rec_one: Dictionary = svc_one_of_four.choose("leave", snap_one_of_four)
+	_check(leave_rec_one == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": "leave",
+		"target": "party",
+		"hero_id": "",
+		"candle": 40,
+		"fray": {},
+	}, "Leave succeeds on same visit after salvage refusal with 1 survivor")
+	_check(svc_one_of_four.is_claimed() and not svc_one_of_four.is_valid(),
+		"post-refusal Leave latches once")
+
+	# Solitary-doll party snapshot (1 survivor total)
+	var snap_solitary := {
+		"candle": 40,
+		"gold": 60,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 10},
+		],
+	}
+	var before_solitary: Dictionary = snap_solitary.duplicate(true)
+	var svc_solitary := RunStitchedEventConsequence.new(record)
+	var prev_solitary: Dictionary = svc_solitary.preview(snap_solitary)
+	_check(prev_solitary.get("ok") == true, "solitary-doll party visit previews")
+	var entry_solitary := _entry(prev_solitary, choice_id)
+	_check(not entry_solitary.is_empty() and entry_solitary.get("available") == false,
+		"solitary-doll party salvage choice is unavailable")
+	_check(svc_solitary.choose(choice_id, snap_solitary) == _refusal(40),
+		"solitary-doll party salvage choose refused")
+	_check(svc_solitary.is_valid() and not svc_solitary.is_claimed(),
+		"solitary refusal leaves visit unclaimed")
+	var leave_rec_solitary: Dictionary = svc_solitary.choose("leave", snap_solitary)
+	_check(leave_rec_solitary.get("ok") == true and leave_rec_solitary.get("choice_id") == "leave",
+		"Leave succeeds after solitary refusal on same visit")
+	_check(snap_solitary == before_solitary, "solitary snapshot unmutated")
+	_check(rng_guard.state == guard_state, "solitary flow draws no RNG")
+
+	# --- 6. Malformed min_active_heroes injections ---
+	var malformed_values: Array = [0, 5, -1, true, "2", 2.0, null]
+	for idx in range(malformed_values.size()):
+		var bad_val: Variant = malformed_values[idx]
+		var bad_choice := {
+			"id": "bad_salvage",
+			"text": "Malformed salvage.",
+			"stitched_effect": {
+				"target": "party",
+				"candle": -12,
+				"fray": 10,
+				"gold": 26,
+				"require_full_candle": true,
+				"min_active_heroes": bad_val,
+			},
+		}
+		var bad_event := {
+			"id": "v3_veiled_wardrobe_mirror",
+			"title": "The Veiled Wardrobe Mirror",
+			"description": "Test malformed mirror.",
+			"choices": [
+				bad_choice,
+				{"id": "leave", "text": "Leave.", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}},
+			],
+		}
+		var bad_before: Dictionary = bad_event.duplicate(true)
+		var snap_four_bad: Dictionary = snap_four.duplicate(true)
+		var snap_four_before: Dictionary = snap_four_bad.duplicate(true)
+		var bad_svc := RunStitchedEventConsequence.new(bad_event)
+		_check(bad_svc.is_valid(), "bad min_active_heroes %s keeps envelope valid" % str(bad_val))
+		var bad_prev: Dictionary = bad_svc.preview(snap_four_bad)
+		_check(bad_prev.get("ok") == true, "bad min_active_heroes %s visit previews" % str(bad_val))
+		var bad_entry := _entry(bad_prev, "bad_salvage")
+		_check(not bad_entry.is_empty()
+			and bad_entry.get("available") == false
+			and bad_entry.get("candle_delta") == null
+			and bad_entry.get("fray_delta") == null
+			and int(bad_entry.get("candle")) == 40
+			and bad_entry.get("fray") == {},
+			"bad min_active_heroes %s is unavailable with null deltas" % str(bad_val))
+		_check(_entry(bad_prev, "leave").get("available") == true,
+			"Leave stays available with bad min_active_heroes %s" % str(bad_val))
+		_check(bad_svc.choose("bad_salvage", snap_four_bad) == _refusal(40),
+			"bad min_active_heroes %s choose is refused" % str(bad_val))
+		_check(bad_svc.is_valid() and not bad_svc.is_claimed(),
+			"bad min_active_heroes %s refusal does not latch" % str(bad_val))
+		_check(snap_four_bad == snap_four_before and bad_event == bad_before,
+			"bad min_active_heroes %s mutates no snapshot or event" % str(bad_val))
+		_check(rng_guard.state == guard_state,
+			"bad min_active_heroes %s draws no RNG" % str(bad_val))
+		var bad_leave: Dictionary = bad_svc.choose("leave", snap_four_bad)
+		_check(bad_leave.get("ok") == true and bad_leave.get("choice_id") == "leave",
+			"Leave succeeds after bad min_active_heroes %s refusal" % str(bad_val))
+		_check(bad_svc.is_claimed() and not bad_svc.is_valid(),
+			"post-bad-refusal Leave latches once")
+
+	# Unexpected extra key on effect with min_active_heroes
+	var extra_key_event := {
+		"id": "v3_veiled_wardrobe_mirror",
+		"title": "The Veiled Wardrobe Mirror",
+		"description": "Test extra key mirror.",
+		"choices": [
+			{
+				"id": "extra_key_salvage",
+				"text": "Extra key salvage.",
+				"stitched_effect": {
+					"target": "party",
+					"candle": -12,
+					"fray": 10,
+					"gold": 26,
+					"require_full_candle": true,
+					"min_active_heroes": 2,
+					"unexpected_key": 999,
+				},
+			},
+			{"id": "leave", "text": "Leave.", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}},
+		],
+	}
+	var extra_svc := RunStitchedEventConsequence.new(extra_key_event)
+	_check(extra_svc.is_valid(), "extra key keeps envelope valid")
+	var extra_prev: Dictionary = extra_svc.preview(snap_four)
+	var extra_entry := _entry(extra_prev, "extra_key_salvage")
+	_check(extra_entry.get("available") == false and extra_entry.get("candle_delta") == null,
+		"unexpected key makes salvage malformed and unavailable with null deltas")
+	_check(_entry(extra_prev, "leave").get("available") == true, "Leave stays available with extra key")
+	_check(extra_svc.choose("extra_key_salvage", snap_four) == _refusal(40),
+		"unexpected key choice is refused")
+	_check(extra_svc.is_valid() and not extra_svc.is_claimed(), "unexpected key refusal does not latch")
+	_check(extra_svc.choose("leave", snap_four).get("ok") == true,
+		"Leave succeeds after unexpected key refusal")
+
+	# Ungated sibling preservation: choices without min_active_heroes have byte-for-byte compatible receipts
+	var pin_rec: Dictionary = RunStitchedEventConsequence.new(record).choose("pin_lace_veil", snap_four)
+	_check(pin_rec == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": "pin_lace_veil",
+		"target": "party",
+		"hero_id": "",
+		"candle": 40,
+		"fray": {"warden": -9, "seamstress": -9, "tinker": -9, "yarn_ranger": -9},
+		"scraps_delta": -1,
+		"scraps": 3,
+	}, "ungated pin_lace_veil receipt is byte-for-byte compatible with legacy")
+	_check(not pin_rec.has("min_active_heroes"), "ungated receipt emits no min_active_heroes key")
