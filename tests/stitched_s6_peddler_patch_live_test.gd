@@ -21,7 +21,18 @@ func _run() -> void:
 	var witness := await LiveWitness.first_played(self, LiveWitness.candidates(KINDS, 0, 2, PREFER),
 		func(app: Node, _played: Dictionary) -> bool:
 			var found: StitchedRunSession = app.stitched_run_session
-			return found.phase == "visit" and found.pending.service == "Peddler" and found.gold >= 100)
+			if found.phase != "visit" or found.pending.service != "Peddler" or found.gold < 100:
+				return false
+			# The witnessed sale must be genuinely payable: append-only Event growth
+			# shifts the run RNG, so the first Peddler found may stock a patch priced
+			# above the earned wallet (authored prices reach 110). Require an unowned
+			# patch affordable at the earned gold and a living doll to wear it.
+			if not found.pending.has("peddler_stock"):
+				return false
+			var patch: Dictionary = found.pending.peddler_stock.get("patch", {})
+			if patch.is_empty() or int(patch.get("price", 0)) > found.gold or found.patches.has(patch.get("id")):
+				return false
+			return found.heroes.any(func(hero: Dictionary) -> bool: return not hero.lost), 48)
 	_check(not witness.is_empty(), "a searched seed and route reach a floor-eleven Peddler with an earned wallet")
 	if witness.is_empty():
 		_finish(null)

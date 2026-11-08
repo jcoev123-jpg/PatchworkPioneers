@@ -97,6 +97,10 @@ var stitched_run_intro: Control
 var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
+## True from a mounted Save press whose verified publish failed until the next
+## remount: the file then still holds the previously accepted generation, so the
+## Reload beside that Save refuses to substitute it for the live run.
+var _stitched_run_save_failed := false
 ## Which junction opening the party just walked into, for the walk's turn-in beat.
 var _stitched_arrive_side := ""
 const STITCHED_SAVE_PATH := "user://stitched_run.save"
@@ -4128,6 +4132,7 @@ var party_picker: LiveV3PartyPicker
 
 func _clear_stitched_run_panel() -> void:
 	_stitched_run_epoch += 1
+	_stitched_run_save_failed = false
 	stitched_run_buttons.clear()
 	if is_instance_valid(stitched_run_panel):
 		remove_child(stitched_run_panel)
@@ -4567,14 +4572,14 @@ func _present_stitched_run() -> void:
 		StitchedBattleScreen.CHROME.style_button(save)
 		save.pressed.connect(func():
 			if stitched_run_session == session and stitched_run_battle == stage and save.is_visible_in_tree():
-				StitchedRunSave.write_file(stitched_save_path, session))
+				_stitched_run_save_file(session))
 		stage.add_child(save)
 		# S11: the fight plays in the corridor the walk stopped in; the classic screen stays as the engine.
 		var corridor := StitchedCorridorFight.attach(stage, session.walk_area())
 		if corridor != null:
 			corridor.add_more("save", "Save run", func():
 				if stitched_run_session == session and stitched_run_battle == stage:
-					StitchedRunSave.write_file(stitched_save_path, session))
+					_stitched_run_save_file(session))
 		return
 	if session.phase == "map" and stitched_walks:
 		_present_stitched_junction(session)
@@ -4665,7 +4670,7 @@ func _present_stitched_run() -> void:
 		var ending_actions := HBoxContainer.new()
 		content.add_child(ending_actions)
 		_stitched_run_action(ending_actions, "Return to title", _return_stitched_run_title)
-		_stitched_run_action(ending_actions, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+		_stitched_run_action(ending_actions, "Save run", func(): _stitched_run_save_file(session))
 		if StitchedBedroom.has_art():
 			_stitched_run_action(ending_actions, "Back to Wren's room", _return_stitched_run_room)
 		_stitched_run_keyboard_chain()
@@ -4732,8 +4737,10 @@ func _present_stitched_run() -> void:
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
 	content.add_child(navigation)
-	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
-	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
+	_stitched_run_action(navigation, "Save run", func(): _stitched_run_save_file(session))
+	_stitched_run_action(navigation, "Reload saved run", func():
+		if not _stitched_run_save_failed:
+			load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
 	if session.phase == "map" and not session.gift_offer.is_empty():
 		_show_wren_gift_pick(session)
@@ -4770,7 +4777,7 @@ func _present_stitched_junction(session: StitchedRunSession) -> void:
 		stitched_run_buttons.append(junction.doors[id])
 	stitched_run_buttons.append(junction.add_action("Save run", func():
 		if stitched_run_session == session and stitched_run_panel == junction:
-			StitchedRunSave.write_file(stitched_save_path, session)))
+			_stitched_run_save_file(session)))
 	stitched_run_buttons.append(junction.add_action("Return to title", func():
 		if stitched_run_session == session and stitched_run_panel == junction:
 			_return_stitched_run_title()))
@@ -4955,8 +4962,10 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 	navigation.position = Vector2(32, 656)
 	navigation.add_theme_constant_override("separation", 12)
 	stitched_run_panel.add_child(navigation)
-	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
-	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
+	_stitched_run_action(navigation, "Save run", func(): _stitched_run_save_file(session))
+	_stitched_run_action(navigation, "Reload saved run", func():
+		if not _stitched_run_save_failed:
+			load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
 
 
@@ -5018,19 +5027,23 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	visit.add_child(navigation)
 	# A retired stop's Save/Reload must never overwrite or rewind a later
 	# authenticated run: each callback re-checks the captured session, page,
-	# epoch, visit phase and service before touching the save file.
+	# epoch, visit phase and service before touching the save file. A Save whose
+	# verified publish failed also locks the Reload beside it: the file still
+	# holds the previous generation, which must never be substituted for the
+	# live visit the player just tried to save.
 	var epoch := _stitched_run_epoch
 	for button in [_stitched_run_action(navigation, "Save run", func():
 			if stitched_run_session == session and stitched_run_panel == visit \
 					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
 					and visit.is_visible_in_tree() and session.phase == "visit" \
 					and str(session.pending.get("service", "Event")) == service:
-				StitchedRunSave.write_file(stitched_save_path, session)),
+				_stitched_run_save_file(session)),
 		_stitched_run_action(navigation, "Reload saved run", func():
 			if stitched_run_session == session and stitched_run_panel == visit \
 					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
 					and visit.is_visible_in_tree() and session.phase == "visit" \
-					and str(session.pending.get("service", "Event")) == service:
+					and str(session.pending.get("service", "Event")) == service \
+					and not _stitched_run_save_failed:
 				load_stitched_run(stitched_save_path))]:
 		StitchedBattleScreen.CHROME.style_button(button)
 		button.add_theme_font_size_override("font_size", 17)
@@ -5066,6 +5079,16 @@ func _retire_stitched_run_views() -> void:
 		stitched_run_battle.queue_free()
 	stitched_run_battle = null
 	_clear_stitched_run_panel()  # Invalidate obsolete run-page callbacks/epoch.
+
+
+## The mounted Save boundary: a save press only counts once StitchedRunSave's
+## verified publish reports true. A false result means the file still holds the
+## previously accepted generation; it is remembered until the next remount so
+## the Reload mounted beside this Save never substitutes that stale generation
+## for the live run the player just tried to save.
+func _stitched_run_save_file(session: StitchedRunSession) -> bool:
+	_stitched_run_save_failed = not StitchedRunSave.write_file(stitched_save_path, session)
+	return not _stitched_run_save_failed
 
 
 func load_stitched_run(path: String) -> bool:

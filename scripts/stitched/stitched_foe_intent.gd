@@ -87,6 +87,12 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) \
 				or not battle._self_move_gate(actor, ability).is_empty():
 			continue
+		# The Scissor Bailiff's Seize Thread is only worth spending on a seam that is still
+		# whole: a rank-1 thread that has already been cut behind its doll can never be cut
+		# again. Skip that candidate and step on through the same authored rotation (which
+		# normally raises Unpick Verdict) instead of re-snipping a severed seam.
+		if _skips_cut_seize_thread(battle, actor, ability):
+			continue
 		# A pulling strike reels the deepest reachable doll forward, so it scans the
 		# back rank first. A single-target attack authored to bite into a Marked doll
 		# hunts the closest already-Marked legal rank. The Moth Swarm's Wing Dust instead
@@ -103,7 +109,19 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			scan_ranks = [ward_rank]
 		elif str(ability.get("target_side", "")) == "enemy" \
 				and int(ability.get("effects", {}).get("pull", 0)) == 1:
-			scan_ranks = [4, 3, 2, 1]
+			if _prefers_swappable_pull(actor, ability):
+				# Chain Drag and Spool Snare are only worth spending on a seam that can
+				# really swap ranks: the reeled doll and its forward neighbour must both be
+				# living and neither Tangled nor thread-cut. Prefer the deepest such rank,
+				# and fall back below to the old deepest legal target when none can move
+				# (its Fray/Mark still matter on a confirmed hit).
+				var swappable_rank := _deepest_swappable_pull_rank(battle, actor, ability)
+				if swappable_rank > 0:
+					scan_ranks = [swappable_rank]
+				else:
+					scan_ranks = [4, 3, 2, 1]
+			else:
+				scan_ranks = [4, 3, 2, 1]
 		elif _hunts_marked_fray(actor, ability):
 			# The Spool Snarekeeper's Snare Lash follows its own spool-pull setup: among the
 			# dolls the authored reach can hit, it severs the seam of the most-frayed Marked
@@ -475,6 +493,84 @@ static func _nearest_uncut_thread_rank(
 				continue
 			return rank
 	return 0
+
+
+## True only for the Scissor Bailiff's own authored Seize Thread.
+static func _is_seize_thread(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "scissor_bailiff" \
+		and str(ability.get("id", "")) == "seize_thread"
+
+
+## The Bailiff's Seize Thread is skipped only when the actual rank-1 living legal doll
+## already carries a cut thread behind it: that seam cannot be snipped a second time.
+## The same read-only legality authority decides what is legal, so a lost, empty or
+## out-of-reach rank never triggers the skip and the authored move is kept. Never
+## mutates the battle or draws RNG.
+static func _skips_cut_seize_thread(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> bool:
+	if not _is_seize_thread(actor, ability):
+		return false
+	var cuts: Dictionary = battle.thread_cuts()
+	for target in battle._legal_targets(actor, ability, 1):
+		if int(target.get("rank", 0)) != 1 or not _is_live_doll(target):
+			continue
+		if cuts.has(str(target.get("id", ""))):
+			return true
+	return false
+
+
+## True only for the two canonical elite pull moves this branch may reorder: the Zipper
+## Hauler's Chain Drag and the Spool Snarekeeper's Spool Snare. Every other pull keeps
+## the ordinary deepest-legal-rank order.
+static func _prefers_swappable_pull(actor: Dictionary, ability: Dictionary) -> bool:
+	var foe_id := str(actor.get("id", ""))
+	var ability_id := str(ability.get("id", ""))
+	return (foe_id == "zipper_hauler" and ability_id == "chain_drag") \
+		or (foe_id == "spool_snarekeeper" and ability_id == "spool_snare")
+
+
+## Deepest authored pull rank 4-2 whose reel can actually swap ranks: a legal living
+## target and a living adjacent forward doll, neither already Tangled nor thread-cut.
+## The passed ability's own target mask and the battle's legality authority decide which
+## targets exist, and only public snapshots are read, so a dead, LOST, hanging, empty,
+## heap or enemy slot can never be chosen. Returns 0 when no reel can move, which lets
+## the caller keep the old deepest legal target. Never mutates the battle or draws RNG.
+static func _deepest_swappable_pull_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var cuts: Dictionary = battle.thread_cuts()
+	for rank in [4, 3, 2]:
+		var forward_id := _living_hero_id_at(battle, rank - 1)
+		if forward_id.is_empty() or cuts.has(forward_id):
+			continue
+		var forward := battle.get_unit(forward_id)
+		if int(forward.get("statuses", {}).get("tangled", 0)) > 0:
+			continue
+		for target in battle._legal_targets(actor, ability, rank):
+			if int(target.get("rank", 0)) != rank or not _is_live_doll(target):
+				continue
+			var target_id := str(target.get("id", ""))
+			if cuts.has(target_id):
+				continue
+			if int(target.get("statuses", {}).get("tangled", 0)) > 0:
+				continue
+			return rank
+	return 0
+
+
+## The id of the living, non-LOST hero standing in one rank ("" when that rank is empty,
+## dead, lost or held by a non-hero). Read-only: it only inspects the public hero list.
+static func _living_hero_id_at(battle: StitchedRules, rank: int) -> String:
+	if rank < 1:
+		return ""
+	for hero in battle.get_heroes():
+		if int(hero.get("rank", 0)) != rank:
+			continue
+		if not _is_live_doll(hero):
+			continue
+		return str(hero.get("id", ""))
+	return ""
 
 
 ## True only for the Needle Marshal's own authored Iron Discipline. Every other ability on
