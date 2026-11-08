@@ -444,13 +444,18 @@ func _run() -> void:
 	await _click(drawings)
 	await _click(guide.tab_buttons[1])
 	page = guide.page_text(1)
-	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[1])
-	var invalid_clean := page == baseline
-	for line in lessons:
+	var expected_invalid: Array = StitchedFieldGuide.PAGES[1].duplicate()
+	var s15_notes := StitchedS15FieldNotes.examples()
+	expected_invalid.append_array(s15_notes)
+	var invalid_clean := s15_notes.size() == 3 and page == "\n\n".join(expected_invalid)
+	for line in lessons + StitchedGoldThreadNotes.examples():
 		if page.contains(line):
 			invalid_clean = false
+	for line in s15_notes:
+		if page.count(line) != 1:
+			invalid_clean = false
 	_check(invalid_clean,
-		"an invalid required lesson row rebuilds only the plain baseline, without stale lines")
+		"an invalid required S14 lesson row clears stale S14 lines while retaining only the static baseline and validated S15 notes")
 	guide.lesson_kits = null
 	await _click(guide.close_button)
 	await _click(drawings)
