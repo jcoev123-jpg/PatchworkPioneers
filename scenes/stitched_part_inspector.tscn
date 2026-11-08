@@ -266,7 +266,7 @@ stretch_mode = 5
 layout_mode = 0
 offset_left = 26.0
 offset_top = 301.0
-offset_right = 709.0
+offset_right = 494.0
 offset_bottom = 338.0
 theme_override_font_sizes/font_size = 20
 
@@ -274,7 +274,7 @@ theme_override_font_sizes/font_size = 20
 layout_mode = 0
 offset_left = 26.0
 offset_top = 345.0
-offset_right = 709.0
+offset_right = 494.0
 offset_bottom = 382.0
 theme_override_font_sizes/font_size = 20
 
@@ -282,7 +282,7 @@ theme_override_font_sizes/font_size = 20
 layout_mode = 0
 offset_left = 26.0
 offset_top = 389.0
-offset_right = 709.0
+offset_right = 494.0
 offset_bottom = 424.0
 theme_override_font_sizes/font_size = 19
 
