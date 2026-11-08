@@ -22,8 +22,19 @@ static func after_run(record: Dictionary, session: StitchedRunSession) -> Dictio
 	next.outcome = session.phase
 	var dolls := {}
 	for hero in session.heroes:
-		dolls[str(hero.id)] = {"fray": int(hero.fray), "lost": bool(hero.lost),
+		var doll := {"fray": int(hero.fray), "lost": bool(hero.lost),
 			"hanging": not hero.lost and int(hero.hp) == 0}
+		var torn_slots: Array[String] = []
+		var parts: Dictionary = hero.get("parts", {})
+		for slot in StitchedParts.SLOTS:
+			if slot not in ["arms", "legs"]:
+				continue
+			var worn: Variant = parts.get(slot)
+			if worn is Dictionary and worn.get("torn", false) == true:
+				torn_slots.append(slot)
+		if not torn_slots.is_empty():
+			doll["torn_slots"] = torn_slots
+		dolls[str(hero.id)] = doll
 	next.dolls = dolls
 	return next
 
@@ -42,6 +53,14 @@ static func valid(raw: Variant) -> bool:
 				or typeof(doll.get("fray")) not in [TYPE_INT, TYPE_FLOAT] \
 				or typeof(doll.get("lost")) != TYPE_BOOL or typeof(doll.get("hanging")) != TYPE_BOOL:
 			return false
+		if doll.has("torn_slots"):
+			if not doll["torn_slots"] is Array:
+				return false
+			var seen := {}
+			for slot in doll["torn_slots"]:
+				if typeof(slot) != TYPE_STRING or slot not in ["arms", "legs"] or seen.has(slot):
+					return false
+				seen[slot] = true
 	return true
 
 
