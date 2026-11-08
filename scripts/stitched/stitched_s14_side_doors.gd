@@ -38,7 +38,10 @@ static func catalog(document: Variant = null) -> Dictionary:
 	return result
 
 
-static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool) -> Dictionary:
+## leg_payer_available: whether any surviving doll could pay the leg bargain's price. When false
+## only the limb-cost Underbed deal leaves the weighted pool; everything else is unchanged.
+static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool,
+		leg_payer_available: bool = true) -> Dictionary:
 	var entries := catalog()
 	if rng == null or entries.is_empty() or not kind in ["Elite", "Boss"]:
 		return {}
@@ -50,6 +53,8 @@ static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool
 	if side == "underbed":
 		for entry in entries.values():
 			if entry.kind == "underbed":
+				if not leg_payer_available and entry.cost == "limb":
+					continue
 				var weight: int = int(UNDERBED_WEIGHTS.get(entry.get("reward", ""), 0))
 				for _i in weight:
 					choices.append(entry.id)
