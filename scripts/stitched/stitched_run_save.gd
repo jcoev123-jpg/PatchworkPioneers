@@ -197,6 +197,16 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	if not _staged_run_matches(staged, buffer, document):
 		DirAccess.remove_absolute(staged)
 		return false
+	# The previously accepted save is the exact state a failed publish must
+	# leave in the file, so its bytes are read before any replace happens.
+	var had_prior := FileAccess.file_exists(path)
+	var prior := PackedByteArray()
+	if had_prior:
+		var previous := FileAccess.open(path, FileAccess.READ)
+		if previous != null and previous.get_length() <= MAX_BYTES:
+			prior = previous.get_buffer(previous.get_length())
+		if previous != null:
+			previous.close()
 	# The staged bytes hold the complete latest run. The rename itself replaces
 	# the old target, which is never removed first, so a failed replace leaves
 	# the previously accepted save intact.
@@ -207,10 +217,35 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	# sees exactly the just-captured run, never stale or partial bytes.
 	var published := FileAccess.open(path, FileAccess.READ)
 	if published == null:
+		_undo_replaced_publish(path, had_prior, prior)
 		return false
 	var final_bytes := published.get_buffer(published.get_length())
 	published.close()
-	return final_bytes == buffer
+	if final_bytes == buffer:
+		return true
+	# A readback that fails its proof after the replace is still a failed
+	# publish: the previously accepted save goes back byte for byte, so a
+	# false result always leaves the file holding the last accepted run.
+	_undo_replaced_publish(path, had_prior, prior)
+	return false
+
+
+## Best-effort rollback of a publish whose final verification failed after the
+## replace: put the previously accepted save's exact bytes back, or remove the
+## published file again when no prior save existed.
+static func _undo_replaced_publish(path: String, had_prior: bool, prior: PackedByteArray) -> void:
+	if not had_prior:
+		DirAccess.remove_absolute(path)
+		return
+	if prior.is_empty():
+		# The prior file existed but could not be read back within the size cap;
+		# its unknown bytes cannot be restored.
+		return
+	var restored := FileAccess.open(path, FileAccess.WRITE)
+	if restored == null:
+		return
+	restored.store_buffer(prior)
+	restored.close()
 
 
 ## A staged file only counts when its fresh readback holds the complete bytes
