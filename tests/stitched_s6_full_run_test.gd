@@ -248,9 +248,11 @@ func _exercise_campfire_tell_tales() -> void:
 
 
 func _run() -> void:
-	# Seed 43 re-derives the public-control winning witness for the first-phase Behemoth
-	# Maul tear: the same mounted route from an opening Fight must still reach victory.
-	var app: Node = await _new_run(43)
+	# Seed 46 re-derives the public-control winning witness: the mounted route from an
+	# opening Fight must still reach victory after the roadside event catalog grew (two
+	# appended lane8 corridor events redraw the seeded event rotation; seed 43's old
+	# route now drops a mid-route battle).
+	var app: Node = await _new_run(46)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null:
 		app.free()

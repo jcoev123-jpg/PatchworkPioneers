@@ -102,6 +102,83 @@
         {"id": "pin_lace_veil", "text": "Pin the veil back with a scrap to soothe the dolls", "stitched_effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
         {"id": "leave", "text": "Pass without looking into the silver again", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
+    },
+    {
+      "id": "v3_glasseye_pendulum",
+      "title": "The Glass-Eyed Pendulum",
+      "description": "A toppled hall clock blocks the doll-sized corridor. Its pendulum swings past a black glass eye, and a button-eyed keeper holds the wick beneath its ticking teeth.",
+      "choices": [
+        {
+          "id": "feed_brass_wick",
+          "text": "Feed the clock's wick and quiet the dolls",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 24,
+            "fray": -6,
+            "scraps": -2,
+            "require_candle_room": true,
+            "min_fray": 1
+          }
+        },
+        {
+          "id": "pluck_clock_tooth",
+          "text": "Break off a brass tooth and take its spool",
+          "stitched_effect": {
+            "target": "party",
+            "candle": -12,
+            "fray": 10,
+            "scraps": 3,
+            "require_full_candle": true
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Back away from the ticking glass",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 0,
+            "fray": 0
+          }
+        }
+      ]
+    },
+    {
+      "id": "v3_skirting_listening_shell",
+      "title": "The Skirting Listening Shell",
+      "description": "A pale spiral shell is sewn into the tall skirting board. Four little voices whisper from its mouth while the corridor candle bends toward the wall.",
+      "choices": [
+        {
+          "id": "monk_answer_echo",
+          "text": "Let the Lantern Monk answer the whisper",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 16,
+            "fray": 6,
+            "required_hero": "lantern_monk",
+            "require_candle_room": true
+          }
+        },
+        {
+          "id": "buy_shell_silence",
+          "text": "Pay to quiet the voices",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 0,
+            "fray": -12,
+            "gold": -14,
+            "min_fray": 1
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the shell to whisper",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 0,
+            "fray": 0
+          }
+        }
+      ]
     }
   ]
 }
