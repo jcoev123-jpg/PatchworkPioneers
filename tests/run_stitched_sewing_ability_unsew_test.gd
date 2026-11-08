@@ -33,6 +33,10 @@ func _initialize() -> void:
 	_sew_refusals()
 	_sew_after_leave()
 	_sew_receipts_and_replay()
+	_move_sewn_gold_transfer()
+	_move_sewn_variants()
+	_move_sewn_refusals()
+	_move_sewn_closed_and_replay()
 	for message in failures:
 		printerr(message)
 	print("run_stitched_sewing_ability_unsew_test: %d checks, %d failures" % [checks, failures.size()])
@@ -481,3 +485,178 @@ func _sew_receipts_and_replay() -> void:
 	var final := seq.read_state()
 	_check(not seq.sew("seamstress", KNOT, 11, NODE, final).ok and not seq.unsew("warden", CATCH, 13, NODE, final).ok and not seq.leave(NODE, final).ok, "sew sequence refuses all later mutations")
 	_check(seq.read_state() == final, "sew sequence closed state unchanged by refusals")
+
+
+const MOVE_KEYS := ["ok", "error", "action", "node_id", "uid", "item", "from_hero_id", "from_ability_id",
+	"to_hero_id", "to_ability_id", "source_state", "state"]
+const RIM := "warden_legs_rim_toss"
+const TUNE := "tinker_legs_tune_up"
+
+
+func _refuse_move(service: RunStitchedSewingAbilityUnsew, rng: RandomNumberGenerator, label: String, args: Array, node: Variant, expected: Variant) -> void:
+	var state_before := service.read_state()
+	var rng_before := rng.state
+	var result := service.move_sewn(args[0], args[1], args[2], args[3], args[4], node, expected)
+	_check(result.get("ok") == false and not str(result.get("error", "")).is_empty(), label + " move refused")
+	_check(not result.has("action") and not result.has("source_state"), label + " move refusal carries no success receipt")
+	_check(service.read_state() == state_before, label + " move preserves state")
+	_check(rng.state == rng_before, label + " move leaves RNG sentinel untouched")
+
+
+func _move_sewn_gold_transfer() -> void:
+	var service := _make()
+	var before := service.read_state()
+	_check(before.sockets["warden"][CATCH] == [13, 12] and before.sockets["seamstress"][KNOT] == [11], "move AC1 fixture precondition")
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 31337
+	rng.randi()
+	var rng_before := rng.state
+	var receipt := service.move_sewn("warden", CATCH, "seamstress", KNOT, 13, NODE, before)
+	_check(receipt.get("ok") == true and receipt.get("error") == "" and receipt.get("action") == "move_sewn", "move AC1 gold transfer succeeds")
+	if receipt.get("ok") != true:
+		return
+	for key in MOVE_KEYS:
+		_check(receipt.has(key), "move AC1 receipt has " + key)
+	_check(receipt.node_id == NODE and receipt.uid == 13, "move AC1 receipt names node and uid")
+	_check(receipt.from_hero_id == "warden" and receipt.from_ability_id == CATCH and receipt.to_hero_id == "seamstress" and receipt.to_ability_id == KNOT, "move AC1 receipt names both signatures")
+	_check(receipt.item == {"uid": 13, "id": CHAIN, "rarity": "gold"}, "move AC1 receipt carries the owned record")
+	_check(receipt.source_sockets_before == [13, 12] and receipt.source_sockets_after == [12], "move AC1 receipt source before/after rows")
+	_check(receipt.destination_sockets_before == [11] and receipt.destination_sockets_after == [11, 13], "move AC1 receipt destination before/after rows")
+	_check(receipt.source_state == before, "move AC1 receipt source_state is the presented snapshot")
+	var after: Dictionary = receipt.state
+	_check(after.sockets["warden"][CATCH] == [12], "move AC1 source becomes [12]")
+	_check(after.sockets["seamstress"][KNOT] == [11, 13], "move AC1 destination becomes [11, 13]")
+	_check(StitchedS14Abilities.valid_loadout("warden", {CATCH: [MARK]}), "move AC1 source passes valid_loadout")
+	_check(StitchedS14Abilities.valid_loadout("seamstress", {KNOT: [LINT, CHAIN]}), "move AC1 destination passes valid_loadout")
+	_check(after.inventory == before.inventory and after.inventory == _inventory(), "move AC1 inventory exactly unchanged")
+	_check(int(after.version) == int(before.version) + 1, "move AC1 version advances once")
+	_check(after.open == true and service.read_state() == after, "move AC1 visit stays open and state is authoritative")
+	_check(after.hero_ids == before.hero_ids and not after.sockets.has("tinker") and not after.sockets.has("lantern_monk"), "move AC1 no other doll gains sockets")
+	_check(_bound_anywhere(after, 13) == 1 and _bound_anywhere(after, 12) == 1 and _bound_anywhere(after, 11) == 1, "move AC1 every uid is bound exactly once")
+	_check(rng.state == rng_before, "move AC1 RNG sentinel untouched")
+	for key in after:
+		_check(not str(key).contains("scrap") and not str(key).contains("gold") and not str(key).contains("rng"), "move AC1 no wallet or RNG key " + str(key))
+	# Receipts are detached from held state.
+	var held := service.read_state()
+	receipt.state.sockets["seamstress"][KNOT].append(999)
+	receipt.source_state.sockets.clear()
+	receipt.source_sockets_after.clear()
+	receipt.destination_sockets_after.append(5)
+	receipt.item["id"] = "forged"
+	_check(service.read_state() == held, "move AC1 mutating the receipt never changes held state")
+	# The next action chains off the receipt state: move the gold patch back.
+	var back := service.move_sewn("seamstress", KNOT, "warden", CATCH, 13, NODE, held)
+	_check(back.get("ok") == true and back.state.sockets["warden"][CATCH] == [12, 13] and back.state.sockets["seamstress"][KNOT] == [11], "move AC1 gold moves back legally")
+	_check(back.get("ok") == true and int(back.state.version) == int(before.version) + 2, "move AC1 second move advances the version once more")
+	# Identical fixtures replay identically.
+	var twin := _make()
+	var twin_receipt := twin.move_sewn("warden", CATCH, "seamstress", KNOT, 13, NODE, twin.read_state())
+	_check(twin_receipt.get("ok") == true and twin.read_state() == held, "move AC1 identicalfixtures replay to identical snapshots")
+
+
+func _move_sewn_variants() -> void:
+	# Wool to an empty signature of another doll, and to another signature of the same doll.
+	var service := _make()
+	var start := service.read_state()
+	var to_tinker := service.move_sewn("warden", CATCH, "tinker", TUNE, 12, NODE, start)
+	_check(to_tinker.get("ok") == true, "move variant wool reaches a doll with no socket map")
+	if to_tinker.get("ok") == true:
+		_check(to_tinker.state.sockets["tinker"][TUNE] == [12] and to_tinker.state.sockets["warden"][CATCH] == [13], "move variant new hero map built and source keeps gold")
+		_check(to_tinker.destination_sockets_before == [] and to_tinker.state.sockets["seamstress"] == start.sockets["seamstress"], "move variant leaves the other doll alone")
+		_check(to_tinker.state.inventory == start.inventory, "move variant inventory unchanged")
+	var same_doll := _make()
+	var same_start := same_doll.read_state()
+	var rim := same_doll.move_sewn("warden", CATCH, "warden", RIM, 12, NODE, same_start)
+	_check(rim.get("ok") == true, "move variant same doll other signature succeeds")
+	if rim.get("ok") == true:
+		_check(rim.state.sockets["warden"][CATCH] == [13] and rim.state.sockets["warden"][RIM] == [12], "move variant same doll both rows updated")
+		_check(int(rim.state.version) == int(same_start.version) + 1, "move variant same doll version advances once")
+	var emptied := _make()
+	var cotton := emptied.move_sewn("seamstress", KNOT, "tinker", TUNE, 11, NODE, emptied.read_state())
+	_check(cotton.get("ok") == true and cotton.state.sockets["seamstress"][KNOT] == [] and cotton.state.sockets["tinker"][TUNE] == [11], "move variant emptying the source leaves an empty row")
+	if cotton.get("ok") == true:
+		_check(cotton.state.sockets["warden"] == start.sockets["warden"], "move variant untouched doll keeps its exact order")
+
+
+func _move_sewn_refusals() -> void:
+	var service := _make()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	rng.randi()
+	var state := service.read_state()
+	# AC2: two non-gold patches exceed one slot.
+	_refuse_move(service, rng, "wool onto occupied cotton", ["warden", CATCH, "seamstress", KNOT, 12], NODE, state)
+	_refuse_move(service, rng, "cotton onto gold plus wool", ["seamstress", KNOT, "warden", CATCH, 11], NODE, state)
+	# Malformed or unowned uid and wrong ownership.
+	_refuse_move(service, rng, "unknown uid", ["warden", CATCH, "seamstress", KNOT, 9999], NODE, state)
+	_refuse_move(service, rng, "zero uid", ["warden", CATCH, "seamstress", KNOT, 0], NODE, state)
+	_refuse_move(service, rng, "string uid", ["warden", CATCH, "seamstress", KNOT, "13"], NODE, state)
+	_refuse_move(service, rng, "float uid", ["warden", CATCH, "seamstress", KNOT, 13.0], NODE, state)
+	_refuse_move(service, rng, "null uid", ["warden", CATCH, "seamstress", KNOT, null], NODE, state)
+	_refuse_move(service, rng, "incorrect source holder", ["seamstress", KNOT, "warden", RIM, 13], NODE, state)
+	_refuse_move(service, rng, "right doll wrong source ability", ["warden", RIM, "seamstress", KNOT, 13], NODE, state)
+	# Unknown or foreign signatures and heroes.
+	_refuse_move(service, rng, "unknown destination ability", ["warden", CATCH, "seamstress", "seamstress_head_made_up", 13], NODE, state)
+	_refuse_move(service, rng, "destination ability of another hero", ["warden", CATCH, "seamstress", CATCH, 13], NODE, state)
+	_refuse_move(service, rng, "unknown source ability", ["warden", "warden_head_made_up", "seamstress", KNOT, 13], NODE, state)
+	_refuse_move(service, rng, "unknown destination hero", ["warden", CATCH, "nobody", KNOT, 13], NODE, state)
+	_refuse_move(service, rng, "destination hero outside the party", ["warden", CATCH, "scarecrow", "scarecrow_head_straw_gaze", 13], NODE, state)
+	_refuse_move(service, rng, "source hero outside the party", ["scarecrow", "scarecrow_head_straw_gaze", "seamstress", KNOT, 13], NODE, state)
+	_refuse_move(service, rng, "non-string hero", [7, CATCH, "seamstress", KNOT, 13], NODE, state)
+	_refuse_move(service, rng, "non-string ability", ["warden", CATCH, "seamstress", 7, 13], NODE, state)
+	# Same destination as source.
+	_refuse_move(service, rng, "same signature", ["warden", CATCH, "warden", CATCH, 13], NODE, state)
+	# Snapshot gate.
+	_refuse_move(service, rng, "wrong node", ["warden", CATCH, "tinker", TUNE, 13], "other_node", state)
+	_refuse_move(service, rng, "non-string node", ["warden", CATCH, "tinker", TUNE, 13], 5, state)
+	var stale := state.duplicate(true)
+	stale["version"] = 99
+	_refuse_move(service, rng, "stale version", ["warden", CATCH, "tinker", TUNE, 13], NODE, stale)
+	var altered := state.duplicate(true)
+	altered.sockets["warden"][CATCH] = [13]
+	_refuse_move(service, rng, "altered snapshot", ["warden", CATCH, "tinker", TUNE, 13], NODE, altered)
+	var forged := state.duplicate(true)
+	forged.inventory[0]["rarity"] = "gold"
+	_refuse_move(service, rng, "forged inventory", ["warden", CATCH, "tinker", TUNE, 13], NODE, forged)
+	_refuse_move(service, rng, "non-dictionary state", ["warden", CATCH, "tinker", TUNE, 13], NODE, "state")
+	_refuse_move(service, rng, "null state", ["warden", CATCH, "tinker", TUNE, 13], NODE, null)
+	_check(service.read_state() == state and state.inventory == _inventory(), "move refusals left held state and inventory untouched")
+	# A legal move is still available after every refused attempt.
+	var eligible := service.move_sewn("warden", CATCH, "seamstress", KNOT, 13, NODE, service.read_state())
+	_check(eligible.get("ok") == true and int(eligible.state.version) == int(state.version) + 1, "move refusals consumed no eligible action")
+
+
+func _move_sewn_closed_and_replay() -> void:
+	var service := _make()
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 7
+	rng.randi()
+	var start := service.read_state()
+	var done := service.move_sewn("warden", CATCH, "seamstress", KNOT, 13, NODE, start)
+	_check(done.get("ok") == true, "move replay fixture moves once")
+	if done.get("ok") != true:
+		return
+	# Replay of the same call with the old snapshot, and with the fresh one.
+	_refuse_move(service, rng, "replay with the old snapshot", ["warden", CATCH, "seamstress", KNOT, 13], NODE, start)
+	_refuse_move(service, rng, "replay with the fresh snapshot", ["warden", CATCH, "seamstress", KNOT, 13], NODE, done.state)
+	# The uid now sits on the destination, so moving it from the old source is refused too.
+	_refuse_move(service, rng, "stale source after success", ["warden", CATCH, "tinker", TUNE, 13], NODE, done.state)
+	# Existing operations still work after a move.
+	var out := service.unsew("seamstress", KNOT, 13, NODE, done.state)
+	_check(out.get("ok") == true and out.state.sockets["seamstress"][KNOT] == [11], "move then unsew works on the new binding")
+	if out.get("ok") != true:
+		return
+	var resew := service.sew("warden", CATCH, 13, NODE, out.state)
+	_check(resew.get("ok") == true and resew.state.sockets["warden"][CATCH] == [12, 13], "move then sew works on the released patch")
+	if resew.get("ok") != true:
+		return
+	var left := service.leave(NODE, resew.state)
+	_check(left.get("ok") == true and left.state.open == false, "visit leaves after a move")
+	var closed := service.read_state()
+	_refuse_move(service, rng, "move after leave", ["warden", CATCH, "seamstress", KNOT, 13], NODE, closed)
+	_refuse_move(service, rng, "move after leave with a legal target", ["warden", CATCH, "tinker", TUNE, 12], NODE, closed)
+	_check(service.read_state() == closed and closed.inventory == _inventory(), "closed visit unchanged by move refusals")
+	# A visit that was never admitted refuses moves as well.
+	var bad := RunStitchedSewingAbilityUnsew.new("", HEROES.duplicate(), _inventory(), _sockets())
+	var bad_result := bad.move_sewn("warden", CATCH, "seamstress", KNOT, 13, NODE, bad.read_state())
+	_check(bad_result.get("ok") == false, "move refused by an unadmitted service")

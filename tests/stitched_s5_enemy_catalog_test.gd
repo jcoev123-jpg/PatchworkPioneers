@@ -737,7 +737,11 @@ func _test_spool_combat(catalog: Dictionary) -> int:
 			var rank := int(intent["target_rank"])
 			var round_value := battle.round_number()
 			# The second legal tag goes to another hero, leaving a naturally expired control.
-			if actor["id"] == "spool_hexer" and round_value == 6:
+			# The Hexer's own live Mark priority can instead fire its authored Hex Bolt on this
+			# turn; then the chosen (already legal) bolt rank is kept rather than forcing a rank
+			# the chosen action cannot reach.
+			if actor["id"] == "spool_hexer" and round_value == 6 \
+					and str(intent["ability_id"]) == "thread_tag":
 				rank = 2
 			var targets := battle._legal_targets(actor, actor["abilities"][
 				(round_value - 1) % actor["abilities"].size()], rank) if actor["id"] == "spool_hexer" else []

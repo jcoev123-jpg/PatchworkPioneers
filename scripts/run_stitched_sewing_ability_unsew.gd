@@ -152,6 +152,77 @@ func sew(hero_id: Variant, ability_id: Variant, uid: Variant, expected_node_id: 
 	}
 
 
+## Atomically moves one sewn patch from one party signature to another legal signature in the same
+## open visit. A detached candidate takes the single source occurrence out and appends it once to the
+## destination; both complete hero loadouts are validated before _sockets is assigned. The inventory
+## record is never touched, the version advances once, and a refusal changes nothing.
+func move_sewn(from_hero_id: Variant, from_ability_id: Variant, to_hero_id: Variant, to_ability_id: Variant, uid: Variant, expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	var gate := _gate(expected_node_id, expected_state)
+	if not gate.is_empty():
+		return _fail(gate)
+	if typeof(from_hero_id) != TYPE_STRING or typeof(from_ability_id) != TYPE_STRING \
+			or typeof(to_hero_id) != TYPE_STRING or typeof(to_ability_id) != TYPE_STRING or typeof(uid) != TYPE_INT:
+		return _fail("hero ids and ability ids must be strings and uid an integer")
+	var from_hero: String = from_hero_id
+	var from_ability: String = from_ability_id
+	var to_hero: String = to_hero_id
+	var to_ability: String = to_ability_id
+	var uid_value: int = uid
+	if not from_hero in _hero_ids:
+		return _fail("unknown source hero: " + from_hero)
+	if not to_hero in _hero_ids:
+		return _fail("unknown destination hero: " + to_hero)
+	if StitchedS14Abilities.ability(from_hero, from_ability).is_empty():
+		return _fail("unknown source signature ability for that hero: " + from_ability)
+	if StitchedS14Abilities.ability(to_hero, to_ability).is_empty():
+		return _fail("unknown destination signature ability for that hero: " + to_ability)
+	if from_hero == to_hero and from_ability == to_ability:
+		return _fail("source and destination signature must differ")
+	var item_index := _item_index(uid_value)
+	if item_index < 0:
+		return _fail("unowned patch uid")
+	var source_bound: Array = _sockets.get(from_hero, {}).get(from_ability, [])
+	if source_bound.count(uid_value) != 1:
+		return _fail("that patch is not sewn on the source signature")
+	var before := read_state()
+	var item: Dictionary = _inventory[item_index].duplicate(true)
+	var destination_before: Array = _sockets.get(to_hero, {}).get(to_ability, []).duplicate()
+	var candidate: Dictionary = _sockets.duplicate(true)
+	var remaining: Array = source_bound.duplicate()
+	remaining.remove_at(remaining.find(uid_value))
+	candidate[from_hero][from_ability] = remaining
+	if not candidate.has(to_hero):
+		candidate[to_hero] = {}
+	if not candidate[to_hero].has(to_ability):
+		candidate[to_hero][to_ability] = []
+	candidate[to_hero][to_ability].append(uid_value)
+	if not _loadout_ok(from_hero, candidate[from_hero]):
+		return _fail("resulting source loadout is invalid")
+	if not _loadout_ok(to_hero, candidate[to_hero]):
+		return _fail("no free socket for that patch on the destination signature")
+	_sockets = candidate
+	_version += 1
+	var after := read_state()
+	return {
+		"ok": true,
+		"error": "",
+		"action": "move_sewn",
+		"node_id": _node_id,
+		"uid": uid_value,
+		"item": item,
+		"from_hero_id": from_hero,
+		"from_ability_id": from_ability,
+		"to_hero_id": to_hero,
+		"to_ability_id": to_ability,
+		"source_sockets_before": source_bound.duplicate(),
+		"source_sockets_after": after["sockets"][from_hero][from_ability].duplicate(),
+		"destination_sockets_before": destination_before,
+		"destination_sockets_after": after["sockets"][to_hero][to_ability].duplicate(),
+		"source_state": before,
+		"state": after,
+	}
+
+
 ## Ends the visit; no binding changes.
 func leave(expected_node_id: Variant, expected_state: Variant) -> Dictionary:
 	var gate := _gate(expected_node_id, expected_state)

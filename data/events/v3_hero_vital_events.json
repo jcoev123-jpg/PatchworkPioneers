@@ -1461,6 +1461,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_rag_duelist_porcelain_slipper_guard",
+      "title": "The Porcelain Slipper Guard",
+      "description": "A cracked porcelain ballet slipper, taller than any doll, blocks a narrow wardrobe passage. The Rag Duelist hooks his needle rapier beneath its brass heel while a tiny clockwork dancer knocks from inside.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "lace_slipper_guard",
+          "text": "Bind the heel to your cape for lasting strength",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "trade_heelseam_silk",
+          "text": "Unpick a strip of lasting stuffing for the dancer's coins",
+          "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the dancer ticking in its porcelain shoe",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_bellpull_bridge",
+      "title": "The Bell-Pull Crossing",
+      "description": "A tasselled bell pull droops across a gap between black floorboards. The Yarn Ranger loops wool bolas around its embroidered knots while tiny footsteps answer a bell that has not rung.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "knot_bellpull_lifeline",
+          "text": "Lash the bell pull into a sturdier lifeline",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 3, "max_hp": 2 }
+        },
+        {
+          "id": "harvest_bellpull_wool",
+          "text": "Risk your stuffing to gather the braided wool",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the bell silent over the dark floor gap",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_brass_abacus_rail",
+      "title": "The Brass Abacus Rail",
+      "description": "A house-sized brass abacus bars a narrow under-stair corridor. The Button Golem braces its round fists against the sliding beads as a small stitched bookkeeper counts from the shadows.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "rivet_abacus_beads",
+          "text": "Sew the brass beads into a sturdier heart",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "sell_heart_buttons",
+          "text": "Part with a lasting heart button for the keeper's purse",
+          "outcome": { "gold": 28, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the silent bookkeeper finish counting",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }

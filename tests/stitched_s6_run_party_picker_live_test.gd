@@ -836,9 +836,9 @@ func _exercise_number_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> St
 	var actions: Array[Button] = app.stitched_run_buttons.duplicate()
 	var originals: Dictionary = picker.tiles.duplicate()
 	var heading := app.stitched_run_panel.find_child("StitchedPageHeading", true, false) as Label
-	_check(heading != null and heading.tooltip_text == "Keys 1–8: choose dolls"
+	_check(heading != null and heading.tooltip_text == "Keys 1–8: choose dolls · Esc/B: cancel"
 		and actions.size() == 2 and actions[0].text == "Set out" and actions[1].text == "Cancel",
-		"original heading offers the shortcut in its native tooltip without a new control")
+		"original heading offers both shortcuts in its native tooltip without a new control")
 	var receipts: Array = []
 	picker.draft_changed.connect(func(picks: Array) -> void: receipts.append(picks.duplicate()))
 	var wallet_before := [app.session_gold, app.run_scraps]
@@ -976,6 +976,157 @@ func _exercise_number_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> St
 	return fresh
 
 
+## Physical Escape and controller B must cancel exactly like the mounted
+## Cancel Button: through its own guarded pressed path, only from the live,
+## focused picker page. Returns a fresh default title picker for the rest.
+func _exercise_back_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> StitchedRunPartyPicker:
+	var actions: Array[Button] = app.stitched_run_buttons.duplicate()
+	var wallet_before := [app.session_gold, app.run_scraps]
+	seed(60517)
+	var expected_global := randi()
+	seed(60517)
+	var escape_press := InputEventKey.new()
+	escape_press.keycode = KEY_ESCAPE
+	escape_press.physical_keycode = KEY_ESCAPE
+	escape_press.pressed = true
+	var pad_b := InputEventJoypadButton.new()
+	pad_b.device = 0
+	pad_b.button_index = JOY_BUTTON_B
+	pad_b.pressed = true
+	_check(InputMap.event_is_action(escape_press, "ui_cancel")
+		and InputMap.event_is_action(pad_b, "ui_cancel"),
+		"the real physical Escape key and controller B are the native ui_cancel inputs")
+	_check(actions.size() == 2 and actions[0].text == "Set out" and actions[1].text == "Cancel",
+		"back-shortcut witness starts from the original [Set out, Cancel] actions")
+	# Released, echoed and repeated back input never cancels.
+	picker.tiles["warden"].grab_focus()
+	await _key_event(KEY_ESCAPE, false)
+	await _joy_event(JOY_BUTTON_B, false)
+	await _key_event(KEY_ESCAPE, true, true)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null
+		and app.stitched_run_session == null
+		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS
+		and picker.tiles["warden"].has_focus(),
+		"released and echoed Escape/B input never cancels the live picker")
+	# A chorded Escape is a different player input, never a picker Cancel: all
+	# four modifier chords must leave the focused tile, draft and mounted page.
+	for modifier in ["ctrl", "alt", "shift", "meta"]:
+		await _key_event(KEY_ESCAPE, true, false, modifier)
+		await _key_event(KEY_ESCAPE, false, false, modifier)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null
+		and app.stitched_run_panel.get_meta("page_kind", "") == "picker"
+		and app.stitched_run_session == null and app.run_rng == null
+		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS
+		and picker.selected_ids() == StitchedRunSession.DEFAULT_PICKS
+		and picker.tiles_match_draft() and picker.tiles["warden"].has_focus(),
+		"all four modified Escapes keep the mounted picker, focused tile and draft")
+	actions[1].grab_focus()
+	for modifier in ["ctrl", "alt", "shift", "meta"]:
+		await _key_event(KEY_ESCAPE, true, false, modifier)
+		await _key_event(KEY_ESCAPE, false, false, modifier)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null
+		and app.stitched_run_panel.get_meta("page_kind", "") == "picker"
+		and app.stitched_run_session == null and app.run_rng == null
+		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS
+		and actions[1].has_focus(),
+		"all four modified Escapes keep the focused Cancel action and mounted picker")
+	# Without live page focus the back inputs belong to no picker.
+	root.gui_release_focus()
+	_check(root.gui_get_focus_owner() == null,
+		"back-shortcut negative focus witness genuinely relinquishes focus")
+	await _key(KEY_ESCAPE)
+	await _joy_event(JOY_BUTTON_B, true)
+	await _joy_event(JOY_BUTTON_B, false)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null,
+		"an unfocused live picker ignores both physical back inputs")
+	# A stale picker epoch must never cancel a newer page's state.
+	picker.tiles["seamstress"].grab_focus()
+	var epoch: int = app._stitched_run_epoch
+	app._stitched_run_epoch += 1
+	await _key(KEY_ESCAPE)
+	await _joy_event(JOY_BUTTON_B, true)
+	await _joy_event(JOY_BUTTON_B, false)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null
+		and app.stitched_run_session == null,
+		"stale picker epoch refuses both physical back inputs")
+	app._stitched_run_epoch = epoch
+	app.stitched_run_panel.set_meta("page_kind", "other")
+	await _key(KEY_ESCAPE)
+	_check(picker.is_visible_in_tree() and app.stitched_run_panel != null,
+		"a non-picker page kind ignores the physical back shortcut")
+	app.stitched_run_panel.set_meta("page_kind", "picker")
+	picker.hide()
+	await _key(KEY_ESCAPE)
+	await _joy_event(JOY_BUTTON_B, true)
+	await _joy_event(JOY_BUTTON_B, false)
+	_check(not picker.is_visible_in_tree() and app.stitched_run_panel != null,
+		"a hidden picker ignores both physical back inputs")
+	picker.show()
+	await process_frame
+	picker.update_opening_rank_cues(StitchedRunSession.DEFAULT_PICKS)
+	_check(picker.selected_ids() == StitchedRunSession.DEFAULT_PICKS
+		and picker.tiles_match_draft()
+		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS,
+		"every refused back input leaves the authored default draft untouched")
+	# Physical Escape cancels a complete default title draft through Cancel.
+	picker.tiles["warden"].grab_focus()
+	await _key(KEY_ESCAPE)
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and app.stitched_run_intro == null
+		and app.run_rng == null and app.run_map == null and app.deck == null
+		and app.run_deck.is_empty() and app.stitched_run_draft.is_empty()
+		and not FileAccess.file_exists(SAVE) and app.start_button.has_focus()
+		and [app.session_gold, app.run_scraps] == wallet_before,
+		"physical Escape cancels the complete default title picker to the focused title")
+	# Controller B cancels the same way after a genuinely incomplete draft.
+	await _mouse(app.start_button)
+	var incomplete := _picker(app)
+	if incomplete == null:
+		return null
+	await _key(KEY_1)
+	_check(incomplete.selected_ids().size() == StitchedPartyAdmission.RANK_COUNT - 1
+		and app.stitched_run_buttons.size() == 2 and app.stitched_run_buttons[0].disabled,
+		"one real digit leaves a genuinely incomplete three-doll draft")
+	await _joy_event(JOY_BUTTON_B, true)
+	await _joy_event(JOY_BUTTON_B, false)
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and app.stitched_run_intro == null
+		and app.run_rng == null and app.stitched_run_draft.is_empty()
+		and not FileAccess.file_exists(SAVE) and app.start_button.has_focus()
+		and [app.session_gold, app.run_scraps] == wallet_before,
+		"controller B cancels the incomplete title draft to the focused title")
+	# The live S9c intro ignores both picker back shortcuts.
+	await _mouse(app.start_button)
+	var intro_picker := _picker(app)
+	if intro_picker == null:
+		return null
+	await _mouse(app.stitched_run_buttons[0])
+	_check(app.stitched_run_session != null and app.stitched_run_intro != null
+		and not app.title_view.is_visible_in_tree(),
+		"seeded Set out opens the genuine Wren intro over the first map page")
+	await _key(KEY_ESCAPE)
+	await _joy_event(JOY_BUTTON_B, true)
+	await _joy_event(JOY_BUTTON_B, false)
+	_check(app.stitched_run_session != null and app.stitched_run_intro != null
+		and app.stitched_run_panel != null,
+		"the live intro ignores both picker back shortcuts and keeps the night")
+	app._return_stitched_run_title()
+	await process_frame
+	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null
+		and app.start_button.has_focus(),
+		"returning from the intro witness restores the focused title")
+	await _mouse(app.start_button)
+	var fresh := _picker(app)
+	_check(fresh != null and fresh != picker
+		and fresh.selected_ids() == StitchedRunSession.DEFAULT_PICKS
+		and app.stitched_run_buttons[0].tooltip_text == "",
+		"back-shortcut exercise returns fresh authored defaults for existing regressions")
+	_check(randi() == expected_global and [app.session_gold, app.run_scraps] == wallet_before
+		and not FileAccess.file_exists(SAVE),
+		"every accepted and refused back input stays session, save, wallet and RNG neutral")
+	return fresh
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_advisory_fixtures()
@@ -1016,6 +1167,12 @@ func _run() -> void:
 		return
 	_default(picker, app)
 	picker = await _exercise_opening_warning(app, picker)
+	if picker == null:
+		app.free()
+		_finish()
+		return
+	_default(picker, app)
+	picker = await _exercise_back_shortcuts(app, picker)
 	if picker == null:
 		app.free()
 		_finish()
@@ -1228,6 +1385,39 @@ func _run() -> void:
 		picker = _picker(app)
 		_default(picker, app)
 		await _mouse(app.stitched_run_buttons[1])
+		# Physical Escape and controller B must return to this browsable bedroom too.
+		await _mouse(village.set_out_button)
+		picker = _picker(app)
+		_default(picker, app)
+		await _key(KEY_1)
+		_check(picker != null and app.stitched_run_buttons.size() == 2
+			and picker.selected_ids().size() == StitchedPartyAdmission.RANK_COUNT - 1
+			and app.stitched_run_buttons[0].disabled,
+			"bedroom witness holds a genuinely incomplete draft before physical back input")
+		await _key(KEY_ESCAPE)
+		_check(village.is_visible_in_tree() and village.has_open_village()
+			and village.set_out_button.has_focus() and app.stitched_run_panel == null
+			and app.stitched_run_session == null and app.run_rng == null and app.deck == null
+			and app.stitched_run_draft.is_empty() and not FileAccess.file_exists(SAVE)
+			and [app.session_gold, app.run_scraps] == wallet_before,
+			"bedroom Escape returns the browsable bedroom and focused Set out after an incomplete draft")
+		await _mouse(village.set_out_button)
+		picker = _picker(app)
+		_default(picker, app)
+		await _joy_event(JOY_BUTTON_B, true)
+		await _joy_event(JOY_BUTTON_B, false)
+		_check(village.is_visible_in_tree() and village.has_open_village()
+			and village.set_out_button.has_focus() and app.stitched_run_panel == null
+			and app.stitched_run_session == null and app.stitched_run_draft.is_empty()
+			and not FileAccess.file_exists(SAVE)
+			and [app.session_gold, app.run_scraps] == wallet_before,
+			"bedroom controller B returns the browsable bedroom and focus from a complete draft")
+		await _joy_event(JOY_BUTTON_B, true)
+		await _joy_event(JOY_BUTTON_B, false)
+		_check(village.is_visible_in_tree() and village.has_open_village()
+			and village.set_out_button.has_focus() and app.stitched_run_panel == null
+			and app.stitched_run_session == null,
+			"a retired bedroom picker never captures stray later back input")
 		# Legacy callers can change several controls and confirm in one event loop.
 		# The queued reflow must settle before the authenticated rank check.
 		await _mouse(village.set_out_button)

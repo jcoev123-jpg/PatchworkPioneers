@@ -32,6 +32,7 @@ func _initialize() -> void:
     _test_stitched_lost_calm_eligibility()
     _test_stitched_calm_outcome_projection()
     _test_stitched_calm_outcome_availability()
+    _test_stitched_zero_fray_unravelled_recovery()
     if failures.is_empty():
         print("run_unpicker_visit_test: PASS (", checks, " checks)")
     else:
@@ -611,7 +612,16 @@ func _test_stitched_resolve_recovery() -> void:
     var zero_heroes := _s_resolve_heroes(0, "bitter")
     var zero := _s_open(zero_heroes)
     var zero_source := zero.read_state()
-    _s_reject(zero, "warden", zero_source["visit_id"], NODE, zero_source, "zero-FRAY calm keeps resolve")
+    _check(zero.quote()["hero_ids"] == ["warden"] and zero.quote()["choices"] == ["calm_hero", "leave"],
+            "zero-FRAY Warden with lingering bitter is quoted")
+    var zero_paid := _s_calm(zero, "warden", zero_source)
+    var zero_expected := _s_resolve_heroes(0, "bitter")
+    zero_expected[0]["resolve"] = ""
+    _check(zero_paid["ok"] == true and zero_paid["fray_before"] == 0 and zero_paid["fray_after"] == 0
+            and zero_paid["charged_gold"] == 75 and zero_paid["gold"] == 25
+            and zero_paid["heroes"] == zero_expected and zero.is_consumed(),
+            "zero-FRAY calm clears lingering bitter for one 75 debit without changing FRAY")
+    _s_reject(zero, "warden", zero_source["visit_id"], NODE, zero_source, "replayed zero-FRAY cure")
 
 
 func _test_stitched_leave_and_refusals() -> void:
@@ -1565,3 +1575,148 @@ func _test_stitched_calm_outcome_availability() -> void:
     var legacy_quote := _make_visit(_deck(), 175).quote()
     _check(not legacy_quote.has("calm_outcomes") and legacy_quote["choices"] == ["remove_card", "leave"],
             "legacy quote untouched")
+
+
+## Heroes from _s_heroes with a resolve value set on the given {index: resolve} entries.
+func _z_heroes(frays: Array, resolves: Dictionary) -> Array:
+    var heroes := _s_heroes(frays)
+    for index in resolves:
+        heroes[index]["resolve"] = resolves[index]
+    return heroes
+
+
+## Zero-FRAY recovery: a non-LOST doll at 0 FRAY with a lingering known Unravelled
+## trait can pay once to clear it (FRAY stays 0); zero FRAY without that benefit,
+## and any LOST doll, can never be a paid target. Base and expanded modes.
+func _test_stitched_zero_fray_unravelled_recovery() -> void:
+    var traits: Array = StitchedS1BEffects.RESOLVE_TRAITS
+    _check(traits.has("bitter") and traits.size() >= 2, "recognized trait fixtures are present")
+    for expanded in [false, true]:
+        var tag := "expanded " if expanded else "base "
+        # (1) Each recognized trait at 0 FRAY: quoted, cured once for exactly 75, FRAY unchanged.
+        for unravel in traits:
+            var ttag: String = tag + str(unravel)
+            var target := 1
+            var heroes := _z_heroes([0, 0, 0, 0], {target: unravel})
+            var original := heroes.duplicate(true)
+            var visit := _l_open(expanded, heroes, 75)
+            _check(visit.is_valid() and not visit.is_consumed(), ttag + ": zero-FRAY visit opens")
+            var source := visit.read_state()
+            var quote := visit.quote()
+            _check(quote["ok"] and quote["hero_ids"] == [HERO_IDS[target]] and quote["price"] == 75
+                    and quote["calm_amount"] == 50
+                    and quote["choices"] == (["calm_hero", "unpick_spare", "leave"] if expanded
+                            else ["calm_hero", "leave"]),
+                    ttag + ": quote names the zero-FRAY herowith lingering Unravelled")
+            _check(quote["calm_outcomes"].size() == 1 and quote["calm_outcomes"][0].keys().size() == OUTCOME_KEYS.size()
+                    and quote["calm_outcomes"][0]["hero_id"] == HERO_IDS[target]
+                    and quote["calm_outcomes"][0]["fray_before"] == 0
+                    and quote["calm_outcomes"][0]["fray_after"] == 0
+                    and quote["calm_outcomes"][0]["fray_relief"] == 0
+                    and quote["calm_outcomes"][0]["clears_unravelled"] == true,
+                    ttag + ": existing outcome row shapereports the cure")
+            # Refused attempts (stale snapshot, wrong node, wrong visit) change nothing.
+            var stale := source.duplicate(true)
+            stale["heroes"][target]["resolve"] = ""
+            seed(4417)
+            var next_draw := randi()
+            seed(4417)
+            _e_reject(visit, "calm", HERO_IDS[target], source["visit_id"], NODE, stale,
+                    ttag + ": stale zero-FRAY cure")
+            _e_reject(visit, "calm", HERO_IDS[target], source["visit_id"], "other-node", source,
+                    ttag + ": wrong-node zero-FRAY cure")
+            _e_reject(visit, "calm", HERO_IDS[target], "wrong-visit", NODE, source,
+                    ttag + ": wrong-visit zero-FRAY cure")
+            var paid := _s_calm(visit, HERO_IDS[target], source)
+            var expected := original.duplicate(true)
+            expected[target]["resolve"] = ""
+            _check(paid["ok"] == true and paid["action"] == "calm_hero"
+                    and paid["calmed_hero_id"] == HERO_IDS[target]
+                    and paid["fray_before"] == 0 and paid["fray_after"] == 0
+                    and paid["heroes"] == expected and paid["heroes"][target]["resolve"] == "",
+                    ttag + ": zero-FRAY cure clears only that trait, FRAY stays 0")
+            _check(paid["charged_gold"] == 75 and paid["gold"] == 0 and visit.is_consumed()
+                    and paid["consumed"] == true and paid["source_snapshot"] == source,
+                    ttag + ": exactly 75 charged once, wallet 0, visit consumed")
+            if expanded:
+                _check(paid["satchel"] == _e_spares() and paid["scraps"] == 1
+                        and paid["scrap_yield"] == 2 and paid["credited_scraps"] == 0
+                        and paid["removed_part"] == {},
+                        ttag + ": cure leaves satchel, scraps and yield untouched")
+            _e_reject(visit, "calm", HERO_IDS[target], source["visit_id"], NODE, source,
+                    ttag + ": replayed zero-FRAY cure")
+            _check(visit.quote()["choices"].is_empty() and not visit.quote()["ok"],
+                    ttag + ": consumed visit offers nothing")
+            _check(randi() == next_draw, ttag + ": zero-FRAY cure and refusals draw no RNG")
+
+        # (2) Zero FRAY without a lingering known trait: never quoted, direct buy refused.
+        for resolve in [ABSENT, "", "steadfast", "not_a_trait", "Bitter", " bitter", null, 7]:
+            var clean := _o_heroes(0, resolve)
+            var clean_visit := _l_open(expanded, clean, 500)
+            var clean_source := clean_visit.read_state()
+            var clean_quote := clean_visit.quote()
+            _check(clean_quote["ok"] and clean_quote["hero_ids"].is_empty()
+                    and clean_quote["calm_outcomes"].is_empty()
+                    and clean_quote["choices"] == (["unpick_spare", "leave"] if expanded else ["leave"]),
+                    tag + "zero FRAY resolve " + str(resolve) + " is not offered")
+            for id in HERO_IDS:
+                _e_reject(clean_visit, "calm", id, clean_source["visit_id"], NODE, clean_source,
+                        tag + "zero-FRAY no-benefit buy " + id + " resolve " + str(resolve))
+            var clean_left := clean_visit.leave(clean_source["visit_id"], NODE, clean_source)
+            _check(clean_left["ok"] and clean_left["charged_gold"] == 0 and clean_left["gold"] == 500
+                    and clean_left["heroes"] == clean, tag + "no-benefit visit still Leaves free")
+
+        # (3) LOST dolls at zero FRAY with a known trait are excluded; Hanging (HP 0) is not.
+        var lost := _l_heroes([0, 0, 0, 0], [1])
+        lost[1]["resolve"] = "bitter"
+        var lost_original := lost.duplicate(true)
+        var lost_visit := _l_open(expanded, lost, 75)
+        var lost_source := lost_visit.read_state()
+        _check(lost_visit.quote()["hero_ids"].is_empty() and lost_visit.quote()["calm_outcomes"].is_empty()
+                and not lost_visit.quote()["choices"].has("calm_hero"),
+                tag + "LOST zero-FRAY hero with a known trait is not quoted")
+        _e_reject(lost_visit, "calm", HERO_IDS[1], lost_source["visit_id"], NODE, lost_source,
+                tag + "LOST zero-FRAY known-trait buy")
+        _check(lost_visit.read_state()["heroes"] == lost_original, tag + "LOST doll keeps its trait")
+        for lost_value in [null, false, "true", 1]:
+            var hanging := _z_heroes([0, 0, 0, 0], {2: "cowering"})
+            hanging[2]["hp"] = 0
+            if lost_value != null:
+                hanging[2]["lost"] = lost_value
+            var hanging_original := hanging.duplicate(true)
+            var hang_visit := _l_open(expanded, hanging, 75)
+            var hang_source := hang_visit.read_state()
+            _check(hang_visit.quote()["hero_ids"] == [HERO_IDS[2]],
+                    tag + "Hanging zero-FRAY hero (lost=" + str(lost_value) + ") is quoted")
+            var hang_paid := _s_calm(hang_visit, HERO_IDS[2], hang_source)
+            var hang_expected := hanging_original.duplicate(true)
+            hang_expected[2]["resolve"] = ""
+            _check(hang_paid["ok"] == true and hang_paid["fray_after"] == 0
+                    and hang_paid["charged_gold"] == 75 and hang_paid["gold"] == 0
+                    and hang_paid["heroes"] == hang_expected and hang_paid["heroes"][2]["hp"] == 0,
+                    tag + "Hanging zero-FRAY hero cured once (lost=" + str(lost_value) + ")")
+
+        # (4) Mixed roster order and the unchanged positive-FRAY threshold beside a zero-FRAY cure.
+        var mixed := _z_heroes([0, 0, 70, 0], {0: "frantic", 1: "steadfast", 3: "hollow"})
+        var mixed_visit := _l_open(expanded, mixed, 75)
+        var mixed_quote := mixed_visit.quote()
+        _check(mixed_quote["hero_ids"] == [HERO_IDS[0], HERO_IDS[2], HERO_IDS[3]]
+                and mixed_quote["calm_outcomes"].size() == 3
+                and mixed_quote["calm_outcomes"][1]["fray_after"] == 20
+                and mixed_quote["calm_outcomes"][1]["clears_unravelled"] == false,
+                tag + "mixed roster quotes zero-FRAY cures and the frayed hero in rank order")
+        for boundary in [[99, 49, ""], [100, 50, "bitter"]]:
+            var edge := _z_heroes([boundary[0], 0, 0, 0], {0: "bitter"})
+            var edge_visit := _l_open(expanded, edge, 75)
+            var edge_paid := _s_calm(edge_visit, HERO_IDS[0], edge_visit.read_state())
+            _check(edge_paid["ok"] == true and edge_paid["fray_after"] == boundary[1]
+                    and edge_paid["heroes"][0]["resolve"] == boundary[2]
+                    and edge_paid["charged_gold"] == 75,
+                    tag + "FRAY %d still calms to %d with strictly-below-50 threshold" % [boundary[0], boundary[1]])
+        # Unaffordable: no cure is offered or possible for the zero-FRAY hero.
+        var poor := _l_open(expanded, _z_heroes([0, 0, 0, 0], {0: "bitter"}), 74)
+        var poor_source := poor.read_state()
+        _check(poor.quote()["hero_ids"].is_empty() and not poor.quote()["choices"].has("calm_hero"),
+                tag + "74 gold does not offer the zero-FRAY cure")
+        _e_reject(poor, "calm", HERO_IDS[0], poor_source["visit_id"], NODE, poor_source,
+                tag + "unaffordable zero-FRAY cure")
