@@ -98,8 +98,8 @@
       "title": "The Veiled Wardrobe Mirror",
       "description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
       "choices": [
-        {"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "stitched_effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true, "min_active_heroes": 2}},
-        {"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
+        {"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and fray every doll", "stitched_effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
+        {"id": "pin_lace_veil", "text": "Pin the veil back with a scrap to soothe the dolls", "stitched_effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
         {"id": "leave", "text": "Pass without looking into the silver again", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     }

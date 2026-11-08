@@ -50,8 +50,8 @@ const EXPECTED := {
 		"title": "The Veiled Wardrobe Mirror",
 		"description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
 		"choices": [
-			{"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true, "min_active_heroes": 2}},
-			{"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
+			{"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and fray every doll", "effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
+			{"id": "pin_lace_veil", "text": "Pin the veil back with a scrap to soothe the dolls", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
 			{"id": "leave", "text": "Pass without looking into the silver again", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -74,7 +74,7 @@ const FUNDED_FINAL := {
 		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
 	},
 	"v3_veiled_wardrobe_mirror": {
-		"lift_silver_seam": {"candle": 28, "candle_delta": -12, "fray": 10, "gold": 86, "gold_delta": 26},
+		"lift_silver_seam": {"candle": 22, "candle_delta": -18, "fray": 15, "gold": 95, "gold_delta": 35},
 		"pin_lace_veil": {"candle": 40, "candle_delta": 0, "fray": -9, "scraps": 3, "scraps_delta": -1},
 		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
 	},
@@ -117,14 +117,14 @@ const CANDLE_SHORTS := [
 	{
 		"event_id": "v3_veiled_wardrobe_mirror",
 		"choice_id": "lift_silver_seam",
-		"short_candle": 11,
-		"funded_candle": 12,
-		"candle_delta": -12,
-		"fray_delta": 10,
+		"short_candle": 17,
+		"funded_candle": 18,
+		"candle_delta": -18,
+		"fray_delta": 15,
 		"purse_key": "gold",
 		"purse_delta_key": "gold_delta",
 		"purse_base": BASE_GOLD,
-		"purse_delta": 26,
+		"purse_delta": 35,
 	},
 ]
 
@@ -1397,10 +1397,10 @@ func _denied_preview() -> Dictionary:
 
 ## AC1 / AC2 / AC3 / AC4: Veiled Wardrobe Mirror surviving-party gate on lift_silver_seam.
 ## Requires at least 2 non-LOST distinct heroes.
-## 1. Four survivors: candle 40, gold 60, scraps 4 -> candle 28, gold 86, raw +10 fray intent for all 4.
-## 2. Three survivors: 3 living + 1 lost -> candle 28, gold 86, raw +10 fray for the 3 living IDs only.
-## 3. Two survivors: 2 living + 2 lost -> candle 28, gold 86, raw +10 fray for the 2 living IDs only.
-## 4. Candle affordability boundary: candle 11 unavailable, candle 12 available and projects 0.
+## 1. Four survivors: candle 40, gold 60, scraps 4 -> candle 22, gold 95, raw +15 fray intent for all 4.
+## 2. Three survivors: 3 living + 1 lost -> candle 22, gold 95, raw +15 fray for the 3 living IDs only.
+## 3. Two survivors: 2 living + 2 lost -> candle 22, gold 95, raw +15 fray for the 2 living IDs only.
+## 4. Candle affordability boundary: candle 17 unavailable, candle 18 available and projects 0.
 ## 5. One survivor: (1 living + 3 lost) or solitary -> unavailable, refused, Leave succeeds.
 ## 6. Malformed min_active_heroes injections: 0, 5, -1, true, "2", 2.0, null and unexpected key.
 ## 7. Ungated sibling preservation: choices without gate remain byte-for-byte compatible.
@@ -1431,15 +1431,15 @@ func _test_mirror_surviving_party_gate() -> void:
 	_check(not entry_four.is_empty() and entry_four.get("available") == true,
 		"four-survivor salvage choice is available")
 	var expected_fray_four := {
-		"warden": 10, "seamstress": 10, "tinker": 10, "yarn_ranger": 10,
+		"warden": 15, "seamstress": 15, "tinker": 15, "yarn_ranger": 15,
 	}
-	_check(int(entry_four.get("candle")) == 28
-		and int(entry_four.get("candle_delta")) == -12
-		and int(entry_four.get("fray_delta")) == 10
-		and int(entry_four.get("gold")) == 86
-		and int(entry_four.get("gold_delta")) == 26
+	_check(int(entry_four.get("candle")) == 22
+		and int(entry_four.get("candle_delta")) == -18
+		and int(entry_four.get("fray_delta")) == 15
+		and int(entry_four.get("gold")) == 95
+		and int(entry_four.get("gold_delta")) == 35
 		and entry_four.get("fray") == expected_fray_four,
-		"four-survivor preview quotes candle 28, gold 86, and raw +10 fray for all four")
+		"four-survivor preview quotes candle 22, gold 95, and raw +15 fray for all four")
 	var rec_four: Dictionary = svc_four.choose(choice_id, snap_four)
 	var expected_rec_four := {
 		"ok": true,
@@ -1447,13 +1447,13 @@ func _test_mirror_surviving_party_gate() -> void:
 		"choice_id": choice_id,
 		"target": "party",
 		"hero_id": "",
-		"candle": 28,
+		"candle": 22,
 		"fray": expected_fray_four,
-		"gold_delta": 26,
-		"gold": 86,
+		"gold_delta": 35,
+		"gold": 95,
 	}
 	_check(rec_four == expected_rec_four,
-		"four-survivor claim settles exact receipt (40->28 candle, 60->86 gold, +10 fray for four)")
+		"four-survivor claim settles exact receipt (40->22 candle, 60->95 gold, +15 fray for four)")
 	_check(not rec_four.has("min_active_heroes") and not rec_four.has("scraps") and not rec_four.has("hp"),
 		"four-survivor receipt has no extra keys")
 	_check(svc_four.is_claimed() and not svc_four.is_valid(),
@@ -1494,12 +1494,12 @@ func _test_mirror_surviving_party_gate() -> void:
 	_check(not entry_three.is_empty() and entry_three.get("available") == true,
 		"three-survivor salvage choice is available")
 	var expected_fray_three := {
-		"warden": 10, "seamstress": 10, "tinker": 10,
+		"warden": 15, "seamstress": 15, "tinker": 15,
 	}
-	_check(int(entry_three.get("candle")) == 28
-		and int(entry_three.get("gold")) == 86
+	_check(int(entry_three.get("candle")) == 22
+		and int(entry_three.get("gold")) == 95
 		and entry_three.get("fray") == expected_fray_three,
-		"three-survivor preview quotes candle 28, gold 86, and raw +10 fray for the three active dolls only")
+		"three-survivor preview quotes candle 22, gold 95, and raw +15 fray for the three active dolls only")
 	var rec_three: Dictionary = svc_three.choose(choice_id, snap_three)
 	_check(rec_three == {
 		"ok": true,
@@ -1507,10 +1507,10 @@ func _test_mirror_surviving_party_gate() -> void:
 		"choice_id": choice_id,
 		"target": "party",
 		"hero_id": "",
-		"candle": 28,
+		"candle": 22,
 		"fray": expected_fray_three,
-		"gold_delta": 26,
-		"gold": 86,
+		"gold_delta": 35,
+		"gold": 95,
 	}, "three-survivor claim settles exact receipt with only 3 living hero IDs in fray map")
 	_check(not (rec_three.get("fray") as Dictionary).has("yarn_ranger"),
 		"three-survivor fray map excludes LOST doll")
@@ -1540,12 +1540,12 @@ func _test_mirror_surviving_party_gate() -> void:
 	_check(not entry_two.is_empty() and entry_two.get("available") == true,
 		"two-survivor salvage choice is available")
 	var expected_fray_two := {
-		"warden": 10, "seamstress": 10,
+		"warden": 15, "seamstress": 15,
 	}
-	_check(int(entry_two.get("candle")) == 28
-		and int(entry_two.get("gold")) == 86
+	_check(int(entry_two.get("candle")) == 22
+		and int(entry_two.get("gold")) == 95
 		and entry_two.get("fray") == expected_fray_two,
-		"two-survivor preview quotes candle 28, gold 86, and fray map for only the two active dolls")
+		"two-survivor preview quotes candle 22, gold 95, and fray map for only the two active dolls")
 	var rec_two: Dictionary = svc_two.choose(choice_id, snap_two)
 	_check(rec_two == {
 		"ok": true,
@@ -1553,48 +1553,48 @@ func _test_mirror_surviving_party_gate() -> void:
 		"choice_id": choice_id,
 		"target": "party",
 		"hero_id": "",
-		"candle": 28,
+		"candle": 22,
 		"fray": expected_fray_two,
-		"gold_delta": 26,
-		"gold": 86,
+		"gold_delta": 35,
+		"gold": 95,
 	}, "two-survivor claim settles exact receipt with only 2 living hero IDs in fray map")
 	_check(snap_two == before_two and record == record_snapshot,
 		"two-survivor flow mutates no caller snapshot or record")
 	_check(rng_guard.state == guard_state,
 		"two-survivor flow draws no RNG")
 
-	# --- 4. Two survivors candle affordability boundary: candle 11 vs 12 ---
-	var snap_two_c11 := snap_two.duplicate(true)
-	snap_two_c11["candle"] = 11
-	var before_two_c11: Dictionary = snap_two_c11.duplicate(true)
-	var svc_two_c11 := RunStitchedEventConsequence.new(record)
-	var prev_two_c11: Dictionary = svc_two_c11.preview(snap_two_c11)
-	_check(prev_two_c11.get("ok") == true, "two-survivor candle 11 visit previews")
-	var entry_two_c11 := _entry(prev_two_c11, choice_id)
-	_check(not entry_two_c11.is_empty() and entry_two_c11.get("available") == false,
-		"two-survivor candle 11 makes salvage unavailable via require_full_candle")
-	_check(int(entry_two_c11.get("candle")) == 11 and entry_two_c11.get("fray") == {},
-		"two-survivor candle 11 quotes caller candle 11 and empty fray")
-	_check(svc_two_c11.choose(choice_id, snap_two_c11) == _refusal(11),
-		"two-survivor candle 11 direct choose refused")
-	_check(svc_two_c11.is_valid() and not svc_two_c11.is_claimed(),
-		"two-survivor candle 11 refusal does not latch")
-	_check(snap_two_c11 == before_two_c11, "candle 11 snapshot unchanged")
-	_check(rng_guard.state == guard_state, "candle 11 refusal draws no RNG")
+	# --- 4. Two survivors candle affordability boundary: candle 17 vs 18 ---
+	var snap_two_c17 := snap_two.duplicate(true)
+	snap_two_c17["candle"] = 17
+	var before_two_c17: Dictionary = snap_two_c17.duplicate(true)
+	var svc_two_c17 := RunStitchedEventConsequence.new(record)
+	var prev_two_c17: Dictionary = svc_two_c17.preview(snap_two_c17)
+	_check(prev_two_c17.get("ok") == true, "two-survivor candle 17 visit previews")
+	var entry_two_c17 := _entry(prev_two_c17, choice_id)
+	_check(not entry_two_c17.is_empty() and entry_two_c17.get("available") == false,
+		"two-survivor candle 17 makes salvage unavailable via require_full_candle")
+	_check(int(entry_two_c17.get("candle")) == 17 and entry_two_c17.get("fray") == {},
+		"two-survivor candle 17 quotes caller candle 17 and empty fray")
+	_check(svc_two_c17.choose(choice_id, snap_two_c17) == _refusal(17),
+		"two-survivor candle 17 direct choose refused")
+	_check(svc_two_c17.is_valid() and not svc_two_c17.is_claimed(),
+		"two-survivor candle 17 refusal does not latch")
+	_check(snap_two_c17 == before_two_c17, "candle 17 snapshot unchanged")
+	_check(rng_guard.state == guard_state, "candle 17 refusal draws no RNG")
 
-	var snap_two_c12 := snap_two.duplicate(true)
-	snap_two_c12["candle"] = 12
-	var before_two_c12: Dictionary = snap_two_c12.duplicate(true)
-	var svc_two_c12 := RunStitchedEventConsequence.new(record)
-	var prev_two_c12: Dictionary = svc_two_c12.preview(snap_two_c12)
-	_check(prev_two_c12.get("ok") == true, "two-survivor candle 12 visit previews")
-	var entry_two_c12 := _entry(prev_two_c12, choice_id)
-	_check(not entry_two_c12.is_empty() and entry_two_c12.get("available") == true,
-		"two-survivor candle 12 makes salvage available")
-	_check(int(entry_two_c12.get("candle")) == 0 and int(entry_two_c12.get("gold")) == 86,
-		"two-survivor candle 12 projects candle 0 and gold 86")
-	var rec_two_c12: Dictionary = svc_two_c12.choose(choice_id, snap_two_c12)
-	_check(rec_two_c12 == {
+	var snap_two_c18 := snap_two.duplicate(true)
+	snap_two_c18["candle"] = 18
+	var before_two_c18: Dictionary = snap_two_c18.duplicate(true)
+	var svc_two_c18 := RunStitchedEventConsequence.new(record)
+	var prev_two_c18: Dictionary = svc_two_c18.preview(snap_two_c18)
+	_check(prev_two_c18.get("ok") == true, "two-survivor candle 18 visit previews")
+	var entry_two_c18 := _entry(prev_two_c18, choice_id)
+	_check(not entry_two_c18.is_empty() and entry_two_c18.get("available") == true,
+		"two-survivor candle 18 makes salvage available")
+	_check(int(entry_two_c18.get("candle")) == 0 and int(entry_two_c18.get("gold")) == 95,
+		"two-survivor candle 18 projects candle 0 and gold 95")
+	var rec_two_c18: Dictionary = svc_two_c18.choose(choice_id, snap_two_c18)
+	_check(rec_two_c18 == {
 		"ok": true,
 		"event_id": event_id,
 		"choice_id": choice_id,
@@ -1602,11 +1602,11 @@ func _test_mirror_surviving_party_gate() -> void:
 		"hero_id": "",
 		"candle": 0,
 		"fray": expected_fray_two,
-		"gold_delta": 26,
-		"gold": 86,
-	}, "two-survivor candle 12 settles exact receipt at candle 0 and gold 86")
-	_check(snap_two_c12 == before_two_c12, "candle 12 snapshot unchanged")
-	_check(rng_guard.state == guard_state, "candle 12 claim draws no RNG")
+		"gold_delta": 35,
+		"gold": 95,
+	}, "two-survivor candle 18 settles exact receipt at candle 0 and gold 95")
+	_check(snap_two_c18 == before_two_c18, "candle 18 snapshot unchanged")
+	_check(rng_guard.state == guard_state, "candle 18 claim draws no RNG")
 
 	# --- 5. One survivor: (1 living + 3 LOST) AND solitary doll ---
 	var snap_one_of_four := {
@@ -1629,9 +1629,9 @@ func _test_mirror_surviving_party_gate() -> void:
 		"one-survivor (1 living + 3 lost) salvage choice is unavailable")
 	_check(int(entry_one_of_four.get("candle")) == 40
 		and int(entry_one_of_four.get("gold")) == 60
-		and int(entry_one_of_four.get("candle_delta")) == -12
-		and int(entry_one_of_four.get("fray_delta")) == 10
-		and int(entry_one_of_four.get("gold_delta")) == 26
+		and int(entry_one_of_four.get("candle_delta")) == -18
+		and int(entry_one_of_four.get("fray_delta")) == 15
+		and int(entry_one_of_four.get("gold_delta")) == 35
 		and entry_one_of_four.get("fray") == {},
 		"one-survivor unavailable choice quotes caller state, deltas, and empty fray")
 	var veil_entry := _entry(prev_one_of_four, "pin_lace_veil")
