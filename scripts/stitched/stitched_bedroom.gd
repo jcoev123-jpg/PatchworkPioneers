@@ -33,6 +33,15 @@ const SPOT_TIPS := {
 	"candle": "The candle burns through each night's road",
 	"tin": "Spare parts and spoils in the sewing tin",
 }
+## Explicit image-space arrows; Tab and Shift-Tab keep the host's separate loop.
+const DIRECTIONAL_FOCUS := {
+	"door": {"left": "shelf", "right": "drawings", "bottom": "tin"},
+	"drawings": {"left": "door", "right": "window", "bottom": "candle"},
+	"window": {"left": "drawings", "bottom": "candle"},
+	"candle": {"top": "window", "left": "drawings"},
+	"shelf": {"right": "door", "bottom": "tin"},
+	"tin": {"top": "shelf", "right": "door"},
+}
 ## Where the light leaks under the door.
 const DOOR_LIGHT := Rect2(521, 476, 200, 14)
 ## Feet line of each shelf and how many dolls stand on it.
@@ -95,6 +104,7 @@ func _ready() -> void:
 		dolls[id] = doll
 	inspector = StitchedBedroomDollInspector.new()
 	room.add_child(inspector)
+	_wire_directional_focus()
 	visibility_changed.connect(_on_room_visibility_changed)
 	resized.connect(_fit)
 	present(record)
@@ -119,7 +129,26 @@ func adopt(spot_id: String, button: Button) -> void:
 	if button.get_parent() != null:
 		button.get_parent().remove_child(button)
 	_make_spot(spot_id, button)
+	_wire_directional_focus()
 	_restyle_spots()
+
+
+## Rebuild only when all six buttons share the live tree. Adopted host buttons
+## replace queued-for-free originals, so every NodePath must be recalculated.
+func _wire_directional_focus() -> void:
+	if not is_inside_tree():
+		return
+	for id in SPOTS:
+		var target: Button = spots.get(id)
+		if not is_instance_valid(target) or not target.is_inside_tree():
+			return
+	for id in DIRECTIONAL_FOCUS:
+		var button: Button = spots[id]
+		var links: Dictionary = DIRECTIONAL_FOCUS[id]
+		button.focus_neighbor_left = button.get_path_to(spots[links["left"]]) if links.has("left") else NodePath()
+		button.focus_neighbor_right = button.get_path_to(spots[links["right"]]) if links.has("right") else NodePath()
+		button.focus_neighbor_top = button.get_path_to(spots[links["top"]]) if links.has("top") else NodePath()
+		button.focus_neighbor_bottom = button.get_path_to(spots[links["bottom"]]) if links.has("bottom") else NodePath()
 
 
 func spot(spot_id: String) -> Button:
