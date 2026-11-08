@@ -1254,6 +1254,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_tinker_sewing_treadle",
+      "title": "The Sewing Treadle",
+      "description": "A house-sized cast-iron treadle rises through a crack in the floorboards. The Tinker's crooked goggles catch an amber spark beneath its loose brass hinge, while a thread of red light shivers through the pedal.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "brace_treadle_rivet",
+          "text": "Patch the hinge into sturdier stuffing",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 3, "max_hp": 2 }
+        },
+        {
+          "id": "strip_treadle_axle",
+          "text": "Pawn the axle and surrender a seam",
+          "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the great pedal fall quiet",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_tailors_wax_cake",
+      "title": "The Tailor's Wax Cake",
+      "description": "A moon-pale cake of tailor's wax hangs above a skirting-board passage like a second ceiling. The Yarn Ranger catches it with braided bolas; tiny stitched birds wait on the ledge for the falling shavings.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "bind_wax_roost",
+          "text": "Buy warm wax to seal the torn wool",
+          "outcome": { "gold": -15, "scraps": 0, "hp": 6, "max_hp": 1 }
+        },
+        {
+          "id": "scrape_wax_heart",
+          "text": "Trade a lasting seam for waxy salvage",
+          "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little birds to their candlelit roost",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_bent_napkin_ring",
+      "title": "The Bent Napkin Ring",
+      "description": "A bent brass napkin ring fills a gap between two cupboard walls. The Button Golem's wide button fists hold back its closing clasp as old oxblood ribbon wraps the little corridor like a noose.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "reinforce_ring_stitch",
+          "text": "Sew the brass clasp into a tougher shell",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "pawn_brass_clasp",
+          "text": "Pawn a button seam with the broken clasp",
+          "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Ease the brass ring back into the shadows",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
