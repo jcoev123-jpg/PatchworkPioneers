@@ -2025,7 +2025,8 @@
           "dmg": [3, 4],
           "crit": 0,
           "effects": {
-            "bleed": 1
+            "bleed": 1,
+            "snip": 1
           },
           "self_move": 0,
           "move": "attack2"
@@ -2047,6 +2048,24 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "termite_lint_spit",
+          "name": "Lint Spit",
+          "kind": "ranged",
+          "launch": [2, 3, 4],
+          "target": [2, 3, 4],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 84,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "blind": 1,
+            "exposed": 1
+          },
+          "self_move": 0,
+          "move": "attack3"
         }
       ]
     }
