@@ -81,7 +81,7 @@
         "2": {"ability": {"dmg": [5, 8], "mark_damage": 3, "self_move": -1}},
         "3": {"ability": {"dmg": [7, 10], "mark_damage": 5, "self_move": -1}}
       },
-      "text": "Lunge from ranks 2-3 at one foe in ranks 1-2 and step one rank forward. Deeper stitch tiers pierce harder, and tiers II and III bite deeper into a foe left Marked by Feather Feint."
+      "text": "A slender silver needle-rapier motif crosses a crimson felt sleeve patch, picked out with crooked gold stitches against black cloth."
     },
     {
       "id": "rag_duelist_arms_needle_prick",
@@ -108,7 +108,7 @@
         "2": {"ability": {"dmg": [4, 6], "effects": {"bleed": 3}}},
         "3": {"ability": {"dmg": [5, 8], "effects": {"bleed": 4}}}
       },
-      "text": "Prick one foe in ranks 1-2 for light damage and open a Bleed, deeper at each stitch tier."
+      "text": "Three tiny silver needles rest on a black felt wrist patch, sewn down with uneven crimson cross-stitches and a gold thread knot."
     },
     {
       "id": "rag_duelist_torso_cape_parry",

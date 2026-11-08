@@ -116,6 +116,42 @@ const HEAD_PATCH_FORBIDDEN_WORDS := [
 	"effect", "effects", "spend", "action", "actions",
 ]
 
+## S14: the two arm patches are worn sewn-cloth identities too, so their player-readable text is
+## a sewn-fabric description rather than the part-granted combat move their legacy data still holds.
+const ARM_PATCH_TEXT := {
+	"rag_duelist_arms_rapier_lunge": "A slender silver needle-rapier motif crosses a crimson felt sleeve patch, picked out with crooked gold stitches against black cloth.",
+	"rag_duelist_arms_needle_prick": "Three tiny silver needles rest on a black felt wrist patch, sewn down with uneven crimson cross-stitches and a gold thread knot.",
+}
+
+## The retired part-as-attack sentences these two arm records carried before S14 retired
+## part-granted combat copy; neither exact sentence may survive anywhere in this catalog.
+const ARM_PATCH_RETIRED_TEXT := {
+	"rag_duelist_arms_rapier_lunge": "Lunge from ranks 2-3 at one foe in ranks 1-2 and step one rank forward. Deeper stitch tiers pierce harder, and tiers II and III bite deeper into a foe left Marked by Feather Feint.",
+	"rag_duelist_arms_needle_prick": "Prick one foe in ranks 1-2 for light damage and open a Bleed, deeper at each stitch tier.",
+}
+
+## Visible sewn-cloth words each arm description must name, so the copy stays a description of
+## the worn patch rather than a generic nonempty string. The hyphenated needle-rapier motif and
+## cross-stitches split into whole words, so those hyphenated tokens are never rejected.
+const ARM_PATCH_WORDS := {
+	"rag_duelist_arms_rapier_lunge": [
+		"silver", "needle", "rapier", "crimson", "sleeve", "felt", "gold", "stitches",
+	],
+	"rag_duelist_arms_needle_prick": [
+		"silver", "needles", "black", "felt", "wrist", "sewn", "crimson", "stitches", "gold",
+	],
+}
+
+## Whole combat words the two arm descriptions must never promise, matched case-insensitively on
+## word boundaries so "stitches" or "patch" cannot trip a check by accident. The retired Mark and
+## Bleed statuses are named explicitly: the legacy abilities keep them, the cloth copy must not
+## advertise them.
+const ARM_PATCH_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "foe", "enemy", "target", "attack", "hit",
+	"damage", "mark", "marked", "bleed", "weak", "exposed", "tangled", "stun",
+	"guard", "heal", "turn", "ability", "move", "step", "forward", "effect",
+]
+
 ## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
 ## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
 ## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
@@ -236,7 +272,7 @@ func _initialize() -> void:
 	_test_flourish_catalog()
 	_test_cape_legs_text()
 	_test_head_patch_text()
-	_test_rapier_lunge_text()
+	_test_arm_patch_text()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
@@ -863,32 +899,75 @@ func _test_head_patch_text() -> void:
 				"AC3: the head description stays on " + str(head_id) + ", never on " + str(other_id))
 
 
-# ---------------------------------------------------------------- AC1: Rapier Lunge rules text
+# ---------------------------------------------------------------- AC1/AC2: the two arm-patch texts
 
-## The upgraded Rapier Lunge copy must name the Mark payoff, say it arrives with the stitch tiers,
-## and keep describing its one-rank forward step. It must not adopt another part's effect.
-func _test_rapier_lunge_text() -> void:
+## S14 retires the two arm parts' combat role while S13 keeps them as sewn patches, so both
+## player-readable arm descriptions are sewn-fabric copy only: no rank, tier, Mark, Bleed, damage,
+## target or other combat promise, and no number. Each named record is checked against its
+## authored sentence, its identity fields and the visible cloth it names, using whole words
+## (never accidental substrings) for the forbidden combat vocabulary; neither retired attack
+## sentence may survive anywhere in this hero kit.
+func _test_arm_patch_text() -> void:
 	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the shipped catalog loads for the two arm-patch text checks")
 	if not bool(catalog.get("ok", false)):
-		_check(false, "AC1: the shipped catalog loads for the Rapier Lunge text check")
 		return
-	var lunge_id := str(STARTER_PARTS["arms"])
-	if not catalog["by_id"].has(lunge_id):
-		_check(false, "AC1: the Rapier Lunge text check needs the starter arms part")
-		return
-	var text := str(catalog["by_id"][lunge_id].get("text", "")).strip_edges()
-	_check(not text.is_empty(), "AC1: Rapier Lunge carries rules text")
-	var lower := text.to_lower()
-	_check(lower.contains("mark"), "AC1: Rapier Lunge text names the Mark it exploits: " + text)
-	_check(lower.contains(" ii") and lower.contains(" iii"),
-		"AC1: Rapier Lunge text names the upgrading stitch tiers II and III: " + text)
-	_check(lower.contains("bite") or lower.contains("harder"),
-		"AC1: Rapier Lunge text says upgraded Lunge bites harder against Mark: " + text)
-	_check(lower.contains("step") or lower.contains("forward"),
-		"AC1: Rapier Lunge text still describes its one-rank forward step: " + text)
-	_check(not lower.contains("exposed") and not lower.contains("tangled")
-		and not lower.contains("bleed") and not lower.contains("weak"),
-		"AC1: Rapier Lunge text never claims another part's status: " + text)
+	var by_id: Dictionary = catalog["by_id"]
+	for part_id in ARM_PATCH_TEXT:
+		var id := str(part_id)
+		var sentence := str(ARM_PATCH_TEXT[id])
+		_check(by_id.has(id), "AC1: the catalog authors the named arm-patch record " + id)
+		if not by_id.has(id):
+			continue
+		var part: Dictionary = by_id[id]
+		var spec: Dictionary = EXPECTED[id]
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC3: validate_part accepts the shipped " + id)
+		_check(str(part.get("id", "")) == id, "AC1: " + id + " keeps its authored id")
+		_check(str(part.get("name", "")) == str(spec["name"]),
+			"AC1: " + id + " keeps its authored name " + str(spec["name"]))
+		_check(str(part.get("owner", "")) == OWNER, "AC1: " + id + " stays owned by the rag_duelist")
+		_check(str(part.get("slot", "")) == "arms", "AC1: " + id + " stays an arms patch")
+		_check(_int_dict(part["stat"]) == _int_dict(spec["stat"]),
+			"AC3: " + id + " keeps its legacy tier-I slot stat " + str(spec["stat"]))
+		_check(str(part["ability"]["id"]) == str(spec["ability_id"]),
+			"AC3: " + id + " keeps its legacy ability " + str(spec["ability_id"]))
+		_check(part["tiers"].has("2") and part["tiers"].has("3"),
+			"AC3: " + id + " keeps its legacy tiers II and III overrides")
+		var text := str(part.get("text", ""))
+		_check(text == sentence, "AC1: " + id + " carries its authored sewn-cloth sentence: " + text)
+		var words := _whole_words(text)
+		for word in ARM_PATCH_WORDS[id]:
+			_check(str(word) in words,
+				"AC2: " + id + " names the visible sewn cloth " + str(word) + ": " + text)
+		for word in ARM_PATCH_FORBIDDEN_WORDS:
+			_check(not str(word) in words,
+				"AC2: " + id + " promises no combat term " + str(word) + ": " + text)
+		for digit in range(10):
+			_check(not text.contains(str(digit)),
+				"AC2: " + id + " states no number " + str(digit) + ": " + text)
+		# Neither retired part-as-attack sentence may survive on this record.
+		_check(text != str(ARM_PATCH_RETIRED_TEXT[id]),
+			"AC2: " + id + " no longer carries its retired attack sentence")
+		# The same record cloned in memory with its text emptied still fails closed.
+		for bad_text in ["", "   "]:
+			var blank := part.duplicate(true)
+			blank["text"] = bad_text
+			_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+				"AC3: " + id + " with blank text is refused: " + text)
+	# Neither retired attack sentence may survive anywhere in this hero kit, and neither arm
+	# description may be reused by—or leak onto—the other six wearables.
+	for other_id in ALL_PART_IDS:
+		var other_text := str(by_id[other_id].get("text", ""))
+		for retired_id in ARM_PATCH_RETIRED_TEXT:
+			_check(other_text != str(ARM_PATCH_RETIRED_TEXT[retired_id]),
+				"AC2: the retired " + str(retired_id) + " attack copy is gone from " + str(other_id))
+		if ARM_PATCH_TEXT.has(other_id):
+			continue
+		for arm_id in ARM_PATCH_TEXT:
+			_check(other_text != str(ARM_PATCH_TEXT[arm_id]),
+				"AC3: the arm description stays on " + str(arm_id) + ", never on " + str(other_id))
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
