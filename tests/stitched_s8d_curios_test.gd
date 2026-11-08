@@ -117,9 +117,18 @@ func exercise(seed_number: int, area: String, id: String, mode: String = "normal
 				if mode in ["pins", "dye"]:
 					check(walk.snapshot().pending.filter(func(e): return e.kind == "curio_trap").is_empty(), "pins/dye protects trap")
 					var protection: Dictionary = walk.snapshot().pending[0]
-					check(protection.consumed if mode == "pins" else not protection.effects.skip_one_curio_trap,
-						"protection consumed once")
-					if mode == "dye": check(protection.effects.skip_next_fight_first_strike and not protection.consumed, "dye retains battle protection")
+					if mode == "pins":
+						check(protection.consumed, "protection consumed once")
+					elif mode == "dye":
+						check(protection.effects.skip_next_fight_first_strike and not protection.consumed, "dye retains battle protection")
+						var unprot_walk := start(seed_number, area)
+						while unprot_walk.snapshot().step < curio.step: check(act(unprot_walk, "forward").ok, "public approach")
+						check(choose(unprot_walk, curio, "reach").ok, "unprotected reach")
+						var unprot_bit: bool = not unprot_walk.snapshot().pending.filter(func(e): return e.kind == "curio_trap").is_empty()
+						if unprot_bit:
+							check(not protection.effects.skip_one_curio_trap, "protection consumed once")
+						else:
+							check(protection.effects.skip_one_curio_trap, "dye trap skip retained on harmless reach")
 			"pattern_scraps":
 				check(choose(walk, curio, "read").ok, "read wall patterns")
 				check(walk.snapshot().pending[-1].effects == {"area": area, "marker": "wall_pattern_secret"}, "floor-specific secret marker")
@@ -142,6 +151,8 @@ func exercise(seed_number: int, area: String, id: String, mode: String = "normal
 
 func curio_test(id: String, area: String) -> void:
 	var count := 0
+	var bite_witnesses := 0
+	var harmless_witnesses := 0
 	for seed_number in 96:
 		var trace := exercise(seed_number, area, id)
 		if trace.is_empty(): continue
@@ -149,9 +160,20 @@ func curio_test(id: String, area: String) -> void:
 		check(trace == exercise(seed_number, area, id), "independent seeded action/receipt replay: " + id)
 		if count == 1:
 			exercise(seed_number, area, id, "leave")
-			if id == "biting_bundle":
-				for mode in ["pins", "dye"]: check(exercise(seed_number, area, id, mode) == exercise(seed_number, area, id, mode), "protected seeded replay")
+		if id == "biting_bundle":
+			var bit: bool = not trace[-1].pending.filter(func(e): return e.kind == "curio_trap").is_empty()
+			if bit:
+				bite_witnesses += 1
+				if bite_witnesses == 1:
+					for mode in ["pins", "dye"]: check(exercise(seed_number, area, id, mode) == exercise(seed_number, area, id, mode), "protected seeded replay")
+			else:
+				harmless_witnesses += 1
+				if harmless_witnesses == 1:
+					for mode in ["pins", "dye"]: check(exercise(seed_number, area, id, mode) == exercise(seed_number, area, id, mode), "protected seeded replay")
 	check(count > 0, "nonvacuous authored curio witness " + id)
+	if id == "biting_bundle":
+		check(bite_witnesses > 0, "at least one ragbag bite witness")
+		check(harmless_witnesses > 0, "at least one ragbag harmless witness")
 	check(witnessed.has(id + "_end"), "last traversable position reachable " + id)
 
 func negatives() -> void:
@@ -195,6 +217,29 @@ func negatives() -> void:
 		var before := rng.state
 		check(Walk.start(rng, "walls", party(), {"0": [], "1": [], "2": [], "3": []}, bad) == null and rng.state == before,
 			"malformed authored metadata rejects before RNG: " + field)
+	var ragbag_walk := start(24, "floorboards")
+	var ragbag_curio: Dictionary = ragbag_walk.snapshot().curios[0]
+	check(act(ragbag_walk, "use_item", {"slot": 1, "target": "1"}).ok, "dye unrelated doll 1")
+	check(choose(ragbag_walk, ragbag_curio, "reach").ok, "doll 0 reaches biting bag")
+	check(not ragbag_walk.snapshot().pending.filter(func(e): return e.kind == "curio_trap" and e.target == "0").is_empty(),
+		"reacher doll 0 suffers trap despite unrelated doll 1 dye")
+	var unrelated_dye: Dictionary = ragbag_walk.snapshot().pending.filter(func(e): return e.kind == "dye")[0]
+	check(unrelated_dye.effects.skip_one_curio_trap and unrelated_dye.effects.skip_next_fight_first_strike and not unrelated_dye.consumed,
+		"unrelated doll dye remains completely unconsumed")
+	var leave_walk := start(24, "floorboards")
+	var leave_curio: Dictionary = leave_walk.snapshot().curios[0]
+	check(act(leave_walk, "use_item", {"slot": 1, "target": "0"}).ok, "dye reacher doll 0")
+	check(choose(leave_walk, leave_curio, "leave").ok, "leave ragbag")
+	var leave_dye: Dictionary = leave_walk.snapshot().pending.filter(func(e): return e.kind == "dye")[0]
+	check(leave_dye.effects.skip_one_curio_trap and leave_dye.effects.skip_next_fight_first_strike and not leave_dye.consumed,
+		"leave does not consume dye")
+	var rej_walk := start(24, "floorboards")
+	var rej_curio: Dictionary = rej_walk.snapshot().curios[0]
+	check(act(rej_walk, "use_item", {"slot": 1, "target": "0"}).ok, "dye reacher doll 0 before bad action")
+	reject(rej_walk, {"kind": "curio", "actor": "0", "target": rej_curio.instance, "choice": "forged"})
+	var rej_dye: Dictionary = rej_walk.snapshot().pending.filter(func(e): return e.kind == "dye")[0]
+	check(rej_dye.effects.skip_one_curio_trap and rej_dye.effects.skip_next_fight_first_strike and not rej_dye.consumed,
+		"rejected action does not consume dye")
 
 func _initialize() -> void:
 	catalogs = Walk.load_catalogs()
