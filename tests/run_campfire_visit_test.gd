@@ -65,6 +65,9 @@ func _initialize() -> void:
 	_test_mend_torn_availability()
 	_test_mend_clears_death_hits()
 	_test_mend_death_hits_untouched_elsewhere()
+	_test_session_campfire_torn_mend()
+	_test_session_campfire_lingering_resolve()
+	_test_session_campfire_no_recovery_offers()
 	_finish()
 
 
@@ -2892,3 +2895,281 @@ func _test_mend_death_hits_untouched_elsewhere() -> void:
 	_check(legacy_receipt.get("ok") == true and legacy_receipt["heroes"][2]["death_hits"] == 1
 		and legacy_receipt["heroes"][2]["hp"] == 8,
 		"legacy three-hero heal leaves death_hits alone")
+
+
+## --- Direct StitchedRunSession route regressions: Campfire action availability ---
+## The service's quoted choices are authoritative; the session must not veto Mend for a
+## torn worn part at full HP, nor Tell Tales for a lingering Unravelled resolve at zero FRAY.
+
+## First seeded map whose opening choices include a Rest node, i.e. a real Campfire.
+func _session_rest_route() -> Array:
+	for seed_number in range(300):
+		var map_rng := RandomNumberGenerator.new()
+		map_rng.seed = seed_number
+		var generated := RunMap.new()
+		if not generated.generate(map_rng):
+			continue
+		for node_id in generated.get_legal_choices():
+			if generated.get_node(node_id).type == "Rest":
+				return [seed_number, node_id]
+	return []
+
+
+## A fresh seeded run edited by `edit`, resealed, then routed into the Rest node through
+## the real enter(). Returns {} when the route cannot be entered.
+func _session_campfire(route: Array, edit: Callable) -> Dictionary:
+	var session := StitchedRunSession.start(route[0])
+	if session == null:
+		return {}
+	edit.call(session)
+	session._seal()
+	var rng_before: int = session.rng.state
+	var candle_before: int = session.candle
+	if not session.enter(route[1], session.snapshot()):
+		return {}
+	return {"session": session, "rng": rng_before, "candle": candle_before}
+
+
+func _session_ids(session: StitchedRunSession, enabled_only: bool) -> Array:
+	var ids: Array = []
+	for action in session.visit_actions():
+		if not enabled_only or action.enabled == true:
+			ids.append(action.id)
+	return ids
+
+
+func _session_action(session: StitchedRunSession, action_id: String) -> Dictionary:
+	for action in session.visit_actions():
+		if action.id == action_id:
+			return action
+	return {}
+
+
+## Four living dolls with nothing to recover: full HP, no FRAY, no resolve, nothing torn.
+func _session_recovered(session: StitchedRunSession) -> void:
+	for hero in session.heroes:
+		hero["hp"] = hero["max_hp"]
+		hero["fray"] = 0
+		hero["resolve"] = ""
+		hero["hanging"] = false
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
+
+
+func _hero_full_zero_fray(hero: Dictionary) -> bool:
+	return hero["hp"] == hero["max_hp"] and hero["fray"] == 0
+
+
+func _hero_calm(hero: Dictionary) -> bool:
+	return _hero_full_zero_fray(hero) and hero["resolve"] == ""
+
+
+func _edit_torn_arms(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session.heroes[1]["parts"]["arms"]["torn"] = true
+
+
+func _edit_frantic(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session.heroes[2]["resolve"] = "frantic"
+
+
+func _edit_lost_only(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	var lost: Dictionary = session.heroes[3]
+	lost["lost"] = true
+	lost["hp"] = 0
+	lost["parts"]["legs"]["torn"] = true
+	lost["resolve"] = "frantic"
+
+
+func _edit_wounded(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session.heroes[0]["hp"] = int(session.heroes[0]["max_hp"]) - 5
+
+
+func _edit_fray(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session.heroes[0]["fray"] = 10
+
+
+func _edit_fear(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session._kid_fear.apply_observed_event({"kind": "lost"})
+
+
+## Everything except the dolls, route bookkeeping and the spent decision stays identical.
+func _session_ledgers_same(before: Dictionary, after: Dictionary, skip: Array = []) -> bool:
+	for key in ["gold", "scraps", "candle", "satchel", "patches", "pockets", "kid_fear", "s14", "gifts", "map"]:
+		if key in skip:
+			continue
+		if before.get(key) != after.get(key):
+			return false
+	return true
+
+
+func _test_session_campfire_torn_mend() -> void:
+	var route := _session_rest_route()
+	_check(route.size() == 2, "session: a seeded map offers a real Campfire route")
+	if route.size() != 2:
+		return
+	var setup := _session_campfire(route, _edit_torn_arms)
+	_check(not setup.is_empty(), "session: torn-arms fixture enters the Campfire")
+	if setup.is_empty():
+		return
+	var session: StitchedRunSession = setup["session"]
+	_check(session.phase == "visit" and str(session.pending.get("service")) == "Campfire"
+		and session.candle == int(setup["candle"]) - StitchedRunSession.NODE_CANDLE_COST
+		and session.rng.state == int(setup["rng"]) and session.kid_fear() == 0,
+		"session A: entry spends only the ordinary route candle and draws no RNG")
+	var doll_before: Dictionary = session.heroes[1].duplicate(true)
+	_check(not bool(doll_before["lost"]) and doll_before["parts"]["arms"]["torn"] == true
+		and doll_before["hp"] == doll_before["max_hp"]
+		and session.heroes.all(_hero_calm),
+		"session A: precondition is a living full-HP doll with a torn arms part and nothing else to recover")
+	var mend := _session_action(session, "mend")
+	_check(not mend.is_empty() and mend["enabled"] == true and mend["text"] == "Mend"
+		and _session_ids(session, true).has("leave") and not _session_ids(session, false).has("tell_tales"),
+		"session A: Mend is offered and enabled at full HP; Tell Tales stays absent")
+	var before := session.snapshot()
+	var heroes_before: Array = session.heroes.duplicate(true)
+	_check(session.choose_visit("mend", mend["arguments"], before),
+		"session A: one real Mend decision is accepted")
+	var expected: Array = heroes_before.duplicate(true)
+	expected[1]["parts"]["arms"]["torn"] = false
+	var after := session.snapshot()
+	_check(session.heroes == expected and session.heroes[1]["parts"]["arms"]["torn"] == false
+		and session.heroes[1]["hp"] == doll_before["hp"] and session.heroes[1]["max_hp"] == doll_before["max_hp"],
+		"session A: the torn flag clears and every other doll, gear and HP field is unchanged")
+	_check(_session_ledgers_same(before, after) and session.rng.state == int(setup["rng"])
+		and session.candle == int(setup["candle"]) - StitchedRunSession.NODE_CANDLE_COST,
+		"session A: wallet, satchel, patches, pockets, FEAR, map, RNG and candle are untouched")
+	_check(session.phase == "map" and session.receipts.size() == 1 and session.receipts[0]["decision"] == "mend"
+		and session.pending.is_empty() and session.visit_actions().is_empty() and session.is_consistent(),
+		"session A: receipt committed, map phase resumed, visit closed")
+	var done := session.snapshot()
+	_check(not session.choose_visit("mend", mend["arguments"], before)
+		and not session.choose_visit("mend", mend["arguments"], done)
+		and not session.choose_visit("leave", [], done) and session.snapshot() == done,
+		"session A: a stale or replayed decision is refused without mutation")
+
+
+func _test_session_campfire_lingering_resolve() -> void:
+	var route := _session_rest_route()
+	if route.size() != 2:
+		_check(false, "session B: a seeded map offers a real Campfire route")
+		return
+	_check("frantic" in StitchedS1BEffects.RESOLVE_TRAITS, "session B: frantic is an existing Unravelled trait")
+	var setup := _session_campfire(route, _edit_frantic)
+	_check(not setup.is_empty(), "session: frantic fixture enters the Campfire")
+	if setup.is_empty():
+		return
+	var session: StitchedRunSession = setup["session"]
+	_check(session.phase == "visit" and session.candle == int(setup["candle"]) - StitchedRunSession.NODE_CANDLE_COST
+		and session.rng.state == int(setup["rng"])
+		and session.heroes[2]["resolve"] == "frantic" and session.heroes[2]["fray"] == 0
+		and not bool(session.heroes[2]["lost"]) and session.kid_fear() == 0
+		and session.heroes.all(_hero_full_zero_fray),
+		"session B: precondition is one living frantic doll at zero FRAY/FEAR and full HP")
+	var tales := _session_action(session, "tell_tales")
+	_check(not tales.is_empty() and tales["enabled"] == true and tales["text"] == "Tell Tales"
+		and not _session_ids(session, false).has("mend") and _session_ids(session, true).has("leave"),
+		"session B: Tell Tales is offered and enabled at zero FRAY; Mend stays absent")
+	var before := session.snapshot()
+	var heroes_before: Array = session.heroes.duplicate(true)
+	_check(session.choose_visit("tell_tales", tales["arguments"], before),
+		"session B: one real Tell Tales decision is accepted")
+	var expected: Array = heroes_before.duplicate(true)
+	expected[2]["resolve"] = ""
+	var after := session.snapshot()
+	_check(session.heroes == expected and session.heroes[2]["resolve"] == ""
+		and session.heroes[2]["fray"] == 0 and session.kid_fear() == 0,
+		"session B: the resolve clears, FRAY stays zero and no other doll field changes")
+	_check(_session_ledgers_same(before, after, ["kid_fear"]) and session.kid_fear() == 0
+		and session.rng.state == int(setup["rng"])
+		and session.candle == int(setup["candle"]) - StitchedRunSession.NODE_CANDLE_COST,
+		"session B: no fabricated benefit, no RNG draw and no extra candle or currency spending")
+	_check(session.phase == "map" and session.receipts.size() == 1 and session.receipts[0]["decision"] == "tell_tales"
+		and session.pending.is_empty() and session.is_consistent(),
+		"session B: receipt committed and map phase resumed")
+	var done := session.snapshot()
+	_check(not session.choose_visit("tell_tales", tales["arguments"], before)
+		and not session.choose_visit("tell_tales", tales["arguments"], done) and session.snapshot() == done,
+		"session B: a stale or replayed Tell Tales is refused without mutation")
+
+
+func _test_session_campfire_no_recovery_offers() -> void:
+	var route := _session_rest_route()
+	if route.size() != 2:
+		_check(false, "session C: a seeded map offers a real Campfire route")
+		return
+	# Nothing to recover: neither Mend nor Tell Tales, Leave stays.
+	var calm := _session_campfire(route, _session_recovered)
+	_check(not calm.is_empty(), "session C: recovered fixture enters the Campfire")
+	if not calm.is_empty():
+		var calm_session: StitchedRunSession = calm["session"]
+		_check(not _session_ids(calm_session, false).has("mend")
+			and not _session_ids(calm_session, false).has("tell_tales")
+			and _session_ids(calm_session, true).has("leave"),
+			"session C: fully recovered dolls offer neither Mend nor Tell Tales, only Leave stays")
+	# A LOST doll's torn part and lingering resolve never unlock either choice.
+	var lost := _session_campfire(route, _edit_lost_only)
+	_check(not lost.is_empty(), "session C: LOST-only fixture enters the Campfire")
+	if not lost.is_empty():
+		var lost_session: StitchedRunSession = lost["session"]
+		var lost_doll: Dictionary = lost_session.heroes[3]
+		_check(lost_doll["lost"] == true and lost_doll["parts"]["legs"]["torn"] == true
+			and lost_doll["resolve"] == "frantic"
+			and lost_session.heroes.slice(0, 3).all(_hero_calm),
+			"session C: precondition is a LOST doll with a torn flag and lingering resolve beside healthy dolls")
+		var lost_before := lost_session.snapshot()
+		_check(not _session_ids(lost_session, false).has("mend")
+			and not _session_ids(lost_session, false).has("tell_tales")
+			and _session_ids(lost_session, true).has("leave")
+			and not lost_session.choose_visit("mend", [], lost_before)
+			and not lost_session.choose_visit("tell_tales", [], lost_before)
+			and lost_session.snapshot() == lost_before,
+			"session C: a LOST doll's tear or trait offers no recovery and forged choices are refused")
+		_check(lost_session.choose_visit("leave", [], lost_before)
+			and lost_session.heroes.slice(0, 3) == lost_before["heroes"].slice(0, 3)
+			and lost_session.heroes[3]["lost"] == true and lost_session.heroes[3]["hp"] == 0
+			and lost_session.heroes[3]["parts"]["legs"]["torn"] == true
+			and lost_session.phase == "map" and lost_session.receipts.size() == 1
+			and lost_session.receipts[0]["decision"] == "leave",
+			"session C: Leave still closes the one-choice visit and never mends the LOST doll")
+	# Ordinary eligibility remains: wounded HP, positive FRAY and positive Wren FEAR.
+	var wounded := _session_campfire(route, _edit_wounded)
+	if wounded.is_empty():
+		_check(false, "session C: wounded fixture enters the Campfire")
+	else:
+		var wounded_session: StitchedRunSession = wounded["session"]
+		var mend := _session_action(wounded_session, "mend")
+		_check(not mend.is_empty() and mend["enabled"] == true
+			and not _session_ids(wounded_session, false).has("tell_tales"),
+			"session C: a wounded doll still offers an enabled Mend and no Tell Tales")
+		var wounded_before := wounded_session.snapshot()
+		var stale := wounded_before.duplicate(true)
+		stale["candle"] = int(stale["candle"]) + 1
+		_check(not wounded_session.choose_visit("mend", mend["arguments"], stale)
+			and wounded_session.snapshot() == wounded_before,
+			"session C: a stale snapshot is refused without mutation")
+		_check(wounded_session.choose_visit("mend", mend["arguments"], wounded_before)
+			and wounded_session.heroes[0]["hp"] > wounded_before["heroes"][0]["hp"]
+			and not wounded_session.choose_visit("mend", mend["arguments"], wounded_before),
+			"session C: the wounded Mend heals once and a replay is refused")
+	var frayed := _session_campfire(route, _edit_fray)
+	if frayed.is_empty():
+		_check(false, "session C: positive-FRAY fixture enters the Campfire")
+	else:
+		var frayed_session: StitchedRunSession = frayed["session"]
+		_check(_session_ids(frayed_session, true).has("tell_tales")
+			and not _session_ids(frayed_session, false).has("mend"),
+			"session C: positive FRAY still offers Tell Tales and no Mend")
+	var fearful := _session_campfire(route, _edit_fear)
+	if fearful.is_empty():
+		_check(false, "session C: positive-FEAR fixture enters the Campfire")
+	else:
+		var fearful_session: StitchedRunSession = fearful["session"]
+		_check(fearful_session.kid_fear() > 0 and _session_ids(fearful_session, true).has("tell_tales")
+			and not _session_ids(fearful_session, false).has("mend"),
+			"session C: positive Wren FEAR still offers Tell Tales and no Mend")
