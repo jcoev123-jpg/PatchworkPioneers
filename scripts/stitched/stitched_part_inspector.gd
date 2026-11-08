@@ -7,10 +7,6 @@ signal close_requested
 const SLOTS := ["head", "arms", "torso", "legs"]
 const OWNERS := ["all", "warden", "seamstress", "tinker", "yarn_ranger", "any"]
 const OWNER_LABELS := ["All", "Warden", "Seamstress", "Tinker", "Yarn Ranger", "Spoils"]
-const STAT_LABELS := {
-    "acc": "ACC", "crit": "CRIT", "dmg": "DMG", "max_hp": "MAX HP",
-    "prot": "PROT", "speed": "SPEED", "dodge": "DODGE",
-}
 const TIER_LABELS := ["I", "II", "III"]
 
 @onready var _rows: VBoxContainer = $CatalogPanel/PartScroll/PartRows
@@ -135,7 +131,7 @@ func select_part(part_id: String) -> bool:
     return true
 
 
-## Changing tier preserves the chosen part and only changes the readout.
+## Changing finish preserves the chosen cloth patch and only changes its stitched border.
 func select_tier(tier: int) -> bool:
     if not _by_id.has(selected_part_id) or tier < 1 or tier > 3:
         return false
@@ -262,9 +258,7 @@ func _refresh_details() -> void:
         _move.text = ""
         return
     var part: Dictionary = _by_id[selected_part_id]
-    var ability := StitchedParts.ability_at_tier(part, selected_tier)
-    var stat := StitchedParts.stat_at_tier(part, selected_tier)
-    var tier_data: Dictionary = part["tiers"].get(str(selected_tier), {})
+    var slot := str(part["slot"]).to_upper()
     var patch_path := StitchedSewnPatches.icon_path(selected_part_id, str(part["slot"]))
     var border_path := StitchedSewnPatches.border_path(selected_tier)
     _patch_preview.texture = load(patch_path) as Texture2D if not patch_path.is_empty() else null
@@ -272,50 +266,21 @@ func _refresh_details() -> void:
     _patch_preview.visible = _patch_preview.texture != null
     _tier_border_preview.visible = _tier_border_preview.texture != null and _patch_preview.visible
     _name.text = str(part["name"])
-    _meta.text = "SLOT: %s    OWNER: %s    TIER %s    ID: %s" % [
-        str(part["slot"]).to_upper(), str(part["owner"]), TIER_LABELS[selected_tier - 1], selected_part_id,
+    _meta.text = "SLOT: %s    OWNER: %s    ID: %s" % [
+        slot, str(part["owner"]), selected_part_id,
     ]
     var maker_thread := StitchedSewnPatches.thread_of(selected_part_id)
     if not maker_thread.is_empty():
         _meta.text += "\nTHREAD: " + maker_thread.to_upper()
-    _text.text = str(tier_data.get("text", part["text"]))
-    var stats: Array[String] = []
-    for key in StitchedParts.SLOT_STATS[str(part["slot"])]:
-        if stat.has(key):
-            stats.append("%s +%d" % [STAT_LABELS[key], int(stat[key])])
-    _stat.text = "PART MODIFIER: " + (", ".join(stats) if not stats.is_empty() else "None")
-    _ability.text = "ABILITY: %s  /  %s  (%s)" % [
-        str(ability["name"]), str(ability["kind"]).to_upper(), str(ability["id"]),
-    ]
-    _ranks.text = "LAUNCH: %s    TARGET: %s RANKS %s    MULTI: %s" % [
-        _rank_text(ability["launch"]), str(ability["target_side"]).to_upper(),
-        _rank_text(ability["target"]), "Yes" if ability["multi"] else "No",
-    ]
-    var damage: Array = ability["dmg"]
-    _numbers.text = "ACC: %d%%    DAMAGE: %d-%d    CRIT: %d%%    MARK BONUS: %d" % [
-        int(ability["acc"]), int(damage[0]), int(damage[1]), int(ability["crit"]),
-        int(ability["mark_damage"]),
-    ]
-    _effects.text = "EFFECTS: " + _effect_text(ability["effects"])
-    _move.text = "SELF MOVE: %+d    POSE: %s" % [int(ability["self_move"]), str(ability["move"])]
-
-
-func _rank_text(ranks: Array) -> String:
-    var items: Array[String] = []
-    for rank in ranks:
-        items.append(str(rank))
-    return ", ".join(items)
-
-
-func _effect_text(effects: Dictionary) -> String:
-    if effects.is_empty():
-        return "None"
-    var keys := effects.keys()
-    keys.sort()
-    var labels: Array[String] = []
-    for key in keys:
-        labels.append("%s %d" % [str(key).capitalize(), int(effects[key])])
-    return ", ".join(labels)
+    # Legacy part ability, tier prose, ranks and numeric modifiers are not
+    # promises of moves granted by wearing a cloth patch (S14 fixed doll kits).
+    _text.text = "Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." % slot
+    _stat.text = ""
+    _ability.text = ""
+    _ranks.text = ""
+    _numbers.text = ""
+    _effects.text = ""
+    _move.text = ""
 
 
 func _on_close_pressed() -> void:

@@ -1,6 +1,6 @@
 extends SceneTree
 ## Headless S6 contract: follow the real village entry to the guide's nested
-## inspector. Only disk-authored Warden and foe parts may appear, without runs.
+## inspector. All five disk-authored owner/spoils catalogs browse without runs.
 const VILLAGE := preload("res://scenes/base_screen.tscn")
 const WARDEN := "res://data/parts/warden_parts.json"
 const FOES := "res://data/parts/enemy_parts.json"
@@ -82,9 +82,42 @@ func _line(inspector: StitchedPartInspector, name: String) -> String:
     return str(inspector.get_node("DetailsPanel/" + name).text)
 
 
+func _preview(inspector: StitchedPartInspector) -> TextureRect:
+    return inspector.get_node("DetailsPanel/PatchPreview") as TextureRect
+
+
+func _border(inspector: StitchedPartInspector) -> TextureRect:
+    return inspector.get_node("DetailsPanel/TierBorderPreview") as TextureRect
+
+
+func _texture_path(node: TextureRect) -> String:
+    return node.texture.resource_path if node.texture != null else ""
+
+
+func _no_retired_readouts(inspector: StitchedPartInspector) -> bool:
+    for name in ["StatLine", "AbilityLine", "RanksLine", "NumbersLine",
+            "EffectsLine", "MovementLine"]:
+        if not _line(inspector, name).is_empty():
+            return false
+    return true
+
+
+func _cloth_copy(inspector: StitchedPartInspector, slot: String) -> bool:
+    return _line(inspector, "PartText") == (
+        "Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." %
+        slot.to_upper())
+
+
+func _maker_matches(inspector: StitchedPartInspector, id: String) -> bool:
+    var maker := StitchedSewnPatches.thread_of(id)
+    var meta := _line(inspector, "PartMeta")
+    if maker.is_empty():
+        return not meta.contains("THREAD:")
+    return meta.contains("\nTHREAD: " + maker.to_upper())
+
+
 func _witness(inspector: StitchedPartInspector, id: String, name: String,
-        slot: String, owner: String, ability: String, kind: String,
-        launch: String, side: String, targets: String, effect: String) -> void:
+        slot: String, owner: String) -> void:
     _check(inspector.part_ids_in_slot(slot).has(id),
         "real catalog includes required id %s under %s (never a size/order fixture)" % [id, slot])
     _check(inspector.select_part(id), "public inspector selects real ID " + id)
@@ -92,77 +125,59 @@ func _witness(inspector: StitchedPartInspector, id: String, name: String,
         and inspector.selected_tier == 1 and _line(inspector, "PartName") == name
         and _line(inspector, "PartMeta").contains("OWNER: " + owner)
         and _line(inspector, "PartMeta").contains("SLOT: " + slot.to_upper())
-        and _line(inspector, "PartMeta").contains("ID: " + id),
-        "real part ID/name/owner/slot and tier I are displayed: " + id)
-    _check(_line(inspector, "AbilityLine").contains("ABILITY: " + ability)
-        and _line(inspector, "AbilityLine").contains(kind.to_upper())
-        and _line(inspector, "RanksLine").contains("LAUNCH: " + launch)
-        and _line(inspector, "RanksLine").contains("TARGET: " + side.to_upper() + " RANKS " + targets)
-        and _line(inspector, "EffectsLine").contains(effect),
-        "ability, legal launch/target ranks and effects come from real part: " + id)
+        and _line(inspector, "PartMeta").contains("ID: " + id)
+        and _maker_matches(inspector, id) and _cloth_copy(inspector, slot)
+        and _no_retired_readouts(inspector),
+        "real identity, maker and doll-owned move copy (no retired attacks): " + id)
 
 
-## Expectations are computed from the independently validated on-disk record,
-## not copied numeric values or duplicated rows.
+## Assertions derive independently from the validated on-disk catalog, rather
+## than duplicating old tier-specific attack projections from those records.
 func _source_witness(inspector: StitchedPartInspector, part: Dictionary) -> void:
     var id := str(part["id"])
     var slot := str(part["slot"])
     var owner := str(part["owner"])
-    var ability: Dictionary = StitchedParts.ability_at_tier(part, 1)
     _check(inspector.part_ids_in_slot(slot).has(id) and inspector.select_part(id),
         "mounted inspector includes authentic source-backed part " + id)
     _check(inspector.selected_part_id == id and inspector.active_slot == slot
         and _line(inspector, "PartName") == str(part["name"])
+        and _line(inspector, "PartMeta").contains("SLOT: " + slot.to_upper())
         and _line(inspector, "PartMeta").contains("OWNER: " + owner)
         and _line(inspector, "PartMeta").contains("ID: " + id)
-        and _line(inspector, "AbilityLine").contains("ABILITY: " + str(ability["name"]))
-        and _line(inspector, "RanksLine").contains("TARGET: " + str(ability["target_side"]).to_upper()),
-        "name, ID, owner, slot and ability match validated source for " + id)
+        and _maker_matches(inspector, id) and _cloth_copy(inspector, slot)
+        and _no_retired_readouts(inspector),
+        "name, ID, owner, slot, maker and cloth copy match validated source for " + id)
 
 
 func _source_tier(inspector: StitchedPartInspector, part: Dictionary, tier: int) -> void:
-    var ability := StitchedParts.ability_at_tier(part, tier)
-    var stat := StitchedParts.stat_at_tier(part, tier)
     var id := str(part["id"])
-    await _click(inspector.get_node("DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1]) as Button)
+    var slot := str(part["slot"])
+    var button := inspector.get_node("DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1]) as Button
+    await _click(button)
     _check(inspector.selected_part_id == id and inspector.selected_tier == tier
-        and _line(inspector, "NumbersLine").contains("ACC: %d%%" % int(ability["acc"]))
-        and _line(inspector, "NumbersLine").contains("DAMAGE: %d-%d" % [
-            int(ability["dmg"][0]), int(ability["dmg"][1])])
-        and _line(inspector, "RanksLine").contains("LAUNCH: " + _ranks(ability["launch"]))
-        and _line(inspector, "RanksLine").contains("RANKS " + _ranks(ability["target"]))
-        and _line(inspector, "MovementLine").contains("POSE: " + str(ability["move"])),
-        "tier %d numbers/ranks/pose are authored for %s" % [tier, id])
-    for key in stat:
-        _check(_line(inspector, "StatLine").contains(
-            "%s +%d" % [str(key).to_upper().replace("_", " "), int(stat[key])]),
-            "tier %d stat %s comes from source %s" % [tier, str(key), id])
-    for key in ability["effects"]:
-        _check(_line(inspector, "EffectsLine").contains(
-            "%s %d" % [str(key).capitalize(), int(ability["effects"][key])]),
-            "tier %d effect %s comes from source %s" % [tier, str(key), id])
+        and button.button_pressed
+        and _texture_path(_preview(inspector)) == StitchedSewnPatches.icon_path(id, slot)
+        and _texture_path(_border(inspector)) == StitchedSewnPatches.border_path(tier)
+        and _border(inspector).visible == (tier != 1)
+        and _cloth_copy(inspector, slot) and _no_retired_readouts(inspector)
+        and _maker_matches(inspector, id)
+        and not _line(inspector, "PartMeta").contains("TIER "),
+        "physical finish %d preserves authentic source art, maker and no obsolete move data: %s" % [tier, id])
 
 
-func _ranks(ranks: Array) -> String:
-    var values: Array[String] = []
-    for rank in ranks:
-        values.append(str(rank))
-    return ", ".join(values)
-
-
-func _tier(inspector: StitchedPartInspector, id: String, tier: int,
-        accuracy: int, damage: String, effect: String) -> void:
-    var button: Button = inspector.get_node(
-        "DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1])
+func _tier(inspector: StitchedPartInspector, id: String, tier: int) -> void:
+    var slot := inspector.active_slot
+    var button := inspector.get_node("DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1]) as Button
     await _click(button)
     await _frames()
-    _check(inspector.selected_part_id == id and inspector.selected_tier == tier,
-        "physical tier button %d keeps selected ID %s" % [tier, id])
-    _check(_line(inspector, "NumbersLine").contains("ACC: %d%%" % accuracy)
-        and _line(inspector, "NumbersLine").contains("DAMAGE: " + damage)
-        and _line(inspector, "EffectsLine").contains(effect)
-        and _line(inspector, "PartMeta").contains("TIER " + ["I", "II", "III"][tier - 1]),
-        "tier-%d real authored accuracy/damage/effect readout for %s" % [tier, id])
+    _check(inspector.selected_part_id == id and inspector.selected_tier == tier
+        and button.button_pressed and _cloth_copy(inspector, slot)
+        and _no_retired_readouts(inspector) and _maker_matches(inspector, id)
+        and _texture_path(_preview(inspector)) == StitchedSewnPatches.icon_path(id, slot)
+        and _texture_path(_border(inspector)) == StitchedSewnPatches.border_path(tier)
+        and _border(inspector).visible == (tier != 1)
+        and not _line(inspector, "PartMeta").contains("TIER "),
+        "physical finish %d keeps selected %s and changes only its border" % [tier, id])
 
 
 func _run() -> void:
@@ -254,6 +269,10 @@ func _run() -> void:
         and owner_filter.focus_mode == Control.FOCUS_ALL
         and root.get_visible_rect().encloses(owner_filter.get_global_rect()),
         "real Gothic owner filter exposes six groups inside 1280x720")
+    _check(_no_retired_readouts(inspector)
+        and _preview(inspector).get_global_rect().size == Vector2(96, 96)
+        and root.get_visible_rect().encloses(_preview(inspector).get_global_rect()),
+        "real mounted Reliquary has passive readable patch art and no attack projections")
     _check(guide.catalog_paths == SOURCES and inspector.selected_owner == "all",
         "live guide loads five independent files and defaults to All")
     var all_head := inspector.part_ids_in_slot("head")
@@ -297,28 +316,28 @@ func _run() -> void:
     for id in ["warden_head_pot_helm_bonk", "scissor_crab_claw_arm",
             "moth_swarm_wings", "felt_bulwark_button_shield"]:
         _source_witness(inspector, actual_ids[id])
-    _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden",
-        "Pot Helm Bonk", "melee", "1, 2", "enemy", "1, 2", "Weak 2")
-    await _tier(inspector, "warden_head_pot_helm_bonk", 1, 90, "4-6", "Weak 2")
-    await _tier(inspector, "warden_head_pot_helm_bonk", 3, 95, "7-10", "Weak 2")
-    _witness(inspector, "scissor_crab_claw_arm", "Scissor Claw", "arms", "any",
-        "Snip", "melee", "1, 2", "enemy", "1, 2", "Bleed 2")
-    await _tier(inspector, "scissor_crab_claw_arm", 1, 90, "4-7", "Bleed 2")
-    await _tier(inspector, "scissor_crab_claw_arm", 2, 90, "5-8", "Bleed 3")
-    _witness(inspector, "moth_swarm_wings", "Tatter Wings", "legs", "any",
-        "Flutter Back", "move", "1, 2, 3", "self", "1, 2, 3", "Dodge 5")
-    _check(_line(inspector, "MovementLine").contains("SELF MOVE: +1")
-        and _line(inspector, "MovementLine").contains("POSE: skill")
-        and _line(inspector, "EffectsLine").contains("Duration 1"),
-        "Tatter Wings describes backwards movement and one-turn duration")
-    await _tier(inspector, "moth_swarm_wings", 3, 100, "0-0", "Dodge 10")
-    _check(_line(inspector, "EffectsLine").contains("Duration 1"),
-        "Flutter Back tier III still lasts one turn")
-    _witness(inspector, "felt_bulwark_button_shield", "Button Shield Torso", "torso",
-        "any", "Button Shield", "guard", "1, 2", "ally", "1, 2, 3, 4", "Guard 2")
-    _check(_line(inspector, "NumbersLine").contains("DAMAGE: 0-0")
-        and _line(inspector, "MovementLine").contains("POSE: guard"),
-        "Button Shield is an ally guard, not an invented damage attack")
+    _check((inspector.get_node("DetailsPanel/TierHeading") as Label).text == "STITCH FINISH"
+        and (inspector.get_node("DetailsPanel/TierI") as Button).text == "Plain"
+        and (inspector.get_node("DetailsPanel/TierII") as Button).text == "Double"
+        and (inspector.get_node("DetailsPanel/TierIII") as Button).text == "Gold thread"
+        and _preview(inspector).get_global_rect() == _border(inspector).get_global_rect()
+        and _preview(inspector).get_global_rect().size == Vector2(96, 96)
+        and _preview(inspector).mouse_filter == Control.MOUSE_FILTER_IGNORE
+        and _border(inspector).mouse_filter == Control.MOUSE_FILTER_IGNORE
+        and _preview(inspector).focus_mode == Control.FOCUS_NONE
+        and _border(inspector).focus_mode == Control.FOCUS_NONE,
+        "real mounted inspector retains three focusable stitch finishes and passive aligned 96px art")
+    _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden")
+    await _tier(inspector, "warden_head_pot_helm_bonk", 1)
+    await _tier(inspector, "warden_head_pot_helm_bonk", 3)
+    _witness(inspector, "scissor_crab_claw_arm", "Scissor Claw", "arms", "any")
+    await _tier(inspector, "scissor_crab_claw_arm", 1)
+    await _tier(inspector, "scissor_crab_claw_arm", 2)
+    _witness(inspector, "moth_swarm_wings", "Tatter Wings", "legs", "any")
+    await _tier(inspector, "moth_swarm_wings", 3)
+    _witness(inspector, "felt_bulwark_button_shield", "Button Shield Torso", "torso", "any")
+    _check(_no_retired_readouts(inspector) and _cloth_copy(inspector, "torso"),
+        "foe torso cloth does not promise former ally guard or zero-damage move")
     _check(not inspector.select_part("fictional_part")
         and inspector.selected_part_id == "felt_bulwark_button_shield"
         and not inspector.select_tier(0) and not inspector.select_tier(4),
@@ -390,7 +409,9 @@ func _run() -> void:
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and inspector.part_ids_in_slot("head").is_empty()
         and (inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
-        and _line(inspector, "NumbersLine").is_empty()
+        and _line(inspector, "PartText").is_empty()
+        and _no_retired_readouts(inspector)
+        and _preview(inspector).texture == null and _border(inspector).texture == null
         and guide.atlas_status.text.contains("UNAVAILABLE")
         and root.gui_get_focus_owner() != inspector.get_node("CloseButton"),
         "missing second catalog rejects whole atlas without stale rows, stats or focus")
@@ -441,7 +462,9 @@ func _run() -> void:
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and inspector.part_ids_in_slot("head").is_empty()
         and (inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
-        and _line(inspector, "NumbersLine").is_empty()
+        and _line(inspector, "PartText").is_empty()
+        and _no_retired_readouts(inspector)
+        and _preview(inspector).texture == null and _border(inspector).texture == null
         and guide.atlas_status.text.contains("UNAVAILABLE"),
         "direct Parts doorway also rejects a partial catalog with no stale rows or facts")
     await _key(KEY_ESCAPE)
