@@ -33,7 +33,8 @@ func _initialize() -> void:
 		_test_offer_tiers()
 		_test_choice_availability()
 		_test_full_ability_quotes()
-	_check(randi()== next_draw, "open, quote, buy, leave and refusals draw no global RNG")
+		_test_visit_identity()
+	_check(randi()== next_draw,"open, quote, buy, leave and refusals draw no global RNG")
 	if failures.is_empty():
 		print("run_stitched_peddler_part_test: PASS (", checks, " checks)")
 	else:
@@ -272,7 +273,7 @@ func _test_refusals_and_replay() -> void:
 	for bad_snapshot in [{}, null, "not-a-dictionary", [], 7]:
 		_reject(visit, true, NODE, bad_snapshot, "malformed snapshot buy: " + str(bad_snapshot))
 		_reject(visit, false, NODE, bad_snapshot, "malformed snapshot leave: " + str(bad_snapshot))
-	for field in ["node_id", "status", "open", "gold", "satchel", "offer", "ok"]:
+	for field in ["node_id", "status", "open", "gold", "satchel", "offer", "ok", "visit_id"]:
 		var stale: Dictionary = snap.duplicate(true)
 		match field:
 			"gold":
@@ -403,9 +404,14 @@ func _test_offer_tiers() -> void:
 	var legacy := _open(120, _spares(2))
 	var explicit_one := _open_tier(1, 120, _spares(2), PRICE)
 	var legacy_offer: Dictionary = legacy.read_state().get("offer", {})
+	var legacy_twin: Dictionary = legacy.read_state()
+	var explicit_twin: Dictionary = explicit_one.read_state()
+	# Two separate openings differ only by their own opaque visit identity.
+	legacy_twin.erase("visit_id")
+	explicit_twin.erase("visit_id")
 	_check(legacy.is_open() and legacy_offer.get("tier") == 1
 		and legacy_offer.get("ability", {}).get("dmg") == [3, 5]
-		and legacy.read_state() == explicit_one.read_state(),
+		and legacy_twin == explicit_twin,
 		"a six-argument call is the tier-I offer, identical to an explicit tier 1")
 	var legacy_paid := legacy.buy(NODE, legacy.read_state())
 	_check(legacy_paid.get("ok") == true and legacy_paid.get("gold") == 50
@@ -510,7 +516,78 @@ func _test_offer_tiers() -> void:
 		"tier projections never mutate the catalog or share state")
 
 
-## The quote and snapshot disclose the COMPLETE tier-resolved ability (equal to the real resolver's
+## Each valid opening carries its own opaque visit identity: identical-twin visits expose distinct,
+## stable, tamper-proof identities, and a snapshot from one can never act on the other.
+func _test_visit_identity() -> void:
+	var existing := _spares(3)
+	var a := _open(200, existing)
+	var b := _open(200, existing)
+	_check(a.is_valid() and b.is_valid() and a.is_open() and b.is_open(),
+		"both identical-twin visits admit")
+	var a_state := a.read_state()
+	var b_state := b.read_state()
+	var a_id: Variant = a_state.get("visit_id")
+	var b_id: Variant = b_state.get("visit_id")
+	_check(typeof(a_id) == TYPE_STRING and typeof(b_id) == TYPE_STRING and not str(a_id).is_empty()
+		and not str(b_id).is_empty() and a_id != b_id, "twin visits expose distinct nonempty identities")
+	var a_plain: Dictionary = a_state.duplicate(true)
+	var b_plain: Dictionary = b_state.duplicate(true)
+	a_plain.erase("visit_id")
+	b_plain.erase("visit_id")
+	_check(a_plain == b_plain and a_plain.size() == a_state.size() - 1,
+		"the twins are otherwise identical in node, gold, offer, tier, price, catalog and satchel")
+	_check(a.read_state().get("visit_id") == a_id and a.read_state().get("visit_id") == a_id
+		and b.read_state().get("visit_id") == b_id and a.quote().get("state", {}).get("visit_id") == a_id,
+		"each identity is stable across repeated reads and the quote")
+	# Tampering with returned dictionaries cannot rewrite the held identity.
+	a_state["visit_id"] = b_id
+	a_state["gold"] = 1
+	var deep: Dictionary = a.quote()
+	deep["state"]["visit_id"] = "forged"
+	_check(a.read_state().get("visit_id") == a_id and b.read_state().get("visit_id") == b_id,
+		"mutating returned snapshots never rewrites the held visit identity")
+	# Cross-visit callbacks refuse in both directions for both operations.
+	var a_snap := a.read_state()
+	var b_snap := b.read_state()
+	_reject(b, true, NODE, a_snap, "A's snapshot buying on B")
+	_reject(b, false, NODE, a_snap, "A's snapshot leaving B")
+	_reject(a, true, NODE, b_snap, "B's snapshot buying on A")
+	_reject(a, false, NODE, b_snap, "B's snapshot leaving A")
+	_check(JSON.stringify(a.read_state(), "", true) == JSON.stringify(a_snap, "", true)
+		and JSON.stringify(b.read_state(), "", true) == JSON.stringify(b_snap, "", true)
+		and a.is_open() and b.is_open() and not a.is_consumed() and not b.is_consumed()
+		and a.read_state()["gold"] == 200 and b.read_state()["gold"] == 200
+		and a.read_state()["satchel"] == existing and b.read_state()["satchel"] == existing,
+		"refused cross-visit requests leave both visits byte-for-byte unchanged")
+	# Authentic same-visit decisions still succeed exactly once.
+	var b_paid := b.buy(NODE, b.read_state())
+	_check(b_paid.get("ok") == true and b_paid.get("decision") == "buy_part"
+		and b_paid.get("charged_gold") == PRICE and b_paid.get("gold") == 200 - PRICE
+		and b_paid.get("satchel", []).size() == existing.size() + 1
+		and b_paid.get("part") == {"id": HEAD, "slot": "head", "tier": 1, "torn": false}
+		and b_paid.get("state", {}).get("visit_id") == b_id and b.is_consumed(),
+		"B's authentic Buy charges the quote once and appends one spare")
+	var a_left := a.leave(NODE, a.read_state())
+	_check(a_left.get("ok") == true and a_left.get("decision") == "leave" and a_left.get("charged_gold") == 0
+		and a_left.get("gold") == 200 and a_left.get("satchel") == existing
+		and a_left.get("state", {}).get("visit_id") == a_id and a.is_consumed(),
+		"A's authentic Leave is free and terminal")
+	var b_used := b.read_state()
+	var a_used := a.read_state()
+	_reject(b, true, NODE, b_used, "replayed B buy")
+	_reject(b, true, NODE, b_snap, "stale B pre-buy replay")
+	_reject(b, false, NODE, b_used, "leave after B's buy")
+	_reject(a, false, NODE, a_used, "replayed A leave")
+	_reject(a, true, NODE, a_snap, "stale A pre-leave buy replay")
+	_check(b.read_state() == b_used and a.read_state() == a_used and b_used["gold"] == 200 - PRICE
+		and b_used["satchel"].size() == existing.size() + 1 and a_used["gold"] == 200
+		and a_used["satchel"] == existing, "replays leave exactly one charge and one spare")
+	# Invalid admissions carry no identity.
+	_check(not _open(200, [], HEAD, PRICE, "").read_state().has("visit_id"),
+		"a refused admission publishes no visit identity")
+
+
+## The quote and snapshot disclose the COMPLETE tier-resolved ability(equal to the real resolver's
 ## output), for a Warden head part and a foreign owner:"any" Scissor Claw, detached from the service.
 func _test_full_ability_quotes() -> void:
 	var claw_id := "scissor_crab_claw_arm"

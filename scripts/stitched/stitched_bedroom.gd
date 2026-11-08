@@ -59,6 +59,7 @@ var door_light: TextureRect
 var spots := {}
 var dolls := {}
 var torn_marks := {}
+var leg_torn_marks := {}
 var labels := {}
 var inspector: StitchedBedroomDollInspector
 var _hover_inspection := ""
@@ -104,17 +105,22 @@ func _ready() -> void:
 		doll.texture = load(path) as Texture2D if ResourceLoader.exists(path) else null
 		room.add_child(doll)
 		dolls[id] = doll
-		# The authored cloth mark inherits the portrait's position and rotation.
-		var mark := TextureRect.new()
-		mark.name = "TornMark"
-		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		mark.focus_mode = Control.FOCUS_NONE
-		mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		mark.texture = load(TORN_ART) as Texture2D if ResourceLoader.exists(TORN_ART) else null
-		mark.visible = false
-		doll.add_child(mark)
-		torn_marks[id] = mark
+		# Two authored cloth marks share the portrait's transform. Allocate once;
+		# successive nights only reposition and toggle these existing children.
+		for slot in ["arms", "legs"]:
+			var mark := TextureRect.new()
+			mark.name = "TornArmMark" if slot == "arms" else "TornLegMark"
+			mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			mark.focus_mode = Control.FOCUS_NONE
+			mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			mark.texture = load(TORN_ART) as Texture2D if ResourceLoader.exists(TORN_ART) else null
+			mark.visible = false
+			doll.add_child(mark)
+			if slot == "arms":
+				torn_marks[id] = mark
+			else:
+				leg_torn_marks[id] = mark
 	inspector = StitchedBedroomDollInspector.new()
 	room.add_child(inspector)
 	_wire_directional_focus()
@@ -382,20 +388,24 @@ func _place_dolls() -> void:
 		index += 1
 
 
-## Keep exactly one passive mark per portrait, including on successive outings.
-## Recompute after all doll poses/sizes so a mark follows a fallen doll too.
+## Keep one arm mark and one leg mark per portrait, including LOST dolls.
+## Local positions and proportional sizes remain inside even the smaller tin
+## portrait; the parent carries the marks when the doll lies on its side.
 func _refresh_torn_marks() -> void:
 	var history: Dictionary = record.get("dolls", {})
 	var ended := StitchedBedroomDollInspector.has_ended_outing(record)
 	for id in StitchedPartyAdmission.HERO_IDS:
 		var doll: TextureRect = dolls[id]
-		var mark: TextureRect = torn_marks[id]
-		mark.size = Vector2(27, 27)
-		mark.position = Vector2(doll.size.x * 0.53, doll.size.y * 0.48)
+		var side := minf(doll.size.x * 0.27, doll.size.y * 0.24)
+		var marks := {"arms": torn_marks[id], "legs": leg_torn_marks[id]}
 		var last: Dictionary = history.get(id, {})
-		mark.visible = (mark.texture != null and ended and history.has(id)
-			and not bool(last.get("lost", false))
-			and not last.get("torn_slots", []).is_empty())
+		var torn: Array = last.get("torn_slots", []) if ended else []
+		for slot in ["arms", "legs"]:
+			var mark: TextureRect = marks[slot]
+			mark.size = Vector2(side, side)
+			mark.position = Vector2(doll.size.x * (0.62 if slot == "arms" else 0.40),
+				doll.size.y * (0.36 if slot == "arms" else 0.72))
+			mark.visible = mark.texture != null and slot in torn
 
 
 func _fit() -> void:

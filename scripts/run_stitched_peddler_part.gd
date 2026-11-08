@@ -19,7 +19,8 @@ extends RefCounted
 ## API: open_stitched(node_id, gold, satchel, catalog_by_id, offered_part_id, quoted_price,
 ## offered_tier = 1), read_state(), quote(), buy(expected_node_id, expected_state), leave(expected_node_id,
 ## expected_state). A decision must name the genuine node and present the exact state last
-## published (read_state() or a previous receipt's "state"). A stale or forged state, a wrong node,
+## published (read_state() or a previous receipt's "state"), which includes the opaque "visit_id"
+## of this one opening: a snapshot from another visit, even with identical economics, is refused.A stale or forged state, a wrong node,
 ## a closed (already decided) visit, too little gold or a full satchel fails with
 ## {"ok": false, "error": ..., "decision": "", "charged_gold": 0} and changes nothing; an
 ## unaffordable or full-satchel Buy leaves the visit open for a later free Leave.
@@ -42,6 +43,10 @@ var _offer_id := ""
 var _offer_tier := DEFAULT_OFFER_TIER
 var _status := STATUS_OPEN
 var _error := ""
+## Opaque, process-local identity of THIS opening, set once after a valid admission and never
+## changed or accepted from a caller. It is published in read_state(), so the exact-state gate
+## refuses a snapshot captured from any other (even otherwise identical) visit.
+var _visit_id := ""
 
 
 ## Opens a visit; invalid input yields a closed, unusable visit that reports its error.
@@ -75,6 +80,7 @@ func read_state() -> Dictionary:
 		return {"ok": false, "error": _error}
 	return {
 		"ok": true,
+		"visit_id": _visit_id,
 		"node_id": _node_id,
 		"status": _status,
 		"open": _status == STATUS_OPEN,
@@ -250,6 +256,7 @@ func _setup(node_id: Variant, gold: Variant, satchel: Variant, catalog_by_id: Va
 	_offer_id = str(offered_part_id)
 	_offer_tier = int(offered_tier)
 	_status = STATUS_OPEN
+	_visit_id = "peddler-part-visit-%d" % get_instance_id()
 	return ""
 
 

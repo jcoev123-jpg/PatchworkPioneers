@@ -11,6 +11,7 @@ const UNDERBED_WEIGHTS := {
 	"silk_patch": 5,
 	"wren_gift": 4,
 }
+const ATTIC_REWARDS := ["candle", "mend", "head_guard"]
 
 static func catalog(document: Variant = null) -> Dictionary:
 	if document == null:
@@ -30,6 +31,15 @@ static func catalog(document: Variant = null) -> Dictionary:
 		if (row.kind == "attic") != (row.cost == "none"):
 			return {}
 		if row.kind == "underbed" and row.amount == 0:
+			return {}
+		# Kind-specific reward families, free Attic amount and one-limb price:
+		# an Underbed deal must carry a weighted reward family, a free Attic record
+		# must stay free with a free-family reward, and a limb price is one limb.
+		if row.kind == "underbed" and not UNDERBED_WEIGHTS.has(row.reward):
+			return {}
+		if row.kind == "attic" and (not row.reward in ATTIC_REWARDS or row.amount != 0):
+			return {}
+		if row.cost == "limb" and row.amount != 1:
 			return {}
 		result[row.id] = row.duplicate(true)
 	if result.values().filter(func(row: Dictionary) -> bool: return row.kind == "underbed").is_empty() \
