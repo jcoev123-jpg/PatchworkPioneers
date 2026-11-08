@@ -23,6 +23,24 @@ func _line(panel: Control, label_name: String) -> String:
     return str(panel.get_node("DetailsPanel/" + label_name).text)
 
 
+func _texture_path(preview: TextureRect) -> String:
+    return preview.texture.resource_path if preview.texture != null else ""
+
+
+func _preview(panel: Control) -> TextureRect:
+    return panel.get_node("DetailsPanel/PatchPreview") as TextureRect
+
+
+func _border(panel: Control) -> TextureRect:
+    return panel.get_node("DetailsPanel/TierBorderPreview") as TextureRect
+
+
+func _empty_preview(panel: Control) -> bool:
+    return _preview(panel).texture == null and _border(panel).texture == null and (
+        not _preview(panel).visible and not _border(panel).visible) and (
+        not _line(panel, "PartMeta").contains("THREAD:"))
+
+
 func _assert_helm(panel: StitchedPartInspector, tier: int, acc: int, lo: int, hi: int) -> void:
     _check(panel.select_tier(tier), "tier %d selectable" % tier)
     var numbers := _line(panel, "NumbersLine")
@@ -123,6 +141,11 @@ func _run() -> void:
         _check(panel.active_slot == "head" and head_rows.get_child_count() == 2,
             "physical head selector navigates back to its rows")
         _check(panel.select_part("warden_head_iron_helm"), "Iron Helm public selection works")
+        _check(_texture_path(_preview(panel)) ==
+            "res://assets/paper/stitched/patches/patch_head.png"
+            and _preview(panel).visible and _texture_path(_border(panel)).is_empty()
+            and not _line(panel, "PartMeta").contains("THREAD:"),
+            "fixture Iron Helm uses slot-head fallback without invented maker thread or knot")
         _check(_line(panel, "PartName") == "Iron Helm" and
             _line(panel, "PartMeta").contains("OWNER: warden") and
             _line(panel, "PartMeta").contains("SLOT: HEAD") and
@@ -133,14 +156,23 @@ func _run() -> void:
         panel.get_node("DetailsPanel/TierII").pressed.emit()
         _check(panel.selected_tier == 2 and _line(panel, "NumbersLine").contains("ACC: 92%"),
             "clicking actual tier-II button updates selected part values")
+        _check(_texture_path(_preview(panel)).ends_with("patch_head.png")
+            and _texture_path(_border(panel)).ends_with("border_2.png")
+            and _border(panel).visible, "fixture tier II adds actual double-stitch overlay")
         _assert_helm(panel, 2, 92, 6, 9)
+        panel.get_node("DetailsPanel/TierIII").pressed.emit()
+        _check(_texture_path(_preview(panel)).ends_with("patch_head.png")
+            and _texture_path(_border(panel)).ends_with("border_3.png")
+            and _border(panel).visible, "fixture tier III adds actual gold-thread overlay")
         _assert_helm(panel, 3, 95, 7, 11)
         _check(_line(panel, "NumbersLine").contains("CRIT: 8%"),
             "third-tier crit override displays")
         _check(not panel.select_tier(0) and not panel.select_tier(4) and
             panel.selected_tier == 3 and panel.selected_part_id == "warden_head_iron_helm" and
-            not panel.select_part("unknown_helm"),
-            "invalid tier or unknown ID cannot change selection")
+            not panel.select_part("unknown_helm") and
+            _texture_path(_preview(panel)).ends_with("patch_head.png") and
+            _texture_path(_border(panel)).ends_with("border_3.png"),
+            "invalid tier or unknown ID cannot change selection or artwork")
         _check(panel.select_part("warden_torso_quilt") and panel.selected_tier == 1,
             "different slot part resets to tier I")
         _check(panel.select_tier(3) and
@@ -175,15 +207,15 @@ func _run() -> void:
             "foreign heal readout preserves zero damage, heal effect and torso stats")
         _check(not panel.present_parts([{"id": "invalid"}]) and
             panel.selected_part_id.is_empty() and head_rows.get_child_count() == 0 and
-            _line(panel, "NumbersLine").is_empty(),
-            "bad entry fails closed and wipes previous part details")
+            _line(panel, "NumbersLine").is_empty() and _empty_preview(panel),
+            "bad entry fails closed and wipes previous part details and artwork")
         _check(not panel.present_parts({ "parts": warden_parts }) and
-            panel.selected_part_id.is_empty() and not panel.select_tier(1),
-            "non-array catalog fails closed")
+            panel.selected_part_id.is_empty() and not panel.select_tier(1) and _empty_preview(panel),
+            "non-array catalog fails closed without artwork")
         _check(not panel.present_parts([]) and
             panel.selected_part_id.is_empty() and
-            _line(panel, "PartName") == "No part selected",
-            "empty array restores clear empty state")
+            _line(panel, "PartName") == "No part selected" and _empty_preview(panel),
+            "empty array restores clear empty state and clears artwork")
         _check(not panel.select_part("warden_head_iron_helm"),
             "cleared catalog cannot resurrect an old ID")
         _check(panel.present_parts(warden_parts) and
@@ -247,6 +279,16 @@ func _test_live_owners(packed: PackedScene) -> void:
         and panel.part_ids_in_slot("head").has("tinker_head_cog_shot"),
         "standalone full validated atlas opens at All with source-backed rows")
     var all_head := panel.part_ids_in_slot("head")
+    var preview := _preview(panel)
+    var border := _border(panel)
+    _check(preview.mouse_filter == Control.MOUSE_FILTER_IGNORE
+        and border.mouse_filter == Control.MOUSE_FILTER_IGNORE
+        and preview.focus_mode == Control.FOCUS_NONE
+        and border.focus_mode == Control.FOCUS_NONE
+        and preview.get_global_rect() == border.get_global_rect()
+        and preview.get_global_rect().size == Vector2(96, 96)
+        and root.get_visible_rect().encloses(preview.get_global_rect()),
+        "shipped 96px aligned transparent art layers are passive and within viewport")
     for owner in ["warden", "seamstress", "tinker", "yarn_ranger", "any"]:
         var idx := StitchedPartInspector.OWNERS.find(owner)
         owner_control.select(idx)
@@ -282,9 +324,30 @@ func _test_live_owners(packed: PackedScene) -> void:
         _check(_line(panel, "PartMeta").contains("OWNER: " + owner)
             and _line(panel, "PartName") == str(part["name"]),
             "group selection does not invent the ID or displayed name: " + id)
+        _check(_texture_path(preview) == StitchedSewnPatches.icon_path(id, str(part["slot"]))
+            and preview.visible and _texture_path(border).is_empty()
+            and _line(panel, "PartMeta").contains("THREAD: " +
+                StitchedSewnPatches.thread_of(id).to_upper())
+            and not _line(panel, "PartMeta").contains("KNOT"),
+            "selected live sourced patch has its own icon, actual maker thread, no set knot: " + id)
+        if id == "warden_head_pot_helm_bonk" or id == "scissor_crab_claw_arm":
+            _check(_texture_path(preview) ==
+                "res://assets/paper/stitched/patches/" + id + ".png"
+                and StitchedSewnPatches.thread_of(id) == "crimson"
+                and _line(panel, "PartMeta").contains("THREAD: CRIMSON"),
+                "named sewn-patch art and crimson thread explicitly authored: " + id)
         for tier in [1, 2, 3]:
             var ability := StitchedParts.ability_at_tier(part, tier)
             var stats := StitchedParts.stat_at_tier(part, tier)
+            var tier_button := panel.get_node("DetailsPanel/Tier%s" % StitchedPartInspector.TIER_LABELS[tier - 1]) as Button
+            tier_button.pressed.emit()
+            _check(panel.selected_tier == tier
+                and _texture_path(preview) == StitchedSewnPatches.icon_path(id, str(part["slot"]))
+                and _texture_path(border) == StitchedSewnPatches.border_path(tier)
+                and border.visible == (tier != 1)
+                and _line(panel, "PartMeta").contains("THREAD: " +
+                    StitchedSewnPatches.thread_of(id).to_upper()),
+                "real tier button changes border alone while keeping patch/thread: %s tier %d" % [id, tier])
             _check(panel.select_tier(tier)
                 and _line(panel, "NumbersLine").contains("ACC: %d%%" % int(ability["acc"]))
                 and _line(panel, "NumbersLine").contains("DAMAGE: %d-%d" % [
@@ -302,8 +365,10 @@ func _test_live_owners(packed: PackedScene) -> void:
                     "real tier %d %s effect for %s" % [tier, str(key), id])
         _check(not panel.select_tier(0) and not panel.select_tier(4)
             and not panel.select_owner("not_a_hero") and not panel.select_part("fictional")
-            and panel.selected_part_id == id and panel.selected_tier == 3,
-            "invalid tier, owner and part do not mutate selection")
+            and panel.selected_part_id == id and panel.selected_tier == 3
+            and _texture_path(preview) == StitchedSewnPatches.icon_path(id, str(part["slot"]))
+            and _texture_path(border).ends_with("border_3.png"),
+            "invalid tier, owner and part do not mutate selection or textures")
         _check(panel.select_slot("legs")
             and panel.active_slot == "legs" and not panel.selected_part_id.is_empty()
             and panel.selected_tier == 1,
@@ -321,16 +386,18 @@ func _test_live_owners(packed: PackedScene) -> void:
         and panel.select_owner("tinker")
         and panel.selected_part_id.is_empty()
         and panel.visible_part_ids_in_slot("arms").is_empty()
-        and panel.part_ids_in_slot("arms").has("scissor_crab_claw_arm"),
-        "group without parts empties details, not the full source index")
+        and panel.part_ids_in_slot("arms").has("scissor_crab_claw_arm")
+        and _empty_preview(panel),
+        "group without parts empties details/art, not the full source index")
     _check(not panel.select_tier(2) and not panel.select_part("scissor_crab_claw_arm")
         and _line(panel, "NumbersLine").is_empty()
         and not panel.select_owner("invalid"),
         "empty visible owner refuses stale tier, hidden part and invalid owner")
     _check(not panel.present_parts([{"id": "bad"}])
         and panel.selected_part_id.is_empty() and panel.selected_owner == "all"
-        and owner_control.disabled and not panel.select_owner("warden"),
-        "invalid re-presentation clears owner, selection and disables dropdown")
+        and owner_control.disabled and not panel.select_owner("warden")
+        and _empty_preview(panel),
+        "invalid re-presentation clears owner, selection, textures and disables dropdown")
     _check(panel.present_parts(input) and not owner_control.disabled
         and panel.selected_owner == "all",
         "full atlas recovers in All after invalid source")
