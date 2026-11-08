@@ -1041,13 +1041,13 @@
       "choices": [
         { "id": "brace_iron_hinge",
           "text": "Spend 2 scraps bracing the great iron hinge (earn 29 gold)",
-          "outcome": {"gold": 29, "scraps": -2} },
+          "outcome": { "gold": 29, "scraps": -2} },
         { "id": "salvage_board_tacks",
           "text": "Gather two useful brass tacks from the board (+2 scraps)",
-          "outcome": {"gold": 0, "scraps": 2} },
+          "outcome": { "gold": 0, "scraps": 2} },
         { "id": "leave",
           "text": "Leave the couriers waiting beside the creaking hinge",
-          "outcome": {"gold": 0, "scraps": 0} }
+          "outcome": { "gold": 0, "scraps": 0} }
       ]
     },
     {
@@ -1059,13 +1059,13 @@
       "choices": [
         { "id": "repair_threader_loop",
           "text": "Spend 1 scrap mending the bent wire loop (earn 23 gold)",
-          "outcome": {"gold": 23, "scraps": -1} },
+          "outcome": { "gold": 23, "scraps": -1} },
         { "id": "buy_eyeloop_wire",
           "text": "Pay 15 gold for three coils of fine threader wire (+3 scraps)",
-          "outcome": {"gold": -15, "scraps": 3} },
+          "outcome": { "gold": -15, "scraps": 3} },
         { "id": "leave",
           "text": "Let the silver doorway sway in the draft",
-          "outcome": {"gold": 0, "scraps": 0} }
+          "outcome": { "gold": 0, "scraps": 0} }
       ]
     },
     {
@@ -1077,13 +1077,13 @@
       "choices": [
         { "id": "seal_can_spout",
           "text": "Spend 2 scraps sealing the spout's gears (earn 31 gold)",
-          "outcome": {"gold": 31, "scraps": -2} },
+          "outcome": { "gold": 31, "scraps": -2} },
         { "id": "gather_spout_springs",
           "text": "Collect a spare spring from the watering-can rim (+1 scrap)",
-          "outcome": {"gold": 0, "scraps": 1} },
+          "outcome": { "gold": 0, "scraps": 1} },
         { "id": "leave",
           "text": "Pass under the dripping spout without disturbing it",
-          "outcome": {"gold": 0, "scraps": 0} }
+          "outcome": { "gold": 0, "scraps": 0} }
       ]
     },
     {
@@ -1095,13 +1095,13 @@
       "choices": [
         { "id": "lift_scuttle_latch",
           "text": "Spend 1 scrap lifting the iron latch for the nest (earn 25 gold)",
-          "outcome": {"gold": 25, "scraps": -1} },
+          "outcome": { "gold": 25, "scraps": -1} },
         { "id": "gather_ash_thread",
           "text": "Wind two clean strands from the ash-dusted nest (+2 scraps)",
-          "outcome": {"gold": 0, "scraps": 2} },
+          "outcome": { "gold": 0, "scraps": 2} },
         { "id": "leave",
           "text": "Leave the crow watching the coal-dark mouth",
-          "outcome": {"gold": 0, "scraps": 0} }
+          "outcome": { "gold": 0, "scraps": 0} }
       ]
     },
     {
@@ -1244,6 +1244,78 @@
         {
           "id": "leave",
           "text": "Slip beneath the silent hands",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_warden_brass_doorstop_rescue",
+      "title": "The Brass Doorstop",
+      "description": "A brass doorstop as broad as a wagon holds a nursery door ajar above a doll-sized passage. The Warden sets his great patched shield against its heel while a trapped little courier taps from under the iron lip.",
+      "required_hero": "warden",
+      "hero_choice_ids": ["brace_doorstop_heel", "gather_doorstop_tacks"],
+      "choices": [
+        {
+          "id": "brace_doorstop_heel",
+          "text": "Spend 2 scraps bracing the heavy heel (earn 29 gold)",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "gather_doorstop_tacks",
+          "text": "Gather two fallen brass tacks (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the courier tapping beneath the door",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_opaline_lamp_chimney",
+      "title": "The Opaline Lamp Chimney",
+      "description": "An opaline glass lamp chimney rises like a moonlit tower along the pantry wall. The Lantern Monk lifts his moth-circled lantern to a tiny stranded flame flickering behind the tall glass.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["guide_chimney_flame", "buy_chimney_wick"],
+      "choices": [
+        {
+          "id": "guide_chimney_flame",
+          "text": "Spend 1 scrap guiding the trapped flame home (earn 23 gold)",
+          "outcome": {"gold": 23, "scraps": -1}
+        },
+        {
+          "id": "buy_chimney_wick",
+          "text": "Pay 16 gold for three clean wick bundles (+3 scraps)",
+          "outcome": {"gold": -16, "scraps": 3}
+        },
+        {
+          "id": "leave",
+          "text": "Let the pale flame flicker behind its glass",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_ribbon_reel_banister",
+      "title": "The Ribbon-Reel Banister",
+      "description": "A velvet ribbon reel spins above a steep stairwell gulf. The Yarn Ranger loops her knitting-needle bow through its axle and casts wool bolas toward a stranded patchwork doll across the dark.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["anchor_reel_bridge", "gather_ribbon_knots"],
+      "choices": [
+        {
+          "id": "anchor_reel_bridge",
+          "text": "Spend 2 scraps securing the reel bridge (earn 28 gold)",
+          "outcome": {"gold": 28, "scraps": -2}
+        },
+        {
+          "id": "gather_ribbon_knots",
+          "text": "Wind two loose velvet knots (+2 scraps)",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the ribbon turning over the black stairs",
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
