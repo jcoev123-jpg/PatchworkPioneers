@@ -49,7 +49,7 @@ const PHASE_TWO_ABILITIES := [
 		"acc": 82, "dmg": [14, 20], "crit": 0, "effects": {"fray": 4},
 		"self_move": 0, "move": "attack2"},
 	{"id": "behemoth_phase2_rage_howl", "name": "Rage Howl", "kind": "debuff",
-		"launch": [1, 4], "target": [1, 2, 3, 4], "target_side": "enemy", "multi": false,
+		"launch": [1, 4], "target": [1, 2, 3, 4], "target_side": "enemy", "multi": true,
 		"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"weak": 2},
 		"self_move": 0, "move": "skill"},
 	{"id": "behemoth_phase2_stuffing_storm", "name": "Stuffing Storm", "kind": "ranged",
