@@ -19,12 +19,23 @@ const ALL_IDS := [
 	"tinker_legs_tune_up", "tinker_head_spring_clamp", "tinker_arms_overload",
 	"tinker_torso_gear_brace", "tinker_legs_spare_screws",
 ]
+## S14: Tinker's head and torso starters are worn patches, so their base copy describes the sewn
+## copper, cogs, mustard thread and moss-green cloth a player sees. The retired part-granted
+## combat text ("...mark its seams.", "...Thorns answer each landed blow.") is no longer
+## advertised; those mechanics live in data/stitched/s14_hero_abilities.json instead.
+const COG_SHOT_TEXT := "Three chipped copper cogs are stitched around the Tinker's mismatched goggle lenses, their teeth caught in mustard thread."
+const CASING_WARD_TEXT := "Dented copper plates overlap the Tinker's moss-green torso, secured by crooked mustard stitches and little brass buttons."
+const PATCH_FORBIDDEN_WORDS := [
+	"rank", "hit", "mark", "thorns", "guard", "heal", "damage", "crit", "card", "cost",
+	"activate", "attack",
+]
 var failures: Array[String] = []
 var checks := 0
 
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_starter_patch_appearance_text()
 	_test_spring_clamp_catalog()
 	_test_spring_clamp_mark_setup()
 	_test_spring_clamp_next_foe_attack()
@@ -169,8 +180,8 @@ func _test_catalog() -> void:
 	var ward_part: Dictionary = accepted["by_id"]["tinker_torso_casing_ward"]
 	_check(str(ward_part["name"]) == "Casing Ward" and str(ward_part["slot"]) == "torso"
 		and str(ward_part["owner"]) == "tinker"
-		and str(ward_part["text"]) == "Fold metal casing around yourself; Thorns answer each landed blow.",
-		"AC1: Casing Ward stays Tinker's named torso part with its authored rules text")
+		and str(ward_part["text"]) == CASING_WARD_TEXT,
+		"AC1: Casing Ward stays Tinker's named torso part with its authored sewn-patch text")
 	var all_hero_ranks: Array = [1, 2, 3, 4]
 	for tier in [1, 2, 3]:
 		var tier_ward := StitchedParts.ability_at_tier(ward_part, tier)
@@ -290,8 +301,8 @@ func _test_catalog() -> void:
 	var cog_part: Dictionary = accepted["by_id"]["tinker_head_cog_shot"]
 	_check(str(cog_part["name"]) == "Cog Shot" and str(cog_part["slot"]) == "head"
 		and str(cog_part["owner"]) == "tinker" and cog_part["stat"] == {"acc": 4}
-		and str(cog_part["text"]) == "Fire a salvaged cog across the enemy line and mark its seams.",
-		"AC1: Cog Shot stays Tinker's starter head with its authored ACC +4 stat and rules text")
+		and str(cog_part["text"]) == COG_SHOT_TEXT,
+		"AC1: Cog Shot stays Tinker's starter head with its authored ACC +4 stat and sewn-patch text")
 	var all_foe_ranks: Array = [1, 2, 3, 4]
 	var cog_launch: Array = [2, 3, 4]
 	_check(cog_part["ability"]["id"] == "tinker_cog_shot_move" and str(cog_part["ability"]["name"]) == "Cog Shot"
@@ -416,6 +427,65 @@ func _test_catalog() -> void:
 		for part in accepted["parts"]:
 			_check(not part.has(key) and not part["ability"].has(key) and not part["ability"]["effects"].has(key),
 				"AC1: retired card resources absent from " + str(part["id"]) + ": " + key)
+
+
+func _test_starter_patch_appearance_text() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)), "AC1: StitchedParts.load_catalog accepts Tinker for the starter patch copy")
+	if not bool(accepted.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["head"]: {
+			"name": "Cog Shot", "slot": "head", "stat": {"acc": 4}, "text": COG_SHOT_TEXT,
+			"visual": ["cogs", "goggle", "mustard thread"],
+		},
+		STARTERS["torso"]: {
+			"name": "Casing Ward", "slot": "torso", "stat": {"max_hp": 5, "prot": 4}, "text": CASING_WARD_TEXT,
+			"visual": ["copper plates", "moss-green", "stitches", "buttons"],
+		},
+	}
+	# The exact sentences the two starters used to advertise as part-cast moves.
+	var old_sentences := [
+		"Fire a salvaged cog across the enemy line and mark its seams.",
+		"Fold metal casing around yourself; Thorns answer each landed blow.",
+	]
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(accepted["by_id"].has(id), "AC1: starter patch keeps its named ID: " + id)
+		if not accepted["by_id"].has(id):
+			continue
+		var part: Dictionary = accepted["by_id"][id]
+		_check(str(part["name"]) == str(spec["name"]) and str(part["slot"]) == str(spec["slot"])
+			and str(part["owner"]) == "tinker" and part["stat"] == spec["stat"],
+			"AC1: starter patch keeps its name, slot, Tinker owner and authored stat: " + id)
+		var text := str(part.get("text", ""))
+		_check(not text.is_empty(), "AC2: starter patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: starter patch base copy is the exact sewn-patch sentence: " + id)
+		_check(not (text in old_sentences),
+			"AC2: starter patch no longer carries a retired part-action sentence: " + id)
+		# Positive: the copy names the visible sewn patch pieces, not a combat effect.
+		var visual_ok := true
+		for phrase in spec["visual"]:
+			visual_ok = visual_ok and text.to_lower().contains(str(phrase))
+		_check(visual_ok, "AC2: starter patch copy names its visible sewn patch pieces: " + id)
+		# Negative: no combat-action, status or retired-card vocabulary, checked on the lower text.
+		var lowered := text.to_lower()
+		for word in PATCH_FORBIDDEN_WORDS:
+			_check(not lowered.contains(word),
+				"AC2: starter patch copy never advertises '%s': %s" % [word, id])
+		# Fail-closed: the shipped catalog still refuses a patch copy with blank text.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+	# Boundary: the retired part-cast sentences are gone from every Tinker record, and only the two
+	# starter sentences above were rewritten (the git diff confirms the rest of the catalog is intact).
+	for retired in old_sentences:
+		var lingering := false
+		for raw_part in accepted["parts"]:
+			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
+		_check(not lingering, "AC2: no Tinker part still carries the retired sentence: " + str(retired))
 
 
 func _test_every_tier_in_real_combat() -> void:
