@@ -106,9 +106,40 @@ func _live_focus_owner() -> Control:
 	return focus_owner
 
 
+## Physical Escape and controller B borrow the mounted page's own Cancel
+## action, so its guarded pressed path stays the only teardown. Releases, echoes
+## and stale, hidden or unfocused pages never capture the back input.
+func _cancel_through_live_action(event: InputEvent) -> bool:
+	# A chorded Escape is a different player input, never a picker Cancel:
+	# action matching ignores modifier differences, so reject them first.
+	var key := event as InputEventKey
+	if key != null and (key.ctrl_pressed or key.alt_pressed
+			or key.shift_pressed or key.meta_pressed):
+		return false
+	if not event.is_action_pressed("ui_cancel"):
+		return false
+	if _live_focus_owner() == null:
+		return false
+	var app := get_parent().get_parent().get_parent().get_parent()
+	var actions: Array = app.get("stitched_run_buttons")
+	if actions.size() != 2 or not (actions[0] is Button) or not (actions[1] is Button) \
+			or str(actions[0].text) != "Set out" or str(actions[1].text) != "Cancel":
+		return false
+	# Cancel tears the mounted page down synchronously, so keep the viewport
+	# first: the detached picker can no longer reach it afterwards.
+	var viewport := get_viewport()
+	var cancel := actions[1] as Button
+	cancel.pressed.emit()
+	if viewport != null:
+		viewport.set_input_as_handled()
+	return true
+
+
 ## Only pressed shoulder edges navigate; releases merely rearm their own button.
 ## Native Accept, spatial D-pad neighbors and the tile's toggled signal are unchanged.
 func _unhandled_input(event: InputEvent) -> void:
+	if _cancel_through_live_action(event):
+		return
 	var shoulder := event as InputEventJoypadButton
 	if shoulder == null or (shoulder.button_index != JOY_BUTTON_LEFT_SHOULDER
 			and shoulder.button_index != JOY_BUTTON_RIGHT_SHOULDER):
