@@ -97,7 +97,12 @@ func _queue_tile_order() -> void:
 	if _reorder_pending:
 		return
 	_reorder_pending = true
-	_arrange_tiles.call_deferred()
+	_settle_queued_tile_order.call_deferred()
+
+
+func _settle_queued_tile_order() -> void:
+	if _reorder_pending:
+		_arrange_tiles()
 
 
 ## Confirmation is a separate control event: finish only a genuinely queued reflow.
@@ -109,6 +114,7 @@ func settle_pending_tile_order() -> void:
 
 func _arrange_tiles() -> void:
 	_reorder_pending = false
+	var focused_tile: Button = get_viewport().gui_get_focus_owner() as Button if is_inside_tree() else null
 	var first: Array = _selected.duplicate()
 	if first.size() == MAX_PICKS:
 		var receipt := StitchedPartyAdmission.admit(first)
@@ -121,6 +127,30 @@ func _arrange_tiles() -> void:
 		var tile: Button = tiles.get(first[index])
 		if is_instance_valid(tile) and tile.get_parent() == self and tile.get_index() != index:
 			move_child(tile, index)
+	_wire_spatial_focus()
+	if is_instance_valid(focused_tile) and focused_tile.get_parent() == self:
+		focused_tile.grab_focus()
+
+
+## Every direction follows the currently displayed two-column grid, not draft order.
+## Only build and legitimately queued reflows call this; unsolicited moves stay visible.
+func _wire_spatial_focus() -> void:
+	if columns != 2 or get_child_count() != StitchedPartyAdmission.HERO_IDS.size() or tiles.size() != get_child_count():
+		return
+	var row_count: int = get_child_count() / columns
+	for index in get_child_count():
+		var tile := get_child(index) as Button
+		var column := index % columns
+		var row: int = index / columns
+		var other := get_child(index + (1 if column == 0 else -1)) as Button
+		var above := get_child(((row + row_count - 1) % row_count) * columns + column) as Button
+		var below := get_child(((row + 1) % row_count) * columns + column) as Button
+		if tile == null or other == null or above == null or below == null:
+			return
+		tile.focus_neighbor_left = tile.get_path_to(other)
+		tile.focus_neighbor_right = tile.get_path_to(other)
+		tile.focus_neighbor_top = tile.get_path_to(above)
+		tile.focus_neighbor_bottom = tile.get_path_to(below)
 
 
 func tiles_match_draft() -> bool:
