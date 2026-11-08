@@ -1047,6 +1047,75 @@
           }
         }
       ]
+    },
+    {
+      "id": "v3_warden_tarnished_silver_tray",
+      "title": "The Tarnished Silver Tray",
+      "description": "An upturned silver serving tray bridges a doll-wide black drain; the Warden wedges his vast quilted shield beneath its bent handle as red candle wax drips through the rim.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "brace_tray_lip",
+          "text": "Spend 2 scraps padding the tray's shield-braced lip (+3 max HP)",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "pry_serving_stamp",
+          "text": "Pry off the silver serving stamp (lose 5 HP; gain 24 gold)",
+          "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the silver tray spanning the dark drain",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_seamstress_ivory_music_stand",
+      "title": "The Ivory Music Stand",
+      "description": "A towering ivory music stand leans across a cracked parlour floor; the Seamstress threads her enormous needle through a velvet scorebook before the stand's brass teeth snap shut.",
+      "required_hero": "seamstress",
+      "choices": [
+        {
+          "id": "sew_stand_bandage",
+          "text": "Pay 16 gold to stitch a soft velvet bandage (heal 9 HP)",
+          "outcome": { "gold": -16, "scraps": 0, "hp": 9, "max_hp": 0 }
+        },
+        {
+          "id": "unpick_score_ribbon",
+          "text": "Unpick 2 max HP of scorebook ribbon to salvage 3 scraps",
+          "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Close the music book and leave the stand still",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_clockwork_spice_tin",
+      "title": "The Clockwork Spice Tin",
+      "description": "A spice tin bigger than a cottage rattles beside an attic skirting board; through its lid the Tinker's crooked goggles catch a copper crank turning tiny rusted gears by candlelight.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "fit_tin_gear",
+          "text": "Spend 1 scrap fitting a stronger copper lining (+2 max HP)",
+          "outcome": { "gold": 0, "scraps": -1, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "strip_hot_cogs",
+          "text": "Strip the hot crank gears (lose 6 HP; gain 3 scraps)",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the clockwork tin rattle on in the dark",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
