@@ -4411,6 +4411,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 		_present_stitched_run()
 		_show_stitched_intro())
 	var cancel := _stitched_run_action(actions, "Cancel", _return_stitched_run_title)
+	confirm.tooltip_text = StitchedPartyKitHints.opening_rank_advisory(stitched_run_draft)
 	picker.draft_changed.connect(func(picks: Array):
 		if epoch != _stitched_run_epoch or not is_instance_valid(picker) \
 				or picker.get_parent() != content or not picker.is_visible_in_tree() \
@@ -4428,6 +4429,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 		var enabled: bool = picks.size() == StitchedPartyAdmission.RANK_COUNT \
 			and StitchedPartyAdmission.admit(picks).get("ok") == true
 		confirm.disabled = not enabled
+		confirm.tooltip_text = StitchedPartyKitHints.opening_rank_advisory(picks) if enabled else ""
 		confirm.focus_mode = Control.FOCUS_ALL if enabled else Control.FOCUS_NONE
 		if not enabled and confirm.has_focus():
 			cancel.grab_focus())

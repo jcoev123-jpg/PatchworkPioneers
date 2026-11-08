@@ -227,8 +227,202 @@ func _invalid_hints() -> void:
 		"in-memory corruptions neither poison the shipped cache nor prevent later hints")
 
 
+## Independent source-based oracle: use admission's canonical seating and read the
+## four real checked signatures directly, without calling the advisory formatter.
+func _source_opening_counts(picks: Array, catalog: Dictionary) -> Dictionary:
+	var admission := StitchedPartyAdmission.admit(picks)
+	if admission.get("ok") != true:
+		return {}
+	var result := {}
+	for index in admission["hero_ids"].size():
+		var id: String = admission["hero_ids"][index]
+		var count := 0
+		for slot in StitchedParts.SLOTS:
+			var signature: Dictionary = catalog[id][slot]
+			if index + 1 in signature["launch"]:
+				count += 1
+		result[id] = count
+	return result
+
+
+func _advisory_fixtures() -> void:
+	var catalog := StitchedS14Abilities.kits()
+	var witness := ["rag_duelist", "scarecrow", "button_golem", "warden"]
+	var admission := StitchedPartyAdmission.admit(witness)
+	_check(not catalog.is_empty() and admission.get("ok") == true
+		and admission.get("hero_ids") == witness and admission.get("heroes", []).size() == 4,
+		"real S14 witness admits Rag, Scarecrow, Golem, Warden to ranks 1, 2, 3, 4")
+	if catalog.is_empty() or admission.get("ok") != true:
+		return
+	var counts := _source_opening_counts(witness, catalog)
+	var warden_launches: Array = []
+	for slot in StitchedParts.SLOTS:
+		warden_launches.append(catalog["warden"][slot]["launch"])
+	var warn := StitchedPartyKitHints.opening_rank_advisory(witness, catalog)
+	_check(counts.size() == 4 and counts.get("warden", -1) == 0
+		and counts.get("rag_duelist", 0) > 0 and counts.get("scarecrow", 0) > 0
+		and counts.get("button_golem", 0) > 0
+		and warden_launches == [[1, 2, 3], [1, 2, 3], [1, 2], [1, 2, 3]],
+		"independent four-slot authored launches strand only rank-4 Warden")
+	_check(warn.contains("Warden") and warn.contains("rank 4")
+		and warn.contains("cannot launch") and warn.contains("Move") and warn.contains("Pass")
+		and not warn.contains("Scarecrow at rank"),
+		"only rank-4 Warden is warned, and Move/Pass stays available")
+	var default_counts := _source_opening_counts(StitchedRunSession.DEFAULT_PICKS, catalog)
+	var default_safe := default_counts.size() == StitchedPartyAdmission.RANK_COUNT
+	for count in default_counts.values():
+		default_safe = default_safe and count > 0
+	_check(default_safe and StitchedPartyKitHints.opening_rank_advisory(
+		StitchedRunSession.DEFAULT_PICKS, catalog) == ""
+		and StitchedPartyKitHints.opening_rank_advisory(
+			["rag_duelist", "scarecrow", "button_golem", "yarn_ranger"], catalog) == "",
+		"independent launch fixture confirms defaults and alternate re-pick require no warning")
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness) == warn
+		and StitchedPartyKitHints.opening_rank_advisory([]) == ""
+		and StitchedPartyKitHints.opening_rank_advisory(["warden"]) == ""
+		and StitchedPartyKitHints.opening_rank_advisory(
+			["warden", "seamstress", "tinker", "warden"]) == ""
+		and StitchedPartyKitHints.opening_rank_advisory(
+			["warden", "seamstress", "tinker", "bogus"]) == ""
+		and StitchedPartyKitHints.opening_rank_advisory(
+			["warden", "seamstress", "tinker", "lantern_monk", "scarecrow"]) == ""
+		and StitchedPartyKitHints.opening_rank_advisory("not picks") == ""
+		and StitchedPartyKitHints.opening_rank_advisory(witness, []) == "",
+		"authentic default catalog agrees; incomplete, duplicate, unknown, overfull and forged picks fail closed")
+	var invalid := catalog.duplicate(true)
+	invalid.erase("warden")
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"missing selected hero kit gives no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"].erase("legs")
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"missing selected signature gives no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["arms"]["slot"] = "head"
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"forged signature slot gives no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["head"].erase("launch")
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"missing authored launch array gives no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["head"]["launch"] = [4, 4]
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"duplicate authored launch rank cannot falsely clear warning")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["head"]["launch"] = [4.0]
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"non-integer authored launch array is rejected")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["head"]["target_side"] = "neutral"
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"invalid signature target side gives no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["head"]["target"] = []
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"invalid signature target ranks give no opening claim")
+	invalid = catalog.duplicate(true)
+	invalid["warden"]["arms"]["id"] = invalid["warden"]["head"]["id"]
+	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
+		"duplicate signature identifiers give no opening claim")
+	_check(StitchedS14Abilities.kits() == catalog
+		and StitchedPartyKitHints.opening_rank_advisory(witness) == warn,
+		"negative fixture mutations cannot corrupt cached real S14 signatures")
+
+
+## Drive the actual mounted picker through the stranded quartet, a safe re-pick,
+## and the same production Set out Button. Return to a fresh default picker so
+## the existing focus, Cancel, rapid reflow and full-run checks stay intact.
+func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> StitchedRunPartyPicker:
+	var actions: Array = app.stitched_run_buttons.duplicate()
+	var action_row: Node = actions[0].get_parent()
+	var panel_children: int = app.stitched_run_panel.get_child_count()
+	var wallet_before := [app.session_gold, app.run_scraps]
+	var witness := ["rag_duelist", "scarecrow", "button_golem", "warden"]
+	_check(actions[0].tooltip_text == "" and not actions[0].disabled,
+		"mounted default Set out has no speculative rank warning")
+	for id in StitchedRunSession.DEFAULT_PICKS:
+		await _mouse(picker.tiles[id])
+	_check(picker.selected_ids().is_empty() and app.stitched_run_draft.is_empty()
+		and actions[0].disabled and actions[0].focus_mode == Control.FOCUS_NONE
+		and actions[0].tooltip_text == "" and app.stitched_run_session == null,
+		"empty draft disables confirm, clears warning and does not start a run")
+	for id in witness:
+		await _mouse(picker.tiles[id])
+	var receipt := StitchedPartyAdmission.admit(witness)
+	_check(picker.selected_ids() == witness and app.stitched_run_draft == witness
+		and picker.displayed_rank_ids() == receipt.get("hero_ids", [])
+		and picker.tiles_match_draft() and not actions[0].disabled
+		and actions[0].focus_mode == Control.FOCUS_ALL,
+		"real pointer picks reach canonical stranded rank-4 Warden without disabling Set out")
+	var warning: String = actions[0].tooltip_text
+	_check(warning == StitchedPartyKitHints.opening_rank_advisory(witness)
+		and warning.contains("Warden") and warning.contains("rank 4")
+		and warning.contains("Move") and warning.contains("Pass"),
+		"existing mounted Set out Button displays only source-derived Warden warning")
+	picker.draft_changed.emit(["warden", "warden", "tinker", "lantern_monk"])
+	_check(app.stitched_run_draft == witness and actions[0].tooltip_text == warning,
+		"forged draft_changed signal cannot replace accepted warning or App draft")
+	await _mouse(picker.tiles["warden"])
+	_check(actions[0].disabled and actions[0].tooltip_text == ""
+		and app.stitched_run_draft.size() == 3,
+		"warning is removed immediately when the stranded composition becomes incomplete")
+	await _mouse(picker.tiles["yarn_ranger"])
+	var safe := ["rag_duelist", "scarecrow", "button_golem", "yarn_ranger"]
+	_check(picker.selected_ids() == safe and picker.displayed_rank_ids()
+		== StitchedPartyAdmission.admit(safe).get("hero_ids", [])
+		and actions[0].tooltip_text == "" and not actions[0].disabled,
+		"safe four-doll replacement clears old warning and leaves Set out available")
+	await _mouse(picker.tiles["yarn_ranger"])
+	await _mouse(picker.tiles["warden"])
+	_check(picker.selected_ids() == witness and actions[0].tooltip_text == warning,
+		"restoring rank-4 Warden restores the warning on the same Set out Button")
+	_check(app.stitched_run_buttons == actions and action_row.get_child_count() == 2
+		and app.stitched_run_panel.get_child_count() == panel_children
+		and picker.get_child_count() == StitchedPartyAdmission.HERO_IDS.size(),
+		"advisory adds no action, panel or extra tile and preserves original action indices")
+	_check_hints(picker, picker.tiles.duplicate(), "after warning and safe re-pick")
+	_check(app.stitched_run_session == null and app.run_rng == null and app.run_map == null
+		and [app.session_gold, app.run_scraps] == wallet_before,
+		"rank preview creates no session, map, RNG or wallet side effects")
+	var active_epoch: int = app._stitched_run_epoch
+	app._stitched_run_epoch = active_epoch + 1
+	actions[0].tooltip_text = "stale signal witness"
+	picker.draft_changed.emit(witness)
+	_check(actions[0].tooltip_text == "stale signal witness"
+		and app.stitched_run_session == null,
+		"stale epoch draft_changed cannot rewrite the previous Set out tooltip")
+	app._stitched_run_epoch = active_epoch
+	picker.draft_changed.emit(witness)
+	_check(actions[0].tooltip_text == warning,
+		"accepted same-draft signal restores truthful warning after stale signal")
+	await _mouse(actions[0])
+	var session: StitchedRunSession = app.stitched_run_session
+	var expected := StitchedRunSession.start(7311, witness)
+	var seeded_ids: Array = []
+	if session != null:
+		for hero in session.heroes:
+			seeded_ids.append(hero.id)
+	_check(session != null and expected != null and session.is_consistent()
+		and session.picks == witness and seeded_ids == receipt.get("hero_ids", [])
+		and session.snapshot() == expected.snapshot() and app.stitched_run_intro != null
+		and app.run_rng == null and app.deck == null,
+		"warned yet enabled production Set out starts identical seeded canonical four-rank session")
+	app._return_stitched_run_title()
+	_check(app.stitched_run_session == null and app.stitched_run_draft != witness,
+		"closing the warned run clears session and previously accepted draft")
+	await process_frame
+	await _mouse(app.start_button)
+	var fresh := _picker(app)
+	_check(fresh != null and fresh != picker and fresh.selected_ids() == StitchedRunSession.DEFAULT_PICKS
+		and app.stitched_run_buttons[0].tooltip_text == "",
+		"fresh picker has no stale warning after previous session and epoch")
+	return fresh
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	_advisory_fixtures()
 	_invalid_hints()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
 	var app: Node = (load("res://scenes/app.tscn") as PackedScene).instantiate()
@@ -251,6 +445,12 @@ func _run() -> void:
 		_finish()
 		return
 	await process_frame
+	_default(picker, app)
+	picker = await _exercise_opening_warning(app, picker)
+	if picker == null:
+		app.free()
+		_finish()
+		return
 	_default(picker, app)
 	var original_tiles: Dictionary = picker.tiles.duplicate()
 	var draft_receipts: Array = []
