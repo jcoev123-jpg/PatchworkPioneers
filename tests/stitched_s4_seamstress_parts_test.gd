@@ -121,11 +121,31 @@ const EXPECTED_SCARLET_KNOT_TEXT := "A fat scarlet knot pins a torn plum felt br
 const EXPECTED_THREAD_PRICK_TEXT := "The Seamstress's oversized silver needle is fastened to a cream sleeve with dark-red blanket stitches; a loose crimson thread trails from its eye."
 const EXPECTED_NEEDLE_RAIN_TEXT := "A fan of slender silver needles rests across dusty-plum felt on the Seamstress's long sleeve, each shaft caught under cream stitches and red thread."
 const ARMS_PATCH_IDS := [THREAD_PRICK_ID, NEEDLE_RAIN_ID]
+## S14 sewn-cloth appearance copy for the two TORSO patches: a cream apron hem bound to a
+## dusty-purple chest patch, and dried herbs sewn under a cream linen apron pocket. Like the
+## head and arms rows these are appearance sentences, never part-cast promises.
+const SHIELDING_HEM_ID := "seamstress_shielding_hem_coat"
+const POULTICE_APRON_ID := "seamstress_poultice_apron"
+const TORSO_PATCH_IDS := [SHIELDING_HEM_ID, POULTICE_APRON_ID]
+const EXPECTED_SHIELDING_HEM_TEXT := "A cream apron-hem folds over a dusty-purple chest patch, with red running stitches binding its loose linen edges to the dress."
+const EXPECTED_POULTICE_APRON_TEXT := "A small bundle of dried herbs is sewn beneath a cream linen apron pocket, tied to dusty-purple felt with a knotted red thread."
+## The retired cast instructions the two torso patches used to print, kept only as witnesses.
+const RETIRED_SHIELDING_HEM_TEXT := "Stitch a hem over one living ally: heal 2 and Guard the hits aimed at it for 2 turns."
+const RETIRED_POULTICE_APRON_TEXT := "Darned herbs for one living ally: heal 3 and Guard it for 1 turn."
 ## Whole words that would turn this appearance copy back into an obsolete combat promise.
 const FORBIDDEN_COPY_WORDS := [
 	"ability", "cast", "rank", "ranks", "tier", "tiers", "heal", "heals", "hp",
 	"bleed", "weak", "damage", "dodge", "guard", "stun", "move", "moves", "turn",
 	"turns", "target", "foe", "ally", "strike", "attack",
+]
+## The brief's fuller forbidden vocabulary for the two torso sentences: every whole word that
+## would still read as a part-granted combat instruction, rank/tier promise or ability outcome.
+const TORSO_FORBIDDEN_COPY_WORDS := [
+	"rank", "ranks", "tier", "tiers", "heal", "heals", "guard", "target", "targets",
+	"foe", "foes", "ally", "allies", "attack", "attacks", "hit", "hits", "damage",
+	"dodge", "bleed", "weak", "stun", "mark", "move", "moves", "ability", "abilities",
+	"action", "actions", "turn", "turns", "buff", "buffs", "effect", "effects",
+	"duration", "self", "cast",
 ]
 
 ## The authored acceptance contract, one row per part id, indexed by tier - 1.
@@ -237,6 +257,7 @@ var _checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_torso_patch_appearance_text()
 	_test_tiers()
 	_test_live_tier_stats()
 	_test_negatives()
@@ -470,6 +491,102 @@ func _test_catalog() -> void:
 					"AC1: the authored " + other_id + " carries no mark bonus of its own")
 	else:
 		_check(false, "AC1: the parts file parses as a JSON object")
+
+
+# ---------------------------------------------------------------- AC1/AC2: torso sewn patches
+
+## The two TORSO wearables now read as sewn cloth patches, exactly like the head and arms rows.
+## The legacy stat/ability/tier dictionaries above are compatibility contracts and are proven by
+## _test_catalog/_test_tiers; this helper only proves the two top-level appearance sentences.
+func _test_torso_patch_appearance_text() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the Seamstress catalog loads for the torso patch appearance contract")
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	var expected := {
+		SHIELDING_HEM_ID: EXPECTED_SHIELDING_HEM_TEXT,
+		POULTICE_APRON_ID: EXPECTED_POULTICE_APRON_TEXT,
+	}
+	var retired := {
+		SHIELDING_HEM_ID: RETIRED_SHIELDING_HEM_TEXT,
+		POULTICE_APRON_ID: RETIRED_POULTICE_APRON_TEXT,
+	}
+	for part_id in TORSO_PATCH_IDS:
+		_check(by_id.has(part_id), "AC1: the catalog authors the torso patch " + part_id)
+		if not by_id.has(part_id):
+			continue
+		var part: Dictionary = by_id[part_id]
+		var spec: Dictionary = EXPECTED[part_id]
+		var want := str(expected[part_id])
+		_check(str(part["id"]) == part_id, "AC1: " + part_id + " keeps its authored id")
+		_check(str(part["name"]) == str(spec["name"]), "AC1: " + part_id + " keeps its authored name")
+		_check(str(part["owner"]) == OWNER and str(part["slot"]) == "torso",
+			"AC1: " + part_id + " stays a seamstress torso patch")
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC1: " + part_id + " still validates with its sewn-patch description")
+		_check(str(part["text"]) == want,
+			"AC1: " + part_id + " carries its exact authored sewn-patch description")
+		# The retired healing/Guard instruction survives nowhere on this record.
+		_check(not str(part["text"]).contains(str(retired[part_id])),
+			"AC2: " + part_id + " no longer prints its retired cast instruction")
+		# Materials and palette: matte cream linen, dusty purple felt and red thread on both.
+		var low := str(part["text"]).to_lower()
+		for word in ["cream", "dusty", "purple", "red", "linen"]:
+			_check(_contains_whole_word(low, word),
+				"AC2: " + part_id + " names the cloth word " + word)
+		var sewn_context := false
+		for word in ["patch", "stitches", "sewn"]:
+			if _contains_whole_word(low, word):
+				sewn_context = true
+		_check(sewn_context, "AC2: " + part_id + " names a visible sewn patch, stitches or seam")
+		# No numeric combat digits and no whole-word combat promise of any kind.
+		_check(not _contains_digit(low),
+			"AC2: " + part_id + " cloth copy contains no numeric digits")
+		for word in TORSO_FORBIDDEN_COPY_WORDS:
+			_check(not _contains_whole_word(low, word),
+				"AC2: " + part_id + " cloth copy never names the combat word " + word)
+	# The two torso patches describe different garments, not the same sentence twice.
+	_check(str(by_id[SHIELDING_HEM_ID]["text"]) != str(by_id[POULTICE_APRON_ID]["text"]),
+		"AC2: the two torso patches describe visually distinct sewn cloth")
+	# Per-patch physical details, split on the hyphenated cloth words apron-hem / dusty-purple.
+	var hem_low := str(by_id[SHIELDING_HEM_ID]["text"]).to_lower()
+	for word in ["chest", "patch", "apron", "stitches", "dress"]:
+		_check(_contains_whole_word(hem_low, word),
+			"AC2: the Shielding Hem patch names the sewn detail " + word)
+	var apron_low := str(by_id[POULTICE_APRON_ID]["text"]).to_lower()
+	for word in ["herbs", "sewn", "apron", "pocket", "felt", "thread"]:
+		_check(_contains_whole_word(apron_low, word),
+			"AC2: the Poultice patch names the sewn detail " + word)
+	# Neither retired sentence reappears anywhere in the eight authored texts, and no other
+	# record duplicates either new sentence.
+	for part_id in ALL_PART_IDS:
+		if not by_id.has(part_id):
+			continue
+		var text := str(by_id[part_id]["text"])
+		for retired_id in TORSO_PATCH_IDS:
+			_check(not text.contains(str(retired[retired_id])),
+				"AC2: %s does not reprint the retired %s instruction" % [part_id, retired_id])
+		if part_id in TORSO_PATCH_IDS:
+			continue
+		_check(text != EXPECTED_SHIELDING_HEM_TEXT and text != EXPECTED_POULTICE_APRON_TEXT,
+			"AC2: the other " + part_id + " does not duplicate a torso patch sentence")
+	# Required appearance text still fails closed on a deep clone of each real part, and the
+	# shipped record is left untouched by the rejected validations.
+	for part_id in TORSO_PATCH_IDS:
+		var shipped_text := str(by_id[part_id]["text"])
+		for blank in ["", "   "]:
+			var blanked: Dictionary = by_id[part_id].duplicate(true)
+			blanked["text"] = blank
+			_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+				"AC3: %s with %s top-level text is refused" % [part_id, "blank" if blank.is_empty() else "whitespace-only"])
+		var after: Dictionary = by_id[part_id]
+		_check(str(after["text"]) == shipped_text,
+			"AC3: the rejected blank text never changes the shipped " + part_id + " record")
+		_check(_int_dict(StitchedParts.stat_at_tier(after, 1)) == _int_dict({str(EXPECTED[part_id]["stat_key"]): int(EXPECTED[part_id]["stat"][0])})
+			and str(after["ability"]["id"]) == str(EXPECTED[part_id]["ability_id"]),
+			"AC3: " + part_id + " keeps its legacy tier-I stat and ability after the validation")
 
 
 # ---------------------------------------------------------------- AC3: tiers, masks and keys
