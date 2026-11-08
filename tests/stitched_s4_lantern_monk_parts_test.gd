@@ -2,6 +2,7 @@ extends SceneTree
 ## S4 Lantern Monk: private eight-part contract in real seeded S2 4v3 rules combat.
 const CATALOG_PATH := "res://data/parts/lantern_monk_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
+const S14_ABILITIES_PATH := "res://data/stitched/s14_hero_abilities.json"
 const STARTERS := {
 	"head": "lantern_monk_head_moth_wink",
 	"arms": "lantern_monk_arms_wick_spark",
@@ -47,7 +48,7 @@ const OLD_VIGIL_RING_PROMISE := "A ring of lanternlight heals all living allies 
 ## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
 	"lantern_monk_head_moth_wink": {
-		"name": "Moth Wink", "launch": [1, 2, 3, 4], "target": [1, 2, 3], "side": "enemy",
+		"name": "Mothlit Brow Patch", "launch": [1, 2, 3, 4], "target": [1, 2, 3], "side": "enemy",
 		"multi": false, "acc": 90, "dmg": [0, 0], "effects": {"blind": 1}, "move": "skill",
 		"stat": {"acc": 3},
 	},
@@ -112,6 +113,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_patch_copy()
+	_test_moth_wink_patch_label()
 	_test_arm_patch_copy()
 	_test_head_torso_patch_copy()
 	_test_leg_patch_copy()
@@ -341,6 +343,65 @@ func _test_patch_copy() -> void:
 		for phrase in obsolete:
 			_check(not text.to_lower().contains(str(phrase)),
 				"AC1: named patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
+
+
+## S14: the starter head is a worn cloth patch, so its top-level inventory label names the
+## decorated brow ("Mothlit Brow Patch") instead of the fixed signature move the same ID still
+## carries in the separate S14 hero-ability catalog. Both catalogs are looked up by named
+## fields, never list position: the part keeps its old ID, head slot, owner, +3 ACC stat and
+## exact moth/button-eye sentence, its legacy nested ability stays "Moth Wink", and the real
+## S14 signature keeps its own "Moth Wink" name and mechanics untouched.
+func _test_moth_wink_patch_label() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named Moth Wink patch label")
+	if not bool(cat.get("ok", false)):
+		return
+	var part: Dictionary = cat["by_id"].get("lantern_monk_head_moth_wink", {})
+	_check(not part.is_empty(), "AC1: the named Lantern Monk starter head record is present")
+	if part.is_empty():
+		return
+	_check(str(part["name"]) == "Mothlit Brow Patch"
+		and str(part["id"]) == "lantern_monk_head_moth_wink"
+		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
+		and part["stat"] == {"acc": 3}
+		and str(part["text"]) == "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
+		"AC1: the head patch is labelled Mothlit Brow Patch with its old ID, slot, owner, stat and copy")
+	_check(str(part["ability"]["id"]) == "lantern_monk_head_moth_wink_move"
+		and str(part["ability"]["name"]) == "Moth Wink",
+		"AC2: the nested legacy part ability keeps its own Moth Wink id and name")
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(S14_ABILITIES_PATH))
+	_check(parsed is Dictionary and parsed.get("abilities") is Array,
+		"AC3: the real S14 hero-ability catalog parses with an abilities array")
+	if not parsed is Dictionary or not parsed.get("abilities") is Array:
+		return
+	var signature: Dictionary = {}
+	for entry in parsed["abilities"]:
+		if entry is Dictionary and str(entry.get("hero", "")) == "lantern_monk" \
+				and str(entry.get("slot", "")) == "head" \
+				and str(entry.get("id", "")) == "lantern_monk_head_moth_wink":
+			signature = entry
+			break
+	_check(not signature.is_empty(),
+		"AC3: the fixed Lantern Monk head signature is present by hero, slot and id")
+	if signature.is_empty():
+		return
+	# JSON numbers parse as floats, so the rank lists and Blind amount are compared as ints.
+	var launch_ranks: Array = []
+	for rank in signature.get("launch", []):
+		launch_ranks.append(int(rank))
+	var target_ranks: Array = []
+	for rank in signature.get("target", []):
+		target_ranks.append(int(rank))
+	var dmg: Array = signature.get("dmg", [])
+	var effects: Dictionary = signature.get("effects", {})
+	_check(str(signature["name"]) == "Moth Wink" and str(signature["name"]) != str(part["name"])
+		and str(signature["kind"]) == "debuff" and str(signature["target_side"]) == "enemy"
+		and launch_ranks == [2, 3, 4] and target_ranks == [1, 2, 3, 4]
+		and int(signature.get("acc", -1)) == 90
+		and dmg.size() == 2 and int(dmg[0]) == 0 and int(dmg[1]) == 0
+		and effects.size() == 1 and int(effects.get("blind", 0)) == 1
+		and str(signature["move"]) == "attack",
+		"AC3: the fixed S14 Moth Wink stays distinct with enemy Blind 1, ranks, ACC 90 and attack pose")
 
 
 ## S14 arm patch identity copy: both Lantern Monk arm patches describe the sewn cloth the player
@@ -1410,11 +1471,12 @@ func _test_moth_wink_rank4(tier: int, seed_start: int, seed_count: int) -> void:
 	var expected_acc := {1: 90, 2: 94, 3: 100}
 	_check(full_mask == StitchedParts.ALL_RANKS_MASK and full_mask != 0,
 		"AC1: ranks 1-4 derive the complete four-rank mask for Moth Wink")
-	_check(str(part["id"]) == "lantern_monk_head_moth_wink" and str(part["name"]) == "Moth Wink"
+	_check(str(part["id"]) == "lantern_monk_head_moth_wink"
+		and str(part["name"]) == "Mothlit Brow Patch"
 		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
 		and part["stat"] == {"acc": 3}
 		and str(part["text"]) == "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
-		"AC1: Moth Wink keeps its name, head slot, owner, +3 ACC stat and short patch copy")
+		"AC1: Mothlit Brow Patch keeps its head slot, owner, +3 ACC stat and short patch copy")
 	var ability := StitchedParts.ability_at_tier(part, tier)
 	var valid := StitchedParts.validate_ability(ability)
 	_check(bool(valid.get("ok", false)), "AC1: Moth Wink tier %d ability validates" % tier)
