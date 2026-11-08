@@ -3,12 +3,15 @@ extends SceneTree
 ##
 ## Canonical boss JSON -> real StitchedEnemyCatalog -> seeded four-doll StitchedRules fight.
 ## The shared foe driver (StitchedFoeIntent.choose) advertises the deepest legal rank and the
-## public StitchedRules.use_foe_ability commits the authored hit, damage and one-rank pull.
-## No resolver is reimplemented here and no RNG is stubbed: witnesses are found across
-## bounded real seeds.
+## public StitchedRules.use_foe_ability commits the authored hit, damage, one-rank pull and
+## 6 FRAY to the stuck doll. No resolver is reimplemented here and no RNG is stubbed:
+## witnesses are found across bounded real seeds.
 
 const BOSS := "sewing_machine_colossus"
 const BOBBIN := "colossus_bobbin"
+## The authored hook also frays the doll it catches. At the battle's bright candle band the
+## core applies the authored 6 without any candle multiplier.
+const HOOK_FRAY := 6
 const TROPHY := "sewing_machine_colossus_needle_arm"
 const PREVIEW := "res://data/stitched/s2_preview.json"
 const BOSS_PATH := "res://data/enemies/boss.json"
@@ -22,7 +25,7 @@ const TREADLE := {
 const BOBBIN_ABILITY := {
 	"id": "colossus_bobbin", "name": "Bobbin Shot", "kind": "ranged", "launch": [1, 4],
 	"target": [3, 4], "target_side": "enemy", "multi": false, "acc": 80,
-	"dmg": [4, 6], "crit": 0, "effects": {"pull": 1}, "self_move": 0, "move": "attack3",
+	"dmg": [4, 6], "crit": 0, "effects": {"pull": 1, "fray": 6}, "self_move": 0, "move": "attack3",
 }
 const BARRAGE := {
 	"id": "colossus_barrage", "name": "Needle Barrage", "kind": "ranged", "launch": [1, 4],
@@ -67,6 +70,7 @@ func _run() -> void:
 		_test_authored()
 		var witnesses := _test_landed_and_miss()
 		_test_blocked_pull(int(witnesses.get("hit_seed", -1)))
+		_test_turn_refusal()
 		_test_refusals()
 		_test_replay()
 		await _test_live_driver()
@@ -126,9 +130,10 @@ func _test_authored() -> void:
 		and bobbin.get("target") == [3, 4] and bobbin.get("target_side") == "enemy"
 		and not bool(bobbin.get("multi", true)) and int(bobbin.get("acc", 0)) == 80
 		and bobbin.get("dmg") == [4, 6] and int(bobbin.get("crit", -1)) == 0
-		and bobbin.get("effects") == {"pull": 1} and int(bobbin.get("self_move", -1)) == 0
+		and bobbin.get("effects") == {"pull": 1, "fray": 6}
+		and int(bobbin.get("self_move", -1)) == 0
 		and bobbin.get("move") == "attack3",
-		"AC1: Bobbin Shot is the authored rear-rank hook (ranged 1/4 -> 3/4, 4-6, ACC 80, pull 1, attack3)")
+		"AC1: Bobbin Shot is the authored rear-rank hook (ranged 1/4 -> 3/4, 4-6, ACC 80, pull 1 + fray 6, attack3)")
 	_check(int(bobbin.get("launch_mask", 0)) == StitchedParts.rank_mask([1, 4])
 		and int(bobbin.get("target_mask", 0)) == StitchedParts.rank_mask([3, 4])
 		and not StitchedParts.ranks_allowed(int(bobbin.get("target_mask", 0)), 1)
@@ -226,6 +231,26 @@ func _sorted_ranks(battle: StitchedRules) -> Array:
 	return ranks
 
 
+## Every present doll's current hidden FRAY, by identity. FRAY is the mental pressure track
+## the hook now feeds; it is never a visible panel.
+func _fray_map(battle: StitchedRules) -> Dictionary:
+	var frays: Dictionary = {}
+	for hero in battle.get_heroes():
+		frays[str(hero["id"])] = int(hero["fray"])
+	return frays
+
+
+## True when every doll except `except_id` still carries exactly the FRAY it had in `before`.
+func _only_one_frayed(battle: StitchedRules, before: Dictionary, except_id: String) -> bool:
+	for hero in battle.get_heroes():
+		var hero_id := str(hero["id"])
+		if hero_id == except_id:
+			continue
+		if not before.has(hero_id) or int(hero["fray"]) != int(before[hero_id]):
+			return false
+	return true
+
+
 func _refuse(battle: StitchedRules, rank: int, error: String) -> Dictionary:
 	var before := battle.state_snapshot()
 	var rng := battle.rng_state()
@@ -295,7 +320,7 @@ func _test_landed_and_miss() -> Dictionary:
 				and int(intent.get("base_acc", -1)) == 80
 				and intent.get("base_damage") == [4, 6]
 				and int(intent.get("base_crit", -1)) == 0
-				and intent.get("base_effects") == {"pull": 1},
+				and intent.get("base_effects") == {"pull": 1, "fray": 6},
 				"AC2: the chooser projects Bobbin Shot onto the occupied legal rank 4 with authored numbers")
 			_check(ranks3.size() == 1 and str(ranks3[0]["id"]) == front_id
 				and ranks4.size() == 1 and str(ranks4[0]["id"]) == back_id
@@ -306,10 +331,12 @@ func _test_landed_and_miss() -> Dictionary:
 				"AC2: projecting the advertised intent mutates nothing and spends no RNG")
 			if not intent.is_empty() and intent.get("base_effects", {}).has("pull"):
 				intent["base_effects"]["pull"] = 2
+				intent["base_effects"]["fray"] = 99
 				var again := StitchedFoeIntent.choose(battle, battle.get_unit(BOSS))
-				_check(again.get("base_effects") == {"pull": 1},
+				_check(again.get("base_effects") == {"pull": 1, "fray": 6},
 					"AC2: projected effects are detached from the canonical ability catalog")
 		if hit_seed < 0:
+			var before_fray := _fray_map(battle)
 			var receipt := battle.use_foe_ability(BOBBIN, 4)
 			var results: Array = receipt.get("results", [])
 			if bool(receipt.get("ok", false)) and results.size() == 1:
@@ -338,13 +365,31 @@ func _test_landed_and_miss() -> Dictionary:
 					_check(result.get("shift") == {"ok": true, "from": 4, "to": 3,
 						"swapped": front_id},
 						"AC2: a landed hook reports exactly one forward rank step and the swapped doll")
+					# The bright candle band the fixture sets carries no FRAY multiplier, so
+					# the authored 6 arrives whole on the doll the hook actually caught.
+					var started := int(before_fray.get(back_id, -1))
+					var expected_fray := started + HOOK_FRAY
+					var fray_event: Dictionary = result.get("fray_event", {})
+					_check(str(battle.candle_band().get("name", "")) == "bright"
+						and started < StitchedRules.FRAY_MAX - HOOK_FRAY
+						and bool(fray_event.get("ok", false))
+						and str(fray_event.get("actor", "")) == back_id
+						and int(fray_event.get("before", -1)) == started
+						and int(fray_event.get("change", 0)) == HOOK_FRAY
+						and int(fray_event.get("after", -1)) == expected_fray
+						and str(fray_event.get("transition", "x")).is_empty()
+						and int(battle.get_unit(back_id)["fray"]) == expected_fray,
+						"AC2: the landed hook frays the stuck doll by exactly 6 below the cap")
+					_check(_only_one_frayed(battle, before_fray, back_id),
+						"AC2: every other doll's FRAY stays exactly as it was")
 					var expected_back := before_back.duplicate(true)
 					expected_back["rank"] = 3
 					expected_back["hp"] = int(before_back["hp"]) - int(result["damage"])
+					expected_back["fray"] = expected_fray
 					var expected_front := before_front.duplicate(true)
 					expected_front["rank"] = 4
 					_check(battle.get_unit(back_id) == expected_back,
-						"AC2: the reeled rank-4 doll keeps identity and arrives at rank 3 with that HP")
+						"AC2: the reeled rank-4 doll keeps identity and arrives at rank 3 with that HP and FRAY")
 					_check(battle.get_unit(front_id) == expected_front,
 						"AC2: the former rank-3 doll swaps to rank 4 with every other field kept")
 					var after_ranks := _ranks(battle)
@@ -367,6 +412,7 @@ func _test_landed_and_miss() -> Dictionary:
 				continue
 			var m_back := _hero_at_rank(missed, 4)
 			var before_miss := missed.get_unit(m_back)
+			var before_miss_fray := _fray_map(missed)
 			var miss_ranks := _ranks(missed)
 			var miss_rng := missed.rng_state()
 			var miss_receipt := missed.use_foe_ability(BOBBIN, 4)
@@ -381,6 +427,8 @@ func _test_landed_and_miss() -> Dictionary:
 					and miss.get("statuses", []).is_empty()
 					and int(miss.get("target_hp", -1)) == int(before_miss["hp"]),
 					"AC3: a missed Bobbin Shot deals no damage, pull or status")
+				_check(not miss.has("fray_event") and _fray_map(missed) == before_miss_fray,
+					"AC3: a missed hook frays no doll and leaves every FRAY exactly as it was")
 				_check(_ranks(missed) == miss_ranks
 					and missed.get_unit(m_back) == before_miss,
 					"AC3: a missed hook shifts no doll and leaves every rank and field unchanged")
@@ -392,6 +440,31 @@ func _test_landed_and_miss() -> Dictionary:
 
 
 # ---------------------------------------------------------------- AC3 blocked pulls
+
+## A real battle parked on a doll's own decision, where the Colossus must not be able to act.
+func _test_turn_refusal() -> void:
+	var battle := _battle(19)
+	if battle == null:
+		_check(false, "AC3: a real battle is required for the out-of-turn refusal")
+		return
+	var guard := 0
+	while battle.current_side() != "hero" and not battle.is_over() and guard < 20:
+		if not bool(battle.pass_turn().get("ok", false)):
+			break
+		guard += 1
+	if battle.current_side() != "hero":
+		_check(false, "AC3: bounded real turns reach a doll decision for the out-of-turn refusal")
+		return
+	var before := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var fray := _fray_map(battle)
+	var receipt := battle.use_foe_ability(BOBBIN, 4)
+	_check(not bool(receipt.get("ok", true))
+		and str(receipt.get("error", "")) == "it is not a foe turn"
+		and before == battle.state_snapshot() and rng == battle.rng_state()
+		and _fray_map(battle) == fray,
+		"AC3: an out-of-turn Bobbin Shot deals no damage, pull or FRAY and spends no state/RNG")
+
 
 func _test_blocked_pull(hit_seed: int) -> void:
 	if hit_seed <= 0:
@@ -423,6 +496,7 @@ func _test_blocked_pull(hit_seed: int) -> void:
 				battle._held[subject] = battle.round_number()
 		var before_back := battle.get_unit(back_id)
 		var before_ranks := _ranks(battle)
+		var before_fray := _fray_map(battle)
 		var receipt := battle.use_foe_ability(BOBBIN, 4)
 		var results: Array = receipt.get("results", [])
 		var label := "%s %s" % [str(variant[0]), str(variant[1])]
@@ -442,6 +516,18 @@ func _test_blocked_pull(hit_seed: int) -> void:
 			and int(result.get("target_hp", -1))
 				== int(before_back["hp"]) - int(result["damage"]),
 			"AC3: %s still deals its normal direct damage" % label)
+		# A blocked reel never swallows the hit's own legal FRAY consequence: the same
+		# public resolver that refused the movement still frays the doll it struck.
+		var fray_event: Dictionary = result.get("fray_event", {})
+		_check(bool(fray_event.get("ok", false))
+			and str(fray_event.get("actor", "")) == back_id
+			and int(fray_event.get("before", -1)) == int(before_fray.get(back_id, -2))
+			and int(fray_event.get("change", 0)) == HOOK_FRAY
+			and int(fray_event.get("after", -1))
+				== int(before_fray.get(back_id, -1)) + HOOK_FRAY
+			and int(battle.get_unit(back_id)["fray"]) == int(fray_event.get("after", -2))
+			and _only_one_frayed(battle, before_fray, back_id),
+			"AC3: %s keeps its blocked movement but still frays only the struck doll by 6" % label)
 		_check(_ranks(battle) == before_ranks and _sorted_ranks(battle) == [1, 2, 3, 4],
 			"AC3: %s never teleports the struck or swapped doll; all four ranks stay intact" % label)
 		_check(int(battle.get_unit(back_id)["rank"]) == 4
@@ -480,6 +566,7 @@ func _test_refusals() -> void:
 		var front_id := _hero_at_rank(rank3, 2)
 		var before_target := rank3.get_unit(target_id)
 		var before_front := rank3.get_unit(front_id)
+		var before_fray := _fray_map(rank3)
 		var receipt := rank3.use_foe_ability(BOBBIN, 3)
 		var results: Array = receipt.get("results", [])
 		_check(bool(receipt.get("ok", false)) and results.size() == 1
@@ -492,14 +579,16 @@ func _test_refusals() -> void:
 		_check(results[0].get("shift") == {"ok": true, "from": 3, "to": 2,
 			"swapped": front_id},
 			"AC4: the landed rank-3 hook takes exactly one backward rank step")
+		var expected_fray := int(before_fray.get(target_id, -1)) + HOOK_FRAY
 		var expected := before_target.duplicate(true)
 		expected["rank"] = 2
 		expected["hp"] = int(before_target["hp"]) - int(results[0].get("damage", 0))
+		expected["fray"] = expected_fray
 		var expected_front := before_front.duplicate(true)
 		expected_front["rank"] = 3
 		_check(rank3.get_unit(target_id) == expected and rank3.get_unit(front_id) == expected_front
 			and _sorted_ranks(rank3) == [1, 2, 3, 4],
-			"AC4: rank 3 and rank 2 swap places and no doll is duplicated or moved twice")
+			"AC4: rank 3 and rank 2 swap places, the hook frays only its target by 6, and no doll is duplicated or moved twice")
 		break
 	_check(landed, "AC4: nonvacuous landed rank-3 Bobbin witness with its forward step")
 
@@ -542,10 +631,11 @@ func _trace(seed_value: int) -> Dictionary:
 			break
 		receipts.append(receipt)
 		states.append({"state": battle.state_snapshot(), "order": battle.turn_order(),
-			"rng": battle.rng_state()})
+			"rng": battle.rng_state(), "fray": _fray_map(battle)})
 	return {
 		"seed": seed_value, "receipts": receipts, "states": states, "intents": intents,
 		"state": battle.state_snapshot(), "order": battle.turn_order(), "rng": battle.rng_state(),
+		"fray": _fray_map(battle),
 	}
 
 
@@ -571,15 +661,34 @@ func _test_replay() -> void:
 		and guard.get("base_effects") == {"thorns": 4},
 		"AC4: round four still advertises Iron Tread with Thorns 4")
 	var committed := 0
+	var hook_frayed := 0
 	for receipt in first["receipts"]:
 		if str(receipt.get("actor", "")) == BOSS and str(receipt.get("action", "")) == "ability":
 			committed += 1
 			_check(str(receipt.get("ability", "")) == BOBBIN
 				and receipt.get("results", []).size() == 1,
 				"AC4: the only committed boss action is one single-target Bobbin Shot")
+			for result in receipt.get("results", []):
+				var event: Dictionary = result.get("fray_event", {})
+				if not bool(result.get("hit", false)) or event.is_empty():
+					continue
+				hook_frayed += 1
+				_check(str(event.get("actor", "")) == str(result.get("target", ""))
+					and int(event.get("change", 0)) == HOOK_FRAY
+					and int(event.get("after", -1)) == int(event.get("before", -2)) + HOOK_FRAY,
+					"AC4: a replayed landed hook records the same +6 FRAY receipt")
 	_check(committed == 1, "AC4: replay commits exactly one Bobbin Shot, never an extra invented hit")
 	_check(int(first["order"].count(BOSS)) == 2,
 		"AC4: replayed round keeps the boss's authored two-turn cadence")
+	_check(first["fray"] == second["fray"] and first["fray"].size() == 4,
+		"AC4: the whole identical-seed replay carries the same per-doll FRAY")
+	_check(hook_frayed == 1,
+		"AC4: the single committed round-two hook is the replay's one real FRAY source")
+	if hook_frayed > 0:
+		var frays: Array = first["fray"].values()
+		frays.sort()
+		_check(int(frays.back()) >= HOOK_FRAY,
+			"AC4: the replayed hook leaves real FRAY on the doll it caught")
 
 
 # ---------------------------------------------------------------- live mounted driver
@@ -639,6 +748,13 @@ func _test_live_driver() -> void:
 						and int(result.get("shift", {}).get("from", 0)) == 4
 						and int(result.get("shift", {}).get("to", 0)) == 3,
 						"AC2: the live landed hook reels rank 4 into rank 3 through the shared rules")
+					var live_event: Dictionary = result.get("fray_event", {})
+					var caught := str(result.get("target", ""))
+					_check(bool(live_event.get("ok", false))
+						and int(live_event.get("change", 0)) == HOOK_FRAY
+						and int(screen.battle.get_unit(caught).get("fray", -1))
+							== int(live_event.get("after", -2)),
+						"AC2: the same live commit frays the caught doll by 6 in real play")
 					_check(_sorted_ranks(screen.battle) == [1, 2, 3, 4],
 						"AC2: live play still leaves four dolls in unique ranks")
 				witnessed = true
