@@ -15,6 +15,7 @@ const FOE_PARTS := "res://data/parts/enemy_parts.json"
 const LANTERN_MONK_PARTS := "res://data/parts/lantern_monk_parts.json"
 const BUTTON_GOLEM_PARTS := "res://data/parts/button_golem_parts.json"
 const RAG_DUELIST_PARTS := "res://data/parts/rag_duelist_parts.json"
+const SCARECROW_PARTS := "res://data/parts/scarecrow_parts.json"
 const BONE := Color("#f4e5cd")
 const BRASS := Color("#e0b977")
 const PAGES := [
@@ -72,7 +73,7 @@ var part_atlas: StitchedPartInspector
 # to prove that a partial catalog never leaves stale or selectable parts.
 var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS,
 	YARN_RANGER_PARTS, FOE_PARTS, LANTERN_MONK_PARTS, BUTTON_GOLEM_PARTS,
-	RAG_DUELIST_PARTS]
+	RAG_DUELIST_PARTS, SCARECROW_PARTS]
 # Detached lesson sources for headless regression; null reads the live S14 catalogs.
 var lesson_kits: Variant = null
 var lesson_patches: Variant = null
