@@ -258,8 +258,19 @@ func _test_catalog() -> void:
 		and str(overload_part["ability"]["id"]) == "tinker_overload_move" and str(overload_part["ability"]["name"]) == "Overload"
 		and str(overload_part["ability"]["kind"]) == "ranged" and not bool(overload_part["ability"]["multi"]),
 		"AC1: Overload stays Tinker's single-target ranged arms ability")
-	_check(str(overload_part["text"]) == "Discharge a charged tool; a Marked target takes extra damage, with no card or scrap cost.",
-		"AC1: Overload keeps its short authored rules text")
+	var overload_text := "Copper coils run from the Tinker's scrap pack to a patched gauntlet, each loop bound down with mustard thread."
+	_check(str(overload_part["text"]) == overload_text,
+		"AC1: Overload carries the authored copper-coil sewn-patch description")
+	_check(str(overload_part["name"]) == "Overload" and str(overload_part["slot"]) == "arms"
+		and str(overload_part["owner"]) == "tinker" and overload_part["stat"] == {"dmg": 2},
+		"AC1: Overload keeps its named Tinker arms identity and damage +2 stat")
+	var overload_lowered := overload_text.to_lower()
+	_check(not overload_lowered.contains("rank") and not overload_lowered.contains("hit")
+		and not overload_lowered.contains("exposed") and not overload_lowered.contains("mark")
+		and not overload_lowered.contains("weak") and not overload_lowered.contains("card")
+		and not overload_lowered.contains("cost") and not overload_lowered.contains("activate")
+		and not overload_lowered.contains("damage"),
+		"AC1: Overload's patch text promises no ranks, hits, statuses, damage, card cost or skill activation")
 	for tier in [1, 2, 3]:
 		var tier_overload := StitchedParts.ability_at_tier(overload_part, tier)
 		var tier_mask := int(tier_overload["launch_mask"])
@@ -338,11 +349,18 @@ func _test_catalog() -> void:
 	# Exposed 1 applied by each landed shot; every number, reach, stat, accuracy, pose and the
 	# absence of Mark stays exactly as shipped at all three stitch tiers.
 	var bomb_part: Dictionary = accepted["by_id"][STARTERS["arms"]]
-	var bomb_text := "Scatter scrap across every living foe in ranks one through three; each landed shot leaves that foe Exposed 1 for one turn, and no scrap ever reaches a fourth rank."
+	var bomb_text := "Brass washers and bent pins bulge from the Tinker's stitched sleeve; its rust-red seams hold the scrap in place."
 	_check(str(bomb_part["name"]) == "Scrap Bomb" and str(bomb_part["slot"]) == "arms"
 		and str(bomb_part["owner"]) == "tinker" and bomb_part["stat"] == {"dmg": 1}
 		and str(bomb_part["text"]) == bomb_text,
-		"AC1: Scrap Bomb keeps its named arms part, damage +1 stat and one-time setup rules text")
+		"AC1: Scrap Bomb keeps its named Tinker arms identity and damage +1 stat with the authored sewn-patch text")
+	var bomb_lowered := bomb_text.to_lower()
+	_check(not bomb_lowered.contains("rank") and not bomb_lowered.contains("hit")
+		and not bomb_lowered.contains("exposed") and not bomb_lowered.contains("mark")
+		and not bomb_lowered.contains("weak") and not bomb_lowered.contains("card")
+		and not bomb_lowered.contains("cost") and not bomb_lowered.contains("activate")
+		and not bomb_lowered.contains("damage"),
+		"AC1: Scrap Bomb's patch text promises no ranks, hits, statuses, damage, card cost or skill activation")
 	_check(str(bomb_part["ability"]["id"]) == "tinker_scrap_bomb_move"
 		and str(bomb_part["ability"]["name"]) == "Scrap Bomb"
 		and str(bomb_part["ability"]["kind"]) == "ranged"
