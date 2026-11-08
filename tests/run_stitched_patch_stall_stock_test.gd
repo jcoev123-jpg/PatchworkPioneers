@@ -9,9 +9,9 @@ const COATS := {
 	"wool_patch_cloak": 5, "chain_stitched_coat": 7, "reinforced_patchcoat": 9,
 	"thick_felt_mantle": 10,
 }
-## Authored Stitched catalog quotes: budget vest 70, Padded Vest 80, Wool Patch Cloak 90, Thick Felt Mantle 110, the rest 100.
+## Authored Stitched catalog quotes: budget vest 70, Padded Vest 75,Wool Patch Cloak 90, Thick Felt Mantle 110, the rest 100.
 const EXPECTED_PRICE := {
-	"quilted_coat": 100, "padded_vest": 80, "double_quilt_coat": 100, "scrap_lined_vest": 70,
+	"quilted_coat": 100, "padded_vest": 75, "double_quilt_coat": 100, "scrap_lined_vest": 70,
 	"wool_patch_cloak": 90, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
 	"thick_felt_mantle": 110,
 }
@@ -114,12 +114,12 @@ func _run() -> void:
 	_check_visit_failures()
 
 
-## Padded Vest at its 80-gold quote: seeded witness stock, exact-gold buy, 79 refused, owned SOLD.
+## Padded Vest at its 75-gold quote: seeded witness stock, exact-gold buy, 74 refused, owned SOLD.
 func _check_padded_vest_price() -> void:
 	var prices := _source_prices()
 	for id in EXPECTED_PRICE:
 		_check(prices.get(id, -1) == EXPECTED_PRICE[id], "per-ID price unchanged/authored: " + id)
-	_check(prices.get("padded_vest", -1) == 80, "padded_vest source row is exactly 80 gold")
+	_check(prices.get("padded_vest", -1) == 75, "padded_vest source row is exactly 75 gold")
 	var witness_seed := -1
 	var witness: Array = []
 	for seed_value in range(1, 200):
@@ -134,32 +134,32 @@ func _check_padded_vest_price() -> void:
 	_check(_ids(witness).count("padded_vest") == 1, "padded_vest is not duplicated in stock")
 	for offer in witness:
 		if offer.id == "padded_vest":
-			_check(offer == {"id": "padded_vest", "price": 80}, "stocked padded_vest row quotes 80 gold")
+			_check(offer == {"id": "padded_vest", "price": 75}, "stocked padded_vest row quotes 75 gold")
 	var again := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(witness_seed), [])
 	_check(again.get("offers") == witness, "witness seed replays the same stock")
 
-	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 80, witness)
-	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 79, witness)
-	_check(rich.is_valid() and poor.is_valid(), "80-gold and 79-gold visits open")
+	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 75, witness)
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 74, witness)
+	_check(rich.is_valid() and poor.is_valid(), "75-gold and 74-gold visits open")
 	if not rich.is_valid() or not poor.is_valid():
 		return
 	for row in rich.quote().offers:
 		if row.id == "padded_vest":
-			_check(row.price == 80 and row.can_buy == true and row.sold == false,
-				"padded_vest is buyable at 80 gold")
+			_check(row.price == 75 and row.can_buy == true and row.sold == false,
+				"padded_vest is buyable at 75 gold")
 	for row in poor.quote().offers:
 		if row.id == "padded_vest":
-			_check(row.price == 80 and row.can_buy == false, "padded_vest is not buyable at 79 gold")
+			_check(row.price == 75 and row.can_buy == false, "padded_vest is not buyable at 74 gold")
 	var poor_state := poor.read_state()
 	var poor_quote := poor.quote()
 	_check(poor.buy_patch("padded_vest", poor_state.visit_id, poor_state.node_id, poor_state.snapshot).get("ok") != true
 		and poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
-		"79 gold cannot buy padded_vest and nothing is debited or granted")
+		"74 gold cannot buy padded_vest and nothing is debited or granted")
 	var state := rich.read_state()
 	var bought := rich.buy_patch("padded_vest", state.visit_id, state.node_id, state.snapshot)
-	_check(bought.get("ok") == true and bought.receipt == {"kind": "trinket", "id": "padded_vest", "price": 80}
+	_check(bought.get("ok") == true and bought.receipt == {"kind": "trinket", "id": "padded_vest", "price": 75}
 		and bought.ledger.gold == 0 and bought.ledger.owned_patch_ids == ["padded_vest"],
-		"80 gold buys padded_vest once for exactly 80")
+		"75 gold buys padded_vest once for exactly 75")
 	_check(rich.is_consumed() and rich.buy_patch("padded_vest", state.visit_id, state.node_id,
 		state.snapshot).get("ok") != true, "replayed padded_vest buy refused")
 	# Already owned: SOLD and disabled, no debit.
@@ -182,7 +182,7 @@ func _check_padded_vest_price() -> void:
 func _check_wool_cloak_price() -> void:
 	var prices := _source_prices()
 	_check(prices.get("wool_patch_cloak", -1) == 90, "wool_patch_cloak source row is exactly 90 gold")
-	_check(prices.get("quilted_coat", -1) == 100 and prices.get("padded_vest", -1) == 80
+	_check(prices.get("quilted_coat", -1) == 100 and prices.get("padded_vest", -1) == 75
 		and prices.get("thick_felt_mantle", -1) == 110, "neighbouring coat prices stay authored")
 	var owned := _others(["wool_patch_cloak"])
 	var owned_snapshot := owned.duplicate(true)
@@ -272,7 +272,7 @@ func _check_mantle_price() -> void:
 	var prices := _source_prices()
 	_check(prices.get("thick_felt_mantle", -1) == 110, "thick_felt_mantle source row is exactly 110 gold")
 	_check(prices.get("wool_patch_cloak", -1) == 90 and prices.get("reinforced_patchcoat", -1) == 100
-		and prices.get("padded_vest", -1) == 80, "wool cloak stays 90 and neighbours stay authored")
+		and prices.get("padded_vest", -1) == 75, "wool cloakstays 90 and neighbours stay authored")
 	var witness_seed := -1
 	var witness: Array = []
 	for seed_value in range(1, 300):
