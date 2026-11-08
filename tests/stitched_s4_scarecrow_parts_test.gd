@@ -83,8 +83,16 @@ const SIBLING_PARTS := {
 		"dmg": [0, 0], "crit": 0, "effects": {"dodge": 6, "duration": 2}, "move": "guard",
 	},
 }
-const SACK_GLARE_TEXT := "A sack-faced glare Weakens and Marks a foe in enemy ranks 1-3; " \
-	+ "at stitch tier III it reaches rank 4."
+## S14: the two starter pieces are worn cloth patches, so their base copy describes sewn burlap,
+## denim, straw and thread only. The retired part-granted combat text is no longer advertised.
+const SACK_GLARE_TEXT := "A burlap brow patch creases above the Scarecrow's crooked stitched grin, " \
+	+ "held by pumpkin-orange thread."
+const FORK_JAB_TEXT := "A denim cuff binds the pitchfork arm, with loose straw tucked beneath thick " \
+	+ "orange running stitches."
+const PATCH_FORBIDDEN_WORDS := [
+	"foe", "enemy", "attack", "hit", "damage", "rank", "tier", "mark", "weak", "bleed",
+	"stun", "guard", "heal", "turn", "target", "ability",
+]
 const HARVEST_FRIGHT_TEXT := "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, " \
 	+ "leaving Weak on hits; at stitch tier III it also reaches rank 4."
 var failures: Array[String] = []
@@ -93,6 +101,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_starter_patch_appearance_text()
 	_test_each_tier()
 	_test_area_and_effects()
 	_test_guard_and_dodge()
@@ -300,6 +309,51 @@ func _test_catalog() -> void:
 	out_of_range_target["ability"]["target"] = [1, 2, 3, 4, 5]
 	_check(not bool(StitchedParts.validate_part(out_of_range_target).get("ok", false)),
 		"AC3: out-of-bounds target rank rejects on a crow legs part copy")
+
+
+## AC1/AC2: the S14 starters stay the same head and arms parts — same IDs, names, owner and
+## slots — while their base copy now describes the sewn cloth patch a player sees. Neither
+## sentence may advertise a retired part-granted ability, status, target, rank, damage or
+## stitch-tier mechanic.
+func _test_starter_patch_appearance_text() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: Scarecrow catalog loads for the starter patch copy")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["head"]: {"name": "Sack Glare", "slot": "head", "text": SACK_GLARE_TEXT},
+		STARTERS["arms"]: {"name": "Fork Jab", "slot": "arms", "text": FORK_JAB_TEXT},
+	}
+	# The exact sentences the two starters used to advertise as part-cast moves.
+	var old_sentences := [
+		"A sack-faced glare Weakens and Marks a foe in enemy ranks 1-3; "
+			+ "at stitch tier III it reaches rank 4.",
+		"Jab a front foe with the pitchfork, leaving a Bleed.",
+	]
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: starter patch keeps its named ID: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["slot"]) == str(spec["slot"]) and str(part["owner"]) == "scarecrow"
+			and str(part["name"]) == str(spec["name"]),
+			"AC1: starter patch keeps its slot, Scarecrow owner and name: " + id)
+		var text := str(part.get("text", ""))
+		_check(not text.is_empty(), "AC2: starter patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: starter patch base copy is the exact sewn-cloth sentence: " + id)
+		_check(not (text in old_sentences),
+			"AC2: starter patch no longer carries a retired part-action sentence: " + id)
+		var lowered := text.to_lower()
+		for word in PATCH_FORBIDDEN_WORDS:
+			_check(not lowered.contains(word),
+				"AC2: starter patch copy never advertises retired '%s': %s" % [word, id])
+		# Fail-closed: the shipped catalog still refuses a patch copy with blank text.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
 
 
 func _test_each_tier() -> void:
@@ -732,7 +786,7 @@ func _test_sack_glare_rank4_data() -> void:
 		and int(base["target_mask"]) == front_mask,
 		"AC1: tier reads never replace Sack Glare's authored base reach or potency")
 	_check(str(part["text"]) == SACK_GLARE_TEXT,
-		"AC1: Sack Glare text states its front-three reach and the tier-III rank-four unlock")
+		"AC1: Sack Glare base copy describes its sewn burlap brow patch, not the retired cast")
 	for id in SIBLING_PARTS:
 		var sibling: Dictionary = cat["by_id"][id]
 		var spec: Dictionary = SIBLING_PARTS[id]
