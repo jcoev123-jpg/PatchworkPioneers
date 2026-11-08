@@ -1670,15 +1670,19 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 			receipt.statuses.append({"status": "cleanse", "patch": patch_id})
 		elif effect == "steal":
 			# A gold steal on an ally heal harms that ally too: the patch always
-			# affects the actual target, not just the opposing side.
+			# affects the actual target, not just the opposing side. The drained
+			# stuffing never restores a caster this same exchange just made dead
+			# or LOST (a self-steal through the death door, or the shared fray
+			# cascade of a dying target): the bite lands, the drain does not.
 			if target.side in ["hero", "foe"]:
 				var actual := mini(int(target.hp), amount)
 				_damage_target(target, actual, receipt)
-				actor.hp = mini(int(actor.max_hp), int(actor.hp) + actual)
-				if actor.hp > 0:
-					actor.hanging = false
-					actor.death_hits = 0
-				receipt.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
+				if not actor.get("dead", false) and not actor.get("lost", false):
+					actor.hp = mini(int(actor.max_hp), int(actor.hp) + actual)
+					if actor.hp > 0:
+						actor.hanging = false
+						actor.death_hits = 0
+					receipt.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
 		elif effect == "heal":
 			# The sewn-on Cotton/Gold healing mends the signature's actual surviving
 			# target, hero or foe alike (cycle 626's target-side principle): a foe
@@ -1697,6 +1701,11 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 		else:
 			_apply_effects(actor, target, {"effects": {effect: amount}}, receipt)
 		receipt["patches"] = receipt.get("patches", []) + [patch_id]
+		# Ordered sockets stop the moment a patch made the actual target dead or
+		# LOST: no later patch in this same signature may heal, mark or follow up
+		# on the doll that just left the fight, so the receipt stays truthful.
+		if target.get("dead", false) or target.get("lost", false):
+			break
 
 
 func _resolve_single(actor: Dictionary, ability: Dictionary, target: Dictionary) -> Dictionary:

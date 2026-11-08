@@ -3,7 +3,10 @@ extends SceneTree
 ## surviving target of its signature, including a foe struck by an attack.
 ## Seeded, catalog-built battles driven only by public signature, foe-ability
 ## and pass actions; wounds and deaths come from real legal play, never from
-## direct _apply_effects calls or test-only unit mutation.
+## direct _apply_effects calls or test-only unit mutation. The terminal
+## gold-sequence fixtures construct their two-torn-limb, 1-HP death-door
+## preconditions explicitly, then prove through public use_ability that LOST
+## dolls never receive a later patch's healing, effects or receipt entries.
 
 var failures: Array[String] = []
 var checks := 0
@@ -18,6 +21,8 @@ const SACK := "sack_swing"
 const PINCH := "pinch"
 const COTTON := "cotton_mending_fuzz"
 const GOLD := "gold_heart_knot"
+const HUNGRY := "gold_hungry_button"
+const CASING := "tinker_torso_casing_ward"
 
 const SEED := 55
 
@@ -64,6 +69,14 @@ func _any_heal_entry(hit: Dictionary) -> bool:
 		if entry.get("status") == "heal":
 			return true
 	return false
+
+
+func _steal_entries(hit: Dictionary, patch_id: String) -> Array:
+	var found: Array = []
+	for entry in hit.get("statuses", []):
+		if entry.get("status") == "steal" and str(entry.get("patch", "")) == patch_id:
+			found.append(entry)
+	return found
 
 
 ## Authored heal statuses carry no "patch" key; -1 when the ability has none.
@@ -358,6 +371,171 @@ func _killed(receipt: Dictionary) -> bool:
 	return results.size() == 1 and results[0].has("heap")
 
 
+## A surviving allied transfer control: a nonterminal Hungry Button on a
+## different ally drains only the actual damage into the caster, capped at
+## the caster's maximum, and draws no extra RNG against the identical
+## unsocketed signature.
+func _surviving_ally_steal_control() -> void:
+	var sockets := {"warden": {SHIELD_CATCH: [HUNGRY]}}
+	var battle := _battle(sockets)
+	var plain := _battle({})
+	if battle == null or plain == null:
+		return
+	if not _to_turn(battle, "warden", 200) or not _to_turn(plain, "warden", 200):
+		_check(false, "precondition: surviving transfer control reaches real Warden turns")
+		return
+	var doll: Dictionary = battle._units["seamstress"]
+	var caster: Dictionary = battle._units["warden"]
+	var plain_doll: Dictionary = plain._units["seamstress"]
+	var plain_caster: Dictionary = plain._units["warden"]
+	doll.hp = 5
+	caster.hp = int(caster.max_hp) - 7
+	plain_doll.hp = 5
+	plain_caster.hp = int(plain_caster.max_hp) - 7
+	var caster_before := int(caster.hp)
+	_check(int(doll.hp) == 5 and caster_before == int(caster.max_hp) - 7
+		and battle.rng_state() == plain.rng_state(),
+		"precondition: wounded ally, wounded caster and identical seeded RNG states")
+	var receipt: Dictionary = battle.use_ability(SHIELD_CATCH, int(doll.rank))
+	var plain_receipt: Dictionary = plain.use_ability(SHIELD_CATCH, int(plain_doll.rank))
+	var results: Array = receipt.get("results", [])
+	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
+		and results[0].get("target") == str(doll.id),
+		"socketed Shield Catch resolves on its actual surviving ally")
+	if results.size() != 1:
+		return
+	var hit: Dictionary = results[0]
+	var steals := _steal_entries(hit, HUNGRY)
+	_check(steals.size() == 1 and int(steals[0].get("amount", -1)) == 3,
+		"the nonterminal Hungry Button reports exactly its actual drained three")
+	_check(int(doll.hp) == 2 and not bool(doll.hanging) and not bool(doll.lost)
+		and int(hit.get("target_hp", -1)) == 2,
+		"the surviving ally loses exactly the actual damage and stays present")
+	_check(int(caster.hp) == caster_before + 3 and int(caster.hp) <= int(caster.max_hp),
+		"the caster gains exactly the transferred damage below its cap")
+	_check(hit.get("patches", []) == [HUNGRY] and battle.rng_state() == plain.rng_state(),
+		"the drain patch draws no extra RNG against the identical unsocketed cast")
+	_check(plain_receipt.get("ok", false) and int(plain_doll.hp) == 5
+		and int(plain_caster.hp) == int(plain_caster.max_hp) - 7,
+		"the unsocketed control never wounds the ally or heals the caster")
+	var capped := _battle(sockets)
+	if capped == null or not _to_turn(capped, "warden", 200):
+		_check(false, "precondition: capped transfer control reaches a real Warden turn")
+		return
+	var cap_doll: Dictionary = capped._units["seamstress"]
+	var cap_caster: Dictionary = capped._units["warden"]
+	cap_doll.hp = 5
+	cap_caster.hp = int(cap_caster.max_hp) - 1
+	var cap_receipt: Dictionary = capped.use_ability(SHIELD_CATCH, int(cap_doll.rank))
+	var cap_results: Array = cap_receipt.get("results", [])
+	_check(cap_receipt.get("ok", false) and cap_results.size() == 1
+		and int(cap_caster.hp) == int(cap_caster.max_hp) and int(cap_doll.hp) == 2,
+		"a nearly full caster caps the drained heal at its maximum without overhealing")
+
+
+## A confirmed allied Shield Catch whose ordered Hungry Button then Heart Knot
+## bites through the death door: the ally stays LOST at zero HP with no
+## equipment and the second Heart Knot never heals, applies or appears.
+func _terminal_ally_gold_sequence() -> void:
+	var battle := _battle({"warden": {SHIELD_CATCH: [HUNGRY, GOLD]}})
+	if battle == null:
+		return
+	if not _to_turn(battle, "warden", 200):
+		_check(false, "precondition: terminal gold fixture reaches a real Warden turn")
+		return
+	var doll: Dictionary = battle._units["seamstress"]
+	var caster: Dictionary = battle._units["warden"]
+	# Explicit two-torn-limb, 1-HP death-door precondition: the next damaging
+	# zero-HP hit is a third door hit, which is always a terminal head tear.
+	doll.hp = 1
+	doll.parts.arms.torn = true
+	doll.parts.legs.torn = true
+	doll.death_hits = 2
+	battle._recompute_stats(doll)
+	caster.hp = int(caster.max_hp) - 4
+	var caster_before := int(caster.hp)
+	_check(int(doll.hp) == 1 and bool(doll.parts.arms.torn) and bool(doll.parts.legs.torn)
+		and int(doll.death_hits) == 2 and not bool(doll.lost)
+		and caster_before == int(caster.max_hp) - 4,
+		"precondition: two-torn-limb one-HP ally faces a genuinely wounded Warden")
+	var receipt: Dictionary = battle.use_ability(SHIELD_CATCH, int(doll.rank))
+	var results: Array = receipt.get("results", [])
+	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
+		and results[0].get("target") == str(doll.id),
+		"confirmed allied Shield Catch resolves on its actual ally target")
+	if results.size() != 1:
+		return
+	var hit: Dictionary = results[0]
+	var door: Dictionary = hit.get("death_door", {})
+	_check(bool(hit.get("lost", false)) and int(door.get("hits", 0)) == 3
+		and str(door.get("tear", {}).get("slot", "")) == "head",
+		"the Hungry Button's bite is an explicit terminal third door hit")
+	_check(bool(doll.lost) and int(doll.hp) == 0 and not bool(doll.hanging)
+		and doll.parts.is_empty(),
+		"the bitten ally stays LOST at zero HP with no equipment")
+	var steals := _steal_entries(hit, HUNGRY)
+	_check(steals.size() == 1 and int(steals[0].get("amount", -1)) == 1
+		and int(caster.hp) == caster_before + 1,
+		"the executed Hungry Button drained exactly one into its surviving caster")
+	_check(hit.get("patches", []) == [HUNGRY],
+		"the receipt carries only the executed Hungry Button patch ID")
+	_check(_heal_entries(hit, GOLD).is_empty() and not _any_heal_entry(hit),
+		"the second Heart Knot never heals or applies to the LOST ally")
+	_check(int(hit.get("target_hp", -1)) == 0,
+		"the receipt reports the LOST ally's final zero HP")
+	var guarded := false
+	for entry in hit.get("statuses", []):
+		if entry.get("status") == "guard" and str(entry.get("guards", "")) == str(doll.id):
+			guarded = true
+	_check(guarded, "the authored Guard effect still applies alongside the fatal patch")
+
+
+## A self-targeted Casing Ward whose Hungry Button bites its own caster through
+## the death door: the caster stays LOST at zero HP, never drained back up.
+func _terminal_self_casing_ward() -> void:
+	var battle := _battle({"tinker": {CASING: [HUNGRY]}})
+	if battle == null:
+		return
+	if not _to_turn(battle, "tinker", 200):
+		_check(false, "precondition: self-steal fixture reaches a real Tinker turn")
+		return
+	var doll: Dictionary = battle._units["tinker"]
+	doll.hp = 1
+	doll.parts.arms.torn = true
+	doll.parts.legs.torn = true
+	doll.death_hits = 2
+	battle._recompute_stats(doll)
+	_check(int(doll.hp) == 1 and bool(doll.parts.arms.torn) and bool(doll.parts.legs.torn)
+		and int(doll.death_hits) == 2 and not bool(doll.lost),
+		"precondition: two-torn-limb one-HP Tinker faces its own socketed ward")
+	var receipt: Dictionary = battle.use_ability(CASING, int(doll.rank))
+	var results: Array = receipt.get("results", [])
+	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
+		and results[0].get("target") == str(doll.id),
+		"self-targeted Casing Ward resolves on its actual caster")
+	if results.size() != 1:
+		return
+	var hit: Dictionary = results[0]
+	var door: Dictionary = hit.get("death_door", {})
+	_check(bool(hit.get("lost", false)) and int(door.get("hits", 0)) == 3
+		and str(door.get("tear", {}).get("slot", "")) == "head",
+		"the self-bite is an explicit terminal third door hit")
+	_check(bool(doll.lost) and int(doll.hp) == 0 and not bool(doll.hanging)
+		and doll.parts.is_empty(),
+		"the LOST caster stays at zero HP with no equipment")
+	_check(_steal_entries(hit, HUNGRY).is_empty() and not _any_heal_entry(hit),
+		"no drain or heal receipt survives the caster's own fall")
+	_check(hit.get("patches", []) == [HUNGRY],
+		"the receipt carries only the executed Hungry Button patch ID")
+	_check(int(hit.get("target_hp", -1)) == 0,
+		"the receipt reports the LOST caster's final zero HP")
+	var warded := false
+	for entry in hit.get("statuses", []):
+		if entry.get("status") == "thorns" and int(entry.get("duration", 0)) == 2:
+			warded = true
+	_check(warded, "the authored Casing Ward thorns still stamp the receipt")
+
+
 ## Misses, illegal actions, unsocketed attacks and S14-off cannot heal or spend.
 func _miss_and_refusals() -> void:
 	var battle := _battle({"warden": {COMMAND: [COTTON]}})
@@ -511,6 +689,9 @@ func _initialize() -> void:
 	_ally_heal()
 	_hanging_recovery()
 	_lethal_foe()
+	_surviving_ally_steal_control()
+	_terminal_ally_gold_sequence()
+	_terminal_self_casing_ward()
 	_miss_and_refusals()
 	_replay_and_rng_parity()
 	for message in failures:
