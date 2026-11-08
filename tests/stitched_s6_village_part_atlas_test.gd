@@ -1,6 +1,6 @@
 extends SceneTree
 ## Headless S6 contract: follow the real village entry to the guide's nested
-## inspector. All seven disk-authored maker/spoils catalogs browse without runs.
+## inspector. All configured disk-authored maker/spoils catalogs browse without runs.
 const VILLAGE := preload("res://scenes/base_screen.tscn")
 const WARDEN := "res://data/parts/warden_parts.json"
 const FOES := "res://data/parts/enemy_parts.json"
@@ -9,7 +9,26 @@ const TINKER := "res://data/parts/tinker_parts.json"
 const YARN_RANGER := "res://data/parts/yarn_ranger_parts.json"
 const LANTERN_MONK := "res://data/parts/lantern_monk_parts.json"
 const BUTTON_GOLEM := "res://data/parts/button_golem_parts.json"
-const SOURCES := [WARDEN, SEAMSTRESS, TINKER, YARN_RANGER, FOES, LANTERN_MONK, BUTTON_GOLEM]
+const RAG_DUELIST := "res://data/parts/rag_duelist_parts.json"
+const RAG_PATCHES := {
+    "head": [
+        {"id": "rag_duelist_head_feather_feint", "name": "Feather Feint", "thread": "crimson"},
+        {"id": "rag_duelist_head_tattered_snare", "name": "Tattered Snare", "thread": "bone"},
+    ],
+    "arms": [
+        {"id": "rag_duelist_arms_rapier_lunge", "name": "Rapier Lunge", "thread": "indigo"},
+        {"id": "rag_duelist_arms_needle_prick", "name": "Needle Prick", "thread": "ash"},
+    ],
+    "torso": [
+        {"id": "rag_duelist_torso_cape_parry", "name": "Cape Parry", "thread": "bone"},
+        {"id": "rag_duelist_torso_duelist_reprise", "name": "Duelist Reprise", "thread": "crimson"},
+    ],
+    "legs": [
+        {"id": "rag_duelist_legs_cape_slip", "name": "Cape Slip", "thread": "ash"},
+        {"id": "rag_duelist_legs_cape_flourish", "name": "Cape Flourish", "thread": "indigo"},
+    ],
+}
+const SOURCES := [WARDEN, SEAMSTRESS, TINKER, YARN_RANGER, FOES, LANTERN_MONK, BUTTON_GOLEM, RAG_DUELIST]
 
 var failures: Array[String] = []
 var checks := 0
@@ -116,6 +135,12 @@ func _maker_matches(inspector: StitchedPartInspector, id: String) -> bool:
     if maker.is_empty():
         return not meta.contains("THREAD:")
     return meta.contains("\nTHREAD: " + maker.to_upper())
+
+
+func _owner_label(filter: OptionButton, owner: String, label: String) -> bool:
+    var index := StitchedPartInspector.OWNERS.find(owner)
+    return index >= 0 and index < filter.get_item_count() and (
+        filter.get_item_id(index) == index and filter.get_item_text(index) == label)
 
 
 func _witness(inspector: StitchedPartInspector, id: String, name: String,
@@ -248,6 +273,67 @@ func _browse_new_maker(inspector: StitchedPartInspector, owner_filter: OptionBut
         "foreign part and forged owner cannot change filtered %s selection" % owner)
 
 
+## Test each exact authored patch without asserting a global catalog total.
+func _browse_rag_duelist(inspector: StitchedPartInspector, owner_filter: OptionButton,
+        all_slots: Dictionary) -> void:
+    var catalog := StitchedParts.load_catalog(RAG_DUELIST)
+    _check(bool(catalog.get("ok", false)), "Rag Duelist independently validates")
+    if not bool(catalog.get("ok", false)):
+        return
+    var by_id: Dictionary = catalog["by_id"]
+    var owner_index := StitchedPartInspector.OWNERS.find("rag_duelist")
+    _check(_owner_label(owner_filter, "rag_duelist", "Rag Duelist"),
+        "Rag Duelist is named in the existing owner selector")
+    if owner_index < 0:
+        return
+    owner_filter.select(owner_index)
+    owner_filter.item_selected.emit(owner_index)
+    _check(inspector.selected_owner == "rag_duelist" and not owner_filter.disabled,
+        "mounted owner selector chooses Rag Duelist")
+    for slot in StitchedPartInspector.SLOTS:
+        var button := inspector.get_node("CatalogPanel/Slot" + slot.capitalize()) as Button
+        await _click(button)
+        var visible := inspector.visible_part_ids_in_slot(slot)
+        var rows := inspector.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer
+        _check(inspector.active_slot == slot and button.button_pressed
+            and visible.size() == 2 and rows.get_child_count() == 2
+            and inspector.part_ids_in_slot(slot) == all_slots[slot],
+            "Rag has two real rows in %s, with full slot index unchanged" % slot)
+        for expected in RAG_PATCHES[slot]:
+            var id := str(expected["id"])
+            var name := str(expected["name"])
+            var thread := str(expected["thread"])
+            _check(by_id.has(id) and visible.has(id)
+                and str(by_id[id]["slot"]) == slot
+                and str(by_id[id]["owner"]) == "rag_duelist"
+                and str(by_id[id]["name"]) == name
+                and StitchedSewnPatches.thread_of(id) == thread,
+                "Rag validated source names exact patch, owner, slot and maker thread: " + id)
+            if not by_id.has(id):
+                continue
+            var row := rows.get_node_or_null("Part_" + id) as Button
+            _check(row != null and row.text == "%s   /   rag_duelist" % name,
+                "Rag has actual selectable authored row: " + id)
+            _source_witness(inspector, by_id[id])
+            _check(inspector.selected_part_id == id and inspector.active_slot == slot
+                and _line(inspector, "PartName") == name
+                and _line(inspector, "PartMeta").contains("THREAD: " + thread.to_upper())
+                and _no_retired_readouts(inspector) and _cloth_copy(inspector, slot),
+                "Rag selected metadata has no retired ability or numerical projection: " + id)
+            var icon := "res://assets/paper/stitched/patches/" + id + ".png"
+            _check(ResourceLoader.exists(icon)
+                and StitchedSewnPatches.icon_path(id, slot) == icon
+                and _texture_path(_preview(inspector)) == icon
+                and _preview(inspector).visible,
+                "Rag exact-ID PNG is mounted instead of a fallback: " + id)
+            if id == "rag_duelist_head_feather_feint" or id == "rag_duelist_arms_rapier_lunge":
+                for tier in [1, 2, 3]:
+                    await _source_tier(inspector, by_id[id], tier)
+        _check(not inspector.select_part("warden_head_pot_helm_bonk")
+            and inspector.selected_owner == "rag_duelist" and _no_retired_readouts(inspector),
+            "Rag-only slot refuses foreign ID and retired combat readouts: " + slot)
+
+
 func _run() -> void:
     root.size = Vector2i(1280, 720)
     var originals: Dictionary = {}
@@ -270,7 +356,11 @@ func _run() -> void:
             "scissor_crab_claw_arm", "moth_swarm_wings",
             "felt_bulwark_button_shield",
             "lantern_monk_head_moth_wink", "lantern_monk_arms_wick_spark",
-            "button_golem_head_loose_pop", "button_golem_arms_button_fist"]:
+            "button_golem_head_loose_pop", "button_golem_arms_button_fist",
+            "rag_duelist_head_feather_feint", "rag_duelist_head_tattered_snare",
+            "rag_duelist_arms_rapier_lunge", "rag_duelist_arms_needle_prick",
+            "rag_duelist_torso_cape_parry", "rag_duelist_torso_duelist_reprise",
+            "rag_duelist_legs_cape_slip", "rag_duelist_legs_cape_flourish"]:
         _check(actual_ids.has(id), "validated source actually contains witness " + id)
     view = VILLAGE.instantiate() as BaseScreen
     root.add_child(view)
@@ -332,21 +422,25 @@ func _run() -> void:
             return node is StitchedPartInspector).size() == 1,
         "nested modal stays blocked, labelled reference-only and singly mounted")
     var owner_filter := inspector.get_node("CatalogPanel/OwnerFilter") as OptionButton
-    _check(owner_filter != null and owner_filter.get_item_count() == 8
-        and owner_filter.get_item_text(0) == "All"
-        and owner_filter.get_item_text(4) == "Yarn Ranger"
-        and owner_filter.get_item_text(5) == "Lantern Monk"
-        and owner_filter.get_item_text(6) == "Button Golem"
-        and owner_filter.get_item_text(7) == "Spoils"
+    _check(owner_filter != null
+        and _owner_label(owner_filter, "all", "All")
+        and _owner_label(owner_filter, "yarn_ranger", "Yarn Ranger")
+        and _owner_label(owner_filter, "lantern_monk", "Lantern Monk")
+        and _owner_label(owner_filter, "button_golem", "Button Golem")
+        and _owner_label(owner_filter, "rag_duelist", "Rag Duelist")
+        and _owner_label(owner_filter, "any", "Spoils")
         and owner_filter.focus_mode == Control.FOCUS_ALL
         and root.get_visible_rect().encloses(owner_filter.get_global_rect()),
-        "real Gothic owner filter exposes eight groups inside 1280x720")
+        "Gothic owner filter has named groups without assuming a global count or Spoils index")
     _check(_no_retired_readouts(inspector)
         and _preview(inspector).get_global_rect().size == Vector2(96, 96)
         and root.get_visible_rect().encloses(_preview(inspector).get_global_rect()),
         "real mounted Reliquary has passive readable patch art and no attack projections")
-    _check(guide.catalog_paths == SOURCES and inspector.selected_owner == "all",
-        "live guide loads seven independent files and defaults to All")
+    var all_sources_once := true
+    for path in SOURCES:
+        all_sources_once = all_sources_once and guide.catalog_paths.count(path) == 1
+    _check(all_sources_once and inspector.selected_owner == "all",
+        "live guide includes each named validated source exactly once and defaults to All")
     var all_head := inspector.part_ids_in_slot("head")
     var all_slots: Dictionary = {}
     for slot in StitchedPartInspector.SLOTS:
@@ -386,9 +480,10 @@ func _run() -> void:
         "lantern_monk_head_moth_wink", "lantern_monk_arms_wick_spark", all_slots)
     await _browse_new_maker(inspector, owner_filter, "button_golem", BUTTON_GOLEM,
         "button_golem_head_loose_pop", "button_golem_arms_button_fist", all_slots)
+    await _browse_rag_duelist(inspector, owner_filter, all_slots)
     _check(inspector.select_owner("all") and
         inspector.visible_part_ids_in_slot("head") == all_head,
-        "All recovers original combined index after browsing the two new makers")
+        "All recovers original combined index after browsing the added makers")
     _check(inspector.select_owner("warden") and inspector.select_part("warden_head_pot_helm_bonk"),
         "Warden group remains browseable")
     _check(inspector.select_owner("any") and inspector.select_part("scissor_crab_claw_arm"),
@@ -398,7 +493,11 @@ func _run() -> void:
     for id in ["warden_head_pot_helm_bonk", "scissor_crab_claw_arm",
             "moth_swarm_wings", "felt_bulwark_button_shield",
             "lantern_monk_head_moth_wink", "lantern_monk_arms_wick_spark",
-            "button_golem_head_loose_pop", "button_golem_arms_button_fist"]:
+            "button_golem_head_loose_pop", "button_golem_arms_button_fist",
+            "rag_duelist_head_feather_feint", "rag_duelist_head_tattered_snare",
+            "rag_duelist_arms_rapier_lunge", "rag_duelist_arms_needle_prick",
+            "rag_duelist_torso_cape_parry", "rag_duelist_torso_duelist_reprise",
+            "rag_duelist_legs_cape_slip", "rag_duelist_legs_cape_flourish"]:
         _source_witness(inspector, actual_ids[id])
     _check((inspector.get_node("DetailsPanel/TierHeading") as Label).text == "STITCH FINISH"
         and (inspector.get_node("DetailsPanel/TierI") as Button).text == "Plain"
@@ -531,13 +630,23 @@ func _run() -> void:
     await _key(KEY_ESCAPE)
     _check(not inspector.visible and inspector.selected_part_id.is_empty(),
         "new-missing-source tests begin with a cleared, closed atlas")
+    await _click(guide.atlas_button)
+    _check(inspector.is_visible_in_tree()
+        and inspector.select_part("rag_duelist_head_feather_feint")
+        and _texture_path(_preview(inspector)) ==
+            "res://assets/paper/stitched/patches/rag_duelist_head_feather_feint.png",
+        "real Rag cloth is displayed successfully before the missing-source retry")
+    await _key(KEY_ESCAPE)
+    _check(not inspector.visible and inspector.selected_part_id.is_empty(),
+        "Rag cloth clears before failed re-open")
     seed(568263)
     var new_failure_expected_draw := randi()
     seed(568263)
     var before_new_failures := _state()
     for injection in [
             [5, LANTERN_MONK, "lantern_monk_head_moth_wink"],
-            [6, BUTTON_GOLEM, "button_golem_head_loose_pop"]]:
+            [6, BUTTON_GOLEM, "button_golem_head_loose_pop"],
+            [7, RAG_DUELIST, "rag_duelist_head_feather_feint"]]:
         var index: int = injection[0]
         var authentic_path: String = injection[1]
         var authentic_id: String = injection[2]
@@ -568,7 +677,7 @@ func _run() -> void:
         _check(not inspector.visible and inspector.selected_part_id.is_empty(),
             "maker retry index %d closes and clears the inspector" % index)
     _check(_state() == before_new_failures and randi() == new_failure_expected_draw,
-        "both missing-maker failures and retries leave village state and global RNG unchanged")
+        "all missing-maker failures and retries leave village state and global RNG unchanged")
     view.hide()
     await _frames()
     _check(not guide.is_open() and not guide.visible and not inspector.visible
@@ -597,8 +706,13 @@ func _run() -> void:
         "failed direct doorway restores Parts focus")
     guide.catalog_paths[4] = FOES
     await _click(view.parts_button)
-    _check(inspector.is_visible_in_tree() and inspector.select_part("scissor_crab_claw_arm"),
-        "direct house recovers authentic foe inspection after invalid source")
+    _check(inspector.is_visible_in_tree() and inspector.select_part("scissor_crab_claw_arm")
+        and inspector.select_part("rag_duelist_arms_rapier_lunge")
+        and _texture_path(_preview(inspector)) ==
+            "res://assets/paper/stitched/patches/rag_duelist_arms_rapier_lunge.png"
+        and _line(inspector, "PartMeta").contains("THREAD: INDIGO")
+        and _no_retired_readouts(inspector),
+        "direct Sewing Tin Parts recovers authentic foe and Rag inspection")
     view.close_village()
     _check(not guide.is_open() and not inspector.visible and entry.disabled
         and not view.has_open_village() and inspector.selected_part_id.is_empty(),
@@ -606,7 +720,7 @@ func _run() -> void:
     var sources_unchanged := true
     for path in SOURCES:
         sources_unchanged = sources_unchanged and originals[path] == FileAccess.get_file_as_string(path)
-    _check(sources_unchanged, "all seven authored JSON files remain byte-for-byte unchanged")
+    _check(sources_unchanged, "all named authored JSON files remain byte-for-byte unchanged")
     _check(_state()[0] == "Gold 27  ·  Scraps 6" and calls["back"] == 0
         and calls["set_out"] == 0 and calls["path"] == 0 and calls["tinker"] == 0
         and calls["warden"] == 0 and calls["difficulty"] == 0,
