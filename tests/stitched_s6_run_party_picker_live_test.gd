@@ -168,6 +168,33 @@ func _hover(tile: Button) -> void:
 
 ## Independently reconstruct displayed strings from shipped S14 records rather
 ## than comparing the formatter with itself or keeping a second ability table.
+## Independent native-effect oracle, from source values rather than formatted tooltips.
+func _source_effect_phrase(entry: Dictionary) -> String:
+	var words: Array[String] = []
+	if entry["dmg"][1] > 0:
+		words.append("strike")
+	var native := {
+		"mark": "mark", "guard": "guard", "heal": "mend", "weak": "weaken",
+		"exposed": "expose", "bleed": "bleed", "tangled": "tangle",
+		"blind": "blind", "stun": "stun", "thorns": "return harm",
+		"push": "push back", "pull": "pull forward", "dodge": "evade",
+		"riposte": "counterattack",
+	}
+	for effect in StitchedParts.EFFECT_KEYS:
+		if effect != "duration" and entry["effects"].has(effect):
+			words.append(native.get(effect, "apply " + effect.replace("_", " ")))
+	var description := "use this move"
+	if words.size() == 1:
+		description = words[0]
+	elif words.size() > 1:
+		description = ", ".join(words.slice(0, words.size() - 1)) + " and " + words[-1]
+	if entry["multi"]:
+		match entry["target_side"]:
+			"enemy": description += " several eligible foes"
+			"ally": description += " several eligible allies"
+			_: description += " across eligible targets"
+	return "Can " + description
+
 func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context: String, marked_id: String = "") -> void:
 	if picker == null:
 		_check(false, context + ": picker is present for hints")
@@ -203,8 +230,8 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			if not entry is Dictionary or not sides.has(entry.get("target_side", null)):
 				_check(false, context + ": complete authored " + slot + " entry for " + id)
 				continue
-			var line := "%s — %s · %s" % [
-				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]]]
+			var line := "%s — %s · %s · %s" % [
+				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]], _source_effect_phrase(entry)]
 			if four_admitted and id in admitted_ids:
 				var rank: int = admitted_ids.find(id) + 1
 				var can_launch: bool = rank in entry["launch"]
@@ -215,6 +242,16 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 				else:
 					blocked += 1
 			lines.append(line)
+			var effect_phrase: String = _source_effect_phrase(entry)
+			var no_amounts := true
+			for digit in "0123456789":
+				if effect_phrase.contains(digit):
+					no_amounts = false
+			_check(effect_phrase.begins_with("Can ") and no_amounts
+				and not effect_phrase.to_lower().contains("patch")
+				and not effect_phrase.to_lower().contains("socket")
+				and (effect_phrase.contains("several eligible") == bool(entry["multi"])),
+				context + ": " + id + "/" + slot + " shows only possible native effects, without amounts or patches")
 		var expected_tooltip := "\n".join(lines)
 		if id == marked_id:
 			expected_tooltip += "\n" + WARN_SUFFIX
@@ -253,6 +290,30 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 		context + ": Seamstress's ally and foe moves are distinguished")
 	_check(picker.tiles["tinker"].tooltip_text.contains("Torso — Casing Ward · Self"),
 		context + ": Tinker's self-only move is labelled Self")
+	_check(picker.tiles["warden"].tooltip_text.contains("Head — Pot Helm Command · Foe · Can mark")
+		and picker.tiles["warden"].tooltip_text.contains("Arms — Shield Catch · Ally · Can guard")
+		and picker.tiles["warden"].tooltip_text.contains("Torso — Iron Challenge · Foe · Can strike and weaken")
+		and picker.tiles["warden"].tooltip_text.contains("Legs — Rim Toss · Foe · Can strike and push back"),
+		context + ": Warden's mark, guard, weak, push are distinct")
+	_check(picker.tiles["seamstress"].tooltip_text.contains("Head — Mending Knot · Ally · Can mend")
+		and picker.tiles["seamstress"].tooltip_text.contains("Arms — Needle Prick · Foe · Can strike and bleed")
+		and picker.tiles["seamstress"].tooltip_text.contains("Torso — Shielding Hem · Ally · Can guard")
+		and picker.tiles["seamstress"].tooltip_text.contains("Legs — Tether Spools · Foe · Can tangle"),
+		context + ": Seamstress's ally heal/guard and foe bleed/tangle are distinct")
+	_check(picker.tiles["tinker"].tooltip_text.contains("Arms — Scrap Bomb · Foe · Can strike and expose several eligible foes")
+		and picker.tiles["tinker"].tooltip_text.contains("Torso — Casing Ward · Self · Can return harm")
+		and picker.tiles["tinker"].tooltip_text.contains("Legs — Tune Up · Ally · Can mend"),
+		context + ": Tinker's multi-foe Exposed, self Thorns and ally Heal are distinct")
+	_check(picker.tiles["lantern_monk"].tooltip_text.contains(
+		"Torso — Lamplight Wash · Ally · Can mend several eligible allies"),
+		context + ": Lantern Monk can mend several eligible allies, not everyone")
+	_check(picker.tiles["rag_duelist"].tooltip_text.contains("Torso — Feint Stitch · Self · Can evade")
+		and picker.tiles["button_golem"].tooltip_text.contains("Head — Button Brow · Foe · Can stun"),
+		context + ": Rag Duelist's duration Dodge and Button Golem's foe Stun are native")
+	if marked_id == "warden":
+		_check(picker.tiles["warden"].tooltip_text.count("Needs another rank") == StitchedParts.SLOTS.size()
+			and picker.tiles["warden"].tooltip_text.count(WARN_SUFFIX) == 1,
+			context + ": rank-four Warden has four blocked signatures and one warning")
 
 
 func _invalid_hints() -> void:
@@ -288,6 +349,25 @@ func _invalid_hints() -> void:
 	bad = source.duplicate(true)
 	bad["warden"]["legs"]["acc"] = -1
 	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "invalid S14 ability field fails closed")
+	for problem in ["unknown_effect", "noninteger_effect", "orphan_dodge", "invalid_multi"]:
+		bad = source.duplicate(true)
+		match problem:
+			"unknown_effect": bad["warden"]["head"]["effects"]["unearned_heal"] = 5
+			"noninteger_effect": bad["warden"]["head"]["effects"]["mark"] = "many"
+			"orphan_dodge": bad["warden"]["head"]["effects"] = {"dodge": 10}
+			"invalid_multi": bad["warden"]["head"]["multi"] = "true"
+		_check(StitchedPartyKitHints.tooltip("warden", bad) == "",
+			"invalid injected " + problem + " cannot leak a partial or invented signature")
+	var altered := source.duplicate(true)
+	altered["warden"]["head"]["dmg"] = [0, 1]
+	altered["warden"]["head"]["effects"] = {"blind": 1}
+	altered["warden"]["head"]["multi"] = true
+	var altered_text := StitchedPartyKitHints.tooltip("warden", altered)
+	_check(altered_text.split("\n").size() == StitchedParts.SLOTS.size()
+		and altered_text.begins_with("Head — Pot Helm Command · Foe · Can strike and blind several eligible foes")
+		and not altered_text.contains("Can mark")
+		and StitchedPartyKitHints.tooltip("warden", source).contains("Can mark"),
+		"a valid detached source derives damage, effect and multi without stale move-specific prose")
 	bad = source.duplicate(true)
 	bad["warden"]["extra_slot"] = bad["warden"]["head"].duplicate(true)
 	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "fifth unexpected slot fails closed")
