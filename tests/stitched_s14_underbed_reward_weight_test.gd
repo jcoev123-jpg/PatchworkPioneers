@@ -11,6 +11,7 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	_test_ac1_catalog_fail_closed()
 	_test_ac1_detached_records()
 	_test_ac1_eligibility_boundaries()
 	_test_ac2_oracle_and_weights()
@@ -20,6 +21,73 @@ func _initialize() -> void:
 		printerr(message)
 	print("stitched_s14_underbed_reward_weight_test: %d checks, %d failures" % [checks, failures.size()])
 	quit(0 if failures.is_empty() else 1)
+
+
+func _shipped_doors_copy() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(
+		FileAccess.get_file_as_string("res://data/stitched/s14_side_doors.json"))
+	return (parsed as Dictionary).duplicate(true) if parsed is Dictionary else {}
+
+
+## AC1: Impossible kind/reward/amount combinations fail closed through the public
+## catalog parser. Every negative fixture starts from a deep copy of the shipped
+## document and changes exactly one field while keeping both door families present,
+## so only the tightened invariants can reject it. The shipped records and valid
+## appended records still validate, without a fixed catalog total.
+func _test_ac1_catalog_fail_closed() -> void:
+	var valid: Dictionary = StitchedS14SideDoors.catalog(_shipped_doors_copy())
+	_check(not valid.is_empty(), "valid control: unchanged deep copy of the shipped catalog validates")
+	for door_id in ["underbed_stuffing_trade", "underbed_leg_trade", "underbed_fear_trade",
+			"attic_waxlight", "attic_rethread", "attic_headward"]:
+		_check(valid.has(door_id), "valid control: shipped door " + door_id + " still validates")
+
+	# Future valid appends validate too; no fixed total is required.
+	var appended := _shipped_doors_copy()
+	appended.doors.append({"id": "underbed_spare_trade", "kind": "underbed", "cost": "max_hp",
+		"amount": 6, "reward": "gold_patch"})
+	var appended_catalog: Dictionary = StitchedS14SideDoors.catalog(appended)
+	_check(appended_catalog.has("underbed_spare_trade")
+		and appended_catalog.size() == valid.size() + 1,
+		"valid appended underbed record validates without a fixed catalog total")
+	var appended_attic := _shipped_doors_copy()
+	appended_attic.doors.append({"id": "attic_spare_cache", "kind": "attic", "cost": "none",
+		"amount": 0, "reward": "mend"})
+	_check(StitchedS14SideDoors.catalog(appended_attic).has("attic_spare_cache"),
+		"valid appended free Attic record validates without a fixed catalog total")
+
+	# One-field negatives: each fixture keeps both door families, so family absence
+	# can never be the reason the catalog fails closed.
+	var negatives := [
+		{"row": "underbed_stuffing_trade", "field": "reward", "value": "candle",
+			"label": "underbed reward from the free Attic family fails closed"},
+		{"row": "underbed_leg_trade", "field": "reward", "value": "head_guard",
+			"label": "underbed reward outside the weighted family fails closed"},
+		{"row": "underbed_fear_trade", "field": "reward", "value": "mend",
+			"label": "underbed reward without a draw weight fails closed"},
+		{"row": "attic_waxlight", "field": "reward", "value": "gold_patch",
+			"label": "Attic reward from the weighted Underbed family fails closed"},
+		{"row": "attic_rethread", "field": "reward", "value": "silk_patch",
+			"label": "Attic reward outside the free family fails closed"},
+		{"row": "attic_headward", "field": "amount", "value": 2,
+			"label": "nonzero free Attic amount fails closed"},
+		{"row": "underbed_leg_trade", "field": "amount", "value": 2,
+			"label": "limb price other than exactly one limb fails closed"},
+		{"row": "underbed_leg_trade", "field": "amount", "value": 0,
+			"label": "zero-amount Underbed deal fails closed (preserved amount check)"},
+	]
+	for negative_case in negatives:
+		var document := _shipped_doors_copy()
+		var mutated := false
+		for door in document.doors:
+			if door.id == negative_case.row:
+				door[negative_case.field] = negative_case.value
+				mutated = true
+		var kinds := {}
+		for door in document.doors:
+			kinds[door.kind] = true
+		_check(mutated and kinds.has("underbed") and kinds.has("attic"),
+			negative_case.label + " (fixture mutates one field and keeps both door families)")
+		_check(StitchedS14SideDoors.catalog(document).is_empty(), negative_case.label)
 
 
 func _test_ac1_detached_records() -> void:
