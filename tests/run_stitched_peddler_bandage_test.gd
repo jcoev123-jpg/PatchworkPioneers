@@ -196,8 +196,8 @@ func _test_actionable_quotes() -> void:
 	_assert_quote(_open(120, PRICE), 120, ["buy_bandage", "leave"], true, "",
 		both, "ample gold")
 	_assert_quote(_open(PRICE - 1, PRICE), PRICE - 1, ["leave"], false,
-		"not enough gold", both, "one gold short")
-	_assert_quote(_open(0, PRICE), 0, ["leave"], false, "not enough gold", both,
+		"not enough gold", [], "one gold short")
+	_assert_quote(_open(0, PRICE), 0, ["leave"], false, "not enough gold", [],
 		"empty wallet")
 	var unbled := _party()
 	unbled[0]["statuses"] = {"weak": 1}
@@ -212,13 +212,14 @@ func _test_actionable_quotes() -> void:
 	invalid_bleed[3]["statuses"] = {"bleed": "3"}
 	_assert_quote(_open_party(120, PRICE, invalid_bleed), 120, ["leave"], false,
 		"no bleeding heroes", [], "invalid Bleed values")
-	# A mixed roster lists only the truly bleeding hero, even when unaffordable.
+	# A mixed roster lists only the truly bleeding hero when payable; an
+	# unaffordable quote advertises no target at all.
 	var mixed := invalid_bleed.duplicate(true)
 	mixed[2]["statuses"] = {"bleed": 2}
 	_assert_quote(_open_party(120, PRICE, mixed), 120, ["buy_bandage", "leave"],
 		true, "", ["seamstress"], "mixed roster affordable")
 	_assert_quote(_open_party(PRICE - 1, PRICE, mixed), PRICE - 1, ["leave"], false,
-		"not enough gold", ["seamstress"], "mixed roster unaffordable")
+		"not enough gold", [], "mixed roster unaffordable")
 	# With nothing to cure and no gold, the missing target is reported first.
 	_assert_quote(_open_party(0, PRICE, unbled), 0, ["leave"], false,
 		"no bleeding heroes", [], "unbled and broke")
@@ -303,7 +304,8 @@ func _test_refusals() -> void:
 	_check(poor.quote().get("ok") == true and poor.quote().get("price") == PRICE
 		and poor.quote().get("choices") == ["leave"]
 		and poor.quote().get("can_buy") == false
-		and poor.quote().get("blocked") == "not enough gold",
+		and poor.quote().get("blocked") == "not enough gold"
+		and poor.quote().get("eligible") == [],
 		"an unaffordable quote is still honestly disclosed, with Leave only")
 	_reject(poor, "rag_duelist", NODE, poor_snap, "insufficient gold")
 	# A replayed or falsified quote cannot authorize a buy it does not permit.
@@ -498,8 +500,8 @@ func _test_bleed_outcomes() -> void:
 		and poor_quote.get("can_buy") == false
 		and poor_quote.get("blocked") == "not enough gold"
 		and poor_quote.get("choices") == ["leave"]
-		and poor_quote.get("eligible") == ["rag_duelist", "warden"],
-		"a short wallet keeps the truthful rows, blocks Buy and offers only Leave")
+		and poor_quote.get("eligible") == [],
+		"a short wallet keeps the truthful rows, blocks Buy, offers only Leave and no target")
 	# Clean roster, and a roster whose only bleeder is LOST: empty and Leave-only.
 	var clean := _party()
 	clean[0]["statuses"] = {"weak": 1}
