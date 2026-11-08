@@ -16,14 +16,15 @@ const DUST := {
 }
 const DIVE := {
 	"id": "queen_dive", "name": "Pin Crown Dive", "kind": "melee",
-	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2, "snip": 1},
+	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
+	"acc": 85, "dmg": [6, 8], "crit": 0,
+	"effects": {"tangled": 2, "snip": 1, "mark": 3},
 	"self_move": 0, "move": "attack3",
 }
 const DEVOUR := {
 	"id": "queen_devour", "name": "Devour", "kind": "melee",
 	"launch": [1, 2], "target": [1, 2], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [7, 9], "crit": 0, "effects": {"bleed": 2},
+	"acc": 85, "dmg": [7, 9], "crit": 0, "mark_damage": 3, "effects": {"bleed": 2},
 	"self_move": 0, "move": "attack4",
 }
 const VEIL := {
@@ -112,7 +113,7 @@ func _test_source(catalog: Dictionary) -> void:
 		"turns_per_round": 2, "trophy": "moth_queen_wing_crown",
 		"abilities": [DUST, DIVE, DEVOUR, VEIL]}
 	_expect(queen.get("stitched") == _json(expected),
-		"AC1: exact Veil kit preserved; Dive now carries only Tangled 2")
+		"AC1: exact Veil kit preserved; Dive carries Tangled 2, SNIP 1 and Mark 3, Devour carries Mark damage 3")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "moth_queen")
 	_expect(not foe.is_empty(), "AC1: the canonical Queen foe loads")
 	if foe.is_empty():
