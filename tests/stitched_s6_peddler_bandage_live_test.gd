@@ -181,6 +181,15 @@ func _status_contract(base: Dictionary) -> Dictionary:
 	return {"ok": admitted, "refused": refused}
 
 
+## A visit snapshot minus its per-visit identity: two fresh, otherwise identical
+## runs open different visits on purpose, so only the identity is excluded from
+## the exact-replay comparison; every other field is still compared.
+func _replay_state(state: Dictionary) -> Dictionary:
+	var copy: Dictionary = state.duplicate(true)
+	copy.erase("visit_id")
+	return copy
+
+
 func _trace() -> Dictionary:
 	var app: Node = load("res://scenes/app.tscn").instantiate()
 	root.add_child(app)
@@ -595,11 +604,12 @@ func _trace() -> Dictionary:
 	return {
 		"pinch": pinch.duplicate(true), "opening": opening, "final_round": final_round,
 		"victory_hp": victory_hp, "victory_bleed": victory_bleed,
-		"roster": roster, "displayed": displayed, "opened_state": opened_state,
+		"roster": roster, "displayed": _replay_state(displayed),
+		"opened_state": _replay_state(opened_state),
 		"next_config": next_config, "next_opening": next_opening,
 		"next_state": next_state, "third_bleed": third_wounds["bleed"],
 		"third_hp": third_wounds["hp"], "third_opening": third_opening,
-		"second_quote": second_quote, "second_carry": carry_second,
+		"second_quote": _replay_state(second_quote), "second_carry": carry_second,
 		"gold": final_gold, "status_contract": status_contract,
 	}
 
