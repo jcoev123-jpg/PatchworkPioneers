@@ -86,6 +86,45 @@ func build(default_picks: Array) -> void:
 	_arrange_tiles()
 
 
+## A shortcut acts on the same original Button property as a click, so its
+## toggled signal remains the only path to the validated draft_changed signal.
+## Ignore keys if this is no longer the focused, mounted New Run page.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if (key == null or not key.pressed or key.echo
+			or key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed):
+		return
+	var index := int(key.physical_keycode) - int(KEY_1)
+	if (index < 0 or index >= StitchedPartyAdmission.HERO_IDS.size()
+			or key.physical_keycode > KEY_8):
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or not tiles_match_draft():
+		return
+	var content := get_parent() as Control
+	var frame := content.get_parent() if content != null else null
+	var page := frame.get_parent() as Control if frame != null else null
+	var app := page.get_parent() if page != null else null
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if (page == null or page.name != "StitchedRunPage"
+			or page.get_meta("page_kind", "") != "picker" or not page.is_visible_in_tree()
+			or app == null or app.get("stitched_run_panel") != page
+			or get_meta("stitched_run_epoch", -1) != app.get("_stitched_run_epoch")
+			or focus_owner == null or not content.is_ancestor_of(focus_owner)):
+		return
+	var id: String = StitchedPartyAdmission.HERO_IDS[index]
+	var tile: Button = tiles.get(id)
+	if (not is_instance_valid(tile) or tile.get_parent() != self
+			or not tile.is_visible_in_tree() or tile.disabled):
+		return
+	# A focused Set out can become disabled on deselection. Like a mouse click,
+	# focus the actual tile first, so the next number still has a live focus context.
+	# Existing tile-to-tile focus is preserved through the deferred reflow.
+	if not is_ancestor_of(focus_owner):
+		tile.grab_focus()
+	tile.button_pressed = not tile.button_pressed
+	get_viewport().set_input_as_handled()
+
+
 func selected_ids() -> Array:
 	return _selected.duplicate()
 

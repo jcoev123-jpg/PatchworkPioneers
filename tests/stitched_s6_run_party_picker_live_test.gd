@@ -37,14 +37,23 @@ func _mouse(button: Button) -> void:
 		await process_frame
 
 
+func _key_event(code: Key, down: bool, repeat: bool = false, modifier: String = "") -> void:
+	var input := InputEventKey.new()
+	input.keycode = code
+	input.physical_keycode = code
+	input.pressed = down
+	input.echo = repeat
+	input.ctrl_pressed = modifier == "ctrl"
+	input.alt_pressed = modifier == "alt"
+	input.shift_pressed = modifier == "shift"
+	input.meta_pressed = modifier == "meta"
+	Input.parse_input_event(input)
+	await process_frame
+
+
 func _key(code: Key) -> void:
 	for down in [true, false]:
-		var input := InputEventKey.new()
-		input.keycode = code
-		input.physical_keycode = code
-		input.pressed = down
-		Input.parse_input_event(input)
-		await process_frame
+		await _key_event(code, down)
 
 
 func _picker(app: Node) -> StitchedRunPartyPicker:
@@ -501,6 +510,153 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 	return fresh
 
 
+## Exercise physical top-row digits on the actual title-mounted picker. A fresh
+## picker is returned so the existing pointer, focus, Warden and replay tests
+## still drive their original production route and controls.
+func _exercise_number_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> StitchedRunPartyPicker:
+	var actions: Array[Button] = app.stitched_run_buttons.duplicate()
+	var originals: Dictionary = picker.tiles.duplicate()
+	var heading := app.stitched_run_panel.find_child("StitchedPageHeading", true, false) as Label
+	_check(heading != null and heading.tooltip_text == "Keys 1–8: choose dolls"
+		and actions.size() == 2 and actions[0].text == "Set out" and actions[1].text == "Cancel",
+		"original heading offers the shortcut in its native tooltip without a new control")
+	var receipts: Array = []
+	picker.draft_changed.connect(func(picks: Array) -> void: receipts.append(picks.duplicate()))
+	var wallet_before := [app.session_gold, app.run_scraps]
+	var default_picks: Array = StitchedRunSession.DEFAULT_PICKS.duplicate()
+	seed(33081)
+	var expected_global := randi()
+	seed(33081)
+	# No false key-up, repeat, modified, keypad or unrelated-key toggles.
+	await _key_event(KEY_1, false)
+	await _key_event(KEY_1, true, true)
+	for modifier in ["ctrl", "alt", "shift", "meta"]:
+		await _key_event(KEY_1, true, false, modifier)
+	await _key_event(KEY_KP_1, true)
+	await _key_event(KEY_9, true)
+	await _key_event(KEY_F8, true)
+	await _key(KEY_LEFT)
+	_check(picker.selected_ids() == default_picks and app.stitched_run_draft == default_picks
+		and picker.tiles_match_draft() and receipts.is_empty()
+		and originals["warden"].button_pressed,
+		"releases, echo, four modifiers, keypad, out-of-range and navigation keys do not toggle dolls")
+	root.gui_release_focus()
+	_check(root.gui_get_focus_owner() == null,
+		"negative focus witness genuinely relinquishes current UI focus")
+	await _key(KEY_1)
+	_check(picker.selected_ids() == default_picks and app.stitched_run_draft == default_picks
+		and receipts.is_empty(), "unfocused picker does not capture a digit")
+	actions[0].grab_focus()
+	await _key(KEY_5)
+	_check(not originals["rag_duelist"].button_pressed and picker.selected_ids() == default_picks
+		and app.stitched_run_draft == default_picks and receipts.is_empty(),
+		"KEY_5 is refused as a genuine fifth Button toggle, without a draft receipt")
+	var codes := [KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6, KEY_7, KEY_8]
+	var draft: Array = default_picks.duplicate()
+	for i in range(4):
+		var id: String = StitchedPartyAdmission.HERO_IDS[i]
+		var prior: int = receipts.size()
+		await _key(codes[i])
+		draft.erase(id)
+		_check(not originals[id].button_pressed and picker.selected_ids() == draft
+			and app.stitched_run_draft == draft and picker.tiles_match_draft()
+			and receipts.size() == prior + 1 and receipts.back() == draft,
+			"unmodified top-row KEY_%d unchecks its original Button and emits the one authentic draft" % (i + 1))
+		if i == 0:
+			_check(root.gui_get_focus_owner() != null
+				and picker.is_ancestor_of(root.gui_get_focus_owner()),
+				"disabling focused Set out via a digit leaves focus on a live original tile")
+	_check(draft.is_empty() and actions[0].disabled
+		and actions[0].focus_mode == Control.FOCUS_NONE,
+		"four distinct digit deselections leave no picks and disable Set out")
+	var back_four: Array = []
+	for i in range(4, 8):
+		var id: String = StitchedPartyAdmission.HERO_IDS[i]
+		var prior: int = receipts.size()
+		await _key(codes[i])
+		back_four.append(id)
+		_check(originals[id].button_pressed and picker.selected_ids() == back_four
+			and app.stitched_run_draft == back_four and picker.tiles_match_draft()
+			and receipts.size() == prior + 1 and receipts.back() == back_four,
+			"unmodified top-row KEY_%d checks its original Button through draft_changed" % (i + 1))
+	var back_receipt := StitchedPartyAdmission.admit(back_four)
+	_check(back_receipt.get("ok") == true and picker.displayed_rank_ids() == back_receipt.hero_ids
+		and not actions[0].disabled and picker.tiles_match_draft(),
+		"keyboard-only back-four admission enables the unchanged Set out control")
+	await _key(KEY_1)
+	_check(picker.selected_ids() == back_four and app.stitched_run_draft == back_four
+		and not originals["warden"].button_pressed and receipts.size() == 8,
+		"another full-quartet fifth digit cannot evict the selected dolls")
+	for i in range(7, 3, -1):
+		await _key(codes[i])
+	_check(picker.selected_ids().is_empty() and actions[0].disabled,
+		"all four selected back-row digits toggle their own originals off")
+	# This draft's admitted visible rank order differs from its keyboard input order.
+	var witness := ["seamstress", "tinker", "lantern_monk", "rag_duelist"]
+	for code in [KEY_2, KEY_3, KEY_4]:
+		await _key(code)
+	originals["tinker"].grab_focus()
+	await _key(KEY_5)
+	var admitted := StitchedPartyAdmission.admit(witness)
+	_check(admitted.get("ok") == true and admitted.get("hero_ids", []) != witness
+		and picker.selected_ids() == witness and app.stitched_run_draft == witness
+		and picker.displayed_rank_ids() == admitted.hero_ids and picker.tiles_match_draft()
+		and not actions[0].disabled and actions[0].focus_mode == Control.FOCUS_ALL
+		and receipts.size() == 16 and receipts.back() == witness,
+		"four distinct keys produce a valid authentic draft and canonical, non-click-order ranks")
+	_check(originals["tinker"].has_focus(),
+		"deferred keyboard reflow restores focused original Tinker tile")
+	_check_order(picker, admitted.hero_ids,
+		["warden", "scarecrow", "yarn_ranger", "button_golem"],
+		"keyboard-only four-key witness selected-first order")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(picker.tiles[id] == originals[id] and originals[id].get_parent() == picker
+			and originals[id].get_node("Portrait") is TextureRect
+			and originals[id].get_node("DollName") is Label,
+			"KEY_1–KEY_8 retain the eight original portrait/name Buttons for " + id)
+	_check_hints(picker, originals, "after eight physical number keys")
+	var unchanged_receipts: int = receipts.size()
+	picker.draft_changed.emit(["warden", "warden", "tinker", "lantern_monk"])
+	_check(app.stitched_run_draft == witness and picker.selected_ids() == witness
+		and receipts.size() == unchanged_receipts + 1,
+		"fabricated draft_changed does not override authenticated keyboard draft")
+	var epoch: int = app._stitched_run_epoch
+	app._stitched_run_epoch += 1
+	await _key(KEY_2)
+	_check(picker.selected_ids() == witness and app.stitched_run_draft == witness
+		and originals["seamstress"].button_pressed and receipts.size() == unchanged_receipts + 1,
+		"stale picker epoch refuses even a physical selected-digit key press")
+	app._stitched_run_epoch = epoch
+	_check(app.stitched_run_session == null and app.run_rng == null and app.run_map == null
+		and app.deck == null and app.run_deck.is_empty() and not FileAccess.file_exists(SAVE)
+		and [app.session_gold, app.run_scraps] == wallet_before and randi() == expected_global,
+		"negative shortcuts, full cap and real toggles allocate no run, save, cards, RNG or wallet")
+	await _mouse(actions[0])
+	var session: StitchedRunSession = app.stitched_run_session
+	var expected := StitchedRunSession.start(7311, witness)
+	var seeded_ids: Array = []
+	if session != null:
+		for hero in session.heroes:
+			seeded_ids.append(hero.id)
+	_check(session != null and expected != null and session.is_consistent()
+		and session.picks == witness and seeded_ids == admitted.get("hero_ids", [])
+		and session.snapshot() == expected.snapshot() and app.stitched_run_intro != null
+		and app.run_rng == null and app.deck == null,
+		"original Set out launches seeded canonical four-rank session from keyboard-only witness")
+	app._return_stitched_run_title()
+	await process_frame
+	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus()
+		and app.stitched_run_session == null, "keyboard-started run cleans up to focused title")
+	await _key(KEY_1)
+	_check(app.stitched_run_panel == null and app.stitched_run_draft.is_empty(),
+		"digits at the title without the picker never reopen or mutate the draft")
+	await _mouse(app.start_button)
+	var fresh := _picker(app)
+	_check(fresh != null and fresh != picker and fresh.selected_ids() == default_picks,
+		"new title picker restores all four authored defaults after keyboard-started run")
+	return fresh
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_advisory_fixtures()
@@ -526,6 +682,12 @@ func _run() -> void:
 		_finish()
 		return
 	await process_frame
+	_default(picker, app)
+	picker = await _exercise_number_shortcuts(app, picker)
+	if picker == null:
+		app.free()
+		_finish()
+		return
 	_default(picker, app)
 	picker = await _exercise_opening_warning(app, picker)
 	if picker == null:
@@ -678,8 +840,13 @@ func _run() -> void:
 	var stale_confirm: Button = app.stitched_run_buttons[0]
 	app.stitched_run_buttons[1].pressed.emit()
 	stale_confirm.pressed.emit()
-	_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree(),
-		"cancelled confirmation cannot start a second run while its old node is pending free")
+	_check(not picker.is_inside_tree() and app.stitched_run_panel == null
+		and app.stitched_run_session == null and app.title_view.is_visible_in_tree(),
+		"Cancel detaches the old picker and stale Set out fails while queued for free")
+	await _key(KEY_1)
+	_check(app.stitched_run_draft.is_empty() and app.stitched_run_session == null
+		and app.run_rng == null and app.stitched_run_panel == null,
+		"late KEY_1 after cancelling the old picker cannot touch the App draft")
 	await process_frame
 	await _mouse(app.start_button)
 	picker = _picker(app)
@@ -697,6 +864,28 @@ func _run() -> void:
 		await _mouse(village.set_out_button)
 		picker = _picker(app)
 		_default(picker, app)
+		var bedroom_originals: Dictionary = picker.tiles.duplicate()
+		var bedroom_receipts: Array = []
+		picker.draft_changed.connect(func(picks: Array) -> void: bedroom_receipts.append(picks.duplicate()))
+		for code in [KEY_1, KEY_2, KEY_3, KEY_4]:
+			await _key(code)
+		for code in [KEY_5, KEY_6, KEY_7, KEY_8]:
+			await _key(code)
+		var bedroom_picks := ["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]
+		var bedroom_admission := StitchedPartyAdmission.admit(bedroom_picks)
+		_check(bedroom_admission.get("ok") == true and bedroom_receipts.size() == 8
+			and bedroom_receipts.back() == bedroom_picks
+			and picker.selected_ids() == bedroom_picks and app.stitched_run_draft == bedroom_picks
+			and picker.tiles_match_draft() and picker.displayed_rank_ids() == bedroom_admission.hero_ids
+			and not app.stitched_run_buttons[0].disabled,
+			"live Wren-room picker takes all eight genuine number keys via authentic App drafts")
+		for id in StitchedPartyAdmission.HERO_IDS:
+			_check(picker.tiles[id] == bedroom_originals[id]
+				and bedroom_originals[id].button_pressed == (id in bedroom_picks),
+				"Wren shortcut retains and updates the original " + id + " Button")
+		_check_order(picker, bedroom_admission.hero_ids,
+			["warden", "seamstress", "tinker", "lantern_monk"],
+			"Wren-room number-key selected-first layout")
 		await _mouse(app.stitched_run_buttons[1])
 		_check(village.is_visible_in_tree() and village.set_out_button.has_focus()
 			and village.has_open_village() and app.stitched_run_session == null
