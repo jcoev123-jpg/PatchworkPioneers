@@ -551,7 +551,8 @@
           "crit": 0,
           "mark_damage": 3,
           "effects": {
-            "tangled": 1
+            "tangled": 1,
+            "snip": 1
           },
           "self_move": 0,
           "move": "attack2"

@@ -54,6 +54,13 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		elif str(ability.get("target_side", "")) == "enemy" \
 				and int(ability.get("effects", {}).get("pull", 0)) == 1:
 			scan_ranks = [4, 3, 2, 1]
+		elif _hunts_marked_fray(actor, ability):
+			# The Spool Snarekeeper's Snare Lash follows its own spool-pull setup: among the
+			# dolls the authored reach can hit, it severs the seam of the most-frayed Marked
+			# one. With no legal Mark left the ordinary nearest-legal-rank fallback applies.
+			var marked_fray_rank := _most_frayed_marked_legal_rank(battle, actor, ability)
+			if marked_fray_rank > 0:
+				scan_ranks = [marked_fray_rank]
 		elif _hunts_mark(ability):
 			var marked_rank := _nearest_marked_rank(battle, actor, ability)
 			if marked_rank > 0:
@@ -150,6 +157,45 @@ static func _nearest_tangled_rank(
 			if int(target.get("statuses", {}).get("tangled", 0)) > 0:
 				return rank
 	return 0
+
+
+## True only for the Spool Snarekeeper's own authored Snare Lash. Every other ability on every
+## other foe keeps its existing Mark hunt, FRAY hunt or nearest-legal-rank order.
+static func _hunts_marked_fray(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "spool_snarekeeper" \
+		and str(ability.get("id", "")) == "snare_lash"
+
+
+## Legal living hero rank carrying both current MARK and the greatest current FRAY; exact FRAY
+## ties keep the lower (closer) rank. Only ranks 1-3 are scanned because Snare Lash's authored
+## reach stops there, and the passed ability's own target mask still has the final say. Dead,
+## lost, unmarked, hanging or unreachable dolls are never candidates. Returns 0 when no legal
+## Marked doll remains, which lets the ordinary nearest-legal fallback apply. Read-only: never
+## mutates the battle or draws RNG.
+static func _most_frayed_marked_legal_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var best_rank := 0
+	var best_fray := 0
+	for rank in range(1, 4):
+		for target in battle._legal_targets(actor, ability, rank):
+			if not _is_live_marked_hero(target):
+				continue
+			var fray := int(target.get("fray", 0))
+			if best_rank == 0 or fray > best_fray:
+				best_rank = rank
+				best_fray = fray
+	return best_rank
+
+
+## A snare may only bite a living doll that still carries its Mark: never a fallen, LOST or
+## unmarked hero.
+static func _is_live_marked_hero(unit: Dictionary) -> bool:
+	return str(unit.get("side", "")) == "hero" \
+		and not bool(unit.get("dead", false)) \
+		and not bool(unit.get("lost", false)) \
+		and int(unit.get("hp", 0)) > 0 \
+		and int(unit.get("statuses", {}).get("mark", 0)) > 0
 
 
 ## True only for the Moth Swarm's own authored Wing Dust. Every other ability on every
