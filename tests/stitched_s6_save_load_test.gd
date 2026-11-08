@@ -160,6 +160,62 @@ func _lost_save() -> void:
 	await process_frame
 
 
+func _published_document(path: String) -> Variant:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return null
+	var readback: Variant = bytes_to_var(file.get_buffer(file.get_length()))
+	file.close()
+	return readback
+
+
+## AC1 witness: the file published at path must reopen as exactly the
+## just-captured latest generation, never a stale or partial predecessor.
+func _check_published_generation(path: String, session: StitchedRunSession,
+		prior: Dictionary, label: String) -> Dictionary:
+	var document := StitchedRunSave.capture(session)
+	_check(not document.is_empty(), label + " captures the authenticated generation")
+	var on_disk: Variant = _published_document(path)
+	var matched: bool = on_disk is Dictionary and on_disk.version == document.version \
+		and on_disk.seed == document.seed and on_disk.picks == document.picks \
+		and on_disk.initial == document.initial and on_disk.journal == document.journal \
+		and on_disk.state == document.state and on_disk.digest == document.digest
+	_check(matched, label + " reopens as the just-captured seed, picks, initial, state, journal and digest")
+	var fresh: bool = prior.is_empty() or (on_disk is Dictionary and on_disk.journal != prior.journal \
+		and on_disk.state != prior.state and on_disk.digest != prior.digest)
+	_check(fresh, label + " publishes the latest run, never the stale prior generation")
+	_check(not FileAccess.file_exists(path + ".tmp"), label + " successful replace consumes its staged file")
+	var reopened := StitchedRunSave.read_file(path)
+	_check(reopened != null and reopened != session and reopened.snapshot() == session.snapshot() \
+		and reopened.journal == session.journal and reopened.seed_value == session.seed_value,
+		label + " immediate reopen replays exactly the latest generation")
+	return document
+
+
+## AC2 witness: invalid and unwritable writes must fail without corrupting
+## the prior accepted save or leaving a misleading staged file behind.
+func _check_negative_writes(path: String, session: StitchedRunSession, label: String) -> void:
+	var before := session.snapshot()
+	var prior := StitchedRunSave.read_file(path)
+	_check(prior != null and prior.snapshot() == before, label + " starts from an intact prior accepted save")
+	_check(not StitchedRunSave.write_file(path, null), label + " invalid run fails closed")
+	_check(not StitchedRunSave.write_file("user://s6_save_load_missing_dir/run.save", session),
+		label + " unwritable directory fails closed")
+	_check(not FileAccess.file_exists(path + ".tmp"), label + " failed writes leave no misleading staged file")
+	var preserved := StitchedRunSave.read_file(path)
+	_check(preserved != null and preserved.snapshot() == before and preserved.journal == session.journal,
+		label + " failed writes preserve the prior accepted save and journal")
+	var corrupt_path := "user://s6_save_load_corrupt.save"
+	var writer := FileAccess.open(corrupt_path, FileAccess.WRITE)
+	_check(writer != null, label + " corrupt fixture opens")
+	if writer != null:
+		writer.store_buffer(var_to_bytes({"version": "not a run"}))
+		writer.close()
+	_check(StitchedRunSave.read_file(corrupt_path) == null, label + " a failed read remains fail-closed")
+	DirAccess.remove_absolute(corrupt_path)
+	_check(session.snapshot() == before, label + " negative writes leave the live session untouched")
+
+
 func _run() -> void:
 	var app: Node = await _new_run(42)
 	var session: StitchedRunSession = app.stitched_run_session
@@ -180,7 +236,11 @@ func _run() -> void:
 		_check(_act(stage), "mounted ability and target buttons spend a genuine turn before save")
 		restored = _roundtrip(session, "midbattle")
 		var path := "user://s6_save_load_test.save"
+		DirAccess.remove_absolute(path)
+		DirAccess.remove_absolute(path + ".tmp")
 		_check(StitchedRunSave.write_file(path, session), "versioned run file writes successfully")
+		var first := _check_published_generation(path, session, {}, "midbattle generation")
+		_check_negative_writes(path, session, "midbattle negative writes")
 		var before := session.snapshot()
 		_check(app.load_stitched_run(path), "app publishes fully validated restored battle")
 		session = app.stitched_run_session
@@ -192,9 +252,12 @@ func _run() -> void:
 		stage._action_buttons["exit"].pressed.emit()
 		restored = _roundtrip(session, "postbattle")
 		_check(StitchedRunSave.write_file(path, session), "second Save atomically replaces the existing run file")
-		var latest := StitchedRunSave.read_file(path)
-		_check(latest != null and latest.snapshot() == session.snapshot(), "repeated Save reloads the latest state")
+		var second := _check_published_generation(path, session, first, "postbattle generation")
+		_check(not first.is_empty() and not second.is_empty() \
+			and second.journal.size() > first.journal.size(),
+			"postbattle generation carries strictly more authenticated journal actions")
 		DirAccess.remove_absolute(path)
+		DirAccess.remove_absolute(path + ".tmp")
 	var visit_id := ""
 	for candidate in session.choices():
 		if not session.map.get_node(candidate).type in ["Fight", "Elite", "Boss"]:
