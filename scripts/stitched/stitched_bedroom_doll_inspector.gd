@@ -110,23 +110,25 @@ static func status_for(record: Dictionary, id: String) -> String:
 	var last: Dictionary = history[id]
 	if bool(last.get("lost", false)):
 		return "LOST"
-	if bool(last.get("hanging", false)):
-		return "HANGING BY A THREAD"
-	var fray := int(last.get("fray", 0))
-	var status := "FRAY %d/200" % fray
 	var torn: Array = last.get("torn_slots", [])
+	var injury := ""
 	if not torn.is_empty():
 		var names: Array[String] = []
 		if "arms" in torn:
 			names.append("ARM")
 		if "legs" in torn:
 			names.append("LEG")
-		return status + "\nTORN " + ", ".join(names)
+		injury = "TORN " + ", ".join(names)
+	if bool(last.get("hanging", false)):
+		return "HANGING BY A THREAD" + ("\n" + injury if not injury.is_empty() else "")
+	if not injury.is_empty():
+		return injury
+	var fray := int(last.get("fray", 0))
 	if fray >= 150:
-		return status + "\nFACING WALL"
+		return "FACING WALL"
 	if fray >= 100:
-		return status + "\nSLUMPED"
-	return status
+		return "SLUMPED"
+	return "UPRIGHT"
 
 
 func present(record: Dictionary) -> void:

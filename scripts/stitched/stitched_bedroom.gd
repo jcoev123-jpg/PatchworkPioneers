@@ -10,6 +10,7 @@ signal spot_pressed(spot_id: String)
 const NIGHT_ART := "res://assets/paper/kid/bedroom_night.png"
 const MORNING_ART := "res://assets/paper/kid/bedroom_morning.png"
 const DOLL_ART := "res://assets/paper/heroes/%s.png"
+const TORN_ART := "res://assets/paper/stitched/patches/frayed.png"
 const FELT := "res://assets/paper/ui/panel_felt.png"
 const DESIGN_SIZE := Vector2(1280.0, 720.0)
 ## Object places in the 1280x720 picture.
@@ -57,6 +58,7 @@ var room: Control
 var door_light: TextureRect
 var spots := {}
 var dolls := {}
+var torn_marks := {}
 var labels := {}
 var inspector: StitchedBedroomDollInspector
 var _hover_inspection := ""
@@ -102,6 +104,17 @@ func _ready() -> void:
 		doll.texture = load(path) as Texture2D if ResourceLoader.exists(path) else null
 		room.add_child(doll)
 		dolls[id] = doll
+		# The authored cloth mark inherits the portrait's position and rotation.
+		var mark := TextureRect.new()
+		mark.name = "TornMark"
+		mark.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		mark.focus_mode = Control.FOCUS_NONE
+		mark.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		mark.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		mark.texture = load(TORN_ART) as Texture2D if ResourceLoader.exists(TORN_ART) else null
+		mark.visible = false
+		doll.add_child(mark)
+		torn_marks[id] = mark
 	inspector = StitchedBedroomDollInspector.new()
 	room.add_child(inspector)
 	_wire_directional_focus()
@@ -166,6 +179,7 @@ func present(next: Dictionary) -> void:
 	_restyle_spots()
 	_place_door_light()
 	_place_dolls()
+	_refresh_torn_marks()
 	if inspector != null:
 		inspector.present(record)
 		# Re-presentation may happen on the same room with the same focused
@@ -366,6 +380,22 @@ func _place_dolls() -> void:
 				doll.position.y += width * 0.35
 				doll.modulate = Color(0.66, 0.6, 0.6)
 		index += 1
+
+
+## Keep exactly one passive mark per portrait, including on successive outings.
+## Recompute after all doll poses/sizes so a mark follows a fallen doll too.
+func _refresh_torn_marks() -> void:
+	var history: Dictionary = record.get("dolls", {})
+	var ended := StitchedBedroomDollInspector.has_ended_outing(record)
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var doll: TextureRect = dolls[id]
+		var mark: TextureRect = torn_marks[id]
+		mark.size = Vector2(27, 27)
+		mark.position = Vector2(doll.size.x * 0.53, doll.size.y * 0.48)
+		var last: Dictionary = history.get(id, {})
+		mark.visible = (mark.texture != null and ended and history.has(id)
+			and not bool(last.get("lost", false))
+			and not last.get("torn_slots", []).is_empty())
 
 
 func _fit() -> void:

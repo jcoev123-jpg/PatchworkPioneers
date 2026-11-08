@@ -104,6 +104,34 @@ func _record_rules() -> void:
 	torn_session.heroes[0].parts.arms.torn = false
 	_check(torn_record.dolls.warden.torn_slots == ["arms"],
 		"source run mutations cannot rewrite a completed last outing")
+	# Zero HP is HANGING, not LOST; real worn tears must survive the record.
+	var hanging_session := StitchedRunSession.start(42)
+	for hero in hanging_session.heroes:
+		_check(int(hero.hp) > 0 and not hero.lost, "hanging fixture starts with living participants")
+		hero.hp = 0
+	hanging_session.heroes[0].parts.arms.torn = true
+	hanging_session.heroes[1].parts.legs.torn = true
+	hanging_session.heroes[2].parts.arms.torn = true
+	hanging_session.heroes[2].parts.legs.torn = true
+	hanging_session.phase = "defeat"
+	var hanging_record := StitchedBedroomRecord.after_run(fresh, hanging_session)
+	_check(hanging_record.dolls.size() == StitchedPartyAdmission.RANK_COUNT
+		and hanging_record.dolls.warden.hanging and not hanging_record.dolls.warden.lost
+		and hanging_record.dolls.warden.torn_slots == ["arms"]
+		and hanging_record.dolls.seamstress.torn_slots == ["legs"]
+		and hanging_record.dolls.tinker.torn_slots == ["arms", "legs"]
+		and hanging_record.dolls.lantern_monk.hanging
+		and not hanging_record.dolls.lantern_monk.has("torn_slots"),
+		"actual zero-HP but non-LOST heroes record all hanging tear combinations")
+	_check(StitchedBedroomDollInspector.status_for(hanging_record, "warden")
+		== "HANGING BY A THREAD\nTORN ARM"
+		and StitchedBedroomDollInspector.status_for(hanging_record, "seamstress")
+		== "HANGING BY A THREAD\nTORN LEG"
+		and StitchedBedroomDollInspector.status_for(hanging_record, "tinker")
+		== "HANGING BY A THREAD\nTORN ARM, LEG"
+		and StitchedBedroomDollInspector.status_for(hanging_record, "lantern_monk")
+		== "HANGING BY A THREAD",
+		"real hanging survivors retain both the HANGING and their exact recorded limb labels")
 	var broken := fresh.duplicate(true)
 	broken.dolls = {"not_a_doll": {"fray": 0, "lost": false, "hanging": false}}
 	_check(not StitchedBedroomRecord.valid(broken), "unknown dolls are refused")
@@ -171,10 +199,20 @@ func _room_rules() -> void:
 		_check(spot.get_theme_stylebox("normal") is StyleBoxEmpty, "the %s rests in the picture" % id)
 		_check((room.labels[id].text == spot.text or id == "window") and not room.labels[id].text.is_empty(),
 			"pinned label on the " + id)
+	var mark_instances := {}
 	for id in StitchedPartyAdmission.HERO_IDS:
 		_check(room.doll_pose(id) == "upright" and room.dolls[id].texture != null
 			and Rect2(StitchedBedroom.SPOTS.shelf).grow(8).encloses(Rect2(room.dolls[id].position, room.dolls[id].size)),
 			"%s stands on the shelf" % id)
+		var mark: TextureRect = room.torn_marks.get(id)
+		_check(mark != null and mark.get_parent() == room.dolls[id]
+			and mark.texture != null and mark.texture.resource_path == StitchedBedroom.TORN_ART
+			and not mark.visible and mark.mouse_filter == Control.MOUSE_FILTER_IGNORE
+			and mark.focus_mode == Control.FOCUS_NONE
+			and Rect2(Vector2.ZERO, room.dolls[id].size).encloses(Rect2(mark.position, mark.size)),
+			"%s has one hidden, input-inert authored cloth mark pinned inside its portrait" % id)
+		if mark != null:
+			mark_instances[id] = mark.get_instance_id()
 	var ledger := room.inspector
 	_check(ledger != null and ledger.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and ledger.focus_mode == Control.FOCUS_NONE, "the last-outing inspector cannot steal mouse or focus")
@@ -234,8 +272,8 @@ func _room_rules() -> void:
 	_check(ledger.visible and ledger.entry_order.size() == StitchedPartyAdmission.HERO_IDS.size()
 		and ledger.status_labels.warden.text == "LOST"
 		and ledger.status_labels.seamstress.text == "HANGING BY A THREAD"
-		and ledger.status_labels.tinker.text == "FRAY 120/200\nSLUMPED"
-		and ledger.status_labels.lantern_monk.text == "FRAY 160/200\nFACING WALL",
+		and ledger.status_labels.tinker.text == "SLUMPED"
+		and ledger.status_labels.lantern_monk.text == "FACING WALL",
 		"defeat shelf shows LOST/HANGING and both exact fray/posture bands")
 	for id in ["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]:
 		_check(ledger.status_labels[id].text == "STAYED HOME"
@@ -268,11 +306,17 @@ func _room_rules() -> void:
 	_check(room.doll_pose("lantern_monk") == "slumped"
 		and room.doll_pose("scarecrow") == "upright",
 		"intact frayed and never-selected dolls keep original shelf poses")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var mark: TextureRect = room.torn_marks[id]
+		_check(mark.visible == (id in ["warden", "seamstress", "tinker"])
+			and mark.get_instance_id() == mark_instances[id] and mark.get_parent() == room.dolls[id]
+			and Rect2(Vector2.ZERO, room.dolls[id].size).encloses(Rect2(mark.position, mark.size)),
+			"torn-after-outing mark on %s is correctly attached, placed and reused" % id)
 	room.spot("shelf").focus_entered.emit()
-	_check(ledger.visible and ledger.status_labels.warden.text == "FRAY 165/200\nTORN ARM"
-		and ledger.status_labels.seamstress.text == "FRAY 0/200\nTORN LEG"
-		and ledger.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG"
-		and ledger.status_labels.lantern_monk.text == "FRAY 110/200\nSLUMPED"
+	_check(ledger.visible and ledger.status_labels.warden.text == "TORN ARM"
+		and ledger.status_labels.seamstress.text == "TORN LEG"
+		and ledger.status_labels.tinker.text == "TORN ARM, LEG"
+		and ledger.status_labels.lantern_monk.text == "SLUMPED"
 		and ledger.status_labels.scarecrow.text == "STAYED HOME",
 		"shelf keyboard readout names exact torn limbs, above Fray 150, without inventing injuries")
 	room.spot("shelf").focus_exited.emit()
@@ -294,12 +338,45 @@ func _room_rules() -> void:
 		"LOST beats torn; HANGING keeps its side pose when also torn")
 	room.spot("shelf").focus_entered.emit()
 	_check(ledger.status_labels.warden.text == "LOST"
-		and ledger.status_labels.seamstress.text == "HANGING BY A THREAD",
-		"LOST and HANGING status labels take precedence over torn slots")
+		and ledger.status_labels.seamstress.text == "HANGING BY A THREAD\nTORN LEG",
+		"LOST suppresses injury; hanging preserves its recorded torn leg")
+	_check(not room.torn_marks.warden.visible and room.torn_marks.seamstress.visible
+		and room.torn_marks.tinker.visible,
+		"LOST portrait loses its overlay, but a hanging survivor keeps it")
 	room.spot("shelf").focus_exited.emit()
 	room.spot("tin").mouse_entered.emit()
 	_check(ledger.entry_order == ["warden"] and not ledger.status_labels.has("tinker"),
 		"only actual LOST appears in the tin despite other torn participants")
+	room.spot("tin").mouse_exited.emit()
+	# A genuinely completed zero-HP outing must follow record -> room -> inspector,
+	# not a manually synthesized hanging flag.
+	var hanging_session := StitchedRunSession.start(42)
+	for hero in hanging_session.heroes:
+		hero.hp = 0
+		hero.lost = false
+	hanging_session.heroes[0].parts.arms.torn = true
+	hanging_session.heroes[1].parts.legs.torn = true
+	hanging_session.heroes[2].parts.arms.torn = true
+	hanging_session.heroes[2].parts.legs.torn = true
+	hanging_session.phase = "defeat"
+	var hanging_record := StitchedBedroomRecord.after_run(record, hanging_session)
+	room.present(hanging_record)
+	room.spot("shelf").focus_entered.emit()
+	_check(ledger.status_labels.warden.text == "HANGING BY A THREAD\nTORN ARM"
+		and ledger.status_labels.seamstress.text == "HANGING BY A THREAD\nTORN LEG"
+		and ledger.status_labels.tinker.text == "HANGING BY A THREAD\nTORN ARM, LEG"
+		and ledger.status_labels.lantern_monk.text == "HANGING BY A THREAD"
+		and hanging_record.dolls.warden.hanging and not hanging_record.dolls.warden.lost,
+		"mounted shelf reports each real hanging tear without treating an untorn hanging doll as torn")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(room.torn_marks[id].visible == (id in ["warden", "seamstress", "tinker"])
+			and room.torn_marks[id].get_instance_id() == mark_instances[id]
+			and room.doll_pose(id) == ("side" if id in ["warden", "seamstress", "tinker", "lantern_monk"] else "upright"),
+			"real hanging %s retains its pose and only an authentic torn mark" % id)
+	room.spot("shelf").focus_exited.emit()
+	room.spot("tin").mouse_entered.emit()
+	_check(ledger.entry_order.is_empty() and ledger.empty_label.text == "No dolls lost on the last outing",
+		"genuine hanging-at-zero dolls still never enter LOST-only tin")
 	room.spot("tin").mouse_exited.emit()
 	var legacy := record.duplicate(true)
 	_check(StitchedBedroomRecord.save_file(TEST_SAVE, legacy),
@@ -312,9 +389,12 @@ func _room_rules() -> void:
 	_check(room.doll_pose("tinker") == "slumped"
 		and room.doll_pose("lantern_monk") == "wall",
 		"legacy v1 record without optional tear keys retains old fray poses")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(not room.torn_marks[id].visible and room.torn_marks[id].get_instance_id() == mark_instances[id],
+			"legacy v1 history hides obsolete tear marks for %s" % id)
 	room.spot("shelf").mouse_entered.emit()
-	_check(ledger.status_labels.tinker.text == "FRAY 120/200\nSLUMPED"
-		and ledger.status_labels.lantern_monk.text == "FRAY 160/200\nFACING WALL",
+	_check(ledger.status_labels.tinker.text == "SLUMPED"
+		and ledger.status_labels.lantern_monk.text == "FACING WALL",
 		"legacy v1 shelf labels remain unchanged")
 	room.spot("shelf").mouse_exited.emit()
 	room.spot("tin").mouse_entered.emit()
@@ -332,10 +412,13 @@ func _room_rules() -> void:
 		"victory updates tin to no last-outing losses")
 	room.spot("tin").mouse_exited.emit()
 	room.spot("shelf").mouse_entered.emit()
-	_check(ledger.status_labels.warden.text == "FRAY 0/200"
-		and ledger.status_labels.tinker.text == "FRAY 0/200"
+	_check(ledger.status_labels.warden.text == "UPRIGHT"
+		and ledger.status_labels.tinker.text == "UPRIGHT"
 		and not ledger.status_labels.warden.text.contains("LOST")
 		and room.doll_pose("warden") == "upright", "victory replaces defeat rather than retaining injuries")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(not room.torn_marks[id].visible and room.torn_marks[id].get_instance_id() == mark_instances[id],
+			"new intact/stayed-home outing drops old frayed overlays on %s" % id)
 	room.spot("shelf").mouse_exited.emit()
 	room.spot("shelf").grab_focus()
 	var another_loss := StitchedBedroomRecord.after_run(record, _ended("defeat"))
@@ -344,7 +427,7 @@ func _room_rules() -> void:
 		and ledger.status_labels.warden.text == "LOST",
 		"re-presenting while shelf keeps keyboard focus refreshes to the latest loss")
 	room.present(record)
-	_check(ledger.visible and ledger.status_labels.warden.text == "FRAY 0/200",
+	_check(ledger.visible and ledger.status_labels.warden.text == "UPRIGHT",
 		"re-presenting another last night replaces loss without an extra focus event")
 	room.spot("shelf").release_focus()
 	room.present(StitchedBedroomRecord.fresh())
@@ -358,6 +441,29 @@ func _room_rules() -> void:
 	_check(ledger.status_labels.warden.text == "NOT YET GONE OUT"
 		and ledger.status_labels.button_golem.text == "NOT YET GONE OUT",
 		"reset shelf has no old fray history")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(not room.torn_marks[id].visible and room.torn_marks[id].get_instance_id() == mark_instances[id],
+			"fresh re-presentation has no stale mark on %s" % id)
+	# Both precise fray band thresholds remain physical poses and record data,
+	# even though the felt inspector never prints a raw numerical Fray value.
+	var bands_session := StitchedRunSession.start(42)
+	for index in range(StitchedPartyAdmission.RANK_COUNT):
+		bands_session.heroes[index].fray = [99, 100, 149, 150][index]
+	bands_session.phase = "victory"
+	var bands := StitchedBedroomRecord.after_run(StitchedBedroomRecord.fresh(), bands_session)
+	room.present(bands)
+	room.spot("shelf").mouse_entered.emit()
+	for index in range(StitchedPartyAdmission.RANK_COUNT):
+		var id: String = StitchedPartyAdmission.HERO_IDS[index]
+		var expected_pose: String = ["upright", "slumped", "slumped", "wall"][index]
+		var expected_label: String = ["UPRIGHT", "SLUMPED", "SLUMPED", "FACING WALL"][index]
+		_check(bands.dolls[id].fray == [99, 100, 149, 150][index]
+			and room.doll_pose(id) == expected_pose
+			and ledger.status_labels[id].text == expected_label
+			and not ledger.status_labels[id].text.contains("FRAY"),
+			"exact 99/100/149/150 Fray thresholds preserve pose and qualitative label for %s" % id)
+	room.spot("shelf").mouse_exited.emit()
+	room.present(StitchedBedroomRecord.fresh())
 	room.hide()
 	_check(not ledger.visible, "hidden bedroom suppresses its readout")
 	room.show()
@@ -664,10 +770,10 @@ func _live_base(app: Node) -> void:
 	view.bedroom.spot("shelf").grab_focus()
 	await process_frame
 	_check(view.bedroom.spot("shelf").has_focus() and view.bedroom.inspector.visible
-		and view.bedroom.inspector.status_labels.warden.text == "FRAY 0/200\nTORN ARM"
-		and view.bedroom.inspector.status_labels.seamstress.text == "FRAY 0/200\nTORN LEG"
-		and view.bedroom.inspector.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG"
-		and view.bedroom.inspector.status_labels.lantern_monk.text == "FRAY 0/200",
+		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM"
+		and view.bedroom.inspector.status_labels.seamstress.text == "TORN LEG"
+		and view.bedroom.inspector.status_labels.tinker.text == "TORN ARM, LEG"
+		and view.bedroom.inspector.status_labels.lantern_monk.text == "UPRIGHT",
 		"real return shelf keyboard inspection reads the live torn and intact history")
 	_check(view.bedroom.record == app.bedroom_record
 		and view.bedroom.doll_pose("warden") == "side"
@@ -681,8 +787,8 @@ func _live_base(app: Node) -> void:
 	await process_frame
 	await _mouse_move(view.bedroom.spot("shelf").get_global_rect().get_center())
 	_check(view.bedroom.inspector.visible
-		and view.bedroom.inspector.status_labels.warden.text == "FRAY 0/200\nTORN ARM"
-		and view.bedroom.inspector.status_labels.tinker.text == "FRAY 0/200\nTORN ARM, LEG",
+		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM"
+		and view.bedroom.inspector.status_labels.tinker.text == "TORN ARM, LEG",
 		"real mouse motion over returned shelf shows identical live injury labels")
 	await _mouse_move(view.bedroom.spot("tin").get_global_rect().get_center())
 	_check(view.bedroom.inspector.visible and view.bedroom.inspector.entry_order.is_empty()
@@ -705,8 +811,8 @@ func _live_base(app: Node) -> void:
 		and view.bedroom.inspector.status_labels.warden.text == "LOST",
 		"mounted loss tin reveals the actual lost doll by keyboard")
 	view.bedroom.spot("shelf").mouse_entered.emit()
-	_check(view.bedroom.inspector.status_labels.tinker.text == "FRAY 120/200\nSLUMPED"
-		and view.bedroom.inspector.status_labels.lantern_monk.text == "FRAY 160/200\nFACING WALL",
+	_check(view.bedroom.inspector.status_labels.tinker.text == "SLUMPED"
+		and view.bedroom.inspector.status_labels.lantern_monk.text == "FACING WALL",
 		"mounted loss shelf hover reveals the full correct aftermath")
 	await _shot("after_loss")
 	var closed_record: Dictionary = app.bedroom_record.duplicate(true)
