@@ -104,6 +104,31 @@ const PATCH_FORBIDDEN_WORDS := [
 	"foe", "enemy", "attack", "hit", "damage", "rank", "tier", "mark", "weak", "bleed",
 	"stun", "guard", "heal", "turn", "target", "ability",
 ]
+## S14: the two torso parts are worn cloth patches too. Their base copy names only the straw,
+## burlap, denim and thread sewn to the doll; the retired part-granted Guard/Dodge instructions
+## are kept below only to prove they can never come back into the visible sentence.
+const STRAW_PADDING_PATCH_TEXT := "A plump bundle of golden straw swells beneath a coarse burlap " \
+	+ "chest patch, secured by uneven pumpkin-orange stitches and denim ties."
+const STRAW_WRAP_PATCH_TEXT := "Three bands of worn denim cross a straw-stuffed burlap torso patch, " \
+	+ "their frayed edges held by crooked pumpkin-orange cross-stitches."
+## The exact sentences the two torso parts used to advertise as part-cast Guard/Dodge moves.
+const STRAW_PADDING_OLD_TEXT := "Tuck straw in an ally's seams; intercept their hits with Guard."
+const STRAW_WRAP_OLD_TEXT := "Wrap one ally in loose straw for temporary Dodge."
+## Complete combat words the S14 sewn-cloth torso descriptions must never promise, matched on
+## whole tokens so "stitches" can never trip a "hit" check by accident.
+const TORSO_PATCH_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "foe", "foes", "enemy", "enemies", "target", "targets",
+	"attack", "attacks", "hit", "hits", "damage", "guard", "dodge", "mark", "marked", "bleed",
+	"weak", "exposed", "tangled", "stun", "heal", "turn", "turns", "ability", "abilities",
+	"move", "moves", "action", "effect", "effects",
+]
+## The visible cloth each torso patch's sentence must place on the Scarecrow.
+const STRAW_PADDING_MATERIALS := [
+	"straw", "burlap", "chest", "patch", "pumpkin-orange", "stitches", "denim",
+]
+const STRAW_WRAP_MATERIALS := [
+	"denim", "straw", "burlap", "torso", "patch", "pumpkin-orange", "stitches",
+]
 const HARVEST_FRIGHT_TEXT := "Strike each foe in enemy ranks 1-3 with a terrifying crow harvest, " \
 	+ "leaving Weak on hits; at stitch tier III it also reaches rank 4."
 var failures: Array[String] = []
@@ -114,6 +139,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_starter_patch_appearance_text()
 	_test_crow_leg_patch_appearance_text()
+	_test_torso_patch_appearance_text()
 	_test_each_tier()
 	_test_area_and_effects()
 	_test_guard_and_dodge()
@@ -415,6 +441,77 @@ func _test_crow_leg_patch_appearance_text() -> void:
 		"AC2: the retired Crow Dive attack sentence genuinely differs from its patch copy")
 	_check(CROW_PECK_OLD_TEXT != CROW_PECK_PATCH_TEXT,
 		"AC2: the retired Crow Peck attack sentence genuinely differs from its patch copy")
+
+
+## AC1/AC2: both torso parts keep their IDs, names, Scarecrow owner and torso slot, while their
+## base copy now describes the sewn straw-and-denim patch a player actually sees. Neither sentence
+## may advertise a retired part-granted Guard/Dodge instruction, a status, target, rank, turn or
+## stitch tier, and each patch still fails closed when its description is blanked.
+func _test_torso_patch_appearance_text() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: Scarecrow catalog loads for the torso patch copy")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["torso"]: {
+			"name": "Straw Padding", "slot": "torso", "text": STRAW_PADDING_PATCH_TEXT,
+			"old": STRAW_PADDING_OLD_TEXT, "materials": STRAW_PADDING_MATERIALS,
+		},
+		ALTERNATES["torso"]: {
+			"name": "Straw Wrap", "slot": "torso", "text": STRAW_WRAP_PATCH_TEXT,
+			"old": STRAW_WRAP_OLD_TEXT, "materials": STRAW_WRAP_MATERIALS,
+		},
+	}
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: torso patch keeps its named ID: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["slot"]) == str(spec["slot"]) and str(part["owner"]) == "scarecrow"
+			and str(part["name"]) == str(spec["name"]),
+			"AC1: torso patch keeps its torso slot, Scarecrow owner and name: " + id)
+		var text := str(part.get("text", ""))
+		var shipped := text
+		_check(not text.is_empty(), "AC2: torso patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: torso patch base copy is the exact sewn-cloth sentence: " + id)
+		_check(text != str(spec["old"]) and not text.contains(str(spec["old"])),
+			"AC2: torso patch no longer carries its retired part-action sentence: " + id)
+		var violation := _torso_prose_violation(text)
+		_check(violation.is_empty(),
+			"AC2: torso patch copy promises no rank/tier/status/action/number: %s (%s)"
+				% [id, violation])
+		var words := _whole_words(text)
+		var lowered := text.to_lower()
+		for material in spec["materials"]:
+			var token := str(material)
+			# "pumpkin-orange" is hyphenated cloth dye, so it is matched literally; every single
+			# word material is matched whole so "patch" can never pass on an accidental substring.
+			var named := lowered.contains(token) if token.contains("-") else token in words
+			_check(named, "AC2: torso patch copy names its sewn cloth '%s': %s" % [token, id])
+		# Fail-closed: the shipped catalog still refuses a patch copy with blank text, and the
+		# in-memory duplicate never mutates the loaded catalog.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+		_check(str(cat["by_id"][id]["text"]) == shipped,
+			"AC3: blanking a duplicate leaves the shipped %s copy untouched" % id)
+	_check(STRAW_PADDING_OLD_TEXT != STRAW_PADDING_PATCH_TEXT,
+		"AC2: the retired Straw Padding Guard sentence genuinely differs from its patch copy")
+	_check(STRAW_WRAP_OLD_TEXT != STRAW_WRAP_PATCH_TEXT,
+		"AC2: the retired Straw Wrap Dodge sentence genuinely differs from its patch copy")
+	# The whole-word gate itself is proven, not vacuous: each retired instruction really fails it,
+	# a plain digit really fails it, while the sewn-cloth words never trip on accidental substrings.
+	for retired in [STRAW_PADDING_OLD_TEXT, STRAW_WRAP_OLD_TEXT]:
+		_check(not _torso_prose_violation(str(retired)).is_empty(),
+			"AC2: the retired part-action sentence fails the prose gate: " + str(retired))
+	_check(not _torso_prose_violation("The patch holds 2 denim ties.").is_empty(),
+		"AC2: a stated digit fails the torso prose gate")
+	_check(_whole_words(STRAW_PADDING_PATCH_TEXT).has("stitches")
+		and _torso_prose_violation("Uneven stitches on coarse felt.").is_empty(),
+		"AC2: 'stitches' never trips the whole-word gate, and plain cloth prose passes it")
 
 
 func _test_each_tier() -> void:
@@ -1989,6 +2086,40 @@ func _status_amount(statuses: Array, key: String) -> int:
 		if str(status.get("status", "")) == key:
 			return int(status.get("duration", 0))
 	return 0
+
+
+## Whole words of a description, split on every non-alphanumeric character, so a forbidden word is
+## only ever matched whole ("hit" can never trip on "stitches") and standalone digits stay visible.
+func _whole_words(text: String) -> Array:
+	var words: Array = []
+	var current := ""
+	var lower := text.to_lower()
+	for index in range(lower.length()):
+		var code := lower.unicode_at(index)
+		if (code >= 97 and code <= 122) or (code >= 48 and code <= 57):
+			current += lower[index]
+		elif not current.is_empty():
+			words.append(current)
+			current = ""
+	if not current.is_empty():
+		words.append(current)
+	return words
+
+
+## The S14 prose-only gate for the two torso patches: the sentence must be nonblank, state no digit
+## and promise no complete retired combat word. Returns the first violation, or "" when it passes.
+func _torso_prose_violation(text: String) -> String:
+	if text.strip_edges().is_empty():
+		return "blank text"
+	for index in range(text.length()):
+		var code := text.unicode_at(index)
+		if code >= 48 and code <= 57:
+			return "digit"
+	var words := _whole_words(text)
+	for word in TORSO_PATCH_FORBIDDEN_WORDS:
+		if str(word) in words:
+			return "retired combat word: " + str(word)
+	return ""
 
 
 func _reject_without_spend(b: StitchedRules, id: String, rank: int, label: String) -> void:
