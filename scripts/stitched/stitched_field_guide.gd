@@ -12,6 +12,8 @@ const SEAMSTRESS_PARTS := "res://data/parts/seamstress_parts.json"
 const TINKER_PARTS := "res://data/parts/tinker_parts.json"
 const YARN_RANGER_PARTS := "res://data/parts/yarn_ranger_parts.json"
 const FOE_PARTS := "res://data/parts/enemy_parts.json"
+const LANTERN_MONK_PARTS := "res://data/parts/lantern_monk_parts.json"
+const BUTTON_GOLEM_PARTS := "res://data/parts/button_golem_parts.json"
 const BONE := Color("#f4e5cd")
 const BRASS := Color("#e0b977")
 const PAGES := [
@@ -68,7 +70,7 @@ var part_atlas: StitchedPartInspector
 # Fixed live sources. The mounted regression can replace one with a missing path
 # to prove that a partial catalog never leaves stale or selectable parts.
 var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS,
-	YARN_RANGER_PARTS, FOE_PARTS]
+	YARN_RANGER_PARTS, FOE_PARTS, LANTERN_MONK_PARTS, BUTTON_GOLEM_PARTS]
 # Detached lesson sources for headless regression; null reads the live S14 catalogs.
 var lesson_kits: Variant = null
 var lesson_patches: Variant = null
@@ -232,7 +234,7 @@ func _on_visibility_changed() -> void:
 		_active = false
 
 
-## This is an atlas, not a satchel: all five real file catalogs must validate in
+## This is an atlas, not a satchel: all seven real file catalogs must validate in
 ## full before the existing inspector receives any entries. No gameplay API is
 ## referenced, and reopening always reloads the authored sources.
 func open_part_atlas() -> bool:
@@ -264,7 +266,7 @@ func open_part_atlas() -> bool:
 		_reject_part_atlas()
 		return false
 	(part_atlas.get_node("Subtitle") as Label).text = (
-		"REFERENCE ONLY  •  Warden, Seamstress, Tinker, Yarn Ranger & spoils; no equips.")
+		"REFERENCE ONLY  •  Six doll makers & spoils; cloth reference, no equips.")
 	part_atlas.show()
 	atlas_status.text = "REFERENCE ONLY  •  Inspect sewn limbs and cloth patches; no changes to your party."
 	_wire_atlas_focus()
@@ -401,7 +403,7 @@ func _build_view() -> void:
 	atlas_button = Button.new()
 	atlas_button.name = "PartAtlasButton"
 	atlas_button.text = "Parts & spoils"
-	atlas_button.tooltip_text = "Reference only: examine Warden, Seamstress, Tinker, Yarn Ranger and foe parts"
+	atlas_button.tooltip_text = "Reference only: examine six doll makers and foe spoils; no equips"
 	atlas_button.custom_minimum_size = Vector2(190, 46)
 	atlas_button.add_theme_font_size_override("font_size", 19)
 	atlas_button.focus_mode = Control.FOCUS_ALL

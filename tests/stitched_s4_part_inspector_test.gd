@@ -138,6 +138,33 @@ func _run() -> void:
         var expected_draw := randi()
         seed(witness_seed)
         _check(panel.present_parts(parts_input), "Warden fixture mounts without app wiring")
+        var owner_control := panel.get_node("CatalogPanel/OwnerFilter") as OptionButton
+        _check(owner_control.get_item_count() == 8
+            and owner_control.get_item_text(0) == "All"
+            and owner_control.get_item_text(4) == "Yarn Ranger"
+            and owner_control.get_item_text(5) == "Lantern Monk"
+            and owner_control.get_item_text(6) == "Button Golem"
+            and owner_control.get_item_text(7) == "Spoils",
+            "original detached inspector exposes eight ordered maker/spoils labels")
+        var fixture_head_ids := panel.part_ids_in_slot("head")
+        for maker in ["lantern_monk", "button_golem"]:
+            var maker_index := StitchedPartInspector.OWNERS.find(maker)
+            owner_control.select(maker_index)
+            owner_control.item_selected.emit(maker_index)
+            _check(panel.selected_owner == maker and owner_control.get_selected_id() == maker_index
+                and panel.selected_part_id.is_empty()
+                and panel.visible_part_ids_in_slot("head").is_empty()
+                and panel.part_ids_in_slot("head") == fixture_head_ids
+                and (panel.get_node("CatalogPanel/PartScroll/PartRows") as VBoxContainer).get_child_count() == 0
+                and _empty_preview(panel) and not panel.select_tier(2)
+                and not panel.select_part("warden_head_iron_helm"),
+                "new %s owner is selectable but cannot invent missing fixture rows" % maker)
+        owner_control.select(0)
+        owner_control.item_selected.emit(0)
+        _check(panel.selected_owner == "all"
+            and panel.visible_part_ids_in_slot("head") == fixture_head_ids
+            and not panel.selected_part_id.is_empty(),
+            "All restores the genuine detached fixture after selecting absent makers")
         var head_rows: VBoxContainer = panel.get_node("CatalogPanel/PartScroll/PartRows")
         _check(head_rows.get_child_count() == 2 and
             head_rows.get_child(0) is Button and head_rows.get_child(1) is Button,
@@ -256,6 +283,8 @@ func _test_live_owners(packed: PackedScene) -> void:
         "res://data/parts/tinker_parts.json",
         "res://data/parts/yarn_ranger_parts.json",
         "res://data/parts/enemy_parts.json",
+        "res://data/parts/lantern_monk_parts.json",
+        "res://data/parts/button_golem_parts.json",
     ]
     var input: Array = []
     var source: Dictionary = {}
@@ -273,14 +302,19 @@ func _test_live_owners(packed: PackedScene) -> void:
         "tinker_head_cog_shot", "yarn_ranger_head_needle_nock",
         "scissor_crab_claw_arm", "moth_swarm_wings",
         "felt_bulwark_button_shield",
+        "lantern_monk_head_moth_wink", "lantern_monk_arms_wick_spark",
+        "button_golem_head_loose_pop", "button_golem_arms_button_fist",
     ]
     for id in witness_ids:
-        _check(source.has(id), "combined five real catalogs contain " + id)
+        _check(source.has(id), "combined seven real catalogs contain " + id)
     var panel := packed.instantiate() as StitchedPartInspector
     root.add_child(panel)
     await process_frame
     var owner_control := panel.get_node("CatalogPanel/OwnerFilter") as OptionButton
-    _check(owner_control.get_item_count() == 6
+    _check(owner_control.get_item_count() == 8
+        and owner_control.get_item_text(5) == "Lantern Monk"
+        and owner_control.get_item_text(6) == "Button Golem"
+        and owner_control.get_item_text(7) == "Spoils"
         and owner_control.focus_mode == Control.FOCUS_ALL
         and owner_control.get_theme_stylebox("focus") != null
         and root.get_visible_rect().encloses(owner_control.get_global_rect()),
@@ -310,7 +344,8 @@ func _test_live_owners(packed: PackedScene) -> void:
         and preview.get_global_rect().size == Vector2(96, 96)
         and root.get_visible_rect().encloses(preview.get_global_rect()),
         "shipped 96px aligned transparent art layers are passive and within viewport")
-    for owner in ["warden", "seamstress", "tinker", "yarn_ranger", "any"]:
+    for owner in ["warden", "seamstress", "tinker", "yarn_ranger",
+            "lantern_monk", "button_golem", "any"]:
         var idx := StitchedPartInspector.OWNERS.find(owner)
         owner_control.select(idx)
         owner_control.item_selected.emit(idx)
@@ -336,6 +371,8 @@ func _test_live_owners(packed: PackedScene) -> void:
             ["seamstress", "seamstress_mending_knot_hat"],
             ["tinker", "tinker_head_cog_shot"],
             ["yarn_ranger", "yarn_ranger_head_needle_nock"],
+            ["lantern_monk", "lantern_monk_head_moth_wink"],
+            ["button_golem", "button_golem_head_loose_pop"],
             ["any", "scissor_crab_claw_arm"]]:
         var owner: String = group[0]
         var id: String = group[1]
