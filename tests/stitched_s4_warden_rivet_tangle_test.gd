@@ -24,7 +24,9 @@ const TIER_TANGLED := [1, 2, 3]
 const TIER_DMG := [[5, 7], [6, 9], [8, 11]]
 const TIER_ACC := [90, 90, 95]
 const TIER_MARK_DAMAGE := [3, 4, 5]
-const MARKED_TEXT := "Double-fist a front foe, tangle its thread, and strike Marked seams harder."
+## S14 retires part-granted actions, so the top-level text now names the sewn-on fist patch instead
+## of advertising the Mark/Tangled promise; the move's own authored fields below stay unchanged.
+const PUMMEL_TEXT := "Two dull brass rivets weight a slate-blue fist patch, their crooked stitches crossing a frayed bone-grey cuff."
 ## The seven other authored Warden parts that must stay present when this one entry changes.
 const OTHER_WARDEN_IDS := [
 	"warden_head_pot_helm_bonk", "warden_head_helmet_rattle", "warden_arms_shield_catch",
@@ -115,8 +117,13 @@ func _test_catalog_tiers() -> void:
 	_check(str(part.get("owner", "")) == WARDEN, "AC1: Rivet Pummel stays Warden's own part")
 	_check(JSON.stringify(part.get("stat")) == JSON.stringify({"dmg": 2}),
 		"AC1: Rivet Pummel keeps its arms stat dmg 2")
-	_check(str(part.get("text", "")) == MARKED_TEXT,
-		"AC1: Rivet Pummel states its Marked-seam bonus in its authored rules text")
+	var wording := str(part.get("text", ""))
+	var lower := wording.to_lower()
+	_check(wording == PUMMEL_TEXT \
+		and not lower.contains("mark") and not lower.contains("tangle") \
+		and not lower.contains("tier") and not lower.contains("rank") \
+		and not lower.contains("target") and not lower.contains("damage"),
+		"AC1: Rivet Pummel names its sewn fist patch, not the retired Mark/Tangled seam promise")
 
 	var base: Dictionary = part.get("ability", {})
 	_check(str(base.get("id", "")) == ABILITY_ID, "AC1: tier I is the named Rivet Pummel move")
