@@ -7000,8 +7000,17 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	var path := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
 	var source := FileAccess.get_file_as_string(path)
 	var doc: Variant = JSON.parse_string(source)
-	_check(doc is Dictionary and doc.get("id") == "s6_stitched_lantern_bobbin_ferry",
-		"AC1: genuine s6_stitched_lantern_bobbin_ferry.json parses")
+	_check(doc is Dictionary and doc.get("id") == "s6_stitched_lantern_bobbin_ferry"
+		and doc.get("title") == "Lantern Bobbin Ferry"
+		and doc.get("choices") is Array and doc["choices"].size() == 3
+		and doc["choices"][0].get("id") == "pay_gold"
+		and doc["choices"][0].get("stitched_effect") == {"target":"party","candle":0,"fray":0,"gold":-10,"scraps":2}
+		and doc["choices"][1].get("id") == "mend_wick"
+		and doc["choices"][1].get("text") == "Spend a scrap to rekindle the ferry lantern"
+		and doc["choices"][1].get("stitched_effect") == {"target":"party","candle":25,"fray":0,"gold":0,"scraps":-1,"require_candle_room":true}
+		and doc["choices"][2].get("id") == "leave"
+		and doc["choices"][2].get("stitched_effect") == {"target":"party","candle":0,"fray":0,"gold":0,"scraps":0},
+		"AC1: genuine s6_stitched_lantern_bobbin_ferry.json preserves 3 choices, mend_wick 25 candle and rekindle text")
 	var ferry_event: Dictionary = (doc as Dictionary).duplicate(true)
 	var event_snapshot: Dictionary = ferry_event.duplicate(true)
 
@@ -7022,7 +7031,7 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	var mend_100 := _entry(prev_100, "mend_wick")
 	_check(mend_100.get("available") == false
 		and int(mend_100.get("candle")) == 100
-		and int(mend_100.get("candle_delta")) == 8
+		and int(mend_100.get("candle_delta")) == 25
 		and int(mend_100.get("scraps")) == 1
 		and int(mend_100.get("scraps_delta")) == -1
 		and int(mend_100.get("gold")) == 10
@@ -7050,17 +7059,21 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	_assert_rejected(svc_100, "mend_wick", snap_100, 100, "AC1: duplicate mend_wick refuses")
 
 	# AC2: With candle 92 and scraps >=1, mend_wick previews and settles 92->100, scraps 1->0 exactly once.
-	# With candle 0 it restores +8; with candle 99 it is admitted and clamps to 100 rather than demanding
-	# a full eight-point deficit. Compare exact preview and successful receipt; duplicate choose refuses
+	# With candle 0 it restores +25; with candle 99 it is admitted and clamps to 100 rather than demanding
+	# a full 25-point deficit. Compare exact preview and successful receipt; duplicate choose refuses
 	# and input copies remain untouched.
 	var snap_92 := _gold_scraps_four(92, 1, 10, [10, 20, 30, 40])
 	var before_92: Dictionary = snap_92.duplicate(true)
+	var rng_guard_92 := RandomNumberGenerator.new()
+	rng_guard_92.seed = 23456
+	var guard_state_92: int = rng_guard_92.state
+
 	var svc_92 := RunStitchedEventConsequence.new(ferry_event)
 	var prev_92: Dictionary = svc_92.preview(snap_92)
 	var mend_92 := _entry(prev_92, "mend_wick")
 	_check(mend_92.get("available") == true
 		and int(mend_92.get("candle")) == 100
-		and int(mend_92.get("candle_delta")) == 8
+		and int(mend_92.get("candle_delta")) == 25
 		and int(mend_92.get("scraps")) == 0
 		and int(mend_92.get("scraps_delta")) == -1
 		and int(mend_92.get("gold")) == 10
@@ -7075,8 +7088,11 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 		and int(receipt_92.get("scraps_delta")) == -1
 		and int(receipt_92.get("gold")) == 10
 		and int(receipt_92.get("gold_delta")) == 0
-		and receipt_92.get("fray") == {},
-		"AC2: candle 92 mend_wick settles 92 -> 100, scraps 1 -> 0")
+		and receipt_92.get("fray") == {}
+		and not receipt_92.has("part")
+		and not receipt_92.has("hp"),
+		"AC2: candle 92 mend_wick settles 92 -> 100, scraps 1 -> 0, leaving gold/fray/hp/parts untouched")
+	_check(rng_guard_92.state == guard_state_92, "AC2: RNG undisturbed by mend_wick choose")
 	_check(int(receipt_92.get("candle")) == int(mend_92.get("candle"))
 		and int(receipt_92.get("scraps")) == int(mend_92.get("scraps"))
 		and int(receipt_92.get("gold")) == int(mend_92.get("gold")),
@@ -7086,22 +7102,27 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	_assert_rejected(svc_92, "leave", snap_92, 92, "AC2: subsequent leave refuses after claim")
 	_check(snap_92 == before_92, "AC2: input snapshot copy remains untouched")
 
-	# Candle 0 restores +8
+	# Candle 0 restores +25 (0 -> 25)
 	var snap_0 := _gold_scraps_four(0, 1, 10, [10, 20, 30, 40])
 	var before_0: Dictionary = snap_0.duplicate(true)
 	var svc_0 := RunStitchedEventConsequence.new(ferry_event)
 	var prev_0: Dictionary = svc_0.preview(snap_0)
 	var mend_0 := _entry(prev_0, "mend_wick")
 	_check(mend_0.get("available") == true
-		and int(mend_0.get("candle")) == 8
+		and int(mend_0.get("candle")) == 25
+		and int(mend_0.get("candle_delta")) == 25
 		and int(mend_0.get("scraps")) == 0,
-		"AC2: candle 0 mend_wick previews +8 (0 -> 8)")
+		"AC2: candle 0 mend_wick previews +25 (0 -> 25)")
 	var receipt_0: Dictionary = svc_0.choose("mend_wick", snap_0)
 	_check(receipt_0.get("ok") == true
-		and int(receipt_0.get("candle")) == 8
+		and int(receipt_0.get("candle")) == 25
 		and int(receipt_0.get("scraps")) == 0
-		and int(receipt_0.get("scraps_delta")) == -1,
-		"AC2: candle 0 mend_wick claims +8 (0 -> 8)")
+		and int(receipt_0.get("scraps_delta")) == -1
+		and int(receipt_0.get("gold")) == 10
+		and receipt_0.get("fray") == {}
+		and not receipt_0.has("part")
+		and not receipt_0.has("hp"),
+		"AC2: candle 0 mend_wick claims +25 (0 -> 25)")
 	_check(snap_0 == before_0, "AC2: candle 0 input copy untouched")
 
 	# Candle 99 admitted and clamps to 100
@@ -7112,14 +7133,18 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	var mend_99 := _entry(prev_99, "mend_wick")
 	_check(mend_99.get("available") == true
 		and int(mend_99.get("candle")) == 100
-		and int(mend_99.get("candle_delta")) == 8
+		and int(mend_99.get("candle_delta")) == 25
 		and int(mend_99.get("scraps")) == 0,
 		"AC2: candle 99 admitted and clamps to 100 in preview")
 	var receipt_99: Dictionary = svc_99.choose("mend_wick", snap_99)
 	_check(receipt_99.get("ok") == true
 		and int(receipt_99.get("candle")) == 100
 		and int(receipt_99.get("scraps")) == 0
-		and int(receipt_99.get("scraps_delta")) == -1,
+		and int(receipt_99.get("scraps_delta")) == -1
+		and int(receipt_99.get("gold")) == 10
+		and receipt_99.get("fray") == {}
+		and not receipt_99.has("part")
+		and not receipt_99.has("hp"),
 		"AC2: candle 99 admitted and clamps to 100 in choose")
 	_check(snap_99 == before_99, "AC2: candle 99 input copy untouched")
 

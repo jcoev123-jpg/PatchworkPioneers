@@ -16,10 +16,10 @@
 		},
 		{
 			"id": "mend_wick",
-			"text": "Spend 1 scrap to restore 8 candlelight",
+			"text": "Spend a scrap to rekindle the ferry lantern",
 			"stitched_effect": {
 				"target": "party",
-				"candle": 8,
+				"candle": 25,
 				"fray": 0,
 				"gold": 0,
 				"scraps": -1,
