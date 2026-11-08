@@ -5,7 +5,8 @@ extends RefCounted
 ## Wraps RunV3ServiceWaystationEventGate for authentic Sewing Circle Events
 ## ("v3_threadmill_sewing_circle" and "v3_moonlace_darning_parlor").
 ## A paid entrance toll may only be claimed when the player's Stitched party/satchel
-## has at least one usable action (swap, mend, or 1-tier upgrade) under the post-toll wallet.
+## has at least one usable action (swap, mend, 1-tier upgrade, or authentic LOST-doll replacement)
+## under the post-toll wallet.
 ## Alternate trade choices and Leave remain accessible as authored.
 
 const SEWING_CIRCLE_EVENT_IDS := [
@@ -278,6 +279,9 @@ func leave(expected_node_id: Variant = null, expected_state: Variant = null) -> 
 
 
 func _has_usable_action(post_toll_scraps: int) -> bool:
+	if _has_valid_replacement_opportunity():
+		return true
+
 	var swap_service := RunStitchedSewingSwap.new(_node_id, _heroes, _satchel, _catalog)
 	var swap_quote := swap_service.quote()
 
@@ -317,6 +321,39 @@ func _has_usable_action(post_toll_scraps: int) -> bool:
 					return true
 
 	return false
+
+
+func _has_valid_replacement_opportunity() -> bool:
+	if _heroes.size() != HERO_COUNT:
+		return false
+
+	var canonical_ids := StitchedPartyAdmission.HERO_IDS
+	var seen_ids := {}
+	var genuine_lost_count := 0
+
+	for hero_raw: Variant in _heroes:
+		if not (hero_raw is Dictionary):
+			return false
+		var hero: Dictionary = hero_raw
+		var raw_id: Variant = hero.get("id")
+		if typeof(raw_id) != TYPE_STRING:
+			return false
+		var hero_id := String(raw_id)
+		if not canonical_ids.has(hero_id) or seen_ids.has(hero_id):
+			return false
+		seen_ids[hero_id] = true
+
+		var is_lost_flag := typeof(hero.get("lost")) == TYPE_BOOL and bool(hero["lost"])
+		if is_lost_flag:
+			var parts_raw: Variant = hero.get("parts")
+			var parts_empty := (parts_raw is Dictionary) and (parts_raw as Dictionary).is_empty()
+			var hp_val: Variant = hero.get("hp")
+			var hp_zero := (typeof(hp_val) == TYPE_INT or typeof(hp_val) == TYPE_FLOAT) and int(hp_val) == 0
+			if not (hp_zero and parts_empty):
+				return false
+			genuine_lost_count += 1
+
+	return genuine_lost_count > 0
 
 
 static func _index_hero_quotes(quote_dict: Dictionary) -> Dictionary:
