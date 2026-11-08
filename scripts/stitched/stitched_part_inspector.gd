@@ -18,6 +18,8 @@ const TIER_LABELS := ["I", "II", "III"]
 @onready var _status: Label = $CatalogPanel/StatusLabel
 @onready var _name: Label = $DetailsPanel/PartName
 @onready var _meta: Label = $DetailsPanel/PartMeta
+@onready var _patch_preview: TextureRect = $DetailsPanel/PatchPreview
+@onready var _tier_border_preview: TextureRect = $DetailsPanel/TierBorderPreview
 @onready var _text: Label = $DetailsPanel/PartText
 @onready var _stat: Label = $DetailsPanel/StatLine
 @onready var _ability: Label = $DetailsPanel/AbilityLine
@@ -245,6 +247,10 @@ func _refresh_details() -> void:
         button.disabled = not _by_id.has(selected_part_id)
         button.button_pressed = index + 1 == selected_tier and not button.disabled
     if not _by_id.has(selected_part_id):
+        _patch_preview.texture = null
+        _tier_border_preview.texture = null
+        _patch_preview.hide()
+        _tier_border_preview.hide()
         _name.text = "No part selected"
         _meta.text = "Choose a supplied part to inspect its stitches."
         _text.text = ""
@@ -259,10 +265,19 @@ func _refresh_details() -> void:
     var ability := StitchedParts.ability_at_tier(part, selected_tier)
     var stat := StitchedParts.stat_at_tier(part, selected_tier)
     var tier_data: Dictionary = part["tiers"].get(str(selected_tier), {})
+    var patch_path := StitchedSewnPatches.icon_path(selected_part_id, str(part["slot"]))
+    var border_path := StitchedSewnPatches.border_path(selected_tier)
+    _patch_preview.texture = load(patch_path) as Texture2D if not patch_path.is_empty() else null
+    _tier_border_preview.texture = load(border_path) as Texture2D if not border_path.is_empty() else null
+    _patch_preview.visible = _patch_preview.texture != null
+    _tier_border_preview.visible = _tier_border_preview.texture != null and _patch_preview.visible
     _name.text = str(part["name"])
     _meta.text = "SLOT: %s    OWNER: %s    TIER %s    ID: %s" % [
         str(part["slot"]).to_upper(), str(part["owner"]), TIER_LABELS[selected_tier - 1], selected_part_id,
     ]
+    var maker_thread := StitchedSewnPatches.thread_of(selected_part_id)
+    if not maker_thread.is_empty():
+        _meta.text += "\nTHREAD: " + maker_thread.to_upper()
     _text.text = str(tier_data.get("text", part["text"]))
     var stats: Array[String] = []
     for key in StitchedParts.SLOT_STATS[str(part["slot"])]:

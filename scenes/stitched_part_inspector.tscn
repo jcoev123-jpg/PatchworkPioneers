@@ -180,8 +180,8 @@ layout_mode = 0
 offset_left = 26.0
 offset_top = 75.0
 offset_right = 713.0
-offset_bottom = 105.0
-theme_override_font_sizes/font_size = 17
+offset_bottom = 115.0
+theme_override_font_sizes/font_size = 16
 text = "Choose a supplied part to inspect its stitches."
 
 [node name="PartText" type="Label" parent="DetailsPanel"]
@@ -239,6 +239,28 @@ offset_bottom = 287.0
 focus_mode = 2
 toggle_mode = true
 text = "III"
+
+[node name="PatchPreview" type="TextureRect" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 542.0
+offset_top = 201.0
+offset_right = 638.0
+offset_bottom = 297.0
+focus_mode = 0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="TierBorderPreview" type="TextureRect" parent="DetailsPanel"]
+layout_mode = 0
+offset_left = 542.0
+offset_top = 201.0
+offset_right = 638.0
+offset_bottom = 297.0
+focus_mode = 0
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
 
 [node name="StatLine" type="Label" parent="DetailsPanel"]
 layout_mode = 0
