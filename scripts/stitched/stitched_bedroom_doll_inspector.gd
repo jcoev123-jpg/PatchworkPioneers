@@ -114,6 +114,14 @@ static func status_for(record: Dictionary, id: String) -> String:
 		return "HANGING BY A THREAD"
 	var fray := int(last.get("fray", 0))
 	var status := "FRAY %d/200" % fray
+	var torn: Array = last.get("torn_slots", [])
+	if not torn.is_empty():
+		var names: Array[String] = []
+		if "arms" in torn:
+			names.append("ARM")
+		if "legs" in torn:
+			names.append("LEG")
+		return status + "\nTORN " + ", ".join(names)
 	if fray >= 150:
 		return status + "\nFACING WALL"
 	if fray >= 100:
