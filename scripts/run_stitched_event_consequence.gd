@@ -254,6 +254,12 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	var parsed_effect: Dictionary = _parse_stitched_effect(matched, catalog_state)
 	if not parsed_effect.get("ok", false):
 		return _rejection(base_candle)
+	var is_front: bool = bool(parsed_effect.get("is_front", false))
+	if is_front:
+		var front_resolution: Dictionary = _resolve_needle_toll_payer(base_state)
+		if not front_resolution.get("ok", false) or not front_resolution.get("can_pay", false):
+			return _rejection(base_candle)
+		parsed_effect["hero_id"] = front_resolution.get("hero_id", "")
 	if parsed_effect.get("has_required_hero", false) and not _party_has_hero(base_state, String(parsed_effect["required_hero"])):
 		return _rejection(base_candle)
 	# An absent named hero is unavailable, so it cannot latch the visit.
@@ -806,6 +812,11 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	var parsed_effect: Dictionary = _parse_stitched_effect(choice, catalog_state)
 	if not parsed_effect.get("ok", false):
 		return entry
+	var is_front: bool = bool(parsed_effect.get("is_front", false))
+	var front_resolution := {}
+	if is_front:
+		front_resolution = _resolve_needle_toll_payer(base_state)
+		parsed_effect["hero_id"] = front_resolution.get("hero_id", "")
 	var has_scraps: bool = parsed_effect.get("has_scraps", false)
 	var has_part: bool = parsed_effect.get("has_part", false)
 	var has_gold: bool = parsed_effect.get("has_gold", false)
@@ -832,6 +843,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 		entry["fear"] = base_state.get("wren_fear")
 	if not _has_eligible_recipients(base_state, parsed_effect):
 		# The named hero is not in this party: readable deltas, no projection.
+		return entry
+	if is_front and not front_resolution.get("can_pay", false):
 		return entry
 	if not _meets_candle_band(int(base_state["candle"]), parsed_effect):
 		return entry
@@ -956,6 +969,53 @@ func _is_hidden_by_required_hero(choice: Variant, base_state: Dictionary, catalo
 	return not _party_has_hero(base_state, String(parsed_effect["required_hero"]))
 
 
+func _resolve_needle_toll_payer(base_state: Dictionary) -> Dictionary:
+	var party: Array = base_state.get("party", [])
+	if party.size() != 4:
+		return {"ok": false, "hero_id": "", "can_pay": false}
+	var seen_ranks := {}
+	var rank_1_hero: Dictionary = {}
+	for hero in party:
+		if not hero is Dictionary:
+			return {"ok": false, "hero_id": "", "can_pay": false}
+		if not hero.has("rank") or typeof(hero.get("rank")) != TYPE_INT:
+			return {"ok": false, "hero_id": "", "can_pay": false}
+		var r: int = int(hero.get("rank"))
+		if r < 1 or r > 4:
+			return {"ok": false, "hero_id": "", "can_pay": false}
+		if seen_ranks.has(r):
+			return {"ok": false, "hero_id": "", "can_pay": false}
+		seen_ranks[r] = true
+		if not hero.has("hp") or typeof(hero.get("hp")) != TYPE_INT:
+			return {"ok": false, "hero_id": "", "can_pay": false}
+		if r == 1:
+			rank_1_hero = hero
+	if seen_ranks.size() != 4 or rank_1_hero.is_empty():
+		return {"ok": false, "hero_id": "", "can_pay": false}
+	if bool(rank_1_hero.get("lost", false)):
+		return {"ok": false, "hero_id": "", "can_pay": false}
+	var payer_id: String = String(rank_1_hero.get("id", ""))
+	if not CANONICAL_HERO_IDS.has(payer_id):
+		return {"ok": false, "hero_id": "", "can_pay": false}
+	var minimum_hp: int = 7
+	var choice_reqs: Variant = _event.get("choice_requirements")
+	if choice_reqs is Dictionary:
+		var pay_reqs: Variant = (choice_reqs as Dictionary).get("pay_toll")
+		if pay_reqs is Dictionary:
+			var raw_min: Variant = (pay_reqs as Dictionary).get("minimum_hp")
+			var min_read := _read_signed_int(raw_min)
+			if min_read.get("ok", false):
+				minimum_hp = int(min_read["value"])
+	var payer_hp: int = int(rank_1_hero.get("hp", 0))
+	var can_pay: bool = (payer_hp >= minimum_hp)
+	return {
+		"ok": true,
+		"hero_id": payer_id,
+		"can_pay": can_pay,
+		"hp": payer_hp,
+	}
+
+
 ## Strict snapshot parse: {"candle", "party"} plus optional "scraps", "gold",
 ## "satchel_count" and/or "wren_fear"; candle 0..100; optional native int scraps >= 0;
 ## optional native int gold >= 0; optional native int satchel_count 0..6;
@@ -1042,9 +1102,17 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 			return {"ok": false}
 		var hero: Dictionary = entry
 		var has_lost: bool = hero.has("lost")
-		var expected_hero_size: int = 3 if has_lost else 2
-		if hero.size() != expected_hero_size or not hero.has("id") or not hero.has("fray"):
-			return {"ok": false}
+		var is_needle_toll: bool = (_event.get("id", "") == "needle_toll")
+		if not is_needle_toll:
+			var expected_hero_size: int = 3 if has_lost else 2
+			if hero.size() != expected_hero_size or not hero.has("id") or not hero.has("fray"):
+				return {"ok": false}
+		else:
+			if not hero.has("id") or not hero.has("fray"):
+				return {"ok": false}
+			for key in hero.keys():
+				if not key in ["id", "fray", "lost", "rank", "hp"]:
+					return {"ok": false}
 		var raw_id: Variant = hero.get("id")
 		if not _is_nonblank_string(raw_id) or not CANONICAL_HERO_IDS.has(raw_id):
 			return {"ok": false}
@@ -1064,7 +1132,13 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 			if typeof(raw_lost) != TYPE_BOOL:
 				return {"ok": false}
 			is_lost = bool(raw_lost)
-		party.append({"id": hero_id, "fray": fray, "lost": is_lost})
+		var parsed_hero: Dictionary = {"id": hero_id, "fray": fray, "lost": is_lost}
+		if is_needle_toll:
+			if hero.has("rank"):
+				parsed_hero["rank"] = hero.get("rank")
+			if hero.has("hp"):
+				parsed_hero["hp"] = hero.get("hp")
+		party.append(parsed_hero)
 	var parsed_snapshot := {"candle": candle, "party": party}
 	if has_scraps:
 		parsed_snapshot["scraps"] = scraps_int
@@ -1144,6 +1218,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_require_fray_or_fear else 0)
 	)
 	var hero_id := ""
+	var is_needle_front := false
 	if target == TARGET_PARTY:
 		var expected_party_keys: int = 3 + optional_keys
 		if effect.size() != expected_party_keys:
@@ -1153,8 +1228,15 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if effect.size() != expected_hero_keys or not effect.has("hero_id"):
 			return {"ok": false}
 		var raw_hero: Variant = effect.get("hero_id")
-		if typeof(raw_hero) != TYPE_STRING or not _is_nonblank_string(raw_hero) or not CANONICAL_HERO_IDS.has(raw_hero):
-			return {"ok": false}
+		is_needle_front = (
+			_event.get("id", "") == "needle_toll"
+			and choice is Dictionary
+			and (choice as Dictionary).get("id", "") == "pay_toll"
+			and raw_hero == "$front"
+		)
+		if not is_needle_front:
+			if typeof(raw_hero) != TYPE_STRING or not _is_nonblank_string(raw_hero) or not CANONICAL_HERO_IDS.has(raw_hero):
+				return {"ok": false}
 		hero_id = raw_hero
 	var required_hero := ""
 	if has_required_hero:
@@ -1231,6 +1313,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"fray": int(fray_read["value"]),
 		"target": target,
 		"hero_id": hero_id,
+		"is_front": is_needle_front,
 		"has_scraps": has_scraps,
 		"has_part": has_part,
 		"has_gold": has_gold,
