@@ -131,11 +131,27 @@ static func valid_pool(pool: Variant) -> bool:
 	return true
 
 
+## True when slots holds at most SLOTS distinct known ids; basic hands count too.
+static func valid_slots(slots: Variant) -> bool:
+	if not slots is Array or slots.size() > SLOTS:
+		return false
+	var seen := {}
+	for id in slots:
+		if not id is String or not is_gift(id) or seen.has(id):
+			return false
+		seen[id] = true
+	return true
+
+
 ## Up to three distinct gifts from pool minus slots, drawn by rarity weight on a private RNG so
 ## the run's own draws never move. Same seed and offer index -> the same three gifts.
+## A forged, repeated or basic pool entry, or unknown, repeated or over-capacity slots, yield
+## an empty offer: a malformed input must never look like a seeded choice.
 static func draw_offer(seed_number: int, offer_index: int, pool: Array, slots: Array, elite: bool) -> Array:
 	var book := catalog()
 	if not bool(book.get("ok", false)):
+		return []
+	if not valid_pool(pool) or not valid_slots(slots):
 		return []
 	var weights: Dictionary = book.elite_weights if elite else book.weights
 	var left: Array = []
