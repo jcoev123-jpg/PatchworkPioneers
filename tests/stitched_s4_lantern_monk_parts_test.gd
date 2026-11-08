@@ -29,12 +29,20 @@ const MOTH_SHROUD_COPY := "A button-eyed doll curls inside swirling cloth strips
 ## data/stitched/s14_hero_abilities.json, so these top-level texts stay pure appearance.
 const WICK_SPARK_COPY := "A narrow saffron wick is stitched across the Monk's plum sleeve cuff, with a soot-dark tip bound in cream thread."
 const SNUFF_FLAME_COPY := "A cream lantern-shade flap folds over the Monk's other plum sleeve, its scorched hem edged in small saffron cross-stitches."
+## S14 sewn-cloth copy: the alternate head and torso patches describe the stitched cloth the
+## player sees, never the retired S4 part-granted Blind/Heal/Dodge move. The Monk's real
+## signatures live in data/stitched/s14_hero_abilities.json, so these top-level texts stay
+## pure appearance.
+const MOTH_CLOUD_COPY := "A cluster of plum felt moths swirls across a saffron head patch, with cream wing tips secured by dark cross-stitches."
+const VIGIL_RING_COPY := "A cream-stitched halo circles a tiny lantern on the Monk's plum quilted chest, with saffron cloth rays tucked beneath its seams."
 ## Whole words that would turn this appearance copy back into an obsolete combat promise. `\b`
 ## word boundaries keep "stitched" or "hem" from tripping a shorter token such as "hit".
 const FORBIDDEN_COPY_PATTERN := "\\b(ability|skill|rank|ranks|target|foe|enemy|ally|cast|attack|hit|damage|blind|expose|exposed|weak|bleed|stun|heal|guard|dodge|tier|tiers|turn|turns|duration|move|effect|chance|bonus)\\b"
 ## The two obsolete sentences this lane replaced: positive witnesses that the matcher bites.
 const OLD_WICK_SPARK_PROMISE := "Singe one foe in ranks 1-3: Blind it; stitched tiers II/III also Expose a seam for 1/2 turns."
 const OLD_SNUFF_FLAME_PROMISE := "Snuff a foe's light with a stinging flame; Blind and Expose the target."
+const OLD_MOTH_CLOUD_PROMISE := "Loose a cloud of moths, even from the rear rank; attempt Blind independently on each living foe in ranks one to four."
+const OLD_VIGIL_RING_PROMISE := "A ring of lanternlight heals all living allies and shelters each with temporary Dodge."
 ## The parts this task must leave frozen: base ability shape, slot stat and label.
 ## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
@@ -105,6 +113,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_patch_copy()
 	_test_arm_patch_copy()
+	_test_head_torso_patch_copy()
 	_test_leg_patch_copy()
 	_test_lamplight_wash_launch()
 	_test_wick_spark_launch()
@@ -407,6 +416,72 @@ func _test_arm_patch_copy() -> void:
 			"AC3: deep-copy validation never mutates the shipped arm patch: " + id)
 	_check(seen_texts.size() == 2,
 		"AC2: the two arm patches describe visually distinct sewn cloth")
+
+
+## S14 head/torso patch identity copy: the alternate head and torso patches describe the sewn
+## cloth the player actually sees, never the retired part-granted Blind/Heal/Dodge move. Every
+## text is looked up by named ID (never list position) and must stay free of rank/target/tier/
+## damage/turn promises, while the frozen S4 ability data keeps the real mechanics.
+func _test_head_torso_patch_copy() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named head/torso patch copy checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		ALTERNATES["head"]: {
+			"name": "Moth Cloud", "slot": "head", "text": MOTH_CLOUD_COPY,
+			"motifs": ["moths", "saffron", "cross-stitches"],
+		},
+		ALTERNATES["torso"]: {
+			"name": "Vigil Ring", "slot": "torso", "text": VIGIL_RING_COPY,
+			"motifs": ["halo", "lantern", "plum", "chest"],
+		},
+	}
+	var forbidden := RegEx.new()
+	_check(forbidden.compile(FORBIDDEN_COPY_PATTERN) == OK,
+		"AC2: the whole-word combat-promise pattern compiles for head/torso copy")
+	_check(forbidden.search(OLD_MOTH_CLOUD_PROMISE.to_lower()) != null,
+		"AC2: the matcher really detects the old Moth Cloud combat sentence")
+	_check(forbidden.search(OLD_VIGIL_RING_PROMISE.to_lower()) != null,
+		"AC2: the matcher really detects the old Vigil Ring combat sentence")
+	var digits := RegEx.new()
+	_check(digits.compile("\\d") == OK, "AC2: the numeric-digit pattern compiles for head/torso copy")
+	_check(digits.search("ranks 1-4 for 2 turns") != null,
+		"AC2: the digit matcher really detects numeric combat values")
+	var seen_texts: Dictionary = {}
+	for id in expected:
+		var want: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: named head/torso patch record present: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["id"]) == id and str(part["name"]) == str(want["name"])
+			and str(part["owner"]) == "lantern_monk" and str(part["slot"]) == str(want["slot"]),
+			"AC1: patch keeps its id, name, owner and %s slot: %s" % [str(want["slot"]), id])
+		var text := str(part["text"])
+		_check(text == str(want["text"]),
+			"AC1: patch base copy is exactly the authored cloth sentence: " + id)
+		seen_texts[text] = true
+		var low := text.to_lower()
+		for motif in want["motifs"]:
+			_check(low.contains(str(motif)),
+				"AC1: patch copy names the sewn motif '%s': %s" % [str(motif), id])
+		_check(forbidden.search(low) == null,
+			"AC2: patch copy promises no combat word: " + id)
+		_check(digits.search(text) == null,
+			"AC2: patch copy carries no numeric combat digits: " + id)
+		var blanked: Dictionary = part.duplicate(true)
+		blanked["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+			"AC3: a blank patch base text still fails closed: " + id)
+		var spaces: Dictionary = part.duplicate(true)
+		spaces["text"] = "   "
+		_check(not bool(StitchedParts.validate_part(spaces).get("ok", false)),
+			"AC3: a whitespace-only patch base text still fails closed: " + id)
+		_check(str(cat["by_id"][id]["text"]) == str(want["text"]),
+			"AC3: deep-copy validation never mutates the shipped patch: " + id)
+	_check(seen_texts.size() == 2,
+		"AC2: the two head/torso patches describe visually distinct sewn cloth")
 
 
 ## S14 leg patch identity copy: both Lantern Monk leg patches describe the sewn cloth art the
@@ -730,8 +805,8 @@ func _test_moth_cloud_fourth_rank() -> void:
 		and part["ability"]["effects"] == {"blind": 1} and int(part["ability"]["self_move"]) == 0
 		and str(part["ability"]["move"]) == "skill",
 		"AC1: Moth Cloud launches from [2,3,4] with enemy multi Blind, ACC 90 and its skill pose")
-	_check(str(part["text"]).to_lower().contains("rear rank"),
-		"AC1: Moth Cloud's short rules text mentions the rear rank")
+	_check(str(part["text"]) == MOTH_CLOUD_COPY,
+		"AC1: Moth Cloud's base text is the authored sewn-cloth sentence, not a combat promise")
 	var expected_acc := {1: 90, 2: 95, 3: 100}
 	var expected_effects := {1: {"blind": 1}, 2: {"blind": 1}, 3: {"blind": 1, "exposed": 1}}
 	for tier in [1, 2, 3]:
