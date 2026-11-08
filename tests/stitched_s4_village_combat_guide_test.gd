@@ -322,18 +322,68 @@ func _run() -> void:
 	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
 	_check(_selected_page(guide, 0), "right shoulder wraps last to first")
 	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
-	await _direction_pad(JOY_BUTTON_DPAD_UP, true)
-	_check(_selected_page(guide, 0), "atlas-closed D-pad up does not navigate")
-	await _direction_pad(JOY_BUTTON_DPAD_UP, false)
-	await _direction_pad(JOY_BUTTON_Y, true)
-	_check(_selected_page(guide, 0), "unrelated controller button is inert")
-	await _direction_pad(JOY_BUTTON_Y, false)
-	_check(_state() == arrow_host and randi() == arrow_next_rng,
-		"page and controller actions preserve host, callbacks and RNG")
-	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
+	# Navigate the already-mounted six-control guide focus loop by real
+	# D-pad edges. Neither direction may activate a tab or open the atlas.
 	var focus_ring: Array[Button] = guide.tab_buttons.duplicate()
 	focus_ring.append(guide.atlas_button)
 	focus_ring.append(guide.close_button)
+	_check(focus_ring.size() == 6 and focus_ring[0].name == "GuideTab0"
+		and focus_ring[3].name == "GuideTab3"
+		and focus_ring[4].name == "PartAtlasButton"
+		and focus_ring[5].name == "CloseGuideButton",
+		"gamepad uses the existing named six-control guide ring")
+	var focus_page := guide.page_index
+	guide.tab_buttons[0].grab_focus()
+	for i in range(1, focus_ring.size() + 1):
+		await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+		_check(root.gui_get_focus_owner() == focus_ring[i % focus_ring.size()]
+			and guide.page_index == focus_page and not guide._atlas_is_open(),
+			"fresh D-pad DOWN focuses next guide member and wraps at %d" % i)
+		await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+		_check(root.gui_get_focus_owner() == focus_ring[i % focus_ring.size()]
+			and guide.page_index == focus_page,
+			"held D-pad DOWN never repeats focus at %d" % i)
+		await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+		_check(root.gui_get_focus_owner() == focus_ring[i % focus_ring.size()],
+			"D-pad DOWN release leaves focus unchanged at %d" % i)
+	for i in range(focus_ring.size() - 1, -1, -1):
+		await _direction_pad(JOY_BUTTON_DPAD_UP, true)
+		_check(root.gui_get_focus_owner() == focus_ring[i]
+			and guide.page_index == focus_page and not guide._atlas_is_open(),
+			"fresh D-pad UP focuses prior guide member and wraps at %d" % i)
+		await _direction_pad(JOY_BUTTON_DPAD_UP, true)
+		_check(root.gui_get_focus_owner() == focus_ring[i],
+			"held D-pad UP never repeats focus at %d" % i)
+		await _direction_pad(JOY_BUTTON_DPAD_UP, false)
+	# Hidden/disabled buttons must be skipped, never focused or invoked.
+	guide.atlas_button.disabled = true
+	guide.tab_buttons[3].grab_focus()
+	await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+	_check(root.gui_get_focus_owner() == guide.close_button and not guide._atlas_is_open(),
+		"disabled Parts button is omitted from gamepad focus")
+	await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+	guide.atlas_button.disabled = false
+	guide.atlas_button.hide()
+	guide.tab_buttons[3].grab_focus()
+	await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+	_check(root.gui_get_focus_owner() == guide.close_button and not guide._atlas_is_open(),
+		"hidden Parts button is omitted from gamepad focus")
+	await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+	guide.atlas_button.show()
+	await _direction_pad(JOY_BUTTON_Y, true)
+	_check(root.gui_get_focus_owner() == guide.close_button and guide.page_index == focus_page,
+		"unrelated controller button is inert on guide Close focus")
+	await _direction_pad(JOY_BUTTON_Y, false)
+	_check(_state() == arrow_host and randi() == arrow_next_rng,
+		"focus-only guide traversal preserves page, host callbacks, wallet, selections and RNG")
+	# ui_accept on a focused tab still selects that page, unlike focus travel.
+	guide.tab_buttons[2].grab_focus()
+	await _key(KEY_ENTER)
+	_check(_selected_page(guide, 2), "ui_accept activates only the focused guide tab")
+	guide.tab_buttons[0].grab_focus()
+	await _key(KEY_ENTER)
+	_check(_selected_page(guide, 0), "ui_accept restores page zero without duplicate dispatch")
+	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
 	for i in range(focus_ring.size()):
 		var current := focus_ring[i]
 		var next := focus_ring[(i + 1) % focus_ring.size()]
@@ -528,6 +578,21 @@ func _run() -> void:
 		"inactive guide ignores keyboard, D-pad, shoulder and B events")
 	await _click(entry)
 	_check(guide.is_open(), "pointer reopens same mounted guide")
+	guide.close_button.grab_focus()
+	await _key(KEY_ENTER)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == entry and not entry.disabled,
+		"ui_accept on focused guide Close restores real BaseScreen opener")
+	await _click(entry)
+	_check(guide.is_open(), "guide reopens for outer controller B dismissal")
+	await _direction_pad(JOY_BUTTON_B, true)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == entry and not entry.disabled,
+		"gamepad B on outer guide dismisses and returns to real village opener")
+	await _direction_pad(JOY_BUTTON_B, true)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == entry,
+		"held B cannot dispatch twice through the closed guide")
+	await _direction_pad(JOY_BUTTON_B, false)
+	await _click(entry)
+	_check(guide.is_open(), "guide reopens after controller B release")
 	await _key(KEY_ESCAPE)
 	_check(not guide.is_open() and root.gui_get_focus_owner() == entry,
 		"Escape dismisses and restores guide entry focus")

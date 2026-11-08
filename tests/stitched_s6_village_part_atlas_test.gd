@@ -82,6 +82,14 @@ func _key(key: Key, shifted: bool = false) -> void:
         await process_frame
 
 
+func _direction_pad(button: JoyButton, pressed: bool) -> void:
+    var event := InputEventJoypadButton.new()
+    event.button_index = button
+    event.pressed = pressed
+    root.push_input(event, true)
+    await process_frame
+
+
 func _click(button: Button) -> void:
     var point := button.get_global_rect().get_center()
     _check(root.get_visible_rect().has_point(point), "button has reachable screen coordinates: " + button.name)
@@ -540,7 +548,25 @@ func _run() -> void:
         and guide.page_text(3).contains("CANDLE")
         and guide.page_text(3).contains("SNUFFED 0"),
         "ranks and seams persist, Fray is page 2 and the live Candle bands are page 3")
-    await _click(guide.atlas_button)
+    # Open the same inspector using gamepad focus, then ordinary ui_accept;
+    # focus traversal alone cannot select another guide page or spend anything.
+    _check(root.gui_get_focus_owner() == guide.tab_buttons[0],
+        "real guide entry starts at first tab before controller travel")
+    seed(654061)
+    var controller_next_rng := randi()
+    seed(654061)
+    var controller_host := _state()
+    for i in range(1, 5):
+        await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+        var expected_focus: Button = guide.tab_buttons[i] if i < 4 else guide.atlas_button
+        _check(root.gui_get_focus_owner() == expected_focus and guide.page_index == 0
+            and not guide._atlas_is_open(),
+            "controller DOWN reaches guide tab or Parts & spoils without activation: %d" % i)
+        await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+    _check(_state() == controller_host and randi() == controller_next_rng,
+        "controller focus-only travel cannot change host or seeded RNG")
+    await _direction_pad(JOY_BUTTON_A, true)
+    await _direction_pad(JOY_BUTTON_A, false)
     var inspector := guide.part_atlas
     _check(inspector != null and inspector is StitchedPartInspector
         and inspector.get_script() == load("res://scripts/stitched/stitched_part_inspector.gd")
@@ -555,6 +581,30 @@ func _run() -> void:
         and guide.get_children().filter(func(node: Node) -> bool:
             return node is StitchedPartInspector).size() == 1,
         "nested modal stays blocked, labelled reference-only and singly mounted")
+    # D-pad navigation now owns the atlas ring while it is mounted: each
+    # enabled dynamic row is visited, never the obscured guide buttons.
+    var atlas_ring := guide._atlas_focus_buttons()
+    _check(atlas_ring.size() > 9 and atlas_ring[0] == inspector.get_node("CloseButton")
+        and atlas_ring.has(inspector.get_node("CatalogPanel/OwnerFilter"))
+        and atlas_ring.has(inspector.get_node("CatalogPanel/SlotHead"))
+        and atlas_ring.has(inspector.get_node("DetailsPanel/TierIII")),
+        "controller atlas ring includes Close, Owner, slots, rows and thread finishes")
+    var part_before := inspector.selected_part_id
+    var owner_before := inspector.selected_owner
+    var tier_before := inspector.selected_tier
+    for i in range(atlas_ring.size()):
+        await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+        _check(root.gui_get_focus_owner() == atlas_ring[(i + 1) % atlas_ring.size()]
+            and guide.page_index == 0,
+            "nested D-pad DOWN visits only actual enabled atlas controls %d" % i)
+        await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+    await _direction_pad(JOY_BUTTON_DPAD_UP, true)
+    _check(root.gui_get_focus_owner() == atlas_ring[atlas_ring.size() - 1],
+        "nested D-pad UP wraps from inspector Close to last finish")
+    await _direction_pad(JOY_BUTTON_DPAD_UP, false)
+    _check(inspector.selected_part_id == part_before and inspector.selected_owner == owner_before
+        and inspector.selected_tier == tier_before and guide.page_index == 0,
+        "controller atlas browsing never selects part, owner, tier or guide page")
     var owner_filter := inspector.get_node("CatalogPanel/OwnerFilter") as OptionButton
     _check(owner_filter != null
         and _owner_label(owner_filter, "all", "All")
