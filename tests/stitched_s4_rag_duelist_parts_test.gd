@@ -152,6 +152,48 @@ const ARM_PATCH_FORBIDDEN_WORDS := [
 	"guard", "heal", "turn", "ability", "move", "step", "forward", "effect",
 ]
 
+## S14 retires the two torso parts' part-granted combat role while S13 keeps them as worn sewn
+## patches, so both player-readable torso descriptions are sewn-fabric copy only: no rank, tier,
+## Riposte or other combat promise. The legacy stat and Riposte dictionaries stay as the S4
+## compatibility contract and are proven by _test_catalog, _test_tiers and _test_riposte.
+const TORSO_PATCH_TEXT := {
+	"rag_duelist_torso_cape_parry": "A broad black cape shoulder-cloth lies across a crimson torso patch, its torn hem tacked down with crooked gold cross-stitches.",
+	"rag_duelist_torso_duelist_reprise": "Two overlapping strips of crimson and black cape fabric are sewn to the Duelist's chest, fastened with a tarnished gold button and fraying thread.",
+}
+
+## The retired part-as-guard sentences these two torso records carried before S14 retired
+## part-granted combat copy; neither exact sentence may survive anywhere in this catalog.
+const TORSO_PATCH_RETIRED_TEXT := {
+	"rag_duelist_torso_cape_parry": "Wrap the cape from ranks 1-3: Riposte on yourself, so a foe that lands a hit takes that much back.",
+	"rag_duelist_torso_duelist_reprise": "Answer from ranks 1-2: a heavier Riposte on yourself, sharper at each stitch tier.",
+}
+
+## Visible sewn-cloth words each torso description must name, so the copy stays a description of
+## the worn patch rather than a generic nonempty string. Hyphenated cloth words split into whole
+## tokens, so shoulder-cloth and cross-stitches yield "shoulder"/"cloth" and "cross"/"stitches".
+const TORSO_PATCH_WORDS := {
+	"rag_duelist_torso_cape_parry": [
+		"black", "cape", "shoulder", "cloth", "crimson", "torso", "patch", "hem", "gold",
+		"stitches",
+	],
+	"rag_duelist_torso_duelist_reprise": [
+		"crimson", "black", "cape", "fabric", "sewn", "chest", "gold", "button", "thread",
+	],
+}
+
+## Whole combat words the two torso descriptions must never promise, matched case-insensitively
+## on word boundaries so innocuous material words like "strips", "tacked" or "fraying" cannot trip
+## a check by accident. Riposte and every rank/tier/turn/effect term is named explicitly: the
+## legacy abilities keep them, the cloth copy must not advertise them.
+const TORSO_PATCH_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "riposte", "foe", "foes", "enemy", "enemies",
+	"target", "targets", "attack", "attacks", "hit", "hits", "damage", "dodge", "guard",
+	"bleed", "mark", "weak", "exposed", "heal", "heals", "stun", "buff", "buffs",
+	"effect", "effects", "skill", "skills", "ability", "abilities", "turn", "turns",
+	"move", "moves", "step", "swap", "ally", "allies", "self", "grants", "gain", "gains",
+	"chance", "duration",
+]
+
 ## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
 ## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
 ## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
@@ -273,6 +315,7 @@ func _initialize() -> void:
 	_test_cape_legs_text()
 	_test_head_patch_text()
 	_test_arm_patch_text()
+	_test_torso_patch_text()
 	_test_negatives()
 	_test_live_fixture()
 	_test_live_stats()
@@ -968,6 +1011,93 @@ func _test_arm_patch_text() -> void:
 		for arm_id in ARM_PATCH_TEXT:
 			_check(other_text != str(ARM_PATCH_TEXT[arm_id]),
 				"AC3: the arm description stays on " + str(arm_id) + ", never on " + str(other_id))
+
+
+# ---------------------------------------------------------------- AC1/AC2: the two torso-patch texts
+
+## S14 retires the two torso parts' part-granted Riposte role while S13 keeps them as worn sewn
+## patches, so both player-readable torso descriptions are sewn-cloth copy only: no rank, tier,
+## Riposte, foe, hit, turn or other combat promise, and no number. Each named record is checked
+## against its authored sentence, its identity fields, its legacy stat/ability/tier contract and
+## the visible crimson/black/gold cloth it names, using whole words (never accidental substrings)
+## for the forbidden combat vocabulary; neither retired guard sentence may survive anywhere in
+## this hero kit and neither new sentence may be reused by another wearable.
+func _test_torso_patch_text() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the shipped catalog loads for the two torso-patch text checks")
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	for part_id in TORSO_PATCH_TEXT:
+		var id := str(part_id)
+		var sentence := str(TORSO_PATCH_TEXT[id])
+		_check(by_id.has(id), "AC1: the catalog authors the named torso-patch record " + id)
+		if not by_id.has(id):
+			continue
+		var part: Dictionary = by_id[id]
+		var spec: Dictionary = EXPECTED[id]
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC3: validate_part accepts the shipped " + id)
+		_check(str(part.get("id", "")) == id, "AC1: " + id + " keeps its authored id")
+		_check(str(part.get("name", "")) == str(spec["name"]),
+			"AC1: " + id + " keeps its authored name " + str(spec["name"]))
+		_check(str(part.get("owner", "")) == OWNER, "AC1: " + id + " stays owned by the rag_duelist")
+		_check(str(part.get("slot", "")) == "torso", "AC1: " + id + " stays a torso patch")
+		# The physical description is the only authorized change: the legacy stat, ability and
+		# tier overrides remain the S4 compatibility witnesses, unchanged.
+		_check(_int_dict(part["stat"]) == _int_dict(spec["stat"]),
+			"AC3: " + id + " keeps its legacy tier-I slot stat " + str(spec["stat"]))
+		_check(str(part["ability"]["id"]) == str(spec["ability_id"]),
+			"AC3: " + id + " keeps its legacy ability " + str(spec["ability_id"]))
+		_check(part["tiers"].has("2") and part["tiers"].has("3"),
+			"AC3: " + id + " keeps its legacy tiers II and III overrides")
+		_check(_int_dict(StitchedParts.ability_at_tier(part, 1)["effects"])
+			== _int_dict(spec["effects"][0]),
+			"AC3: " + id + " keeps its legacy Riposte effect")
+		var text := str(part.get("text", ""))
+		_check(text == sentence, "AC1: " + id + " carries its authored sewn-cloth sentence: " + text)
+		var words := _whole_words(text)
+		for word in TORSO_PATCH_WORDS[id]:
+			_check(str(word) in words,
+				"AC2: " + id + " names the visible sewn cloth " + str(word) + ": " + text)
+		for word in TORSO_PATCH_FORBIDDEN_WORDS:
+			_check(not str(word) in words,
+				"AC2: " + id + " promises no combat term " + str(word) + ": " + text)
+		for digit in range(10):
+			_check(not text.contains(str(digit)),
+				"AC2: " + id + " states no number " + str(digit) + ": " + text)
+		# Neither retired part-as-guard sentence may survive on this record.
+		_check(text != str(TORSO_PATCH_RETIRED_TEXT[id]),
+			"AC2: " + id + " no longer carries its retired guard sentence")
+		# The same record cloned in memory with its text emptied still fails closed, and the
+		# shipped record itself is never mutated by the rejected copies.
+		for bad_text in ["", "   "]:
+			var blank := part.duplicate(true)
+			blank["text"] = bad_text
+			_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+				"AC3: " + id + " with blank text is refused: " + text)
+		_check(str(part.get("text", "")) == sentence,
+			"AC3: the rejected blank text never changes the shipped " + id + " record")
+	# Neither retired guard sentence may survive anywhere in this hero kit, and neither new
+	# torso description may be reused by—or leak onto—the other six wearables.
+	for other_id in ALL_PART_IDS:
+		if not by_id.has(other_id):
+			continue
+		var other_text := str(by_id[other_id].get("text", ""))
+		for retired_id in TORSO_PATCH_RETIRED_TEXT:
+			_check(other_text != str(TORSO_PATCH_RETIRED_TEXT[retired_id]),
+				"AC2: the retired " + str(retired_id) + " guard copy is gone from " + str(other_id))
+		if TORSO_PATCH_TEXT.has(other_id):
+			continue
+		for torso_id in TORSO_PATCH_TEXT:
+			_check(other_text != str(TORSO_PATCH_TEXT[torso_id]),
+				"AC3: the torso description stays on " + str(torso_id) + ", never on " + str(other_id))
+	# The two new descriptions are visually distinct cloth, never the same sentence twice.
+	var parry_text := str(by_id["rag_duelist_torso_cape_parry"].get("text", ""))
+	var reprise_text := str(by_id["rag_duelist_torso_duelist_reprise"].get("text", ""))
+	_check(parry_text != reprise_text,
+		"AC2: the two torso patches describe visually distinct sewn cloth")
 
 
 # ---------------------------------------------------------------- AC1/AC3: fail-closed negatives
