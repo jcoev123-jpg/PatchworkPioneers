@@ -215,13 +215,19 @@ func read_state() -> Dictionary:
     }
 
 
-## Paid calm eligibility shared by quote() and calm_hero(): a present hero with
-## positive FRAY that is not LOST. Only a native boolean lost == true is LOST (same
-## rule as the sewing services); HP 0 (Hanging by a Thread) is still eligible.
+## Paid calm eligibility shared by quote() and calm_hero(): a present hero that is
+## not LOST and that the calm can actually help: positive FRAY, or zero FRAY with a
+## still-present known Unravelled trait to clear. Zero FRAY with an absent, empty,
+## "steadfast" or unrecognized resolve has no benefit and is never a paid target.
+## Only a native boolean lost == true is LOST (same rule as the sewing services),
+## checked before both cases; HP 0 (Hanging by a Thread) is still eligible.
 func _calm_eligible(hero: Dictionary) -> bool:
     if typeof(hero.get("lost")) == TYPE_BOOL and bool(hero["lost"]):
         return false
-    return int(hero["fray"]) > 0
+    var fray := int(hero["fray"])
+    if fray > 0:
+        return true
+    return fray == 0 and _calm_clears_resolve(hero, 0)
 
 
 ## True when a calm leaving this FRAY would clear the hero's present, known
@@ -365,8 +371,8 @@ func _receipt(ok: bool, action: String = "", removed_card_id: String = "",
 
 ## Stitched mode only: calm exactly one named hero by 50 FRAY (never below zero)
 ## for the quoted gold. An unaffordable, stale or invalid attempt changes nothing
-## and leaves the visit open for Leave. A hero already at 0 FRAY is refused so no
-## gold is paid for no effect.
+## and leaves the visit open for Leave. A hero at 0 FRAY is refused unless it still
+## carries a known Unravelled trait to clear, so no gold is paid for no effect.
 func calm_hero(hero_id: Variant, expected_visit_id: Variant,
         expected_node_id: Variant, expected_snapshot: Variant) -> Dictionary:
     if not _stitched or not _matches_source(expected_visit_id, expected_node_id, expected_snapshot):

@@ -251,7 +251,11 @@ func _test_service_preview() -> void:
 	var calm_free := _preview_heroes()
 	calm_free[0].fray = 0
 	calm_free[1].fray = 0
-	var spare_only := _choice(_live_open(100, calm_free, _spares()), "hire_unpicker")
+	# A zero-FRAY doll with a lingering known trait can now be cured, so clear the traits
+	# here to keep the "nothing to calm" fixture truly without a calm benefit.
+	calm_free[0].resolve = ""
+	calm_free[1].resolve = ""
+	var spare_only:= _choice(_live_open(100, calm_free, _spares()), "hire_unpicker")
 	_check(spare_only.available and spare_only.service_preview.calm_outcomes.is_empty(), "no calm target projected")
 	_check(spare_only.service_preview.unpick_outcomes.size() == 1, "spare still projected")
 	var nothing := _choice(_live_open(100, calm_free, no_spares), "hire_unpicker")
