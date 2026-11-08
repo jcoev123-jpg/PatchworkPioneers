@@ -38,22 +38,42 @@ func _border(panel: Control) -> TextureRect:
 func _empty_preview(panel: Control) -> bool:
     return _preview(panel).texture == null and _border(panel).texture == null and (
         not _preview(panel).visible and not _border(panel).visible) and (
-        not _line(panel, "PartMeta").contains("THREAD:"))
+        not _line(panel, "PartMeta").contains("THREAD:")) and (
+        _line(panel, "PartText").is_empty() and _no_retired_readouts(panel))
 
 
-func _assert_helm(panel: StitchedPartInspector, tier: int, acc: int, lo: int, hi: int) -> void:
-    _check(panel.select_tier(tier), "tier %d selectable" % tier)
-    var numbers := _line(panel, "NumbersLine")
-    _check(numbers.contains("ACC: %d%%" % acc) and numbers.contains("DAMAGE: %d-%d" % [lo, hi]),
-        "Iron Helm tier %d accurately shows ACC %d and damage %d-%d: %s" % [tier, acc, lo, hi, numbers])
-    _check(_line(panel, "EffectsLine").contains("Weak 1") and
-        _line(panel, "RanksLine").contains("LAUNCH: 1") and
-        _line(panel, "RanksLine").contains("TARGET: ENEMY RANKS 1, 2") and
-        _line(panel, "AbilityLine").contains("Iron Helm Bash") and
-        _line(panel, "MovementLine").contains("POSE: attack"),
-        "Iron Helm tier %d preserves real ability, ranks and Weak effect" % tier)
-    _check(panel.selected_part_id == "warden_head_iron_helm" and panel.selected_tier == tier,
-        "tier selection does not replace the part")
+func _no_retired_readouts(panel: Control) -> bool:
+    for name in ["StatLine", "AbilityLine", "RanksLine", "NumbersLine",
+            "EffectsLine", "MovementLine"]:
+        if not _line(panel, name).is_empty():
+            return false
+    return true
+
+
+func _maker_matches(panel: Control, id: String) -> bool:
+    var maker := StitchedSewnPatches.thread_of(id)
+    var meta := _line(panel, "PartMeta")
+    if maker.is_empty():
+        return not meta.contains("THREAD:")
+    return meta.contains("\nTHREAD: " + maker.to_upper())
+
+
+func _cloth_copy(panel: Control, slot: String) -> bool:
+    var text := _line(panel, "PartText")
+    return text == ("Sewn on the doll's %s. Its battle moves belong to the doll, not this cloth patch." % slot.to_upper())
+
+
+func _assert_helm(panel: StitchedPartInspector, tier: int) -> void:
+    _check(panel.select_tier(tier), "finish %d selectable" % tier)
+    _check(panel.selected_part_id == "warden_head_iron_helm" and panel.selected_tier == tier
+        and _texture_path(_preview(panel)) == "res://assets/paper/stitched/patches/patch_head.png"
+        and _texture_path(_border(panel)) == StitchedSewnPatches.border_path(tier)
+        and _border(panel).visible == (tier != 1),
+        "finish %d keeps Iron Helm and its same base cloth with correct border" % tier)
+    _check(_no_retired_readouts(panel) and _cloth_copy(panel, "head")
+        and not _line(panel, "PartMeta").contains("TIER ")
+        and not _line(panel, "PartMeta").contains("THREAD:"),
+        "finish %d never claims retired combat stats, tiers or an invented maker" % tier)
 
 
 func _run() -> void:
@@ -149,24 +169,25 @@ func _run() -> void:
         _check(_line(panel, "PartName") == "Iron Helm" and
             _line(panel, "PartMeta").contains("OWNER: warden") and
             _line(panel, "PartMeta").contains("SLOT: HEAD") and
-            _line(panel, "PartText").contains("front-rank foe") and
-            _line(panel, "StatLine").contains("ACC +5"),
-            "head renders actual name, metadata, rules text and ACC stat")
-        _assert_helm(panel, 1, 90, 5, 8)
+            _line(panel, "PartMeta").contains("ID: warden_head_iron_helm")
+            and _cloth_copy(panel, "head") and _no_retired_readouts(panel),
+            "head renders genuine name/owner/slot/ID and doll-owned battle-move copy")
+        _assert_helm(panel, 1)
         panel.get_node("DetailsPanel/TierII").pressed.emit()
-        _check(panel.selected_tier == 2 and _line(panel, "NumbersLine").contains("ACC: 92%"),
-            "clicking actual tier-II button updates selected part values")
+        _check(panel.selected_tier == 2 and _no_retired_readouts(panel)
+            and (panel.get_node("DetailsPanel/TierII") as Button).button_pressed,
+            "clicking Double selects finish II without resurrecting attack numbers")
         _check(_texture_path(_preview(panel)).ends_with("patch_head.png")
             and _texture_path(_border(panel)).ends_with("border_2.png")
             and _border(panel).visible, "fixture tier II adds actual double-stitch overlay")
-        _assert_helm(panel, 2, 92, 6, 9)
+        _assert_helm(panel, 2)
         panel.get_node("DetailsPanel/TierIII").pressed.emit()
         _check(_texture_path(_preview(panel)).ends_with("patch_head.png")
             and _texture_path(_border(panel)).ends_with("border_3.png")
             and _border(panel).visible, "fixture tier III adds actual gold-thread overlay")
-        _assert_helm(panel, 3, 95, 7, 11)
-        _check(_line(panel, "NumbersLine").contains("CRIT: 8%"),
-            "third-tier crit override displays")
+        _assert_helm(panel, 3)
+        _check(_no_retired_readouts(panel) and _cloth_copy(panel, "head"),
+            "Gold thread finish never exposes retired crit, damage or move projections")
         _check(not panel.select_tier(0) and not panel.select_tier(4) and
             panel.selected_tier == 3 and panel.selected_part_id == "warden_head_iron_helm" and
             not panel.select_part("unknown_helm") and
@@ -175,36 +196,28 @@ func _run() -> void:
             "invalid tier or unknown ID cannot change selection or artwork")
         _check(panel.select_part("warden_torso_quilt") and panel.selected_tier == 1,
             "different slot part resets to tier I")
-        _check(panel.select_tier(3) and
-            _line(panel, "StatLine").contains("MAX HP +12") and
-            _line(panel, "StatLine").contains("PROT +15") and
-            _line(panel, "EffectsLine").contains("Thorns 4") and
-            _line(panel, "AbilityLine").contains("BUFF") and
-            _line(panel, "NumbersLine").contains("DAMAGE: 0-0"),
-            "non-head torso displays effective tier-III HP/PROT and buff, not an invented attack")
-        _check(panel.select_part("warden_arm_brace") and
-            _line(panel, "AbilityLine").contains("GUARD") and
-            _line(panel, "EffectsLine").contains("Guard 2") and
-            _line(panel, "NumbersLine").contains("DAMAGE: 0-0") and
-            _line(panel, "RanksLine").contains("TARGET: ALLY RANKS 1, 4") and
-            _line(panel, "MovementLine").contains("POSE: guard"),
-            "different slot guard shows true ally targets, zero damage and pose")
-        _check(panel.select_part("warden_legs_stride") and
-            _line(panel, "AbilityLine").contains("MOVE") and
-            _line(panel, "MovementLine").contains("SELF MOVE: -1") and
-            _line(panel, "MovementLine").contains("POSE: skill"),
-            "leg movement is presented without executing it")
+        _check(panel.select_tier(3) and _cloth_copy(panel, "torso")
+            and _no_retired_readouts(panel)
+            and _texture_path(_preview(panel)).ends_with("patch_torso.png")
+            and _texture_path(_border(panel)).ends_with("border_3.png"),
+            "torso is shown as sewn cloth, with gold-thread border but no HP/buff promise")
+        _check(panel.select_part("warden_arm_brace") and _cloth_copy(panel, "arms")
+            and _no_retired_readouts(panel)
+            and _texture_path(_preview(panel)).ends_with("patch_arms.png")
+            and _texture_path(_border(panel)).is_empty(),
+            "arms are a plain sewn patch, not a guard move or ally-target forecast")
+        _check(panel.select_part("warden_legs_stride") and _cloth_copy(panel, "legs")
+            and _no_retired_readouts(panel) and _texture_path(_border(panel)).is_empty(),
+            "legs are sewn cloth, not a granted movement ability or pose")
         var mixed := [warden_parts[0].duplicate(true), foreign.duplicate(true), warden_parts[4].duplicate(true)]
         _check(panel.present_parts(mixed) and panel.part_ids_in_slot("torso").size() == 2 and
             panel.part_ids_in_slot("head").size() == 1,
             "mixed satchel retains all owner types and does not demand a full hero kit")
-        _check(panel.select_part("any_torso_felt_coat") and
-            _line(panel, "AbilityLine").contains("HEAL") and
-            _line(panel, "NumbersLine").contains("DAMAGE: 0-0") and
-            _line(panel, "EffectsLine").contains("Heal 5") and
-            _line(panel, "StatLine").contains("MAX HP +8") and
-            _line(panel, "StatLine").contains("PROT +5"),
-            "foreign heal readout preserves zero damage, heal effect and torso stats")
+        _check(panel.select_part("any_torso_felt_coat") and _cloth_copy(panel, "torso")
+            and _no_retired_readouts(panel)
+            and _line(panel, "PartMeta").contains("OWNER: any")
+            and _line(panel, "PartMeta").contains("ID: any_torso_felt_coat"),
+            "foreign torso keeps genuine identity without promising a heal or stat bonus")
         _check(not panel.present_parts([{"id": "invalid"}]) and
             panel.selected_part_id.is_empty() and head_rows.get_child_count() == 0 and
             _line(panel, "NumbersLine").is_empty() and _empty_preview(panel),
@@ -281,6 +294,14 @@ func _test_live_owners(packed: PackedScene) -> void:
     var all_head := panel.part_ids_in_slot("head")
     var preview := _preview(panel)
     var border := _border(panel)
+    _check((panel.get_node("DetailsPanel/TierHeading") as Label).text == "STITCH FINISH"
+        and (panel.get_node("DetailsPanel/TierI") as Button).text == "Plain"
+        and (panel.get_node("DetailsPanel/TierII") as Button).text == "Double"
+        and (panel.get_node("DetailsPanel/TierIII") as Button).text == "Gold thread"
+        and (panel.get_node("DetailsPanel/TierI") as Button).focus_mode == Control.FOCUS_ALL
+        and (panel.get_node("DetailsPanel/TierII") as Button).focus_mode == Control.FOCUS_ALL
+        and (panel.get_node("DetailsPanel/TierIII") as Button).focus_mode == Control.FOCUS_ALL,
+        "the three original focusable controls name authentic stitch finishes")
     _check(preview.mouse_filter == Control.MOUSE_FILTER_IGNORE
         and border.mouse_filter == Control.MOUSE_FILTER_IGNORE
         and preview.focus_mode == Control.FOCUS_NONE
@@ -326,8 +347,7 @@ func _test_live_owners(packed: PackedScene) -> void:
             "group selection does not invent the ID or displayed name: " + id)
         _check(_texture_path(preview) == StitchedSewnPatches.icon_path(id, str(part["slot"]))
             and preview.visible and _texture_path(border).is_empty()
-            and _line(panel, "PartMeta").contains("THREAD: " +
-                StitchedSewnPatches.thread_of(id).to_upper())
+            and _maker_matches(panel, id)
             and not _line(panel, "PartMeta").contains("KNOT"),
             "selected live sourced patch has its own icon, actual maker thread, no set knot: " + id)
         if id == "warden_head_pot_helm_bonk" or id == "scissor_crab_claw_arm":
@@ -337,32 +357,19 @@ func _test_live_owners(packed: PackedScene) -> void:
                 and _line(panel, "PartMeta").contains("THREAD: CRIMSON"),
                 "named sewn-patch art and crimson thread explicitly authored: " + id)
         for tier in [1, 2, 3]:
-            var ability := StitchedParts.ability_at_tier(part, tier)
-            var stats := StitchedParts.stat_at_tier(part, tier)
             var tier_button := panel.get_node("DetailsPanel/Tier%s" % StitchedPartInspector.TIER_LABELS[tier - 1]) as Button
             tier_button.pressed.emit()
-            _check(panel.selected_tier == tier
+            _check(panel.selected_part_id == id and panel.selected_tier == tier
+                and tier_button.button_pressed
                 and _texture_path(preview) == StitchedSewnPatches.icon_path(id, str(part["slot"]))
                 and _texture_path(border) == StitchedSewnPatches.border_path(tier)
                 and border.visible == (tier != 1)
-                and _line(panel, "PartMeta").contains("THREAD: " +
-                    StitchedSewnPatches.thread_of(id).to_upper()),
-                "real tier button changes border alone while keeping patch/thread: %s tier %d" % [id, tier])
-            _check(panel.select_tier(tier)
-                and _line(panel, "NumbersLine").contains("ACC: %d%%" % int(ability["acc"]))
-                and _line(panel, "NumbersLine").contains("DAMAGE: %d-%d" % [
-                    int(ability["dmg"][0]), int(ability["dmg"][1])])
-                and _line(panel, "AbilityLine").contains(str(ability["name"]))
-                and _line(panel, "MovementLine").contains("POSE: " + str(ability["move"])),
-                "real tier %d accuracy/damage/ability/pose for %s" % [tier, id])
-            for key in stats:
-                _check(_line(panel, "StatLine").contains("%s +%d" % [
-                    str(key).to_upper().replace("_", " "), int(stats[key])]),
-                    "real tier %d %s stat for %s" % [tier, str(key), id])
-            for key in ability["effects"]:
-                _check(_line(panel, "EffectsLine").contains("%s %d" % [
-                    str(key).capitalize(), int(ability["effects"][key])]),
-                    "real tier %d %s effect for %s" % [tier, str(key), id])
+                and _maker_matches(panel, id),
+                "real finish button changes border alone while keeping patch/thread: %s finish %d" % [id, tier])
+            _check(panel.select_tier(tier) and _cloth_copy(panel, str(part["slot"]))
+                and _no_retired_readouts(panel)
+                and not _line(panel, "PartMeta").contains("TIER "),
+                "real finish %d has stable sewn-cloth copy, not combat numbers: %s" % [tier, id])
         _check(not panel.select_tier(0) and not panel.select_tier(4)
             and not panel.select_owner("not_a_hero") and not panel.select_part("fictional")
             and panel.selected_part_id == id and panel.selected_tier == 3
@@ -373,7 +380,7 @@ func _test_live_owners(packed: PackedScene) -> void:
             and panel.active_slot == "legs" and not panel.selected_part_id.is_empty()
             and panel.selected_tier == 1,
             "owner " + owner + " can change slot and resets on a different part")
-    _test_bobbin_snag_text(panel, source)
+    _test_bobbin_patch_copy(panel, source)
     _check(panel.select_owner("all") and panel.visible_part_ids_in_slot("head") == all_head
         and panel.select_part("felt_bulwark_button_shield"),
         "All restores full rows and allows other-slot foreign torso")
@@ -413,101 +420,40 @@ func _reversed(parts: Array) -> Array:
     return result
 
 
-## AC1/AC2/AC3: the shipped Bobbin Snag legs part used to print "Mark 1 and Tangled 1" while every
-## tier really applied Mark 2/Tangled 2 or Mark 3/Tangled 2. The real catalog, the shipped
-## inspector readout and StitchedParts.ability_at_tier must now agree at all three tiers.
-func _test_bobbin_snag_text(panel: StitchedPartInspector, source: Dictionary) -> void:
-    var expected_text := [
-        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2.",
-        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2.",
-        "Snag one foe in ranks 1-3 on knotted bobbins: Mark 3 and Tangled 2.",
-    ]
-    var expected_effects := [
-        {"mark": 2, "tangled": 2},
-        {"mark": 2, "tangled": 2},
-        {"mark": 3, "tangled": 2},
-    ]
+## Independently loaded authored entry stays browsable, but its retired ability
+## and tier-text forecasts must never reach the visible S13 cloth reference.
+func _test_bobbin_patch_copy(panel: StitchedPartInspector, source: Dictionary) -> void:
     var catalog := StitchedParts.load_catalog(SEAMSTRESS_PATH)
     _check(bool(catalog.get("ok", false)) and catalog["by_id"].has(BOBBIN_PART),
-        "AC1: the shipped Seamstress catalog loads and authors " + BOBBIN_PART)
+        "the shipped Seamstress catalog validates and authors " + BOBBIN_PART)
     if not bool(catalog.get("ok", false)) or not catalog["by_id"].has(BOBBIN_PART):
         return
     var part: Dictionary = catalog["by_id"][BOBBIN_PART]
-    _check(source.has(BOBBIN_PART) and source[BOBBIN_PART] == part,
-        "AC1: the mounted inspector was handed this same validated Bobbin Snag record")
-    _check(str(part["text"]) == expected_text[0],
-        "AC1: the tier-I base text states Mark 2 and Tangled 2: " + str(part["text"]))
-    _check(not str(part["text"]).contains("Mark 1") and not str(part["text"]).contains("Tangled 1"),
-        "AC1: the tier-I base text no longer claims Mark 1 and Tangled 1")
-    var tiers: Dictionary = part["tiers"]
-    _check(tiers.has("2") and not tiers["2"].has("text"),
-        "AC1: tier II keeps the base-text fallback with no redundant override")
-    _check(tiers.has("3") and str(tiers["3"].get("text", "")) == expected_text[2],
-        "AC1: tier III authors its own Mark 3 and Tangled 2 text")
-    _check(int(tiers["2"]["stat"]["dodge"]) == 4 and int(tiers["3"]["stat"]["dodge"]) == 5,
-        "AC3: the tier-II and tier-III Dodge overrides stay 4 and 5")
-    var ability: Dictionary = part["ability"]
-    _check(str(ability["id"]) == "bobbin_snag" and str(ability["name"]) == "Bobbin Snag"
-        and str(ability["kind"]) == "debuff",
-        "AC3: Bobbin Snag keeps its id, name and debuff kind")
-    _check(str(part["owner"]) == "seamstress" and str(part["slot"]) == "legs",
-        "AC3: Bobbin Snag stays the Seamstress legs part")
+    _check(source.has(BOBBIN_PART) and source[BOBBIN_PART] == part
+        and str(part["slot"]) == "legs" and str(part["owner"]) == "seamstress"
+        and part["tiers"].has("2") and part["tiers"].has("3"),
+        "mounted Bobbin entry equals independent validated source, with three finishes")
+    _check(panel.select_owner("seamstress") and panel.select_part(BOBBIN_PART)
+        and panel.selected_tier == 1
+        and _line(panel, "PartName") == str(part["name"])
+        and _line(panel, "PartMeta").contains("ID: " + BOBBIN_PART)
+        and _maker_matches(panel, BOBBIN_PART),
+        "public owner/part selection retains genuine Bobbin identity and maker")
+    var base := StitchedSewnPatches.icon_path(BOBBIN_PART, "legs")
     for tier in [1, 2, 3]:
-        var resolved := StitchedParts.ability_at_tier(part, tier)
-        var effects: Dictionary = resolved["effects"]
-        _check(effects == expected_effects[tier - 1],
-            "AC1: tier %d ability effects are %s" % [tier, str(expected_effects[tier - 1])])
-        _check(str(resolved["id"]) == "bobbin_snag" and int(resolved["acc"]) == 90
-            and _ints(resolved["dmg"]) == [0, 0] and not bool(resolved["multi"]),
-            "AC3: tier %d Bobbin Snag keeps single-target 90%% accuracy and no damage" % tier)
-        _check(StitchedParts.stat_at_tier(part, tier) == {"dodge": tier + 2},
-            "AC3: tier %d grants Dodge %d" % [tier, tier + 2])
-        _check(_ints(resolved["launch"]) == [2, 3] and _ints(resolved["target"]) == [1, 2, 3]
-            and str(resolved["target_side"]) == "enemy",
-            "AC3: tier %d launches from ranks 2-3 at enemy ranks 1-3" % tier)
-        for rank in [1, 2, 3, 4]:
-            _check(StitchedParts.ranks_allowed(int(resolved["launch_mask"]), rank)
-                == (rank != 1 and rank != 4)
-                and StitchedParts.ranks_allowed(int(resolved["target_mask"]), rank) == (rank != 4),
-                "AC3: tier %d rank %d launch and target legality" % [tier, rank])
-    _check(panel.select_owner("seamstress") and panel.select_part(BOBBIN_PART),
-        "AC2: the public owner and part selectors reach Bobbin Snag")
-    _check(panel.selected_part_id == BOBBIN_PART and panel.selected_tier == 1
-        and _line(panel, "PartName") == "Bobbin Snag Spools"
-        and _line(panel, "PartMeta").contains("OWNER: seamstress")
-        and _line(panel, "PartMeta").contains("SLOT: LEGS")
-        and _line(panel, "AbilityLine").contains("Bobbin Snag"),
-        "AC2: its real name, owner, slot and ability are on screen")
-    _check(_line(panel, "PartText") == expected_text[0],
-        "AC2: its first public selection shows the corrected tier-I text")
-    for tier in [1, 2, 3]:
-        var shown := StitchedParts.ability_at_tier(part, tier)
-        var shown_effects: Dictionary = shown["effects"]
-        var pair := "Mark %d and Tangled %d" % [
-            int(shown_effects["mark"]), int(shown_effects["tangled"])]
-        _check(panel.select_tier(tier) and panel.selected_tier == tier
-            and panel.selected_part_id == BOBBIN_PART,
-            "AC2: tier %d is publicly selectable without losing the part" % tier)
-        _check(_line(panel, "PartText") == expected_text[tier - 1],
-            "AC2: tier %d PartText reads %s, got %s" % [
-                tier, expected_text[tier - 1], _line(panel, "PartText")])
-        _check(_line(panel, "PartText").contains(pair),
-            "AC2: tier %d PartText matches ability_at_tier %s" % [tier, pair])
-        _check(not _line(panel, "PartText").contains("Mark 1 and Tangled 1"),
-            "AC2: tier %d PartText never shows the stale Mark 1 and Tangled 1" % tier)
-        _check(_line(panel, "EffectsLine") == "EFFECTS: Mark %d, Tangled %d" % [
-            int(shown_effects["mark"]), int(shown_effects["tangled"])],
-            "AC2: tier %d EffectsLine shows the effective pair: %s" % [
-                tier, _line(panel, "EffectsLine")])
-        _check(_line(panel, "StatLine").contains("DODGE +%d" % (tier + 2)),
-            "AC2: tier %d StatLine shows Dodge %d" % [tier, tier + 2])
-
-
-func _ints(values: Variant) -> Array:
-    var result: Array = []
-    for value in values:
-        result.append(int(value))
-    return result
+        var button := panel.get_node("DetailsPanel/" + ["TierI", "TierII", "TierIII"][tier - 1]) as Button
+        button.pressed.emit()
+        _check(panel.selected_tier == tier and panel.selected_part_id == BOBBIN_PART
+            and button.button_pressed and _texture_path(_preview(panel)) == base
+            and _texture_path(_border(panel)) == StitchedSewnPatches.border_path(tier)
+            and _border(panel).visible == (tier != 1),
+            "Bobbin finish %d keeps its base cloth art with only the authored border" % tier)
+        _check(_cloth_copy(panel, "legs") and _no_retired_readouts(panel)
+            and _maker_matches(panel, BOBBIN_PART)
+            and not _line(panel, "PartMeta").contains("TIER ")
+            and not _line(panel, "PartText").contains("Mark")
+            and not _line(panel, "PartText").contains("Tangled"),
+            "Bobbin finish %d never projects old Mark/Tangled move prose" % tier)
 
 
 func _finish() -> void:
