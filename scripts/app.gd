@@ -4376,6 +4376,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 	picker.name = "StitchedRunPartyPicker"
 	content.add_child(picker)
 	picker.build(stitched_run_draft)
+	picker.update_opening_rank_cues(stitched_run_draft)
 	# The two original public action indices must remain [Set out, Cancel].
 	var actions := HBoxContainer.new()
 	actions.name = "PickerActions"
@@ -4430,6 +4431,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 			and StitchedPartyAdmission.admit(picks).get("ok") == true
 		confirm.disabled = not enabled
 		confirm.tooltip_text = StitchedPartyKitHints.opening_rank_advisory(picks) if enabled else ""
+		picker.update_opening_rank_cues(picks)
 		confirm.focus_mode = Control.FOCUS_ALL if enabled else Control.FOCUS_NONE
 		if not enabled and confirm.has_focus():
 			cancel.grab_focus())
