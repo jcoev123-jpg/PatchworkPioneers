@@ -88,6 +88,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_patch_copy()
 	_test_lamplight_wash_launch()
 	_test_wick_spark_launch()
 	_test_moth_cloud_fourth_rank()
@@ -288,6 +289,32 @@ func _test_catalog() -> void:
 	bad_mask["ability"]["target"] = [1, 2, 3, 5]
 	_check(not bool(StitchedParts.validate_part(bad_mask).get("ok", false)),
 		"AC3: out-of-bounds target rank rejects")
+
+
+## S13/S14 patch identity copy: the two named starter patches now describe the sewn patch the
+## player sees instead of advertising a retired part-granted ability. Both texts are compared
+## by named ID (never list position), and neither field may keep a card-era or receipt phrase.
+func _test_patch_copy() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named patch copy checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		"lantern_monk_head_moth_wink":
+			"Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
+		"lantern_monk_torso_lamplight_wash":
+			"Lamplight pools over the Monk's quilted robe and warms the stitches along its seams.",
+	}
+	var obsolete := ["card draw", "heal receipt"]
+	for id in expected:
+		_check(cat["by_id"].has(id), "AC1: named patch copy record present: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var text := str(cat["by_id"][id]["text"])
+		_check(text == str(expected[id]), "AC1: named patch copy is exactly the authored sentence: " + id)
+		for phrase in obsolete:
+			_check(not text.to_lower().contains(str(phrase)),
+				"AC1: named patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
 
 
 ## The starter torso launches from hero ranks 2-4 with an all-ally multi heal. Every field,
@@ -1154,8 +1181,8 @@ func _test_moth_wink_rank4(tier: int, seed_start: int, seed_count: int) -> void:
 	_check(str(part["id"]) == "lantern_monk_head_moth_wink" and str(part["name"]) == "Moth Wink"
 		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
 		and part["stat"] == {"acc": 3}
-		and str(part["text"]) == "A flicker of moth-wing light blinds one nearby foe; no retired card draw.",
-		"AC1: Moth Wink keeps its name, head slot, owner, +3 ACC stat and short rules text")
+		and str(part["text"]) == "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
+		"AC1: Moth Wink keeps its name, head slot, owner, +3 ACC stat and short patch copy")
 	var ability := StitchedParts.ability_at_tier(part, tier)
 	var valid := StitchedParts.validate_ability(ability)
 	_check(bool(valid.get("ok", false)), "AC1: Moth Wink tier %d ability validates" % tier)
