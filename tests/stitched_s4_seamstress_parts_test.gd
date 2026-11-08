@@ -108,6 +108,19 @@ const NEEDLE_RANK4_FOE_RANKS := {
 ## The shipped legs starter whose tier III alone reaches enemy rank 4.
 const TETHER_LOOP_PART := "seamstress_tether_loop_spools"
 
+## S14 sewn-cloth appearance copy for the two head patches. These are never cast promises:
+## the Seamstress's four signature abilities live in data/stitched/s14_hero_abilities.json.
+const MENDING_KNOT_ID := "seamstress_mending_knot_hat"
+const SCARLET_KNOT_ID := "seamstress_scarlet_knot_hat"
+const EXPECTED_MENDING_KNOT_TEXT := "A cream pincushion hat wears a dusty-purple darning knot, with red thread tucked beneath uneven brim stitches."
+const EXPECTED_SCARLET_KNOT_TEXT := "A fat scarlet knot pins a torn plum felt brim to a cream patch, its loose red threads held by crooked cross-stitches."
+## Whole words that would turn this appearance copy back into an obsolete combat promise.
+const FORBIDDEN_COPY_WORDS := [
+	"ability", "cast", "rank", "ranks", "tier", "tiers", "heal", "heals", "hp",
+	"bleed", "weak", "damage", "dodge", "guard", "stun", "move", "moves", "turn",
+	"turns", "target", "foe", "ally", "strike", "attack",
+]
+
 ## The authored acceptance contract, one row per part id, indexed by tier - 1.
 const EXPECTED := {
 	"seamstress_mending_knot_hat": {
@@ -332,10 +345,40 @@ func _test_catalog() -> void:
 			"AC1: %s is the starter wearable for the %s slot" % [starter, slot])
 		_check(by_id.has(alternate) and str(by_id[alternate]["slot"]) == slot,
 			"AC1: %s is the alternative wearable for the %s slot" % [alternate, slot])
-	var scarlet_text := str(by_id["seamstress_scarlet_knot_hat"]["text"]).to_lower()
-	_check(scarlet_text.contains("bleed 2") and scarlet_text.contains("weak 2")
-		and scarlet_text.contains("next strike") and not scarlet_text.contains("weak 1"),
-		"AC1: Scarlet Knot text names its tier-I Bleed 2 / Weak 2 and next-strike duration")
+	var mending_text := str(by_id[MENDING_KNOT_ID]["text"])
+	var scarlet_text := str(by_id[SCARLET_KNOT_ID]["text"])
+	_check(mending_text == EXPECTED_MENDING_KNOT_TEXT,
+		"AC1: Mending Knot Hat keeps its exact authored sewn-cloth description")
+	_check(scarlet_text == EXPECTED_SCARLET_KNOT_TEXT,
+		"AC1: Scarlet Knot Hat keeps its exact authored sewn-cloth description")
+	_check(mending_text != scarlet_text,
+		"AC2: the two head patches describe visually distinct sewn cloth")
+	for head_id in [MENDING_KNOT_ID, SCARLET_KNOT_ID]:
+		_check(str(by_id[head_id]["owner"]) == OWNER and str(by_id[head_id]["slot"]) == "head",
+			"AC1: " + head_id + " stays a seamstress head patch")
+		_check(str(by_id[head_id]["name"]) == str(EXPECTED[head_id]["name"]),
+			"AC1: " + head_id + " keeps its authored name")
+		_check(bool(StitchedParts.validate_part(by_id[head_id]).get("ok", false)),
+			"AC1: " + head_id + " still validates with its sewn-cloth description")
+	var mending_low := mending_text.to_lower()
+	var scarlet_low := scarlet_text.to_lower()
+	_check((mending_low.contains("hat") or mending_low.contains("brim"))
+		and (mending_low.contains("thread") or mending_low.contains("stitches"))
+		and (mending_low.contains("cream") or mending_low.contains("plum")
+			or mending_low.contains("scarlet") or mending_low.contains("purple")),
+		"AC2: Mending Knot text names a stitched cream/plum/scarlet/purple hat or brim")
+	_check((scarlet_low.contains("hat") or scarlet_low.contains("brim"))
+		and (scarlet_low.contains("thread") or scarlet_low.contains("stitches"))
+		and (scarlet_low.contains("cream") or scarlet_low.contains("plum")
+			or scarlet_low.contains("scarlet") or scarlet_low.contains("purple")),
+		"AC2: Scarlet Knot text names a stitched cream/plum/scarlet/purple hat or brim")
+	for word in FORBIDDEN_COPY_WORDS:
+		_check(not _contains_whole_word(mending_low, word),
+			"AC2: Mending Knot cloth copy never names the combat word " + word)
+		_check(not _contains_whole_word(scarlet_low, word),
+			"AC2: Scarlet Knot cloth copy never names the combat word " + word)
+	_check(not _contains_digit(mending_low) and not _contains_digit(scarlet_low),
+		"AC2: both head-patch descriptions contain no numeric combat digits")
 	# The one edited description really explains the rank 1-4 shower from hero ranks 1-4, plus damage and Bleed.
 	var rain_text := str(by_id["seamstress_needle_rain_needle"]["text"]).to_lower()
 	_check(rain_text.contains("each living foe") and rain_text.contains("enemy ranks 1-4"),
@@ -524,6 +567,12 @@ func _test_negatives() -> void:
 		return
 	var by_id: Dictionary = catalog["by_id"]
 	var head: Dictionary = by_id["seamstress_mending_knot_hat"].duplicate(true)
+	# The S14 appearance copy is still required rules text: a blank top-level text fails closed.
+	for head_id in [MENDING_KNOT_ID, SCARLET_KNOT_ID]:
+		var blanked: Dictionary = by_id[head_id].duplicate(true)
+		blanked["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+			"AC3: " + head_id + " with blank top-level text is refused")
 	for bad_rank in [-1, 0, 5, 1.5]:
 		var mutated := head.duplicate(true)
 		mutated["ability"]["launch"] = [bad_rank]
@@ -2252,9 +2301,9 @@ func _test_rear_launch_masks() -> void:
 		else:
 			_check(not StitchedParts.ranks_allowed(base_mask, 1),
 				"AC1: " + part_id + " still refuses a rank-1 launch")
-	# The one description that named the old reach now names ranks 2-4.
-	_check(str(catalog["by_id"]["seamstress_mending_knot_hat"]["text"]).contains("ranks 2-4"),
-		"AC1: the Mending Knot description names its new reach from ranks 2-4")
+	# S14 sewn-cloth copy: the head patch describes cloth, never a cast or a rank reach.
+	_check(str(catalog["by_id"][MENDING_KNOT_ID]["text"]) == EXPECTED_MENDING_KNOT_TEXT,
+		"AC1: the Mending Knot description is the authored sewn-cloth sentence, not a cast promise")
 	# The other five parts keep their exact authored launch ranks (Needle Rain only gained rank 4).
 	for part_id in ALL_PART_IDS:
 		if REAR_SUPPORT_CASES.has(part_id):
@@ -2983,6 +3032,36 @@ func _read_json(path: String) -> Variant:
 		_check(false, "unparsable JSON: " + path)
 		return null
 	return parsed
+
+
+## Lowercase words and numbers only, so hyphenated cloth words such as "cross-stitches" split
+## cleanly and whole-word exclusions cannot pass or fail by accident on a substring.
+func _copy_tokens(text: String) -> Array[String]:
+	var tokens: Array[String] = []
+	var current := ""
+	for index in range(text.length()):
+		var ch := text.substr(index, 1)
+		if (ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9"):
+			current += ch
+		elif not current.is_empty():
+			tokens.append(current)
+			current = ""
+	if not current.is_empty():
+		tokens.append(current)
+	return tokens
+
+
+func _contains_whole_word(text: String, word: String) -> bool:
+	return word in _copy_tokens(text)
+
+
+func _contains_digit(text: String) -> bool:
+	for token in _copy_tokens(text):
+		for index in range(token.length()):
+			var ch := token.substr(index, 1)
+			if ch >= "0" and ch <= "9":
+				return true
+	return false
 
 
 ## The shipped S2 preview, copied in memory, with the eight authored parts appended and only the
