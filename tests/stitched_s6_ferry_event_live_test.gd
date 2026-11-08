@@ -306,7 +306,7 @@ func _scenario(choice: String, candle_override: int = -1,
 	var expected_gold: int = int(before["gold"]) - (10 if choice == "pay_gold" and selected_available else 0)
 	var expected_scraps: int = int(before["scraps"]) + (2 if choice == "pay_gold" and selected_available \
 		else -1 if choice == "mend_wick" and selected_available else 0)
-	var expected_candle := mini(100, before["candle"] + (8 if choice == "mend_wick" and selected_available else 0))
+	var expected_candle := mini(100, before["candle"] + (25 if choice == "mend_wick" and selected_available else 0))
 	_check(after["gold"] == expected_gold and after["scraps"] == expected_scraps \
 		and after["candle"] == expected_candle \
 		and after["hp"] == before["hp"] and after["fray"] == before["fray"] \
@@ -331,9 +331,11 @@ func _scenario(choice: String, candle_override: int = -1,
 	if next_stage != null:
 		next_stage._action_buttons["exit"].pressed.emit()
 		await process_frame
+	var next_roadblock_candle: int = app.stitched_roadblock_candle
 	app.free()
 	await process_frame
-	return {"before_entry": before_entry, "before": before, "after": after}
+	return {"before_entry": before_entry, "before": before, "after": after,
+		"next_roadblock_candle": next_roadblock_candle}
 
 func _failed_entries() -> void:
 	var app: Node = await _earned(true)
@@ -401,18 +403,20 @@ func _run() -> void:
 		"full wick pays entry 100 -> 92 before one scrap restores it to 100")
 	_check(partial_cap.get("before_entry", {}).get("candle") == 96 \
 		and partial_cap.get("before", {}).get("candle") == 88 \
-		and partial_cap.get("after", {}).get("candle") == 96 \
+		and partial_cap.get("after", {}).get("candle") == 100 \
 		and partial_cap.get("after", {}).get("scraps") == 0,
-		"96 pays entry to 88 before the unchanged eight-point Mend Wick")
+		"96 pays entry to 88 before one scrap restores and clamps candle to 100")
 	for candle in [100, 96, 4, 0]:
 		var zero_or_left := await _scenario("leave", candle)
 		_check(zero_or_left.get("before_entry", {}).get("candle") == candle \
 			and zero_or_left.get("after", {}).get("candle") == maxi(0, candle - 8),
 			"Leave retains the floored node charge from %d" % candle)
 	var zero_mend := await _scenario("mend_wick", 0)
-	_check(zero_mend.get("before", {}).get("candle") == 0 \
-		and zero_mend.get("after", {}).get("candle") == 8,
-		"zero-candle entry still permits the authored eight-point Mend Wick")
+	_check(zero_mend.get("before_entry", {}).get("candle") == 0 \
+		and zero_mend.get("before", {}).get("candle") == 0 \
+		and zero_mend.get("after", {}).get("candle") == 25 \
+		and zero_mend.get("next_roadblock_candle") == 17,
+		"zero-candle entry permits the authored 25-point Mend Wick (0 -> 25 -> 17 next Roadblock)")
 	var short_gold: Dictionary = await _scenario("pay_gold", -1, -1, 9)
 	var short_scraps: Dictionary = await _scenario("mend_wick", -1, 0)
 	_check(not bought.is_empty() and not repaired.is_empty() and not left.is_empty() \
