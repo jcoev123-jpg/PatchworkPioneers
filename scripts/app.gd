@@ -4387,8 +4387,14 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 		if epoch != _stitched_run_epoch or not is_instance_valid(picker) \
 				or not picker.is_visible_in_tree() or picker.get_parent() != content \
 				or not picker.tiles_match_draft() \
-				or picker.selected_ids() != stitched_run_draft \
-				or StitchedPartyAdmission.admit(stitched_run_draft).get("ok") != true:
+				or picker.selected_ids() != stitched_run_draft:
+			return
+		# Rapid programmatic/keyboard edits can submit before idle reflow; settle
+		# that legitimate queued order, but never silently repair a tampered board.
+		picker.settle_pending_tile_order()
+		var admission := StitchedPartyAdmission.admit(stitched_run_draft)
+		if admission.get("ok") != true \
+				or picker.displayed_rank_ids() != admission.get("hero_ids", []):
 			return
 		var session := StitchedRunSession.start(run_seed, stitched_run_draft)
 		var gift_profile := _wren_gifts_profile()

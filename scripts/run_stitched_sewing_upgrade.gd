@@ -245,8 +245,8 @@ func _setup(node_id: Variant, heroes: Variant, scraps: Variant, quoted_upgrade_c
 		if not entry.get("ability") is Dictionary or not entry.has("name") or not entry.has("owner") or not entry.has("text"):
 			return "catalog entry is incomplete: " + str(key)
 	_catalog = catalog_by_id.duplicate(true)
-	if not heroes is Array or heroes.size() != MAX_HEROES:
-		return "roster needs exactly %d heroes" % MAX_HEROES
+	if not heroes is Array or heroes.size() < 1 or heroes.size() > MAX_HEROES:
+		return "roster needs 1-%d heroes" % MAX_HEROES
 	var seen: Dictionary = {}
 	var ranks: Dictionary = {}
 	var clean_heroes: Array = []

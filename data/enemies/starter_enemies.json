@@ -135,6 +135,24 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "shield_shunt",
+          "name": "Shield Shunt",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 86,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "push": 1,
+            "fray": 5
+          },
+          "self_move": 0,
+          "move": "skill"
         }
       ]
     }

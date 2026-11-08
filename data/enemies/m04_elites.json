@@ -94,7 +94,9 @@
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
-            "thorns": 2
+            "thorns": 2,
+            "dodge": 8,
+            "duration": 2
           },
           "self_move": 0,
           "move": "guard"

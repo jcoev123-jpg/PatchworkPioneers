@@ -155,6 +155,10 @@
       },
       "tiers": {
         "2": {
+          "stat": {
+            "max_hp": 8,
+            "prot": 4
+          },
           "ability": {
             "effects": {
               "thorns": 3
@@ -162,6 +166,10 @@
           }
         },
         "3": {
+          "stat": {
+            "max_hp": 10,
+            "prot": 5
+          },
           "ability": {
             "effects": {
               "thorns": 5
@@ -394,6 +402,10 @@
       },
       "tiers": {
         "2": {
+          "stat": {
+            "max_hp": 7,
+            "prot": 6
+          },
           "ability": {
             "effects": {
               "guard": 3
@@ -401,6 +413,10 @@
           }
         },
         "3": {
+          "stat": {
+            "max_hp": 9,
+            "prot": 8
+          },
           "ability": {
             "effects": {
               "guard": 4

@@ -228,13 +228,88 @@ func _test_ac1_quote_projections_and_admission() -> void:
 	var extra_slot := _party()
 	extra_slot[0]["parts"]["tail"] = _worn("warden_head_pot_helm_bonk")
 	bad_rosters.append(extra_slot)
-	var three := _party()
-	three.pop_back()
-	bad_rosters.append(three)
+	var empty_roster: Array = []
+	bad_rosters.append(empty_roster)
+	var five := _party()
+	five.append({"id": "hero_e", "name": "Doll hero_e", "rank": 4, "parts": _party()[0]["parts"]})
+	bad_rosters.append(five)
+	var five_ranked := _party()
+	five_ranked.append({"id": "hero_e", "name": "Doll hero_e", "rank": 5, "parts": _party()[0]["parts"]})
+	bad_rosters.append(five_ranked)
 	for roster in bad_rosters:
 		_check(not bool(RunStitchedSewingUpgrade.new(NODE, roster, 5, 2, catalog).read_state()["ok"]), "constructor refuses a malformed roster")
 	_check(not bool(RunStitchedSewingUpgrade.new(NODE, _party(), 5, 2, {}).read_state()["ok"]), "empty catalog refused")
 	_check(not bool(RunStitchedSewingUpgrade.new(NODE, _party(), 5, 2, "catalog").read_state()["ok"]), "non-dictionary catalog refused")
+	_check(not bool(RunStitchedSewingUpgrade.new(NODE, "roster", 5, 2, catalog).read_state()["ok"]), "non-array roster refused")
+	_test_survivor_rosters()
+
+
+## Reduced rosters (one or more dolls LOST) must still open and upgrade one legal tier at the quoted fee.
+func _test_survivor_rosters() -> void:
+	var cases := [
+		{"name": "three survivors", "keep": [0, 1, 2], "ranks": [1, 2, 3], "hero": "hero_a", "slot": "head"},
+		{"name": "two survivors", "keep": [0, 3], "ranks": [2, 4], "hero": "hero_d", "slot": "torso"},
+		{"name": "one survivor", "keep": [3], "ranks": [1], "hero": "hero_d", "slot": "legs"},
+		{"name": "gapped ranks 1,3,4", "keep": [0, 2, 3], "ranks": [1, 3, 4], "hero": "hero_d", "slot": "arms"},
+	]
+	for entry in cases:
+		var party := _party()
+		var roster: Array = []
+		var ranks: Array = entry["ranks"]
+		for position in range(entry["keep"].size()):
+			var hero: Dictionary = party[int(entry["keep"][position])]
+			hero["rank"] = int(ranks[position])
+			roster.append(hero)
+		var roster_before := _snap(roster)
+		var svc := _service(5, 2, roster)
+		var state := svc.read_state()
+		var label := str(entry["name"])
+		_check(bool(state["ok"]) and bool(state["open"]) and state["heroes"].size() == roster.size(), label + ": roster admitted")
+		_check(_snap(state["heroes"]) == roster_before, label + ": state heroes equal the survivors")
+		var quote := svc.quote()
+		_check(bool(quote["ok"]) and quote["heroes"].size() == roster.size(), label + ": quote lists only the survivors")
+		var slot_quote := _slot_quote(quote, str(entry["hero"]), str(entry["slot"]))
+		_check(not slot_quote.is_empty() and bool(slot_quote["can_upgrade"]) and int(slot_quote["next_tier"]) == 2 and int(slot_quote["cost"]) == 2, label + ": a tier I part is offered at the quoted fee")
+		var receipt := svc.upgrade(str(entry["hero"]), str(entry["slot"]), NODE, state)
+		_check(bool(receipt["ok"]), label + ": upgrade succeeds")
+		if not bool(receipt["ok"]):
+			continue
+		_check(int(receipt["tier_before"]) == 1 and int(receipt["tier_after"]) == 2, label + ": exactly one tier")
+		_check(int(receipt["charged_scraps"]) == 2 and int(receipt["scraps_before"]) == 5 and int(receipt["scraps"]) == 3, label + ": 5 scraps becomes 3")
+		_check(int(receipt["state"]["version"]) == int(state["version"]) + 1, label + ": version advances once")
+		_check(_snap(receipt["source_state"]) == _snap(state), label + ": receipt source is the presented snapshot")
+		var expected := state.duplicate(true)
+		for hero in expected["heroes"]:
+			if str(hero["id"]) == str(entry["hero"]):
+				hero["parts"][str(entry["slot"])]["tier"] = 2
+		expected["scraps"] = 3
+		expected["version"] = int(state["version"]) + 1
+		_check(_snap(receipt["state"]) == _snap(expected), label + ": only that tier, SCRAPS and version changed")
+		var stale := svc.upgrade(str(entry["hero"]), str(entry["slot"]), NODE, state)
+		_check(not bool(stale["ok"]) and str(stale["error"]) == "stale or forged state", label + ": stale snapshot refused")
+		_check(int(svc.read_state()["scraps"]) == 3, label + ": stale attempt spent nothing")
+		var twin_roster: Array = []
+		for hero in state["heroes"]:
+			twin_roster.append(hero.duplicate(true))
+		var twin := _service(5, 2, twin_roster)
+		var twin_receipt := twin.upgrade(str(entry["hero"]), str(entry["slot"]), NODE, twin.read_state())
+		_check(bool(twin_receipt["ok"]) and _snap(twin_receipt["state"]) == _snap(receipt["state"]), label + ": independent replay matches")
+		var left := svc.leave(NODE, receipt["state"])
+		_check(bool(left["ok"]) and int(left["charged_scraps"]) == 0 and int(left["scraps"]) == 3, label + ": leave is free")
+	# A lost doll in a reduced roster still cannot upgrade, and HP 0 (hanging) is not lost.
+	var lost_roster := _party()
+	lost_roster.remove_at(1)
+	lost_roster[0]["lost"] = true
+	lost_roster[1]["hp"] = 0
+	var lost_svc := _service(5, 2, lost_roster)
+	var lost_state := lost_svc.read_state()
+	_check(bool(lost_state["ok"]), "reduced roster with a lost doll opens")
+	var lost_before := _snap(lost_state)
+	var lost_result := lost_svc.upgrade("hero_a", "head", NODE, lost_state)
+	_check(not bool(lost_result["ok"]) and str(lost_result["error"]) == "hero is lost", "lost doll in a reduced roster cannot upgrade")
+	_check(_snap(lost_svc.read_state()) == lost_before, "lost refusal changes nothing in a reduced roster")
+	var hanging := lost_svc.upgrade("hero_c", "head", NODE, lost_svc.read_state())
+	_check(bool(hanging["ok"]) and int(hanging["tier_after"]) == 2, "HP 0 hanging doll is not lost and may upgrade")
 
 
 func _test_ac2_tier_upgrades_and_replay() -> void:

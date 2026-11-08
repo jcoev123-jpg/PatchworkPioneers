@@ -361,6 +361,72 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_curtain_weight_bell",
+      "title": "The Curtain-Weight Bell",
+      "description": "A tarnished curtain weight hangs above the floorboard seam like a chapel bell. A round button-eyed watchdoll braces its frayed chain, while one amber candle throws a swinging shadow over the crossing.",
+      "choices": [
+        {
+          "id": "buy_chain_thread",
+          "text": "Pay 21 gold for two chain-thread bundles (+2 scraps)",
+          "outcome": {"gold": -21, "scraps": 2}
+        },
+        {
+          "id": "steady_weight_chain",
+          "text": "Spend 2 scraps steadying the great weight (earn 31 gold)",
+          "outcome": {"gold": 31, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Pass beneath the weight while its shadow swings",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_glass_stopper_beacon",
+      "title": "The Glass-Stopper Beacon",
+      "description": "An immense blue glass bottle stopper crowns a tiny stitched lighthouse built inside the wall. Its plump moss-cloth keeper wraps the glowing wick in thread as a cold reflection sweeps the passage.",
+      "choices": [
+        {
+          "id": "purchase_prism_wraps",
+          "text": "Pay 29 gold for three prism-bound seam wraps (+3 scraps)",
+          "outcome": {"gold": -29, "scraps": 3}
+        },
+        {
+          "id": "rebind_beacon_wick",
+          "text": "Spend 1 scrap rebinding the lighthouse wick (earn 17 gold)",
+          "outcome": {"gold": 17, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little keeper watching the dark wall",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_spinning_top_watch",
+      "title": "The Spinning-Top Watch",
+      "description": "An enormous painted wooden spinning top teeters between two skirting boards, turning its stitched pennants into a blurred warning. A stout plum-velvet watchdoll grips the loose axle under a small lantern.",
+      "choices": [
+        {
+          "id": "buy_axle_threads",
+          "text": "Pay 16 gold for two axle-thread bundles (+2 scraps)",
+          "outcome": {"gold": -16, "scraps": 2}
+        },
+        {
+          "id": "tie_top_axle",
+          "text": "Spend 3 scraps tying the wobbling axle (earn 42 gold)",
+          "outcome": {"gold": 42, "scraps": -3}
+        },
+        {
+          "id": "leave",
+          "text": "Walk away before the great top falls silent",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }

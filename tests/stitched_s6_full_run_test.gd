@@ -34,9 +34,15 @@ func _finish_visit(app: Node) -> bool:
 	var session: StitchedRunSession = app.stitched_run_session
 	var actions := session.visit_actions()
 	var selected := -1
-	for preferred in ["mend", "trim_the_wick", "tell_tales", "leave"]:
+	# A Sewing Circle keeps itself open after mend/upgrade/replace, so finishing it needs
+	# its own Leave. Other stops close on their recovery choice (Campfire mend, a Campfire
+	# tale or wick trim) and offer Leave when none of those apply.
+	var kind := str(session.pending.get("kind", ""))
+	var preferred := ["leave", "mend", "trim_the_wick", "tell_tales"] if kind == "SewingCircle" \
+		else ["mend", "trim_the_wick", "tell_tales", "leave"]
+	for wanted in preferred:
 		for index in actions.size():
-			if actions[index].id == preferred and actions[index].enabled:
+			if actions[index].id == wanted and actions[index].enabled:
 				selected = index
 				break
 		if selected >= 0:

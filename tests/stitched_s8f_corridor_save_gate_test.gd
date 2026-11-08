@@ -256,7 +256,7 @@ func _run() -> void:
 		"Event Walk arrives at actual live event service")
 	var leave: Button
 	for button: Button in app.stitched_run_buttons:
-		if str(button.get_meta("action_id", "")) in ["leave", "decline_trade", "leave_rookery"] and not button.disabled:
+		if str(button.get_meta("action_id", "")) in ["leave", "decline_trade", "leave_rookery", "leave_chapel"] and not button.disabled:
 			leave = button
 			break
 	_check(leave != null, "Event offers enabled Leave / decline without spending")

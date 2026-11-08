@@ -229,6 +229,95 @@ func _run() -> void:
 		await _key(KEY_TAB, true)
 		_check(root.gui_get_focus_owner() == focus_ring[i],
 			"Shift-Tab reverse stays inside six-control ring %d" % i)
+	# The same shipped atlas is reachable through the live BaseScreen guide, not a test-only scene.
+	seed(820631)
+	var atlas_next_rng := randi()
+	seed(820631)
+	var before_atlas := _state()
+	await _click(guide.atlas_button)
+	_check(guide._atlas_is_open() and guide.part_atlas != null
+		and guide.part_atlas.is_visible_in_tree()
+		and root.gui_get_focus_owner() == guide.part_atlas.get_node("CloseButton"),
+		"Parts & spoils action opens shipped inspector and focuses its Close control")
+	var inspector := guide.part_atlas
+	if inspector != null and guide._atlas_is_open():
+		_check(inspector.select_owner("warden") and inspector.select_part("warden_head_pot_helm_bonk"),
+			"live BaseScreen route can select authored Warden head patch")
+		await _frames()
+		var patch := inspector.get_node("DetailsPanel/PatchPreview") as TextureRect
+		var border := inspector.get_node("DetailsPanel/TierBorderPreview") as TextureRect
+		var tier_two := inspector.get_node("DetailsPanel/TierII") as Button
+		var part_path := "res://assets/paper/stitched/patches/warden_head_pot_helm_bonk.png"
+		_check(patch != null and border != null, "shipped atlas includes both passive patch layers")
+		if patch != null and border != null:
+			var patch_rect := patch.get_global_rect()
+			var no_overlap := root.get_visible_rect().encloses(patch_rect)
+			for name in ["TierHeading", "TierI", "TierII", "TierIII", "PartName", "PartMeta",
+					"PartText", "StatLine", "AbilityLine", "RanksLine", "NumbersLine",
+					"EffectsLine", "MovementLine"]:
+				no_overlap = no_overlap and not patch_rect.intersects(
+					inspector.get_node("DetailsPanel/" + name).get_global_rect())
+			for name in ["OwnerFilter", "SlotHead", "SlotArms", "SlotTorso", "SlotLegs",
+					"PartScroll"]:
+				no_overlap = no_overlap and not patch_rect.intersects(
+					inspector.get_node("CatalogPanel/" + name).get_global_rect())
+			_check(no_overlap and patch_rect == border.get_global_rect()
+				and patch.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and border.mouse_filter == Control.MOUSE_FILTER_IGNORE
+				and patch.focus_mode == Control.FOCUS_NONE
+				and border.focus_mode == Control.FOCUS_NONE,
+				"aligned nonblocking patch and edging do not cover existing labels, buttons or list")
+			var metadata := inspector.get_node("DetailsPanel/PartMeta") as Label
+			var maker_lines := metadata.text.split("\n")
+			var label_font := metadata.get_theme_font("font")
+			var label_size := metadata.get_theme_font_size("font_size")
+			var metadata_fits := maker_lines.size() == 2 and (
+				label_font.get_height(label_size) * 2 <= metadata.size.y)
+			for line in maker_lines:
+				metadata_fits = metadata_fits and label_font.get_string_size(
+					line, HORIZONTAL_ALIGNMENT_LEFT, -1, label_size).x <= metadata.size.x
+			_check(metadata_fits,
+				"existing ID and appended maker-thread line both fit in the DetailsPanel")
+			_check(patch.visible and patch.texture != null
+				and patch.texture.resource_path == part_path and border.texture == null
+				and metadata.text.contains("THREAD: CRIMSON"),
+				"live catalog has bespoke head artwork and real crimson maker thread, no tier-I knot")
+			await _click(tier_two)
+			_check(inspector.selected_tier == 2 and patch.texture != null
+				and patch.texture.resource_path == part_path
+				and border.visible and border.texture != null
+				and border.texture.resource_path.ends_with("border_2.png"),
+				"real tier-II click layers double-stitch border without swapping patch art")
+			await _key(KEY_TAB)
+			_check(root.gui_get_focus_owner() == inspector.get_node("DetailsPanel/TierIII"),
+				"Tab follows existing inspector tier ring despite passive art")
+			await _key(KEY_TAB, true)
+			_check(root.gui_get_focus_owner() == tier_two,
+				"Shift-Tab returns to tier II; preview creates no extra focus target")
+		await _click(inspector.get_node("CloseButton"))
+		_check(not guide._atlas_is_open() and root.gui_get_focus_owner() == guide.atlas_button
+			and inspector.selected_part_id.is_empty() and
+			inspector.get_node("DetailsPanel/PatchPreview").texture == null and
+			inspector.get_node("DetailsPanel/TierBorderPreview").texture == null,
+			"inspector Close restores guide action and clears hidden textures")
+		await _key(KEY_ENTER)
+		_check(guide._atlas_is_open() and inspector.is_visible_in_tree(),
+			"guide action reopens the atlas from keyboard")
+		await _key(KEY_ESCAPE)
+		_check(not guide._atlas_is_open() and root.gui_get_focus_owner() == guide.atlas_button
+			and inspector.get_node("DetailsPanel/PatchPreview").texture == null,
+			"atlas Escape returns focus and wipes stale preview")
+		var original_catalog := guide.catalog_paths[0]
+		guide.catalog_paths[0] = "res://data/parts/missing_s4_catalog.json"
+		_check(not guide.open_part_atlas() and not guide._atlas_is_open()
+			and inspector.selected_part_id.is_empty()
+			and inspector.get_node("DetailsPanel/PatchPreview").texture == null
+			and inspector.get_node("DetailsPanel/TierBorderPreview").texture == null
+			and not inspector.get_node("DetailsPanel/PartMeta").text.contains("THREAD:"),
+			"invalid live source fails closed without leaked art or thread metadata")
+		guide.catalog_paths[0] = original_catalog
+		_check(_state() == before_atlas and randi() == atlas_next_rng,
+			"atlas navigation, failure and dismissal leave wallet, choices, signals and RNG untouched")
 	seed(501006)
 	var next_rng := randi()
 	seed(501006)

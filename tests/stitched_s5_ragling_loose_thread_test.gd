@@ -12,6 +12,10 @@ const THREAD := {"id": "loose_thread", "name": "Loose Thread", "kind": "debuff",
 	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
 	"acc": 88, "dmg": [0, 0], "crit": 0, "effects": {"fray": 5, "snip": 1},
 	"self_move": 0, "move": "skill"}
+const SHUNT := {"id": "shield_shunt", "name": "Shield Shunt", "kind": "melee",
+	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
+	"acc": 86, "dmg": [4, 6], "crit": 0, "effects": {"push": 1, "fray": 5},
+	"self_move": 0, "move": "skill"}
 var checks := 0
 var failures: Array[String] = []
 var catalog: Dictionary = {}
@@ -89,8 +93,9 @@ func _source_contract() -> void:
 				{"id": "button_bulwark", "name": "Button Bulwark", "kind": "buff",
 					"launch": [1, 2], "target": [1, 2], "target_side": "self", "multi": false,
 					"acc": 100, "dmg": [0, 0], "crit": 0, "effects": {"thorns": 2},
-					"self_move": 0, "move": "skill"}]}}),
-		"AC1: Guard Ragling source unchanged except authorized Button Bulwark target [1,2]")
+					"self_move": 0, "move": "skill"},
+				SHUNT]}}),
+		"AC1: Guard Ragling source keeps both old moves and appends the exact Shield Shunt")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "ragling")
 	_check(not foe.is_empty() and foe.get("id") == "ragling" and foe.get("max_hp") == 12
 		and foe.get("speed") == 4 and foe.get("dodge") == 8 and foe.get("acc") == 0
