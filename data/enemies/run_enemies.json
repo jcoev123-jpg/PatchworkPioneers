@@ -148,12 +148,13 @@
           "name": "Seam Punch",
           "kind": "melee",
           "launch": [1, 2],
-          "target": [1],
+          "target": [1, 2],
           "target_side": "enemy",
           "multi": false,
           "acc": 86,
           "dmg": [3, 5],
           "crit": 0,
+          "mark_damage": 3,
           "effects": {},
           "self_move": 0,
           "move": "attack"
@@ -174,6 +175,23 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "needle_picket",
+          "name": "Needle Picket",
+          "kind": "melee",
+          "launch": [1, 2],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 88,
+          "dmg": [2, 3],
+          "crit": 0,
+          "effects": {
+            "mark": 3
+          },
+          "self_move": 0,
+          "move": "attack2"
         }
       ]
     }
