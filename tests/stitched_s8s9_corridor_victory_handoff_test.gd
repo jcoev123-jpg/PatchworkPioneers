@@ -426,8 +426,10 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(SAVE_PATH)
 	DirAccess.remove_absolute(SAVE_PATH + ".tmp")
-	# Seed 18 reaches the real Thimble Raincollector: its free non-Leave action
+	# Seed 18's live Event draw is pinned to the real Thimble Raincollector here so
+	# shared catalog growth cannot retarget this witness: its free non-Leave action
 	# grants one scrap, with an authentic placed curio and thread-tug horror.
+	StitchedRunSession.pinned_event_id = "v3_thimble_raincollector"
 	var app := _app(18)
 	await process_frame
 	await process_frame
@@ -732,6 +734,7 @@ func _run() -> void:
 
 
 func _finish(app: Node) -> void:
+	StitchedRunSession.pinned_event_id = ""
 	if is_instance_valid(app):
 		app.free()
 	DirAccess.remove_absolute(SAVE_PATH)
