@@ -80,6 +80,25 @@ func _int_stat(value: Variant) -> Dictionary:
 	return stat
 
 
+## Deep-normalises parsed JSON numbers to ints so raw source dictionaries compare exactly
+## against the authored int literals (JSON numbers parse as floats).
+func _norm(value: Variant) -> Variant:
+	match typeof(value):
+		TYPE_FLOAT:
+			return int(value)
+		TYPE_ARRAY:
+			var items := []
+			for item in value:
+				items.append(_norm(item))
+			return items
+		TYPE_DICTIONARY:
+			var dict := {}
+			for key in value:
+				dict[key] = _norm(value[key])
+			return dict
+	return value
+
+
 func _config(selected: String = "", tier: int = 1, seed_value: int = 503041) -> Dictionary:
 	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW_PATH))
 	_check(parsed is Dictionary, "AC2: real preview parses")
@@ -230,9 +249,10 @@ func _test_catalog() -> void:
 
 
 ## AC1/AC2: S14 gives each hero four fixed signature abilities and retires part-granted moves, so
-## all four starter Button Golem patch texts now describe the sewn-on buttons, felt and thread
-## instead of promising the old part actions. Both ids, slots, stats and every legacy mechanic
-## field stay as authored; only the top-level `text` strings changed.
+## all four starter Button Golem patch texts and the two obsolete alternate move descriptions
+## now describe the sewn-on buttons, felt and thread instead of promising the old part actions.
+## Both ids, slots, stats and every legacy mechanic field stay as authored; only the top-level
+## `text` strings changed.
 func _test_s14_patch_text() -> void:
 	var catalog := _catalog()
 	_check(bool(catalog.get("ok", false)),
@@ -244,16 +264,21 @@ func _test_s14_patch_text() -> void:
 		STARTERS["arms"]: "Scuffed brass buttons stack into a rounded fist, cross-stitched to a bulky walnut felt sleeve.",
 		STARTERS["torso"]: "A quilted walnut-felt chest patch is fastened with three dull brass buttons and broad slate-blue cross-stitches.",
 		STARTERS["legs"]: "Two slate-blue felt threadwheels are stitched to the Golem's stubby boots, each with a brass button hub and loose walnut thread tails.",
+		ALTERNATES["head"]: "A stretched buttonhole gapes in the Golem's walnut-felt brow patch, tied at its edges by thick slate-blue stitches and a brass pin.",
+		ALTERNATES["arms"]: "A fan of loose brass buttons is sewn across the Golem's bulky walnut-felt sleeve, each hole crossed by thick slate-blue thread.",
 	}
 	var slots := {
 		STARTERS["head"]: "head", STARTERS["arms"]: "arms",
 		STARTERS["torso"]: "torso", STARTERS["legs"]: "legs",
+		ALTERNATES["head"]: "head", ALTERNATES["arms"]: "arms",
 	}
-	# The fabric details each corrected starter description must actually name.
+	# The fabric details each corrected patch description must actually name.
 	var motifs := {
 		STARTERS["torso"]: ["walnut-felt", "brass buttons", "cross-stitches"],
 		STARTERS["legs"]: ["slate-blue felt threadwheels", "boots", "brass button hub",
 			"thread tails"],
+		ALTERNATES["head"]: ["buttonhole", "walnut-felt", "slate-blue stitches"],
+		ALTERNATES["arms"]: ["brass buttons", "walnut-felt sleeve", "slate-blue thread"],
 	}
 	var old_sentences := [
 		"Pop a loose button to Mark a front foe for a later hit.",
@@ -271,7 +296,7 @@ func _test_s14_patch_text() -> void:
 	var present := true
 	for id in expected:
 		present = present and catalog["by_id"].has(id)
-		_check(catalog["by_id"].has(id), "AC1: starter patch present: " + id)
+		_check(catalog["by_id"].has(id), "AC1: Button Golem patch present: " + id)
 		if not catalog["by_id"].has(id):
 			continue
 		var part: Dictionary = catalog["by_id"][id]
@@ -342,6 +367,67 @@ func _test_s14_patch_text() -> void:
 		and str(StitchedParts.ability_at_tier(legs, 1)["id"])
 			== "button_golem_legs_threadwheel_roll_move",
 		"AC3: the corrected torso and legs patches keep their legacy ability ids")
+	# The two alternate patch texts sit beside frozen S13 compatibility records: ids, names,
+	# owners, slots, slot stats, base ability dictionaries and tier overrides stay unchanged.
+	var raw := _raw_parts_by_id()
+	_check(not raw.is_empty(), "AC3: raw Button Golem JSON parses for the frozen alternates")
+	var frozen_parts := {
+		ALTERNATES["head"]: {
+			"name": "Buttonhole Snag", "slot": "head", "stat": {"crit": 4},
+			"ability": {
+				"id": "button_golem_head_buttonhole_snag_move", "name": "Buttonhole Snag",
+				"kind": "debuff", "launch": [1, 2], "target": [1, 2, 3],
+				"target_side": "enemy", "multi": false, "acc": 93, "dmg": [2, 4],
+				"crit": 0, "effects": {"tangled": 2}, "self_move": 0, "move": "skill",
+			},
+			"tiers": {
+				"2": {"ability": {"dmg": [3, 5], "effects": {"tangled": 3, "mark": 2}}},
+				"3": {"ability": {"target": [1, 2, 3, 4], "dmg": [4, 7],
+					"effects": {"tangled": 4, "mark": 3}}},
+			},
+		},
+		ALTERNATES["arms"]: {
+			"name": "Popping Volley", "slot": "arms", "stat": {"dmg": 2},
+			"ability": {
+				"id": "button_golem_arms_popping_volley_move", "name": "Popping Volley",
+				"kind": "ranged", "launch": [1, 2], "target": [1, 2, 3, 4],
+				"target_side": "enemy", "multi": true, "acc": 89, "dmg": [2, 3],
+				"crit": 0, "mark_damage": 2, "effects": {}, "self_move": 0, "move": "attack2",
+			},
+			"tiers": {
+				"2": {"ability": {"dmg": [3, 4], "mark_damage": 3}},
+				"3": {"ability": {"dmg": [4, 6], "mark_damage": 4}},
+			},
+		},
+	}
+	for id in frozen_parts:
+		var frozen: Dictionary = frozen_parts[id]
+		var entry: Dictionary = raw.get(id, {})
+		_check(not entry.is_empty(), "AC3: raw alternate record stays in the catalog: " + id)
+		if entry.is_empty():
+			continue
+		_check(str(entry.get("name", "")) == str(frozen["name"])
+			and str(entry.get("slot", "")) == str(frozen["slot"])
+			and str(entry.get("owner", "")) == "button_golem",
+			"AC3: %s keeps its authored name, slot and owner beside the new patch text" % id)
+		_check(_norm(entry.get("stat", {})) == frozen["stat"],
+			"AC3: %s keeps its frozen slot stat" % id)
+		_check(_norm(entry.get("ability", {})) == frozen["ability"],
+			"AC3: %s keeps its frozen compatibility ability dictionary" % id)
+		_check(_norm(entry.get("tiers", {})) == frozen["tiers"],
+			"AC3: %s keeps its frozen tier-II/III ability overrides" % id)
+		_check(bool(StitchedParts.validate_part(entry).get("ok", false)),
+			"AC3: the shipped %s record still validates" % id)
+	# The six other named Button Golem parts stay present and still validate unchanged.
+	for other_id in [
+		"button_golem_head_loose_pop", "button_golem_arms_button_fist",
+		"button_golem_torso_seam_resew", "button_golem_legs_threadwheel_roll",
+		"button_golem_torso_eyelet_guard", "button_golem_legs_button_roll",
+	]:
+		_check(catalog["by_id"].has(other_id), "AC3: other Golem part stays present: " + other_id)
+		if catalog["by_id"].has(other_id):
+			_check(bool(StitchedParts.validate_part(catalog["by_id"][other_id]).get("ok", false)),
+				"AC3: other Golem part still validates: " + other_id)
 	# Fail-closed: the catalog still refuses a patch copy whose text is blank.
 	for id in expected:
 		var blank: Dictionary = catalog["by_id"][id].duplicate(true)
@@ -626,11 +712,11 @@ func _test_buttonhole_tiers() -> void:
 			"AC1: only tier-III Buttonhole Snag reaches enemy rank 4")
 		_check(bool(StitchedParts.validate_ability(at).get("ok", false)),
 			"AC1: Buttonhole Snag tier %d ability validates" % tier)
-	var text := str(part["text"]).to_lower()
-	_check(text.contains("tangled") and text.contains("mark"),
-		"AC1: Buttonhole Snag text names Tangled and the higher-tier Mark")
-	_check(text.contains("tier iii") and text.contains("rank 4"),
-		"AC1: Buttonhole Snag text credits rear rank 4 reach only to tier III")
+	# S14: the record's top-level text now describes only the sewn brow patch; the frozen tier
+	# ladder above is compatibility data, not an advertised move.
+	_check(str(part["text"])
+			== "A stretched buttonhole gapes in the Golem's walnut-felt brow patch, tied at its edges by thick slate-blue stitches and a brass pin.",
+		"AC1: Buttonhole Snag text is exactly the sewn brow-patch sentence")
 	var raw_parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
 	var raw_part := {}
 	if raw_parsed is Dictionary:
@@ -1340,10 +1426,11 @@ func _test_volley_catalog(c: Dictionary) -> void:
 		for rank in [0, 5]:
 			_check(not StitchedParts.ranks_allowed(target_mask, rank),
 				"AC1: Popping Volley tier %d never targets rank %d" % [tier, rank])
-	var text := str(part["text"]).to_lower()
-	_check(text.contains("occupied") and text.contains("marked")
-		and text.contains("extra damage") and not text.contains("three foe ranks"),
-		"AC1: Popping Volley text names every occupied rank and the Marked extra damage")
+	# S14: the record's top-level text now describes only the sewn sleeve patch; the frozen
+	# volley ladder above is compatibility data, not an advertised move.
+	_check(str(part["text"])
+			== "A fan of loose brass buttons is sewn across the Golem's bulky walnut-felt sleeve, each hole crossed by thick slate-blue thread.",
+		"AC1: Popping Volley text is exactly the sewn sleeve-patch sentence")
 	var unchanged := {
 		STARTERS["head"]: {"launch": [1, 2], "target": [1, 2], "stat": {"acc": 5}},
 		STARTERS["arms"]: {"launch": [1, 2], "target": [1, 2], "stat": {"dmg": 1}},
