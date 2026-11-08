@@ -136,7 +136,7 @@
         "2": {"stat": {"max_hp": 6}, "ability": {"effects": {"guard": 3, "heal": 3}}},
         "3": {"stat": {"max_hp": 8}, "ability": {"effects": {"guard": 4, "heal": 4}}}
       },
-      "text": "Stitch a hem over one living ally: heal 2 and Guard the hits aimed at it for 2 turns."
+      "text": "A cream apron-hem folds over a dusty-purple chest patch, with red running stitches binding its loose linen edges to the dress."
     },
     {
       "id": "seamstress_poultice_apron",
@@ -163,7 +163,7 @@
         "2": {"stat": {"prot": 7}, "ability": {"effects": {"heal": 4, "guard": 2}}},
         "3": {"stat": {"prot": 9}, "ability": {"effects": {"heal": 5, "guard": 3}}}
       },
-      "text": "Darned herbs for one living ally: heal 3 and Guard it for 1 turn."
+      "text": "A small bundle of dried herbs is sewn beneath a cream linen apron pocket, tied to dusty-purple felt with a knotted red thread."
     },
     {
       "id": "seamstress_tether_loop_spools",
