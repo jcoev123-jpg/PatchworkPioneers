@@ -108,12 +108,19 @@ const NEEDLE_RANK4_FOE_RANKS := {
 ## The shipped legs starter whose tier III alone reaches enemy rank 4.
 const TETHER_LOOP_PART := "seamstress_tether_loop_spools"
 
-## S14 sewn-cloth appearance copy for the two head patches. These are never cast promises:
-## the Seamstress's four signature abilities live in data/stitched/s14_hero_abilities.json.
+## S14 sewn-cloth appearance copy for the two head patches and the two arms patches. These are
+## never cast promises: the Seamstress's four signature abilities live in
+## data/stitched/s14_hero_abilities.json.
 const MENDING_KNOT_ID := "seamstress_mending_knot_hat"
 const SCARLET_KNOT_ID := "seamstress_scarlet_knot_hat"
+const THREAD_PRICK_ID := "seamstress_thread_prick_needle"
+const NEEDLE_RAIN_ID := "seamstress_needle_rain_needle"
 const EXPECTED_MENDING_KNOT_TEXT := "A cream pincushion hat wears a dusty-purple darning knot, with red thread tucked beneath uneven brim stitches."
 const EXPECTED_SCARLET_KNOT_TEXT := "A fat scarlet knot pins a torn plum felt brim to a cream patch, its loose red threads held by crooked cross-stitches."
+## One oversized needle on cream cloth versus a fan of fine needles on plum felt.
+const EXPECTED_THREAD_PRICK_TEXT := "The Seamstress's oversized silver needle is fastened to a cream sleeve with dark-red blanket stitches; a loose crimson thread trails from its eye."
+const EXPECTED_NEEDLE_RAIN_TEXT := "A fan of slender silver needles rests across dusty-plum felt on the Seamstress's long sleeve, each shaft caught under cream stitches and red thread."
+const ARMS_PATCH_IDS := [THREAD_PRICK_ID, NEEDLE_RAIN_ID]
 ## Whole words that would turn this appearance copy back into an obsolete combat promise.
 const FORBIDDEN_COPY_WORDS := [
 	"ability", "cast", "rank", "ranks", "tier", "tiers", "heal", "heals", "hp",
@@ -379,24 +386,41 @@ func _test_catalog() -> void:
 			"AC2: Scarlet Knot cloth copy never names the combat word " + word)
 	_check(not _contains_digit(mending_low) and not _contains_digit(scarlet_low),
 		"AC2: both head-patch descriptions contain no numeric combat digits")
-	# The one edited description really explains the rank 1-4 shower from hero ranks 1-4, plus damage and Bleed.
-	var rain_text := str(by_id["seamstress_needle_rain_needle"]["text"]).to_lower()
-	_check(rain_text.contains("each living foe") and rain_text.contains("enemy ranks 1-4"),
-		"AC1: the Needle Rain text names every living foe in enemy ranks 1-4")
-	_check(not rain_text.contains("enemy ranks 1-3"),
-		"AC1: the Needle Rain text no longer stops the shower at enemy rank 3")
-	_check(rain_text.contains("once"),
-		"AC1: the Needle Rain text keeps exactly one hit attempt per living foe")
-	_check(rain_text.contains("hero ranks 1-4"),
-		"AC1: the Needle Rain text names its new launch reach from hero ranks 1-4")
-	_check(rain_text.contains("1-2") and rain_text.contains("bleed 3"),
-		"AC1: the Needle Rain text keeps its authored tier-I 1-2 damage and Bleed 3")
-	_check(rain_text.contains("damage") and rain_text.contains("bleed"),
-		"AC1: the Needle Rain text names its damage and its Bleed")
-	_check(not rain_text.contains("one foe") and not rain_text.contains("single"),
-		"AC1: the Needle Rain text no longer claims a single foe")
-	_check(rain_text.contains("already marked") and rain_text.contains("bonus damage"),
-		"AC1: the Needle Rain text names its bonus against an already-Marked foe")
+	# The two ARMS patches carry the same S14 sewn-cloth treatment: one oversized needle on cream
+	# cloth versus a fan of fine needles on plum felt. Neither describes a part-ability outcome,
+	# even though the historic stat/ability numbers stay authored above.
+	var prick_text := str(by_id[THREAD_PRICK_ID]["text"])
+	var rain_text := str(by_id[NEEDLE_RAIN_ID]["text"])
+	_check(prick_text == EXPECTED_THREAD_PRICK_TEXT,
+		"AC1: Thread Prick Needle carries its exact authored sewn-cloth description")
+	_check(rain_text == EXPECTED_NEEDLE_RAIN_TEXT,
+		"AC1: Needle Rain Needle carries its exact authored sewn-cloth description")
+	_check(prick_text != rain_text,
+		"AC2: the two arms patches describe visually distinct sewn cloth")
+	for arms_id in ARMS_PATCH_IDS:
+		_check(str(by_id[arms_id]["owner"]) == OWNER and str(by_id[arms_id]["slot"]) == "arms",
+			"AC1: " + arms_id + " stays a seamstress arms patch")
+		_check(str(by_id[arms_id]["name"]) == str(EXPECTED[arms_id]["name"]),
+			"AC1: " + arms_id + " keeps its authored name")
+		_check(bool(StitchedParts.validate_part(by_id[arms_id]).get("ok", false)),
+			"AC1: " + arms_id + " still validates with its sewn-cloth description")
+	var prick_low := prick_text.to_lower()
+	var rain_low := rain_text.to_lower()
+	_check(prick_low.contains("needle") and prick_low.contains("sleeve")
+		and prick_low.contains("cream") and prick_low.contains("thread"),
+		"AC1: Thread Prick text names one silver needle, a cream sleeve and trailing thread")
+	_check(rain_low.contains("needles") and rain_low.contains("felt")
+		and rain_low.contains("plum") and rain_low.contains("stitches"),
+		"AC1: Needle Rain text names several slender needles on dusty-plum felt under stitches")
+	_check(not prick_low.contains("needles") and not rain_low.contains("oversized"),
+		"AC1: the single-needle and many-needle descriptions stay visually distinct")
+	for word in FORBIDDEN_COPY_WORDS:
+		_check(not _contains_whole_word(prick_low, word),
+			"AC2: Thread Prick cloth copy never names the combat word " + word)
+		_check(not _contains_whole_word(rain_low, word),
+			"AC2: Needle Rain cloth copy never names the combat word " + word)
+	_check(not _contains_digit(prick_low) and not _contains_digit(rain_low),
+		"AC2: both arms-patch descriptions contain no numeric combat digits")
 	var raw: Variant = _read_json(PARTS_PATH)
 	if raw is Dictionary:
 		var document: Dictionary = raw
@@ -405,6 +429,22 @@ func _test_catalog() -> void:
 		_check(raw_parts is Array and raw_parts.size() == ALL_PART_IDS.size(),
 			"AC1: the authored parts array holds exactly the eight named wearables")
 		if raw_parts is Array:
+			for arms_id in ARMS_PATCH_IDS:
+				var raw_arms := _raw_part_for(raw_parts, arms_id)
+				_check(not raw_arms.is_empty(), "AC3: the raw JSON authors the " + arms_id + " record")
+				if raw_arms.is_empty():
+					continue
+				var expected_raw_text := EXPECTED_THREAD_PRICK_TEXT if arms_id == THREAD_PRICK_ID else EXPECTED_NEEDLE_RAIN_TEXT
+				_check(str(raw_arms.get("text", "")) == expected_raw_text,
+					"AC1: the raw " + arms_id + " text is exactly the authored sewn-cloth sentence")
+				_check(_int_dict(raw_arms.get("stat", {})) == {"dmg": 1},
+					"AC3: the raw " + arms_id + " keeps its authored dmg 1 stat")
+				var raw_arms_ability: Dictionary = raw_arms.get("ability", {})
+				_check(str(raw_arms_ability.get("id", "")) == str(EXPECTED[arms_id]["ability_id"]),
+					"AC3: the raw " + arms_id + " keeps its complete legacy ability object")
+				var raw_arms_tiers: Dictionary = raw_arms.get("tiers", {})
+				_check(raw_arms_tiers.has("2") and raw_arms_tiers.has("3"),
+					"AC3: the raw " + arms_id + " keeps both authored tier overrides")
 			var raw_needle := _raw_part_for(raw_parts, "seamstress_needle_rain_needle")
 			_check(not raw_needle.is_empty(), "AC1: the raw JSON authors the Needle Rain Needle record")
 			if not raw_needle.is_empty():
@@ -573,6 +613,12 @@ func _test_negatives() -> void:
 		blanked["text"] = ""
 		_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
 			"AC3: " + head_id + " with blank top-level text is refused")
+	# The two ARMS patches carry required sewn-cloth text too: blanking either one fails closed.
+	for arms_id in ARMS_PATCH_IDS:
+		var blanked_arms: Dictionary = by_id[arms_id].duplicate(true)
+		blanked_arms["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blanked_arms).get("ok", false)),
+			"AC3: " + arms_id + " with blank top-level text is refused")
 	for bad_rank in [-1, 0, 5, 1.5]:
 		var mutated := head.duplicate(true)
 		mutated["ability"]["launch"] = [bad_rank]
