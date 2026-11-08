@@ -4,6 +4,35 @@ extends SceneTree
 var failures: Array[String] = []
 var checks := 0
 
+## Test-only bounded Event service fixture: one authenticated choice whose only
+## consequence is a living doll's lasting maximum-HP change, with the wallet and
+## every other party value untouched. The shipped Event catalog has no
+## max-HP-only outcome, so this minimal service isolates that material case
+## while the session's real choose_visit/_apply_receipt path stays in charge.
+class MaxHpOnlyEventService extends RefCounted:
+	var _node_id := ""
+	var _choice_id := ""
+	var _wallet := {}
+	var _claimed := false
+
+	func _init(node_id: String, choice_id: String, wallet: Dictionary) -> void:
+		_node_id = node_id
+		_choice_id = choice_id
+		_wallet = wallet.duplicate(true)
+
+	func read_state() -> Dictionary:
+		return {"ok": true, "node_id": _node_id, "choice_id": _choice_id,
+			"claimed": _claimed, "wallet": _wallet.duplicate(true)}
+
+	func choose(choice_id: String, expected_node_id: String, expected_state: Dictionary) -> Dictionary:
+		if _claimed or choice_id != _choice_id or expected_node_id != _node_id \
+				or expected_state != read_state():
+			return {"ok": false}
+		_claimed = true
+		return {"ok": true, "node_id": _node_id, "choice_id": choice_id,
+			"target_hero_id": "warden", "max_hp_delta": 3, "hp_delta": 0,
+			"wallet": _wallet.duplicate(true)}
+
 func _check(ok: bool, label: String) -> void:
 	checks += 1
 	if not ok:
@@ -17,6 +46,7 @@ func _initialize() -> void:
 	_chain_thread()
 	_death_door()
 	_doors()
+	_event_max_hp_patch()
 	_sewing_circle_sockets()
 	_live_elite_side_door()
 	_session_replay()
@@ -220,6 +250,176 @@ func _doors() -> void:
 	var barred := run.snapshot()
 	_check(not run.choose_door("attic_waxlight", "", barred)
 		and barred == run.snapshot(), "under-bed deal permanently bars attic blessing")
+
+
+func _event_node_id(run: StitchedRunSession) -> String:
+	for id in run.choices():
+		if run.map.get_node(id).type == "Event":
+			return id
+	return ""
+
+
+## S14: a successful Event whose only changed party material is a living doll's
+## base/effective maximum HP is a genuinely consequential choice and carries the
+## seeded event-source ability patch; a neutral Leave or a refused request never
+## does. The visit is a real pinned authenticated route Event.
+func _event_max_hp_patch() -> void:
+	var seeds: Array = [234]
+	for seed_number in 80:
+		seeds.append(seed_number)
+	var found := -1
+	for seed_number in seeds:
+		var candidate := StitchedRunSession.start(seed_number)
+		if candidate == null:
+			continue
+		if not _event_node_id(candidate).is_empty():
+			found = seed_number
+			break
+	_check(found >= 0, "seeded route exposes an Event node for the S14 material gate")
+	if found < 0:
+		return
+	StitchedRunSession.pinned_event_id = "v3_warden_buckle_heart_ward"
+	_event_max_hp_live(found)
+	_event_max_hp_positive(found)
+	_event_max_hp_negative(found)
+	StitchedRunSession.pinned_event_id = ""
+
+
+## The shipped warden crossroad itself: its authored lasting max-HP rivet
+## trade is material through the real vital-seam service on the live route, and
+## the whole changed run replays from an authenticated save.
+func _event_max_hp_live(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "live pinned Event session starts")
+		return
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "live pinned Event visit mounts the warden crossroad")
+		return
+	_check(run.pending.service == "Event" and run._service is RunStitchedHeroVitalSeams
+		and run.pending.event_id == "v3_warden_buckle_heart_ward",
+		"authenticated Event visit serves the real seam service")
+	var warden := {}
+	var gold_before := run.gold
+	for hero in run.heroes:
+		if str(hero.id) == "warden":
+			warden = hero
+	if warden.is_empty() or bool(warden.lost):
+		_check(false, "living Warden doll carries the authored rivet trade")
+		return
+	var base_before := int(warden.base_max_hp)
+	var max_before := int(warden.max_hp)
+	_check(run.choose_visit("sell_rivets", [], run.snapshot()),
+		"authored max-HP rivet trade commits through the public visit path")
+	var seam := {}
+	for hero in run.heroes:
+		if str(hero.id) == "warden":
+			seam = hero
+	_check(int(seam.base_max_hp) == base_before - 2 and int(seam.max_hp) == max_before - 2
+		and run.gold == gold_before + 24,
+		"authored rivet trade lowers the living doll's maximum HP for gold")
+	_check(run.ability_inventory.size() == 1 and run.journal.back().has("ability_patch"),
+		"live material Event choice awards exactly one ability patch")
+	var document := StitchedRunSave.capture(run)
+	var restored := StitchedRunSave.restore(document)
+	_check(not document.is_empty() and restored != null
+		and restored.snapshot() == run.snapshot(),
+		"changed Event result replays with identical max HP, patch, serial, journal and RNG")
+
+
+## A max-HP-only consequence (no wallet, HP, fray or part change) grants exactly
+## one catalog-valid event-source patch with a new inventory serial and stamps
+## the journal. The replay roundtrip is proven in _event_max_hp_live on the
+## authored seam, because restore replays journal commands through the real
+## services, which a test-only fixture cannot reproduce by design.
+func _event_max_hp_positive(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "max-HP-only Event session starts")
+		return
+	run.scraps = 5
+	run._seal()
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "max-HP-only Event visit mounts")
+		return
+	var warden := {}
+	for hero in run.heroes:
+		if str(hero.id) == "warden":
+			warden = hero
+	if warden.is_empty() or bool(warden.lost):
+		_check(false, "living Warden doll carries the max-HP-only seam")
+		return
+	var base_before := int(warden.base_max_hp)
+	var max_before := int(warden.max_hp)
+	var hp_before := int(warden.hp)
+	var rng_before := run.rng.state
+	# The offered action stays the mounted authored one; the bounded fixture
+	# service resolves it with a wallet-untouched +3 maximum-HP receipt.
+	run._service = MaxHpOnlyEventService.new(node_id, "reinforce_shield_seam",
+		{"gold": run.gold, "scraps": run.scraps})
+	var before := run.snapshot()
+	_check(run.choose_visit("reinforce_shield_seam", [], before),
+		"max-HP-only Event choice commits through the public visit path")
+	var seam := {}
+	for hero in run.heroes:
+		if str(hero.id) == "warden":
+			seam = hero
+	_check(int(seam.base_max_hp) == base_before + 3 and int(seam.max_hp) == max_before + 3
+		and int(seam.hp) == hp_before
+		and run.gold == before.gold and run.scraps == before.scraps,
+		"the committed consequence changes only the living doll's maximum HP")
+	_check(run.ability_inventory.size() == 1 and run.ability_serial == 1
+		and int(run.ability_inventory[0].uid) == 1,
+		"max-HP-only Event material grants exactly one patch with a new serial")
+	var patches := StitchedS14Abilities.patches()
+	_check(patches.by_id.has(run.ability_inventory[0].id)
+		and run.ability_inventory[0].rarity in StitchedS14Abilities.RARITIES,
+		"the event-source reward is a catalog-valid ability patch")
+	var command: Dictionary = run.journal.back()
+	_check(str(command.get("action", "")) == "visit"
+		and command.get("ability_patch", {}) == run.ability_inventory[0],
+		"the reward rides the committed visit journal entry")
+	_check(run.receipts.size() == 1 and run.receipts[0].decision == "reinforce_shield_seam"
+		and run.receipts[0].event_id == "v3_warden_buckle_heart_ward",
+		"the committed Event leaves its node receipt")
+	_check(run.rng.state != rng_before, "the reward consumed the run's seeded reward RNG")
+	_check(run.is_consistent(),
+		"max-HP-only Event result leaves the run sealed and consistent")
+
+
+## A truly neutral Leave and stale or forged requests grant nothing and spend
+## no reward RNG: inventory, serial, journal, wallet and sealed state survive.
+func _event_max_hp_negative(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "neutral Event session starts")
+		return
+	var stale := run.snapshot()
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "neutral Event visit mounts for refusal checks")
+		return
+	var sealed := run.snapshot()
+	var rng_before := run.rng.state
+	var journal_size := run.journal.size()
+	_check(not run.choose_visit("leave", [], stale),
+		"stale expected snapshot is refused before any Event work")
+	_check(not run.choose_visit("forged_choice", [], sealed)
+		and not run.choose_visit("leave", ["bogus"], sealed),
+		"unoffered or argument-forged Event choices are refused")
+	_check(sealed == run.snapshot() and rng_before == run.rng.state
+		and run.ability_inventory.is_empty() and run.ability_serial == 0
+		and run.journal.size() == journal_size,
+		"refused Event requests change no inventory, serial, journal, wallet or RNG")
+	_check(run.choose_visit("leave", [], sealed),
+		"neutral Leave commits through the public visit path")
+	_check(run.ability_inventory.is_empty() and run.ability_serial == 0
+		and run.gold == sealed.gold and run.scraps == sealed.scraps
+		and run.rng.state == rng_before
+		and not run.journal.back().has("ability_patch"),
+		"neutral Leave grants no patch, spends no reward RNG and keeps the wallet")
 
 
 func _play_live_battle(session: StitchedRunSession) -> bool:

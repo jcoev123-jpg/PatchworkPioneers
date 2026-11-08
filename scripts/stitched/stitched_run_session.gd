@@ -451,10 +451,14 @@ func _award_ability_patch(source: String, rarity: String = "") -> Dictionary:
 ## The party material a successful Event choice can change. A free Leave, decline
 ## or escape leaves every value equal, so choose_visit can tell it apart from a
 ## genuinely consequential choice without hard-coding one exit id per Event.
+## A receipt can also re-sew a living doll's base maximum HP (max_hp_delta)
+## before this projection is compared, so both maximum-HP values are material:
+## a max-HP-only seam still counts as a genuinely consequential choice.
 func _event_material_state() -> Dictionary:
 	var row: Array = []
 	for hero in heroes:
-		row.append([str(hero.id), int(hero.hp), int(hero.fray), str(hero.resolve),
+		row.append([str(hero.id), int(hero.hp), int(hero.base_max_hp), int(hero.max_hp),
+			int(hero.fray), str(hero.resolve),
 			bool(hero.lost), bool(hero.hanging), hero.parts.duplicate(true)])
 	return {"gold": gold, "scraps": scraps, "candle": candle,
 		"satchel": satchel.duplicate(true), "patches": patches.duplicate(true),
