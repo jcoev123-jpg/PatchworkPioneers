@@ -223,6 +223,85 @@ func move_sewn(from_hero_id: Variant, from_ability_id: Variant, to_hero_id: Vari
 	}
 
 
+## Atomically exchanges two distinct owned patches that are each sewn exactly once on two different party
+## signatures in the same open visit. A detached candidate swaps the two uids in place (array order is kept);
+## every changed hero loadout (once, when both signatures belong to one hero) is validated with the real S14
+## rules before _sockets is assigned. The inventory is never touched, the version advances once, and a
+## refusal changes nothing. No price, no RNG.
+func swap_sewn(hero_a_id: Variant, ability_a_id: Variant, uid_a: Variant, hero_b_id: Variant, ability_b_id: Variant, uid_b: Variant, expected_node_id: Variant, expected_state: Variant) -> Dictionary:
+	var gate := _gate(expected_node_id, expected_state)
+	if not gate.is_empty():
+		return _fail(gate)
+	if typeof(hero_a_id) != TYPE_STRING or typeof(ability_a_id) != TYPE_STRING or typeof(uid_a) != TYPE_INT \
+			or typeof(hero_b_id) != TYPE_STRING or typeof(ability_b_id) != TYPE_STRING or typeof(uid_b) != TYPE_INT:
+		return _fail("hero ids and ability ids must be strings and uids integers")
+	var hero_a: String = hero_a_id
+	var ability_a: String = ability_a_id
+	var hero_b: String = hero_b_id
+	var ability_b: String = ability_b_id
+	var value_a: int = uid_a
+	var value_b: int = uid_b
+	if not hero_a in _hero_ids:
+		return _fail("unknown first hero: " + hero_a)
+	if not hero_b in _hero_ids:
+		return _fail("unknown second hero: " + hero_b)
+	if StitchedS14Abilities.ability(hero_a, ability_a).is_empty():
+		return _fail("unknown first signature ability for that hero: " + ability_a)
+	if StitchedS14Abilities.ability(hero_b, ability_b).is_empty():
+		return _fail("unknown second signature ability for that hero: " + ability_b)
+	if hero_a == hero_b and ability_a == ability_b:
+		return _fail("the two signatures must differ")
+	if value_a == value_b:
+		return _fail("the two patch uids must differ")
+	var index_a := _item_index(value_a)
+	var index_b := _item_index(value_b)
+	if index_a < 0 or index_b < 0:
+		return _fail("unowned patch uid")
+	var bound_a: Array = _sockets.get(hero_a, {}).get(ability_a, [])
+	var bound_b: Array = _sockets.get(hero_b, {}).get(ability_b, [])
+	if bound_a.count(value_a) != 1:
+		return _fail("the first patch is not sewn on the first signature")
+	if bound_b.count(value_b) != 1:
+		return _fail("the second patch is not sewn on the second signature")
+	var before := read_state()
+	var item_a: Dictionary = _inventory[index_a].duplicate(true)
+	var item_b: Dictionary = _inventory[index_b].duplicate(true)
+	var candidate: Dictionary = _sockets.duplicate(true)
+	var row_a: Array = bound_a.duplicate()
+	row_a[row_a.find(value_a)] = value_b
+	candidate[hero_a][ability_a] = row_a
+	var row_b: Array = bound_b.duplicate()
+	row_b[row_b.find(value_b)] = value_a
+	candidate[hero_b][ability_b] = row_b
+	if not _loadout_ok(hero_a, candidate[hero_a]):
+		return _fail("resulting first loadout is invalid")
+	if hero_b != hero_a and not _loadout_ok(hero_b, candidate[hero_b]):
+		return _fail("resulting second loadout is invalid")
+	_sockets = candidate
+	_version += 1
+	var after := read_state()
+	return {
+		"ok": true,
+		"error": "",
+		"action": "swap_sewn",
+		"node_id": _node_id,
+		"hero_a_id": hero_a,
+		"ability_a_id": ability_a,
+		"uid_a": value_a,
+		"item_a": item_a,
+		"hero_b_id": hero_b,
+		"ability_b_id": ability_b,
+		"uid_b": value_b,
+		"item_b": item_b,
+		"sockets_a_before": bound_a.duplicate(),
+		"sockets_a_after": after["sockets"][hero_a][ability_a].duplicate(),
+		"sockets_b_before": bound_b.duplicate(),
+		"sockets_b_after": after["sockets"][hero_b][ability_b].duplicate(),
+		"source_state": before,
+		"state": after,
+	}
+
+
 ## Ends the visit; no binding changes.
 func leave(expected_node_id: Variant, expected_state: Variant) -> Dictionary:
 	var gate := _gate(expected_node_id, expected_state)

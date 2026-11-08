@@ -1064,13 +1064,9 @@ func _open_visit(kind: String) -> bool:
 			var state: Dictionary = _service.read_state()
 			if state.get("ok") != true:
 				return false
+			# The service's quote is authoritative: it already counts torn worn parts, lingering
+			# Unravelled resolve, FEAR and HP/FRAY, and ignores LOST dolls.
 			for decision in state.get("quote", {}).get("choices", []):
-				if decision == RunCampfireVisit.MEND and not roster.any(func(hero: Dictionary): return not hero.lost and hero.hp < hero.max_hp):
-					continue
-				# Wren's FEAR alone makes Tell Tales worth offering; only a LOST doll's FRAY does not.
-				if decision == RunCampfireVisit.TELL_TALES and kid_fear() <= 0 \
-						and not roster.any(func(hero: Dictionary): return not hero.lost and hero.fray > 0):
-					continue
 				_offer(decision, str(decision).replace("_", " ").capitalize())
 			if not pending.get("swapped", false):
 				_add_swaps(roster)
