@@ -434,6 +434,75 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_brass_stapler_portcullis",
+      "title": "The Brass Stapler Portcullis",
+      "description": "A brass desk stapler looms over a narrow floorboard seam like a hinged fortress gate. Two plump button-eyed wardens brace its iron jaw with red thread while rows of bent staples glitter under a mustard lantern.",
+      "fight_choice_id": "unclamp_stapler_gate",
+      "choices": [
+        {
+          "id": "unclamp_stapler_gate",
+          "text": "Unclamp the jaws and fight the staple wardens (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "buy_brass_staple_pass",
+          "text": "Pay 19 gold for a stamped brass crossing slip",
+          "outcome": {"gold": -19, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Follow the dry seam away from the snapping hinge (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_pewter_measuring_spoon_causeway",
+      "title": "The Pewter Measuring-Spoon Causeway",
+      "description": "An enormous pewter measuring spoon bridges a black puddle between wallpaper folds. Its bowl swings over the water as three moss-cloth porters tug on the handle, guarding the crossing with button shields.",
+      "fight_choice_id": "challenge_spoon_porters",
+      "choices": [
+        {
+          "id": "challenge_spoon_porters",
+          "text": "Take the spoon handle and face its porters (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "bind_spoon_handle",
+          "text": "Spend 2 scraps to lash the swinging handle steady",
+          "outcome": {"gold": 0, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Turn back from the dark water beneath the spoon (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_pencil_sharpener_tollgate",
+      "title": "The Pencil-Sharpener Tollgate",
+      "description": "A brass pencil sharpener hangs from a bent school-desk screw, casting a tunnel of cedar shavings across the corridor. Three stout patched dolls hold the blade hatch shut with a braided thread rope.",
+      "fight_choice_id": "force_sharpener_hatch",
+      "choices": [
+        {
+          "id": "force_sharpener_hatch",
+          "text": "Force the blade hatch and fight the rope-keepers (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "pay_shaving_token",
+          "text": "Pay 21 gold for a cedar-shaving passage token",
+          "outcome": {"gold": -21, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Withdraw before the shavings begin to fall (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
