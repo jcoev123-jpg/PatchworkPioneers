@@ -21,6 +21,7 @@ func _initialize() -> void:
 	_test_refusals()
 	_test_lost_and_hanging()
 	_test_bleed_outcomes()
+	_test_cross_visit_replay()
 	_check(randi() == next_draw,
 		"bandage open, quote, buys, Leaves and every refusal draw no global RNG")
 	if failures.is_empty():
@@ -586,3 +587,87 @@ func _test_bleed_outcomes() -> void:
 		and visit.choose_bandage("warden", NODE, visit.read_state()).get("ok", true) == false
 		and visit.read_state()["gold"] == 120 - PRICE,
 		"the consumed visit publishes no projection and refuses a replayed buy")
+
+
+## AC1/AC2: two visits opened with completely identical inputs have distinct
+## identities, and neither one's snapshot can authorize a buy or Leave on the
+## other, yet each visit's own current snapshot still works exactly once.
+func _test_cross_visit_replay() -> void:
+	var a := _open(PRICE, PRICE)
+	var b := _open(PRICE, PRICE)
+	var snap_a := a.read_state()
+	var snap_b := b.read_state()
+	_check(a.is_open() and b.is_open() and snap_a.get("ok") == true
+		and snap_b.get("ok") == true,
+		"both identical-input visits open (non-vacuous precondition)")
+	var id_a: Variant = snap_a.get("visit_id")
+	var id_b: Variant = snap_b.get("visit_id")
+	_check(typeof(id_a) == TYPE_STRING and not str(id_a).is_empty()
+		and typeof(id_b) == TYPE_STRING and not str(id_b).is_empty()
+		and id_a != id_b,
+		"identical-input visits expose different nonempty visit identities")
+	var same_economics := true
+	for key in snap_a.keys():
+		if key != "visit_id" and snap_a[key] != snap_b.get(key):
+			same_economics = false
+	_check(same_economics and snap_a != snap_b
+		and snap_a["gold"] == PRICE and snap_a["price"] == PRICE
+		and snap_a["node_id"] == NODE,
+		"snapshots differ only by visit identity; node, gold, price and heroes are equal")
+	_check(a.read_state() == snap_a and b.read_state() == snap_b,
+		"a visit's identity is stable across repeated read_state calls")
+	# Cross-visit buy: refused, B untouched and still open.
+	var b_before := b.read_state()
+	var cross_buy := b.choose_bandage("rag_duelist", NODE, snap_a)
+	_check(cross_buy.get("ok", true) == false and cross_buy.get("decision", "x") == ""
+		and cross_buy.get("charged_gold", 1) == 0 and b.is_open()
+		and b.read_state() == b_before
+		and b.read_state()["gold"] == PRICE
+		and b.read_state()["heroes"][0]["statuses"] == {"bleed": 3, "weak": 1},
+		"visit A's snapshot cannot buy on visit B: no charge, no cure, B stays open")
+	# Cross-visit Leave: refused, B still open.
+	var cross_leave := b.leave(NODE, snap_a)
+	_check(cross_leave.get("ok", true) == false and cross_leave.get("decision", "x") == ""
+		and cross_leave.get("charged_gold", 1) == 0 and b.is_open()
+		and not b.is_consumed() and b.read_state() == b_before,
+		"visit A's snapshot cannot Leave visit B: B stays open and unchanged")
+	_check(a.is_open() and a.read_state() == snap_a,
+		"refusals on B leave visit A untouched")
+	# The reverse direction is refused too.
+	_reject(a, "rag_duelist", NODE, snap_b, "visit B's snapshot on visit A")
+	# B's own current snapshot still buys exactly once: 40 to zero.
+	var paid := b.choose_bandage("rag_duelist", NODE, b.read_state())
+	_check(paid.get("ok") == true and paid.get("decision") == "buy_bandage"
+		and paid.get("charged_gold") == PRICE and paid.get("gold") == 0
+		and paid.get("status") == "used" and b.is_consumed()
+		and paid["heroes"][0]["statuses"] == {"weak": 1}
+		and paid["heroes"][1]["statuses"] == {"bleed": 1}
+		and paid["heroes"][2] == _party()[2] and paid["heroes"][3] == _party()[3],
+		"B's current snapshot buys once for 40 and removes only the chosen doll's Bleed")
+	# Repeat buy and Leave stay refused with no further charge, even with the
+	# stale/own snapshots.
+	var closed_state := b.read_state()
+	_check(b.choose_bandage("warden", NODE, closed_state).get("ok", true) == false
+		and b.choose_bandage("rag_duelist", NODE, snap_b).get("ok", true) == false
+		and b.leave(NODE, closed_state).get("ok", true) == false
+		and b.leave(NODE, snap_a).get("ok", true) == false
+		and b.read_state() == closed_state and closed_state["gold"] == 0
+		and closed_state["heroes"][1]["statuses"] == {"bleed": 1},
+		"a repeated buy or Leave on the used visit is refused without drift or charge")
+	# A is unaffected by B's purchase and still decides with its own snapshot.
+	_check(a.is_open() and a.read_state() == snap_a
+		and a.read_state()["gold"] == PRICE,
+		"visit A is unaffected by the purchase on visit B")
+	var a_left := a.leave(NODE, a.read_state())
+	_check(a_left.get("ok") == true and a_left.get("charged_gold") == 0
+		and a_left.get("gold") == PRICE and a.is_consumed()
+		and a.leave(NODE, a.read_state()).get("ok", true) == false
+		and a.choose_bandage("rag_duelist", NODE, a.read_state()).get("ok", true) == false,
+		"A's own snapshot still gives the free terminal Leave; repeats are refused")
+	# Invalid visits carry no identity that could match a live one.
+	var invalid_state := _open(PRICE, 0).read_state()
+	_check(invalid_state.get("ok") == false and invalid_state.get("visit_id") == "",
+		"an invalid visit publishes an empty visit identity")
+	var c := _open(PRICE, PRICE)
+	_check(c.read_state().get("visit_id") != id_a and c.read_state().get("visit_id") != id_b,
+		"a later visit never reuses an earlier visit's identity")

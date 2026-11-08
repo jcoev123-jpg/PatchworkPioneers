@@ -239,12 +239,19 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 		return
 	var phase := str(session.phase)
 	var service := str(session.pending.get("service", "")) if phase == "visit" else ""
-	var before := session.snapshot()
-	var journal := session.journal.duplicate(true)
-	var choices := session.visit_actions() if phase == "visit" else session.choices() if phase == "map" else []
+	# The sealed-file witness is acquired only against the generation that is
+	# current when Save is pressed: a capture taken before the awaited controls
+	# can go stale across the wait, so each branch reads the snapshot, journal
+	# and choices after its own wait, never from a pre-await capture.
+	var before: Dictionary = {}
+	var journal: Array = []
+	var choices: Array = []
 	app.stitched_save_path = SAVE_PATH
 	if phase == "battle":
-		# Battle has its own public Save, not the map/visit button array.
+		# Battle has its own public Save, not the map/visit button array; no
+		# await precedes that press, so its witness is the live session itself.
+		before = session.snapshot()
+		journal = session.journal.duplicate(true)
 		var stage: StitchedBattleScreen = app.stitched_run_battle
 		var battle_save := stage.get_node_or_null("SaveStitchedBattle") as Button if is_instance_valid(stage) else null
 		_check(is_instance_valid(stage) and stage.battle == session.battle
@@ -256,17 +263,28 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 	elif phase in ["map", "visit"]:
 		if not await _await_controls(app, phase, service):
 			return
-		# The wait may span a remount: prove the generation is still this exact
-		# session, phase, service and parented page before indexing the button
-		# array, so a retired page is never pressed and an out-of-sync array is
-		# reported with explicit evidence instead of an indexing error.
+		# The wait may span a remount: reject generation drift before Save.
+		# The awaited session, phase, service and parented page must still be
+		# this exact generation, so an invalid or outdated page generation can
+		# never supply the save witness, and no stale pre-await capture is ever
+		# asserted against; explicit evidence names the exact mismatch.
 		var live: StitchedRunSession = app.stitched_run_session
-		var count := choices.size()
 		var panel: Control = app.stitched_run_panel
-		var usable: bool = live == session and live.phase == phase \
+		var mounted: bool = live == session and live.phase == phase \
 			and (phase != "visit" or str(live.pending.get("service", "")) == service) \
-			and is_instance_valid(panel) and panel.get_parent() == app \
-			and app.stitched_run_buttons.size() >= count + 2
+			and is_instance_valid(panel) and panel.get_parent() == app
+		_check(mounted, label + " saves the same mounted generation it awaited; "
+			+ _controls_evidence(app, "wanted the awaited phase=" + phase + " service=" + service + " generation"))
+		if not mounted:
+			return
+		# Complete current-generation witness, acquired after the await against
+		# the mounted, parented page and its verified Save/Reload buttons: the
+		# sealed file must replay exactly this snapshot, journal and choices.
+		before = live.snapshot()
+		journal = live.journal.duplicate(true)
+		choices = live.visit_actions() if phase == "visit" else live.choices()
+		var count := choices.size()
+		var usable: bool = app.stitched_run_buttons.size() >= count + 2
 		var save: Button = app.stitched_run_buttons[count] if usable else null
 		var secondary: Button = app.stitched_run_buttons[count + 1] if usable else null
 		if usable:
@@ -291,7 +309,7 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 		_check(sealed != null and sealed.snapshot() == before and sealed.journal == journal,
 			label + " seals the current generation into its public save; "
 			+ _controls_evidence(app, "wanted the sealed file to hold phase=" + phase + " service=" + service))
-		if sealed == null or sealed.snapshot() != before:
+		if sealed == null or sealed.snapshot() != before or sealed.journal != journal:
 			return
 		if phase == "map":
 			secondary.pressed.emit()
