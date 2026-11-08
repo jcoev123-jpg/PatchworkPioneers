@@ -58,9 +58,9 @@ const CROW_LEGS := {
 	},
 }
 ## Seven of the eight Scarecrow parts must keep their authored base records; the only data
-## changes are the tier-III target overrides on Sack Glare and Harvest Fright. Crow Dive, Crow
-## Peck and Crow Flock are pinned by CROW_LEGS and _test_leg_rank4_data, so this table pins the
-## remaining siblings.
+## changes are the tier-III target overrides on Sack Glare and Harvest Fright plus the tier-II/
+## tier-III stat ladders on the two head parts. Crow Dive, Crow Peck and Crow Flock are pinned
+## by CROW_LEGS and _test_leg_rank4_data, so this table pins the remaining siblings.
 const SIBLING_PARTS := {
 	"scarecrow_arms_fork_jab": {
 		"slot": "arms", "stat": {"dmg": 1}, "launch": [1, 2], "target": [1, 2],
@@ -542,11 +542,16 @@ func _test_leg_rank4_data() -> void:
 				"AC1: Crow Flock tier %d excludes enemy rank %d" % [flock_tier, rank])
 		var expected_weak := 2 if flock_tier < 3 else 3
 		var expected_mark: int = 2 if flock_tier < 3 else 3
+		var expected_crit: int = 3 + flock_tier
 		_check(flock_ability["effects"] == {"weak": expected_weak, "mark": expected_mark},
 			"AC1: Crow Flock tier %d keeps Weak %d and Mark %d"
 				% [flock_tier, expected_weak, expected_mark])
-		_check(StitchedParts.stat_at_tier(flock, flock_tier) == {"crit": 4},
-			"AC1: Crow Flock tier %d keeps its crit stat" % flock_tier)
+		_check(StitchedParts.stat_at_tier(flock, flock_tier) == {"crit": expected_crit}
+			and expected_crit == {1: 4, 2: 5, 3: 6}[flock_tier],
+			"AC1: Crow Flock tier %d grants its exact crit stat %d"
+				% [flock_tier, expected_crit])
+		_check(flock["stat"] == {"crit": 4},
+			"AC1: Crow Flock tier-%d read leaves the base crit stat untouched" % flock_tier)
 	_check(flock["ability"]["launch"] == flock_launch
 		and flock["ability"]["effects"] == {"weak": 2, "mark": 2},
 		"AC1: tier reads never replace Crow Flock's base launch or potency")
@@ -671,6 +676,13 @@ func _test_sack_glare_rank4_data() -> void:
 			and int(ability["acc"]) == 92 and ability["dmg"] == [0, 0]
 			and int(ability["crit"]) == 0 and str(ability["move"]) == "skill",
 			"AC1: Sack Glare tier %d keeps its single-target accuracy, damage and pose" % tier)
+	for tier in [1, 2, 3]:
+		var expected_acc: int = 3 + tier
+		_check(StitchedParts.stat_at_tier(part, tier) == {"acc": expected_acc}
+			and expected_acc == {1: 4, 2: 5, 3: 6}[tier],
+			"AC1: Sack Glare tier %d grants its exact acc stat %d" % [tier, expected_acc])
+		_check(part["stat"] == {"acc": 4},
+			"AC1: Sack Glare tier-%d read leaves the base acc stat untouched" % tier)
 	_check(part["tiers"]["2"]["ability"].get("effects") == {"weak": 2, "mark": 2},
 		"AC1: the tier-II override keeps Weak 2/Mark 2")
 	# The loaded catalog normalises every tier into a full merged ability, so the authored
