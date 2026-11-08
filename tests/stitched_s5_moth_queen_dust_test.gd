@@ -11,14 +11,15 @@ const DUST := {
 }
 const DIVE := {
 	"id": "queen_dive", "name": "Pin Crown Dive", "kind": "melee",
-	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [6, 8], "crit": 0, "effects": {"tangled": 2, "snip": 1},
+	"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
+	"acc": 85, "dmg": [6, 8], "crit": 0,
+	"effects": {"tangled": 2, "snip": 1, "mark": 3},
 	"self_move": 0, "move": "attack3",
 }
 const DEVOUR := {
 	"id": "queen_devour", "name": "Devour", "kind": "melee",
 	"launch": [1, 2], "target": [1, 2], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [7, 9], "crit": 0, "effects": {"bleed": 2},
+	"acc": 85, "dmg": [7, 9], "crit": 0, "mark_damage": 3, "effects": {"bleed": 2},
 	"self_move": 0, "move": "attack4",
 }
 const VEIL := {
@@ -97,10 +98,11 @@ func _test_source(catalog: Dictionary) -> void:
 	var expected := {"max_hp": 90, "speed": 6, "dodge": 10, "acc": 0, "prot": 4, "is_boss": true,
 		"turns_per_round": 2, "trophy": "moth_queen_wing_crown", "abilities": [DUST, DIVE, DEVOUR, VEIL]}
 	_check(queen.get("stitched") == JSON.parse_string(JSON.stringify(expected)),
-		"AC1: exact Queen profile: Dust/Devour/Veil preserved, Dive alone gains Tangled 2")
+		"AC1: exact Queen profile: Dust/Devour/Veil preserved, Dive alone gains Mark 3 and Devour Mark damage 3")
 	_check(ResourceLoader.exists("res://assets/paper/enemies/moth_queen.png")
-		and ResourceLoader.exists("res://assets/paper/stitched/icons/status_blind.png"),
-		"AC4: existing Queen sprite and Blind icon carry the move (no new art)")
+		and ResourceLoader.exists("res://assets/paper/stitched/icons/status_blind.png")
+		and ResourceLoader.exists("res://assets/paper/stitched/icons/status_mark.png"),
+		"AC4: existing Queen sprite and Blind/Mark icons carry the moves (no new art)")
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "moth_queen")
 	_check(not foe.is_empty() and StitchedEnemyCatalog.trophy_for(catalog, "moth_queen") == "moth_queen_wing_crown",
 		"AC1: canonical legal boss foe and trophy are available")
@@ -117,9 +119,9 @@ func _test_source(catalog: Dictionary) -> void:
 	for ability in foe.get("abilities", []):
 		if str(ability["id"]) == "queen_dive":
 			loaded_dive = ability
-	_check(not loaded_dive.is_empty() and loaded_dive.get("effects") == {"tangled": 2, "snip": 1}
-		and loaded_dive.get("launch") == [1, 3] and loaded_dive.get("target") == [1]
-		and loaded_dive.get("multi") == false, "AC1: loaded single-front Dive alone carries Tangled 2")
+	_check(not loaded_dive.is_empty() and loaded_dive.get("effects") == {"tangled": 2, "snip": 1, "mark": 3}
+		and loaded_dive.get("launch") == [1, 3] and loaded_dive.get("target") == [1, 2]
+		and loaded_dive.get("multi") == false, "AC1: loaded Dive alone carries Mark 3 and the rank-two target")
 	for boss_id in ["patchwork_behemoth", "sewing_machine_colossus"]:
 		_check(not StitchedEnemyCatalog.foe_for(catalog, boss_id).is_empty(), "AC4: other boss still loads: " + boss_id)
 
@@ -406,7 +408,7 @@ func _dive_script(catalog: Dictionary, seed_value: int, witnesses: Dictionary) -
 	for hero in b.get_heroes():
 		if str(hero["id"]) != "warden":
 			others[str(hero["id"])] = hero.duplicate(true)
-	for rank in [0, 2, 3, 4, 5]:
+	for rank in [0, 3, 4, 5]:
 		var snapshot := b.state_snapshot()
 		var rng := b.rng_state()
 		var invalid := b.use_foe_ability("queen_dive", rank)
@@ -440,6 +442,7 @@ func _dive_script(catalog: Dictionary, seed_value: int, witnesses: Dictionary) -
 		for base in bases:
 			var scaled := StitchedS1BEffects.enemy_damage(
 				int(base) + int(queen.get("dmg_bonus", 0)), b.candle())
+			# The Mark this Dive carries lands after the hit, so the blow itself is unmarked.
 			damages.append(StitchedRules.damage_after_modifiers(
 				scaled, queen["statuses"], front["statuses"], false, 0, int(front["prot"])))
 		_check(damages.has(int(hit["damage"]))
@@ -447,16 +450,18 @@ func _dive_script(catalog: Dictionary, seed_value: int, witnesses: Dictionary) -
 			and int(after["hp"]) == int(hit["target_hp"]),
 			"AC2: hit uses the unchanged 6-8 damage, crit, PROT and candle rules")
 		var remaining := 1 if b.current_actor_id() == "warden" else 2
-		_check(hit.get("statuses") == [{"status": "tangled", "duration": 2}]
-			and int(after["statuses"].get("tangled", 0)) == remaining,
-			"AC2: only a hit gives Tangled 2 (or 1 after immediate turn-start tick)")
+		_check(hit.get("statuses") == [{"status": "tangled", "duration": 2},
+			{"status": "mark", "duration": 3}]
+			and int(after["statuses"].get("tangled", 0)) == remaining
+			and int(after["statuses"].get("mark", 0)) == remaining + 1,
+			"AC2: only a hit gives Tangled 2 and a three-turn Mark (one tick less after an immediate turn)")
 		if not witnesses.is_empty():
 			witnesses["landed"] += 1
 	else:
 		_check(int(hit["damage"]) == 0 and not bool(hit["crit"])
 			and hit.get("statuses") == [] and int(after["hp"]) == int(front["hp"])
-			and not after["statuses"].has("tangled"),
-			"AC2: a natural Dive miss applies neither damage nor Tangled")
+			and not after["statuses"].has("tangled") and not after["statuses"].has("mark"),
+			"AC2: a natural Dive miss applies neither damage, Tangled nor Mark")
 		if not witnesses.is_empty():
 			witnesses["miss"] += 1
 	if not _reach(b, "warden", receipts):
@@ -523,13 +528,13 @@ func _test_dive_intent(catalog: Dictionary) -> void:
 				and intent.get("multi") == false
 				and intent.get("base_acc") == 85
 				and intent.get("base_damage") == [6, 8]
-				and intent.get("base_effects") == {"tangled": 2, "snip": 1}
+				and intent.get("base_effects") == {"tangled": 2, "snip": 1, "mark": 3}
 				and not intent.get("pass", true),
-				"AC3: rotated intent discloses single front rank, unchanged numbers and Tangled 2")
+				"AC3: rotated intent discloses the single aimed front rank, unchanged numbers and Mark 3")
 			projections.append(intent.duplicate(true))
 			intent["base_effects"]["tangled"] = 9
 			_check(StitchedFoeIntent.choose(b, b.get_unit("moth_queen"))
-				.get("base_effects") == {"tangled": 2, "snip": 1}
+				.get("base_effects") == {"tangled": 2, "snip": 1, "mark": 3}
 				and snapshot == b.state_snapshot() and rng == b.rng_state(),
 				"AC3: editing a projected Tangled status cannot modify the real kit or RNG")
 		_check(projections.size() == 2 and projections[0] == projections[1],
@@ -598,6 +603,13 @@ func _devour_trace(catalog: Dictionary, seed_value: int, rank: int) -> Dictionar
 	if not _reach(battle, "moth_queen", receipts):
 		return {}
 	var queen := battle.get_unit("moth_queen")
+	var devour: Dictionary = {}
+	for authored in queen.get("abilities", []):
+		if str(authored.get("id", "")) == "queen_devour":
+			devour = authored
+	_check(int(devour.get("mark_damage", 0)) == 3
+		and int(devour.get("target_mask", 0)) == StitchedParts.rank_mask([1, 2]),
+		"AC1: the loaded Devour carries the authored Mark damage 3 over ranks 1-2")
 	var victim_id := "warden" if rank == 1 else "seamstress"
 	var victim := battle.get_unit(victim_id)
 	var others: Dictionary = {}
@@ -652,15 +664,17 @@ func _devour_trace(catalog: Dictionary, seed_value: int, rank: int) -> Dictionar
 		for base in bases:
 			var scaled := StitchedS1BEffects.enemy_damage(int(base) + int(queen["dmg_bonus"]),
 				battle.candle())
+			# The victim is unmarked, so Devour's authored +3 must not be added even though
+			# the same real damage formula and PROT/candle resolution still apply.
 			damages.append(StitchedRules.damage_after_modifiers(scaled, queen["statuses"],
-				victim["statuses"], false, 0, int(victim["prot"])))
+				victim["statuses"], false, int(devour.get("mark_damage", 0)), int(victim["prot"])))
 		var bleed := int(now["statuses"].get("bleed", 0))
 		_check(damages.has(int(result["damage"])) and int(result["damage"]) > 0
 			and int(result["target_hp"]) == int(victim["hp"]) - int(result["damage"])
 			and result["statuses"] == [{"status": "bleed", "duration": 2}]
 			and ((bleed == 2 and int(now["hp"]) == int(result["target_hp"]))
 				or (bleed == 1 and int(now["hp"]) == int(result["target_hp"]) - 1)),
-			"one natural Devour hit lands authored damage and Bleed 2 on the living target")
+			"one natural Devour hit lands unmarked damage, Bleed 2 and no Mark bonus")
 	else:
 		_check(result["damage"] == 0 and result["statuses"].is_empty()
 			and int(result["target_hp"]) == int(victim["hp"]) and now == victim,
