@@ -66,6 +66,7 @@ func _initialize() -> void:
 	_test_wren_fear_ac2_refusals_and_alternatives()
 	_test_wren_fear_ac3_shapes_and_invariants()
 	_test_require_candle_room_lantern_bobbin_ferry()
+	_test_require_fray_or_fear_keyhole_choir()
 	_finish()
 
 
@@ -7239,6 +7240,353 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 		"AC3: pay_gold refuses with insufficient gold (9 < 10)")
 	_check(svc_under_gold.is_valid() and not svc_under_gold.is_claimed(),
 		"AC3: visit open after underfunded pay_gold refusal")
+
+
+func _test_require_fray_or_fear_keyhole_choir() -> void:
+	# AC1: Authored v3_keyhole_choir record and consequence service agreement
+	var four_pairs := [["warden", 0], ["seamstress", 0], ["tinker", 0], ["button_golem", 0]]
+	var keyhole_event := _event([
+		_choice("follow_humming", "Follow humming.", {
+			"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room": true
+		}),
+		_choice("buy_silence", "Spend scraps to quiet Wren and ease the dolls' fray", {
+			"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "v3_keyhole_choir")
+
+	# Verify catalog file directly contains the exact updated authored record
+	var catalog_doc: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json"))
+	_check(catalog_doc is Dictionary and catalog_doc.has("events"), "AC1: route effects catalog parses")
+	var catalog_keyhole: Dictionary = {}
+	if catalog_doc is Dictionary:
+		for ev in catalog_doc.get("events", []):
+			if ev is Dictionary and str(ev.get("id", "")) == "v3_keyhole_choir":
+				catalog_keyhole = ev.duplicate(true)
+				break
+	_check(not catalog_keyhole.is_empty(), "AC1: v3_keyhole_choir found in stitched_route_effects.json")
+	var keyhole_buy: Dictionary = {}
+	for ch in catalog_keyhole.get("choices", []):
+		if ch is Dictionary and str(ch.get("id", "")) == "buy_silence":
+			keyhole_buy = ch
+			break
+	_check(not keyhole_buy.is_empty(), "AC1: buy_silence choice found in catalog")
+	_check(keyhole_buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' fray",
+		"AC1: buy_silence text matches exactly")
+	var buy_eff: Dictionary = keyhole_buy.get("stitched_effect", {})
+	_check(buy_eff.get("target") == "party"
+		and int(buy_eff.get("candle")) == 0
+		and int(buy_eff.get("fray")) == -12
+		and int(buy_eff.get("scraps")) == -2
+		and int(buy_eff.get("fear")) == -8
+		and buy_eff.get("require_fray_or_fear") == true
+		and not buy_eff.has("min_fray"),
+		"AC1: catalog buy_silence stitched_effect has exact fields")
+
+	# Normalize catalog choice fear float to int for service invocation
+	for ch in catalog_keyhole.get("choices", []):
+		if ch is Dictionary and ch.has("stitched_effect") and ch["stitched_effect"] is Dictionary:
+			if ch["stitched_effect"].has("fear") and typeof(ch["stitched_effect"]["fear"]) == TYPE_FLOAT:
+				ch["stitched_effect"]["fear"] = int(ch["stitched_effect"]["fear"])
+
+	# AC1: Living dolls all at fray 0, Wren fear 8, scraps 4, candle 40
+	var snap_ac1 := _fear_four(40, 8, [0, 0, 0, 0])
+	snap_ac1["scraps"] = 4
+	var before_ac1: Dictionary = snap_ac1.duplicate(true)
+	var svc_ac1 := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_ac1: Dictionary = svc_ac1.preview(snap_ac1)
+	_check(prev_ac1.get("ok") == true and prev_ac1.get("event_id") == "v3_keyhole_choir",
+		"AC1: keyhole preview succeeds with living fray 0 and Wren fear 8")
+	var buy_entry_ac1 := _entry(prev_ac1, "buy_silence")
+	_check(not buy_entry_ac1.is_empty() and buy_entry_ac1.get("available") == true,
+		"AC1: buy_silence is available when Wren fear is 8 even if dolls fray is 0")
+	var expected_fray_all_living := {
+		"warden": -12, "seamstress": -12, "tinker": -12, "button_golem": -12
+	}
+	_check(int(buy_entry_ac1.get("candle")) == 40
+		and int(buy_entry_ac1.get("candle_delta")) == 0
+		and int(buy_entry_ac1.get("fray_delta")) == -12
+		and int(buy_entry_ac1.get("scraps")) == 2
+		and int(buy_entry_ac1.get("scraps_delta")) == -2
+		and int(buy_entry_ac1.get("fear")) == 0
+		and int(buy_entry_ac1.get("fear_delta")) == -8
+		and buy_entry_ac1.get("fray") == expected_fray_all_living,
+		"AC1: preview projects candle 40, scraps 2, fear 0, and raw -12 fray intents")
+	var rec_ac1: Dictionary = svc_ac1.choose("buy_silence", snap_ac1)
+	var expected_rec_ac1 := {
+		"ok": true,
+		"event_id": "v3_keyhole_choir",
+		"choice_id": "buy_silence",
+		"target": "party",
+		"hero_id": "",
+		"candle": 40,
+		"fray": expected_fray_all_living,
+		"scraps_delta": -2,
+		"scraps": 2,
+		"fear_delta": -8,
+		"fear": 0,
+	}
+	_check(rec_ac1 == expected_rec_ac1, "AC1: choose settles exact receipt with fear 0, scraps 2, and raw -12 fray")
+	_check(svc_ac1.is_claimed() and not svc_ac1.is_valid(), "AC1: service claimed once")
+	_assert_rejected(svc_ac1, "buy_silence", snap_ac1, 40, "AC1: duplicate claim refused")
+	_assert_rejected(svc_ac1, "leave", snap_ac1, 40, "AC1: alternate claim on claimed service refused")
+	_check(snap_ac1 == before_ac1, "AC1: caller snapshot untouched by preview and choose")
+
+	# AC2: Precondition (a): Wren fear 0, but one active living doll at fray 1
+	var snap_ac2_fray := _fear_four(40, 0, [1, 0, 0, 0])
+	snap_ac2_fray["scraps"] = 4
+	var before_ac2_fray: Dictionary = snap_ac2_fray.duplicate(true)
+	var svc_ac2_fray := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_ac2_fray: Dictionary = svc_ac2_fray.preview(snap_ac2_fray)
+	var buy_entry_ac2_fray := _entry(prev_ac2_fray, "buy_silence")
+	_check(buy_entry_ac2_fray.get("available") == true,
+		"AC2: buy_silence available when Wren fear 0 but warden has fray 1")
+	_check(int(buy_entry_ac2_fray.get("fear")) == 0
+		and int(buy_entry_ac2_fray.get("fear_delta")) == -8
+		and int(buy_entry_ac2_fray.get("scraps")) == 2
+		and buy_entry_ac2_fray.get("fray") == expected_fray_all_living,
+		"AC2: preview quotes clamped fear 0 and usual -12 party fray")
+	var rec_ac2_fray: Dictionary = svc_ac2_fray.choose("buy_silence", snap_ac2_fray)
+	_check(rec_ac2_fray == expected_rec_ac1, "AC2: choose settles with clamped fear 0 and usual -12 party fray")
+	_check(snap_ac2_fray == before_ac2_fray, "AC2: input snapshot untouched")
+
+	# AC2: Precondition (b): Fully calm: all active fray 0 and Wren fear 0 -> unavailable, choose refused without spend
+	var snap_calm := _fear_four(40, 0, [0, 0, 0, 0])
+	snap_calm["scraps"] = 4
+	var before_calm: Dictionary = snap_calm.duplicate(true)
+	var svc_calm := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_calm: Dictionary = svc_calm.preview(snap_calm)
+	var buy_entry_calm := _entry(prev_calm, "buy_silence")
+	_check(buy_entry_calm.get("available") == false
+		and int(buy_entry_calm.get("candle")) == 40
+		and int(buy_entry_calm.get("candle_delta")) == 0
+		and int(buy_entry_calm.get("fray_delta")) == -12
+		and int(buy_entry_calm.get("scraps")) == 4
+		and int(buy_entry_calm.get("scraps_delta")) == -2
+		and int(buy_entry_calm.get("fear")) == 0
+		and int(buy_entry_calm.get("fear_delta")) == -8
+		and buy_entry_calm.get("fray") == {},
+		"AC2: fully calm preview quotes deltas, caller balances, and empty fray map")
+	_check(_entry(prev_calm, "leave").get("available") == true, "AC2: leave available on calm visit")
+	_check(_entry(prev_calm, "follow_humming").get("available") == true, "AC2: follow_humming available on calm visit")
+	_assert_rejected(svc_calm, "buy_silence", snap_calm, 40, "AC2: fully calm direct choose refused without spend")
+	_check(svc_calm.is_valid() and not svc_calm.is_claimed(), "AC2: calm refusal leaves visit open and unclaimed")
+	_check(snap_calm == before_calm, "AC2: calm refusal mutates no snapshot")
+
+	# Free Leave on same visit after calm refusal
+	var leave_rec: Dictionary = svc_calm.choose("leave", snap_calm)
+	_check(leave_rec.get("ok") == true and leave_rec.get("choice_id") == "leave"
+		and int(leave_rec.get("candle")) == 40 and leave_rec.get("fray") == {},
+		"AC2: free leave succeeds on same visit after calm refusal")
+	_check(svc_calm.is_claimed() and not svc_calm.is_valid(), "AC2: leave claim latches once")
+
+	# AC2 / AC3: Lost high-fray dolls cannot satisfy gate
+	var snap_lost := {
+		"candle": 40,
+		"scraps": 4,
+		"wren_fear": 0,
+		"party": [
+			{"id": "warden", "fray": 60, "lost": true},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 0},
+			{"id": "button_golem", "fray": 0},
+		],
+	}
+	var before_lost: Dictionary = snap_lost.duplicate(true)
+	var svc_lost := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_lost: Dictionary = svc_lost.preview(snap_lost)
+	var buy_lost := _entry(prev_lost, "buy_silence")
+	_check(buy_lost.get("available") == false and buy_lost.get("fray") == {},
+		"AC3: lost high-fray doll cannot satisfy gate when living fray is 0 and fear is 0")
+	_assert_rejected(svc_lost, "buy_silence", snap_lost, 40, "AC3: lost high-fray choose rejected")
+	_check(svc_lost.is_valid() and not svc_lost.is_claimed(), "AC3: visit open after lost-fray rejection")
+	_check(snap_lost == before_lost, "AC3: snapshot untouched after lost-fray rejection")
+	var leave_after_lost := svc_lost.choose("leave", snap_lost)
+	_check(leave_after_lost.get("ok") == true and leave_after_lost.get("choice_id") == "leave",
+		"AC3: leave claims after lost-fray refusal")
+
+	# AC3: Living doll at fray 1 with a LOST doll in the party (never target LOST doll)
+	var snap_living_lost := {
+		"candle": 40,
+		"scraps": 4,
+		"wren_fear": 0,
+		"party": [
+			{"id": "warden", "fray": 1},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 0},
+			{"id": "button_golem", "fray": 50, "lost": true},
+		],
+	}
+	var svc_living_lost := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_living_lost: Dictionary = svc_living_lost.preview(snap_living_lost)
+	var buy_living_lost := _entry(prev_living_lost, "buy_silence")
+	_check(buy_living_lost.get("available") == true, "AC3: living fray 1 with lost companion is available")
+	var expected_living_only := {"warden": -12, "seamstress": -12, "tinker": -12}
+	_check(buy_living_lost.get("fray") == expected_living_only,
+		"AC3: preview fray excludes LOST doll")
+	var rec_living_lost: Dictionary = svc_living_lost.choose("buy_silence", snap_living_lost)
+	_check(rec_living_lost.get("ok") == true
+		and rec_living_lost.get("fray") == expected_living_only
+		and not (rec_living_lost.get("fray") as Dictionary).has("button_golem"),
+		"AC3: receipt fray excludes LOST doll")
+
+	# AC3: Insufficient scraps (scraps 1 < 2)
+	var snap_low_scraps := _fear_four(40, 8, [10, 20, 30, 40])
+	snap_low_scraps["scraps"] = 1
+	var before_low_scraps: Dictionary = snap_low_scraps.duplicate(true)
+	var svc_low_scraps := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_low_scraps: Dictionary = svc_low_scraps.preview(snap_low_scraps)
+	var buy_low_scraps := _entry(prev_low_scraps, "buy_silence")
+	_check(buy_low_scraps.get("available") == false
+		and int(buy_low_scraps.get("scraps")) == 1
+		and int(buy_low_scraps.get("scraps_delta")) == -2
+		and buy_low_scraps.get("fray") == {},
+		"AC3: insufficient scraps 1 makes buy_silence unavailable with empty fray")
+	_assert_rejected(svc_low_scraps, "buy_silence", snap_low_scraps, 40, "AC3: insufficient scraps choose refused")
+	_check(svc_low_scraps.is_valid() and not svc_low_scraps.is_claimed(), "AC3: visit open after scraps refusal")
+	_check(snap_low_scraps == before_low_scraps, "AC3: snapshot untouched after scraps refusal")
+	var leave_after_scraps := svc_low_scraps.choose("leave", snap_low_scraps)
+	_check(leave_after_scraps.get("ok") == true and leave_after_scraps.get("choice_id") == "leave",
+		"AC3: leave claims after insufficient scraps refusal")
+
+	# AC3: Missing wren_fear in snapshot
+	var snap_no_fear := _four(40, [10, 20, 30, 40])
+	snap_no_fear["scraps"] = 4
+	var before_no_fear: Dictionary = snap_no_fear.duplicate(true)
+	var svc_no_fear := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_no_fear: Dictionary = svc_no_fear.preview(snap_no_fear)
+	var buy_no_fear := _entry(prev_no_fear, "buy_silence")
+	_check(buy_no_fear.get("available") == false
+		and buy_no_fear.get("fear") == null
+		and buy_no_fear.get("fray") == {},
+		"AC3: missing wren_fear makes buy_silence unavailable")
+	_assert_rejected(svc_no_fear, "buy_silence", snap_no_fear, 40, "AC3: missing wren_fear choose refused")
+	_check(svc_no_fear.is_valid() and not svc_no_fear.is_claimed(), "AC3: visit open after missing fear refusal")
+	_check(snap_no_fear == before_no_fear, "AC3: snapshot untouched after missing fear refusal")
+	var leave_after_no_fear := svc_no_fear.choose("leave", snap_no_fear)
+	_check(leave_after_no_fear.get("ok") == true and leave_after_no_fear.get("choice_id") == "leave",
+		"AC3: leave claims after missing fear refusal")
+
+	# AC3: Fractional and out-of-range fear in snapshot
+	var invalid_fears: Array = [8.5, 8.0, -1, 101, 999, "8", true, false, null, [], {}]
+	for idx in range(invalid_fears.size()):
+		var bad_f: Variant = invalid_fears[idx]
+		var snap_bad := _four(40, [10, 20, 30, 40])
+		snap_bad["scraps"] = 4
+		snap_bad["wren_fear"] = bad_f
+		var before_bad: Dictionary = snap_bad.duplicate(true)
+		var svc_bad := RunStitchedEventConsequence.new(catalog_keyhole)
+		var prev_bad: Dictionary = svc_bad.preview(snap_bad)
+		var buy_bad := _entry(prev_bad, "buy_silence")
+		_check(buy_bad.get("available") == false, "AC3: invalid wren_fear %d (%s) makes choice unavailable" % [idx, str(bad_f)])
+		_assert_rejected(svc_bad, "buy_silence", snap_bad, 40, "AC3: invalid wren_fear %d choose refused" % idx)
+		_check(svc_bad.is_valid() and not svc_bad.is_claimed(), "AC3: visit open after invalid fear %d refusal" % idx)
+		_check(snap_bad == before_bad, "AC3: snapshot untouched after invalid fear %d refusal" % idx)
+		var leave_bad := svc_bad.choose("leave", snap_bad)
+		_check(leave_bad.get("ok") == true, "AC3: leave claims after invalid fear %d refusal" % idx)
+
+	# AC3: All LOST recipients
+	var snap_all_lost := {
+		"candle": 40,
+		"scraps": 4,
+		"wren_fear": 8,
+		"party": [
+			{"id": "warden", "fray": 10, "lost": true},
+			{"id": "seamstress", "fray": 20, "lost": true},
+			{"id": "tinker", "fray": 30, "lost": true},
+			{"id": "button_golem", "fray": 40, "lost": true},
+		],
+	}
+	var before_all_lost: Dictionary = snap_all_lost.duplicate(true)
+	var svc_all_lost := RunStitchedEventConsequence.new(catalog_keyhole)
+	var prev_all_lost: Dictionary = svc_all_lost.preview(snap_all_lost)
+	var buy_all_lost := _entry(prev_all_lost, "buy_silence")
+	_check(buy_all_lost.get("available") == false, "AC3: all LOST recipients makes choice unavailable")
+	_assert_rejected(svc_all_lost, "buy_silence", snap_all_lost, 40, "AC3: all LOST recipients choose refused")
+	_check(svc_all_lost.is_valid() and not svc_all_lost.is_claimed(), "AC3: visit open after all LOST refusal")
+	_check(snap_all_lost == before_all_lost, "AC3: snapshot untouched after all LOST refusal")
+
+	# AC3: Malformed require_fray_or_fear schema in stitched_effect
+	var malformed_effects: Array = [
+		{"desc": "gate false", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": false}},
+		{"desc": "gate string", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": "true"}},
+		{"desc": "gate int", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": 1}},
+		{"desc": "gate null", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": null}},
+		{"desc": "gate array", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": []}},
+		{"desc": "hero target", "effect": {"target": "hero", "hero_id": "warden", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
+		{"desc": "fray zero", "effect": {"target": "party", "candle": 0, "fray": 0, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
+		{"desc": "fray positive", "effect": {"target": "party", "candle": 0, "fray": 10, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
+		{"desc": "fear zero", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": 0, "require_fray_or_fear": true}},
+		{"desc": "fear positive", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": 8, "require_fray_or_fear": true}},
+		{"desc": "missing fear", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "require_fray_or_fear": true}},
+		{"desc": "fear float", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8.5, "require_fray_or_fear": true}},
+		{"desc": "with min_fray", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "min_fray": 1, "require_fray_or_fear": true}},
+	]
+
+	var valid_snap := _fear_four(40, 8, [10, 20, 30, 40])
+	valid_snap["scraps"] = 4
+	var before_valid_snap: Dictionary = valid_snap.duplicate(true)
+
+	for idx in range(malformed_effects.size()):
+		var mal_test: Dictionary = malformed_effects[idx]
+		var mal_desc: String = mal_test["desc"]
+		var mal_ev := _event([
+			_choice("malformed_choice", "Bad effect.", mal_test["effect"]),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "ev_malformed_%d" % idx)
+		var svc_mal := RunStitchedEventConsequence.new(mal_ev)
+		var prev_mal: Dictionary = svc_mal.preview(valid_snap)
+		_check(prev_mal.get("ok") == true, "AC3: malformed %s preflights" % mal_desc)
+		var mal_entry := _entry(prev_mal, "malformed_choice")
+		_check(mal_entry.get("available") == false
+			and mal_entry.get("candle_delta") == null
+			and mal_entry.get("fray_delta") == null,
+			"AC3: malformed %s has available=false with null deltas" % mal_desc)
+		_check(_entry(prev_mal, "leave").get("available") == true,
+			"AC3: leave available alongside malformed %s" % mal_desc)
+		_assert_rejected(svc_mal, "malformed_choice", valid_snap, 40, "AC3: malformed %s choose refused" % mal_desc)
+		_check(svc_mal.is_valid() and not svc_mal.is_claimed(), "AC3: visit open after malformed %s refusal" % mal_desc)
+		_check(valid_snap == before_valid_snap, "AC3: snapshot untouched after malformed %s refusal" % mal_desc)
+		var leave_after_mal := svc_mal.choose("leave", valid_snap)
+		_check(leave_after_mal.get("ok") == true and leave_after_mal.get("choice_id") == "leave",
+			"AC3: leave claims after malformed %s refusal" % mal_desc)
+		_check(svc_mal.is_claimed() and not svc_mal.is_valid(), "AC3: latched after leave on %s" % mal_desc)
+
+	# RNG Invariance Check
+	seed(17941289)
+	var expected_rng_global := randi()
+	seed(17941289)
+
+	var control_rng := RandomNumberGenerator.new()
+	control_rng.seed = 20261108
+	var expected_rng_supplied := control_rng.randi()
+
+	var test_rng := RandomNumberGenerator.new()
+	test_rng.seed = 20261108
+
+	var rng_svc := RunStitchedEventConsequence.new(catalog_keyhole)
+	rng_svc.preview(snap_calm)
+	rng_svc.choose("buy_silence", snap_calm)
+	rng_svc.preview(snap_ac1)
+	rng_svc.choose("buy_silence", snap_ac1)
+
+	_check(randi() == expected_rng_global, "AC3: global RNG never drawn during require_fray_or_fear operations")
+	_check(test_rng.randi() == expected_rng_supplied, "AC3: supplied RNG never drawn during require_fray_or_fear operations")
+
+	# Post-settlement observations check (relief emits no fray gain observations)
+	var post_svc := RunStitchedEventConsequence.new(catalog_keyhole)
+	var post_snap := _fear_four(40, 8, [20, 20, 20, 20])
+	post_snap["scraps"] = 4
+	var post_rec: Dictionary = post_svc.choose("buy_silence", post_snap)
+	_check(post_rec.get("ok") == true, "AC1/AC4: post settlement setup choose ok")
+	var obs := post_svc.post_settlement_fear_observations(post_rec, post_snap, [
+		{"id": "warden", "fray": 8},
+		{"id": "seamstress", "fray": 8},
+		{"id": "tinker", "fray": 8},
+		{"id": "button_golem", "fray": 8},
+	])
+	_check(obs.is_empty(), "AC4: fray relief choice emits no post-settlement fray gain observations")
+
 
 
 
