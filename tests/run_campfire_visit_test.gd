@@ -58,6 +58,7 @@ func _initialize() -> void:
 	_test_fear_other_choices_and_swap()
 	_test_fear_refusals_replay_and_rng()
 	_test_tales_clears_unravelled_below_threshold()
+	_test_tales_available_for_trait_at_zero_fray()
 	_test_tales_resolve_clear_forecast()
 	_test_stitched_mend_ends_hanging()
 	_test_mend_repairs_torn_worn_parts()
@@ -2289,6 +2290,65 @@ func _test_tales_clears_unravelled_below_threshold() -> void:
 	_check(fear_visit.read_state()["fear"] == 45
 		and fear_visit.read_state()["heroes"] == fear_receipt["heroes"],
 		"read_state holds the soothed FEAR and the cleared resolve")
+
+
+## A living doll's lingering Unravelled trait makes Tell Tales meaningful even
+## when every FRAY is already zero and no FEAR is held; inert resolves do not.
+func _test_tales_available_for_trait_at_zero_fray() -> void:
+	var source := _stitched_party(FULL_HPS, NO_FRAY)
+	source[2]["resolve"] = "bitter"
+	source[0]["resolve"] = "steadfast"
+	var original := source.duplicate(true)
+	seed(424242)
+	var expected_next := randi()
+	seed(424242)
+	var visit := RunCampfireVisit.new("camp_zero", source, "stitched", 100)
+	var opened := visit.read_state()
+	_check(opened.get("status") == "stitched_open" and opened.get("candle") == 100
+		and not opened.has("fear") and opened["heroes"] == original,
+		"zero-FRAY trait fixture opens with CANDLE 100 and no FEAR")
+	_check(opened["quote"]["choices"] == ["tell_tales", "leave"],
+		"Tell Tales is advertised for a recognized trait at zero FRAY")
+	var receipt := visit.select("tell_tales", "camp_zero", original, 100)
+	var expected := original.duplicate(true)
+	expected[2]["resolve"] = ""
+	_check(receipt == {"ok": true, "decision": "tell_tales", "node_id": "camp_zero",
+		"heroes": expected, "candle": 100},
+		"zero-FRAY Tell Tales receipt clears only the eligible trait")
+	var held := visit.read_state()
+	_check(held["heroes"] == expected and held["candle"] == 100
+		and held["status"] == "stitched_decided" and held["quote"]["choices"] == [],
+		"read_state holds the cleared trait and consumes the visit")
+	_check(receipt["heroes"][0]["resolve"] == "steadfast"
+		and receipt["heroes"][2]["fray"] == 0 and receipt["heroes"][3] == original[3],
+		"Steadfast, FRAY and other dolls are unchanged")
+	_check(source == original, "caller-owned roster is not mutated")
+	_check(randi() == expected_next, "zero-FRAY Tell Tales draws no RNG")
+	_assert_stitched_refused(visit, "tell_tales", "camp_zero", expected, 100, "replayed zero-FRAY Tell Tales")
+	# Every recognized trait qualifies on its own.
+	for trait_name in StitchedS1BEffects.RESOLVE_TRAITS:
+		var each := _stitched_party(FULL_HPS, NO_FRAY)
+		each[1]["resolve"] = trait_name
+		var each_visit := RunCampfireVisit.new("camp_each", each, "stitched", 100)
+		_check(each_visit.read_state()["quote"]["choices"] == ["tell_tales", "leave"],
+			"%s at zero FRAY advertises Tell Tales" % trait_name)
+	# Inert resolves, a LOST doll's trait, or a trait held at FRAY >= 50 never qualify alone.
+	for inert in ["steadfast", "mystery", "", null]:
+		var quiet := _stitched_party(FULL_HPS, NO_FRAY)
+		if inert != null:
+			quiet[1]["resolve"] = inert
+		var quiet_visit := RunCampfireVisit.new("camp_quiet", quiet, "stitched", 100)
+		_check(quiet_visit.read_state()["quote"]["choices"] == ["leave"],
+			"inert resolve %s at zero FRAY does not advertise Tell Tales" % str(inert))
+		_assert_stitched_refused(quiet_visit, "tell_tales", "camp_quiet", quiet, 100,
+			"inert resolve %s Tell Tales" % str(inert))
+	var lost_only := _lost_party(FULL_HPS, [1], NO_FRAY)
+	lost_only[1]["resolve"] = "hollow"
+	var lost_visit := RunCampfireVisit.new("camp_lostz", lost_only, "stitched", 100)
+	_check(lost_visit.read_state()["quote"]["choices"] == ["leave"],
+		"a trait only on a LOST doll does not enable Tell Tales")
+	_assert_stitched_refused(lost_visit, "tell_tales", "camp_lostz", lost_only, 100,
+		"LOST-only trait Tell Tales")
 
 
 ## The " [Resolve clears: ...]" forecast of the Tell Tales quote.
