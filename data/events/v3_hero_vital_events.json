@@ -795,6 +795,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_rag_duelist_inkglass_chandelier",
+      "title": "The Ink-Glass Chandelier",
+      "description": "An upside-down chandelier of ink-black glass thimbles hangs across the narrow nursery corridor. The Rag Duelist's needle rapier holds its snapped chain while a little stitched dancer waits in the trembling amber light.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "bind_chandelier_chain",
+          "text": "Spend spare thread to bind the chain and strengthen your seams.",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 2, "max_hp": 3 }
+        },
+        {
+          "id": "cut_chandelier_counterweight",
+          "text": "Cut away lasting stuffing to claim the hidden purse.",
+          "outcome": { "gold": 29, "scraps": 0, "hp": 0, "max_hp": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Lower the rapier and let the glass stop swaying.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_needle_pendulum",
+      "title": "The Needle Pendulum",
+      "description": "Two enormous knitting needles swing like the hands of a broken clock over a child's dark passage. The Yarn Ranger throws a wool bolas across their path as sewn mice huddle beneath the ticking points.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {
+          "id": "retie_pendulum_bolas",
+          "text": "Pay for strong wool and re-tie a lasting seam.",
+          "outcome": { "gold": -18, "scraps": 0, "hp": 5, "max_hp": 3 }
+        },
+        {
+          "id": "strip_pendulum_wool",
+          "text": "Unpick a permanent stitch for a bundle of salvage.",
+          "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Draw back the bolas and pass beneath the needles.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_button_golem_velvet_turnstile",
+      "title": "The Velvet Turnstile",
+      "description": "A brass turnstile made from huge coat buttons blocks a velvet-lined corridor. The Button Golem braces the jammed wheel with both round fists while tiny ragdoll wardens peer through its buttonholes.",
+      "required_hero": "button_golem",
+      "choices": [
+        {
+          "id": "brace_turnstile_wheel",
+          "text": "Sew on spare thread to reinforce your body and recover.",
+          "outcome": { "gold": 0, "scraps": -3, "hp": 4, "max_hp": 3 }
+        },
+        {
+          "id": "pawn_turnstile_spindle",
+          "text": "Give up lasting stuffing and sell the brass spindle.",
+          "outcome": { "gold": 33, "scraps": 0, "hp": 0, "max_hp": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Release the wheel and follow the velvet passage.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
