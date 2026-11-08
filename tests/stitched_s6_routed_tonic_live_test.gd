@@ -122,6 +122,44 @@ func _await_controls(app: Node, phase: String, service: String = "") -> bool:
 	return false
 
 
+## The mounted visit's own Save/Reload navigation pair inside the live panel.
+func _nav_controls(app: Node) -> Array:
+	var found: Array = []
+	var panel: Control = app.stitched_run_panel
+	for button in app.stitched_run_buttons:
+		if is_instance_valid(button) and is_instance_valid(panel) and panel.is_ancestor_of(button) \
+				and button.text in ["Save run", "Reload saved run"]:
+			found.append(button)
+	return found
+
+
+## AC2 witness: emit retained pre-remount navigation controls after a remount and
+## prove zero mutation of the live session, its complete ledger and the sealed file.
+func _reject_stale_nav(app: Node, old_nav: Array, label: String) -> void:
+	var session: StitchedRunSession = app.stitched_run_session
+	_check(session != null, label + " has a live authenticated session to protect")
+	if session == null:
+		return
+	var path: String = app.stitched_save_path
+	_check(not path.is_empty(), label + " uses the public sealed save path")
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	var bytes := FileAccess.get_file_as_bytes(path) if FileAccess.file_exists(path) else PackedByteArray()
+	var sealed := StitchedRunSave.read_file(path)
+	for button in old_nav:
+		_check(is_instance_valid(button), label + " retained a real pre-remount navigation control")
+		if is_instance_valid(button):
+			button.pressed.emit()
+		_check(session.snapshot() == before and session.journal == journal,
+			label + " stale Save/Reload leaves the live snapshot and complete ledger untouched")
+		var now_bytes: PackedByteArray = FileAccess.get_file_as_bytes(path) if FileAccess.file_exists(path) else PackedByteArray()
+		_check(now_bytes == bytes, label + " stale Save leaves the sealed save file byte-identical")
+		var resealed := StitchedRunSave.read_file(path)
+		_check((sealed == null) == (resealed == null) and (resealed == null
+			or (resealed.snapshot() == sealed.snapshot() and resealed.journal == sealed.journal)),
+			label + " stale callbacks keep complete authenticated snapshots and ledgers in the file")
+
+
 func _tonic_controls(app: Node) -> void:
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session.phase == "visit" and session.pending.service == "Peddler"
@@ -201,6 +239,7 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 			label + " uses the phase-correct visible Save and navigation controls")
 		save.pressed.emit()
 		_check(FileAccess.file_exists(SAVE_PATH), label + " creates its public save")
+		var old_nav: Array = []
 		if phase == "map":
 			secondary.pressed.emit()
 			_check(app.stitched_run_session == null and app.title_view.is_visible_in_tree()
@@ -212,6 +251,7 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 				return
 			app.stitched_continue_button.pressed.emit()
 		else:
+			old_nav = [save, secondary]
 			secondary.pressed.emit()
 		var current: StitchedRunSession = app.stitched_run_session
 		_check(current != null and current != session and current.snapshot() == before
@@ -226,6 +266,10 @@ func _save_reload(app: Node, label: String, stale_button: Button = null) -> void
 			stale_button.pressed.emit()
 			_check(current.snapshot() == before and current.journal == journal,
 				"pre-remount callback cannot authorize the restored visit")
+		if not old_nav.is_empty():
+			# The pre-reload Save/Reload survive the session replacement until deferred
+			# freeing; emitting them now must not rewrite the file or rewind the new run.
+			_reject_stale_nav(app, old_nav, label + " pre-reload navigation")
 		_check(await _await_controls(app, phase, service),
 			label + " re-mounts valid, visible, matching controls")
 	else:
@@ -308,6 +352,8 @@ func _buy(app: Node, hero_id: String) -> void:
 	var journal_size := session.journal.size()
 	var old_buttons: Array = app.stitched_run_buttons.duplicate()
 	var old_actions := session.visit_actions()
+	var old_nav := _nav_controls(app)
+	_check(old_nav.size() == 2, "mounted visit retains exactly its Save and Reload navigation controls")
 	button.pressed.emit()
 	var expected_pockets: Dictionary = before.pockets.duplicate(true)
 	expected_pockets[hero_id].append("thimble_tonic")
@@ -327,6 +373,9 @@ func _buy(app: Node, hero_id: String) -> void:
 		and session.receipts.back().decision == "buy_thimble_tonic" and session.receipts.back().steps.size() == 1,
 		"buy closes and authenticates exactly one journal entry and one node receipt")
 	var paid := session.snapshot()
+	# The pre-purchase Save/Reload survive the buy's remount until deferred freeing;
+	# emitting them now must not rewrite the sealed file or rewind the bought run.
+	_reject_stale_nav(app, old_nav, "post-purchase remount")
 	for index in old_actions.size():
 		old_buttons[index].pressed.emit()
 		_check(not session.choose_visit(old_actions[index].id, old_actions[index].arguments, before)

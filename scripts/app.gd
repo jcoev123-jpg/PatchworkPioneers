@@ -5005,8 +5005,22 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	navigation.position = Vector2(32, 656)
 	navigation.add_theme_constant_override("separation", 12)
 	visit.add_child(navigation)
-	for button in [_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session)),
-		_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))]:
+	# A retired stop's Save/Reload must never overwrite or rewind a later
+	# authenticated run: each callback re-checks the captured session, page,
+	# epoch, visit phase and service before touching the save file.
+	var epoch := _stitched_run_epoch
+	for button in [_stitched_run_action(navigation, "Save run", func():
+			if stitched_run_session == session and stitched_run_panel == visit \
+					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
+					and visit.is_visible_in_tree() and session.phase == "visit" \
+					and str(session.pending.get("service", "Event")) == service:
+				StitchedRunSave.write_file(stitched_save_path, session)),
+		_stitched_run_action(navigation, "Reload saved run", func():
+			if stitched_run_session == session and stitched_run_panel == visit \
+					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
+					and visit.is_visible_in_tree() and session.phase == "visit" \
+					and str(session.pending.get("service", "Event")) == service:
+				load_stitched_run(stitched_save_path))]:
 		StitchedBattleScreen.CHROME.style_button(button)
 		button.add_theme_font_size_override("font_size", 17)
 		button.custom_minimum_size = Vector2(170, 40)
