@@ -322,6 +322,22 @@ func _test_fail_closed(catalog: Dictionary) -> void:
 	repeated_phase["stitched_phase_two"]["abilities"][0]["id"] = "behemoth_maul"
 	_check(not bool(StitchedEnemyCatalog.build_catalog(_documents(catalog), repeated_phase, parts).get("ok", true)),
 		"AC2: phase two must author distinct actions")
+	# An otherwise legal ally-only phase-two kit has no hostile action: the catalog
+	# must reject it atomically instead of publishing a passive second phase.
+	var ally_only: Dictionary = _phase_record()
+	var iron_discipline := {}
+	for ability in _record(_documents(catalog), "needle_marshal")["stitched"]["abilities"]:
+		if str(ability.get("id", "")) == "iron_discipline":
+			iron_discipline = (ability as Dictionary).duplicate(true)
+	_check(not iron_discipline.is_empty() and str(iron_discipline.get("target_side", "")) == "ally",
+		"AC1: the canonical Needle Marshal authors the valid ally-only iron_discipline")
+	ally_only["stitched_phase_two"]["abilities"] = [iron_discipline]
+	var ally_result: Dictionary = StitchedEnemyCatalog.build_catalog(_documents(catalog), ally_only, parts)
+	_check(not bool(ally_result.get("ok", true)),
+		"AC1: an ally-only phase-two kit is rejected by build_catalog")
+	_check(ally_result.get("phase_two", {}).is_empty()
+		and str(ally_result.get("error", "")).contains("enemy-targeted"),
+		"AC1: the rejected phase-two kit publishes no kit and names the hostile-action rule")
 	_check(bool(catalog.get("ok", false)) and catalog["foes"].size() > 0,
 		"AC1: the real loader still validates after every malformed probe")
 

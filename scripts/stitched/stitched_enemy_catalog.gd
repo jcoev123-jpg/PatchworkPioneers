@@ -285,6 +285,17 @@ static func _validate_phase_two(
 	if not bool(result.get("ok", false)):
 		return {"ok": false, "error": str(result["error"]), "kits": {}}
 	var abilities: Array = result["abilities"]
+	# A phase-two kit, like the phase-one profile, must threaten the heroes.
+	var attacks := 0
+	for ability in abilities:
+		if str(ability["target_side"]) == "enemy":
+			attacks += 1
+	if attacks == 0:
+		return {
+			"ok": false,
+			"error": "enemy " + boss_id + " phase two needs at least one enemy-targeted action",
+			"kits": {},
+		}
 	var phase_one_ids: Dictionary = {}
 	var phase_one: Array = boss_foe["abilities"]
 	for ability in phase_one:
