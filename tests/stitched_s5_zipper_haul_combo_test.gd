@@ -38,6 +38,7 @@ func _run() -> void:
 		_test_spool_mark_combo()
 		_test_spool_refusals()
 		_test_refusals_miss_and_blocked_pull()
+		_test_pull_preference()
 		_test_intent_and_replay()
 		_test_spool_replay()
 		await _test_live_driver()
@@ -902,6 +903,257 @@ func _test_refusals_miss_and_blocked_pull() -> void:
 		if miss_found and blocked_found:
 			break
 	_check(miss_found and blocked_found, "nonvacuous seeded miss and blocked-pull witnesses")
+
+
+# ---------------------------------------------------------------- AC2/AC3 seam-aware pull preference
+
+func _round_two_pull(seed_value: int, primary: String, ability_id: String) -> StitchedRules:
+	var b := _battle(seed_value, primary)
+	if b == null or not _to(b, primary, 2):
+		return null
+	var choice := StitchedFoeIntent.choose(b, b.get_unit(primary))
+	if str(choice.get("ability_id", "")) != ability_id \
+			or int(choice.get("target_rank", 0)) != 4:
+		return null
+	return b
+
+
+func _find_clean_pull_seed(primary: String, ability_id: String) -> int:
+	for seed_value in range(1, 97):
+		if _round_two_pull(seed_value, primary, ability_id) != null:
+			return seed_value
+	return -1
+
+
+func _find_pull_hit_seed(primary: String, ability_id: String, rank: int) -> int:
+	for seed_value in range(1, 97):
+		var b := _round_two_pull(seed_value, primary, ability_id)
+		if b == null:
+			continue
+		var receipt := b.use_foe_ability(ability_id, rank)
+		var results: Array = receipt.get("results", [])
+		if bool(receipt.get("ok", false)) and results.size() == 1 \
+				and bool(results[0].get("hit", false)):
+			return seed_value
+	return -1
+
+
+func _block_pull(battle: StitchedRules, rank: int, blocker: String) -> void:
+	var hero_id := _hero_at_rank(battle, rank)
+	if hero_id.is_empty():
+		return
+	if blocker == "tangled":
+		battle._units[hero_id]["statuses"]["tangled"] = 1
+	elif blocker == "cut":
+		battle._thread_cuts[hero_id] = rank
+
+
+func _pull_fixture(seed_value: int, primary: String, ability_id: String,
+		blockers: Dictionary, label: String) -> Dictionary:
+	var b := _round_two_pull(seed_value, primary, ability_id)
+	if b == null:
+		_check(false, "AC2: failed to rebuild the " + label + " pull fixture")
+		return {}
+	for rank_key in blockers:
+		_block_pull(b, int(rank_key), str(blockers[rank_key]))
+	var before_heroes := b.get_heroes().duplicate(true)
+	var before_state := b.state_snapshot()
+	var before_rng := b.rng_state()
+	var before_cuts := b.thread_cuts()
+	var choice := StitchedFoeIntent.choose(b, b.get_unit(primary))
+	_check(before_state == b.state_snapshot() and before_rng == b.rng_state()
+		and before_cuts == b.thread_cuts() and b.current_actor_id() == primary,
+		"AC2: the " + label + " chooser spends no turn, RNG or state")
+	var receipt: Dictionary = {}
+	if not bool(choice.get("pass", true)):
+		receipt = b.use_foe_ability(str(choice.get("ability_id", "")),
+			int(choice.get("target_rank", 0)))
+	return {
+		"battle": b,
+		"choice": choice,
+		"receipt": receipt,
+		"before_heroes": before_heroes,
+		"before_state": before_state,
+		"before_rng": before_rng,
+		"before_cuts": before_cuts,
+		"label": label,
+	}
+
+
+func _before_hero_at(before_heroes: Array, rank: int) -> Dictionary:
+	for hero in before_heroes:
+		if int(hero.get("rank", 0)) == rank:
+			return hero
+	return {}
+
+
+func _check_pull_choice(fixture: Dictionary, ability_id: String, rank: int,
+		label: String) -> bool:
+	var choice: Dictionary = fixture.get("choice", {})
+	_check(str(choice.get("ability_id", "")) == ability_id
+		and str(choice.get("ability_name", "")) != ""
+		and int(choice.get("target_rank", 0)) == rank
+		and choice.get("affected_ranks") == [rank]
+		and str(choice.get("target_side", "")) == "hero",
+		"AC2: " + label + " selects " + ability_id + " at rank " + str(rank))
+	return str(choice.get("ability_id", "")) == ability_id \
+		and int(choice.get("target_rank", 0)) == rank
+
+
+func _check_pull_swap(fixture: Dictionary, ability_id: String, rank: int,
+		fray_change: int, expect_mark: bool, label: String) -> void:
+	var receipt: Dictionary = fixture.get("receipt", {})
+	var results: Array = receipt.get("results", [])
+	_check(bool(receipt.get("ok", false)) and receipt.get("ability") == ability_id
+		and results.size() == 1,
+		"AC2: " + label + " commits one real " + ability_id + " result")
+	if results.size() != 1:
+		return
+	var result: Dictionary = results[0]
+	var before_heroes: Array = fixture["before_heroes"]
+	var target_before := _before_hero_at(before_heroes, rank)
+	var forward_before := _before_hero_at(before_heroes, rank - 1)
+	var target_id := str(target_before.get("id", ""))
+	var forward_id := str(forward_before.get("id", ""))
+	_check(not target_id.is_empty() and not forward_id.is_empty()
+		and result.get("target") == target_id
+		and int(result.get("target_rank", 0)) == rank and bool(result.get("hit", false)),
+		"AC2: " + label + " lands on the deepest movable rank-" + str(rank) + " doll")
+	_check(result.get("shift") == {"ok": true, "from": rank, "to": rank - 1,
+		"swapped": forward_id},
+		"AC2: " + label + " really swaps the reeled doll with its forward neighbour")
+	var battle: StitchedRules = fixture["battle"]
+	_check(int(battle.get_unit(target_id)["rank"]) == rank - 1
+		and int(battle.get_unit(forward_id)["rank"]) == rank,
+		"AC2: " + label + " moves exactly the two dolls one seam forward")
+	_check(result.get("fray_event", {}).get("change", 0) == fray_change
+		and int(battle.get_unit(target_id)["fray"]) == int(target_before["fray"]) + fray_change,
+		"AC2: " + label + " keeps its authored Fray " + str(fray_change))
+	if expect_mark:
+		_check(result.get("statuses") == [{"status": "mark", "duration": 3}]
+			and int(battle.get_unit(target_id)["statuses"].get("mark", 0)) >= 1,
+			"AC2: " + label + " keeps its authored Mark 3")
+	else:
+		_check(not battle.get_unit(target_id)["statuses"].has("mark"),
+			"AC2: " + label + " adds no unauthored Mark")
+
+
+func _check_pull_blocked(fixture: Dictionary, ability_id: String, rank: int,
+		reason: String, fray_change: int, expect_mark: bool, label: String) -> void:
+	var receipt: Dictionary = fixture.get("receipt", {})
+	var results: Array = receipt.get("results", [])
+	_check(bool(receipt.get("ok", false)) and receipt.get("ability") == ability_id
+		and results.size() == 1 and bool(results[0].get("hit", false)),
+		"AC3: " + label + " still lands a real authored hit")
+	if results.size() != 1:
+		return
+	var result: Dictionary = results[0]
+	var before_heroes: Array = fixture["before_heroes"]
+	var target_before := _before_hero_at(before_heroes, rank)
+	var target_id := str(target_before.get("id", ""))
+	var before_ranks: Dictionary = {}
+	for hero in before_heroes:
+		before_ranks[str(hero["id"])] = int(hero["rank"])
+	var battle: StitchedRules = fixture["battle"]
+	_check(result.get("target") == target_id and int(result.get("target_rank", 0)) == rank
+		and result.get("shift") == {"ok": false, "reason": reason},
+		"AC3: " + label + " refuses the impossible pull with its real reason")
+	var unchanged := true
+	for hero in battle.get_heroes():
+		if int(hero["rank"]) != int(before_ranks[str(hero["id"])]):
+			unchanged = false
+	_check(unchanged, "AC3: " + label + " leaves every hero rank unchanged")
+	_check(result.get("fray_event", {}).get("change", 0) == fray_change
+		and int(battle.get_unit(target_id)["fray"]) == int(target_before["fray"]) + fray_change,
+		"AC3: " + label + " still applies its authored Fray " + str(fray_change))
+	if expect_mark:
+		_check(result.get("statuses") == [{"status": "mark", "duration": 3}]
+			and int(battle.get_unit(target_id)["statuses"].get("mark", 0)) >= 1,
+			"AC3: " + label + " still Marks the doll on a confirmed hit")
+
+
+func _test_pull_preference_for(primary: String, ability_id: String) -> void:
+	var fray_change := 4 if ability_id == "chain_drag" else 6
+	var expect_mark := ability_id == "spool_snare"
+	var clean_seed := _find_clean_pull_seed(primary, ability_id)
+	var rank_four_hit := _find_pull_hit_seed(primary, ability_id, 4)
+	var rank_three_hit := _find_pull_hit_seed(primary, ability_id, 3)
+	var rank_two_hit := _find_pull_hit_seed(primary, ability_id, 2)
+	_check(clean_seed > 0, "AC2: a clean rank-4 " + ability_id + " turn exists")
+	_check(rank_four_hit > 0 and rank_three_hit > 0 and rank_two_hit > 0,
+		"AC2/AC3: seeded hit witnesses exist for ranks 4, 3 and 2 of " + ability_id)
+	if clean_seed <= 0 or rank_four_hit <= 0 or rank_three_hit <= 0 or rank_two_hit <= 0:
+		return
+	var clean := _pull_fixture(clean_seed, primary, ability_id, {}, "clean " + ability_id)
+	_check_pull_choice(clean, ability_id, 4, "clean " + ability_id)
+	_check_pull_swap(clean, ability_id, 4, fray_change, expect_mark, "clean " + ability_id)
+	# A blocked deepest target at rank 4 steps back to an actually movable rank 3.
+	for blocker in ["tangled", "cut"]:
+		var blocked_target := _pull_fixture(rank_three_hit, primary, ability_id,
+			{4: blocker}, str(blocker) + " rank-4 " + ability_id)
+		_check_pull_choice(blocked_target, ability_id, 3,
+			str(blocker) + " rank-4 " + ability_id)
+		_check_pull_swap(blocked_target, ability_id, 3, fray_change, expect_mark,
+			str(blocker) + " rank-4 " + ability_id)
+	# A blocked forward neighbour at rank 3 also disqualifies the rank-3 target, so the
+	# deepest movable alternative is rank 2.
+	for blocker in ["tangled", "cut"]:
+		var blocked_front := _pull_fixture(rank_two_hit, primary, ability_id,
+			{3: blocker}, str(blocker) + " rank-3 " + ability_id)
+		_check_pull_choice(blocked_front, ability_id, 2,
+			str(blocker) + " rank-3 " + ability_id)
+		_check_pull_swap(blocked_front, ability_id, 2, fray_change, expect_mark,
+			str(blocker) + " rank-3 " + ability_id)
+	# Every reachable reel is immobile: keep the old deepest legal target and its statuses.
+	var stuck := _pull_fixture(rank_four_hit, primary, ability_id,
+		{4: "tangled", 3: "tangled", 2: "tangled"}, "no-movable " + ability_id)
+	var stuck_ok := _check_pull_choice(stuck, ability_id, 4, "no-movable " + ability_id)
+	if stuck_ok:
+		_check_pull_blocked(stuck, ability_id, 4, "tangled units cannot move",
+			fray_change, expect_mark, "no-movable " + ability_id)
+	# No legal reel target at all: the authored rotation moves on, never a fabricated pull.
+	var absent := _round_two_pull(rank_four_hit, primary, ability_id)
+	if absent == null:
+		_check(false, "AC3: failed to rebuild the absent-target " + ability_id + " fixture")
+		return
+	for rank in [2, 3, 4]:
+		absent._units[_hero_at_rank(absent, rank)]["lost"] = true
+	var absent_state := absent.state_snapshot()
+	var absent_rng := absent.rng_state()
+	var absent_choice := StitchedFoeIntent.choose(absent, absent.get_unit(primary))
+	_check(absent_state == absent.state_snapshot() and absent_rng == absent.rng_state(),
+		"AC3: the absent-target chooser is read-only")
+	var next_id := "hauler_slam" if ability_id == "chain_drag" else "snare_lash"
+	_check(not bool(absent_choice.get("pass", true))
+		and str(absent_choice.get("ability_id", "")) != ability_id
+		and str(absent_choice.get("ability_id", "")) == next_id
+		and int(absent_choice.get("target_rank", 0)) == 1
+		and absent_choice.get("affected_ranks") == [1],
+		"AC3: absent reel targets fall through to the authored " + next_id + " at rank 1")
+	if not bool(absent_choice.get("pass", true)):
+		var absent_receipt := absent.use_foe_ability(str(absent_choice["ability_id"]),
+			int(absent_choice["target_rank"]))
+		_check(bool(absent_receipt.get("ok", false))
+			and absent_receipt.get("ability") == next_id
+			and absent_receipt.get("results", []).size() == 1,
+			"AC3: the absent-target fallthrough is a real legal action")
+	# The same seeded fixture replays its intent, receipt, ranks, statuses and RNG.
+	var replay_first := _pull_fixture(rank_three_hit, primary, ability_id,
+		{4: "cut"}, "replay " + ability_id)
+	var replay_second := _pull_fixture(rank_three_hit, primary, ability_id,
+		{4: "cut"}, "replay " + ability_id)
+	_check(not replay_first.is_empty() and not replay_second.is_empty()
+		and replay_first["choice"] == replay_second["choice"]
+		and replay_first["receipt"] == replay_second["receipt"]
+		and replay_first["battle"].get_heroes() == replay_second["battle"].get_heroes()
+		and replay_first["battle"].state_snapshot() == replay_second["battle"].state_snapshot()
+		and replay_first["battle"].rng_state() == replay_second["battle"].rng_state(),
+		"AC4: identical seeded " + ability_id + " choices replay intent, receipts, ranks, statuses and RNG")
+
+
+func _test_pull_preference() -> void:
+	_test_pull_preference_for(ZIPPER, "chain_drag")
+	_test_pull_preference_for(SNAKE, "spool_snare")
 
 
 # ---------------------------------------------------------------- AC3 intent rotation and replay

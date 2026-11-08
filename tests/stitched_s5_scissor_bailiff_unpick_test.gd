@@ -43,6 +43,7 @@ func _initialize() -> void:
 			_check(witnesses[key] > 0, "non-vacuous seeded witness: " + key)
 		_test_invalid_launch(catalog)
 		_test_intent(catalog)
+		_test_seize_thread_intact_and_cut(catalog)
 	if failures.is_empty():
 		print("stitched_s5_scissor_bailiff_unpick_test: PASS (", checks, " checks)")
 	else:
@@ -324,3 +325,78 @@ func _test_intent(catalog: Dictionary) -> void:
 		var first := _intent_script(catalog, seed_value)
 		var replay := _intent_script(catalog, seed_value)
 		_check(not first.is_empty() and first == replay, "AC4: intent projections replay identically")
+
+
+func _seize_thread_script(catalog: Dictionary, seed_value: int) -> Dictionary:
+	var battle := _battle(catalog, seed_value)
+	if battle == null:
+		return {}
+	var receipts: Array = []
+	if not _reach(battle, "scissor_bailiff", receipts):
+		return {}
+	receipts.append(battle.pass_turn())
+	if not _reach(battle, "scissor_bailiff", receipts):
+		return {}
+	_check(battle.round_number() == 2, "AC1: the Bailiff's natural Seize Thread round is reached")
+	var rank_one := ""
+	for hero in battle.get_heroes():
+		if int(hero["rank"]) == 1:
+			rank_one = str(hero["id"])
+	_check(not rank_one.is_empty() and int(battle.get_unit(rank_one)["hp"]) > 0,
+		"AC1: a real living rank-1 doll stands in front of the Bailiff")
+	var state := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var cuts := battle.thread_cuts()
+	var intact := StitchedFoeIntent.choose(battle, battle.get_unit("scissor_bailiff"))
+	_check(cuts.is_empty() and state == battle.state_snapshot() and rng == battle.rng_state()
+		and battle.current_actor_id() == "scissor_bailiff",
+		"AC1: an intact-seam projection spends no turn, RNG or state")
+	_check(intact.get("ability_id") == "seize_thread"
+		and intact.get("ability_name") == "Seize Thread"
+		and int(intact.get("target_rank", 0)) == 1
+		and intact.get("affected_ranks") == [1],
+		"AC1: an intact living rank-1 thread keeps the authored Seize Thread")
+	# Labelled minimal authoritative fixture: the battle's own id-keyed cut map is the
+	# only thing changed, exactly like the shared thread-cut tests.
+	battle._thread_cuts[rank_one] = 1
+	var cut_cuts := battle.thread_cuts()
+	var cut_state := battle.state_snapshot()
+	var cut_rng := battle.rng_state()
+	var cut_choice := StitchedFoeIntent.choose(battle, battle.get_unit("scissor_bailiff"))
+	_check(int(cut_cuts.get(rank_one, 0)) == 1
+		and cut_state == battle.state_snapshot() and cut_rng == battle.rng_state()
+		and battle.current_actor_id() == "scissor_bailiff",
+		"AC1: a cut-seam projection is read-only and spends no extra turn or RNG")
+	_check(cut_choice.get("ability_id") != "seize_thread"
+		and cut_choice.get("ability_id") != "bailiff_snip",
+		"AC1: an already cut rank-1 thread is never snipped again")
+	var amended := ""
+	if not bool(cut_choice.get("pass", true)):
+		amended = str(cut_choice.get("ability_id", ""))
+		_check(amended == "bailiff_unpick"
+			and int(cut_choice.get("target_rank", 0)) == 1
+			and cut_choice.get("affected_ranks") == [1],
+			"AC1: the cut seam walks on to the next authored legal Unpick Verdict")
+		var receipt := battle.use_foe_ability(amended, 1)
+		receipts.append(receipt)
+		_check(receipt.get("ok", false) and receipt.get("ability") == amended
+			and receipt.get("results", []).size() == 1,
+			"AC1: the amended choice is a real legal action, not a refused snip")
+	else:
+		_check(false, "AC1: the cut seam must select the next legal authored ability")
+	return {
+		"receipts": receipts,
+		"intact": intact,
+		"cut": cut_choice,
+		"cuts": cut_cuts,
+		"state": battle.state_snapshot(),
+		"rng": battle.rng_state(),
+	}
+
+
+func _test_seize_thread_intact_and_cut(catalog: Dictionary) -> void:
+	for seed_value in [3, 17]:
+		var first := _seize_thread_script(catalog, seed_value)
+		var replay := _seize_thread_script(catalog, seed_value)
+		_check(not first.is_empty() and first == replay,
+			"AC1/AC4: the intact-versus-cut Seize Thread projection replays identically")
