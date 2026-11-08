@@ -81,6 +81,23 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 				if not marked_prey.is_empty():
 					_record_choice(result, hex_bolt, marked_prey, marked_rank)
 					return result
+	# Needle Briar Guard: a wounded, not-yet-walled escort makes the elite raise its own
+	# authored Briar Wall before the ordinary round rotation. Only the authoritative living
+	# Guard can reach this branch, and the real wall still has to launch legally from its
+	# rank and find a legal living ally through the same read-only authority as every
+	# ordinary candidate below. With no qualifying escort it falls through unchanged.
+	if _is_briar_guard(actor):
+		var wall := _authored_ability(actor, "briar_wall")
+		if not wall.is_empty() \
+				and StitchedParts.ranks_allowed(int(wall["launch_mask"]), int(actor["rank"])) \
+				and battle._self_move_gate(actor, wall).is_empty() \
+				and _needs_emergency_wall(battle, actor, wall):
+			for rank in range(1, 5):
+				var allies: Array = battle._legal_targets(actor, wall, rank)
+				if allies.is_empty():
+					continue
+				_record_choice(result, wall, allies, rank)
+				return result
 	var offset := (battle.round_number() - 1) % maxi(1, authored.size())
 	for step in range(authored.size()):
 		var ability: Dictionary = authored[(offset + step) % authored.size()]
@@ -219,6 +236,11 @@ static func _is_spool_hexer(actor: Dictionary) -> bool:
 	return str(actor.get("id", "")) == "spool_hexer"
 
 
+## True only for the canonical Needle Briar Guard. Every other foe keeps its existing priorities.
+static func _is_briar_guard(actor: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "needle_briar_guard"
+
+
 ## The Queen's own authored ability with this id, unchanged from the live kit ({} when the
 ## record does not carry it).
 static func _authored_ability(actor: Dictionary, ability_id: String) -> Dictionary:
@@ -268,6 +290,46 @@ static func _has_active_dodge_buff(unit: Dictionary) -> bool:
 	if not buff is Dictionary or buff.is_empty():
 		return false
 	return int(buff.get("amount", 0)) > 0 and int(buff.get("turns", 0)) > 0
+
+
+## Emergency wall trigger: at least one OTHER living, non-LOST foe at positive HP no more
+## than half its own maximum and missing an active temporary Thorns or Riposte status. The
+## passed wall's own ally target authority is asked rank by rank, so a dead escort, a LOST
+## unit, a scrap heap, a hero or a missing rank can never satisfy it. The Guard's permanent
+## authored thorns trait is never read here; only the temporary statuses count. Read-only:
+## no RNG, no mutation.
+static func _needs_emergency_wall(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> bool:
+	var guard_id := str(actor.get("id", ""))
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			if str(target.get("id", "")) == guard_id:
+				continue
+			if _is_unprotected_wounded_escort(target):
+				return true
+	return false
+
+
+## A living foe escort at 2*HP <= max HP that lacks at least one active temporary counter
+## status (Thorns or Riposte). An escort carrying both is already protected and never
+## triggers. Dead, LOST and non-foe records are excluded before any HP comparison.
+static func _is_unprotected_wounded_escort(unit: Dictionary) -> bool:
+	if str(unit.get("side", "")) != "foe":
+		return false
+	if bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+		return false
+	var hp := int(unit.get("hp", 0))
+	var maximum := int(unit.get("max_hp", 0))
+	if hp <= 0 or maximum <= 0:
+		return false
+	if 2 * hp > maximum:
+		return false
+	var statuses: Variant = unit.get("statuses", {})
+	if not statuses is Dictionary:
+		return false
+	return int(statuses.get("thorns", 0)) <= 0 \
+		or int(statuses.get("riposte", 0)) <= 0
 
 
 ## True for a single-target attack on the other side that is authored with a Mark bonus.
