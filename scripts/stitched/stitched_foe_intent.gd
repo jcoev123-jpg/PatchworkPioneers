@@ -63,6 +63,24 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 				if not prey.is_empty():
 					_record_choice(result, devour, prey, prey_rank)
 					return result
+	# Spool Hexer: the elite's authored Hex Bolt is its answer to a Marked doll, so a living doll
+	# carrying an active Mark makes it interrupt its ordinary round rotation (Spool Curse or
+	# Thread Tag) and fire that exact bolt. Only the authoritative living Hexer reaches this
+	# branch; the bolt's own launch mask, move gate and the battle's read-only legality authority
+	# decide what is legal, so its authored reach (ranks 1 and 3) is never widened and ranks 2
+	# and 4 can never be chosen. With no reachable living Mark it falls through unchanged to the
+	# exact old rotation below. Read-only: no RNG draw and no mutation.
+	if _is_spool_hexer(actor):
+		var hex_bolt := _authored_ability(actor, "hex_bolt")
+		if not hex_bolt.is_empty() \
+				and StitchedParts.ranks_allowed(int(hex_bolt["launch_mask"]), int(actor["rank"])) \
+				and battle._self_move_gate(actor, hex_bolt).is_empty():
+			var marked_rank := _nearest_live_marked_rank(battle, actor, hex_bolt)
+			if marked_rank > 0:
+				var marked_prey: Array = battle._legal_targets(actor, hex_bolt, marked_rank)
+				if not marked_prey.is_empty():
+					_record_choice(result, hex_bolt, marked_prey, marked_rank)
+					return result
 	var offset := (battle.round_number() - 1) % maxi(1, authored.size())
 	for step in range(authored.size()):
 		var ability: Dictionary = authored[(offset + step) % authored.size()]
@@ -164,6 +182,11 @@ static func _record_choice(
 ## True only for the canonical Moth Queen. Every other foe keeps its existing priorities.
 static func _is_moth_queen(actor: Dictionary) -> bool:
 	return str(actor.get("id", "")) == "moth_queen"
+
+
+## True only for the canonical Spool Hexer. Every other foe keeps its existing priorities.
+static func _is_spool_hexer(actor: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "spool_hexer"
 
 
 ## The Queen's own authored ability with this id, unchanged from the live kit ({} when the
