@@ -24,6 +24,17 @@ const IDS := [
 ## retired S4 part-granted combat move. Both tier text overrides repeat the Pole Shelter sentence.
 const POLE_SHELTER_COPY := "A little robed doll huddles under a slanted cloth shelter beside a hanging lantern, sewn in dark stitches on cream fabric."
 const MOTH_SHROUD_COPY := "A button-eyed doll curls inside swirling cloth strips while tiny moths flutter above it on a deep plum sewn patch."
+## S14 sewn-cloth copy: the two arm patches describe the stitched cloth the player sees, never the
+## retired S4 part-granted Blind/Expose attack. The Monk's real signatures live in
+## data/stitched/s14_hero_abilities.json, so these top-level texts stay pure appearance.
+const WICK_SPARK_COPY := "A narrow saffron wick is stitched across the Monk's plum sleeve cuff, with a soot-dark tip bound in cream thread."
+const SNUFF_FLAME_COPY := "A cream lantern-shade flap folds over the Monk's other plum sleeve, its scorched hem edged in small saffron cross-stitches."
+## Whole words that would turn this appearance copy back into an obsolete combat promise. `\b`
+## word boundaries keep "stitched" or "hem" from tripping a shorter token such as "hit".
+const FORBIDDEN_COPY_PATTERN := "\\b(ability|skill|rank|ranks|target|foe|enemy|ally|cast|attack|hit|damage|blind|expose|exposed|weak|bleed|stun|heal|guard|dodge|tier|tiers|turn|turns|duration|move|effect|chance|bonus)\\b"
+## The two obsolete sentences this lane replaced: positive witnesses that the matcher bites.
+const OLD_WICK_SPARK_PROMISE := "Singe one foe in ranks 1-3: Blind it; stitched tiers II/III also Expose a seam for 1/2 turns."
+const OLD_SNUFF_FLAME_PROMISE := "Snuff a foe's light with a stinging flame; Blind and Expose the target."
 ## The parts this task must leave frozen: base ability shape, slot stat and label.
 ## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
@@ -93,6 +104,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_patch_copy()
+	_test_arm_patch_copy()
 	_test_leg_patch_copy()
 	_test_lamplight_wash_launch()
 	_test_wick_spark_launch()
@@ -322,6 +334,81 @@ func _test_patch_copy() -> void:
 				"AC1: named patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
 
 
+## S14 arm patch identity copy: both Lantern Monk arm patches describe the sewn cloth the player
+## actually sees, never the retired part-granted Blind/Expose attack. Every text is looked up by
+## named ID (never list position) and must stay free of rank/target/tier/damage/turn/numeric
+## promises, while the frozen S4 ability data keeps the real mechanics.
+func _test_arm_patch_copy() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named arm patch copy checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["arms"]: {
+			"name": "Wick Spark",
+			"text": WICK_SPARK_COPY,
+			"motif": "wick",
+			"other_motif": "lantern-shade",
+		},
+		ALTERNATES["arms"]: {
+			"name": "Snuff Flame",
+			"text": SNUFF_FLAME_COPY,
+			"motif": "lantern-shade",
+			"other_motif": "wick",
+		},
+	}
+	var forbidden := RegEx.new()
+	_check(forbidden.compile(FORBIDDEN_COPY_PATTERN) == OK,
+		"AC2: the whole-word combat-promise pattern compiles")
+	_check(forbidden.search(OLD_WICK_SPARK_PROMISE.to_lower()) != null,
+		"AC2: the matcher really detects the old Wick Spark combat sentence")
+	_check(forbidden.search(OLD_SNUFF_FLAME_PROMISE.to_lower()) != null,
+		"AC2: the matcher really detects the old Snuff Flame combat sentence")
+	var digits := RegEx.new()
+	_check(digits.compile("\\d") == OK, "AC2: the numeric-digit pattern compiles")
+	_check(digits.search(OLD_WICK_SPARK_PROMISE) != null,
+		"AC2: the digit matcher really detects the old '1/2 turns' numbers")
+	var seen_texts: Dictionary = {}
+	for id in expected:
+		var want: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: named arm patch record present: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["id"]) == id and str(part["name"]) == str(want["name"])
+			and str(part["owner"]) == "lantern_monk" and str(part["slot"]) == "arms",
+			"AC1: arm patch keeps its id, name, owner and arms slot: " + id)
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC1: shipped arm patch validates with its sewn-cloth description: " + id)
+		var text := str(part["text"])
+		_check(text == str(want["text"]),
+			"AC1: arm patch base copy is exactly the authored cloth sentence: " + id)
+		seen_texts[text] = true
+		var low := text.to_lower()
+		_check(low.contains("sleeve") and (low.contains("stitch") or low.contains("thread")),
+			"AC1: arm patch copy names a stitched sleeve: " + id)
+		_check(low.contains("saffron") and low.contains("plum") and low.contains("cream"),
+			"AC1: arm patch copy keeps the saffron/plum/cream linen hues: " + id)
+		_check(low.contains(str(want["motif"])) and not low.contains(str(want["other_motif"])),
+			"AC1: arm patch copy keeps its own wick-versus-lantern-shade motif: " + id)
+		_check(forbidden.search(low) == null,
+			"AC2: arm patch copy promises no combat word: " + id)
+		_check(digits.search(text) == null,
+			"AC2: arm patch copy carries no numeric combat digits: " + id)
+		var blanked: Dictionary = part.duplicate(true)
+		blanked["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+			"AC3: a blank arm patch base text still fails closed: " + id)
+		var spaces: Dictionary = part.duplicate(true)
+		spaces["text"] = "   "
+		_check(not bool(StitchedParts.validate_part(spaces).get("ok", false)),
+			"AC3: a whitespace-only arm patch base text still fails closed: " + id)
+		_check(str(cat["by_id"][id]["text"]) == str(want["text"]),
+			"AC3: deep-copy validation never mutates the shipped arm patch: " + id)
+	_check(seen_texts.size() == 2,
+		"AC2: the two arm patches describe visually distinct sewn cloth")
+
+
 ## S14 leg patch identity copy: both Lantern Monk leg patches describe the sewn cloth art the
 ## player actually sees, never a retired part-granted combat move. Every player-facing string is
 ## looked up by named ID (never list position) and must stay free of Guard/Dodge/rank/target
@@ -532,9 +619,9 @@ func _test_wick_spark_launch() -> void:
 		and ability["effects"] == {"blind": 1} and int(ability["self_move"]) == 0
 		and str(ability["move"]) == "attack2",
 		"AC1: Wick Spark launches from [2,3,4], hits one enemy rank 1-3 and keeps its fuel values")
-	_check(str(part["text"]).to_lower().contains("blind")
-		and str(part["text"]).to_lower().contains("expose"),
-		"AC1: Wick Spark's short rules text names Blind and the upgraded Exposed seam")
+	# S14 sewn-cloth copy: the arm patch names the stitched cloth, never a Blind/Exposed promise.
+	_check(str(part["text"]) == WICK_SPARK_COPY,
+		"AC1: Wick Spark's text is the authored sewn-cloth sentence, not a combat promise")
 	for rank in [2, 3, 4]:
 		_check(StitchedParts.ranks_allowed(launch_mask, rank),
 			"AC1: Wick Spark may launch from hero rank %d" % rank)

@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_ac3_shaky_hands_and_rng_neutrality()
 	_test_ac4_lost_strings_interruption_lifecycle()
 	_test_ac5_negative_atomicity_and_stale_guards()
+	_test_ac6_event_choice_delta_ledger()
 
 	if failures.is_empty():
 		print("stitched_s9a_kid_fear_test: PASS (%d checks)" % checks)
@@ -510,6 +511,77 @@ func _test_ac5_negative_atomicity_and_stale_guards() -> void:
 	var caller_copy := caller_event.duplicate(true)
 	fear.apply_observed_event(caller_event)
 	_check(caller_event == caller_copy, "AC5: caller-owned dictionary not mutated by apply_observed_event")
+
+
+## AC6: the signed Event-choice delta ledger (apply_event_delta) settles once per
+## authenticated Event receipt: clamped 0..100, sequenced, queueing Lose the
+## Strings at 100 without ever cancelling a pending interruption, refusing
+## non-integer payloads atomically and honouring the stale-snapshot guard.
+func _test_ac6_event_choice_delta_ledger() -> void:
+	# 1. A signed relief settles once with a full receipt.
+	var fear := StitchedKidFear.new(20)
+	var seq := fear.get_sequence()
+	var relief := fear.apply_event_delta(-8)
+	_check(bool(relief.get("ok", false)), "AC6: event delta -8 accepted")
+	_check(str(relief.get("kind", "")) == "event_delta" and int(relief.get("delta", 0)) == -8,
+		"AC6: event delta receipt names its kind and signed delta")
+	_check(int(relief.get("before_fear", -1)) == 20 and int(relief.get("after_fear", -1)) == 12,
+		"AC6: event delta receipt reports before and after fear")
+	_check(fear.get_fear() == 12 and fear.get_sequence() == seq + 1
+		and not bool(relief.get("interruption_queued", true)),
+		"AC6: event delta settles exactly one ledger step below the interruption")
+
+	# 2. Floor and cap clamping.
+	fear.reset(5)
+	var floored := fear.apply_event_delta(-15)
+	_check(bool(floored.get("ok", false)) and fear.get_fear() == 0
+		and int(floored.get("after_fear", -1)) == 0,
+		"AC6: negative event delta clamps at the 0 floor")
+	fear.reset(95)
+	var capped := fear.apply_event_delta(15)
+	_check(bool(capped.get("ok", false)) and fear.get_fear() == 100
+		and bool(capped.get("interruption_queued", false)) and fear.has_pending_lost_strings(),
+		"AC6: positive event delta clamps at 100 and queues the interruption once")
+
+	# 3. A pending interruption survives fear dropping back below 100.
+	var kept := fear.apply_event_delta(-20)
+	_check(bool(kept.get("ok", false)) and fear.get_fear() == 80
+		and fear.has_pending_lost_strings() and not bool(kept.get("interruption_queued", true)),
+		"AC6: event relief below 100 never cancels the pending interruption")
+
+	# 4. A zero delta is a valid sequenced no-op step.
+	var zero_sequence: int = fear.get_sequence()
+	var zero := fear.apply_event_delta(0)
+	_check(bool(zero.get("ok", false)) and fear.get_fear() == 80
+		and fear.get_sequence() == zero_sequence + 1,
+		"AC6: zero event delta advances the ledger without changing fear")
+
+	# 5. Non-integer payloads are refused atomically, before any conversion.
+	var refused: Array = [-0.5, 3.0, 8.0, NAN, INF, -INF, "scared", null, true]
+	var caller_rng := RandomNumberGenerator.new()
+	caller_rng.seed = 616100
+	var rng_before := caller_rng.state
+	var before := fear.state_snapshot()
+	for invalid in refused:
+		var label := str(invalid)
+		_check_refusal_atomic(fear, fear.apply_event_delta(invalid), before, caller_rng, rng_before,
+			"event delta " + label)
+
+	# 6. Stale expected-snapshot guard.
+	var stale := fear.state_snapshot()
+	_check(bool(fear.apply_event_delta(4).get("ok", false)), "AC6: advance event delta accepted")
+	var stale_refusal := fear.apply_event_delta(4, stale)
+	_check(not bool(stale_refusal.get("ok", true))
+		and str(stale_refusal.get("error", "")).contains("stale"),
+		"AC6: stale snapshot guard rejects a second event delta")
+
+	# 7. The returned receipt is detached; mutating it never reaches the ledger.
+	var after_stale: int = fear.get_fear()
+	var receipt := fear.apply_event_delta(-4)
+	receipt["fear"] = 1
+	receipt["delta"] = 999
+	receipt["pending_lost_strings"] = false
+	_check(fear.get_fear() == after_stale - 4, "AC6: mutating the returned receipt does not alter the ledger")
 
 
 ## Shared refusal contract: compare the actual reachable service, not a detached

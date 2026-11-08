@@ -27,7 +27,7 @@
         "2": {"stat": {"acc": 3}, "ability": {"effects": {"heal": 6}}},
         "3": {"stat": {"acc": 4}, "ability": {"effects": {"heal": 8}}}
       },
-      "text": "Darn one living ally for 4 HP from ranks 2-4. The sewn knot cannot unpick a debuff yet."
+      "text": "A cream pincushion hat wears a dusty-purple darning knot, with red thread tucked beneath uneven brim stitches."
     },
     {
       "id": "seamstress_scarlet_knot_hat",
@@ -54,7 +54,7 @@
         "2": {"stat": {"crit": 3}, "ability": {"effects": {"bleed": 3, "weak": 2}}},
         "3": {"stat": {"crit": 4}, "ability": {"effects": {"bleed": 4, "weak": 2}}}
       },
-      "text": "Tie red thread through one foe in ranks 1-3: Bleed 2 and Weak 2 (lasting through its next strike)."
+      "text": "A fat scarlet knot pins a torn plum felt brim to a cream patch, its loose red threads held by crooked cross-stitches."
     },
     {
       "id": "seamstress_thread_prick_needle",

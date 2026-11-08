@@ -246,6 +246,46 @@ func apply_event(event: Variant, expected_snapshot: Variant = null) -> Dictionar
 	return apply_observed_event(event, expected_snapshot)
 
 
+## Applies a signed Event-choice fear delta exactly once: the result is clamped
+## to 0..100, the ledger sequence advances, and reaching 100 queues the Lose the
+## Strings interruption. A previously pending interruption is never cancelled,
+## and fear dropping below 100 never clears one. Campfire Tell Tales keeps its
+## own authored event path; this method never re-derives authored kinds.
+func apply_event_delta(delta: Variant, expected_snapshot: Variant = null) -> Dictionary:
+	if not _valid:
+		return {"ok": false, "error": "invalid service instance", "sequence": _sequence, "fear": _fear}
+	var stale_check := _check_stale_snapshot(expected_snapshot)
+	if not stale_check["ok"]:
+		return stale_check
+	if typeof(delta) != TYPE_INT:
+		return {"ok": false, "error": "event fear delta must be a native integer", "sequence": _sequence, "fear": _fear}
+	var before_fear := _fear
+	var new_fear: int = clampi(before_fear + int(delta), FEAR_MIN, FEAR_MAX)
+	var queued_interruption := false
+	if new_fear >= LOSE_STRINGS_THRESHOLD and not _pending_lost_strings:
+		_pending_lost_strings = true
+		queued_interruption = true
+	_fear = new_fear
+	_sequence += 1
+	return {
+		"ok": true,
+		"kind": "event_delta",
+		"event": "event_delta",
+		"delta": int(delta),
+		"before_fear": before_fear,
+		"after_fear": _fear,
+		"fear": _fear,
+		"shake": is_shaking(),
+		"pending_lost_strings": _pending_lost_strings,
+		"interruption_queued": queued_interruption,
+		"sequence": _sequence,
+	}.duplicate(true)
+
+
+func apply_choice_delta(delta: Variant, expected_snapshot: Variant = null) -> Dictionary:
+	return apply_event_delta(delta, expected_snapshot)
+
+
 ## Consumes the pending Lose the Strings interruption on doll-turn admission.
 ## Skips exactly one doll turn, resets fear to 60, and clears the pending interruption.
 ## Fails atomically if no interruption is pending.
