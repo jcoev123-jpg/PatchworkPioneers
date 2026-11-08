@@ -28,6 +28,9 @@ func _button(app: Node, id: String, arguments: Array = []) -> Button:
 
 func _controls(app: Node) -> void:
 	var session: StitchedRunSession = app.stitched_run_session
+	if session == null:
+		_check(false, "Moth control page needs the actual mounted owner, not a null session")
+		return
 	_check(session.phase == "visit" and session.pending.get("event_id") == "moth_infestation"
 		and session.pending.service == "Event"
 		and session.map.get_node(session.pending.node_id).type == "Event",
@@ -63,40 +66,241 @@ func _controls(app: Node) -> void:
 	_check(escape != null and not escape.disabled, "free escape is always selectable")
 
 
-func _reload_and_continue(app: Node, label: String) -> void:
+## The expected journal, quotes and every nested state value belong to the ORIGINAL
+## owner, before Save. Never build expectations from a restored candidate.
+func _sealed_oracle(session: StitchedRunSession) -> Dictionary:
+	var state := session.snapshot().duplicate(true)
+	var document := StitchedRunSave.capture(session).duplicate(true)
+	var service_state := {}
+	if session._service is RunStitchedMothSacrificeEvent:
+		service_state = session._service.read_state().duplicate(true)
+	return {
+		"state": state,
+		"journal": session.journal.duplicate(true),
+		"actions": (session.visit_actions() if session.phase == "visit" else
+			session.choices() if session.phase == "map" else []).duplicate(true),
+		"phase": session.phase,
+		"node": session.map.get_current_node_id(),
+		"service": str(session.pending.get("service", "")),
+		"event": str(session.pending.get("event_id", "")),
+		"service_state": service_state,
+		"document": document,
+	}
+
+
+func _oracle_differences(session: StitchedRunSession, oracle: Dictionary) -> Array[String]:
+	var differences: Array[String] = []
+	if session == null:
+		differences.append("session is null")
+		return differences
+	var actual := session.snapshot()
+	for key in oracle.state:
+		if not actual.has(key) or actual[key] != oracle.state[key]:
+			differences.append("%s: before=%s after=%s" % [key,
+				str(oracle.state[key]).substr(0, 180), str(actual.get(key, "<missing>")).substr(0, 180)])
+	for key in actual:
+		if not oracle.state.has(key):
+			differences.append("unexpected state key " + str(key))
+	if session.journal != oracle.journal:
+		differences.append("journal: before=%s after=%s" % [
+			str(oracle.journal).substr(-280), str(session.journal).substr(-280)])
+	if session.phase != oracle.phase:
+		differences.append("phase: %s -> %s" % [oracle.phase, session.phase])
+	if session.map.get_current_node_id() != oracle.node:
+		differences.append("node: %s -> %s" % [oracle.node, session.map.get_current_node_id()])
+	if str(session.pending.get("service", "")) != oracle.service:
+		differences.append("service: %s -> %s" % [oracle.service, session.pending.get("service", "")])
+	if str(session.pending.get("event_id", "")) != oracle.event:
+		differences.append("event: %s -> %s" % [oracle.event, session.pending.get("event_id", "")])
+	if not oracle.service_state.is_empty():
+		if not (session._service is RunStitchedMothSacrificeEvent):
+			differences.append("restored owner lost the guarded Moth service")
+		elif session._service.read_state() != oracle.service_state:
+			differences.append("guarded Moth service state differs from the pre-save owner")
+	var actions: Array = session.visit_actions() if session.phase == "visit" else (
+		session.choices() if session.phase == "map" else [])
+	if actions != oracle.actions:
+		differences.append("choices: before=%s after=%s" % [
+			str(oracle.actions).substr(0, 240), str(actions).substr(0, 240)])
+	if StitchedRunSave.capture(session) != oracle.document:
+		differences.append("sealed capture/digest differs from pre-save journal and state")
+	return differences
+
+
+## The actual current mounted page and its live Save/Reload generation. The open Moth
+## additionally proves its Event identity, guarded service and that the action controls
+## belong to this page's current quote; a retired generation cannot pass.
+func _owned_mount(app: Node, phase: String) -> Dictionary:
+	if not phase in ["visit", "map"]:
+		return {}
 	var session: StitchedRunSession = app.stitched_run_session
-	var before := session.snapshot()
-	var journal := session.journal.duplicate(true)
-	var actions := session.visit_actions()
-	var count := actions.size() if session.phase == "visit" else session.choices().size()
-	var stale: Button = app.stitched_run_buttons[0]
+	if session == null or session.phase != phase:
+		return {}
+	var page: Control = app.stitched_run_panel
+	if page == null or not is_instance_valid(page) or not page.is_visible_in_tree():
+		return {}
+	# A fresh title's Continue mounts the live corridor junction, not the non-walking
+	# test runner's paper map: its navigation offers Save/Title while every connected
+	# route choice keeps its own active door.
+	if phase == "map" and page is StitchedCorridorJunction:
+		var junction := page as StitchedCorridorJunction
+		var legal: Array = session.choices()
+		if legal.is_empty() or junction.doors.size() != legal.size():
+			return {}
+		for id in legal:
+			var door: Button = junction.doors.get(id)
+			if door == null or door.disabled or not door.is_visible_in_tree() \
+					or not app.stitched_run_buttons.has(door):
+				return {}
+		for button in app.stitched_run_buttons:
+			if button is Button and button.text == "Save run" \
+					and button.is_visible_in_tree() and not button.disabled \
+					and button.get_parent() == junction:
+				return {"page": page, "save": button, "reload": null}
+		return {}
+	if phase == "visit":
+		if session.pending.get("node_id", "") != session.map.get_current_node_id() \
+				or session.pending.get("event_id", "") != "moth_infestation" \
+				or str(session.pending.get("service", "")) != "Event" \
+				or not (session._service is RunStitchedMothSacrificeEvent):
+			return {}
+		var actions: Array = session.visit_actions()
+		if app.stitched_run_buttons.size() < actions.size() + 2:
+			return {}
+		for index in actions.size():
+			var action_button: Button = app.stitched_run_buttons[index]
+			if action_button == null or not action_button.is_visible_in_tree() \
+					or action_button.get_meta("action_id", "") != actions[index].id \
+					or action_button.get_meta("action_arguments", null) != actions[index].arguments \
+					or action_button.disabled != not actions[index].enabled:
+				return {}
+	var navigation := page.find_child("RunNavigation", true, false)
+	if navigation == null or not navigation.is_visible_in_tree():
+		return {}
+	var save: Button = null
+	var reload: Button = null
+	for child in navigation.get_children():
+		if not child is Button or not app.stitched_run_buttons.has(child) \
+				or child.disabled or not child.is_visible_in_tree():
+			continue
+		if child.text == "Save run":
+			save = child
+		elif child.text == "Reload saved run":
+			reload = child
+	if save == null or reload == null:
+		return {}
+	return {"page": page, "save": save, "reload": reload}
+
+
+## The mounted Save/Reload generation must prove itself: the newly published file is
+## compared against a deep pre-Save oracle, a NEW owner replaces the old page, stale
+## callbacks stay powerless, and the fresh-title Continue mounts a third owner within
+## a bounded wait. A missing generation is a precise failing check, never an assumption.
+func _save_reload(app: Node, label: String, stale_button: Button = null) -> void:
+	var original: StitchedRunSession = app.stitched_run_session
+	_check(original != null and original.is_consistent()
+		and original.phase in ["map", "visit"],
+		label + " starts with a consistent live map or visit owner")
+	if original == null or not original.is_consistent() \
+			or not original.phase in ["map", "visit"]:
+		return
+	var oracle := _sealed_oracle(original)
+	_check(not oracle.document.is_empty() and oracle.document.journal == oracle.journal
+		and oracle.document.state == oracle.state,
+		label + " seals an independent deep pre-Save state and journal oracle")
+	if oracle.document.is_empty():
+		return
+	var mounted := _owned_mount(app, oracle.phase)
+	_check(not mounted.is_empty(), label + " has the active " + oracle.phase
+		+ " Save/Reload generation at " + str(oracle.node))
+	if mounted.is_empty():
+		return
+	var old_page: Control = mounted.page
+	var old_save: Button = mounted.save
+	var old_reload: Button = mounted.reload
 	app.stitched_save_path = SAVE_PATH
-	_check(app.stitched_run_buttons[count].text == "Save run"
-		and app.stitched_run_buttons[count + 1].text == "Reload saved run", label + " has real Save/Reload controls")
-	app.stitched_run_buttons[count].pressed.emit()
-	_check(FileAccess.file_exists(SAVE_PATH), label + " writes a save")
-	app.stitched_run_buttons[count + 1].pressed.emit()
-	_check(app.stitched_run_session != session and app.stitched_run_session.snapshot() == before
-		and app.stitched_run_session.journal == journal and app.stitched_run_session.visit_actions() == actions,
-		label + " reloads exact receipt, satchel identity/order, wallet, route, journal, quote and RNG")
-	stale.pressed.emit()
-	_check(app.stitched_run_session.snapshot() == before, label + " rejects pre-reload callback")
+	# A retired generation's file must not masquerade as this generation's Save.
+	DirAccess.remove_absolute(SAVE_PATH)
+	old_save.pressed.emit()
+	var disk: StitchedRunSession = StitchedRunSave.read_file(SAVE_PATH)
+	_check(disk != null and _oracle_differences(disk, oracle).is_empty(),
+		label + " mounted Save writes exactly its pre-save owner (phase=%s node=%s event=%s): " % [
+			oracle.phase, oracle.node, oracle.event] + str(_oracle_differences(disk, oracle)))
+	if disk == null:
+		return
+	old_reload.pressed.emit()
+	var reloaded: StitchedRunSession = app.stitched_run_session
+	_check(reloaded != null and reloaded != original and reloaded != disk
+		and app.stitched_run_panel != old_page,
+		label + " Reload publishes a NEW owner and replaces its old page")
+	if reloaded == null or reloaded == original:
+		return
+	if stale_button != null:
+		_check(is_instance_valid(stale_button),
+			label + " retains its actual pre-Reload stale action for rejection")
+		if is_instance_valid(stale_button):
+			stale_button.pressed.emit()
+			_check(_oracle_differences(reloaded, oracle).is_empty(),
+				label + " old visit callback cannot change the new owner")
+	# Retired Save callbacks must also be powerless after the ownership swap.
+	if is_instance_valid(old_save):
+		old_save.pressed.emit()
+	_check(_oracle_differences(reloaded, oracle).is_empty()
+		and _oracle_differences(StitchedRunSave.read_file(SAVE_PATH), oracle).is_empty(),
+		label + " Reload/stale Save preserve phase, node, wallet, journal, quotes and RNG: "
+			+ str(_oracle_differences(reloaded, oracle)))
+	var fresh_mount: Dictionary = {}
+	for attempt in range(8):
+		fresh_mount = _owned_mount(app, oracle.phase)
+		if app.stitched_run_session == reloaded and not fresh_mount.is_empty() \
+				and fresh_mount.page != old_page:
+			break
+		await process_frame
+	_check(not fresh_mount.is_empty() and fresh_mount.page != old_page
+		and app.stitched_run_session == reloaded,
+		label + " replaces the visible " + oracle.phase + " controls within eight frames")
+	_check(_oracle_differences(reloaded, oracle).is_empty(),
+		label + " new mounted Reload owner matches sealed oracle: "
+			+ str(_oracle_differences(reloaded, oracle)))
 	var continued: Node = load("res://scenes/app.tscn").instantiate()
 	continued.stitched_save_path = SAVE_PATH
 	root.add_child(continued)
-	await process_frame
-	_check(continued.stitched_run_session == null and continued.title_view.is_visible_in_tree()
-		and continued.stitched_continue_button.is_visible_in_tree() and not continued.stitched_continue_button.disabled,
-		label + " fresh title offers Continue")
-	continued.stitched_continue_button.pressed.emit()
-	_check(continued.stitched_run_session != null and continued.stitched_run_session.snapshot() == before
-		and continued.stitched_run_session.journal == journal and continued.stitched_run_session.visit_actions() == actions,
-		label + " title Continue reproduces exact deterministic session")
+	for attempt in range(8):
+		if continued.stitched_run_session == null and continued.title_view != null \
+				and continued.title_view.is_visible_in_tree() \
+				and continued.stitched_continue_button != null \
+				and continued.stitched_continue_button.is_visible_in_tree() \
+				and not continued.stitched_continue_button.disabled:
+			break
+		await process_frame
+	var ready: bool = continued.stitched_run_session == null and continued.title_view != null \
+		and continued.title_view.is_visible_in_tree() and continued.stitched_continue_button != null \
+		and continued.stitched_continue_button.is_visible_in_tree() \
+		and not continued.stitched_continue_button.disabled
+	_check(ready, label + " fresh title exposes an enabled saved-run Continue within eight frames")
+	if ready:
+		continued.stitched_continue_button.pressed.emit()
+		var title_mount: Dictionary = {}
+		for attempt in range(8):
+			title_mount = _owned_mount(continued, oracle.phase)
+			if continued.stitched_run_session != null and not title_mount.is_empty():
+				break
+			await process_frame
+		var title_owner: StitchedRunSession = continued.stitched_run_session
+		_check(title_owner != null and title_owner != original and title_owner != reloaded
+			and not title_mount.is_empty() and _oracle_differences(title_owner, oracle).is_empty(),
+			label + " title Continue restores a third owner and genuine " + oracle.phase
+				+ " controls: " + str(_oracle_differences(title_owner, oracle)))
 	continued.free()
 	await process_frame
 
 
 func _refusals(session: StitchedRunSession) -> void:
+	# The negative tables act only on the live guarded Moth service; a missing service is
+	# an explicit failing check, never an assumed, manufactured or forged one.
+	if not (session != null and session._service is RunStitchedMothSacrificeEvent):
+		_check(false, "refusal table needs the live mounted Moth service, not a null service")
+		return
 	var before := session.snapshot()
 	var journal := session.journal.duplicate(true)
 	var service_state: Dictionary = session._service.read_state()
@@ -166,6 +370,17 @@ func _earn_moth_wallet(stage: StitchedBattleScreen) -> int:
 
 func _settle(app: Node, id: String, arguments: Array, keyboard: bool) -> void:
 	var session: StitchedRunSession = app.stitched_run_session
+	# Settlement acts only on the actual current mounted Moth owner and its guarded
+	# service; a missing owner or service is an explicit failing check, never a
+	# manufactured service or a forced route outcome.
+	if not (session != null and session.phase == "visit"
+			and session.pending.get("event_id") == "moth_infestation"
+			and session._service is RunStitchedMothSacrificeEvent):
+		_check(false, "settlement " + id + " needs the actual mounted open-Moth owner and guarded service"
+			+ " (session=" + ("live" if session != null else "null")
+			+ ", phase=" + (str(session.phase) if session != null else "<none>")
+			+ ", event=" + (str(session.pending.get("event_id", "<none>")) if session != null else "<none>") + ")")
+		return
 	var before := session.snapshot()
 	var journal := session.journal.duplicate(true)
 	var buttons: Array = app.stitched_run_buttons.duplicate()
@@ -236,8 +451,8 @@ func _settle(app: Node, id: String, arguments: Array, keyboard: bool) -> void:
 			"duplicate and competing stale callbacks cannot spend, remove another spare or redraw RNG")
 	var saved := StitchedRunSave.capture(session)
 	for command in [{"action": "visit", "id": id, "arguments": arguments},
-			{"action": "visit", "id": "sacrifice_part", "arguments": [999]},
-			{"action": "visit", "id": "escape", "arguments": [0]}]:
+		{"action": "visit", "id": "sacrifice_part", "arguments": [999]},
+		{"action": "visit", "id": "escape", "arguments": [0]}]:
 		var forged := saved.duplicate(true)
 		forged.journal.append(command)
 		forged.digest = StitchedRunSave._digest(forged)
@@ -248,8 +463,11 @@ func _settle(app: Node, id: String, arguments: Array, keyboard: bool) -> void:
 		forged.state[key] = [{"id": "forged"}] if key == "satchel" else [] if key == "receipts" else -1
 		forged.digest = StitchedRunSave._digest(forged)
 		_check(StitchedRunSave.restore(forged) == null, "forged saved " + key + " fails exact replay")
-	await _reload_and_continue(app, "settled " + id)
+	await _save_reload(app, "settled " + id)
 	session = app.stitched_run_session
+	if session == null:
+		_check(false, "settled " + id + " keeps a live reloaded owner for its onward route")
+		return
 	var onward := session.choices()
 	_check(not onward.is_empty(), "settled/reloaded Moth has a legal onward route")
 	if not onward.is_empty():
@@ -330,7 +548,8 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 	if session.phase == "visit" and session.pending.get("event_id") == "moth_infestation":
 		_controls(app)
 		_refusals(session)
-		await _reload_and_continue(app, "open funded Moth")
+		var stale_open: Button = app.stitched_run_buttons[0]
+		await _save_reload(app, "open funded Moth", stale_open)
 		_controls(app)
 		var arguments: Array = [index] if id == "sacrifice_part" else []
 		await _settle(app, id, arguments, keyboard)
@@ -379,7 +598,8 @@ func _poor_branch() -> void:
 			_check(not session.choose_visit("fumigate", [], before)
 				and not session.choose_visit("sacrifice_part", [0], before) and session.snapshot() == before,
 				"unaffordable fumigate and empty sacrifice refuse without RNG or spend")
-			await _reload_and_continue(app, "open empty Moth")
+			var stale_open: Button = app.stitched_run_buttons[0]
+			await _save_reload(app, "open empty Moth", stale_open)
 			await _settle(app, "escape", [], true)
 	app.free()
 	await process_frame
