@@ -27,6 +27,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_torso_tier_stats()
 	_test_buttonhole_tiers()
 	_test_all_tiers()
 	_test_mark_bonus()
@@ -57,6 +58,25 @@ func _check(ok: bool, note: String) -> void:
 
 func _catalog() -> Dictionary:
 	return StitchedParts.load_catalog(CATALOG_PATH)
+
+
+## The raw authored entries, keyed by id, for exact source comparisons (JSON numbers parse
+## as floats, so callers normalise them with _int_stat before comparing).
+func _raw_parts_by_id() -> Dictionary:
+	var by_id := {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(CATALOG_PATH))
+	if parsed is Dictionary:
+		for entry in parsed.get("parts", []):
+			by_id[str(entry.get("id", ""))] = entry
+	return by_id
+
+
+func _int_stat(value: Variant) -> Dictionary:
+	var stat := {}
+	if value is Dictionary:
+		for key in value:
+			stat[str(key)] = int(value[key])
+	return stat
 
 
 func _config(selected: String = "", tier: int = 1, seed_value: int = 503041) -> Dictionary:
@@ -206,6 +226,134 @@ func _test_catalog() -> void:
 		"AC3: illegal IV tier rejected")
 	_check(not bool(StitchedParts.build_catalog([c["parts"][0], c["parts"][0]]).get("ok", false)),
 		"AC3: duplicate part IDs fail closed")
+
+
+## AC1/AC2: both existing Button Golem torso patches gain defensive stats at stitch tiers II
+## and III while keeping the ability overrides they already carried. The other six parts and
+## the catalog's fail-closed schema stay unchanged.
+func _test_torso_tier_stats() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: Button Golem catalog validates for the torso stat ladder")
+	if not bool(catalog.get("ok", false)):
+		return
+	var rows := [
+		{
+			"id": STARTERS["torso"],
+			"ability": "button_golem_torso_seam_resew_move",
+			"kind": "buff",
+			"target_side": "self",
+			"launch": [1, 2, 3],
+			"target": [1, 2, 3],
+			"stats": [
+				{"max_hp": 6, "prot": 3}, {"max_hp": 8, "prot": 4}, {"max_hp": 10, "prot": 5},
+			],
+			"effect": "thorns",
+			"effects": [2, 3, 5],
+		},
+		{
+			"id": ALTERNATES["torso"],
+			"ability": "button_golem_torso_eyelet_guard_move",
+			"kind": "guard",
+			"target_side": "ally",
+			"launch": [1, 2, 3],
+			"target": [1, 2, 3, 4],
+			"stats": [
+				{"max_hp": 5, "prot": 5}, {"max_hp": 7, "prot": 6}, {"max_hp": 9, "prot": 8},
+			],
+			"effect": "guard",
+			"effects": [2, 3, 4],
+		},
+	]
+	var raw := _raw_parts_by_id()
+	_check(not raw.is_empty(), "AC1: raw Button Golem JSON parses for the exact tier overrides")
+	for row in rows:
+		var id := str(row["id"])
+		_check(catalog["by_id"].has(id), "AC1: real catalog holds torso part " + id)
+		if not catalog["by_id"].has(id):
+			continue
+		var part: Dictionary = catalog["by_id"][id]
+		_check(str(part["owner"]) == "button_golem" and str(part["slot"]) == "torso",
+			"AC2: %s stays owned by button_golem in the torso slot" % id)
+		var previous := {}
+		for index in range(3):
+			var tier := index + 1
+			var expected: Dictionary = row["stats"][index]
+			var stat := StitchedParts.stat_at_tier(part, tier)
+			_check(stat == expected,
+				"AC1: %s tier %d stat is max_hp %d and prot %d"
+					% [id, tier, int(expected["max_hp"]), int(expected["prot"])])
+			_check(stat.keys().all(func(key): return str(key) in StitchedParts.SLOT_STATS["torso"]),
+				"AC1: %s tier %d grants only legal torso stat keys" % [id, tier])
+			if not previous.is_empty():
+				_check(int(stat["max_hp"]) > int(previous["max_hp"])
+					and int(stat["prot"]) > int(previous["prot"]),
+					"AC1: %s tier %d raises both defensive stats over tier %d"
+						% [id, tier, tier - 1])
+			previous = stat
+			var at := StitchedParts.ability_at_tier(part, tier)
+			_check(str(at["id"]) == str(row["ability"]) and str(at["kind"]) == str(row["kind"])
+				and str(at["target_side"]) == str(row["target_side"])
+				and at["launch"] == row["launch"] and at["target"] == row["target"]
+				and int(at["acc"]) == 100 and at["dmg"] == [0, 0] and str(at["move"]) == "guard",
+				"AC2: %s tier %d keeps its authored no-damage ability" % [id, tier])
+			_check(at["effects"] == {str(row["effect"]): int(row["effects"][index])},
+				"AC2: %s tier %d keeps %s %d"
+					% [id, tier, str(row["effect"]), int(row["effects"][index])])
+			_check(bool(StitchedParts.validate_ability(at).get("ok", false)),
+				"AC2: %s tier %d ability still validates" % [id, tier])
+		# The raw authored record: unchanged base stat, and tier II/III carry exactly one new
+		# stat dictionary beside the ability override they already had.
+		var entry: Dictionary = raw.get(id, {})
+		var raw_base: Variant = entry.get("stat", {})
+		_check(not entry.is_empty() and raw_base is Dictionary and raw_base.size() == 2
+			and _int_stat(raw_base) == row["stats"][0],
+			"AC2: raw %s keeps exactly its two base stat values" % id)
+		for index in range(1, 3):
+			var tier := index + 1
+			var override: Variant = entry.get("tiers", {}).get(str(tier), {})
+			var raw_stat: Variant = override.get("stat", {}) if override is Dictionary else {}
+			var ability_fields: Variant = override.get("ability", {}) if override is Dictionary else {}
+			var effects: Variant = ability_fields.get("effects", {}) if ability_fields is Dictionary else {}
+			_check(override is Dictionary and override.size() == 2 and override.has("ability")
+				and raw_stat is Dictionary and raw_stat.size() == 2
+				and raw_stat.has("max_hp") and raw_stat.has("prot")
+				and _int_stat(raw_stat) == row["stats"][index],
+				"AC2: raw %s tier %d authored stat is exactly max_hp/prot" % [id, tier])
+			_check(effects is Dictionary and effects.size() == 1
+				and int(effects.get(str(row["effect"]), -1)) == int(row["effects"][index]),
+				"AC2: raw %s tier %d keeps only its authored %s override"
+					% [id, tier, str(row["effect"])])
+	# The other six Golem parts keep one base stat and gain no tier stat override.
+	var other_base := {
+		"button_golem_head_loose_pop": {"acc": 5},
+		"button_golem_arms_button_fist": {"dmg": 1},
+		"button_golem_legs_threadwheel_roll": {"speed": 2},
+		"button_golem_head_buttonhole_snag": {"crit": 4},
+		"button_golem_arms_popping_volley": {"dmg": 2},
+		"button_golem_legs_button_roll": {"dodge": 5},
+	}
+	for other_id in other_base:
+		_check(catalog["by_id"].has(other_id),
+			"AC3: non-torso Golem part stays in the catalog: " + other_id)
+		if not catalog["by_id"].has(other_id):
+			continue
+		var other: Dictionary = catalog["by_id"][other_id]
+		_check(other["stat"] == other_base[other_id],
+			"AC3: non-torso Golem base stat is unchanged: " + other_id)
+		_check(not other["tiers"]["2"].has("stat") and not other["tiers"]["3"].has("stat")
+			and StitchedParts.stat_at_tier(other, 2) == other_base[other_id]
+			and StitchedParts.stat_at_tier(other, 3) == other_base[other_id],
+			"AC3: non-torso Golem part gains no tier stat override: " + other_id)
+	# An illegal or negative torso tier stat still fails the catalog schema closed.
+	var illegal: Dictionary = catalog["by_id"][STARTERS["torso"]].duplicate(true)
+	illegal["tiers"]["2"]["stat"] = {"max_hp": 8, "speed": 2}
+	_check(not bool(StitchedParts.validate_part(illegal).get("ok", false)),
+		"AC3: a torso tier stat outside max_hp/prot still fails closed")
+	illegal = catalog["by_id"][ALTERNATES["torso"]].duplicate(true)
+	illegal["tiers"]["3"]["stat"] = {"max_hp": -1, "prot": 8}
+	_check(not bool(StitchedParts.validate_part(illegal).get("ok", false)),
+		"AC3: a negative torso tier stat still fails closed")
 
 
 func _test_all_tiers() -> void:
@@ -1088,6 +1236,12 @@ func _test_volley_catalog(c: Dictionary) -> void:
 	var tier_targets := {
 		ALTERNATES["head"]: {1: [1, 2, 3], 2: [1, 2, 3], 3: [1, 2, 3, 4]},
 	}
+	# The two torso patches also gain defensive stats at tiers II and III; every other part
+	# keeps one authored slot stat across all three tiers.
+	var tier_stats := {
+		STARTERS["torso"]: {2: {"max_hp": 8, "prot": 4}, 3: {"max_hp": 10, "prot": 5}},
+		ALTERNATES["torso"]: {2: {"max_hp": 7, "prot": 6}, 3: {"max_hp": 9, "prot": 8}},
+	}
 	for id in unchanged:
 		for tier in [1, 2, 3]:
 			var at := StitchedParts.ability_at_tier(c["by_id"][id], tier)
@@ -1095,10 +1249,13 @@ func _test_volley_catalog(c: Dictionary) -> void:
 			var target: Array = unchanged[id]["target"]
 			if tier_targets.has(id):
 				target = tier_targets[id][tier]
+			var expected_stat: Dictionary = unchanged[id]["stat"]
+			if tier_stats.has(id) and tier_stats[id].has(tier):
+				expected_stat = tier_stats[id][tier]
 			_check(at["launch"] == unchanged[id]["launch"] and at["target"] == target
 				and int(at["launch_mask"]) == StitchedParts.rank_mask(unchanged[id]["launch"])
 				and int(at["target_mask"]) == StitchedParts.rank_mask(target)
-				and stat == unchanged[id]["stat"],
+				and stat == expected_stat,
 				"AC1: %s keeps its authored ranks and slot stat at tier %d" % [id, tier])
 	var loose: Dictionary = c["by_id"][STARTERS["head"]]
 	_check(int(StitchedParts.ability_at_tier(loose, 1)["effects"]["mark"]) == 2
