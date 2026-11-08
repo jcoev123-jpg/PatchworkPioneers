@@ -9,11 +9,11 @@ const COATS := {
 	"wool_patch_cloak": 5, "chain_stitched_coat": 7, "reinforced_patchcoat": 9,
 	"thick_felt_mantle": 10,
 }
-## Authored Stitched catalog quotes: budget vest 70, Padded Vest 80, power mantle 130, the rest 100.
+## Authored Stitched catalog quotes: budget vest 70, Padded Vest 80, Wool Patch Cloak 90, Thick Felt Mantle 110, the rest 100.
 const EXPECTED_PRICE := {
 	"quilted_coat": 100, "padded_vest": 80, "double_quilt_coat": 100, "scrap_lined_vest": 70,
 	"wool_patch_cloak": 90, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
-	"thick_felt_mantle": 130,
+	"thick_felt_mantle": 110,
 }
 const PARTY := ["warden", "seamstress", "tinker", "yarn_ranger"]
 const NODE := "patch_stall_node"
@@ -106,6 +106,7 @@ func _run() -> void:
 	_check_every_coat_eligible()
 	_check_padded_vest_price()
 	_check_wool_cloak_price()
+	_check_mantle_price()
 	_check_scarce(["scrap_lined_vest"], "one")
 	_check_scarce(["thick_felt_mantle", "padded_vest"], "two")
 	_check_all_owned()
@@ -182,7 +183,7 @@ func _check_wool_cloak_price() -> void:
 	var prices := _source_prices()
 	_check(prices.get("wool_patch_cloak", -1) == 90, "wool_patch_cloak source row is exactly 90 gold")
 	_check(prices.get("quilted_coat", -1) == 100 and prices.get("padded_vest", -1) == 80
-		and prices.get("thick_felt_mantle", -1) == 130, "neighbouring coat prices stay authored")
+		and prices.get("thick_felt_mantle", -1) == 110, "neighbouring coat prices stay authored")
 	var owned := _others(["wool_patch_cloak"])
 	var owned_snapshot := owned.duplicate(true)
 	var stock := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(31), owned)
@@ -264,6 +265,80 @@ func _check_wool_cloak_price() -> void:
 		_check(owned_visit.buy_patch("wool_patch_cloak", o_state.visit_id, o_state.node_id,
 			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
 			"owned wool cloak cannot be bought again")
+
+
+## Thick Felt Mantle at its 110-gold quote: seeded witness stock, exact-gold buy, 109 refused, owned SOLD.
+func _check_mantle_price() -> void:
+	var prices := _source_prices()
+	_check(prices.get("thick_felt_mantle", -1) == 110, "thick_felt_mantle source row is exactly 110 gold")
+	_check(prices.get("wool_patch_cloak", -1) == 90 and prices.get("reinforced_patchcoat", -1) == 100
+		and prices.get("padded_vest", -1) == 80, "wool cloak stays 90 and neighbours stay authored")
+	var witness_seed := -1
+	var witness: Array = []
+	for seed_value in range(1, 300):
+		var probe := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(seed_value), [])
+		if probe.get("ok") == true and _ids(probe.offers).has("thick_felt_mantle"):
+			witness_seed = seed_value
+			witness = probe.offers
+			break
+	_check(witness_seed > 0 and witness.size() == 3, "a deterministic seed stocks thick_felt_mantle")
+	if witness_seed < 0:
+		return
+	_check(_ids(witness).count("thick_felt_mantle") == 1 and witness.has({"id": "thick_felt_mantle", "price": 110}),
+		"mantle is stocked once as the 110-gold row")
+	var distinct := {}
+	for id in _ids(witness):
+		distinct[id] = true
+	_check(distinct.size() == 3, "mantle stock rows are distinct")
+	_check(RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(witness_seed), []).get("offers") == witness,
+		"mantle witness seed replays the same stock")
+
+	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 110, witness)
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 109, witness)
+	_check(rich.is_valid() and poor.is_valid(), "110-gold and 109-gold mantle visits open")
+	if not rich.is_valid() or not poor.is_valid():
+		return
+	var rich_seen := false
+	for row in rich.quote().offers:
+		if row.id == "thick_felt_mantle":
+			rich_seen = true
+			_check(row.price == 110 and row.can_buy == true and row.sold == false,
+				"mantle is buyable at 110 gold")
+	_check(rich_seen, "110-gold quote shows the mantle row")
+	var poor_seen := false
+	for row in poor.quote().offers:
+		if row.id == "thick_felt_mantle":
+			poor_seen = true
+			_check(row.price == 110 and row.can_buy == false, "mantle is not buyable at 109 gold")
+	_check(poor_seen, "109-gold quote shows the mantle row")
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	_check(poor.buy_patch("thick_felt_mantle", poor_state.visit_id, poor_state.node_id,
+		poor_state.snapshot).get("ok") != true
+		and poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"109 gold cannot buy the mantle and nothing is debited or granted")
+	var state := rich.read_state()
+	var bought := rich.buy_patch("thick_felt_mantle", state.visit_id, state.node_id, state.snapshot)
+	_check(bought.get("ok") == true
+		and bought.receipt == {"kind": "trinket", "id": "thick_felt_mantle", "price": 110}
+		and bought.ledger.gold == 0 and bought.ledger.owned_patch_ids == ["thick_felt_mantle"],
+		"110 gold buys the mantle once for exactly 110 and leaves 0 gold")
+	_check(rich.is_consumed() and rich.buy_patch("thick_felt_mantle", state.visit_id, state.node_id,
+		state.snapshot).get("ok") != true, "replayed mantle buy refused")
+	# Already owned: SOLD and disabled, no debit.
+	var owned_visit := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), ["thick_felt_mantle"], 200, witness)
+	_check(owned_visit.is_valid(), "owned-mantle visit opens")
+	if owned_visit.is_valid():
+		var o_state := owned_visit.read_state()
+		var found := false
+		for row in owned_visit.quote().offers:
+			if row.id == "thick_felt_mantle":
+				found = true
+				_check(row.sold == true and row.can_buy == false, "owned mantle is SOLD and disabled")
+		_check(found, "owned mantle row remains visible as SOLD")
+		_check(owned_visit.buy_patch("thick_felt_mantle", o_state.visit_id, o_state.node_id,
+			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
+			"owned mantle cannot be bought again")
 
 
 func _check_membership_and_determinism(prices: Dictionary) -> void:
