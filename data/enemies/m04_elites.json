@@ -456,9 +456,9 @@
           "name": "Briar Thrust",
           "kind": "melee",
           "launch": [1, 3],
-          "target": [1],
+          "target": [1, 2],
           "target_side": "enemy",
-          "multi": false,
+          "multi": true,
           "acc": 86,
           "dmg": [4, 5],
           "crit": 0,
@@ -480,7 +480,8 @@
           "dmg": [0, 0],
           "crit": 0,
           "effects": {
-            "thorns": 3
+            "thorns": 3,
+            "riposte": 2
           },
           "self_move": 0,
           "move": "guard"

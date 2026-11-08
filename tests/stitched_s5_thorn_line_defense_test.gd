@@ -5,10 +5,10 @@ const ELITES := "res://data/enemies/m04_elites.json"
 const PREVIEW := "res://data/stitched/s2_preview.json"
 const CASES := [
 	{"id": "needle_briar_guard", "name": "Needle Briar Guard", "buff": "briar_wall",
-		"buff_name": "Briar Wall", "thorns": 3, "hp": 42, "prot": 10,
+		"buff_name": "Briar Wall", "thorns": 3, "riposte": 2, "hp": 42, "prot": 10,
 		"trophy": "needle_briar_guard_briar"},
 	{"id": "pincushion_matriarch", "name": "Pincushion Matriarch", "buff": "pin_crown",
-		"buff_name": "Pin Crown", "thorns": 4, "hp": 44, "prot": 8,
+		"buff_name": "Pin Crown", "thorns": 4, "riposte": 0, "hp": 44, "prot": 8,
 		"trophy": "pincushion_matriarch_crown"},
 ]
 
@@ -39,16 +39,23 @@ func _check(condition: bool, message: String) -> void:
 		failures.append(message)
 
 
+func _effects(spec: Dictionary) -> Dictionary:
+	var effects := {"thorns": spec.thorns}
+	if int(spec.riposte) > 0:
+		effects["riposte"] = int(spec.riposte)
+	return effects
+
+
 func _buff(spec: Dictionary) -> Dictionary:
 	return {"id": spec.buff, "name": spec.buff_name, "kind": "buff", "launch": [1, 3],
 		"target": [1, 2, 3, 4], "target_side": "ally", "multi": true, "acc": 100,
-		"dmg": [0, 0], "crit": 0, "effects": {"thorns": spec.thorns}, "self_move": 0, "move": "guard"}
+		"dmg": [0, 0], "crit": 0, "effects": _effects(spec), "self_move": 0, "move": "guard"}
 
 
 func _attack(spec: Dictionary) -> Dictionary:
 	if spec.id == "needle_briar_guard":
 		return {"id": "briar_thrust", "name": "Briar Thrust", "kind": "melee", "launch": [1, 3],
-			"target": [1], "target_side": "enemy", "multi": false, "acc": 86, "dmg": [4, 5],
+			"target": [1, 2], "target_side": "enemy", "multi": true, "acc": 86, "dmg": [4, 5],
 			"crit": 0, "effects": {"bleed": 2}, "self_move": 0, "move": "attack2"}
 	return {"id": "matriarch_burst", "name": "Matriarch Burst", "kind": "melee", "launch": [1, 4],
 		"target": [1, 2, 3], "target_side": "enemy", "multi": false, "acc": 85, "dmg": [3, 4],
@@ -169,7 +176,7 @@ func _project(battle: StitchedRules, spec: Dictionary, count: int) -> Dictionary
 		and intent.get("ability_kind") == "buff" and intent.get("multi") == true and not intent.get("pass", true)
 		and intent.get("target_side") == "foe" and intent.get("target_rank") == 1
 		and intent.get("affected_ranks") == ranks and intent.get("base_acc") == 100
-		and intent.get("base_damage") == [0, 0] and intent.get("base_effects") == {"thorns": spec.thorns},
+		and intent.get("base_damage") == [0, 0] and intent.get("base_effects") == _effects(spec),
 		"AC4: round-2 intent projects exact multi ally buff on occupied foe ranks")
 	_check(before == battle.state_snapshot() and rng == battle.rng_state(), "AC4: projection is state/RNG read-only")
 	var edited := intent.duplicate(true)
@@ -210,19 +217,26 @@ func _script(catalog: Dictionary, spec: Dictionary, seed_value: int, count: int,
 		_check(buff.get("actor") == spec.id and buff.get("ability") == spec.buff
 			and buff.get("results", []).size() == count, "AC2: empty selected rank 4 resolves exactly the occupied allies")
 		var targets: Array = []
+		var receipt_statuses: Array = [{"status": "thorns", "duration": spec.thorns}]
+		if int(spec.riposte) > 0:
+			receipt_statuses.append({"status": "riposte", "duration": spec.riposte})
 		for hit in buff.get("results", []):
 			targets.append(hit.target)
 			_check(hit.target_side == "foe" and hit.target_rank >= 1 and hit.target_rank <= count
 				and hit.hit and not hit.crit and hit.damage == 0
-				and hit.statuses == [{"status": "thorns", "duration": spec.thorns}], "AC2: exact no-damage thorn receipt per ally")
+				and hit.statuses == receipt_statuses, "AC2: exact no-damage thorns/riposte receipt per ally")
 		for old in foes_before:
 			var now := battle.get_unit(old.id)
 			# Public ability use enters the next actor's turn, ticking that actor's statuses once.
-			var expected := int(spec.thorns) - (1 if battle.current_actor_id() == old.id else 0)
-			_check(targets.count(old.id) == 1 and now.statuses == {"thorns": expected}
+			var tick := 1 if battle.current_actor_id() == old.id else 0
+			var expected := {"thorns": int(spec.thorns) - tick}
+			if int(spec.riposte) > 0:
+				expected["riposte"] = int(spec.riposte) - tick
+			_check(targets.count(old.id) == 1 and now.statuses == expected
 				and now.hp == old.hp and now.rank == old.rank and not now.dead,
-				"AC2: actual ally snapshot has exact Thorns with only its own turn tick; HP/rank unchanged")
-			full_line = full_line and now.statuses.thorns == spec.thorns
+				"AC2: actual ally snapshot has exact Thorns/Riposte with only its own turn tick; HP/rank unchanged")
+			full_line = full_line and now.statuses.thorns == spec.thorns \
+				and int(now.statuses.get("riposte", 0)) == int(spec.riposte)
 		_check(battle.get_heroes() == heroes_before and battle.get_foes().size() == count
 			and not buff.has("self_move"), "AC2: heroes unchanged, no phantom foe, no caster movement")
 	var buff_state := battle.state_snapshot()
@@ -236,11 +250,18 @@ func _script(catalog: Dictionary, spec: Dictionary, seed_value: int, count: int,
 	_check(battle.current_actor_id() == "warden", "AC3: real Warden attack turn reached")
 	var attacker := battle.get_unit("warden")
 	var target := battle.get_unit("scissor_crab")
+	# The next Warden turn is at most one round after the cast, so a buffed ally keeps at least
+	# one live Thorns turn while its Riposte may already have counted down to zero.
 	var thorns := int(target.statuses.get("thorns", 0))
-	_check(attacker.rank == 1 and attacker.prot > 0 and attacker.hp > spec.thorns
+	var riposte := int(target.statuses.get("riposte", 0))
+	if protected:
+		_check(thorns > 0 and riposte <= int(spec.riposte),
+			"AC3: struck ally carries exactly its still-live authored reaction clock")
+	else:
+		_check(thorns == 0 and riposte == 0, "AC3: matched control ally carries no reactions")
+	_check(attacker.rank == 1 and attacker.prot > 0 and attacker.hp > thorns + riposte
 		and target.rank == 2 and target.hp == target.max_hp and not target.dead,
 		"AC3: healthy armoured attacker and living protected ally, not caster")
-	_check(thorns > 0 if protected else thorns == 0, "AC3: positive protection versus unbuffed control")
 	var attack := battle.use_part("warden_head_iron_helm", 2)
 	receipts.append(attack)
 	_check(attack.get("ok", false) and attack.get("results", []).size() == 1, "AC3: genuine equipped hero attack resolves")
@@ -254,15 +275,25 @@ func _script(catalog: Dictionary, spec: Dictionary, seed_value: int, count: int,
 	if hit.hit:
 		_check(hit.damage > 0 and foe_after.hp == target.hp - hit.damage, "AC3: landed attack really damages the ally")
 		if protected:
-			_check(hit.get("thorns") == thorns and after.hp == attacker.hp - thorns,
-				"AC3: confirmed hit returns exactly current Thorns despite attacker PROT")
+			if riposte > 0:
+				_check(hit.get("thorns") == thorns and hit.get("riposte") == riposte
+					and hit.keys().find("thorns") < hit.keys().find("riposte")
+					and after.hp == attacker.hp - thorns - riposte,
+					"AC3: confirmed hit returns exactly current Thorns then Riposte despite attacker PROT")
+			else:
+				_check(hit.get("thorns") == thorns and not hit.has("riposte")
+					and after.hp == attacker.hp - thorns,
+					"AC3: confirmed hit returns exactly the still-live Thorns and no expired Riposte")
 		else:
-			_check(not hit.has("thorns") and after.hp == attacker.hp, "AC3: landed unbuffed control has no return damage")
+			_check(not hit.has("thorns") and not hit.has("riposte") and after.hp == attacker.hp,
+				"AC3: landed unbuffed control has no return damage")
 	else:
-		_check(not hit.has("thorns") and hit.damage == 0 and foe_after.hp == target.hp and after.hp == attacker.hp,
-			"AC3: natural miss carries no Thorns or HP damage")
+		_check(not hit.has("thorns") and not hit.has("riposte") and hit.damage == 0
+			and foe_after.hp == target.hp and after.hp == attacker.hp,
+			"AC3: natural miss carries no Thorns, Riposte or HP damage")
 	return {"receipts": receipts, "intent": intent, "buff_state": buff_state, "state": battle.state_snapshot(),
-		"rng": battle.rng_state(), "hit": hit.hit, "thorns": thorns, "full_line": full_line}
+		"rng": battle.rng_state(), "hit": hit.hit, "thorns": thorns, "riposte": riposte,
+		"full_line": full_line}
 
 
 func _test_line_and_replay(catalog: Dictionary, spec: Dictionary) -> void:
@@ -286,7 +317,7 @@ func _test_reactions(catalog: Dictionary, spec: Dictionary) -> void:
 	var miss_seed := 0
 	for seed_value in range(1, 65):
 		var result := _script(catalog, spec, seed_value, 3)
-		if result.is_empty() or result.thorns != spec.thorns:
+		if result.is_empty() or result.thorns != spec.thorns or result.riposte != int(spec.riposte):
 			continue
 		if result.hit and hit_seed == 0:
 			hit_seed = seed_value
@@ -300,6 +331,7 @@ func _test_reactions(catalog: Dictionary, spec: Dictionary) -> void:
 			continue
 		var protected := _script(catalog, spec, seed_value, 3)
 		var control := _script(catalog, spec, seed_value, 3, false)
-		_check(not control.is_empty() and protected.hit == control.hit and control.thorns == 0,
+		_check(not control.is_empty() and protected.hit == control.hit and control.thorns == 0
+			and control.riposte == 0,
 			"AC3: matched seeded unbuffed control preserves hit outcome without retaliation")
 		print(spec.buff, " ", "hit" if protected.hit else "miss", " witness seed=", seed_value)
