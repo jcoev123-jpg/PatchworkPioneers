@@ -71,7 +71,33 @@ const PATCH_LORE := {
 			"A single concentrated needle hit that Exposes a foe in enemy ranks 1-3; only stitch tier III reaches a foe in the rear rank 4.",
 	},
 }
-## The six Yarn Ranger records this task must leave untouched, with their exact authored copy.
+## The two remaining alternate patches whose copy also moved to the cloth sewn onto the doll:
+## their exact authored line, the textile motifs it must keep, and the retired instruction that
+## must never come back. Their legacy ability dictionaries stay for the S4 compatibility tests;
+## the S14 signature abilities live separately in data/stitched/s14_hero_abilities.json.
+const SEWN_PATCH_ALTERNATES := {
+	"yarn_ranger_torso_snare_net": {
+		"name": "Snare Net",
+		"slot": "torso",
+		"text":
+			"An open net of wool-white yarn rests across the Ranger's moss-green chest patch, each teal knot held down by crooked cross-stitches.",
+		"motifs": ["wool-white", "moss-green", "teal", "cross-stitches"],
+		"old_text":
+			"Cast a net over every living foe in ranks one through three and Tangle each independently; only stitch tier III also reaches a foe in the rear rank 4.",
+	},
+	"yarn_ranger_legs_endless_skein": {
+		"name": "Endless Skein",
+		"slot": "legs",
+		"text":
+			"An overfull teal skein curls around the Ranger's moss-green boot cuff, with a wool-white tail pinned under uneven cross-stitches.",
+		"motifs": ["wool-white", "moss-green", "teal", "cross-stitches"],
+		"old_text":
+			"Uncoil a great skein of yarn to damage and Tangle all living foes in range.",
+	},
+}
+## The exact authored copy of every Yarn Ranger record: the four parts this task leaves
+## untouched, plus the two alternate patches it moves from body-part attack instructions to
+## sewn-patch lore (SEWN_PATCH_ALTERNATES).
 const OTHER_PART_TEXT := {
 	"yarn_ranger_head_needle_nock":
 		"A teal yarn knot holds a spare knitting needle against the Ranger's moss-green hood.",
@@ -82,9 +108,9 @@ const OTHER_PART_TEXT := {
 	"yarn_ranger_legs_reel_thread":
 		"A small teal thread reel sits on a moss-green boot cuff, with white wool looped through uneven stitches.",
 	"yarn_ranger_torso_snare_net":
-		"Cast a net over every living foe in ranks one through three and Tangle each independently; only stitch tier III also reaches a foe in the rear rank 4.",
+		"An open net of wool-white yarn rests across the Ranger's moss-green chest patch, each teal knot held down by crooked cross-stitches.",
 	"yarn_ranger_legs_endless_skein":
-		"Uncoil a great skein of yarn to damage and Tangle all living foes in range.",
+		"An overfull teal skein curls around the Ranger's moss-green boot cuff, with a wool-white tail pinned under uneven cross-stitches.",
 }
 ## Pre-change snapshot of every non-text field on the two revised records. Only their copy may
 ## differ, so the test compares the loaded record against this before-image.
@@ -234,6 +260,7 @@ func _initialize() -> void:
 	_test_catalog()
 	_test_sewn_patch_text()
 	_test_alternate_patch_lore()
+	_test_sewn_patch_alternates()
 	_test_head_launch_tiers()
 	_test_arms_launch_tiers()
 	_test_purling_launch_tiers()
@@ -626,10 +653,11 @@ func _test_snare_net_launch_tiers() -> void:
 		and not raw["tiers"]["2"]["ability"].has("target")
 		and raw["tiers"]["3"]["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3, 4],
 		"AC1: only the authored tier-III Snare Net override carries the widened target list")
-	var text := str(part["text"]).to_lower()
-	_check(text.contains("tier iii") and text.contains("rank 4")
-		and text.contains("ranks one through three"),
-		"AC1: Snare Net text credits the rear rank 4 only to tier III and keeps ranks 1-3")
+	# The alternate torso now prints sewn-cloth appearance copy; the tier-III rank-4 reach it used
+	# to spell out stays proven above by the authored target list and mask, never by a tooltip.
+	_check(str(part["text"]) == str(SEWN_PATCH_ALTERNATES[SNARE_ID]["text"])
+		and _banned_patch_words(str(part["text"])).is_empty(),
+		"AC1: Snare Net prints its sewn-patch description instead of a rank or tier rule")
 
 
 ## Reel Thread launches from hero rank four as well as ranks two and three at every stitch
@@ -2361,10 +2389,11 @@ func _test_sewn_patch_text() -> void:
 			"AC3: a blank in-memory copy of %s fails closed" % expected_name)
 
 
-## AC1/AC2: only the two alternate patch descriptions moved to sewn-cloth lore. Each keeps its
-## ID, name, slot, owner and every non-text field exactly as authored, the records outside this
-## task keep their exact copy, and every catalog ID is still present. Lookups go through named
-## IDs, never array positions.
+## AC1/AC2: the two alternate head/arms patch descriptions moved to sewn-cloth lore; the
+## torso/legs pair is proven by _test_sewn_patch_alternates below. Each keeps its ID, name, slot,
+## owner and every non-text field exactly as authored, the four records outside this task keep
+## their exact copy, and every catalog ID is still present. Lookups go through named IDs, never
+## array positions.
 func _test_alternate_patch_lore() -> void:
 	var cat := _catalog()
 	if not bool(cat.get("ok", false)):
@@ -2374,11 +2403,11 @@ func _test_alternate_patch_lore() -> void:
 			"AC1: the parsed catalog still authors " + part_id)
 	var untouched: Array = []
 	for part_id in IDS:
-		if not PATCH_LORE.has(part_id):
+		if not PATCH_LORE.has(part_id) and not SEWN_PATCH_ALTERNATES.has(part_id):
 			untouched.append(part_id)
-	_check(untouched.size() == OTHER_PART_TEXT.size()
+	_check(untouched.size() == OTHER_PART_TEXT.size() - SEWN_PATCH_ALTERNATES.size()
 		and untouched.all(func(other_id): return OTHER_PART_TEXT.has(other_id)),
-		"AC1: every Ranger part outside the two revised records keeps its authored text")
+		"AC1: every Ranger part outside this task's four revised records keeps its authored text")
 	for part_id in PATCH_LORE:
 		var lore: Dictionary = PATCH_LORE[part_id]
 		var part: Dictionary = cat["by_id"].get(part_id, {})
@@ -2396,11 +2425,63 @@ func _test_alternate_patch_lore() -> void:
 		_check(_non_text_snapshot(record) == _non_text_snapshot(PATCH_NON_TEXT_SNAPSHOT[part_id]),
 			"AC2: %s changes only its text; stat, ability, tiers, masks and pose stay authored as before"
 				% part_id)
+	# Every Ranger record still prints exactly the copy authored for it: the four untouched
+	# records and the two revised sewn-patch records alike.
 	for part_id in OTHER_PART_TEXT:
 		var raw := _raw_part(part_id)
 		_check(not raw.is_empty()
 			and str(raw.get("text", "")) == str(OTHER_PART_TEXT[part_id]),
-			"AC1: untouched record %s keeps its exact authored text" % part_id)
+			"AC1: authored record %s keeps its exact shipped text" % part_id)
+
+
+## AC1/AC3: the two remaining alternate patches now describe the cloth sewn onto the doll. Each
+## is looked up by its named ID (never an array position) in both the loaded catalog and the raw
+## authored JSON. The vocabulary guard is proven live by feeding it the retired instruction it
+## replaced, and blank copy still fails closed through StitchedParts.validate_part.
+func _test_sewn_patch_alternates() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for part_id in SEWN_PATCH_ALTERNATES:
+		var spec: Dictionary = SEWN_PATCH_ALTERNATES[part_id]
+		var part: Dictionary = cat["by_id"].get(part_id, {})
+		var record := _raw_part(part_id)
+		var shown: String = "AC1: " + str(part_id)
+		_check(not part.is_empty() and not record.is_empty()
+			and str(record.get("id", "")) == part_id
+			and str(record.get("name", "")) == str(spec["name"])
+			and str(record.get("slot", "")) == str(spec["slot"])
+			and str(record.get("owner", "")) == "yarn_ranger"
+			and str(part.get("id", "")) == part_id
+			and str(part.get("name", "")) == str(spec["name"])
+			and str(part.get("slot", "")) == str(spec["slot"])
+			and str(part.get("owner", "")) == "yarn_ranger",
+			shown + " keeps its named identity as a Yarn Ranger " + str(spec["slot"]) + " patch")
+		var text := str(record.get("text", ""))
+		var lowered := text.to_lower()
+		var motifs_ok := not text.is_empty()
+		for motif in spec["motifs"]:
+			motifs_ok = motifs_ok and lowered.contains(str(motif).to_lower())
+		_check(text == str(spec["text"]) and motifs_ok
+			and str(part.get("text", "")) == text,
+			shown + " authors exactly the new sewn-cloth line with its textile motifs: "
+				+ str(spec["motifs"]))
+		_check(text != str(spec["old_text"])
+			and not lowered.contains(str(spec["old_text"]).to_lower()),
+			shown + " no longer repeats its retired attack instruction")
+		var banned := _banned_patch_words(text)
+		_check(banned.is_empty(),
+			shown + "'s sewn-cloth line keeps no attack/status/target vocabulary: " + str(banned))
+		# The guard is genuinely live: the exact sentence this patch used to print still trips it.
+		_check(not _banned_patch_words(str(spec["old_text"])).is_empty(),
+			shown + "'s retired instruction really trips the vocabulary guard")
+		# The shipped catalog is never mutated: only this in-memory duplicate goes blank.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not part.is_empty()
+			and not bool(StitchedParts.validate_part(blank).get("ok", false))
+			and str(part.get("text", "")) == text,
+			shown + " with blank in-memory text fails closed and leaves the shipped record intact")
 
 
 ## The exact sewn-cloth line, every textile motif, and no surviving body-part attack wording.
