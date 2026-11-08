@@ -108,8 +108,6 @@ static func status_for(record: Dictionary, id: String) -> String:
 	if not history.has(id):
 		return "STAYED HOME"
 	var last: Dictionary = history[id]
-	if bool(last.get("lost", false)):
-		return "LOST"
 	var torn: Array = last.get("torn_slots", [])
 	var injury := ""
 	if not torn.is_empty():
@@ -119,6 +117,8 @@ static func status_for(record: Dictionary, id: String) -> String:
 		if "legs" in torn:
 			names.append("LEG")
 		injury = "TORN " + ", ".join(names)
+	if bool(last.get("lost", false)):
+		return "LOST" + ("\n" + injury if not injury.is_empty() else "")
 	if bool(last.get("hanging", false)):
 		return "HANGING BY A THREAD" + ("\n" + injury if not injury.is_empty() else "")
 	if not injury.is_empty():
