@@ -1116,6 +1116,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_warden_stovepipe_hinge",
+      "title": "The Stovepipe Hinge",
+      "description": "A giant soot-black stovepipe leans through a narrow attic corridor. The Warden braces its buckled brass hinge with his quilted shield while a tiny ember glows behind the grate.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "brace_soot_hinge",
+          "text": "Stitch the hinge firm and reinforce the Warden's stuffing",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "pry_stove_bolts",
+          "text": "Burn some stuffing to salvage the blackened bolts",
+          "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the ember breathing behind the grate",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_seamstress_shadow_embroidery_screen",
+      "title": "The Shadow Embroidery Screen",
+      "description": "An embroidery screen taller than the dolls blocks a moonlit passage. The Seamstress traces the silhouettes of lost puppets in its oxblood silk while an empty needle taps the wooden frame.",
+      "required_hero": "seamstress",
+      "choices": [
+        {
+          "id": "sew_shadow_lining",
+          "text": "Buy silk and sew a lasting lining beneath the screen",
+          "outcome": { "gold": -16, "scraps": 0, "hp": 0, "max_hp": 2 }
+        },
+        {
+          "id": "unpick_screen_memory",
+          "text": "Unpick the Seamstress's own seam for ghostly threads",
+          "outcome": { "gold": 0, "scraps": 3, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the puppet shadows hold their place",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_hollow_windsock",
+      "title": "The Hollow Windsock",
+      "description": "A weather-beaten cloth windsock hangs from a doll-sized vent high in the corridor. The Scarecrow's ribbon-feather crows circle its hollow throat as cold air pulls straw from his sleeve.",
+      "required_hero": "scarecrow",
+      "choices": [
+        {
+          "id": "sew_windsock_heart",
+          "text": "Stuff the windsock's heart and reinforce the Scarecrow",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "strip_wind_seam",
+          "text": "Trade a lasting seam for the wind's hidden coin",
+          "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the wind swallow the crow calls",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
