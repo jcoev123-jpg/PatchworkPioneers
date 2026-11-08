@@ -97,6 +97,8 @@ var stitched_run_intro: Control
 var stitched_run_buttons: Array[Button] = []
 var stitched_run_draft: Array = []
 var _stitched_run_epoch := 0
+## Which junction opening the party just walked into, for the walk's turn-in beat.
+var _stitched_arrive_side := ""
 const STITCHED_SAVE_PATH := "user://stitched_run.save"
 ## Playtest cheats (debug builds only; delete scripts/debug/ before the full game ships).
 const PLAYTEST_CHEATS_PATH := "res://scripts/debug/playtest_cheats.gd"
@@ -4224,12 +4226,16 @@ func _stitched_visit_corridor(session: StitchedRunSession) -> StitchedCorridorSt
 	stage.build(session.walk_area(), 2)
 	stage.fight_view(true)
 	stage.set_candle(str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name))
+	_stitched_place_party(stage, session)
+	return stage
+
+
+func _stitched_place_party(stage: StitchedCorridorStage, session: StitchedRunSession) -> void:
 	for hero in session.heroes:
 		if hero.lost:
 			continue
 		var art := _stitched_run_texture(str(STAGE_ROSTER.art_paths(str(hero.id)).get("idle", "")))
 		stage.place("hero_%d" % hero.rank, art, stage.fight_point("hero", hero.rank), StitchedCorridorFight.HERO_HEIGHT)
-	return stage
 
 
 ## PanelContainer uses authored felt as a true nine-slice, never code-drawn shapes.
@@ -4508,6 +4514,9 @@ func _present_stitched_run() -> void:
 			walker.queue_free()
 			_present_stitched_run())
 		add_child(walker)
+		if walker.stage != null and not _stitched_arrive_side.is_empty():
+			walker.stage.arrive_from(_stitched_arrive_side, not walker.reduced_motion)
+		_stitched_arrive_side = ""
 		return
 	if session.phase == "battle":
 		_clear_stitched_run_panel()
@@ -4554,6 +4563,12 @@ func _present_stitched_run() -> void:
 			corridor.add_more("save", "Save run", func():
 				if stitched_run_session == session and stitched_run_battle == stage:
 					StitchedRunSave.write_file(stitched_save_path, session))
+		return
+	if session.phase == "map" and stitched_walks:
+		_present_stitched_junction(session)
+		return
+	if session.phase == "visit" and stitched_walks:
+		_present_stitched_corridor_visit(session)
 		return
 	var terminal := session.phase in ["victory", "defeat"]
 	var page_kind := session.phase
@@ -4709,6 +4724,46 @@ func _present_stitched_run() -> void:
 	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
 	_stitched_run_keyboard_chain()
 	if session.phase == "map" and not session.gift_offer.is_empty():
+		_show_wren_gift_pick(session)
+
+
+## Owner 11-08: the road map is a junction in the corridor. Each legal stop stands in an
+## opening to the left, ahead or to the right; walking into one enters it at once.
+func _present_stitched_junction(session: StitchedRunSession) -> void:
+	_clear_stitched_run_panel()
+	var junction := StitchedCorridorJunction.new()
+	junction.name = "StitchedRunPage"
+	junction.set_meta("page_kind", "map")
+	add_child(junction)
+	stitched_run_panel = junction
+	var epoch := _stitched_run_epoch
+	var expected := session.snapshot()
+	var legal := session.choices()
+	var stops: Array = []
+	for id in legal:
+		var node := session.map.get_node(id)
+		stops.append({"id": id, "kind": str(node.type), "position": int(node.position)})
+	junction.present(session.walk_area(),
+		str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name), stops)
+	junction.chosen.connect(func(id: String):
+		if stitched_run_session != session or stitched_run_panel != junction \
+			or epoch != _stitched_run_epoch or not junction.is_visible_in_tree() \
+			or session.phase != "map" or not legal.has(id) or session.snapshot() != expected:
+			return
+		var side := str(junction.sides.get(id, "forward"))
+		if session.enter(id, expected):
+			_stitched_arrive_side = side
+			_present_stitched_run())
+	for id in junction.doors:
+		stitched_run_buttons.append(junction.doors[id])
+	stitched_run_buttons.append(junction.add_action("Save run", func():
+		if stitched_run_session == session and stitched_run_panel == junction:
+			StitchedRunSave.write_file(stitched_save_path, session)))
+	stitched_run_buttons.append(junction.add_action("Return to title", func():
+		if stitched_run_session == session and stitched_run_panel == junction:
+			_return_stitched_run_title()))
+	junction.focus_first()
+	if not session.gift_offer.is_empty():
 		_show_wren_gift_pick(session)
 
 
@@ -4881,10 +4936,25 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 	choices_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	choices_box.add_theme_constant_override("separation", 6)
 	scroll.add_child(choices_box)
+	_stitched_visit_choices(session, choices_box, expected)
+	# Save and reload wait in the dark strip under the corridor, off the stop's own page.
+	var navigation := HBoxContainer.new()
+	navigation.name = "RunNavigation"
+	navigation.position = Vector2(32, 656)
+	navigation.add_theme_constant_override("separation", 12)
+	stitched_run_panel.add_child(navigation)
+	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
+	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
+	_stitched_run_keyboard_chain()
+
+
+func _stitched_visit_choices(session: StitchedRunSession, choices_box: VBoxContainer, expected: Dictionary) -> Array[Button]:
+	var made: Array[Button] = []
 	for action in session.visit_actions():
 		var button := _stitched_run_action(choices_box, str(action.text), func():
 			if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
 				_present_stitched_run(), action.enabled)
+		made.append(button)
 		button.custom_minimum_size = Vector2(0, 44)
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -4898,14 +4968,36 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 			button.expand_icon = true
 			button.add_theme_constant_override("icon_max_width", 44)
 			button.custom_minimum_size = Vector2(0, 64)
-	# Save and reload wait in the dark strip under the corridor, off the stop's own page.
+	return made
+
+
+## Owner 11-08: a road stop happens in the corridor. The party stands at their ranks, the stop
+## stands across from them, and its words and choices hang beside it; no pop-up page.
+func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
+	_clear_stitched_run_panel()
+	var service := str(session.pending.get("service", "Event"))
+	var visit := StitchedCorridorVisit.new()
+	visit.name = "StitchedRunPage"
+	visit.set_meta("page_kind", "visit:" + service)
+	add_child(visit)
+	stitched_run_panel = visit
+	visit.present(session.walk_area(), str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name),
+		service, str(session.pending.get("title", service.capitalize())), session.visit_story())
+	_stitched_place_party(visit.stage, session)
+	for button in _stitched_visit_choices(session, visit.choices, session.snapshot()):
+		visit.dress_choice(button)
+		if button.icon != null:
+			button.custom_minimum_size = Vector2(0, 60)
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
 	navigation.position = Vector2(32, 656)
 	navigation.add_theme_constant_override("separation", 12)
-	stitched_run_panel.add_child(navigation)
-	_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session))
-	_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))
+	visit.add_child(navigation)
+	for button in [_stitched_run_action(navigation, "Save run", func(): StitchedRunSave.write_file(stitched_save_path, session)),
+		_stitched_run_action(navigation, "Reload saved run", func(): load_stitched_run(stitched_save_path))]:
+		StitchedBattleScreen.CHROME.style_button(button)
+		button.add_theme_font_size_override("font_size", 17)
+		button.custom_minimum_size = Vector2(170, 40)
 	_stitched_run_keyboard_chain()
 
 

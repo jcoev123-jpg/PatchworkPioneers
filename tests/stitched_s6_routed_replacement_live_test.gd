@@ -130,7 +130,12 @@ func _lost_circle() -> void:
 	for hero_id in StitchedPartyAdmission.HERO_IDS:
 		if not hero_id in session._party_ids():
 			_check(seen.has(hero_id), "every unused authenticated identity is offered")
+	# Owner 11-08: Mend is offered only when a living doll has a torn part and the scraps to sew it.
+	var mendable: bool = session.scraps >= StitchedRunSession.SEWING_COST and session.heroes.any(func(hero):
+		return not hero.lost and hero.parts.values().any(func(part): return part is Dictionary and part.get("torn", false)))
 	for id in ["mend", "upgrade", "swap", "leave"]:
+		if id == "mend" and not mendable:
+			continue
 		_check(session.visit_actions().any(func(action: Dictionary): return action.id == id), "Circle retains " + id)
 	if offers.is_empty():
 		app.free()

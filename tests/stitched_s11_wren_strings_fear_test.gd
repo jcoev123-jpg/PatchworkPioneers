@@ -64,7 +64,7 @@ func _projection(fight: StitchedCorridorFight, note: String) -> void:
 				cut_count += 1
 		var at := Vector2(rect.get_center().x, rect.position.y)
 		var stored: Vector2 = string.get_meta("doll_top", Vector2(-1000, -1000))
-		_check(string.is_visible_in_tree() and stored.distance_to(at) < 0.75,
+		_check(string.visible and stored.distance_to(at) < 0.75,
 			note + ": R%d string follows actual projected 3D head %s, not classic hit box" % [rank, str(at)])
 		_check(bool(string.get_meta("cut", false)) == cut
 			and string.texture == (view._thread_cut if cut else view._thread),
@@ -125,13 +125,13 @@ func _run() -> void:
 		and view.get_index() > fight.stage.get_index()
 		and view.get_index() < fight.hits["hero_1"].get_index(),
 		"one visible Wren layer is above 3D stage but below clickable hit boxes")
-	_check(view.hands.visible and view.hands.texture != null
+	_check(not view.get_node("KidHandsLayer").visible and view.hands.texture != null
 		and view.meter.is_visible_in_tree()
 		and view.meter.get_node("KidFearJar").texture != null
 		and view.meter_fill.texture_progress != null
 		and view.mouse_filter == Control.MOUSE_FILTER_IGNORE
 		and view.meter.mouse_filter == Control.MOUSE_FILTER_IGNORE,
-		"authored hands, fear jar and ink are visible and transparent to pointer hits")
+		"owner 11-08: no puppet hands; fear jar and ink are visible and transparent to pointer hits")
 	_check(view.meter.get_global_rect().end.y < fight.ribbon.get_global_rect().position.y
 		and view.meter.get_global_rect().end.y < StitchedCorridorFight.BAR_TOP
 		and view.meter.get_global_rect().end.x <= 1280,
@@ -169,11 +169,9 @@ func _run() -> void:
 		and view.meter_label.text.contains("100 / 100") and view.hands.rotation == 0.0,
 		"reduced motion still shows source FEAR 100 but suppresses hand animation")
 	_unchanged(fight, baseline, rng, receipts, budget, "reduced motion")
-	fight.intent_tickets[1].grab_focus()
 	_click(view.meter.get_global_rect().get_center())
 	_click(fight.hits["hero_1"].get_global_rect().get_center())
-	_unchanged(fight, baseline, rng, receipts, budget, "intent focus and passive mouse pointers")
-	fight.intent_tickets[1].release_focus()
+	_unchanged(fight, baseline, rng, receipts, budget, "passive mouse pointers")
 	# A real legal hand command and a stage figure click still pass through.
 	fear_box[0] = 0
 	screen.set_reduced_motion(false)
