@@ -32,7 +32,7 @@ const EXPECTED := {
 		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
 		"choices": [
 			{"id": "follow_humming", "text": "Follow the warm humming (+16 candle, +7 fray each; requires room in the candle)", "effect": {"target": "party", "candle": 16, "fray": 7, "require_candle_room": true}},
-			{"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2}},
+			{"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "min_fray": 1}},
 			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -50,7 +50,7 @@ const EXPECTED := {
 		"description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
 		"choices": [
 			{"id": "lift_silver_seam", "text": "Lift the mirror's loose silver seam (+26 gold, -12 candle, +10 fray each)", "effect": {"target": "party", "candle": -12, "fray": 10, "gold": 26, "require_full_candle": true}},
-			{"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1}},
+			{"id": "pin_lace_veil", "text": "Pin the veil back with one scrap (-1 scrap, -9 fray each)", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
 			{"id": "leave", "text": "Pass without looking into the silver again", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -167,6 +167,7 @@ func _initialize() -> void:
 	_test_unknown_choice_refusals()
 	_test_stale_effect_fails()
 	_test_compass_fray_gates()
+	_test_paid_fray_relief_gates()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	var before_draw: int = rng_guard.state
 	rng_guard.randi()
@@ -916,6 +917,283 @@ func _test_compass_fray_gates() -> void:
 		"Fixture D: omission of nonexistent zero keys on Leave receipt")
 	_check(svc_d.is_claimed() and not svc_d.is_valid(),
 		"Fixture D: leave latches once")
+
+
+## AC2 / AC3: Keyhole Choir (buy_silence) and Veiled Wardrobe Mirror (pin_lace_veil)
+## min_fray gates on scrap-paid party fray relief.
+## 1. Living dolls all at fray 0 -> choice unavailable, deltas present, choose refused without spend.
+## 2. Only a LOST doll has positive fray -> refused the same way.
+## 3. One living doll at fray 1 -> choice available, commits scrap price and -12 / -9 raw fray intent once.
+## 4. One living doll at fray 1 with a LOST doll in the party -> LOST doll excluded from fray intent map.
+## 5. Underfunded with positive living fray -> choice unavailable, choose refused, Leave preserved.
+func _test_paid_fray_relief_gates() -> void:
+	var cases := [
+		{
+			"event_id": "v3_keyhole_choir",
+			"choice_id": "buy_silence",
+			"other_choice_id": "follow_humming",
+			"price": 2,
+			"settled_scraps": 2,
+			"fray_delta": -12,
+			"underfunded_scraps": 1,
+		},
+		{
+			"event_id": "v3_veiled_wardrobe_mirror",
+			"choice_id": "pin_lace_veil",
+			"other_choice_id": "lift_silver_seam",
+			"price": 1,
+			"settled_scraps": 3,
+			"fray_delta": -9,
+			"underfunded_scraps": 0,
+		},
+	]
+
+	for tc in cases:
+		var event_id: String = tc["event_id"]
+		var choice_id: String = tc["choice_id"]
+		var other_id: String = tc["other_choice_id"]
+		var price: int = tc["price"]
+		var settled_scraps: int = tc["settled_scraps"]
+		var fray_delta: int = tc["fray_delta"]
+		var underfunded_scraps: int = tc["underfunded_scraps"]
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+
+		# 1. All-calm: 4 active non-LOST heroes at fray 0, scraps 4, candle 40
+		var snap_calm := {
+			"candle": 40,
+			"gold": 60,
+			"scraps": 4,
+			"party": [
+				{"id": "warden", "fray": 0},
+				{"id": "seamstress", "fray": 0},
+				{"id": "tinker", "fray": 0},
+				{"id": "yarn_ranger", "fray": 0},
+			],
+		}
+		var before_calm: Dictionary = snap_calm.duplicate(true)
+		var svc_calm := RunStitchedEventConsequence.new(record)
+		var prev_calm: Dictionary = svc_calm.preview(snap_calm)
+		_check(prev_calm.get("ok") == true and prev_calm.get("event_id") == event_id,
+			"all-calm visit previews: " + event_id)
+		var calm_entry := _entry(prev_calm, choice_id)
+		_check(not calm_entry.is_empty() and calm_entry.get("available") == false,
+			"all-calm paid relief choice unavailable: " + event_id + " / " + choice_id)
+		_check(calm_entry.get("fray") == {}
+			and int(calm_entry.get("candle")) == 40
+			and int(calm_entry.get("scraps")) == 4
+			and int(calm_entry.get("candle_delta")) == 0
+			and int(calm_entry.get("fray_delta")) == fray_delta
+			and int(calm_entry.get("scraps_delta")) == -price,
+			"all-calm unavailable choice quotes original scraps, empty fray map, and deltas: " + event_id)
+		_check(_entry(prev_calm, other_id).get("available") == true,
+			"all-calm other lawful choice stays available: " + event_id + " / " + other_id)
+		_check(_entry(prev_calm, "leave").get("available") == true,
+			"all-calm Leave stays available: " + event_id)
+		_check(svc_calm.choose(choice_id, snap_calm) == _refusal(40),
+			"all-calm direct choose refused: " + event_id + " / " + choice_id)
+		_check(svc_calm.is_valid() and not svc_calm.is_claimed(),
+			"all-calm refused choose keeps visit open and unclaimed: " + event_id)
+		_check(snap_calm == before_calm and record == record_snapshot,
+			"all-calm refused choose mutates no snapshot or record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"all-calm refused choose draws no RNG: " + event_id)
+
+		# Alternate choice claims on same visit after refusal:
+		var alt_receipt: Dictionary = svc_calm.choose(other_id, snap_calm)
+		_check(alt_receipt.get("ok") == true and alt_receipt.get("choice_id") == other_id,
+			"other choice succeeds after refusal on same visit: " + event_id + " / " + other_id)
+		_check(svc_calm.is_claimed() and not svc_calm.is_valid(),
+			"other choice claim latches once: " + event_id)
+
+		# Leave succeeds on independent all-calm visit after refusal:
+		var svc_calm_leave := RunStitchedEventConsequence.new(record)
+		var snap_calm_2 := snap_calm.duplicate(true)
+		_check(svc_calm_leave.choose(choice_id, snap_calm_2) == _refusal(40),
+			"independent all-calm choose refused: " + event_id)
+		var leave_calm_rec: Dictionary = svc_calm_leave.choose("leave", snap_calm_2)
+		_check(leave_calm_rec.get("ok") == true and leave_calm_rec.get("choice_id") == "leave"
+			and int(leave_calm_rec.get("candle")) == 40 and leave_calm_rec.get("fray") == {},
+			"Leave settles after refusal on independent all-calm visit: " + event_id)
+		_check(svc_calm_leave.is_claimed() and not svc_calm_leave.is_valid(),
+			"Leave claim latches once: " + event_id)
+
+		# 2. Only a LOST hero has positive fray
+		var snap_lost := {
+			"candle": 40,
+			"gold": 60,
+			"scraps": 4,
+			"party": [
+				{"id": "warden", "fray": 40, "lost": true},
+				{"id": "seamstress", "fray": 0},
+				{"id": "tinker", "fray": 0},
+				{"id": "yarn_ranger", "fray": 0},
+			],
+		}
+		var before_lost: Dictionary = snap_lost.duplicate(true)
+		var svc_lost := RunStitchedEventConsequence.new(record)
+		var prev_lost: Dictionary = svc_lost.preview(snap_lost)
+		_check(prev_lost.get("ok") == true, "only-lost-fray visit previews: " + event_id)
+		var lost_entry := _entry(prev_lost, choice_id)
+		_check(not lost_entry.is_empty() and lost_entry.get("available") == false,
+			"only-lost-fray choice unavailable: " + event_id)
+		_check(lost_entry.get("fray") == {} and int(lost_entry.get("scraps")) == 4,
+			"only-lost-fray choice quotes original scraps and empty fray: " + event_id)
+		_check(svc_lost.choose(choice_id, snap_lost) == _refusal(40),
+			"only-lost-fray direct choose refused: " + event_id)
+		_check(svc_lost.is_valid() and not svc_lost.is_claimed(),
+			"only-lost-fray refused choose keeps visit open: " + event_id)
+		_check(snap_lost == before_lost and record == record_snapshot,
+			"only-lost-fray refused choose mutates no snapshot or record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"only-lost-fray refused choose draws no RNG: " + event_id)
+		var leave_lost_rec: Dictionary = svc_lost.choose("leave", snap_lost)
+		_check(leave_lost_rec.get("ok") == true and leave_lost_rec.get("choice_id") == "leave",
+			"Leave succeeds after only-lost-fray refusal: " + event_id)
+		_check(svc_lost.is_claimed() and not svc_lost.is_valid(),
+			"post-refusal Leave latches once: " + event_id)
+
+		# 3. One living frayed hero (warden fray 1, others 0)
+		var snap_frayed := {
+			"candle": 40,
+			"gold": 60,
+			"scraps": 4,
+			"party": [
+				{"id": "warden", "fray": 1},
+				{"id": "seamstress", "fray": 0},
+				{"id": "tinker", "fray": 0},
+				{"id": "yarn_ranger", "fray": 0},
+			],
+		}
+		var before_frayed: Dictionary = snap_frayed.duplicate(true)
+		var svc_frayed := RunStitchedEventConsequence.new(record)
+		var prev_frayed: Dictionary = svc_frayed.preview(snap_frayed)
+		_check(prev_frayed.get("ok") == true, "one-living-frayed visit previews: " + event_id)
+		var frayed_entry := _entry(prev_frayed, choice_id)
+		_check(not frayed_entry.is_empty() and frayed_entry.get("available") == true,
+			"one-living-frayed choice is available: " + event_id)
+		var expected_fray_map := {
+			"warden": fray_delta,
+			"seamstress": fray_delta,
+			"tinker": fray_delta,
+			"yarn_ranger": fray_delta,
+		}
+		_check(int(frayed_entry.get("candle")) == 40
+			and int(frayed_entry.get("candle_delta")) == 0
+			and int(frayed_entry.get("fray_delta")) == fray_delta
+			and int(frayed_entry.get("scraps")) == settled_scraps
+			and int(frayed_entry.get("scraps_delta")) == -price
+			and frayed_entry.get("fray") == expected_fray_map,
+			"one-living-frayed preview quotes settled scraps and -12/-9 raw fray intents: " + event_id)
+		var claim_rec: Dictionary = svc_frayed.choose(choice_id, snap_frayed)
+		_check(claim_rec == {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": choice_id,
+			"target": "party",
+			"hero_id": "",
+			"candle": 40,
+			"fray": expected_fray_map,
+			"scraps_delta": -price,
+			"scraps": settled_scraps,
+		}, "one-living-frayed claim settles exact raw fray map and scraps: " + event_id)
+		_check(not claim_rec.has("gold") and not claim_rec.has("gold_delta")
+			and not claim_rec.has("hp") and not claim_rec.has("hp_delta")
+			and not claim_rec.has("fear") and not claim_rec.has("fear_delta")
+			and not claim_rec.has("part"),
+			"claim receipt omits nonexistent keys: " + event_id)
+		_check(svc_frayed.is_claimed() and not svc_frayed.is_valid(),
+			"claim latches exactly once: " + event_id)
+		_check(svc_frayed.choose(choice_id, snap_frayed) == _refusal(40),
+			"replay after claim is refused: " + event_id)
+		_check(svc_frayed.choose("leave", snap_frayed) == _refusal(40),
+			"alternate choice after claim is refused: " + event_id)
+		_check(svc_frayed.preview(snap_frayed) == _denied_preview(),
+			"spent visit offers no preview: " + event_id)
+		_check(snap_frayed == before_frayed and record == record_snapshot,
+			"claim flow mutates no caller snapshot or record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"claim flow draws no RNG: " + event_id)
+
+		# Deterministic replay check
+		var svc_replay := RunStitchedEventConsequence.new(record)
+		_check(svc_replay.preview(snap_frayed) == prev_frayed,
+			"deterministic replay preview matches: " + event_id)
+		_check(svc_replay.choose(choice_id, snap_frayed) == claim_rec,
+			"deterministic replay receipt matches: " + event_id)
+
+		# 4. Living frayed hero with a LOST hero in the party (never target LOST hero)
+		var snap_with_lost := {
+			"candle": 40,
+			"gold": 60,
+			"scraps": 4,
+			"party": [
+				{"id": "warden", "fray": 1},
+				{"id": "seamstress", "fray": 0},
+				{"id": "tinker", "fray": 0},
+				{"id": "yarn_ranger", "fray": 30, "lost": true},
+			],
+		}
+		var svc_with_lost := RunStitchedEventConsequence.new(record)
+		var prev_with_lost: Dictionary = svc_with_lost.preview(snap_with_lost)
+		var entry_with_lost := _entry(prev_with_lost, choice_id)
+		_check(not entry_with_lost.is_empty() and entry_with_lost.get("available") == true,
+			"living frayed with lost hero choice is available: " + event_id)
+		var expected_fray_living_only := {
+			"warden": fray_delta,
+			"seamstress": fray_delta,
+			"tinker": fray_delta,
+		}
+		_check(entry_with_lost.get("fray") == expected_fray_living_only,
+			"preview never emits fray intent for LOST hero: " + event_id)
+		var rec_with_lost: Dictionary = svc_with_lost.choose(choice_id, snap_with_lost)
+		_check(rec_with_lost.get("ok") == true
+			and rec_with_lost.get("fray") == expected_fray_living_only
+			and int(rec_with_lost.get("scraps")) == settled_scraps,
+			"receipt never emits fray intent for LOST hero: " + event_id)
+		_check(not (rec_with_lost.get("fray") as Dictionary).has("yarn_ranger"),
+			"LOST hero absent from settled fray map: " + event_id)
+
+		# 5. Underfunded with living fray positive
+		var snap_under := {
+			"candle": 40,
+			"gold": 60,
+			"scraps": underfunded_scraps,
+			"party": [
+				{"id": "warden", "fray": 1},
+				{"id": "seamstress", "fray": 0},
+				{"id": "tinker", "fray": 0},
+				{"id": "yarn_ranger", "fray": 0},
+			],
+		}
+		var before_under: Dictionary = snap_under.duplicate(true)
+		var svc_under := RunStitchedEventConsequence.new(record)
+		var prev_under: Dictionary = svc_under.preview(snap_under)
+		_check(prev_under.get("ok") == true, "underfunded visit previews: " + event_id)
+		var under_entry := _entry(prev_under, choice_id)
+		_check(not under_entry.is_empty() and under_entry.get("available") == false,
+			"underfunded choice unavailable: " + event_id)
+		_check(under_entry.get("fray") == {}
+			and int(under_entry.get("scraps")) == underfunded_scraps
+			and int(under_entry.get("scraps_delta")) == -price
+			and int(under_entry.get("fray_delta")) == fray_delta,
+			"underfunded choice quotes caller balance and empty fray: " + event_id)
+		_check(_entry(prev_under, "leave").get("available") == true,
+			"underfunded Leave stays available: " + event_id)
+		_check(svc_under.choose(choice_id, snap_under) == _refusal(40),
+			"underfunded choice refused: " + event_id)
+		_check(svc_under.is_valid() and not svc_under.is_claimed(),
+			"underfunded refusal leaves service valid and unclaimed: " + event_id)
+		_check(snap_under == before_under and record == record_snapshot,
+			"underfunded refusal mutates no snapshot or record: " + event_id)
+		_check(rng_guard.state == guard_state,
+			"underfunded refusal draws no RNG: " + event_id)
+		var leave_under_rec: Dictionary = svc_under.choose("leave", snap_under)
+		_check(leave_under_rec.get("ok") == true and leave_under_rec.get("choice_id") == "leave"
+			and int(leave_under_rec.get("candle")) == 40 and leave_under_rec.get("fray") == {},
+			"Leave succeeds after underfunded refusal on same visit: " + event_id)
+		_check(svc_under.is_claimed() and not svc_under.is_valid(),
+			"post-underfunded Leave latches once: " + event_id)
 
 
 func _funded_snapshot(gold: int, scraps: int) -> Dictionary:
