@@ -301,12 +301,35 @@ func _run() -> void:
 	_check(_selected_page(guide, 1), "D-pad release does not move a page")
 	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
 	_check(_selected_page(guide, 0), "left D-pad moves one page")
+	await _direction_pad(JOY_BUTTON_DPAD_LEFT, false)
 	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
 	_check(_selected_page(guide, 3), "left D-pad wraps to last page")
 	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
 	_check(_selected_page(guide, 0), "right D-pad wraps to first page")
+	# Shoulders wrap; repeated presses without releases are held, not new edges.
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(_selected_page(guide, 1), "right shoulder advances focused tab")
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(_selected_page(guide, 1), "held shoulder does not repeat")
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	_check(_selected_page(guide, 1), "shoulder release is inert")
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, true)
+	_check(_selected_page(guide, 0), "left shoulder moves back")
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, false)
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, true)
+	_check(_selected_page(guide, 3), "left shoulder wraps first to last")
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, false)
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	_check(_selected_page(guide, 0), "right shoulder wraps last to first")
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	await _direction_pad(JOY_BUTTON_DPAD_UP, true)
+	_check(_selected_page(guide, 0), "atlas-closed D-pad up does not navigate")
+	await _direction_pad(JOY_BUTTON_DPAD_UP, false)
+	await _direction_pad(JOY_BUTTON_Y, true)
+	_check(_selected_page(guide, 0), "unrelated controller button is inert")
+	await _direction_pad(JOY_BUTTON_Y, false)
 	_check(_state() == arrow_host and randi() == arrow_next_rng,
-		"all key and D-pad page turns leave seeded RNG, host state and signals untouched")
+		"page and controller actions preserve host, callbacks and RNG")
 	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
 	var focus_ring: Array[Button] = guide.tab_buttons.duplicate()
 	focus_ring.append(guide.atlas_button)
@@ -343,8 +366,42 @@ func _run() -> void:
 	_check(guide.page_index == atlas_page and guide._atlas_is_open()
 		and guide.part_atlas.is_visible_in_tree(),
 		"nested inspector does not yield guide pages to key or D-pad directions")
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, true)
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, false)
+	_check(guide.page_index == atlas_page, "shoulders cannot change page with nested atlas open")
 	var inspector := guide.part_atlas
 	if inspector != null and guide._atlas_is_open():
+		var ring := guide._atlas_focus_buttons()
+		_check(ring.size() > 7 and ring[0] == inspector.get_node("CloseButton")
+			and ring.has(inspector.get_node("CatalogPanel/OwnerFilter"))
+			and ring.has(inspector.get_node("CatalogPanel/SlotHead"))
+			and ring.has(inspector.get_node("DetailsPanel/TierI"))
+			and ring.has(inspector.get_node("DetailsPanel/TierIII")),
+			"live atlas ring has enabled Close, Owner, Slot, rows and Tiers")
+		var part_before := inspector.selected_part_id
+		var tier_before := inspector.selected_tier
+		var owner_before := inspector.selected_owner
+		for i in range(ring.size()):
+			await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+			_check(root.gui_get_focus_owner() == ring[(i + 1) % ring.size()],
+				"down cycles through existing enabled ring %d" % i)
+			await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
+			_check(root.gui_get_focus_owner() == ring[(i + 1) % ring.size()],
+				"held down does not repeat %d" % i)
+			await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
+		for i in range(ring.size()):
+			await _direction_pad(JOY_BUTTON_DPAD_UP, true)
+			_check(root.gui_get_focus_owner() == ring[(ring.size() - 1 - i) % ring.size()],
+				"up cycles through existing enabled ring %d" % i)
+			await _direction_pad(JOY_BUTTON_DPAD_UP, false)
+		await _direction_pad(JOY_BUTTON_Y, true)
+		await _direction_pad(JOY_BUTTON_Y, false)
+		_check(root.gui_get_focus_owner() == ring[0] and guide.page_index == atlas_page
+			and inspector.selected_part_id == part_before and inspector.selected_tier == tier_before
+			and inspector.selected_owner == owner_before,
+			"focus-only atlas traversal never selects owner, slot, part or tier")
 		_check(inspector.select_owner("warden") and inspector.select_part("warden_head_pot_helm_bonk"),
 			"live BaseScreen route can select authored Warden head patch")
 		await _frames()
@@ -407,6 +464,19 @@ func _run() -> void:
 		await _key(KEY_ENTER)
 		_check(guide._atlas_is_open() and inspector.is_visible_in_tree(),
 			"guide action reopens the atlas from keyboard")
+		await _direction_pad(JOY_BUTTON_B, true)
+		_check(not guide._atlas_is_open() and guide.is_open()
+			and root.gui_get_focus_owner() == guide.atlas_button
+			and inspector.selected_part_id.is_empty()
+			and inspector.get_node("DetailsPanel/PatchPreview").texture == null
+			and inspector.get_node("DetailsPanel/TierBorderPreview").texture == null,
+			"gamepad B closes only atlas and clears selection/previews")
+		await _direction_pad(JOY_BUTTON_B, true)
+		_check(guide.is_open() and root.gui_get_focus_owner() == guide.atlas_button,
+			"held B cannot close guide after closing nested atlas")
+		await _direction_pad(JOY_BUTTON_B, false)
+		await _key(KEY_ENTER)
+		_check(guide._atlas_is_open(), "atlas can reopen from restored Parts focus")
 		await _key(KEY_ESCAPE)
 		_check(not guide._atlas_is_open() and root.gui_get_focus_owner() == guide.atlas_button
 			and inspector.get_node("DetailsPanel/PatchPreview").texture == null,
@@ -450,8 +520,12 @@ func _run() -> void:
 	var closed_page := guide.page_index
 	await _direction_key(KEY_RIGHT, true)
 	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
+	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
+	await _direction_pad(JOY_BUTTON_B, true)
+	await _direction_pad(JOY_BUTTON_B, false)
 	_check(not guide.is_open() and guide.page_index == closed_page,
-		"inactive guide ignores pressed keyboard and D-pad input")
+		"inactive guide ignores keyboard, D-pad, shoulder and B events")
 	await _click(entry)
 	_check(guide.is_open(), "pointer reopens same mounted guide")
 	await _key(KEY_ESCAPE)
