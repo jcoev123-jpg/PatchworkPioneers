@@ -304,6 +304,27 @@ func _run() -> void:
 		picker = _picker(app)
 		_default(picker, app)
 		await _mouse(app.stitched_run_buttons[1])
+		# Legacy callers can change several controls and confirm in one event loop.
+		# The queued reflow must settle before the authenticated rank check.
+		await _mouse(village.set_out_button)
+		picker = _picker(app)
+		_default(picker, app)
+		picker.tiles["warden"].button_pressed = false
+		picker.tiles["rag_duelist"].button_pressed = true
+		var rapid_picks := ["seamstress", "tinker", "lantern_monk", "rag_duelist"]
+		var rapid_ranks := ["rag_duelist", "seamstress", "tinker", "lantern_monk"]
+		_check(picker.selected_ids() == rapid_picks and app.stitched_run_draft == rapid_picks
+			and picker.displayed_rank_ids() != rapid_ranks,
+			"rapid draft has a genuine pending visual reorder before confirmation")
+		app.stitched_run_buttons[0].pressed.emit()
+		var rapid_session: StitchedRunSession = app.stitched_run_session
+		var actual_ranks: Array = []
+		if rapid_session != null:
+			for hero in rapid_session.heroes:
+				actual_ranks.append(hero.id)
+		_check(rapid_session != null and rapid_session.picks == rapid_picks
+			and actual_ranks == rapid_ranks and app.stitched_run_intro != null,
+			"immediate Set out settles pending order and admits genuine preferred ranks")
 	app.free()
 	await process_frame
 	_finish()

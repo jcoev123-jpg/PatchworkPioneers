@@ -100,6 +100,13 @@ func _queue_tile_order() -> void:
 	_arrange_tiles.call_deferred()
 
 
+## Confirmation is a separate control event: finish only a genuinely queued reflow.
+## Never repair unsolicited tile movement, which must fail the App's rank guard.
+func settle_pending_tile_order() -> void:
+	if _reorder_pending:
+		_arrange_tiles()
+
+
 func _arrange_tiles() -> void:
 	_reorder_pending = false
 	var first: Array = _selected.duplicate()
