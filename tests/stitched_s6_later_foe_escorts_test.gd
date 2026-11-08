@@ -182,6 +182,13 @@ func _verify(run: Dictionary, kind: String, label: String) -> void:
 	config["run_rng"] = expected_rng
 	var control := StitchedRules.new()
 	var setup_error := control._setup(config)
+	# The session carries the run satchel into the battle after setup (spares a route's
+	# events/rewards picked up, then the battle's own opening spares, capped at 6).
+	var opening_spares := control.satchel()
+	control._satchel = (run.pre.get("satchel", []) as Array).duplicate(true)
+	for spare in opening_spares:
+		if control._satchel.size() < 6:
+			control._satchel.append(spare)
 	_check(setup_error.is_empty() and expected_rng.state == session.rng.state \
 		and control.state_snapshot() == session.battle.state_snapshot(),
 		label + " uses the exact expected selection and initiative RNG draws")

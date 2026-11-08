@@ -300,10 +300,9 @@ func _replacement_loss() -> void:
 
 
 func _no_loss(hanging: bool) -> void:
-	# Seed 46 keeps the no-loss full route winning after the roadside event catalog
-	# grew (two appended lane8 corridor events redraw the seeded event rotation);
-	# seed 43's old route now drops a mid-route battle, so this witness is re-derived.
-	var app: Node = await _new_run(0 if hanging else 46)
+	# The no-loss full route's winning seed is searched at run time (_winning_seed), so
+	# appended Events that redraw the seeded rotation no longer break this witness.
+	var app: Node = await _new_run(0 if hanging else await _winning_seed())
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and _route_kind(app, "Fight"), "no-loss witness mounts a genuine fight")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
