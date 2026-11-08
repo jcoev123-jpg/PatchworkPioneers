@@ -1530,6 +1530,39 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_seamstress_midnight_pressing_ham",
+      "title": "The Midnight Pressing Ham",
+      "description": "An enormous plum-cloth tailor's pressing ham rests on a hot iron cradle in a candlelit sewing alcove. The Seamstress lifts a loose scarlet seam with her giant needle as the cloth swells like a sleeping heart.",
+      "required_hero": "seamstress",
+      "choices": [
+        {"id": "reinforce_ham_seam", "text": "Sew the warm lining into stronger seams.", "outcome": {"gold": 0, "scraps": -2, "hp": 4, "max_hp": 2}},
+        {"id": "sell_ham_stuffing", "text": "Give up lasting stuffing for a purse of brass coins.", "outcome": {"gold": 26, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Cover the pressing ham and leave it warm.", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_knitting_gauge",
+      "title": "The Moonlit Knitting Gauge",
+      "description": "A wooden knitting gauge the size of a doorway hangs across the moonlit passage, each round hole strung with damp wool. The Yarn Ranger hooks a knitting-needle bow through the lowest loop and hears the thread sing.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        {"id": "buy_gauge_lining", "text": "Buy the thick wool lining and mend your seams.", "outcome": {"gold": -15, "scraps": 0, "hp": 5, "max_hp": 1}},
+        {"id": "unpick_gauge_knot", "text": "Unpick a lasting seam for bundles of spare yarn.", "outcome": {"gold": 0, "scraps": 3, "hp": 0, "max_hp": -1}},
+        {"id": "leave", "text": "Lower the bow and pass beneath the gauge.", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_button_golem_stair_carpet_roller",
+      "title": "The Stair Carpet Roller",
+      "description": "A great iron roller has pinned a faded velvet stair runner against the floorboards. The Button Golem grips the riveted axle in both round fists, exposing an old brass seam beneath the heavy cloth.",
+      "required_hero": "button_golem",
+      "choices": [
+        {"id": "pad_roller_axle", "text": "Pad the axle with spare thread and strengthen your seams.", "outcome": {"gold": 0, "scraps": -2, "hp": 3, "max_hp": 2}},
+        {"id": "pawn_brass_buttons", "text": "Part with lasting brass plating for found gold.", "outcome": {"gold": 27, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Ease the axle down and leave the carpet pinned.", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
     }
   ]
 }
