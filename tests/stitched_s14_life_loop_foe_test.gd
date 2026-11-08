@@ -19,6 +19,11 @@ func _initialize() -> void:
 	_foe_ticks()
 	_foe_cap()
 	_ally_control()
+	var first := _hanging_recovery_trial()
+	var replay := _hanging_recovery_trial()
+	_check(not first.is_empty() and first == replay,
+		"identical seeded authentic Life Loop injury and public pass replay has identical snapshots, turn state and RNG")
+	_lost_and_dead_exclusions()
 	_miss_and_refusals()
 	_missing_target_refusal()
 	_without_socket()
@@ -240,6 +245,19 @@ func _s14_disabled() -> void:
 	_check(battle.pass_turn().get("ok", false) and _to_turn(battle, str(foe.id))
 		and int(foe.hp) == wounded and int(foe.statuses.get("regen", 0)) == 2,
 		"S14-off second turn still does not tick unsupported regen")
+	var hero: Dictionary = battle._units["tinker"]
+	_check(not hero.is_empty() and int(hero.hp) > 0 and not hero.lost,
+		"precondition: S14-disabled Hanging negative has a real surviving ally")
+	if hero.is_empty():
+		return
+	hero.hp = 0
+	var door := battle._enter_hanging(hero)
+	_check(door.get("ok", false) and hero.hanging and not hero.lost,
+		"precondition: legacy damage-door marks the actual ally Hanging")
+	hero.statuses["regen"] = 2
+	_check(_to_turn(battle, str(hero.id)) and int(hero.hp) == 0 and hero.hanging
+		and int(hero.statuses.get("regen", 0)) == 2,
+		"S14-off Hanging ally neither recovers nor consumes unsupported Life Loop")
 
 
 func _missing_target_refusal() -> void:
@@ -270,3 +288,125 @@ func _missing_target_refusal() -> void:
 	_check(not refused.get("ok", true) and battle.state_snapshot() == before
 		and battle.rng_state() == before_rng and battle.current_actor_id() == "warden",
 		"legal-mask but absent foe target refuses without healing, spending a turn or RNG")
+
+
+## Two independent executions use the real S14 socket/signature and real turn queue.
+## The intervening injury uses the same damage/death-door code as battle hits.
+func _hanging_recovery_trial() -> Dictionary:
+	var battle := _battle(true, {"seamstress": {MENDING: [LOOP]}})
+	if battle == null or not _to_turn(battle, "seamstress"):
+		_check(false, "precondition: seeded Seamstress has an actionable socketed turn")
+		return {}
+	var ally: Dictionary = battle._units["warden"]
+	_check(ally.side == "hero" and not ally.lost and int(ally.hp) > 0
+		and int(ally.max_hp) >= 8 and not ally.parts.arms.torn and not ally.parts.legs.torn,
+		"precondition: genuine living Warden has two intact death-door limbs")
+	if int(ally.max_hp) < 8 or bool(ally.lost):
+		return {}
+	ally.hp = int(ally.max_hp) - 7
+	var heal := battle.use_ability(MENDING, int(ally.rank))
+	var results: Array = heal.get("results", [])
+	var socket_receipt := false
+	if results.size() == 1:
+		for effect in results[0].get("statuses", []):
+			if effect.get("status") == "regen" and effect.get("duration") == 2 \
+					and effect.get("patch") == LOOP:
+				socket_receipt = true
+	_check(heal.get("ok", false) and results.size() == 1 and socket_receipt
+		and results[0].get("target") == ally.id and results[0].get("hit", false)
+		and int(ally.statuses.get("regen", 0)) == 2,
+		"real Mending Knot socket attaches exactly two Life Loop ticks to the ally")
+	_check(battle.current_actor_id() != str(ally.id),
+		"precondition: no Warden turn has started between socket and the injury")
+	if not socket_receipt or int(ally.statuses.get("regen", 0)) != 2 \
+			or battle.current_actor_id() == str(ally.id):
+		return {}
+	var trace := [{"snapshot": battle.state_snapshot(), "rng": battle.rng_state(),
+		"turn": battle.current_actor_id()}]
+	var injury := {}
+	var inflicted := int(ally.hp)
+	_check(inflicted > 0, "precondition: authentic damage will take a living ally to zero")
+	if inflicted <= 0:
+		return {}
+	battle._damage_target(ally, inflicted, injury)
+	var door: Dictionary = injury.get("death_door", {})
+	var tear: Dictionary = door.get("tear", {})
+	var torn_slot := str(tear.get("slot", ""))
+	_check(door.get("ok", false) and int(door.get("hits", 0)) == 1
+		and not door.get("lost", true) and (torn_slot == "arms" or torn_slot == "legs")
+		and bool(ally.hanging) and not bool(ally.lost) and int(ally.hp) == 0
+		and int(ally.death_hits) == 1 and int(ally.statuses.get("regen", 0)) == 2,
+		"seeded genuine first S14 damaging death-door hit leaves a non-head torn Hanging ally with both ticks")
+	if torn_slot != "arms" and torn_slot != "legs":
+		return {}
+	_check(bool(ally.parts[torn_slot].torn), "actual death-door injury tears the witnessed equipped limb")
+	var torn_id := str(ally.parts[torn_slot].id)
+	trace.append({"snapshot": battle.state_snapshot(), "rng": battle.rng_state(),
+		"turn": battle.current_actor_id()})
+	var reached := _to_turn(battle, str(ally.id))
+	_check(reached, "precondition: Hanging ally's own next turn remains reachable by public passes")
+	if not reached:
+		return {}
+	_check(int(ally.hp) == 2 and not ally.hanging and not ally.lost
+		and int(ally.death_hits) == 0 and int(ally.statuses.get("regen", 0)) == 1,
+		"first natural Hanging recovery heals exactly two, clears Hanging and death hits, consumes one tick")
+	_check(ally.parts.has(torn_slot) and bool(ally.parts[torn_slot].torn)
+		and str(ally.parts[torn_slot].id) == torn_id,
+		"recovery does not repair or swap the originally torn equipped limb")
+	trace.append({"snapshot": battle.state_snapshot(), "rng": battle.rng_state(),
+		"turn": battle.current_actor_id()})
+	reached = battle.pass_turn().get("ok", false) and _to_turn(battle, str(ally.id))
+	_check(reached, "precondition: public passes reach the recovered ally's second natural turn")
+	if not reached:
+		return {}
+	_check(int(ally.hp) == 4 and not ally.statuses.has("regen") and int(ally.death_hits) == 0
+		and bool(ally.parts[torn_slot].torn),
+		"second natural tick heals exactly two and expires without mending the tear")
+	trace.append({"snapshot": battle.state_snapshot(), "rng": battle.rng_state(),
+		"turn": battle.current_actor_id()})
+	reached = battle.pass_turn().get("ok", false) and _to_turn(battle, str(ally.id))
+	_check(reached, "precondition: public passes reach a third post-expiry ally turn")
+	if not reached:
+		return {}
+	_check(int(ally.hp) == 4 and not ally.statuses.has("regen")
+		and bool(ally.parts[torn_slot].torn),
+		"expired Life Loop cannot heal again or repair the torn limb")
+	trace.append({"snapshot": battle.state_snapshot(), "rng": battle.rng_state(),
+		"turn": battle.current_actor_id()})
+	return {"trace": trace, "limb": torn_slot, "part": torn_id}
+
+
+func _lost_and_dead_exclusions() -> void:
+	var battle := _battle(true)
+	if battle == null:
+		return
+	var hero: Dictionary = battle._units["tinker"]
+	var foe: Dictionary = battle._foe_at(3)
+	_check(not hero.is_empty() and not foe.is_empty() and int(foe.hp) > 0,
+		"precondition: distinct real ally and living foe are available for negative exclusions")
+	if hero.is_empty() or foe.is_empty():
+		return
+	var lost_receipt := battle._lose_hero(hero)
+	var kill_receipt := {}
+	battle._damage_target(foe, int(foe.hp), kill_receipt)
+	_check(lost_receipt.get("ok", false) and hero.lost and not hero.hanging
+		and bool(foe.dead) and kill_receipt.has("heap"),
+		"genuine LOST and killed-foe mechanics establish permanently unavailable recipients")
+	if not hero.lost or not foe.dead:
+		return
+	# An externally carried/stale status must not bypass the death gates.
+	hero.statuses["regen"] = 2
+	foe.statuses["regen"] = 2
+	var start_round := battle.round_number()
+	var passes := 0
+	while battle.round_number() < start_round + 2 and passes < 40 and not battle.is_over():
+		if not battle.pass_turn().get("ok", false):
+			break
+		passes += 1
+	_check(battle.round_number() >= start_round + 2 and passes > 0,
+		"precondition: public passes advance multiple genuine rounds past both excluded units")
+	_check(hero.lost and not hero.hanging and int(hero.hp) == 0
+		and int(hero.statuses.get("regen", 0)) == 2,
+		"LOST doll cannot be revived or consume forged Life Loop duration")
+	_check(foe.dead and int(foe.hp) == 0 and int(foe.statuses.get("regen", 0)) == 2,
+		"dead foe cannot be revived or consume forged Life Loop duration")
