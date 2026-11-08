@@ -23,7 +23,7 @@ const ABILITY_KINDS := ["melee", "ranged", "heal", "guard", "buff", "debuff", "m
 const TARGET_SIDES := ["enemy", "ally", "self"]
 const EFFECT_KEYS := [
 	"bleed", "weak", "exposed", "tangled", "stun", "mark", "thorns", "riposte", "blind",
-	"guard", "heal", "fray", "snip", "push", "pull", "tear", "dodge", "duration",
+	"guard", "heal", "fray", "snip", "push", "pull", "tear", "dodge", "duration", "rot",
 ]
 const MOVE_POSES := ["attack", "attack2", "attack3", "attack4", "guard", "skill"]
 const MIN_TIER := 1

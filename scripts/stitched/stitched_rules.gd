@@ -46,6 +46,16 @@ const SATCHEL_CAP := 6
 const FRAY_MAX := 200
 const FRAY_RESOLVE := 100
 const FRAY_RECOVER := 50
+## S15 Deeper Seams: a foe may resist what a doll's hit would put on it (one roll per
+## effect, only when the foe has that resist). Kits pierce nothing; a sewn patch pierces
+## by its rarity and gold always lands. Wren's own hand actions never roll resist.
+const RESIST_KEYS := ["stun", "bleed", "rot", "move", "debuff"]
+const RESIST_MAX := 90
+const RESIST_DEBUFFS := ["mark", "blind", "weak", "exposed", "tangled"]
+const PATCH_PIERCE := {"cotton": 0, "wool": 15, "silk": 30, "gold": 100}
+## Rot (mildew): each of the unit's turns deals ROT_TICK ignoring PROT, then counts down;
+## heals on a rotting unit mend half (rounded down).
+const ROT_TICK := 2
 const WALK_MIMIC_ID := "extra_thread_shadow"
 const COUNTDOWN_KEYS := [
 	"weak", "exposed", "tangled", "mark", "thorns", "riposte", "stun_resist", "guard",
@@ -1170,6 +1180,16 @@ func _build_foe(entry: Variant, rank: int) -> Dictionary:
 		if value < 0:
 			return {"ok": false, "error": "foe " + unit_id + " needs a nonnegative " + key, "unit": {}}
 		stats[key] = value
+	var raw_resist: Variant = entry.get("resist", {})
+	if not raw_resist is Dictionary:
+		return {"ok": false, "error": "foe " + unit_id + " resist must be a dictionary", "unit": {}}
+	var resist := {}
+	for key in raw_resist:
+		var amount := _nonnegative_int(raw_resist[key])
+		if not key is String or not key in RESIST_KEYS or amount < 0 or amount > RESIST_MAX:
+			return {"ok": false, "error": "foe " + unit_id + " has an illegal resist: " + str(key), "unit": {}}
+		if amount > 0:
+			resist[key] = amount
 	var is_boss: Variant = entry.get("is_boss", false)
 	if not is_boss is bool:
 		return {"ok": false, "error": "foe " + unit_id + " is_boss must be a boolean", "unit": {}}
@@ -1222,6 +1242,7 @@ func _build_foe(entry: Variant, rank: int) -> Dictionary:
 		"dmg_bonus": 0,
 		"fray": 0,
 		"statuses": {},
+		"resist": resist,
 		"parts": {},
 		"abilities": abilities,
 		"is_boss": bool(is_boss),
@@ -1435,7 +1456,7 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 		str(unit.side) == "hero" and int(unit.hp) == 0 and bool(unit.hanging)
 	))
 	if _s14 and regen_eligible and int(statuses.get("regen", 0)) > 0:
-		unit.hp = mini(int(unit.max_hp), int(unit.hp) + 2)
+		unit.hp = mini(int(unit.max_hp), int(unit.hp) + rot_heal(unit, 2))
 		if str(unit.side) == "hero":
 			if int(unit.hp) > 0:
 				unit.hanging = false
@@ -1456,6 +1477,17 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			statuses.erase("bleed")
 		if int(unit["hp"]) > 0:
 			unit["hp"] = maxi(0, int(unit["hp"]) - bleed)
+			if int(unit["hp"]) == 0:
+				_begin_hanging_or_death(unit)
+				return true
+	# S15 Rot: a steady mildew tick after Bleed, ignoring PROT, one turn used per tick.
+	var rot := int(statuses.get("rot", 0))
+	if rot > 0:
+		statuses["rot"] = rot - 1
+		if int(statuses["rot"]) <= 0:
+			statuses.erase("rot")
+		if int(unit["hp"]) > 0:
+			unit["hp"] = maxi(0, int(unit["hp"]) - ROT_TICK)
 			if int(unit["hp"]) == 0:
 				_begin_hanging_or_death(unit)
 				return true
@@ -1685,7 +1717,7 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 			target.statuses["regen"] = maxi(int(target.statuses.get("regen", 0)), amount)
 			receipt.statuses.append({"status": "regen", "duration": amount, "patch": patch_id})
 		elif effect == "cleanse":
-			for key in ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stun"]:
+			for key in ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stun", "rot"]:
 				target.statuses.erase(key)
 			receipt.statuses.append({"status": "cleanse", "patch": patch_id})
 		elif effect == "steal":
@@ -1711,7 +1743,7 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 			# heal effects or resurrect the already killed (gated above).
 			if target.side in ["hero", "foe"]:
 				var before := int(target.hp)
-				target.hp = mini(int(target.max_hp), before + amount)
+				target.hp = mini(int(target.max_hp), before + rot_heal(target, amount))
 				var healed := int(target.hp) - before
 				if target.side == "hero" and int(target.hp) > 0:
 					target.hanging = false
@@ -1719,7 +1751,8 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 				receipt.statuses.append({"status": "heal", "amount": healed, "patch": patch_id})
 				receipt.target_hp = int(target.hp)
 		else:
-			_apply_effects(actor, target, {"effects": {effect: amount}}, receipt)
+			_apply_effects(actor, target, {"effects": {effect: amount},
+				"pierce": int(PATCH_PIERCE.get(str(patch.rarity), 0))}, receipt)
 		receipt["patches"] = receipt.get("patches", []) + [patch_id]
 		# Ordered sockets stop the moment a patch made the actual target dead or
 		# LOST: no later patch in this same signature may heal, mark or follow up
@@ -1873,13 +1906,14 @@ func _apply_effects(
 			var direction := 1 if key == "push" else -1
 			if str(target["side"]) == "hero":
 				receipt["shift"] = _shift(target, direction)
-			elif _s14 and str(target["side"]) == "foe":
+			elif _s14 and str(target["side"]) == "foe" \
+					and not _resisted(actor, target, key, ability, receipt):
 				receipt["shift"] = _gift_shift(target, direction)
 			continue
 		if key == "heal":
 			if str(target["side"]) == "hero" and not bool(target["lost"]):
 				var before := int(target["hp"])
-				target["hp"] = mini(int(target["max_hp"]), before + value)
+				target["hp"] = mini(int(target["max_hp"]), before + rot_heal(target, value))
 				if int(target["hp"]) > 0:
 					target["hanging"] = false
 					if _s14:
@@ -1903,8 +1937,42 @@ func _apply_effects(
 		if key == "stun" and int(target["statuses"].get("stun_resist", 0)) > 0:
 			receipt["statuses"].append({"status": "stun", "refused": true})
 			continue
+		if _resisted(actor, target, key, ability, receipt):
+			continue
 		target["statuses"][key] = maxi(int(target["statuses"].get(key, 0)), value)
 		receipt["statuses"].append({"status": key, "duration": value})
+
+
+## S15: true when the struck foe shrugs off this effect. Only a doll's effect on a living
+## foe with a matching resist rolls (so foes without resists spend no draw); the ability's
+## "pierce" (a sewn patch's rarity) is taken off first and gold always lands.
+func _resisted(
+	actor: Dictionary, target: Dictionary, key: String, ability: Dictionary, receipt: Dictionary
+) -> bool:
+	if str(actor.get("side", "")) != "hero" or str(target.get("side", "")) != "foe":
+		return false
+	var group := key
+	if key == "push" or key == "pull":
+		group = "move"
+	elif key in RESIST_DEBUFFS:
+		group = "debuff"
+	elif not key in RESIST_KEYS:
+		return false
+	var resist := int(target.get("resist", {}).get(group, 0)) - int(ability.get("pierce", 0))
+	if resist <= 0:
+		return false
+	var roll := _rng.randi_range(1, 100)
+	if roll > resist:
+		return false
+	receipt["statuses"].append({"status": key, "resisted": true, "roll": roll, "resist": resist})
+	return true
+
+
+## S15: mildew halves every heal a rotting unit receives (rounded down).
+static func rot_heal(unit: Dictionary, amount: int) -> int:
+	if int(unit.get("statuses", {}).get("rot", 0)) > 0:
+		return amount / 2
+	return amount
 
 
 func _damage_target(target: Dictionary, damage: int, receipt: Dictionary) -> void:

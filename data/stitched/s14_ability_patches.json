@@ -78,6 +78,13 @@
       "amount": 1
     },
     {
+      "id": "silk_mildew_spore",
+      "name": "Mildew Spore",
+      "rarity": "silk",
+      "effect": "rot",
+      "amount": 3
+    },
+    {
       "id": "gold_hungry_button",
       "name": "Hungry Button",
       "rarity": "gold",

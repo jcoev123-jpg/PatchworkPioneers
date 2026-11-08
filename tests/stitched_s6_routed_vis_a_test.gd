@@ -1030,14 +1030,18 @@ func _run() -> void:
 	# retunes a boss or adds a foe can turn one fixed seed's route into a real defeat. A seed
 	# whose route ends in a genuine defeat is not a witness, so its route checks are dropped and
 	# the next seed is tried; the kept run must pass every check and win.
+	# S15 (11-09) made deeper floors bite, so the search window is wider.
 	var win_app: Node = null
-	for seed_number in range(43, 51):
+	var last_seed := 74
+	for seed_number in range(43, last_seed + 1):
 		var kept := failures.size()
 		win_app = await _new_run(seed_number)
 		if win_app.stitched_run_session == null:
 			break
 		_complete_route(win_app)
-		if win_app.stitched_run_session.phase != "defeat" or seed_number == 50:
+		# A lost route battle stops _complete_route before the session settles, so the
+		# witness test is a settled victory, not merely "not defeat".
+		if win_app.stitched_run_session.phase == "victory" or seed_number == last_seed:
 			break
 		failures.resize(kept)
 		win_app.free()
