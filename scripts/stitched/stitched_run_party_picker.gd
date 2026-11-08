@@ -12,6 +12,7 @@ const AMBER := Color("#efbb69")
 
 var tiles: Dictionary = {}
 var _selected: Array = []
+var _reorder_pending := false
 
 
 func _init() -> void:
@@ -70,10 +71,49 @@ func build(default_picks: Array) -> void:
 		tile.set_pressed_no_signal(id in _selected)
 		_update_name(id)
 		tile.toggled.connect(_on_tile_toggled.bind(id))
+	_arrange_tiles()
 
 
 func selected_ids() -> Array:
 	return _selected.duplicate()
+
+
+## Actual top two rows, not click order. Incomplete drafts have no rank receipt.
+func displayed_rank_ids() -> Array:
+	if _selected.size() != MAX_PICKS or get_child_count() != tiles.size():
+		return []
+	var ids: Array = []
+	for index in range(MAX_PICKS):
+		var tile := get_child(index) as Button
+		if tile == null or tile.get_parent() != self:
+			return []
+		ids.append(tile.get_meta("hero_id", ""))
+	return ids
+
+
+## Move the original controls after input dispatch, never while a held pointer/Space
+## event is still being delivered to a tile that is changing its grid position.
+func _queue_tile_order() -> void:
+	if _reorder_pending:
+		return
+	_reorder_pending = true
+	_arrange_tiles.call_deferred()
+
+
+func _arrange_tiles() -> void:
+	_reorder_pending = false
+	var first: Array = _selected.duplicate()
+	if first.size() == MAX_PICKS:
+		var receipt := StitchedPartyAdmission.admit(first)
+		if receipt.get("ok") == true:
+			first = receipt["hero_ids"].duplicate()
+	for id in StitchedPartyAdmission.HERO_IDS:
+		if not id in _selected:
+			first.append(id)
+	for index in first.size():
+		var tile: Button = tiles.get(first[index])
+		if is_instance_valid(tile) and tile.get_parent() == self and tile.get_index() != index:
+			move_child(tile, index)
 
 
 func tiles_match_draft() -> bool:
@@ -101,6 +141,7 @@ func _on_tile_toggled(pressed: bool, id: String) -> void:
 			return
 		_selected.erase(id)
 	_update_name(id)
+	_queue_tile_order()
 	draft_changed.emit(_selected.duplicate())
 
 

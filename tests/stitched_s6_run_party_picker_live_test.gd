@@ -59,12 +59,53 @@ func _picker(app: Node) -> StitchedRunPartyPicker:
 	return picker
 
 
+## Examine the real GridContainer children in row-major display order, not tiles' dictionary.
+func _visual_tile_ids(picker: StitchedRunPartyPicker) -> Array:
+	var result: Array = []
+	for child in picker.get_children():
+		if child is Button:
+			result.append(child.get_meta("hero_id", ""))
+	return result
+
+
+func _check_order(picker: StitchedRunPartyPicker, first: Array, rest: Array, context: String) -> void:
+	if picker == null:
+		return
+	var expected := first + rest
+	var actual := _visual_tile_ids(picker)
+	_check(picker.columns == 2 and actual == expected
+		and picker.get_child_count() == StitchedPartyAdmission.HERO_IDS.size(),
+		context + ": exactly the original two-column tiles appear selected-first (actual %s, expected %s)" % [actual, expected])
+	_check(picker.displayed_rank_ids() == (first if first.size() == 4 else []),
+		context + ": only a complete admission exposes four pictured ranks")
+	for i in range(mini(expected.size(), picker.get_child_count())):
+		var child := picker.get_child(i) as Button
+		_check(child == picker.tiles.get(expected[i]) and child.name == "HeroTile_" + str(expected[i]),
+			context + ": original button instance occupies visual slot %d" % i)
+	for row in range(picker.get_child_count() / 2):
+		var left := picker.get_child(row * 2) as Button
+		var right := picker.get_child(row * 2 + 1) as Button
+		var a := left.get_global_rect()
+		var b := right.get_global_rect()
+		_check(a.end.x <= b.position.x and absf(a.position.y - b.position.y) < 1.0,
+			context + ": left/right row-major geometry %d" % row)
+		if row > 0:
+			var above := (picker.get_child((row - 1) * 2) as Button).get_global_rect()
+			_check(above.end.y <= a.position.y, context + ": row %d stays below prior row" % row)
+
+
 func _default(picker: StitchedRunPartyPicker, app: Node) -> void:
 	if picker == null:
 		return
 	_check(picker.tiles.size() == StitchedPartyAdmission.HERO_IDS.size() and picker.selected_ids() == StitchedRunSession.DEFAULT_PICKS
 		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS
 		and picker.tiles_match_draft(), "eight tiles, four authored defaults, consistent checked draft")
+	var admission := StitchedPartyAdmission.admit(StitchedRunSession.DEFAULT_PICKS)
+	_check(admission.get("ok") == true and admission.get("hero_ids") == StitchedRunSession.DEFAULT_PICKS,
+		"authored defaults have a real front-to-back admission receipt")
+	_check_order(picker, admission.get("hero_ids", []),
+		["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
+		"mounted default New Run")
 	for id in StitchedPartyAdmission.HERO_IDS:
 		var tile: Button = picker.tiles.get(id)
 		var art: TextureRect = tile.get_node("Portrait") if tile != null else null
@@ -107,6 +148,8 @@ func _run() -> void:
 		return
 	await process_frame
 	_default(picker, app)
+	var original_tiles: Dictionary = picker.tiles.duplicate()
+	var wallet_before := [app.session_gold, app.run_scraps]
 	var reachable: Dictionary = {}
 	for step in range(StitchedPartyAdmission.HERO_IDS.size() + 3):
 		await _key(KEY_TAB)
@@ -136,14 +179,22 @@ func _run() -> void:
 		and picker.selected_ids() == StitchedRunSession.DEFAULT_PICKS
 		and app.stitched_run_draft == StitchedRunSession.DEFAULT_PICKS,
 		"mouse cannot add a fifth doll while four are chosen")
+	_check_order(picker, StitchedRunSession.DEFAULT_PICKS,
+		["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
+		"rejected fifth pick")
 	picker.tiles["warden"].grab_focus()
 	await _key(KEY_SPACE)
+	await process_frame  # Idle-deferred layout moves only after Space has been released.
 	_check(not picker.tiles["warden"].button_pressed
 		and picker.selected_ids() == ["seamstress", "tinker", "lantern_monk"]
 		and app.stitched_run_draft == picker.selected_ids()
 		and app.stitched_run_buttons[0].disabled
 		and app.stitched_run_buttons[0].focus_mode == Control.FOCUS_NONE,
 		"physical keyboard removes Warden and disables/unfocuses incomplete Set out")
+	_check(picker.tiles["warden"].has_focus(), "keyboard Space preserves focused tile across reflow")
+	_check_order(picker, ["seamstress", "tinker", "lantern_monk"],
+		["warden", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
+		"incomplete draft has pick order but no invented rank receipt")
 	# A directly emitted disabled action is also fail-closed, not only a pointer click.
 	app.stitched_run_buttons[0].pressed.emit()
 	_check(app.stitched_run_session == null and app.run_rng == null,
@@ -155,21 +206,49 @@ func _run() -> void:
 		and not app.stitched_run_buttons[0].disabled
 		and app.stitched_run_buttons[0].focus_mode == Control.FOCUS_ALL,
 		"one replacement restores exactly four and enables Set out")
+	var expected_ranks := ["rag_duelist", "seamstress", "tinker", "lantern_monk"]
+	_check(picker.tiles["rag_duelist"].has_focus(),
+		"mouse replacement retains Rag Duelist keyboard focus across grid reorder")
+	_check_order(picker, expected_ranks,
+		["warden", "scarecrow", "yarn_ranger", "button_golem"],
+		"alternate admitted order visibly differs from the click-order draft")
+	_check(picker.selected_ids() != picker.displayed_rank_ids(),
+		"visible rank order is intentionally distinct from the four-ID draft")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(picker.tiles[id] == original_tiles[id]
+			and picker.tiles[id].get_node("Portrait").get_meta("art_path")
+				== "res://assets/paper/heroes/" + id + ".png",
+			"rank reflow retains the exact original focusable picture control for " + id)
 	await _mouse(picker.tiles["scarecrow"])
 	_check(not picker.tiles["scarecrow"].button_pressed and picker.selected_ids() == expected_picks,
 		"a second fifth choice still does nothing")
+	_check_order(picker, expected_ranks,
+		["warden", "scarecrow", "yarn_ranger", "button_golem"],
+		"another rejected fifth pick never moves tiles")
 	_check(app.stitched_run_session == null and app.run_rng == null and app.run_map == null
-		and app.deck == null and not FileAccess.file_exists(SAVE)
-		and randi() == expected_global,
+		and app.deck == null and app.run_deck.is_empty()
+		and [app.session_gold, app.run_scraps] == wallet_before
+		and not FileAccess.file_exists(SAVE) and randi() == expected_global,
 		"drafting and fifth-choice refusals spend no RNG and allocate no run/save/cards")
 	app.stitched_run_draft.append("seamstress")
 	app.stitched_run_buttons[0].pressed.emit()
 	_check(app.stitched_run_session == null and app.run_rng == null,
 		"duplicate overfull stale draft cannot publish a session")
 	app.stitched_run_draft = expected_picks.duplicate()
+	# A stale/mismatched visible position must not authenticate a new session.
+	picker.move_child(picker.tiles["rag_duelist"], 7)
+	app.stitched_run_buttons[0].pressed.emit()
+	_check(app.stitched_run_session == null and app.run_rng == null,
+		"confirmation rejects an internally tampered on-screen rank order")
+	picker.move_child(picker.tiles["rag_duelist"], 0)
+	_check_order(picker, expected_ranks,
+		["warden", "scarecrow", "yarn_ranger", "button_golem"],
+		"restoring the genuine rank display re-enables authentic admission")
 	var expected_admission := StitchedPartyAdmission.admit(expected_picks)
-	_check(expected_admission.get("ok") == true and expected_admission.hero_ids.size() == 4,
-		"canonical four-doll admission provides a real expected rank receipt")
+	_check(expected_admission.get("ok") == true
+		and expected_admission.hero_ids == expected_ranks
+		and picker.displayed_rank_ids() == expected_admission.hero_ids,
+		"canonical four-doll admission equals all four actual pictured ranks")
 	await _mouse(app.stitched_run_buttons[0])
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and session.is_consistent() and app.stitched_run_intro != null,
@@ -204,8 +283,9 @@ func _run() -> void:
 	app.stitched_run_buttons[1].grab_focus()
 	await _key(KEY_ENTER)
 	_check(app.title_view.is_visible_in_tree() and app.start_button.has_focus()
-		and app.stitched_run_session == null and app.run_rng == null,
-		"keyboard Cancel restores original focused title with no run")
+		and app.stitched_run_session == null and app.run_rng == null
+		and [app.session_gold, app.run_scraps] == wallet_before,
+		"keyboard Cancel restores original focused title with no run or wallet spend")
 	await _mouse(app.base_button)
 	var village: BaseScreen = app.base_screen
 	_check(village != null and village.is_visible_in_tree() and village.has_open_village(),
@@ -217,7 +297,8 @@ func _run() -> void:
 		await _mouse(app.stitched_run_buttons[1])
 		_check(village.is_visible_in_tree() and village.set_out_button.has_focus()
 			and village.has_open_village() and app.stitched_run_session == null
-			and app.run_rng == null and app.deck == null and not FileAccess.file_exists(SAVE),
+			and app.run_rng == null and app.deck == null and not FileAccess.file_exists(SAVE)
+			and [app.session_gold, app.run_scraps] == wallet_before,
 			"Wren-room Cancel returns focus and original browseable bedroom, without save or spend")
 		await _mouse(village.set_out_button)
 		picker = _picker(app)
