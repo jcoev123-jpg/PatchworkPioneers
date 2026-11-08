@@ -1581,10 +1581,11 @@ func _resolve_ability(
 	var original_foes: Array = []
 	var chain_enabled := false
 	if _s14 and str(actor.side) == "hero" and str(ability.target_side) == "enemy":
-		for rank in range(MIN_RANK, MAX_RANK + 1):
-			var foe := _foe_at(rank)
-			if not foe.is_empty():
-				original_foes.append({"id": str(foe.id), "rank": rank})
+		# Include fallen foes in the original line-up. A dead successor still
+		# occupies its historical place in the chain: never jump past that
+		# link to a later foe just because the successor left a scrap heap.
+		for foe in _units_of_side("foe"):
+			original_foes.append({"id": str(foe.id), "rank": int(foe.rank)})
 		var attached: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
 		var catalog := StitchedS14Abilities.patches()
 		for patch_id in attached:
@@ -1614,24 +1615,32 @@ func _resolve_ability(
 			if str(entry.id) == chain_anchor:
 				anchor_rank = int(entry.rank)
 				break
+		# Choose the one documented successor by its original entry: the first
+		# foe originally behind the anchor whose original rank the mask allows.
+		var successor_id := ""
 		for entry in original_foes:
 			var original_rank := int(entry.rank)
 			var next_id := str(entry.id)
 			if original_rank <= anchor_rank or primary_ids.has(next_id) \
 					or not StitchedParts.ranks_allowed(int(ability.target_mask), original_rank):
 				continue
-			var successor: Dictionary = _units.get(next_id, {})
+			successor_id = next_id
+			break
+		# Attempt only that one foe: a dead, moved or vanished successor ends the
+		# chain without consuming another hit roll or falling through to a
+		# different foe behind it.
+		if not successor_id.is_empty():
+			var successor: Dictionary = _units.get(successor_id, {})
 			if not successor.is_empty() and not bool(successor.dead) and int(successor.hp) > 0 \
 					and str(successor.side) == "foe" \
 					and StitchedParts.ranks_allowed(int(ability.target_mask), int(successor.rank)):
 				var current: Dictionary = _foe_at(int(successor.rank))
-				if not current.is_empty() and str(current.id) == next_id:
+				if not current.is_empty() and str(current.id) == successor_id:
 					var chained := _resolve_single(actor, ability, successor)
 					chained["chained"] = true
 					results.append(chained)
 					if chained.hit:
 						_s14_apply_patches(actor, ability, chained)
-			break
 	var receipt := {
 		"ok": true,
 		"action": "ability",
