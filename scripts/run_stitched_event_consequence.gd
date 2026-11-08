@@ -10,7 +10,7 @@ extends RefCounted
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
 ##      "min_fray": 1..200, "required_candle_band": "bright"|...,
 ##      "required_candle_bands": ["dark", "snuffed"]|..., "fear": int,
-##      "min_active_heroes": 1..4}
+##      "min_active_heroes": 1..4, "require_fray_or_fear": true}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -37,6 +37,12 @@ extends RefCounted
 ## preview() and claimable in choose() iff the opening snapshot candle matches a band
 ## in that set. An event choice cannot specify both `required_candle_band` and
 ## `required_candle_bands`.
+## `require_fray_or_fear` is an optional native boolean admission gate on
+## `stitched_effect` equal to true. Legal only on target: "party" with strictly
+## negative native integer fray and fear deltas. Preview and choose admit the
+## choice iff the snapshot provides valid wren_fear (0..100), at least one active
+## non-LOST recipient is present, and either at least one active non-LOST doll has
+## fray >= 1 or wren_fear >= 1.
 ## `scraps`, `gold`, `part`, `hp`, `fear`,
 ## `require_full_candle` and `require_candle_room` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
@@ -254,6 +260,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if not _meets_min_fray(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _meets_min_active_heroes(base_state, parsed_effect):
+		return _rejection(base_candle)
+	if not _meets_require_fray_or_fear(base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _can_afford_candle(base_candle, parsed_effect):
 		return _rejection(base_candle)
@@ -676,6 +684,31 @@ func _meets_min_active_heroes(base_state: Dictionary, parsed_effect: Dictionary)
 	return _active_hero_count(base_state) >= min_required
 
 
+## Shared fray-or-Wren-fear admission gate for preview and commit when
+## `require_fray_or_fear: true` is present on `stitched_effect`.
+## Legal only on party target with strictly negative fray and fear deltas.
+## Admits iff the snapshot provides a valid wren_fear, at least one active
+## non-LOST doll is present, and either any active non-LOST doll has fray >= 1
+## or wren_fear >= 1.
+func _meets_require_fray_or_fear(base_state: Dictionary, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("has_require_fray_or_fear", false):
+		return true
+	if not bool(base_state.get("wren_fear_valid", false)):
+		return false
+	var wren_fear: int = int(base_state.get("wren_fear", 0))
+	var active_count := 0
+	var has_active_fray := false
+	var party: Array = base_state.get("party", [])
+	for hero in party:
+		if not bool(hero.get("lost", false)):
+			active_count += 1
+			if int(hero.get("fray", 0)) >= 1:
+				has_active_fray = true
+	if active_count < 1:
+		return false
+	return has_active_fray or (wren_fear >= 1)
+
+
 ## Shared party-scraps arithmetic for preview and commit: requires a valid
 ## snapshot scraps balance, refuses debits below 0, and refuses positive deltas
 ## that would exceed signed 64-bit MAX_INT.
@@ -788,6 +821,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if not _meets_min_fray(base_state, parsed_effect):
 		return entry
 	if not _meets_min_active_heroes(base_state, parsed_effect):
+		return entry
+	if not _meets_require_fray_or_fear(base_state, parsed_effect):
 		return entry
 	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
 		return entry
@@ -1061,9 +1096,12 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_required_candle_bands: bool = effect.has("required_candle_bands")
 	var has_fear: bool = effect.has("fear")
 	var has_min_active_heroes: bool = effect.has("min_active_heroes")
+	var has_require_fray_or_fear: bool = effect.has("require_fray_or_fear")
 	if has_required_candle_band and has_required_candle_bands:
 		return {"ok": false}
 	if has_require_full_candle and has_require_candle_room:
+		return {"ok": false}
+	if has_min_fray and has_require_fray_or_fear:
 		return {"ok": false}
 	var optional_keys: int = (
 		(1 if has_scraps else 0)
@@ -1078,6 +1116,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_required_candle_bands else 0)
 		+ (1 if has_fear else 0)
 		+ (1 if has_min_active_heroes else 0)
+		+ (1 if has_require_fray_or_fear else 0)
 	)
 	var hero_id := ""
 	if target == TARGET_PARTY:
@@ -1116,6 +1155,16 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if typeof(raw_require_candle_room) != TYPE_BOOL or raw_require_candle_room != true:
 			return {"ok": false}
 		if candle_delta <= 0:
+			return {"ok": false}
+	if has_require_fray_or_fear:
+		var raw_rfof: Variant = effect.get("require_fray_or_fear")
+		if typeof(raw_rfof) != TYPE_BOOL or raw_rfof != true:
+			return {"ok": false}
+		if target != TARGET_PARTY:
+			return {"ok": false}
+		if int(fray_read["value"]) >= 0:
+			return {"ok": false}
+		if not has_fear:
 			return {"ok": false}
 	var required_candle_band := ""
 	if has_required_candle_band:
@@ -1166,6 +1215,8 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"required_candle_bands": required_candle_bands,
 		"has_fear": has_fear,
 		"has_min_active_heroes": has_min_active_heroes,
+		"has_require_fray_or_fear": has_require_fray_or_fear,
+		"require_fray_or_fear": has_require_fray_or_fear,
 	}
 	if has_scraps:
 		var scraps_read: Dictionary = _read_signed_int(effect.get("scraps"))
@@ -1192,6 +1243,9 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		if typeof(raw_fear) != TYPE_INT:
 			return {"ok": false}
 		parsed["fear"] = int(raw_fear)
+	if has_require_fray_or_fear:
+		if int(parsed.get("fear", 0)) >= 0:
+			return {"ok": false}
 	if has_min_fray:
 		var min_fray_read: Dictionary = _read_signed_int(effect.get("min_fray"))
 		if not min_fray_read.get("ok", false):
