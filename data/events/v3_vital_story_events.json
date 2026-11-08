@@ -1633,6 +1633,36 @@
         {"id": "sell_lift_stitch", "text": "Trade a heart seam for the hidden purse", "outcome": {"gold": 28, "scraps": 0, "hp": 0, "max_hp": -2}},
         {"id": "leave", "text": "Leave the lift hanging above the dark floor", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
       ]
+    },
+    {
+      "id": "v3_ashglass_nursery_lamp",
+      "title": "The Ashglass Nursery Lamp",
+      "description": "A nursery lamp as tall as the dolls' house door hangs sideways from a torn mitten on the corridor wall. An ash-blue felt moth shelters inside its amber glass, holding a warm thread in one crooked claw.",
+      "choices": [
+        { "id": "sew_ashglass_wick", "text": "Pay the moth for a warm, lasting seam", "outcome": { "gold": -18, "scraps": -1, "hp": 6, "max_hp": 1 } },
+        { "id": "lift_amber_shard", "text": "Sell the lamp's amber shard and bear its sting", "outcome": { "gold": 24, "scraps": 0, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the moth cupping its small light", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_sable_rocking_cradle",
+      "title": "The Sable Rocking Cradle",
+      "description": "An enormous black-velvet toy cradle rocks across the narrow floorboards with no child inside. A button-eyed rag nurse steadies its crooked runners while one red thread unspools from the blanket.",
+      "choices": [
+        { "id": "bind_cradle_heart", "text": "Spend spare thread to strengthen a heart seam", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "sell_cradle_lining", "text": "Give up a heart seam for the nurse's coins", "outcome": { "gold": 25, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Let the empty cradle rock itself to sleep", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_bent_pram_axle",
+      "title": "The Bent Pram Axle",
+      "description": "A child's abandoned toy pram fills the far bend of the corridor, its giant brass wheel ticking against the wall. Beneath the torn quilt roof a squat moss-felt mechanic offers to re-tie the split axle with red cord.",
+      "choices": [
+        { "id": "bear_axle_strain", "text": "Take a painful pull to make the seam last", "outcome": { "gold": 0, "scraps": 0, "hp": -5, "max_hp": 2 } },
+        { "id": "buy_soft_axle_pad", "text": "Pay for the mechanic's warm quilt padding", "outcome": { "gold": -15, "scraps": 0, "hp": 8, "max_hp": 0 } },
+        { "id": "leave", "text": "Slip past while the wheel turns in place", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }

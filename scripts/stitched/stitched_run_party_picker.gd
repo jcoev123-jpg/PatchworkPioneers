@@ -9,10 +9,16 @@ const PORTRAIT_ROOT := "res://assets/paper/heroes/"
 const TILE_SKIN := "res://assets/paper/ui/reward_button.png"
 const BONE := Color("#f4e1b8")
 const AMBER := Color("#efbb69")
+const OXBLOOD := Color("#742c38")
+const WARNING_BONE := Color("#ffe8c3")
+const SHADOW := Color("#221517")
 
 var tiles: Dictionary = {}
 var _selected: Array = []
 var _reorder_pending := false
+var _base_tooltips: Dictionary = {}
+var _rank_cues: Dictionary = {}
+var _uncued_faces: Dictionary = {}
 
 
 func _init() -> void:
@@ -28,6 +34,9 @@ func build(default_picks: Array) -> void:
 		child.queue_free()
 	tiles.clear()
 	_selected.clear()
+	_base_tooltips.clear()
+	_rank_cues.clear()
+	_uncued_faces.clear()
 	var signature_kits := StitchedS14Abilities.kits()
 	for id in StitchedPartyAdmission.HERO_IDS:
 		if id in default_picks and not id in _selected and _selected.size() < MAX_PICKS:
@@ -37,6 +46,7 @@ func build(default_picks: Array) -> void:
 		tile.name = "HeroTile_" + id
 		tile.set_meta("hero_id", id)
 		tile.tooltip_text = StitchedPartyKitHints.tooltip(id, signature_kits)
+		_base_tooltips[id] = tile.tooltip_text
 		tile.toggle_mode = true
 		tile.focus_mode = Control.FOCUS_ALL
 		tile.custom_minimum_size = Vector2(516, 94)
@@ -65,7 +75,7 @@ func build(default_picks: Array) -> void:
 		nameplate.size = Vector2(373, 45)
 		nameplate.add_theme_font_size_override("font_size", 23)
 		nameplate.add_theme_color_override("font_color", BONE)
-		nameplate.add_theme_color_override("font_shadow_color", Color("#221517"))
+		nameplate.add_theme_color_override("font_shadow_color", SHADOW)
 		nameplate.add_theme_constant_override("shadow_offset_x", 1)
 		nameplate.add_theme_constant_override("shadow_offset_y", 2)
 		nameplate.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -74,6 +84,45 @@ func build(default_picks: Array) -> void:
 		_update_name(id)
 		tile.toggled.connect(_on_tile_toggled.bind(id))
 	_arrange_tiles()
+
+
+## A shortcut acts on the same original Button property as a click, so its
+## toggled signal remains the only path to the validated draft_changed signal.
+## Ignore keys if this is no longer the focused, mounted New Run page.
+func _unhandled_key_input(event: InputEvent) -> void:
+	var key := event as InputEventKey
+	if (key == null or not key.pressed or key.echo
+			or key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed):
+		return
+	var index := int(key.physical_keycode) - int(KEY_1)
+	if (index < 0 or index >= StitchedPartyAdmission.HERO_IDS.size()
+			or key.physical_keycode > KEY_8):
+		return
+	if not is_inside_tree() or not is_visible_in_tree() or not tiles_match_draft():
+		return
+	var content := get_parent() as Control
+	var frame := content.get_parent() if content != null else null
+	var page := frame.get_parent() as Control if frame != null else null
+	var app := page.get_parent() if page != null else null
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if (page == null or page.name != "StitchedRunPage"
+			or page.get_meta("page_kind", "") != "picker" or not page.is_visible_in_tree()
+			or app == null or app.get("stitched_run_panel") != page
+			or get_meta("stitched_run_epoch", -1) != app.get("_stitched_run_epoch")
+			or focus_owner == null or not content.is_ancestor_of(focus_owner)):
+		return
+	var id: String = StitchedPartyAdmission.HERO_IDS[index]
+	var tile: Button = tiles.get(id)
+	if (not is_instance_valid(tile) or tile.get_parent() != self
+			or not tile.is_visible_in_tree() or tile.disabled):
+		return
+	# A focused Set out can become disabled on deselection. Like a mouse click,
+	# focus the actual tile first, so the next number still has a live focus context.
+	# Existing tile-to-tile focus is preserved through the deferred reflow.
+	if not is_ancestor_of(focus_owner):
+		tile.grab_focus()
+	tile.button_pressed = not tile.button_pressed
+	get_viewport().set_input_as_handled()
 
 
 func selected_ids() -> Array:
@@ -184,11 +233,71 @@ func _on_tile_toggled(pressed: bool, id: String) -> void:
 	draft_changed.emit(_selected.duplicate())
 
 
+## The App calls this only after authenticating the live draft_changed event,
+## or when building the initial draft. Incomplete drafts clear all warnings.
+## A pending legitimate reflow is allowed; a foreign tile order is not.
+func update_opening_rank_cues(accepted_picks: Array) -> void:
+	if accepted_picks != _selected or not tiles_match_draft():
+		return
+	var warnings := {}
+	if accepted_picks.size() == MAX_PICKS:
+		var receipt := StitchedPartyAdmission.admit(accepted_picks)
+		if receipt.get("ok") != true:
+			return
+		if not _reorder_pending and displayed_rank_ids() != receipt.get("hero_ids", []):
+			return
+		for hero in StitchedPartyKitHints.opening_rank_stranded(accepted_picks):
+			var id: String = hero["id"]
+			var rank: int = hero["rank"]
+			if id in _selected and receipt["hero_ids"][rank - 1] == id:
+				warnings[id] = hero
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var tile: Button = tiles.get(id)
+		if not is_instance_valid(tile) or tile.get_parent() != self:
+			return
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_set_opening_rank_cue(id, warnings.get(id, {}))
+
+
+## Recolour the already-skinned original Button using copies of its existing
+## image styles. No extra control, texture, hit target or rank plaque is made.
+func _set_opening_rank_cue(id: String, cue: Dictionary) -> void:
+	if _rank_cues.get(id, {}) == cue:
+		return
+	var tile: Button = tiles[id]
+	if not _uncued_faces.has(id):
+		var originals := {}
+		for face in ["pressed", "hover_pressed", "focus"]:
+			if tile.has_theme_stylebox_override(face):
+				originals[face] = tile.get_theme_stylebox(face)
+		_uncued_faces[id] = originals
+	var faces: Dictionary = _uncued_faces[id]
+	if cue.is_empty():
+		_rank_cues.erase(id)
+		tile.tooltip_text = _base_tooltips[id]
+		for face in faces:
+			tile.add_theme_stylebox_override(face, faces[face])
+	else:
+		_rank_cues[id] = cue.duplicate()
+		tile.tooltip_text = _base_tooltips[id] + "\n%s at rank %d cannot launch a signature move; Move/Pass remain possible." % [
+			cue["name"], cue["rank"]]
+		for face in faces:
+			var source: StyleBoxTexture = faces[face] as StyleBoxTexture
+			if source == null:
+				continue
+			var warning_style := source.duplicate(true) as StyleBoxTexture
+			warning_style.modulate_color = WARNING_BONE if face == "focus" else (
+				Color("#a14b50") if face == "hover_pressed" else OXBLOOD)
+			tile.add_theme_stylebox_override(face, warning_style)
+	_update_name(id)
+
+
 func _update_name(id: String) -> void:
 	var tile: Button = tiles[id]
 	var label: Label = tile.get_node("DollName")
 	label.text = id.replace("_", " ").capitalize() + ("   ✓" if id in _selected else "")
-	label.add_theme_color_override("font_color", AMBER if id in _selected else BONE)
+	label.add_theme_color_override("font_color", WARNING_BONE if _rank_cues.has(id) else (AMBER if id in _selected else BONE))
+	label.add_theme_color_override("font_shadow_color", OXBLOOD if _rank_cues.has(id) else SHADOW)
 
 
 func _skin_tile(tile: Button) -> void:

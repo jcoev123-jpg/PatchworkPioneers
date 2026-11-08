@@ -81,7 +81,7 @@
         "2": {"stat": {"dmg": 2}, "ability": {"dmg": [3, 4], "effects": {"bleed": 3}}},
         "3": {"stat": {"dmg": 3}, "ability": {"dmg": [4, 5], "effects": {"bleed": 4}}}
       },
-      "text": "Drive the giant needle into one foe in ranks 1-3 for 2-3 and open a Bleed 2."
+      "text": "The Seamstress's oversized silver needle is fastened to a cream sleeve with dark-red blanket stitches; a loose crimson thread trails from its eye."
     },
     {
       "id": "seamstress_needle_rain_needle",
@@ -109,7 +109,7 @@
         "2": {"stat": {"dmg": 2}, "ability": {"dmg": [2, 3], "mark_damage": 3, "effects": {"bleed": 4}}},
         "3": {"stat": {"dmg": 3}, "ability": {"dmg": [3, 4], "mark_damage": 4, "effects": {"bleed": 5}}}
       },
-      "text": "Shower each living foe in enemy ranks 1-4 once from hero ranks 1-4: 1-2 damage and Bleed 3 on every struck foe, plus 2 bonus damage to a foe already Marked."
+      "text": "A fan of slender silver needles rests across dusty-plum felt on the Seamstress's long sleeve, each shaft caught under cream stitches and red thread."
     },
     {
       "id": "seamstress_shielding_hem_coat",

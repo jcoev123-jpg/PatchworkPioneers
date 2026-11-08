@@ -89,6 +89,33 @@ const CAPE_LEG_FORBIDDEN_WORDS := [
 	"temporary", "chance", "evade", "evasion", "effect", "spend", "action",
 ]
 
+## S14: the two head patches are worn sewn-cloth identities too, so their player-readable text is
+## a sewn-fabric description rather than the part-granted combat move their legacy data still holds.
+const HEAD_PATCH_TEXT := {
+	"rag_duelist_head_feather_feint": "A crimson hat feather leans over a black button eyepatch, secured with crooked gold stitches.",
+	"rag_duelist_head_tattered_snare": "A knotted black rag ribbon wraps the hatband beneath the Duelist's feather, its frayed tail sewn in crimson thread.",
+}
+
+## Visible sewn-cloth words each head description must name, so the copy stays a description of the
+## worn patch rather than a generic nonempty string.
+const HEAD_PATCH_WORDS := {
+	"rag_duelist_head_feather_feint": ["feather", "eyepatch", "stitches"],
+	"rag_duelist_head_tattered_snare": ["ribbon", "sewn", "thread"],
+}
+
+## Whole combat words the two head descriptions must never promise, matched case-insensitively on
+## word boundaries so "stitches" or "button" cannot trip a check by accident. The retired
+## Exposed/Mark/Tangled/Weak statuses are named explicitly: the legacy abilities keep them, the
+## cloth copy must not advertise them.
+const HEAD_PATCH_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "exposed", "mark", "marked", "tangled", "weak",
+	"damage", "hit", "hits", "attack", "attacks", "dodge", "turn", "turns", "duration",
+	"ability", "abilities", "move", "moves", "target", "targets", "guard", "heal", "bleed",
+	"status", "statuses", "skill", "skills", "step", "forward", "backward", "swap",
+	"swapping", "ally", "gain", "grants", "temporary", "chance", "evade", "evasion",
+	"effect", "effects", "spend", "action", "actions",
+]
+
 ## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
 ## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
 ## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
@@ -208,7 +235,7 @@ func _initialize() -> void:
 	_test_lunge_mark_contract()
 	_test_flourish_catalog()
 	_test_cape_legs_text()
-	_test_tattered_snare_text()
+	_test_head_patch_text()
 	_test_rapier_lunge_text()
 	_test_negatives()
 	_test_live_fixture()
@@ -773,28 +800,67 @@ func _test_cape_legs_text() -> void:
 			"AC3: " + id + " with whitespace-only text is refused")
 
 
-# ---------------------------------------------------------------- AC1: Tattered Snare rules text
+# ---------------------------------------------------------------- AC1/AC2: the two head-patch texts
 
-## The alternative head's copy must name both halves of its upgrade ladder: Tangled at every
-## stitch tier and Weak only from tier II, with no direct-hit or extra-move claim that this
-## zero-damage debuff does not support.
-func _test_tattered_snare_text() -> void:
+## S14 retires the two head parts' combat role while S13 keeps them as sewn patches, so both
+## player-readable head descriptions are sewn-fabric copy only: no rank, tier, Exposed, Mark,
+## Tangled, Weak, damage, hit or other combat promise, and no number. Each named record is checked
+## against its authored sentence, its identity fields and the visible cloth it names, using whole
+## words (never accidental substrings) for the forbidden combat vocabulary.
+func _test_head_patch_text() -> void:
 	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the shipped catalog loads for the two head-patch text checks")
 	if not bool(catalog.get("ok", false)):
-		_check(false, "AC1: the shipped catalog loads for the Tattered Snare text check")
 		return
-	var snare_id := str(ALTERNATE_PARTS["head"])
-	if not catalog["by_id"].has(snare_id):
-		_check(false, "AC1: the Tattered Snare text check needs the alternative head part")
-		return
-	var text := str(catalog["by_id"][snare_id].get("text", "")).strip_edges()
-	var lower := text.to_lower()
-	_check(lower.contains("tangled"), "AC1: Tattered Snare text names Tangled: " + text)
-	_check(lower.contains("weak"), "AC1: Tattered Snare text names the higher-tier Weak: " + text)
-	_check(lower.contains(" ii") and lower.contains(" iii"),
-		"AC1: Tattered Snare text names both upgrading stitch tiers explicitly: " + text)
-	_check(not lower.contains("damage") and not lower.contains("hit") and not lower.contains("step"),
-		"AC1: Tattered Snare text never claims a direct hit or an extra move: " + text)
+	var by_id: Dictionary = catalog["by_id"]
+	for part_id in HEAD_PATCH_TEXT:
+		var id := str(part_id)
+		var sentence := str(HEAD_PATCH_TEXT[id])
+		_check(by_id.has(id), "AC1: the catalog authors the named head-patch record " + id)
+		if not by_id.has(id):
+			continue
+		var part: Dictionary = by_id[id]
+		var spec: Dictionary = EXPECTED[id]
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC3: validate_part accepts the shipped " + id)
+		_check(str(part.get("id", "")) == id, "AC1: " + id + " keeps its authored id")
+		_check(str(part.get("name", "")) == str(spec["name"]),
+			"AC1: " + id + " keeps its authored name " + str(spec["name"]))
+		_check(str(part.get("owner", "")) == OWNER, "AC1: " + id + " stays owned by the rag_duelist")
+		_check(str(part.get("slot", "")) == "head", "AC1: " + id + " stays a head patch")
+		_check(_int_dict(part["stat"]) == _int_dict(spec["stat"]),
+			"AC3: " + id + " keeps its legacy tier-I slot stat " + str(spec["stat"]))
+		_check(str(part["ability"]["id"]) == str(spec["ability_id"]),
+			"AC3: " + id + " keeps its legacy ability " + str(spec["ability_id"]))
+		_check(part["tiers"].has("2") and part["tiers"].has("3"),
+			"AC3: " + id + " keeps its legacy tiers II and III overrides")
+		var text := str(part.get("text", ""))
+		_check(text == sentence, "AC1: " + id + " carries its authored sewn-cloth sentence: " + text)
+		var words := _whole_words(text)
+		for word in HEAD_PATCH_WORDS[id]:
+			_check(str(word) in words,
+				"AC2: " + id + " names the visible sewn cloth " + str(word) + ": " + text)
+		for word in HEAD_PATCH_FORBIDDEN_WORDS:
+			_check(not str(word) in words,
+				"AC2: " + id + " promises no combat term " + str(word) + ": " + text)
+		for digit in range(10):
+			_check(not text.contains(str(digit)),
+				"AC2: " + id + " states no number " + str(digit) + ": " + text)
+		# The same record cloned in memory with its text emptied still fails closed.
+		for bad_text in ["", "   "]:
+			var blank := part.duplicate(true)
+			blank["text"] = bad_text
+			_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+				"AC3: " + id + " with blank text is refused: " + text)
+	# Neither head description may be reused by—or leak onto—the other six wearables.
+	for other_id in ALL_PART_IDS:
+		if HEAD_PATCH_TEXT.has(other_id):
+			continue
+		var other_text := str(by_id[other_id].get("text", ""))
+		for head_id in HEAD_PATCH_TEXT:
+			_check(other_text != str(HEAD_PATCH_TEXT[head_id]),
+				"AC3: the head description stays on " + str(head_id) + ", never on " + str(other_id))
 
 
 # ---------------------------------------------------------------- AC1: Rapier Lunge rules text
@@ -1702,10 +1768,16 @@ func _test_status_ticks() -> void:
 			"AC2: the Bleed counter ticks down by one unit turn")
 	## Feather Feint: tier I only Exposes the foe; tiers II and III also Mark that same seam, so a
 	## later mark_damage follow-up can find it. Both counters tick down one on that foe's real turn.
+	## S14 keeps that legacy ladder in the record, but its player-readable copy is now the sewn-cloth
+	## description checked here instead of the retired combat promise.
 	var feint_id := str(STARTER_PARTS["head"])
 	var feint_text := str(_catalog()["by_id"][feint_id]["text"])
-	_check(feint_text == "Feint from ranks 1-2 at one foe in ranks 1-3: Exposed 2 at stitch tiers I-II, Exposed 3 at tier III. Tiers II-III also Mark its seam for follow-up.",
-		"AC1: Feather Feint text names its two-turn tier-I/II window, tier-III depth and Mark-only upgrades")
+	_check(feint_text == str(HEAD_PATCH_TEXT[feint_id]),
+		"AC1: Feather Feint carries its authored sewn-cloth sentence: " + feint_text)
+	var feint_words := _whole_words(feint_text)
+	for word in HEAD_PATCH_FORBIDDEN_WORDS:
+		_check(not str(word) in feint_words,
+			"AC1: Feather Feint promises no combat term " + str(word) + ": " + feint_text)
 	var feint_ladder := [
 		{"exposed": 2, "mark": 0},
 		{"exposed": 2, "mark": 1},

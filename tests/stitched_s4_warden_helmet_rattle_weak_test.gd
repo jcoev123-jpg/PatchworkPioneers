@@ -16,10 +16,21 @@ extends SceneTree
 ## genuine tier-III hit on the living rank-three foe; tiers I/II of the same state cannot target
 ## rank 3, rank 4 never works, refusals are state/turn/RNG atomic, a natural miss adds no Weak,
 ## and duplicate seeded trials replay identical receipts, snapshots and RNG.
+##
+## S14 gives every hero four fixed signature abilities independently of body parts, so the two
+## Warden HEAD records are sewn-cloth inventory: their top-level "text" is a one-sentence visual
+## description of the patch, not the retired part-action promise. Those two sentences are checked
+## exactly here with a whole-word prose gate; the legacy ability dictionaries stay authored and are
+## still exercised through the real battle above.
 
 const WARDEN_PATH := "res://data/parts/warden_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
 const PART_ID := "warden_head_helmet_rattle"
+const POT_HELM_ID := "warden_head_pot_helm_bonk"
+const HEAD_NAMES := {
+	"warden_head_helmet_rattle": "Helmet Rattle",
+	"warden_head_pot_helm_bonk": "Pot Helm Bonk",
+}
 const ABILITY_ID := "head_helmet_rattle_move"
 const WARDEN := "warden"
 const RANK_ONE_FOE := "fray_scavenger"
@@ -33,7 +44,18 @@ const TIER_CRIT := [0, 0, 8]
 const TIER_ACC := [90, 90, 90]
 const TIER_TARGET := [[1, 2], [1, 2], [1, 2, 3]]
 const LAUNCH := [1, 2]
-const RATTLE_TEXT := "Rattle a nearby foe into Weakness; at tier III the clang reaches enemy rank 3."
+const RATTLE_TEXT := "A small brass rattle is sewn beneath the Warden's battered helmet brim on a bone-grey felt flap."
+const POT_HELM_TEXT := "A dented pot-helm brow sits above the Warden's stitched-X eye, held by broad slate-blue stitches."
+## The retired part-action sentences, kept only to prove the prose gate rejects them in memory.
+const RETIRED_RATTLE_TEXT := "Rattle a nearby foe into Weakness; at tier III the clang reaches enemy rank 3."
+const RETIRED_POT_HELM_TEXT := "Bonk a forward foe and loosen its stitching with Weak."
+## Complete combat words the S14 sewn-cloth head descriptions must never promise, matched on whole
+## tokens so "stitches" or "stitched" can never trip a check by accident.
+const HEAD_TEXT_FORBIDDEN_WORDS := [
+	"card", "cards", "tier", "tiers", "rank", "ranks", "weak", "weakness",
+	"target", "targets", "attack", "attacks", "damage", "hit", "hits", "guard",
+	"heal", "bleed", "mark", "stun", "dodge", "crit", "acc", "energy", "cost",
+]
 ## Upper bound on the deterministic seed searches (never a wall-clock or random search).
 const SEED_SEARCH_LIMIT := 200
 
@@ -139,6 +161,7 @@ var witnessed_hit_seed := 0
 
 func _initialize() -> void:
 	_test_real_catalog()
+	_test_head_patch_text()
 	_test_base_weak_reply()
 	_test_invalid_copies()
 	_test_rank_three_hit_witness()
@@ -231,7 +254,22 @@ func _test_real_catalog() -> void:
 	_check(str(part.get("owner", "")) == WARDEN, "AC2: Helmet Rattle stays Warden's own part")
 	_check(part.get("stat", {}) == {"crit": 4}, "AC2: Helmet Rattle keeps its head stat crit 4")
 	_check(str(part.get("text", "")) == RATTLE_TEXT,
-		"AC2: Helmet Rattle states its tier-III rank-3 reach in its authored rules text")
+		"AC1: Helmet Rattle carries its authored sewn-cloth description: " + str(part.get("text", "")))
+
+	# The alternative Warden head keeps its identity and now reads as sewn cloth too.
+	_check(by_id.has(POT_HELM_ID), "AC2: the catalog contains " + POT_HELM_ID)
+	if by_id.has(POT_HELM_ID):
+		var pot_helm: Dictionary = by_id[POT_HELM_ID]
+		_check(bool(StitchedParts.validate_part(pot_helm).get("ok", false)),
+			"AC2: Pot Helm Bonk validates as shipped")
+		_check(str(pot_helm.get("id", "")) == POT_HELM_ID
+			and str(pot_helm.get("name", "")) == "Pot Helm Bonk"
+			and str(pot_helm.get("slot", "")) == "head"
+			and str(pot_helm.get("owner", "")) == WARDEN,
+			"AC2: Pot Helm Bonk keeps its id, name, head slot and Warden owner")
+		_check(str(pot_helm.get("text", "")) == POT_HELM_TEXT,
+			"AC1: Pot Helm Bonk carries its authored sewn-cloth description: "
+				+ str(pot_helm.get("text", "")))
 
 	var base: Dictionary = part.get("ability", {})
 	_check(str(base.get("id", "")) == ABILITY_ID, "AC2: tier I is the named Helmet Rattle move")
@@ -335,6 +373,95 @@ func _test_real_catalog() -> void:
 			_check(str(ability.get("target_side", "")) == str(expected["side"])
 				and str(ability.get("move", "")) == str(expected["pose"]),
 				label + " keeps its original target side and pose")
+
+
+# ------------------------------------------------- AC1/AC2: the two head-patch sewn-cloth texts
+
+## S14 gives each hero four fixed signature abilities independently of body parts, so the two
+## Warden HEAD records are sewn-cloth inventory only. Their top-level text is a one-sentence
+## description of the fabric patch actually sewn to the doll, while their legacy ability
+## dictionaries stay in the data for compatibility (exercised through the real battles below).
+## Both records are resolved by id, never by a catalog total or list position, and the whole-word
+## gate rejects blank or retired tactical copy on in-memory duplicates without touching the
+## shipped catalog.
+func _test_head_patch_text() -> void:
+	var catalog := _catalog()
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog.get("by_id", {})
+	var expected := {PART_ID: RATTLE_TEXT, POT_HELM_ID: POT_HELM_TEXT}
+	for part_id in expected:
+		var id := str(part_id)
+		var sentence := str(expected[id])
+		_check(by_id.has(id), "AC1: the shipped Warden catalog authors the head record " + id)
+		if not by_id.has(id):
+			continue
+		var part: Dictionary = by_id[id]
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC1: " + id + " validates as shipped")
+		_check(str(part.get("id", "")) == id
+			and str(part.get("name", "")) == str(HEAD_NAMES[id])
+			and str(part.get("slot", "")) == "head"
+			and str(part.get("owner", "")) == WARDEN,
+			"AC2: " + id + " keeps its id, name, head slot and Warden owner")
+		var text := str(part.get("text", ""))
+		_check(text == sentence,
+			"AC1: " + id + " carries its authored sewn-cloth sentence: " + text)
+		_check(text != str(RETIRED_RATTLE_TEXT) and text != str(RETIRED_POT_HELM_TEXT),
+			"AC1: " + id + " no longer carries a retired part-action promise: " + text)
+		_check(_prose_violation(text).is_empty(),
+			"AC1: " + id + " is nonblank prose with no retired combat word or digit: " + text)
+		# Fail-closed copy checks: blank and retired tactical copy both fail the same prose gate.
+		var blank := part.duplicate(true)
+		blank["text"] = ""
+		_check(str(blank.get("text", "x")) == "",
+			"AC1: the " + id + " copy really holds blank text")
+		_check(not _prose_violation(str(blank.get("text", ""))).is_empty(),
+			"AC1: a blank " + id + " description is rejected")
+		var spaced := part.duplicate(true)
+		spaced["text"] = "   "
+		_check(not _prose_violation(str(spaced.get("text", ""))).is_empty(),
+			"AC1: a whitespace-only " + id + " description is rejected")
+		var legacy := part.duplicate(true)
+		legacy["text"] = str(RETIRED_RATTLE_TEXT if id == PART_ID else RETIRED_POT_HELM_TEXT)
+		var violation := _prose_violation(str(legacy.get("text", "")))
+		_check(not violation.is_empty(),
+			"AC1: the retired tactical sentence for " + id + " fails the prose gate (" + violation + ")")
+		_check(str(part.get("text", "")) == sentence,
+			"AC1: the rejected copies never mutate the shipped " + id + " text")
+
+
+## Whole words of a description, split on every non-alphanumeric character, so a forbidden word is
+## only ever matched whole ("hit" can never trip on "stitched") and standalone digits stay visible.
+func _whole_words(text: String) -> Array:
+	var words: Array = []
+	var current := ""
+	var lower := text.to_lower()
+	for index in range(lower.length()):
+		var code := lower.unicode_at(index)
+		if (code >= 97 and code <= 122) or (code >= 48 and code <= 57):
+			current += lower[index]
+		elif not current.is_empty():
+			words.append(current)
+			current = ""
+	if not current.is_empty():
+		words.append(current)
+	return words
+
+
+## The tiny S14 prose-only gate: a sewn-cloth description must be nonblank, promise no complete
+## retired combat word and state no digit. Returns the first violation, or "" when it passes.
+func _prose_violation(text: String) -> String:
+	if text.strip_edges().is_empty():
+		return "blank text"
+	var words := _whole_words(text)
+	for word in HEAD_TEXT_FORBIDDEN_WORDS:
+		if str(word) in words:
+			return "retired combat word: " + str(word)
+	for digit in range(10):
+		if str(digit) in words:
+			return "digit: " + str(digit)
+	return ""
 
 
 # ---------------------------------------------------------------- seeded real battle helpers
