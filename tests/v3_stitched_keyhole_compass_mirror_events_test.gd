@@ -31,7 +31,7 @@ const EXPECTED := {
 		"title": "The Keyhole Choir",
 		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
 		"choices": [
-			{"id": "follow_humming", "text": "Follow the warm humming (+16 candle, +7 fray each; requires room in the candle)", "effect": {"target": "party", "candle": 16, "fray": 7, "require_candle_room": true}},
+			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room": true}},
 			{"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "min_fray": 1}},
 			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
@@ -63,7 +63,7 @@ const EXPECTED := {
 ## internal consistency check.
 const FUNDED_FINAL := {
 	"v3_keyhole_choir": {
-		"follow_humming": {"candle": 56, "candle_delta": 16, "fray": 7},
+		"follow_humming": {"candle": 56, "candle_delta": 16, "fray": 7, "hp": 5, "hp_delta": 5},
 		"buy_silence": {"candle": 40, "candle_delta": 0, "fray": -12, "scraps": 2, "scraps_delta": -2},
 		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
 	},
@@ -640,6 +640,8 @@ func _test_full_candle_keyhole() -> void:
 		"ok": true, "event_id": event_id, "choice_id": choice_id,
 		"target": "party", "hero_id": "", "candle": 100,
 		"fray": _fray_map(PARTY_FRAYS, 7),
+		"hp_delta": 5,
+		"hp": _fray_map(PARTY_FRAYS, 5),
 	}, "candle 99 claims follow_humming settling the clamped candle 100 and its minimal receipt")
 	_check(service_99.is_claimed() and not service_99.is_valid(),
 		"the near-full claim latches once")
@@ -1240,6 +1242,9 @@ func _expected_entry(choice_id: String, row: Dictionary, frays: Array) -> Dictio
 	if row.has("gold"):
 		entry["gold_delta"] = int(row["gold_delta"])
 		entry["gold"] = int(row["gold"])
+	if row.has("hp"):
+		entry["hp_delta"] = int(row["hp_delta"])
+		entry["hp"] = _fray_map(frays, int(row["hp"]))
 	return entry
 
 
@@ -1259,6 +1264,9 @@ func _expected_receipt(event_id: String, choice_id: String, row: Dictionary, fra
 	if row.has("gold"):
 		receipt["gold_delta"] = int(row["gold_delta"])
 		receipt["gold"] = int(row["gold"])
+	if row.has("hp"):
+		receipt["hp_delta"] = int(row["hp_delta"])
+		receipt["hp"] = _fray_map(frays, int(row["hp"]))
 	return receipt
 
 
