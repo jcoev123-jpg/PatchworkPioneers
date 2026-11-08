@@ -1392,6 +1392,75 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_seamstress_lace_spindle_vigil",
+      "title": "The Lace-Spindle Vigil",
+      "description": "A house-high lace spindle turns slowly in a wall niche. The Seamstress catches its torn crimson warp with her giant needle while two button-eyed dolls peer from between the spokes.",
+      "required_hero": "seamstress",
+      "choices": [
+        {
+          "id": "bind_spindle_hem",
+          "text": "Bind the spindle's red lace into your own seams.",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "strip_spindle_barbs",
+          "text": "Pull free the barbed lace for salvage, tearing your own stitches.",
+          "outcome": { "gold": 0, "scraps": 3, "hp": -5, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the spindle turning in the dark.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_tinker_brass_caliper",
+      "title": "The Brass Caliper",
+      "description": "Giant brass measuring jaws squeeze a stuck toy gear in the skirting-board passage. The Tinker wedges her scrap blunderbuss beneath the ratchet, its crooked goggle lenses glowing copper in the candlelight.",
+      "required_hero": "tinker",
+      "choices": [
+        {
+          "id": "shim_caliper_spring",
+          "text": "Pay for a lasting copper brace fitted to your stuffing.",
+          "outcome": { "gold": -17, "scraps": 0, "hp": 0, "max_hp": 3 }
+        },
+        {
+          "id": "salvage_caliper_tooth",
+          "text": "Trade away a protective seam to prise loose a valuable brass tooth.",
+          "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the jaws ticking around the gear.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_oxblood_corset_frame",
+      "title": "The Oxblood Corset Frame",
+      "description": "A towering crimson corset frame hangs in a wardrobe alcove, its crossed bone-cream stays held by one silk thread. The Rag Duelist's needle rapier catches the frayed seam while his ragged cape brushes the floor.",
+      "required_hero": "rag_duelist",
+      "choices": [
+        {
+          "id": "restitch_corset_stays",
+          "text": "Sew the loose stays into your cape lining, mending and strengthening it.",
+          "outcome": { "gold": 0, "scraps": -2, "hp": 5, "max_hp": 1 }
+        },
+        {
+          "id": "claim_corset_clasps",
+          "text": "Cut the gilt clasps free for coins, ripping your cape in the bargain.",
+          "outcome": { "gold": 28, "scraps": 0, "hp": -6, "max_hp": 0 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the empty corset sway in silence.",
+          "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
+        }
+      ]
     }
   ]
 }
