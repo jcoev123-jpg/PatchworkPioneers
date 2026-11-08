@@ -29,6 +29,17 @@ window/stretch/aspect="keep"
 
 theme/custom="res://themes/gothic_theme.tres"
 
+[input]
+
+ui_accept={
+"deadzone": 0.5,
+"events": [Object(InputEventKey,"device":-1,"keycode":4194309)
+, Object(InputEventKey,"device":-1,"keycode":4194310)
+, Object(InputEventKey,"device":-1,"keycode":32)
+, Object(InputEventJoypadButton,"device":-1,"button_index":0)
+]
+}
+
 [rendering]
 
 renderer/rendering_method="gl_compatibility"

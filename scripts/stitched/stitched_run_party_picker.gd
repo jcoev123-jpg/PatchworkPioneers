@@ -19,6 +19,7 @@ var _reorder_pending := false
 var _base_tooltips: Dictionary = {}
 var _rank_cues: Dictionary = {}
 var _uncued_faces: Dictionary = {}
+var _shoulder_held: Dictionary = {}
 
 
 func _init() -> void:
@@ -86,6 +87,64 @@ func build(default_picks: Array) -> void:
 	_arrange_tiles()
 
 
+## Share the digit shortcut's live-page authentication with shoulder browsing.
+## A retained/hidden picker or focus outside its real page cannot capture input.
+func _live_focus_owner() -> Control:
+	if not is_inside_tree() or not is_visible_in_tree() or not tiles_match_draft():
+		return null
+	var content := get_parent() as Control
+	var frame := content.get_parent() if content != null else null
+	var page := frame.get_parent() as Control if frame != null else null
+	var app := page.get_parent() if page != null else null
+	var focus_owner := get_viewport().gui_get_focus_owner()
+	if (content == null or page == null or page.name != "StitchedRunPage"
+			or page.get_meta("page_kind", "") != "picker" or not page.is_visible_in_tree()
+			or app == null or app.get("stitched_run_panel") != page
+			or get_meta("stitched_run_epoch", -1) != app.get("_stitched_run_epoch")
+			or focus_owner == null or not content.is_ancestor_of(focus_owner)):
+		return null
+	return focus_owner
+
+
+## Only pressed shoulder edges navigate; releases merely rearm their own button.
+## Native Accept, spatial D-pad neighbors and the tile's toggled signal are unchanged.
+func _unhandled_input(event: InputEvent) -> void:
+	var shoulder := event as InputEventJoypadButton
+	if shoulder == null or (shoulder.button_index != JOY_BUTTON_LEFT_SHOULDER
+			and shoulder.button_index != JOY_BUTTON_RIGHT_SHOULDER):
+		return
+	var held_key := Vector2i(shoulder.device, shoulder.button_index)
+	if not shoulder.pressed:
+		_shoulder_held.erase(held_key)
+		return
+	if _shoulder_held.has(held_key):
+		return
+	_shoulder_held[held_key] = true
+	var focus_owner := _live_focus_owner()
+	if focus_owner == null or get_child_count() != StitchedPartyAdmission.HERO_IDS.size():
+		return
+	var direction := 1 if shoulder.button_index == JOY_BUTTON_RIGHT_SHOULDER else -1
+	var index := focus_owner.get_index() if focus_owner.get_parent() == self else -1
+	if index >= 0:
+		var id: String = focus_owner.get_meta("hero_id", "")
+		if tiles.get(id) != focus_owner:
+			return
+	else:
+		var app := get_parent().get_parent().get_parent().get_parent()
+		var actions: Array = app.get("stitched_run_buttons")
+		if (actions.size() != 2 or (focus_owner != actions[0] and focus_owner != actions[1])
+				or focus_owner.disabled or not focus_owner.is_visible_in_tree()):
+			return
+		index = -1 if direction > 0 else 0
+	var next_index := posmod(index + direction, get_child_count())
+	var next_tile := get_child(next_index) as Button
+	if (next_tile == null or tiles.get(next_tile.get_meta("hero_id", "")) != next_tile
+			or next_tile.disabled or not next_tile.is_visible_in_tree()):
+		return
+	next_tile.grab_focus()
+	get_viewport().set_input_as_handled()
+
+
 ## A shortcut acts on the same original Button property as a click, so its
 ## toggled signal remains the only path to the validated draft_changed signal.
 ## Ignore keys if this is no longer the focused, mounted New Run page.
@@ -98,18 +157,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if (index < 0 or index >= StitchedPartyAdmission.HERO_IDS.size()
 			or key.physical_keycode > KEY_8):
 		return
-	if not is_inside_tree() or not is_visible_in_tree() or not tiles_match_draft():
-		return
-	var content := get_parent() as Control
-	var frame := content.get_parent() if content != null else null
-	var page := frame.get_parent() as Control if frame != null else null
-	var app := page.get_parent() if page != null else null
-	var focus_owner := get_viewport().gui_get_focus_owner()
-	if (page == null or page.name != "StitchedRunPage"
-			or page.get_meta("page_kind", "") != "picker" or not page.is_visible_in_tree()
-			or app == null or app.get("stitched_run_panel") != page
-			or get_meta("stitched_run_epoch", -1) != app.get("_stitched_run_epoch")
-			or focus_owner == null or not content.is_ancestor_of(focus_owner)):
+	var focus_owner := _live_focus_owner()
+	if focus_owner == null:
 		return
 	var id: String = StitchedPartyAdmission.HERO_IDS[index]
 	var tile: Button = tiles.get(id)
