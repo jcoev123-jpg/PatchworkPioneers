@@ -12,7 +12,7 @@ const COATS := {
 ## Authored Stitched catalog quotes: budget vest 70, Padded Vest 75,Wool Patch Cloak 90, Thick Felt Mantle 110, the rest 100.
 const EXPECTED_PRICE := {
 	"quilted_coat": 100, "padded_vest": 75, "double_quilt_coat": 100, "scrap_lined_vest": 70,
-	"wool_patch_cloak": 90, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
+	"wool_patch_cloak": 90, "chain_stitched_coat": 100, "reinforced_patchcoat": 105,
 	"thick_felt_mantle": 110,
 }
 const PARTY := ["warden", "seamstress", "tinker", "yarn_ranger"]
@@ -107,6 +107,7 @@ func _run() -> void:
 	_check_padded_vest_price()
 	_check_wool_cloak_price()
 	_check_mantle_price()
+	_check_patchcoat_price()
 	_check_scarce(["scrap_lined_vest"], "one")
 	_check_scarce(["thick_felt_mantle", "padded_vest"], "two")
 	_check_all_owned()
@@ -271,7 +272,7 @@ func _check_wool_cloak_price() -> void:
 func _check_mantle_price() -> void:
 	var prices := _source_prices()
 	_check(prices.get("thick_felt_mantle", -1) == 110, "thick_felt_mantle source row is exactly 110 gold")
-	_check(prices.get("wool_patch_cloak", -1) == 90 and prices.get("reinforced_patchcoat", -1) == 100
+	_check(prices.get("wool_patch_cloak", -1) == 90 and prices.get("reinforced_patchcoat", -1) == 105
 		and prices.get("padded_vest", -1) == 75, "wool cloakstays 90 and neighbours stay authored")
 	var witness_seed := -1
 	var witness: Array = []
@@ -339,6 +340,75 @@ func _check_mantle_price() -> void:
 		_check(owned_visit.buy_patch("thick_felt_mantle", o_state.visit_id, o_state.node_id,
 			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
 			"owned mantle cannot be bought again")
+
+
+## Reinforced Patchcoat at its 105-gold quote: seeded witness stock, exact-gold buy, 104 refused, owned SOLD.
+func _check_patchcoat_price() -> void:
+	var prices := _source_prices()
+	_check(prices.get("reinforced_patchcoat", -1) == 105, "reinforced_patchcoat source row is exactly 105 gold")
+	_check(prices.get("double_quilt_coat", -1) == 100 and prices.get("thick_felt_mantle", -1) == 110,
+		"double_quilt_coat stays 100 and thick_felt_mantle stays 110")
+	var witness_seed := -1
+	var witness: Array = []
+	for seed_value in range(1, 300):
+		var probe := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(seed_value), [])
+		if probe.get("ok") == true and _ids(probe.offers).has("reinforced_patchcoat"):
+			witness_seed = seed_value
+			witness = probe.offers
+			break
+	_check(witness_seed > 0 and witness.size() == 3, "a deterministic seed stocks reinforced_patchcoat")
+	if witness_seed < 0:
+		return
+	_check(_ids(witness).count("reinforced_patchcoat") == 1
+		and witness.has({"id": "reinforced_patchcoat", "price": 105}),
+		"patchcoat is stocked once as the 105-gold row")
+	_check(RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(witness_seed), []).get("offers") == witness,
+		"patchcoat witness seed replays the same stock")
+	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 105, witness)
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), [], 104, witness)
+	_check(rich.is_valid() and poor.is_valid(), "105-gold and 104-gold patchcoat visits open")
+	if not rich.is_valid() or not poor.is_valid():
+		return
+	var rich_seen := false
+	for row in rich.quote().offers:
+		if row.id == "reinforced_patchcoat":
+			rich_seen = true
+			_check(row.price == 105 and row.can_buy == true and row.sold == false,
+				"patchcoat is buyable at 105 gold")
+	_check(rich_seen, "105-gold quote shows the patchcoat row")
+	var poor_seen := false
+	for row in poor.quote().offers:
+		if row.id == "reinforced_patchcoat":
+			poor_seen = true
+			_check(row.price == 105 and row.can_buy == false, "patchcoat is not buyable at 104 gold")
+	_check(poor_seen, "104-gold quote shows the patchcoat row")
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	_check(poor.buy_patch("reinforced_patchcoat", poor_state.visit_id, poor_state.node_id,
+		poor_state.snapshot).get("ok") != true
+		and poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"104 gold cannot buy the patchcoat and nothing is debited or granted")
+	var state := rich.read_state()
+	var bought := rich.buy_patch("reinforced_patchcoat", state.visit_id, state.node_id, state.snapshot)
+	_check(bought.get("ok") == true
+		and bought.receipt == {"kind": "trinket", "id": "reinforced_patchcoat", "price": 105}
+		and bought.ledger.gold == 0 and bought.ledger.owned_patch_ids == ["reinforced_patchcoat"],
+		"105 gold buys the patchcoat once for exactly 105 and leaves 0 gold")
+	_check(rich.is_consumed() and rich.buy_patch("reinforced_patchcoat", state.visit_id, state.node_id,
+		state.snapshot).get("ok") != true, "replayed patchcoat buy refused")
+	var owned_visit := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), ["reinforced_patchcoat"], 200, witness)
+	_check(owned_visit.is_valid(), "owned-patchcoat visit opens")
+	if owned_visit.is_valid():
+		var o_state := owned_visit.read_state()
+		var found := false
+		for row in owned_visit.quote().offers:
+			if row.id == "reinforced_patchcoat":
+				found = true
+				_check(row.sold == true and row.can_buy == false, "owned patchcoat is SOLD and disabled")
+		_check(found, "owned patchcoat row remains visible as SOLD")
+		_check(owned_visit.buy_patch("reinforced_patchcoat", o_state.visit_id, o_state.node_id,
+			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
+			"owned patchcoat cannot be bought again")
 
 
 func _check_membership_and_determinism(prices: Dictionary) -> void:
