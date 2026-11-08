@@ -1,6 +1,7 @@
 extends SceneTree
 ## Physical input against the actual mounted title and Wren-room New Run entry.
 const SAVE := "user://stitched_s6_run_party_picker_live_test.save"
+const WARN_SUFFIX := "Warden at rank 4 cannot launch a signature move; Move/Pass remain possible."
 
 var failures: Array[String] = []
 var checks := 0
@@ -135,7 +136,7 @@ func _hover(tile: Button) -> void:
 
 ## Independently reconstruct displayed strings from shipped S14 records rather
 ## than comparing the formatter with itself or keeping a second ability table.
-func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context: String) -> void:
+func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context: String, marked_id: String = "") -> void:
 	if picker == null:
 		_check(false, context + ": picker is present for hints")
 		return
@@ -164,9 +165,24 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 				continue
 			lines.append("%s — %s · %s" % [
 				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]]])
-		_check(lines.size() == 4 and tile.tooltip_text == "\n".join(lines)
-			and tile.tooltip_text.split("\n").size() == 4,
-			context + ": " + id + " names all four S14 slots and their actual target sides in order")
+		var expected_tooltip := "\n".join(lines)
+		if id == marked_id:
+			expected_tooltip += "\n" + WARN_SUFFIX
+		_check(lines.size() == 4 and tile.tooltip_text == expected_tooltip
+			and tile.tooltip_text.split("\n").size() == (5 if id == marked_id else 4),
+			context + ": " + id + " keeps all four S14 lines and only its authentic warning suffix")
+		var nameplate: Label = tile.get_node("DollName")
+		_check(tile.get_child_count() == 2 and nameplate.get_theme_color("font_color")
+			== (StitchedRunPartyPicker.WARNING_BONE if id == marked_id else (
+				StitchedRunPartyPicker.AMBER if tile.button_pressed else StitchedRunPartyPicker.BONE))
+			and nameplate.get_theme_color("font_shadow_color")
+			== (StitchedRunPartyPicker.OXBLOOD if id == marked_id else StitchedRunPartyPicker.SHADOW),
+			context + ": " + id + " retains exactly its original portrait/name, with reversible bone/oxblood cue")
+		var pressed := tile.get_theme_stylebox("pressed") as StyleBoxTexture
+		if pressed != null:
+			_check(pressed.modulate_color == (StitchedRunPartyPicker.OXBLOOD if id == marked_id
+				else Color("#d4a160")),
+				context + ": " + id + " retains the image-skinned tile, tinted only for warning")
 		_check(tile == originals.get(id) and tile.name == "HeroTile_" + id
 			and tile.get_meta("hero_id") == id and tile.focus_mode == Control.FOCUS_ALL
 			and tile.get_node_or_null("Portrait") is TextureRect
@@ -259,6 +275,10 @@ func _advisory_fixtures() -> void:
 	for slot in StitchedParts.SLOTS:
 		warden_launches.append(catalog["warden"][slot]["launch"])
 	var warn := StitchedPartyKitHints.opening_rank_advisory(witness, catalog)
+	var stranded := StitchedPartyKitHints.opening_rank_stranded(witness, catalog)
+	_check(stranded == [{"id": "warden", "name": "Warden", "rank": 4}]
+		and StitchedPartyKitHints.opening_rank_stranded(witness) == stranded,
+		"pure validated rank helper identifies exactly the admitted original Warden tile")
 	_check(counts.size() == 4 and counts.get("warden", -1) == 0
 		and counts.get("rag_duelist", 0) > 0 and counts.get("scarecrow", 0) > 0
 		and counts.get("button_golem", 0) > 0
@@ -268,6 +288,10 @@ func _advisory_fixtures() -> void:
 		and warn.contains("cannot launch") and warn.contains("Move") and warn.contains("Pass")
 		and not warn.contains("Scarecrow at rank"),
 		"only rank-4 Warden is warned, and Move/Pass stays available")
+	_check(StitchedPartyKitHints.opening_rank_stranded(StitchedRunSession.DEFAULT_PICKS, catalog).is_empty()
+		and StitchedPartyKitHints.opening_rank_stranded(
+			["rag_duelist", "scarecrow", "button_golem", "yarn_ranger"], catalog).is_empty(),
+		"safe default and safe replacement have no stranded tile ids or ranks")
 	var default_counts := _source_opening_counts(StitchedRunSession.DEFAULT_PICKS, catalog)
 	var default_safe := default_counts.size() == StitchedPartyAdmission.RANK_COUNT
 	for count in default_counts.values():
@@ -325,6 +349,45 @@ func _advisory_fixtures() -> void:
 	invalid["warden"]["arms"]["id"] = invalid["warden"]["head"]["id"]
 	_check(StitchedPartyKitHints.opening_rank_advisory(witness, invalid) == "",
 		"duplicate signature identifiers give no opening claim")
+	# The tile service has no second, less-strict ability parser.
+	var invalid_picks: Array = [[], ["warden"], "not picks",
+		["warden", "seamstress", "tinker", "warden"],
+		["warden", "seamstress", "tinker", "bogus"],
+		["warden", "seamstress", "tinker", "lantern_monk", "scarecrow"]]
+	for draft in invalid_picks:
+		_check(StitchedPartyKitHints.opening_rank_stranded(draft, catalog).is_empty(),
+			"malformed, duplicate, unknown and overfull rank-helper inputs give no cue")
+	var invalid_catalogs: Array = []
+	for field in ["slot", "launch", "target_side", "target", "name", "id"]:
+		var forged := catalog.duplicate(true)
+		match field:
+			"slot":
+				forged["warden"]["arms"]["slot"] = "head"
+			"launch":
+				forged["warden"]["head"]["launch"] = [4.0]
+			"target_side":
+				forged["warden"]["head"]["target_side"] = "neutral"
+			"target":
+				forged["warden"]["head"]["target"] = []
+			"name":
+				forged["warden"]["arms"]["name"] = forged["warden"]["head"]["name"]
+			"id":
+				forged["warden"]["arms"]["id"] = forged["warden"]["head"]["id"]
+		invalid_catalogs.append(forged)
+	var missing := catalog.duplicate(true)
+	missing.erase("warden")
+	invalid_catalogs.append(missing)
+	missing = catalog.duplicate(true)
+	missing["warden"].erase("legs")
+	invalid_catalogs.append(missing)
+	for forged in invalid_catalogs:
+		_check(StitchedPartyKitHints.opening_rank_stranded(witness, forged).is_empty()
+			and StitchedPartyKitHints.opening_rank_advisory(witness, forged) == "",
+			"forged signature validation rejects both advisory and tile cues")
+	_check(StitchedPartyKitHints.opening_rank_stranded(witness, []).is_empty()
+		and StitchedPartyKitHints.opening_rank_stranded(witness, {}).is_empty()
+		and StitchedS14Abilities.kits() == catalog,
+		"nondictionary, absent and corrupt fixture sources leave S14 cache untouched")
 	_check(StitchedS14Abilities.kits() == catalog
 		and StitchedPartyKitHints.opening_rank_advisory(witness) == warn,
 		"negative fixture mutations cannot corrupt cached real S14 signatures")
@@ -339,6 +402,10 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 	var panel_children: int = app.stitched_run_panel.get_child_count()
 	var wallet_before := [app.session_gold, app.run_scraps]
 	var witness := ["rag_duelist", "scarecrow", "button_golem", "warden"]
+	var originals: Dictionary = picker.tiles.duplicate()
+	var old_pressed: StyleBox = originals["warden"].get_theme_stylebox("pressed")
+	var old_hover_pressed: StyleBox = originals["warden"].get_theme_stylebox("hover_pressed")
+	var old_focus: StyleBox = originals["warden"].get_theme_stylebox("focus")
 	_check(actions[0].tooltip_text == "" and not actions[0].disabled,
 		"mounted default Set out has no speculative rank warning")
 	for id in StitchedRunSession.DEFAULT_PICKS:
@@ -347,6 +414,7 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 		and actions[0].disabled and actions[0].focus_mode == Control.FOCUS_NONE
 		and actions[0].tooltip_text == "" and app.stitched_run_session == null,
 		"empty draft disables confirm, clears warning and does not start a run")
+	_check_hints(picker, originals, "empty draft strips stale cues")
 	for id in witness:
 		await _mouse(picker.tiles[id])
 	var receipt := StitchedPartyAdmission.admit(witness)
@@ -360,28 +428,41 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 		and warning.contains("Warden") and warning.contains("rank 4")
 		and warning.contains("Move") and warning.contains("Pass"),
 		"existing mounted Set out Button displays only source-derived Warden warning")
+	_check_hints(picker, originals, "original tiles after physical stranded picks", "warden")
+	_check(originals["warden"].get_theme_stylebox("pressed") != old_pressed
+		and originals["warden"].get_theme_stylebox("hover_pressed") != old_hover_pressed
+		and originals["warden"].get_theme_stylebox("focus") != old_focus,
+		"only Warden's existing skinned button faces are warned, not replaced by new controls")
 	picker.draft_changed.emit(["warden", "warden", "tinker", "lantern_monk"])
-	_check(app.stitched_run_draft == witness and actions[0].tooltip_text == warning,
-		"forged draft_changed signal cannot replace accepted warning or App draft")
+	_check(app.stitched_run_draft == witness and actions[0].tooltip_text == warning
+		and originals["warden"].tooltip_text.ends_with(WARN_SUFFIX),
+		"forged draft_changed signal cannot replace accepted warning or App tile cue")
 	await _mouse(picker.tiles["warden"])
 	_check(actions[0].disabled and actions[0].tooltip_text == ""
 		and app.stitched_run_draft.size() == 3,
 		"warning is removed immediately when the stranded composition becomes incomplete")
+	_check_hints(picker, originals, "deselect Warden immediately clears original styles")
+	_check(originals["warden"].get_theme_stylebox("pressed") == old_pressed
+		and originals["warden"].get_theme_stylebox("hover_pressed") == old_hover_pressed
+		and originals["warden"].get_theme_stylebox("focus") == old_focus,
+		"clearing an incomplete draft restores the identical original skinned style objects")
 	await _mouse(picker.tiles["yarn_ranger"])
 	var safe := ["rag_duelist", "scarecrow", "button_golem", "yarn_ranger"]
 	_check(picker.selected_ids() == safe and picker.displayed_rank_ids()
 		== StitchedPartyAdmission.admit(safe).get("hero_ids", [])
 		and actions[0].tooltip_text == "" and not actions[0].disabled,
 		"safe four-doll replacement clears old warning and leaves Set out available")
+	_check_hints(picker, originals, "safe yarn-ranger replacement has no marks")
 	await _mouse(picker.tiles["yarn_ranger"])
 	await _mouse(picker.tiles["warden"])
 	_check(picker.selected_ids() == witness and actions[0].tooltip_text == warning,
 		"restoring rank-4 Warden restores the warning on the same Set out Button")
+	_check_hints(picker, originals, "restored rank-4 Warden cue", "warden")
 	_check(app.stitched_run_buttons == actions and action_row.get_child_count() == 2
 		and app.stitched_run_panel.get_child_count() == panel_children
 		and picker.get_child_count() == StitchedPartyAdmission.HERO_IDS.size(),
 		"advisory adds no action, panel or extra tile and preserves original action indices")
-	_check_hints(picker, picker.tiles.duplicate(), "after warning and safe re-pick")
+	_check_hints(picker, originals, "after warning and safe re-pick", "warden")
 	_check(app.stitched_run_session == null and app.run_rng == null and app.run_map == null
 		and [app.session_gold, app.run_scraps] == wallet_before,
 		"rank preview creates no session, map, RNG or wallet side effects")
@@ -390,8 +471,8 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 	actions[0].tooltip_text = "stale signal witness"
 	picker.draft_changed.emit(witness)
 	_check(actions[0].tooltip_text == "stale signal witness"
-		and app.stitched_run_session == null,
-		"stale epoch draft_changed cannot rewrite the previous Set out tooltip")
+		and app.stitched_run_session == null and originals["warden"].tooltip_text.ends_with(WARN_SUFFIX),
+		"stale epoch draft_changed cannot rewrite previous Set out tooltip or tile cue")
 	app._stitched_run_epoch = active_epoch
 	picker.draft_changed.emit(witness)
 	_check(actions[0].tooltip_text == warning,
