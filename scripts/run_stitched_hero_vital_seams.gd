@@ -150,10 +150,13 @@ func get_state() -> Dictionary:
 
 ## Read-only preview/quote of all authored choices with exact deltas, availability and projected wallet.
 func preview_choices() -> Dictionary:
-	if not _valid or not _error.is_empty():
+	if not _valid or not _open or _claimed or not _error.is_empty():
+		var err: String = _error
+		if err.is_empty():
+			err = "service closed or already claimed" if (_claimed or not _open) else "invalid visit"
 		return {
 			"ok": false,
-			"error": _error if not _error.is_empty() else "invalid visit",
+			"error": err,
 			"node_id": _node_id,
 			"event_id": _event_id,
 			"required_hero": _required_hero,

@@ -74,6 +74,8 @@ func _initialize() -> void:
 	_test_s6_ac2_rag_duelist_duel_mask_mirror_hp_projection()
 	_test_s6_ac3_unavailable_choice_opening_hp_projections()
 	_test_s6_ac4_repeated_quotes_and_claim_parity()
+	_test_s6_ac5_leave_claim_closes_preview_and_rejects_second_claim()
+	_test_s6_ac6_refusal_before_claim_preserves_open_previews_and_commits_once()
 
 	if failures.is_empty():
 		print("run_stitched_hero_vital_seams_test: PASS (%d checks)" % checks)
@@ -1117,10 +1119,262 @@ func _test_s6_ac4_repeated_quotes_and_claim_parity() -> void:
 	_check(intents.get("hp_delta") == 0, "S6 AC4: intents hp_delta")
 	_check(intents.get("max_hp_delta") == -2, "S6 AC4: intents max_hp_delta")
 
-	# One-claim-only protection
+	# Post-claim exact read_state inspection
+	var state_after: Dictionary = visit.read_state()
+	_check(state_after.get("ok") == true, "S6 AC4: post-claim read_state ok is true")
+	_check(state_after.get("error") == "", "S6 AC4: post-claim read_state error is empty")
+	_check(state_after.get("open") == false, "S6 AC4: post-claim read_state open is false")
+	_check(state_after.get("claimed") == true, "S6 AC4: post-claim read_state claimed is true")
+	_check(state_after.get("version") == 1, "S6 AC4: post-claim read_state version is 1")
+	_check(state_after.get("node_id") == node_id, "S6 AC4: post-claim read_state node_id matches")
+	_check(state_after.get("event_id") == "v3_warden_buckle_heart_ward", "S6 AC4: post-claim read_state event_id matches")
+	_check(state_after.get("required_hero") == "warden", "S6 AC4: post-claim read_state required_hero is warden")
+	_check(state_after.get("wallet") == {"gold": 34, "scraps": 5}, "S6 AC4: post-claim read_state wallet is 34/5")
+	_check(visit.is_claimed() == true, "S6 AC4: visit is_claimed is true")
+	_check(visit.is_open() == false, "S6 AC4: visit is_open is false")
+	_check(visit.is_valid() == false, "S6 AC4: visit is_valid is false")
+
+	# Post-claim preview aliases refuse actionability and return empty choices
+	var post_preview: Dictionary = visit.preview_choices()
+	_check(post_preview.get("ok") == false, "S6 AC4: post-claim preview_choices ok is false")
+	_check((post_preview.get("choices") as Array).is_empty(), "S6 AC4: post-claim preview_choices choices array is empty")
+	_check(post_preview.get("state") == state_after, "S6 AC4: post-claim preview_choices state matches read_state")
+
+	var post_preview_alias: Dictionary = visit.preview()
+	_check(post_preview_alias.get("ok") == false, "S6 AC4: post-claim preview ok is false")
+	_check((post_preview_alias.get("choices") as Array).is_empty(), "S6 AC4: post-claim preview choices array is empty")
+	_check(post_preview_alias.get("state") == state_after, "S6 AC4: post-claim preview state matches read_state")
+
+	var post_quote_alias: Dictionary = visit.quote()
+	_check(post_quote_alias.get("ok") == false, "S6 AC4: post-claim quote ok is false")
+	_check((post_quote_alias.get("choices") as Array).is_empty(), "S6 AC4: post-claim quote choices array is empty")
+	_check(post_quote_alias.get("state") == state_after, "S6 AC4: post-claim quote state matches read_state")
+
+	# Previews do not modify version, wallet, party, catalog or RNG
+	_check(visit.get_version() == 1, "S6 AC4: version remains 1 after post-claim preview calls")
+	_check(visit.get_wallet() == {"gold": 34, "scraps": 5}, "S6 AC4: service wallet remains 34/5 after post-claim preview calls")
+	_check(party == orig_party, "S6 AC4: caller party unmodified after post-claim previews")
+	_check(wallet == orig_wallet, "S6 AC4: caller wallet unmodified after post-claim previews")
+	_check(warden_record == orig_record, "S6 AC4: catalog record unmodified after post-claim previews")
+
+	# One-claim-only protection: second claim refused
 	var second_claim: Dictionary = visit.choose("leave", node_id, visit.read_state())
 	_check(second_claim.get("ok") == false, "S6 AC4: second claim refused")
+	_check((second_claim.get("receipt") as Dictionary).is_empty(), "S6 AC4: second claim receipt is empty")
+	_check(visit.get_version() == 1, "S6 AC4: version remains 1 after second claim refusal")
+	_check(visit.get_wallet() == {"gold": 34, "scraps": 5}, "S6 AC4: service wallet remains 34/5 after second claim refusal")
 
 	_check(seeded_rng.state == rng_seed_before, "S6 AC4: Seeded RNG unmodified after claim")
 	_check(randi() == global_rand_before, "S6 AC4: Global RNG unmodified after claim")
+
+
+## S6 AC2: An independent valid Leave claim likewise makes every preview alias refuse
+## actionability; repeated previews and second-claim rejection leave state, wallet, party,
+## receipt and seeded/global RNG unchanged. Headless snapshots prove no double transaction.
+func _test_s6_ac5_leave_claim_closes_preview_and_rejects_second_claim() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		if (ev_raw as Dictionary).get("id") == "v3_warden_buckle_heart_ward":
+			warden_record = (ev_raw as Dictionary).duplicate(true)
+			break
+
+	var party: Array = _party("warden", 1, 22, 22, false)
+	var wallet := {"gold": 10, "scraps": 5}
+	var orig_party: Array = party.duplicate(true)
+	var orig_wallet: Dictionary = wallet.duplicate(true)
+	var orig_record: Dictionary = warden_record.duplicate(true)
+	var node_id := "node_s6_leave_1"
+
+	var seeded_rng := RandomNumberGenerator.new()
+	seeded_rng.seed = 88882
+	var rng_seed_before: int = seeded_rng.state
+	seed(66662)
+	var global_rand_before: int = randi()
+	seed(66662)
+
+	var visit := SeamsAdapter.open_stitched(node_id, warden_record, party, wallet)
+	_check(visit.is_valid(), "S6 AC5: Fresh visit is valid")
+	_check(visit.is_open(), "S6 AC5: Fresh visit is open")
+	_check(not visit.is_claimed(), "S6 AC5: Fresh visit is not claimed")
+
+	var preview_initial: Dictionary = visit.preview_choices()
+	_check(preview_initial.get("ok") == true, "S6 AC5: Initial preview is ok")
+	_check((preview_initial.get("choices") as Array).size() == 3, "S6 AC5: Initial preview offers 3 choices")
+
+	var state_before: Dictionary = visit.read_state()
+	var leave_res: Dictionary = visit.choose("leave", node_id, state_before)
+	_check(leave_res.get("ok") == true, "S6 AC5: leave claim succeeded")
+	_check(leave_res.get("gold_delta") == 0, "S6 AC5: leave gold delta is 0")
+	_check(leave_res.get("scraps_delta") == 0, "S6 AC5: leave scraps delta is 0")
+	_check(leave_res.get("hp_delta") == 0, "S6 AC5: leave hp delta is 0")
+	_check(leave_res.get("max_hp_delta") == 0, "S6 AC5: leave max hp delta is 0")
+	_check(leave_res.get("projected_max_hp") == 22, "S6 AC5: leave projected max HP 22")
+	_check(leave_res.get("projected_hp") == 22, "S6 AC5: leave projected HP 22")
+	_check(leave_res.get("wallet") == orig_wallet, "S6 AC5: leave wallet unchanged")
+
+	var state_after: Dictionary = visit.read_state()
+	_check(state_after.get("ok") == true, "S6 AC5: state ok is true")
+	_check(state_after.get("claimed") == true, "S6 AC5: state claimed is true")
+	_check(state_after.get("open") == false, "S6 AC5: state open is false")
+	_check(state_after.get("version") == 1, "S6 AC5: state version is 1")
+	_check(state_after.get("wallet") == orig_wallet, "S6 AC5: state wallet matches initial")
+
+	_check(visit.is_claimed() == true, "S6 AC5: visit is_claimed is true")
+	_check(visit.is_open() == false, "S6 AC5: visit is_open is false")
+	_check(visit.is_valid() == false, "S6 AC5: visit is_valid is false")
+
+	# All preview aliases refuse actionability
+	var p_choices: Dictionary = visit.preview_choices()
+	_check(p_choices.get("ok") == false, "S6 AC5: preview_choices refuses actionability")
+	_check((p_choices.get("choices") as Array).is_empty(), "S6 AC5: preview_choices choices is empty")
+	_check(p_choices.get("state") == state_after, "S6 AC5: preview_choices state matches read_state")
+
+	var p_preview: Dictionary = visit.preview()
+	_check(p_preview.get("ok") == false, "S6 AC5: preview refuses actionability")
+	_check((p_preview.get("choices") as Array).is_empty(), "S6 AC5: preview choices is empty")
+	_check(p_preview.get("state") == state_after, "S6 AC5: preview state matches read_state")
+
+	var p_quote: Dictionary = visit.quote()
+	_check(p_quote.get("ok") == false, "S6 AC5: quote refuses actionability")
+	_check((p_quote.get("choices") as Array).is_empty(), "S6 AC5: quote choices is empty")
+	_check(p_quote.get("state") == state_after, "S6 AC5: quote state matches read_state")
+
+	# Repeated previews do not change state, wallet, party, source record or RNG
+	var p_choices_repeat: Dictionary = visit.preview_choices()
+	_check(SeamsAdapter._same_value(p_choices, p_choices_repeat), "S6 AC5: Repeated post-claim preview_choices identical")
+	_check(visit.read_state() == state_after, "S6 AC5: read_state unmodified after repeated previews")
+	_check(visit.get_version() == 1, "S6 AC5: version unmodified after repeated previews")
+	_check(visit.get_wallet() == orig_wallet, "S6 AC5: service wallet unmodified after repeated previews")
+	_check(party == orig_party, "S6 AC5: caller party unmodified after repeated previews")
+	_check(wallet == orig_wallet, "S6 AC5: caller wallet unmodified after repeated previews")
+	_check(warden_record == orig_record, "S6 AC5: catalog record unmodified after repeated previews")
+
+	# Second claim rejection proves no double transaction
+	var second_claim_sell: Dictionary = visit.choose("sell_rivets", node_id, visit.read_state())
+	_check(second_claim_sell.get("ok") == false, "S6 AC5: second choose sell_rivets refused")
+	_check((second_claim_sell.get("receipt") as Dictionary).is_empty(), "S6 AC5: second claim receipt is empty")
+	_check(visit.read_state() == state_after, "S6 AC5: read_state unmodified after second claim attempt")
+	_check(visit.get_version() == 1, "S6 AC5: version unmodified after second claim attempt")
+	_check(visit.get_wallet() == orig_wallet, "S6 AC5: wallet unmodified after second claim attempt")
+
+	var second_claim_leave: Dictionary = visit.choose("leave", node_id, visit.read_state())
+	_check(second_claim_leave.get("ok") == false, "S6 AC5: second choose leave refused")
+	_check((second_claim_leave.get("receipt") as Dictionary).is_empty(), "S6 AC5: second leave receipt is empty")
+
+	_check(seeded_rng.state == rng_seed_before, "S6 AC5: Seeded RNG unmodified after all operations")
+	_check(randi() == global_rand_before, "S6 AC5: Global RNG unmodified after all operations")
+
+
+## S6 AC3: When invalid node/state, unavailable paid choice or malformed input is rejected BEFORE claim,
+## visit stays open and original legitimate previews stay available; a later valid choice still commits once.
+## All previously covered regressions remain intact.
+func _test_s6_ac6_refusal_before_claim_preserves_open_previews_and_commits_once() -> void:
+	var catalog: Dictionary = RunV3HeroVitalEventGate.load_shipped_catalog()
+	var warden_record: Dictionary = {}
+	for ev_raw: Variant in catalog.get("events", []):
+		if (ev_raw as Dictionary).get("id") == "v3_warden_buckle_heart_ward":
+			warden_record = (ev_raw as Dictionary).duplicate(true)
+			break
+
+	# 1 scrap: reinforce_shield_seam requires 2 scraps, so it is underfunded/unavailable!
+	var party: Array = _party("warden", 3, 22, 22, false)
+	var wallet := {"gold": 10, "scraps": 1}
+	var orig_party: Array = party.duplicate(true)
+	var orig_wallet: Dictionary = wallet.duplicate(true)
+	var orig_record: Dictionary = warden_record.duplicate(true)
+	var node_id := "node_s6_refuse_guard_1"
+
+	var visit := SeamsAdapter.open_stitched(node_id, warden_record, party, wallet)
+	_check(visit.is_valid(), "S6 AC6: Fresh visit is valid")
+	_check(visit.is_open(), "S6 AC6: Fresh visit is open")
+
+	var preview_initial: Dictionary = visit.preview_choices()
+	_check(preview_initial.get("ok") == true, "S6 AC6: Initial preview is ok")
+	var initial_state: Dictionary = visit.read_state()
+	_check(initial_state.get("version") == 0, "S6 AC6: Initial version is 0")
+	_check(initial_state.get("claimed") == false, "S6 AC6: Initial claimed is false")
+	_check(initial_state.get("open") == true, "S6 AC6: Initial open is true")
+
+	# Refusal 1: wrong node ID
+	var ref_node: Dictionary = visit.choose("leave", "wrong_node_id", initial_state)
+	_check(ref_node.get("ok") == false, "S6 AC6: wrong node ID refused")
+	_check((ref_node.get("receipt") as Dictionary).is_empty(), "S6 AC6: wrong node receipt is empty")
+	_check(visit.is_open() == true, "S6 AC6: visit remains open after wrong node")
+	_check(visit.is_claimed() == false, "S6 AC6: visit not claimed after wrong node")
+	_check(visit.get_version() == 0, "S6 AC6: version remains 0 after wrong node")
+	_check(visit.get_wallet() == orig_wallet, "S6 AC6: wallet untouched after wrong node")
+	_check(SeamsAdapter._same_value(visit.preview_choices(), preview_initial), "S6 AC6: preview unchanged after wrong node")
+
+	# Refusal 2: stale expected state
+	var stale_state: Dictionary = initial_state.duplicate(true)
+	stale_state["version"] = 99
+	var ref_stale: Dictionary = visit.choose("leave", node_id, stale_state)
+	_check(ref_stale.get("ok") == false, "S6 AC6: stale state refused")
+	_check((ref_stale.get("receipt") as Dictionary).is_empty(), "S6 AC6: stale state receipt is empty")
+	_check(visit.is_open() == true, "S6 AC6: visit remains open after stale state")
+	_check(visit.is_claimed() == false, "S6 AC6: visit not claimed after stale state")
+	_check(visit.get_version() == 0, "S6 AC6: version remains 0 after stale state")
+	_check(SeamsAdapter._same_value(visit.preview_choices(), preview_initial), "S6 AC6: preview unchanged after stale state")
+
+	# Refusal 3: underfunded / unavailable paid choice (reinforce_shield_seam needs 2 scraps, wallet has 1)
+	var ref_underfunded: Dictionary = visit.choose("reinforce_shield_seam", node_id, initial_state)
+	_check(ref_underfunded.get("ok") == false, "S6 AC6: underfunded choice refused")
+	_check((ref_underfunded.get("receipt") as Dictionary).is_empty(), "S6 AC6: underfunded choice receipt is empty")
+	_check(visit.is_open() == true, "S6 AC6: visit remains open after underfunded choice")
+	_check(visit.is_claimed() == false, "S6 AC6: visit not claimed after underfunded choice")
+	_check(visit.get_version() == 0, "S6 AC6: version remains 0 after underfunded choice")
+	_check(visit.get_wallet() == orig_wallet, "S6 AC6: wallet untouched after underfunded choice")
+	_check(SeamsAdapter._same_value(visit.preview_choices(), preview_initial), "S6 AC6: preview unchanged after underfunded choice")
+
+	# Refusal 4: malformed / invalid choice ID
+	var ref_invalid_cid: Dictionary = visit.choose("nonexistent_choice", node_id, initial_state)
+	_check(ref_invalid_cid.get("ok") == false, "S6 AC6: invalid choice ID refused")
+	_check((ref_invalid_cid.get("receipt") as Dictionary).is_empty(), "S6 AC6: invalid choice ID receipt is empty")
+	var ref_blank_cid: Dictionary = visit.choose("", node_id, initial_state)
+	_check(ref_blank_cid.get("ok") == false, "S6 AC6: blank choice ID refused")
+	_check(visit.is_open() == true, "S6 AC6: visit remains open after malformed input")
+	_check(visit.is_claimed() == false, "S6 AC6: visit not claimed after malformed input")
+	_check(visit.get_version() == 0, "S6 AC6: version remains 0 after malformed input")
+	_check(SeamsAdapter._same_value(visit.preview(), preview_initial), "S6 AC6: preview alias unchanged after malformed input")
+	_check(SeamsAdapter._same_value(visit.quote(), preview_initial), "S6 AC6: quote alias unchanged after malformed input")
+
+	# After all refusals, a later valid choice commits once!
+	var valid_res: Dictionary = visit.choose("sell_rivets", node_id, initial_state)
+	_check(valid_res.get("ok") == true, "S6 AC6: later valid choice sell_rivets succeeds")
+	_check(valid_res.get("gold_delta") == 24, "S6 AC6: gold delta is +24")
+	_check(valid_res.get("max_hp_delta") == -2, "S6 AC6: max hp delta is -2")
+	_check(valid_res.get("wallet") == {"gold": 34, "scraps": 1}, "S6 AC6: wallet is 34/1")
+
+	# Now the visit is claimed and closed
+	_check(visit.is_claimed() == true, "S6 AC6: visit is claimed after successful choice")
+	_check(visit.is_open() == false, "S6 AC6: visit is not open after successful choice")
+	_check(visit.is_valid() == false, "S6 AC6: visit is not valid after successful choice")
+	_check(visit.get_version() == 1, "S6 AC6: version incremented to 1")
+
+	# Post-claim preview calls now refuse actionability
+	var post_prev: Dictionary = visit.preview_choices()
+	_check(post_prev.get("ok") == false, "S6 AC6: post-claim preview_choices refused")
+	_check((post_prev.get("choices") as Array).is_empty(), "S6 AC6: post-claim preview_choices choices empty")
+	_check(post_prev.get("state").get("claimed") == true, "S6 AC6: post-claim state claimed is true")
+	_check(post_prev.get("state").get("open") == false, "S6 AC6: post-claim state open is false")
+	_check(post_prev.get("state").get("version") == 1, "S6 AC6: post-claim state version is 1")
+
+	var post_prev_alias: Dictionary = visit.preview()
+	_check(post_prev_alias.get("ok") == false, "S6 AC6: post-claim preview alias refused")
+	_check((post_prev_alias.get("choices") as Array).is_empty(), "S6 AC6: post-claim preview alias choices empty")
+
+	var post_quote_alias: Dictionary = visit.quote()
+	_check(post_quote_alias.get("ok") == false, "S6 AC6: post-claim quote alias refused")
+	_check((post_quote_alias.get("choices") as Array).is_empty(), "S6 AC6: post-claim quote alias choices empty")
+
+	# Second claim rejected
+	var second_claim: Dictionary = visit.choose("leave", node_id, visit.read_state())
+	_check(second_claim.get("ok") == false, "S6 AC6: second claim rejected")
+	_check((second_claim.get("receipt") as Dictionary).is_empty(), "S6 AC6: second claim receipt is empty")
+	_check(visit.get_version() == 1, "S6 AC6: version remains 1")
+	_check(party == orig_party, "S6 AC6: party unmodified")
+	_check(wallet == orig_wallet, "S6 AC6: wallet unmodified")
+	_check(warden_record == orig_record, "S6 AC6: catalog record unmodified")
+
 
