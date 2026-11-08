@@ -71,6 +71,7 @@ func _initialize() -> void:
 	_test_needle_toll_preview_claim_parity_ac2()
 	_test_needle_toll_refusals_and_safe_exit_ac3()
 	_test_needle_toll_regression_and_invariants_ac4()
+	_test_require_candle_room_or_wound_keyhole_choir()
 	_finish()
 
 
@@ -7718,6 +7719,22 @@ func _load_real_needle_toll() -> Dictionary:
 	return {}
 
 
+func _load_real_event(target_id: String) -> Dictionary:
+	var doc: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json"))
+	if doc is Dictionary:
+		for ev in doc.get("events", []):
+			if ev is Dictionary and str(ev.get("id", "")) == target_id:
+				var res: Dictionary = (ev as Dictionary).duplicate(true)
+				for ch in res.get("choices", []):
+					if ch is Dictionary and ch.has("stitched_effect") and ch["stitched_effect"] is Dictionary:
+						var eff: Dictionary = ch["stitched_effect"]
+						for k in ["candle", "fray", "hp", "scraps", "gold", "fear"]:
+							if eff.has(k) and typeof(eff[k]) == TYPE_FLOAT:
+								eff[k] = int(eff[k])
+				return res
+	return {}
+
+
 func _load_enemy_parts_catalog() -> Dictionary:
 	return StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
 
@@ -8073,6 +8090,290 @@ func _test_needle_toll_regression_and_invariants_ac4() -> void:
 				_check(int(eff1.get("scraps", 0)) == 1, "AC4: choice 1 scraps is 1")
 				break
 	_check(found_toll, "AC4: needle_toll authored record exists in stitched_route_effects.json")
+
+
+func _test_require_candle_room_or_wound_keyhole_choir() -> void:
+	# AC1: Authored v3_keyhole_choir record inspection from stitched_route_effects.json
+	var choir := _load_real_event("v3_keyhole_choir")
+	_check(not choir.is_empty(), "AC1: loaded authentic v3_keyhole_choir from catalog")
+	_check(choir.get("title") == "The Keyhole Choir", "AC1: choir title matches")
+	var follow_choice: Dictionary = {}
+	var buy_choice: Dictionary = {}
+	var leave_choice: Dictionary = {}
+	for ch in choir.get("choices", []):
+		if ch is Dictionary:
+			if ch.get("id") == "follow_humming":
+				follow_choice = ch
+			elif ch.get("id") == "buy_silence":
+				buy_choice = ch
+			elif ch.get("id") == "leave":
+				leave_choice = ch
+	_check(not follow_choice.is_empty(), "AC1: follow_humming found in choir")
+	_check(not buy_choice.is_empty(), "AC1: buy_silence found in choir")
+	_check(not leave_choice.is_empty(), "AC1: leave found in choir")
+	var follow_eff: Dictionary = follow_choice.get("stitched_effect", {})
+	_check(follow_eff.get("target") == "party", "AC1: follow_humming target is party")
+	_check(int(follow_eff.get("candle", 0)) == 16, "AC1: follow_humming candle is 16")
+	_check(int(follow_eff.get("fray", 0)) == 7, "AC1: follow_humming fray is 7")
+	_check(int(follow_eff.get("hp", 0)) == 5, "AC1: follow_humming hp is 5")
+	_check(follow_eff.get("require_candle_room_or_wound") == true, "AC1: follow_humming require_candle_room_or_wound is native true")
+	_check(typeof(follow_eff.get("require_candle_room_or_wound")) == TYPE_BOOL, "AC1: flag is native bool")
+	_check(not follow_eff.has("require_candle_room"), "AC1: old require_candle_room removed from follow_humming")
+
+	# AC2: Test 1 - Candle=100, Warden HP=18/max30, all other living dolls full, fray within 0..193
+	var snap1 := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 50, "hp": 18, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 30, "max_hp": 30},
+			{"id": "tinker", "fray": 10, "hp": 26, "max_hp": 26},
+			{"id": "button_golem", "fray": 30, "hp": 48, "max_hp": 48},
+		],
+	}
+	var snap1_before := snap1.duplicate(true)
+	var svc1 := RunStitchedEventConsequence.new(choir)
+	var prev1: Dictionary = svc1.preview(snap1)
+	_check(prev1.get("ok") == true, "AC2: preview ok for candle=100 wounded warden")
+	var entry1 := _entry(prev1, "follow_humming")
+	_check(entry1.get("available") == true, "AC2: follow_humming is available at candle=100 when warden is wounded")
+	_check(int(entry1.get("candle")) == 100, "AC2: preview candle clamped to 100")
+	_check(int(entry1.get("candle_delta")) == 16, "AC2: preview candle_delta is 16")
+	_check(int(entry1.get("fray_delta")) == 7, "AC2: preview fray_delta is 7")
+	_check(int(entry1.get("hp_delta")) == 5, "AC2: preview hp_delta is 5")
+	var expected_fray_party := {"warden": 7, "seamstress": 7, "tinker": 7, "button_golem": 7}
+	var expected_hp_party := {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5}
+	_check(entry1.get("fray") == expected_fray_party, "AC2: preview fray intent +7 for each active hero")
+	_check(entry1.get("hp") == expected_hp_party, "AC2: preview hp intent +5 for each active hero")
+
+	var rec1: Dictionary = svc1.choose("follow_humming", snap1)
+	_check(rec1.get("ok") == true, "AC2: choose follow_humming succeeds at candle=100")
+	_check(int(rec1.get("candle")) == 100, "AC2: receipt candle clamped to 100")
+	_check(rec1.get("choice_id") == "follow_humming", "AC2: receipt choice_id matches")
+	_check(rec1.get("target") == "party", "AC2: receipt target matches")
+	_check(rec1.get("fray") == expected_fray_party, "AC2: receipt fray intent matches")
+	_check(rec1.get("hp_delta") == 5, "AC2: receipt hp_delta is 5")
+	_check(rec1.get("hp") == expected_hp_party, "AC2: receipt hp intent matches")
+	# Settle warden HP: 18 + 5 = 23 <= 30
+	var warden_settled_hp: int = mini(int(snap1["party"][0]["max_hp"]), int(snap1["party"][0]["hp"]) + int(rec1["hp"]["warden"]))
+	_check(warden_settled_hp == 23, "AC2: settled warden HP is 23")
+	_check(snap1 == snap1_before, "AC2: input snapshot unchanged")
+	_check(rec1.get("candle") == entry1.get("candle"), "AC2: receipt candle matches preview")
+	_check(rec1.get("fray") == entry1.get("fray"), "AC2: receipt fray matches preview")
+	_check(rec1.get("hp") == entry1.get("hp"), "AC2: receipt hp matches preview")
+	_check(rec1.get("hp_delta") == entry1.get("hp_delta"), "AC2: receipt hp_delta matches preview")
+
+	# AC2: Test 2 - Candle=100, one surviving doll HP=0 and lost=false: offer works
+	var snap2_surviving_0hp := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 0, "hp": 0, "max_hp": 30, "lost": false},
+			{"id": "seamstress", "fray": 0, "hp": 30, "max_hp": 30, "lost": false},
+			{"id": "tinker", "fray": 0, "hp": 26, "max_hp": 26, "lost": false},
+			{"id": "button_golem", "fray": 0, "hp": 48, "max_hp": 48, "lost": false},
+		],
+	}
+	var svc2_surviving := RunStitchedEventConsequence.new(choir)
+	var prev2_surviving := svc2_surviving.preview(snap2_surviving_0hp)
+	_check(_entry(prev2_surviving, "follow_humming").get("available") == true,
+		"AC2: offer works when surviving doll has HP=0 and lost=false")
+	var rec2_surviving := svc2_surviving.choose("follow_humming", snap2_surviving_0hp)
+	_check(rec2_surviving.get("ok") == true, "AC2: choose succeeds when surviving doll has HP=0 and lost=false")
+
+	# AC2: Test 2 - LOST/ineligible doll must not alone make the offer available
+	var snap2_lost_0hp := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 0, "hp": 0, "max_hp": 30, "lost": true},
+			{"id": "seamstress", "fray": 0, "hp": 30, "max_hp": 30, "lost": false},
+			{"id": "tinker", "fray": 0, "hp": 26, "max_hp": 26, "lost": false},
+			{"id": "button_golem", "fray": 0, "hp": 48, "max_hp": 48, "lost": false},
+		],
+	}
+	var snap2_lost_before := snap2_lost_0hp.duplicate(true)
+	var svc2_lost := RunStitchedEventConsequence.new(choir)
+	var prev2_lost := svc2_lost.preview(snap2_lost_0hp)
+	_check(_entry(prev2_lost, "follow_humming").get("available") == false,
+		"AC2: LOST doll with HP=0 alone cannot make offer available at candle=100")
+	var rec2_lost := svc2_lost.choose("follow_humming", snap2_lost_0hp)
+	_check(rec2_lost.get("ok") == false, "AC2: choose refused when only LOST doll is wounded at candle=100")
+	_check(svc2_lost.is_valid() and not svc2_lost.is_claimed(), "AC2: visit remains open and unclaimed")
+	_check(snap2_lost_0hp == snap2_lost_before, "AC2: snapshot untouched after refusal")
+
+	# AC3: Test 3 - Candle=100 and all living dolls at their max HP: offer unavailable, refuses without latch, Leave works
+	var snap3_full := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 30, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 30, "max_hp": 30},
+			{"id": "tinker", "fray": 30, "hp": 26, "max_hp": 26},
+			{"id": "button_golem", "fray": 40, "hp": 48, "max_hp": 48},
+		],
+	}
+	var snap3_full_before := snap3_full.duplicate(true)
+	var svc3_full := RunStitchedEventConsequence.new(choir)
+	var prev3_full := svc3_full.preview(snap3_full)
+	var entry3_full := _entry(prev3_full, "follow_humming")
+	_check(entry3_full.get("available") == false, "AC3: follow_humming unavailable at candle=100 with full dolls")
+	_check(int(entry3_full.get("candle")) == 100, "AC3: unavailable reports base candle 100")
+	_check(entry3_full.get("fray") == {}, "AC3: unavailable reports empty fray")
+	_check(entry3_full.get("hp") == {}, "AC3: unavailable reports empty hp")
+
+	var refusal3 := svc3_full.choose("follow_humming", snap3_full)
+	_check(refusal3.get("ok") == false, "AC3: choose refused at candle=100 with full dolls")
+	_check(svc3_full.is_valid() and not svc3_full.is_claimed(), "AC3: refusal does not latch visit")
+	_check(snap3_full == snap3_full_before, "AC3: snapshot unchanged after refusal")
+
+	var leave3 := svc3_full.choose("leave", snap3_full)
+	_check(leave3.get("ok") == true and leave3.get("choice_id") == "leave",
+		"AC3: Leave succeeds on same visit after refusal")
+	_check(svc3_full.is_claimed() and not svc3_full.is_valid(), "AC3: Leave latches visit")
+
+	# AC3: Test 3 - Candle=84 and candle=95 at full HP: offer available, candle gains 16 capped at 100
+	var snap3_84 := {
+		"candle": 84,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 30, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 30, "max_hp": 30},
+			{"id": "tinker", "fray": 30, "hp": 26, "max_hp": 26},
+			{"id": "button_golem", "fray": 40, "hp": 48, "max_hp": 48},
+		],
+	}
+	var svc3_84 := RunStitchedEventConsequence.new(choir)
+	var prev3_84 := svc3_84.preview(snap3_84)
+	var entry3_84 := _entry(prev3_84, "follow_humming")
+	_check(entry3_84.get("available") == true, "AC3: follow_humming available at candle=84 at full HP")
+	_check(int(entry3_84.get("candle")) == 100, "AC3: candle=84 + 16 reaches 100 in preview")
+	var rec3_84 := svc3_84.choose("follow_humming", snap3_84)
+	_check(rec3_84.get("ok") == true and int(rec3_84.get("candle")) == 100,
+		"AC3: choose succeeds at candle=84, settling candle=100")
+
+	var snap3_95 := {
+		"candle": 95,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 30, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 30, "max_hp": 30},
+			{"id": "tinker", "fray": 30, "hp": 26, "max_hp": 26},
+			{"id": "button_golem", "fray": 40, "hp": 48, "max_hp": 48},
+		],
+	}
+	var svc3_95 := RunStitchedEventConsequence.new(choir)
+	var prev3_95 := svc3_95.preview(snap3_95)
+	var entry3_95 := _entry(prev3_95, "follow_humming")
+	_check(entry3_95.get("available") == true, "AC3: follow_humming available at candle=95 at full HP")
+	_check(int(entry3_95.get("candle")) == 100, "AC3: candle=95 + 16 capped to 100 in preview")
+	var rec3_95 := svc3_95.choose("follow_humming", snap3_95)
+	_check(rec3_95.get("ok") == true and int(rec3_95.get("candle")) == 100,
+		"AC3: choose succeeds at candle=95, settling candle=100")
+
+	# AC1 / AC4: Test 4 - Synthetic flag false, numeric 1, no/zero/negative hp or candle, and combinations
+	seed(9998881)
+	var rng_state_before := randi()
+	seed(9998881)
+	var snap_synth := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 18, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 30, "max_hp": 30},
+		],
+	}
+	var snap_synth_before := snap_synth.duplicate(true)
+
+	var bad_synthetic_effects: Array = [
+		{"desc": "flag false", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": false}},
+		{"desc": "flag numeric 1", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": 1}},
+		{"desc": "missing hp", "effect": {"target": "party", "candle": 16, "fray": 7, "require_candle_room_or_wound": true}},
+		{"desc": "zero hp", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 0, "require_candle_room_or_wound": true}},
+		{"desc": "negative hp", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": -5, "require_candle_room_or_wound": true}},
+		{"desc": "zero candle", "effect": {"target": "party", "candle": 0, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
+		{"desc": "negative candle", "effect": {"target": "party", "candle": -10, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
+		{"desc": "combined with require_candle_room", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true, "require_candle_room": true}},
+		{"desc": "combined with require_full_candle", "effect": {"target": "party", "candle": -16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true, "require_full_candle": true}},
+		{"desc": "combined with require_full_candle_gain", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true, "require_full_candle_gain": true}},
+	]
+	for case_idx in range(bad_synthetic_effects.size()):
+		var case_info: Dictionary = bad_synthetic_effects[case_idx]
+		var bad_ev := _event([
+			_choice("bad_act", "Bad action.", case_info["effect"]),
+			_choice("leave", "Leave.", _effect(0, 0, "party")),
+		], "bad_synth_%d" % case_idx)
+		var bad_svc := RunStitchedEventConsequence.new(bad_ev)
+		var bad_prev: Dictionary = bad_svc.preview(snap_synth)
+		var bad_entry := _entry(bad_prev, "bad_act")
+		_check(bad_entry.get("available") == false and bad_entry.get("candle_delta") == null,
+			"AC1: synthetic %s is rejected as malformed in preview" % case_info["desc"])
+		var bad_rec: Dictionary = bad_svc.choose("bad_act", snap_synth)
+		_check(bad_rec.get("ok") == false, "AC1: synthetic %s choose refused" % case_info["desc"])
+		_check(bad_svc.is_valid() and not bad_svc.is_claimed(), "AC1: synthetic refusal does not latch")
+		_check(snap_synth == snap_synth_before, "AC1: snapshot untouched by synthetic %s" % case_info["desc"])
+	_check(randi() == rng_state_before, "AC1: synthetic validation draws no RNG")
+
+	# Target hero variation for require_candle_room_or_wound
+	var hero_target_ev := _event([
+		_choice("mend_warden", "Mend Warden.", {
+			"target": "hero", "hero_id": "warden", "candle": 10, "fray": 5, "hp": 6, "require_candle_room_or_wound": true
+		}),
+		_choice("leave", "Leave.", _effect(0, 0, "party")),
+	], "hero_target_ev")
+	var svc_hero_target := RunStitchedEventConsequence.new(hero_target_ev)
+	# Warden is wounded (18/30): available
+	var prev_ht := svc_hero_target.preview(snap1)
+	_check(_entry(prev_ht, "mend_warden").get("available") == true,
+		"AC2: named-hero target admits when that named hero is wounded")
+	# Warden full, seamstress wounded: unavailable because target is Warden!
+	var snap_warden_full := {
+		"candle": 100,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 30, "max_hp": 30},
+			{"id": "seamstress", "fray": 20, "hp": 15, "max_hp": 30},
+		],
+	}
+	var svc_ht_full := RunStitchedEventConsequence.new(hero_target_ev)
+	var prev_ht_full := svc_ht_full.preview(snap_warden_full)
+	_check(_entry(prev_ht_full, "mend_warden").get("available") == false,
+		"AC2: named-hero target refused when named hero is full even if companion is wounded")
+	# Warden absent: unavailable
+	var snap_warden_absent := {
+		"candle": 100,
+		"party": [
+			{"id": "seamstress", "fray": 20, "hp": 15, "max_hp": 30},
+		],
+	}
+	var svc_ht_absent := RunStitchedEventConsequence.new(hero_target_ev)
+	_check(_entry(svc_ht_absent.preview(snap_warden_absent), "mend_warden").get("available") == false,
+		"AC2: named-hero target unavailable when named hero is absent")
+
+	# AC4: Test 5 - Second genuine event using require_candle_room:true stays blocked at candle100
+	var pin_cabinet := _load_real_event("v3_glassfront_pin_cabinet")
+	_check(not pin_cabinet.is_empty(), "AC4: loaded v3_glassfront_pin_cabinet from catalog")
+	var pin_choice: Dictionary = {}
+	for ch in pin_cabinet.get("choices", []):
+		if ch is Dictionary and ch.get("id") == "brace_wick_with_pins":
+			pin_choice = ch
+			break
+	_check(not pin_choice.is_empty(), "AC4: brace_wick_with_pins found in pin cabinet")
+	_check(pin_choice.get("stitched_effect", {}).get("require_candle_room") == true,
+		"AC4: brace_wick_with_pins has require_candle_room: true")
+	var snap_pin := {
+		"candle": 100,
+		"scraps": 10,
+		"party": [
+			{"id": "warden", "fray": 10},
+			{"id": "seamstress", "fray": 20},
+			{"id": "tinker", "fray": 30},
+			{"id": "button_golem", "fray": 40},
+		],
+	}
+	var svc_pin := RunStitchedEventConsequence.new(pin_cabinet)
+	var prev_pin := svc_pin.preview(snap_pin)
+	_check(prev_pin.get("ok") == true, "AC4: pin cabinet preview succeeds with valid standard snapshot")
+	var entry_pin := _entry(prev_pin, "brace_wick_with_pins")
+	_check(entry_pin.get("available") == false,
+		"AC4: brace_wick_with_pins stays blocked at candle=100")
+	var rec_pin := svc_pin.choose("brace_wick_with_pins", snap_pin)
+	_check(rec_pin.get("ok") == false,
+		"AC4: brace_wick_with_pins direct choose refused at candle=100")
+	_check(svc_pin.is_valid() and not svc_pin.is_claimed(), "AC4: pin cabinet refusal does not latch")
+
 
 
 

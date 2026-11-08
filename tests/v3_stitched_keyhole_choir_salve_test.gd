@@ -89,7 +89,7 @@ func _find_preview_entry(preview: Dictionary, choice_id: String) -> Dictionary:
 
 
 ## AC1: Given shipped v3_keyhole_choir, follow_humming has target="party", candle=16, fray=7, hp=5,
-## require_candle_room=true, and only its text is qualitatively changed; buy_silence and leave,
+## require_candle_room_or_wound=true, and only its text is qualitatively changed; buy_silence and leave,
 ## other records stay unchanged. The new catalogue test checks by ID.
 func _test_catalogue_ac1(event_record: Dictionary) -> void:
 	_check(event_record.get("id") == EVENT_ID, "AC1: Event ID matches " + EVENT_ID)
@@ -109,7 +109,7 @@ func _test_catalogue_ac1(event_record: Dictionary) -> void:
 	_check(int(follow_effect.get("candle", 0)) == 16, "AC1: follow_humming candle is 16")
 	_check(int(follow_effect.get("fray", 0)) == 7, "AC1: follow_humming fray is 7")
 	_check(int(follow_effect.get("hp", 0)) == 5, "AC1: follow_humming hp is 5")
-	_check(follow_effect.get("require_candle_room") == true, "AC1: follow_humming require_candle_room is true")
+	_check(follow_effect.get("require_candle_room_or_wound") == true, "AC1: follow_humming require_candle_room_or_wound is true")
 	_check(follow_effect.size() == 5, "AC1: follow_humming has exactly 5 effect keys")
 
 	var buy := _find_choice(event_record, "buy_silence")
