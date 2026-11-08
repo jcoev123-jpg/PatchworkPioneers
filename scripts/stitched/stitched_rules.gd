@@ -17,8 +17,9 @@ extends RefCounted
 ## Statuses (section 3) tick at the start of the affected unit's turn: Bleed deals its
 ## count in direct HP damage (ignoring PROT), then every N-turn counter drops by one. Stun
 ## is special: the stunned unit's turn is skipped, the stun is consumed and it gains one
-## turn of stun resist that refuses the next stun. Guard is a status on the guarding hero
-## that redirects enemy hits aimed at the guarded ally. Mark only adds damage to abilities
+## turn of stun resist that refuses the next stun. Guard is a status on the guarding unit that
+## redirects enemy hits aimed at the guarded same-side ally: a hero's Guard shelters a doll and
+## a foe's authored Guard (Button Shelter) shelters a foe. Mark only adds damage to abilities
 ## authored with mark_damage.
 ##
 ## S1b extends the same S1a session, validation, and seeded RNG with fray, resolve,
@@ -1556,7 +1557,8 @@ func _legal_targets(actor: Dictionary, ability: Dictionary, target_rank: int) ->
 		absolute = "foe" if str(actor["side"]) == "hero" else "hero"
 	if not bool(ability["multi"]):
 		var single := _unit_at(absolute, target_rank)
-		if not single.is_empty() and not _ally_thread_blocked(actor, ability, single):
+		if not single.is_empty() and not _ally_thread_blocked(actor, ability, single) \
+				and not _foe_guard_target_refused(actor, ability, single):
 			targets.append(single)
 		return targets
 	for rank in range(MIN_RANK, MAX_RANK + 1):
@@ -1566,6 +1568,15 @@ func _legal_targets(actor: Dictionary, ability: Dictionary, target_rank: int) ->
 		if not unit.is_empty() and not _ally_thread_blocked(actor, ability, unit):
 			targets.append(unit)
 	return targets
+
+
+## A foe's Guard may shelter only a real living ally on its own side: never the guardian
+## itself, a scrap heap (which _unit_at reports for a fallen foe's rank), an enemy or a
+## missing rank. Hero guards keep their own long-standing self/ally rules.
+func _foe_guard_target_refused(actor: Dictionary, ability: Dictionary, target: Dictionary) -> bool:
+	if str(ability["kind"]) != "guard" or str(actor["side"]) != "foe":
+		return false
+	return str(target["side"]) != "foe" or str(target["id"]) == str(actor["id"])
 
 
 func _resolve_ability(
@@ -1736,7 +1747,9 @@ func _resolve_single(actor: Dictionary, ability: Dictionary, target: Dictionary)
 		receipt["hit"] = true
 		return receipt
 	var aimed := target
-	if str(aimed["side"]) == "hero":
+	# Guard interception is symmetric: a guarding unit may shelter a same-side ally from an
+	# enemy strike, whether the ally is a doll (hero Guard) or a foe (a foe's Button Shelter).
+	if str(aimed["side"]) == "hero" or str(aimed["side"]) == "foe":
 		var guardian := _guardian_for(aimed)
 		if not guardian.is_empty():
 			aimed = guardian
@@ -2065,20 +2078,28 @@ func _gift_shift(foe: Dictionary, direction: int) -> Dictionary:
 	return {"ok": true, "from": from, "to": destination, "swapped": swapped}
 
 
+## The living same-side unit with an active Guard aimed at this target, or {}. Hero targets keep
+## the Reckless bypass and the thread-cut restriction; a foe target is sheltered only by a
+## living foe guardian, never across teams, by itself, or after its Guard expired. A scrap heap
+## or a lost/dead target is never redirected.
 func _guardian_for(target: Dictionary) -> Dictionary:
-	if str(target["side"]) != "hero" or str(target.get("resolve", "")) == "reckless":
+	var side := str(target["side"])
+	if side == "hero":
+		if str(target.get("resolve", "")) == "reckless":
+			return {}
+	elif side != "foe":
 		return {}
 	for unit_id in _units:
 		var unit: Dictionary = _units[unit_id]
-		if str(unit["side"]) != "hero" or str(unit["id"]) == str(target["id"]):
+		if str(unit["side"]) != side or str(unit["id"]) == str(target["id"]):
 			continue
-		if bool(unit["lost"]):
+		if not _can_act(unit):
 			continue
 		if int(unit["statuses"].get("guard", 0)) <= 0:
 			continue
 		if str(unit.get("guard_target", "")) != str(target["id"]):
 			continue
-		if _crosses_cut(int(unit["rank"]), int(target["rank"])):
+		if side == "hero" and _crosses_cut(int(unit["rank"]), int(target["rank"])):
 			continue
 		return unit
 	return {}

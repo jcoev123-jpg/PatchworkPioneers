@@ -148,6 +148,29 @@ func _catalog() -> void:
 		differs = differs or StitchedWrenGifts.draw_offer(42, index, boss, StitchedWrenGifts.basics(), false) != first
 	_check(differs, "later offers draw different gifts")
 	_check(StitchedWrenGifts.draw_offer(7, 0, ["tug", "hug"], ["tug"], true) == ["hug"], "a nearly empty pool offers what is left")
+	_check(StitchedWrenGifts.valid_slots(StitchedWrenGifts.basics()) and StitchedWrenGifts.valid_slots(["tug"])
+		and not StitchedWrenGifts.valid_slots(["tug", "tug"]) and not StitchedWrenGifts.valid_slots(["tug", "made_up"])
+		and not StitchedWrenGifts.valid_slots(["steady", "lift", "hug", "tug", "snip_string"]),
+		"equipped slots hold at most four distinct known gifts")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["tug", "tug"], StitchedWrenGifts.basics(), false).is_empty(),
+		"a repeated pool gift offers nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["steady", "tug"], StitchedWrenGifts.basics(), false).is_empty(),
+		"a basic hand in the pool offers nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["tug", "made_up"], StitchedWrenGifts.basics(), false).is_empty(),
+		"an unknown pool id offers nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["tug", "hug"], ["tug", "made_up"], false).is_empty(),
+		"an unknown equipped id offers nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["tug", "hug"], ["tug", "tug"], false).is_empty(),
+		"a repeated equipped id offers nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, ["tug", "hug"], ["steady", "lift", "hug", "tug", "snip_string"], false).is_empty(),
+		"five equipped ids offer nothing")
+	_check(StitchedWrenGifts.draw_offer(42, 0, [], StitchedWrenGifts.basics(), false).is_empty(),
+		"a valid empty pool offers nothing")
+	_check(StitchedWrenGifts.draw_offer(7, 0, ["hug"], StitchedWrenGifts.basics(), false) == ["hug"],
+		"a pool with one gift left offers it")
+	var seeded := StitchedWrenGifts.draw_offer(42, 0, opening, StitchedWrenGifts.basics(), false)
+	_check(seeded.size() == 3 and seeded.all(func(id): return id in opening),
+		"a genuine unlock pool offers three of its own gifts")
 
 
 func _slots_config() -> void:

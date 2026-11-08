@@ -1,5 +1,5 @@
 extends SceneTree
-## S14 patch-lesson lane: the pure StitchedPatchLesson formatter and its two lines
+## S14 patch-lesson lane: the pure StitchedPatchLesson formatter and four lines
 ## inside the real Wren Drawings field guide on the mounted base screen.
 
 const SCENE := preload("res://scenes/base_screen.tscn")
@@ -82,7 +82,7 @@ func _collect_focusable(node: Node, out: Array) -> void:
 		_collect_focusable(child, out)
 
 
-## Independent source assertions plus the exact two derived lines.
+## Independent source assertions plus the exact four derived lines.
 func _catalog_checks() -> void:
 	var kits := StitchedS14Abilities.kits()
 	var patches := StitchedS14Abilities.patches()
@@ -102,6 +102,25 @@ func _catalog_checks() -> void:
 		and str(strike.get("target_side", "")) == "enemy"
 		and int(strike.get("effects", {}).get("weak", 0)) == 2,
 		"shipped Warden torso record is the enemy melee Iron Challenge with weak 2")
+	var ward: Dictionary = kits.get("tinker", {}).get("torso", {})
+	_check(str(ward.get("id", "")) == "tinker_torso_casing_ward"
+		and str(ward.get("name", "")) == "Casing Ward"
+		and str(ward.get("slot", "")) == "torso"
+		and str(ward.get("kind", "")) == "buff"
+		and str(ward.get("target_side", "")) == "self"
+		and str(ward.get("move", "")) == "skill"
+		and int(ward.get("effects", {}).get("thorns", 0)) == 2,
+		"shipped Tinker torso is the self-targeted thorns Casing Ward skill")
+	var wash: Dictionary = kits.get("lantern_monk", {}).get("torso", {})
+	_check(str(wash.get("id", "")) == "lantern_monk_torso_lamplight_wash"
+		and str(wash.get("name", "")) == "Lamplight Wash"
+		and str(wash.get("slot", "")) == "torso"
+		and str(wash.get("kind", "")) == "heal"
+		and str(wash.get("target_side", "")) == "ally"
+		and str(wash.get("move", "")) == "skill"
+		and wash.get("multi", false) is bool and wash.get("multi", false) == true
+		and int(wash.get("effects", {}).get("heal", 0)) == 4,
+		"shipped Lantern Monk torso is the multi-ally Lamplight Wash healing skill")
 	var lint: Dictionary = patches.by_id.get("cotton_red_lint", {})
 	_check(str(lint.get("id", "")) == "cotton_red_lint"
 		and str(lint.get("name", "")) == "Red Lint"
@@ -116,23 +135,46 @@ func _catalog_checks() -> void:
 		and str(fuzz.get("effect", "")) == "heal"
 		and int(fuzz.get("amount", 0)) == 2,
 		"shipped Mending Fuzz record is a cotton heal patch of amount 2")
+	var pin: Dictionary = patches.by_id.get("silk_pin_prick", {})
+	_check(str(pin.get("id", "")) == "silk_pin_prick"
+		and str(pin.get("name", "")) == "Pin Prick"
+		and str(pin.get("rarity", "")) == "silk"
+		and str(pin.get("effect", "")) == "stun"
+		and int(pin.get("amount", 0)) == 1,
+		"shipped Pin Prick is a silk stun patch of amount 1")
+	var loop: Dictionary = patches.by_id.get("silk_life_loop", {})
+	_check(str(loop.get("id", "")) == "silk_life_loop"
+		and str(loop.get("name", "")) == "Life Loop"
+		and str(loop.get("rarity", "")) == "silk"
+		and str(loop.get("effect", "")) == "regen"
+		and int(loop.get("amount", 0)) == 2,
+		"shipped Life Loop is a silk regen patch of amount 2")
 	var lines := StitchedPatchLesson.examples()
 	var expected := [
 		"PATCH EXAMPLE  |  %s + %s: the heal can also bleed the ally it heals." % [str(heal.name), str(lint.name)],
 		"PATCH EXAMPLE  |  %s + %s: the hostile hit can mend the foe it strikes if that foe survives." % [str(strike.name), str(fuzz.name)],
+		"PATCH EXAMPLE  |  Casing Ward + Pin Prick: a self ward can also stun Tinker.",
+		"PATCH EXAMPLE  |  Lamplight Wash + Life Loop: each ally healed can also gain regeneration.",
 	]
-	_check(lines == expected, "examples() returns exactly the two brief plain-language lines in order")
-	if lines.size() == 2:
+	_check(lines == expected, "examples() returns exactly four precise source-derived lines in order")
+	if lines.size() == 4:
 		_check(lines[0].contains("Mending Knot + Red Lint") and lines[0].contains("ally")
 			and lines[0].contains("bleed"),
 			"first line pairs Mending Knot + Red Lint and names the bled ally")
 		_check(lines[1].contains("Iron Challenge + Mending Fuzz") and lines[1].contains("foe")
 			and lines[1].contains("survives"),
 			"second line pairs Iron Challenge + Mending Fuzz and conditions on the surviving foe")
-		_check(not _has_digit(lines[0]) and not _has_digit(lines[1]),
-			"lesson lines print no numeric heal, bleed, damage, probability or forecast amounts")
+		_check(lines[2].contains("Casing Ward + Pin Prick") and lines[2].contains("stun Tinker"),
+			"third line pairs a self ward with its possible caster stun")
+		_check(lines[3].contains("Lamplight Wash + Life Loop") and lines[3].contains("each ally healed"),
+			"fourth line pairs the group heal with possible regen for each ally")
+		var digit_free := true
+		for line in lines:
+			if _has_digit(line):
+				digit_free = false
+		_check(digit_free, "all four lesson lines contain no numbers, costs, odds or forecasts")
 	_check(StitchedPatchLesson.examples(kits, patches) == expected,
-			"explicit live sources derive the same two lines")
+			"detached live sources derive exactly the same four lines")
 	seed(918273)
 	var expected_rng := randi()
 	seed(918273)
@@ -152,6 +194,9 @@ func _invalid_checks() -> void:
 		and StitchedPatchLesson.examples(null, {}) == []
 		and StitchedPatchLesson.examples({}, null) == [],
 		"empty or half-empty sources fail closed")
+	seed(72914)
+	var expected_invalid_rng := randi()
+	seed(72914)
 	var kit_cases: Array = []
 	var missing_heal: Dictionary = kits.duplicate(true)
 	missing_heal["seamstress"].erase("head")
@@ -177,6 +222,57 @@ func _invalid_checks() -> void:
 	var wrong_id: Dictionary = kits.duplicate(true)
 	wrong_id["warden"]["torso"]["id"] = "warden_torso_other_challenge"
 	kit_cases.append(["strike id mismatch", wrong_id, patches])
+	var bad_kit: Dictionary = kits.duplicate(true)
+	bad_kit["tinker"].erase("torso")
+	kit_cases.append(["Tinker self ward missing", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"].erase("torso")
+	kit_cases.append(["Lantern Monk group heal missing", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["target_side"] = "ally"
+	kit_cases.append(["Tinker ward is not self-targeted", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["target_side"] = "self"
+	kit_cases.append(["Lantern Monk heal does not target allies", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["kind"] = "guard"
+	kit_cases.append(["Tinker ward kind is wrong", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["kind"] = "buff"
+	kit_cases.append(["Lantern Monk heal kind is wrong", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["effects"] = {"guard": 2}
+	kit_cases.append(["Tinker thorns effect missing", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["effects"]["heal"] = 0
+	kit_cases.append(["Lantern Monk heal amount zero", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["id"] = "tinker_torso_other_ward"
+	kit_cases.append(["Tinker ability ID wrong", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["name"] = "Dusk Wash"
+	kit_cases.append(["Lantern Monk ability name wrong", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["slot"] = "arms"
+	kit_cases.append(["Tinker ward slot contradicts torso", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["slot"] = "head"
+	kit_cases.append(["Lantern Monk heal slot contradicts torso", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["tinker"]["torso"]["move"] = "attack"
+	kit_cases.append(["Tinker ward move is not skill", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["move"] = "guard"
+	kit_cases.append(["Lantern Monk heal move is not skill", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"].erase("multi")
+	kit_cases.append(["Lantern Monk multi missing", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["multi"] = false
+	kit_cases.append(["Lantern Monk multi false", bad_kit, patches])
+	bad_kit = kits.duplicate(true)
+	bad_kit["lantern_monk"]["torso"]["multi"] = 1
+	kit_cases.append(["Lantern Monk multi is not a boolean", bad_kit, patches])
 	for entry in kit_cases:
 		var before: Dictionary = (entry[1] as Dictionary).duplicate(true)
 		_check(StitchedPatchLesson.examples(entry[1], entry[2]) == [],
@@ -201,11 +297,43 @@ func _invalid_checks() -> void:
 	var zero_amount: Dictionary = patches.duplicate(true)
 	zero_amount.by_id["cotton_mending_fuzz"]["amount"] = 0
 	patch_cases.append(["mending fuzz amount not positive", kits, zero_amount])
+	var bad_patch: Dictionary = patches.duplicate(true)
+	bad_patch.by_id.erase("silk_pin_prick")
+	patch_cases.append(["Pin Prick missing", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id.erase("silk_life_loop")
+	patch_cases.append(["Life Loop missing", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_pin_prick"]["name"] = "Blunt Prick"
+	patch_cases.append(["Pin Prick name wrong", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_life_loop"]["id"] = "silk_other_loop"
+	patch_cases.append(["Life Loop ID wrong", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_pin_prick"]["rarity"] = "cotton"
+	patch_cases.append(["Pin Prick silk switched to cotton", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_life_loop"]["rarity"] = "cotton"
+	patch_cases.append(["Life Loop silk switched to cotton", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_pin_prick"]["effect"] = "heal"
+	patch_cases.append(["Pin Prick no longer stuns", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_life_loop"]["effect"] = "stun"
+	patch_cases.append(["Life Loop no longer regenerates", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_pin_prick"]["amount"] = 0
+	patch_cases.append(["Pin Prick amount zero", kits, bad_patch])
+	bad_patch = patches.duplicate(true)
+	bad_patch.by_id["silk_life_loop"]["amount"] = 0
+	patch_cases.append(["Life Loop amount zero", kits, bad_patch])
 	for entry in patch_cases:
 		var before: Dictionary = (entry[2] as Dictionary).duplicate(true)
 		_check(StitchedPatchLesson.examples(entry[1], entry[2]) == [],
 			"invalid patches rejected: " + str(entry[0]))
 		_check(entry[2] == before, "invalid patch copy is not mutated: " + str(entry[0]))
+	_check(randi() == expected_invalid_rng,
+		"invalid fixtures and fail-closed formatting consume no global RNG")
 	_check(kits == kits_snapshot and patches == patches_snapshot
 		and StitchedS14Abilities.kits() == kits_snapshot
 		and StitchedS14Abilities.patches() == patches_snapshot,
@@ -267,11 +395,19 @@ func _run() -> void:
 			missing.append(phrase)
 	_check(missing.is_empty(), "all original Seams & retreat lines survive: " + str(missing))
 	var lessons := StitchedPatchLesson.examples()
-	_check(lessons.size() == 2 and page.contains(lessons[0]) and page.contains(lessons[1]),
-		"both derived examples render on the Seams & retreat page")
-	_check(page.count("Mending Knot + Red Lint") == 1
-		and page.count("Iron Challenge + Mending Fuzz") == 1,
-		"each example appears exactly once after open")
+	var all_present_once := lessons.size() == 4
+	var indices: Array[int] = []
+	for line in lessons:
+		if page.count(line) != 1:
+			all_present_once = false
+		indices.append(page.find(line))
+	var ordered := indices.size() == 4
+	if ordered:
+		for i in range(1, indices.size()):
+			if indices[i] <= indices[i - 1]:
+				ordered = false
+	_check(all_present_once and ordered,
+		"all four exact lines render exactly once, in order, on the real Seams & retreat page")
 	var scroll_bar := guide.page_scroll.get_v_scroll_bar()
 	_check(guide.page_scroll != null and scroll_bar != null
 		and guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED,
@@ -279,8 +415,8 @@ func _run() -> void:
 	var travel := maxf(0.0, scroll_bar.max_value - scroll_bar.page)
 	guide.page_scroll.scroll_vertical = int(travel)
 	await process_frame
-	_check(travel <= 0.0 or guide.page_scroll.scroll_vertical > 0,
-		"vertical scroll moves when the page overflows")
+	_check(travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
+		"four lessons overflow the 1280x720 guide and its vertical scroll moves")
 	guide.page_scroll.scroll_vertical = 0
 	await _key(KEY_RIGHT)
 	_check(guide.page_index == 2 and root.gui_get_focus_owner() == guide.tab_buttons[2],
@@ -295,9 +431,12 @@ func _run() -> void:
 	_check(guide.is_open(), "Drawings reopens the same mounted guide")
 	await _click(guide.tab_buttons[1])
 	page = guide.page_text(1)
-	_check(page.count("Mending Knot + Red Lint") == 1
-		and page.count("Iron Challenge + Mending Fuzz") == 1 and page.contains("RETREAT"),
-		"reopen shows each example exactly once with the original page intact")
+	var reopened_complete := page.contains("RETREAT")
+	for line in lessons:
+		if page.count(line) != 1:
+			reopened_complete = false
+	_check(reopened_complete,
+		"reopen shows all four examples once each with original static content intact")
 	var broken_kits: Dictionary = StitchedS14Abilities.kits().duplicate(true)
 	broken_kits["seamstress"].erase("head")
 	guide.lesson_kits = broken_kits
@@ -306,15 +445,23 @@ func _run() -> void:
 	await _click(guide.tab_buttons[1])
 	page = guide.page_text(1)
 	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[1])
-	_check(page == baseline and not page.contains("Mending Knot + Red Lint"),
-		"an invalid lesson fixture rebuilds the plain baseline with no stale line")
+	var invalid_clean := page == baseline
+	for line in lessons:
+		if page.contains(line):
+			invalid_clean = false
+	_check(invalid_clean,
+		"an invalid required lesson row rebuilds only the plain baseline, without stale lines")
 	guide.lesson_kits = null
 	await _click(guide.close_button)
 	await _click(drawings)
 	await _click(guide.tab_buttons[1])
 	page = guide.page_text(1)
-	_check(page.count("Iron Challenge + Mending Fuzz") == 1 and page.contains("RETREAT"),
-		"restored live sources re-derive the examples exactly once")
+	var restored_complete := page.contains("RETREAT")
+	for line in lessons:
+		if page.count(line) != 1:
+			restored_complete = false
+	_check(restored_complete,
+		"restored live sources re-derive all four examples exactly once")
 	await _key(KEY_ESCAPE)
 	_check(not guide.is_open() and root.gui_get_focus_owner() == drawings
 		and not drawings.disabled,

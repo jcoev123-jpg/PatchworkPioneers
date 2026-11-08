@@ -5,6 +5,7 @@ extends RefCounted
 
 const MAX_COMMANDS := 20000
 const MAX_BYTES := 16000000
+const STAGED_SUFFIX := ".tmp"
 
 
 static func capture(session: StitchedRunSession) -> Dictionary:
@@ -187,12 +188,44 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	var buffer := var_to_bytes(document)
 	if buffer.size() > MAX_BYTES:
 		return false
-	var file := FileAccess.open(path + ".tmp", FileAccess.WRITE)
+	var staged := path + STAGED_SUFFIX
+	var file := FileAccess.open(staged, FileAccess.WRITE)
 	if file == null:
 		return false
 	file.store_buffer(buffer)
 	file.close()
-	return DirAccess.rename_absolute(path + ".tmp", path) == OK
+	if not _staged_run_matches(staged, buffer, document):
+		DirAccess.remove_absolute(staged)
+		return false
+	# The staged bytes hold the complete latest run. The rename itself replaces
+	# the old target, which is never removed first, so a failed replace leaves
+	# the previously accepted save intact.
+	if DirAccess.rename_absolute(staged, path) != OK:
+		DirAccess.remove_absolute(staged)
+		return false
+	# Fresh readback of the published file proves the player's next Continue
+	# sees exactly the just-captured run, never stale or partial bytes.
+	var published := FileAccess.open(path, FileAccess.READ)
+	if published == null:
+		return false
+	var final_bytes := published.get_buffer(published.get_length())
+	published.close()
+	return final_bytes == buffer
+
+
+## A staged file only counts when its fresh readback holds the complete bytes
+## and replays through the validator into the exact just-captured run.
+static func _staged_run_matches(staged: String, buffer: PackedByteArray, document: Dictionary) -> bool:
+	var file := FileAccess.open(staged, FileAccess.READ)
+	if file == null:
+		return false
+	var readback := file.get_buffer(file.get_length())
+	file.close()
+	if readback != buffer:
+		return false
+	var replayed := restore(bytes_to_var(readback))
+	return replayed != null and replayed.seed_value == document.seed \
+		and replayed.journal == document.journal and replayed.snapshot() == document.state
 
 
 static func read_file(path: String) -> StitchedRunSession:

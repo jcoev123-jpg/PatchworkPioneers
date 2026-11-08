@@ -405,6 +405,12 @@ func _tales_changes_party() -> bool:
 			continue
 		if int(hero["fray"]) > 0:
 			return true
+		# A lingering Unravelled trait clears below RESOLVE_CLEAR_BELOW FRAY,
+		# so a living doll that already qualifies makes Tell Tales meaningful
+		# even when its FRAY has no room to fall.
+		if int(hero["fray"]) < RESOLVE_CLEAR_BELOW and hero.has("resolve") \
+				and str(hero["resolve"]) in StitchedS1BEffects.RESOLVE_TRAITS:
+			return true
 	return false
 
 
