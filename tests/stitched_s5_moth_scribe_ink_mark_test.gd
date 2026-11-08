@@ -329,9 +329,30 @@ func _test_source_contract() -> void:
 		"self_move": 0,
 		"move": "skill",
 	}
-	_check(_norm(bulwark.get("stitched", {}).get("abilities", []))
-		== _norm([expected_slam, expected_pad]),
-		"AC1: Felt Bulwark's two moves are untouched next to the edited Moth Scribe")
+	var expected_shelter := {
+		"id": "button_shelter",
+		"name": "Button Shelter",
+		"kind": "guard",
+		"launch": [1, 2],
+		"target": [2, 3],
+		"target_side": "ally",
+		"multi": false,
+		"acc": 100,
+		"dmg": [0, 0],
+		"crit": 0,
+		"effects": {"guard": 2},
+		"self_move": 0,
+		"move": "skill",
+	}
+	# Check the partner's kit by authored ID: its two existing moves stay exactly as they were
+	# and the one added Button Shelter record is the authored ally guard. No ordered full-kit
+	# list or ability total is asserted, so parallel catalog lanes stay merge-safe.
+	_check(_norm(_raw_ability(bulwark, "felt_slam")) == _norm(expected_slam),
+		"AC1: Felt Bulwark's Felt Slam is untouched next to the edited Moth Scribe")
+	_check(_norm(_raw_ability(bulwark, "bulwark_pad")) == _norm(expected_pad),
+		"AC1: Felt Bulwark's self Thorns-2 Bulwark Pad is untouched")
+	_check(_norm(_raw_ability(bulwark, "button_shelter")) == _norm(expected_shelter),
+		"AC1: Felt Bulwark gains exactly the authored Button Shelter guard record")
 
 	# Two more authored neighbours stay present with their own kits, not Moth Scribe's numbers.
 	var swarm := _raw_record(raw, "moth_swarm")

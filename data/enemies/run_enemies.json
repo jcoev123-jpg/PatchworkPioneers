@@ -473,6 +473,23 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "button_shelter",
+          "name": "Button Shelter",
+          "kind": "guard",
+          "launch": [1, 2],
+          "target": [2, 3],
+          "target_side": "ally",
+          "multi": false,
+          "acc": 100,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "guard": 2
+          },
+          "self_move": 0,
+          "move": "skill"
         }
       ]
     }
