@@ -200,7 +200,7 @@ func _run() -> void:
 func _coat_quote_checks() -> void:
 	var rows := {"quilted_coat": [100, 6], "padded_vest": [80, 4],
 		"double_quilt_coat": [100, 8], "scrap_lined_vest": [70, 3],
-		"wool_patch_cloak": [100, 5], "chain_stitched_coat": [100, 7],
+		"wool_patch_cloak": [90, 5], "chain_stitched_coat": [100, 7],
 		"reinforced_patchcoat": [100, 9], "thick_felt_mantle": [130, 10]}
 	var authored: Dictionary = RunStitchedPeddlerStock._authored_patches()
 	var coat_defs := {}
@@ -286,8 +286,8 @@ func _card_free_source_checks() -> void:
 	var coats := {"scrap_lined_vest": 3, "padded_vest": 4, "wool_patch_cloak": 5, "quilted_coat": 6,
 		"chain_stitched_coat": 7, "double_quilt_coat": 8, "reinforced_patchcoat": 9,
 		"thick_felt_mantle": 10}
-	var expected_price := {"scrap_lined_vest": 70, "padded_vest": 80, "wool_patch_cloak": 100,
-		"quilted_coat": 100, "chain_stitched_coat": 100, "double_quilt_coat": 100,
+	var expected_price := {"scrap_lined_vest": 70, "padded_vest": 80, "wool_patch_cloak": 90,
+		"quilted_coat": 100,"chain_stitched_coat": 100, "double_quilt_coat": 100,
 		"reinforced_patchcoat": 100, "thick_felt_mantle": 130}
 	var retired := ["stitched_badge", "spare_spool", "button_eye", "pincushion_arm",
 		"switchback_button", "bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",

@@ -12,7 +12,7 @@ const COATS := {
 ## Authored Stitched catalog quotes: budget vest 70, Padded Vest 80, power mantle 130, the rest 100.
 const EXPECTED_PRICE := {
 	"quilted_coat": 100, "padded_vest": 80, "double_quilt_coat": 100, "scrap_lined_vest": 70,
-	"wool_patch_cloak": 100, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
+	"wool_patch_cloak": 90, "chain_stitched_coat": 100, "reinforced_patchcoat": 100,
 	"thick_felt_mantle": 130,
 }
 const PARTY := ["warden", "seamstress", "tinker", "yarn_ranger"]
@@ -105,6 +105,7 @@ func _run() -> void:
 	_check_membership_and_determinism(prices)
 	_check_every_coat_eligible()
 	_check_padded_vest_price()
+	_check_wool_cloak_price()
 	_check_scarce(["scrap_lined_vest"], "one")
 	_check_scarce(["thick_felt_mantle", "padded_vest"], "two")
 	_check_all_owned()
@@ -174,6 +175,95 @@ func _check_padded_vest_price() -> void:
 		_check(owned_visit.buy_patch("padded_vest", o_state.visit_id, o_state.node_id,
 			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
 			"owned padded_vest cannot be bought again")
+
+
+## Wool Patch Cloak at its 90-gold quote: sole-unowned seeded stock, exact-gold buy, 89 refused, replay.
+func _check_wool_cloak_price() -> void:
+	var prices := _source_prices()
+	_check(prices.get("wool_patch_cloak", -1) == 90, "wool_patch_cloak source row is exactly 90 gold")
+	_check(prices.get("quilted_coat", -1) == 100 and prices.get("padded_vest", -1) == 80
+		and prices.get("thick_felt_mantle", -1) == 130, "neighbouring coat prices stay authored")
+	var owned := _others(["wool_patch_cloak"])
+	var owned_snapshot := owned.duplicate(true)
+	var stock := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(31), owned)
+	_check(stock.get("ok") == true and stock.get("offers") is Array and stock.offers.size() == 3,
+		"sole-unowned wool cloak stock samples three rows")
+	if stock.get("ok") != true:
+		return
+	var offers: Array = stock.offers
+	_check(_ids(offers).count("wool_patch_cloak") == 1
+		and offers.has({"id": "wool_patch_cloak", "price": 90}),
+		"stock includes wool_patch_cloak at 90 gold exactly once")
+	var again := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(31), owned.duplicate(true))
+	_check(again == stock, "wool cloak stock replays identically for the same seed and input")
+	_check(owned == owned_snapshot, "wool cloak fixture owned list is not mutated")
+
+	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, 90, offers)
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, 89, offers)
+	_check(rich.is_valid() and poor.is_valid(), "90-gold and 89-gold wool cloak visits open")
+	if not rich.is_valid() or not poor.is_valid():
+		return
+	var rich_row_seen := false
+	for row in rich.quote().offers:
+		if row.id == "wool_patch_cloak":
+			rich_row_seen = true
+			_check(row.price == 90 and row.can_buy == true and row.sold == false,
+				"wool cloak is buyable at 90 gold")
+	_check(rich_row_seen, "90-gold quote shows the wool cloak row")
+	var poor_row_seen := false
+	for row in poor.quote().offers:
+		if row.id == "wool_patch_cloak":
+			poor_row_seen = true
+			_check(row.price == 90 and row.can_buy == false, "wool cloak is not buyable at 89 gold")
+	_check(poor_row_seen, "89-gold quote shows the wool cloak row")
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	_check(poor.buy_patch("wool_patch_cloak", poor_state.visit_id, poor_state.node_id,
+		poor_state.snapshot).get("ok") != true
+		and poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"89 gold cannot buy wool cloak and nothing is debited or granted")
+	var left := poor.leave(poor_state.visit_id, poor_state.node_id, poor_state.snapshot)
+	_check(left.get("ok") == true and left.ledger.gold == 89,
+		"refused 89-gold buy keeps the chance to Leave")
+
+	var state := rich.read_state()
+	var bought := rich.buy_patch("wool_patch_cloak", state.visit_id, state.node_id, state.snapshot)
+	_check(bought.get("ok") == true
+		and bought.receipt == {"kind": "trinket", "id": "wool_patch_cloak", "price": 90}
+		and bought.ledger.gold == 0
+		and bought.ledger.owned_patch_ids.count("wool_patch_cloak") == 1,
+		"90 gold buys wool cloak once for exactly 90 and leaves 0 gold")
+	_check(rich.is_consumed() and rich.buy_patch("wool_patch_cloak", state.visit_id, state.node_id,
+		state.snapshot).get("ok") != true, "replayed wool cloak buy refused")
+	_check(owned == owned_snapshot, "wool cloak visit left caller's owned IDs untouched")
+
+	# Normal three-unowned stock: a seed that offers the cloak quotes it at 90 and replays.
+	var witness_seed := -1
+	var witness: Array = []
+	for seed_value in range(1, 200):
+		var probe := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(seed_value), [])
+		if probe.get("ok") == true and _ids(probe.offers).has("wool_patch_cloak"):
+			witness_seed = seed_value
+			witness = probe.offers
+			break
+	_check(witness_seed > 0 and witness.has({"id": "wool_patch_cloak", "price": 90}),
+		"a deterministic open-ledger seed stocks wool_patch_cloak at 90 gold")
+	if witness_seed > 0:
+		_check(RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(_rng(witness_seed), [])
+			.get("offers") == witness, "open-ledger wool cloak witness seed replays")
+
+	# Already owned: SOLD and disabled, no debit.
+	var owned_visit := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(),
+		owned + ["wool_patch_cloak"], 200, offers)
+	_check(owned_visit.is_valid(), "owned wool cloak visit opens")
+	if owned_visit.is_valid():
+		var o_state := owned_visit.read_state()
+		for row in owned_visit.quote().offers:
+			if row.id == "wool_patch_cloak":
+				_check(row.sold == true and row.can_buy == false, "owned wool cloak is SOLD and disabled")
+		_check(owned_visit.buy_patch("wool_patch_cloak", o_state.visit_id, o_state.node_id,
+			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
+			"owned wool cloak cannot be bought again")
 
 
 func _check_membership_and_determinism(prices: Dictionary) -> void:
