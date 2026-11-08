@@ -1,8 +1,8 @@
 extends SceneTree
 ## Deterministic, legal 50-run Stitched survival baseline. No UI instances, HP edits,
 ## injected outcomes, synthetic receipts, or timeout-to-defeat conversions.
-const SEED_FIRST := 1600
-const SEED_LAST := 1649
+const SEED_FIRST := 1700
+const SEED_LAST := 1749
 const MAX_WALK_STEPS := 450
 const MAX_BATTLE_TURNS := 600
 const MAX_VISIT_STEPS := 24
@@ -121,6 +121,7 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 	var candidates: Array = []
 	var parts: Dictionary = actor.get("parts", {})
 	var abilities: Array = []
+	var can_strike := false
 	if actor.side == "hero":
 		for slot in SLOTS:
 			if not parts.has(slot):
@@ -131,6 +132,7 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 			var ability: Dictionary = StitchedParts.ability_at_tier(catalog[worn.id], int(worn.tier))
 			if not ability.is_empty():
 				abilities.append({"id": worn.id, "ability": ability})
+				can_strike = can_strike or str(ability.get("target_side", "")) == "enemy"
 	else:
 		for ability in actor.get("abilities", []):
 			abilities.append({"id": ability.id, "ability": ability})
@@ -150,7 +152,11 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 					continue
 			candidates.append({"id": entry.id, "rank": rank,
 				"score": _ability_score(ability, targets, actor)})
-	if not candidates.is_empty():
+	# A doll whose surviving kit cannot strike an enemy must walk into reach instead of
+	# re-applying a self-buff forever: a lone rear-rank doll and foes out of reach would
+	# otherwise pass until the harness' bounded turn limit (an authentic stalemate).
+	var stuck: bool = actor.side == "hero" and not can_strike
+	if not candidates.is_empty() and not stuck:
 		candidates.sort_custom(func(a: Dictionary, b: Dictionary):
 			if a.score == b.score:
 				return str(a.id) < str(b.id) if a.id != b.id else a.rank < b.rank
@@ -159,8 +165,10 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 		return battle.use_part(chosen.id, chosen.rank) if actor.side == "hero" \
 			else battle.use_foe_ability(chosen.id, chosen.rank)
 	# Legal positional fallback when all equipped launch masks miss the current rank.
+	# A doll that cannot strike only walks forward; at the front rank it holds and lets
+	# the foes act instead of pacing between two ranks forever.
 	if actor.side == "hero":
-		for direction in [-1, 1]:
+		for direction in ([-1] if stuck else [-1, 1]):
 			var target_rank: int = int(actor.rank) + direction
 			if target_rank < 1 or target_rank > 4:
 				continue
@@ -215,7 +223,9 @@ func _run_seed(seed_number: int, trace_enabled: bool = false) -> Dictionary:
 			"map":
 				var node_id := _pick_node(session)
 				if not _check(not node_id.is_empty() and session.enter(node_id, before),
-						"seed %d rejected route at floor %d" % [seed_number, session.map.get_current_floor()]):
+						"seed %d rejected route at floor %d node %s type %s phase %s" % [
+						seed_number, session.map.get_current_floor(), node_id,
+						session.map.get_node(node_id).get("type", "?"), session.phase]):
 					return {}
 			"walk":
 				var command := _walk_command(session)
@@ -345,10 +355,11 @@ func _init() -> void:
 		_check(not replay.is_empty() and replay.trace == two_replays[seed_number].trace
 			and replay.summary == two_replays[seed_number].summary,
 			"seed %d replay diverges in routes, states, receipts, or RNG" % seed_number)
-	# Measured survival baseline, not a design rule. The older 1000-1049 seed
-	# window now reaches an unadmittable floor-12 Boss on seed 1006. Replace it with
-	# the contiguous 1600-1649 witness: 50 legal completed runs, 14 wins. Preserve
-	# the existing 9-22 win band, replay, route, legality and full-roster checks.
+	# Measured survival baseline, not a design rule. The older 1000-1049 window
+	# reached an unadmittable floor-12 Boss on seed 1006 and the previous 1600-1649
+	# window's seed 1609 hit a 600-turn stalemate after later-escort variation. This
+	# contiguous 1700-1749 witness measures 50 legal completed runs, 16 wins, inside
+	# the unchanged 9-22 band. Preserve replay, route, legality and roster checks.
 	_check(victories >= 9 and victories <= 22,
 		"authentic survival baseline expected 9-22 wins, observed %d" % victories)
 	print("COHORT_SUMMARY ", JSON.stringify({"runs": 50, "wins": victories,

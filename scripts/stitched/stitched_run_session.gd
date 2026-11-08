@@ -432,6 +432,19 @@ func _open_battle(kind: String) -> bool:
 			break
 		if id != chosen:
 			foes.append(StitchedEnemyCatalog.foe_for(enemies, id))
+	# Later three-foe routes keep the primary and first escort. Only the final
+	# Moth Scribe slot varies, using one draw from canonical normal-tier IDs.
+	if map.get_current_floor() >= 3 and kind in ["Fight", "Elite"] and foes.size() == 3:
+		var escort_pool: Array = []
+		for id in enemies.order:
+			if enemies.enemies[id].tier == StitchedEnemyCatalog.TIER_NORMAL \
+					and id != "moth_scribe" and id != foes[0].id and id != foes[1].id:
+				escort_pool.append(id)
+		escort_pool.sort()
+		if escort_pool.is_empty():
+			return false
+		foes[2] = StitchedEnemyCatalog.foe_for(enemies,
+			escort_pool[rng.randi_range(0, escort_pool.size() - 1)])
 	var hero_inputs := _hero_inputs()
 	var cuts := {}
 	var party_fray := 0

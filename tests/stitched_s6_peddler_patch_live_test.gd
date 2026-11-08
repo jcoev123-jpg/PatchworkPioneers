@@ -53,6 +53,18 @@ func _run() -> void:
 		return
 	var part_offer: Dictionary = session.pending.peddler_stock.part.duplicate(true)
 	var patch_offer: Dictionary = session.pending.peddler_stock.patch.duplicate(true)
+	# The late route can lose the front doll before this Peddler, and a LOST doll cannot
+	# wear a patch. Fit the genuine purchase on the first surviving doll instead.
+	var target_hero: Dictionary = {}
+	for hero in session.heroes:
+		if not hero.lost:
+			target_hero = hero
+			break
+	_check(not target_hero.is_empty(), "the earned Peddler still has a living doll for the patch")
+	if target_hero.is_empty():
+		_finish(app)
+		return
+	var target_id: String = str(target_hero.id)
 	var expected_part: Variant = JSON.parse_string(FileAccess.get_file_as_string(
 		"res://data/parts/enemy_parts.json"))
 	var enemy_ids := {}
@@ -82,14 +94,14 @@ func _run() -> void:
 	var patch_actions := legal.filter(func(a: Dictionary): return a.id == "buy_patch")
 	_check(patch_actions.size() == session.heroes.size() * 2,
 		"every actual doll and two stitched patch slots have a projected offer")
-	for malformed in [[], ["bogus", session.heroes[0].id, 0],
-		[patch_offer.id, "forged_hero", 0], [patch_offer.id, session.heroes[0].id, 3]]:
+	for malformed in [[], ["bogus", target_id, 0],
+		[patch_offer.id, "forged_hero", 0], [patch_offer.id, target_id, 3]]:
 		_check(not session.choose_visit("buy_patch", malformed, state)
 			and session.snapshot() == state,
 			"forged or stale patch action cannot spend, change RNG or mutate ledgers")
 	var forged := state.duplicate(true)
 	forged["rng"] = 0
-	_check(not session.choose_visit("buy_patch", [patch_offer.id, session.heroes[0].id, 0], forged)
+	_check(not session.choose_visit("buy_patch", [patch_offer.id, target_id, 0], forged)
 		and session.snapshot() == state, "forged RNG prediction refuses without spend")
 	# Foreground restore recomputes the identical sampled stock and visit choices.
 	var saved := StitchedRunSave.restore(StitchedRunSave.capture(session))
@@ -98,7 +110,7 @@ func _run() -> void:
 		"pending stock, prices, RNG and choices replay exactly under VERSION 1")
 	app.stitched_save_path = SAVE
 	var actions_count: int = session.visit_actions().size()
-	var old_button: Button = _button(app, "buy_patch", [patch_offer.id, session.heroes[0].id, 0])
+	var old_button: Button = _button(app, "buy_patch", [patch_offer.id, target_id, 0])
 	_check(old_button != null and not old_button.disabled and old_button.focus_mode == Control.FOCUS_ALL,
 		"earned patch row is an enabled, focusable public choice")
 	if old_button == null:
@@ -113,7 +125,7 @@ func _run() -> void:
 		"public Reload saved run restores the original stock without reroll")
 	old_button.pressed.emit()
 	_check(session.snapshot() == state, "pre-reload callback cannot claim stock in restored session")
-	var buy: Button = _button(app, "buy_patch", [patch_offer.id, session.heroes[0].id, 0])
+	var buy: Button = _button(app, "buy_patch", [patch_offer.id, target_id, 0])
 	_check(buy != null and not buy.disabled and buy.is_visible_in_tree(),
 		"restored public patch button remains actionable")
 	if buy != null:
@@ -121,25 +133,43 @@ func _run() -> void:
 		_check(buy.has_focus(), "keyboard navigation reaches real patch sale")
 		buy.pressed.emit()
 	var paid := session.snapshot()
+	var wearing := false
+	for hero in session.heroes:
+		if hero.id == target_id:
+			var worn_patches: Array = hero.get("patches", [])
+			wearing = not worn_patches.is_empty() and worn_patches[0] == patch_offer.id
 	_check(session.phase == "map" and session.gold == state.gold - patch_offer.price
-		and session.patches.has(patch_offer.id)
-		and session.heroes[0].patches[0] == patch_offer.id
+		and session.patches.has(patch_offer.id) and wearing
 		and session.receipts.size() == 11 and paid != state,
 		"one paid receipt wears the purchased patch, debits exact authored gold and exits Peddler")
 	if buy != null:
 		buy.pressed.emit()
 	_check(session.snapshot() == paid and session.is_consistent(),
 		"replayed purchase button cannot charge twice or redraw RNG")
-	_check(not session.choose_visit("buy_patch", [patch_offer.id, session.heroes[0].id, 0], paid)
+	_check(not session.choose_visit("buy_patch", [patch_offer.id, target_id, 0], paid)
 		and session.snapshot() == paid, "duplicate purchase command is refused")
 	var reloaded := StitchedRunSave.restore(StitchedRunSave.capture(session))
-	_check(reloaded != null and reloaded.snapshot() == paid
-		and reloaded.heroes[0].patches[0] == patch_offer.id,
-		"owned and worn patch replay exactly with the full ledger and current RNG")
+	var replayed_wear := false
+	if reloaded != null:
+		for hero in reloaded.heroes:
+			if hero.id == target_id:
+				var reloaded_patches: Array = hero.get("patches", [])
+				replayed_wear = not reloaded_patches.is_empty() \
+					and reloaded_patches[0] == patch_offer.id
+	var replay_ok := reloaded != null and reloaded.snapshot() == paid and replayed_wear
+	_check(replay_ok, "owned and worn patch replay exactly with the full ledger and current RNG")
+	if not replay_ok:
+		_finish(app)
+		return
 	var last_node: String = session.choices()[0]
 	_check(session.map.get_node(last_node).type == "Boss" and _press_route(app, last_node)
 		and session.phase == "battle", "next actual ranked Boss receives the bought patch")
-	_check(session.battle != null and session.heroes[0].patches[0] == patch_offer.id,
+	var carried_wear := false
+	for hero in session.heroes:
+		if hero.id == target_id:
+			var carried_patches: Array = hero.get("patches", [])
+			carried_wear = not carried_patches.is_empty() and carried_patches[0] == patch_offer.id
+	_check(session.battle != null and carried_wear,
 		"bought patch persists beyond Peddler into subsequent live node")
 	# An authenticated part service with six spares refuses buy and leaves
 	# the original full satchel and wallet untouched.
