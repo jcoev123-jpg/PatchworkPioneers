@@ -47,6 +47,22 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 					continue
 				_record_choice(result, veil, allies, rank)
 				return result
+		# Marked prey: once her own Pin Crown Dive has sewn a Mark, the Queen seizes the legal
+		# Marked doll with Devour even when her ordinary round rotation would raise Dust or
+		# another veil. This stays strictly after the emergency veil above, respects the
+		# authored launch/target/single-target masks and the battle's own legality authority,
+		# and falls through unchanged to that exact rotation when no living Marked doll is
+		# legally reachable. Read-only: no RNG draw and no mutation.
+		var devour := _authored_ability(actor, "queen_devour")
+		if not devour.is_empty() \
+				and StitchedParts.ranks_allowed(int(devour["launch_mask"]), int(actor["rank"])) \
+				and battle._self_move_gate(actor, devour).is_empty():
+			var prey_rank := _nearest_live_marked_rank(battle, actor, devour)
+			if prey_rank > 0:
+				var prey: Array = battle._legal_targets(actor, devour, prey_rank)
+				if not prey.is_empty():
+					_record_choice(result, devour, prey, prey_rank)
+					return result
 	var offset := (battle.round_number() - 1) % maxi(1, authored.size())
 	for step in range(authored.size()):
 		var ability: Dictionary = authored[(offset + step) % authored.size()]
@@ -220,6 +236,20 @@ static func _nearest_marked_rank(
 	for rank in range(1, 5):
 		for target in battle._legal_targets(actor, ability, rank):
 			if int(target.get("statuses", {}).get("mark", 0)) > 0:
+				return rank
+	return 0
+
+
+## Lowest legal rank whose reached target is a living, positive-HP, non-LOST hero already
+## carrying a current Mark (0 when none). The passed ability's own masks and the battle's
+## read-only legality authority decide what can be reached, so a hanging, lost, dead,
+## out-of-reach or unmarked doll is never seized. Never mutates the battle or draws RNG.
+static func _nearest_live_marked_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			if _is_live_marked_hero(target):
 				return rank
 	return 0
 
