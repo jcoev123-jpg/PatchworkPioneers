@@ -12,6 +12,7 @@ func _check(ok: bool, label: String) -> void:
 
 func _initialize() -> void:
 	_test_ac1_detached_records()
+	_test_ac1_eligibility_boundaries()
 	_test_ac2_oracle_and_weights()
 	_test_ac3_boundaries_and_attic()
 	_test_ac4_session_settlement()
@@ -91,7 +92,192 @@ func _test_ac1_detached_records() -> void:
 		"repeated offer on same seed is fresh detached record")
 
 
-func _oracle_boss_underbed(rng: RandomNumberGenerator) -> Dictionary:
+func _test_ac1_eligibility_boundaries() -> void:
+	# AC1: Given a real settled Elite/Boss state, only non-LOST heroes with base_max_hp - 6 >= 10 can support
+	# underbed_stuffing_trade; only non-LOST heroes with untorn legs can support underbed_leg_trade;
+	# underbed_fear_trade is eligible only when Wren fear <= 85, a living hero exists and an unequipped gift exists.
+	# A deterministic boundary test on each price and the live session verifies offer never names a currently
+	# unpayable Underbed deal.
+
+	# 1. Direct helper eligibility filtering on each trade type
+	# Only stuffing payable (leg=false, stuffing=true, fear=false)
+	var rng1 := RandomNumberGenerator.new()
+	rng1.seed = 1001
+	for _i in 50:
+		var off := StitchedS14SideDoors.offer(rng1, "Boss", true, false, true, false)
+		_check(off.get("id") == "underbed_stuffing_trade", "only stuffing payable offers only stuffing trade")
+
+	# Only leg payable (leg=true, stuffing=false, fear=false)
+	var rng2 := RandomNumberGenerator.new()
+	rng2.seed = 1002
+	for _i in 50:
+		var off := StitchedS14SideDoors.offer(rng2, "Boss", true, true, false, false)
+		_check(off.get("id") == "underbed_leg_trade", "only leg payable offers only leg trade")
+
+	# Only fear payable (leg=false, stuffing=false, fear=true)
+	var rng3 := RandomNumberGenerator.new()
+	rng3.seed = 1003
+	for _i in 50:
+		var off := StitchedS14SideDoors.offer(rng3, "Boss", true, false, false, true)
+		_check(off.get("id") == "underbed_fear_trade", "only fear payable offers only fear trade")
+
+	# Fully exhausted underbed with underbed_taken=true
+	var rng4 := RandomNumberGenerator.new()
+	rng4.seed = 1004
+	for _i in 50:
+		var state_before := rng4.state
+		var off := StitchedS14SideDoors.offer(rng4, "Boss", true, false, false, false)
+		_check(off.is_empty(), "exhausted underbed with underbed_taken=true returns empty offer")
+		_check(rng4.state == state_before, "exhausted underbed with underbed_taken=true consumes 0 RNG draws")
+
+	# Fully exhausted underbed with underbed_taken=false
+	var rng5 := RandomNumberGenerator.new()
+	rng5.seed = 1005
+	for _i in 50:
+		var off := StitchedS14SideDoors.offer(rng5, "Boss", false, false, false, false)
+		_check(off.get("kind") == "attic", "exhausted underbed with underbed_taken=false offers Attic")
+
+	# 2. Live session battle boundary tests
+	# Case A: max-HP insufficient at base_max_hp 15 versus eligible at 16
+	# Seed 6 reaches Elite victory and chooses Underbed.
+	var s16 := StitchedRunSession.start(6)
+	var elite_id := ""
+	for id in s16.choices():
+		if s16.map.get_node(id).type == "Elite":
+			elite_id = id
+			break
+	_check(s16.enter(elite_id, s16.snapshot()), "s16 enters Elite")
+	_check(_play_live_battle(s16) and s16.battle.outcome() == "victory", "s16 wins live Elite battle")
+	for u in s16.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+			u["base_max_hp"] = 16
+	for h in s16.heroes:
+		h.parts.legs.torn = true
+		h.base_max_hp = 16
+	s16._kid_fear._fear = 86
+	s16.gift_slots = s16.gift_pool.duplicate()
+	s16._seal()
+	_check(s16.settle_battle(s16.battle), "s16 settles battle")
+	_check(s16.door_offer.get("id") == "underbed_stuffing_trade",
+		"base_max_hp 16 satisfies 16 - 6 >= 10: stuffing trade offered in live session")
+
+	var s15 := StitchedRunSession.start(6)
+	_check(s15.enter(elite_id, s15.snapshot()), "s15 enters Elite")
+	_check(_play_live_battle(s15) and s15.battle.outcome() == "victory", "s15 wins live Elite battle")
+	for u in s15.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+			u["base_max_hp"] = 15
+	for h in s15.heroes:
+		h.parts.legs.torn = true
+		h.base_max_hp = 15
+	s15._kid_fear._fear = 86
+	s15.gift_slots = s15.gift_pool.duplicate()
+	s15._seal()
+	_check(s15.settle_battle(s15.battle), "s15 settles battle")
+	_check(s15.door_offer.get("id") != "underbed_stuffing_trade" \
+		and s15.door_offer.get("kind") == "attic",
+		"base_max_hp 15 fails 15 - 6 >= 10: stuffing trade is never offered; Attic offered instead")
+
+	# Case B: fear 85 versus 86
+	# Seed 7 reaches Elite victory and chooses fear trade when eligible.
+	var sf85 := StitchedRunSession.start(7)
+	var elite_id7 := ""
+	for id in sf85.choices():
+		if sf85.map.get_node(id).type == "Elite":
+			elite_id7 = id
+			break
+	_check(sf85.enter(elite_id7, sf85.snapshot()), "sf85 enters Elite")
+	_check(_play_live_battle(sf85) and sf85.battle.outcome() == "victory", "sf85 wins live Elite battle")
+	for u in sf85.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+			u["base_max_hp"] = 15
+	for h in sf85.heroes:
+		h.parts.legs.torn = true
+		h.base_max_hp = 15
+	sf85._kid_fear._fear = 85
+	sf85.gift_slots = []
+	sf85._seal()
+	_check(sf85.settle_battle(sf85.battle), "sf85 settles battle")
+	_check(sf85.door_offer.get("id") == "underbed_fear_trade",
+		"fear 85 <= 85 with living dolls and available gifts: fear trade offered in live session")
+
+	var sf86 := StitchedRunSession.start(7)
+	_check(sf86.enter(elite_id7, sf86.snapshot()), "sf86 enters Elite")
+	_check(_play_live_battle(sf86) and sf86.battle.outcome() == "victory", "sf86 wins live Elite battle")
+	for u in sf86.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+			u["base_max_hp"] = 15
+	for h in sf86.heroes:
+		h.parts.legs.torn = true
+		h.base_max_hp = 15
+	sf86._kid_fear._fear = 86
+	sf86.gift_slots = []
+	sf86._seal()
+	_check(sf86.settle_battle(sf86.battle), "sf86 settles battle")
+	_check(sf86.door_offer.get("id") != "underbed_fear_trade",
+		"fear 86 > 85: fear trade is never offered in live session")
+
+	# Case C: no free gift versus an available gift
+	var s_no_gift := StitchedRunSession.start(7)
+	_check(s_no_gift.enter(elite_id7, s_no_gift.snapshot()), "s_no_gift enters Elite")
+	_check(_play_live_battle(s_no_gift) and s_no_gift.battle.outcome() == "victory", "s_no_gift wins live Elite battle")
+	for u in s_no_gift.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+			u["base_max_hp"] = 15
+	for h in s_no_gift.heroes:
+		h.parts.legs.torn = true
+		h.base_max_hp = 15
+	s_no_gift._kid_fear._fear = 80
+	s_no_gift.gift_slots = s_no_gift.gift_pool.duplicate()
+	s_no_gift._seal()
+	_check(s_no_gift.settle_battle(s_no_gift.battle), "s_no_gift settles battle")
+	_check(s_no_gift.door_offer.get("id") != "underbed_fear_trade",
+		"when all gifts are equipped: fear trade is never offered in live session")
+
+	# Case D: all legs torn versus an intact leg
+	# On seed 6 without modification, underbed_leg_trade was offered.
+	var s_intact := StitchedRunSession.start(6)
+	_check(s_intact.enter(elite_id, s_intact.snapshot()), "s_intact enters Elite")
+	_check(_play_live_battle(s_intact) and s_intact.battle.outcome() == "victory", "s_intact wins live battle")
+	_check(s_intact.settle_battle(s_intact.battle), "s_intact settles battle")
+	_check(s_intact.door_offer.get("id") == "underbed_leg_trade",
+		"intact legs present: leg trade offered on seed 6")
+
+	var s_torn := StitchedRunSession.start(6)
+	_check(s_torn.enter(elite_id, s_torn.snapshot()), "s_torn enters Elite")
+	_check(_play_live_battle(s_torn) and s_torn.battle.outcome() == "victory", "s_torn wins live battle")
+	for u in s_torn.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = true
+	for h in s_torn.heroes:
+		h.parts.legs.torn = true
+	s_torn._seal()
+	_check(s_torn.settle_battle(s_torn.battle), "s_torn settles battle")
+	_check(s_torn.door_offer.get("id") != "underbed_leg_trade",
+		"all legs torn: leg trade is never offered on seed 6")
+
+	# Case E: all living dolls LOST
+	var s_lost := StitchedRunSession.start(6)
+	_check(s_lost.enter(elite_id, s_lost.snapshot()), "s_lost enters Elite")
+	_check(_play_live_battle(s_lost) and s_lost.battle.outcome() == "victory", "s_lost wins live battle")
+	for u in s_lost.battle._units.values():
+		if u.get("side") == "hero":
+			u["lost"] = true
+	for h in s_lost.heroes:
+		h.lost = true
+	s_lost.underbed_taken = true
+	s_lost._seal()
+	_check(s_lost.settle_battle(s_lost.battle), "s_lost settles battle")
+	_check(s_lost.door_offer.is_empty(),
+		"all heroes LOST: living_hero is false, no underbed deal offered")
+
+
+func _oracle_boss_underbed(rng: RandomNumberGenerator, leg: bool = true, stuffing: bool = true, fear: bool = true) -> Dictionary:
 	var raw_text := FileAccess.get_file_as_string("res://data/stitched/s14_side_doors.json")
 	var raw_json: Dictionary = JSON.parse_string(raw_text)
 	var weights := {"gold_patch": 1, "silk_patch": 5, "wren_gift": 4}
@@ -99,26 +285,63 @@ func _oracle_boss_underbed(rng: RandomNumberGenerator) -> Dictionary:
 	var records := {}
 	for door in raw_json.get("doors", []):
 		if door.get("kind") == "underbed":
+			if door.cost == "limb" and not leg:
+				continue
+			if door.cost == "max_hp" and not stuffing:
+				continue
+			if door.cost == "fear" and not fear:
+				continue
 			records[door.id] = door
 			var w: int = int(weights.get(door.get("reward", ""), 0))
 			for _i in w:
 				tickets.append(door.id)
 	tickets.sort()
+	if tickets.is_empty():
+		return {}
 	var draw := rng.randi_range(0, tickets.size() - 1)
 	return {"id": tickets[draw], "record": records[tickets[draw]]}
 
 
 func _test_ac2_oracle_and_weights() -> void:
-	# AC2: Given a seeded RNG and authentic Underbed choices, the helper uses a sorted ten-ticket pool
-	# with 1:5:4 weights (gold:silk:Wren gift), one range draw, deterministic replay/state, and gold
-	# rarer than each other option. Prove with an independent one-draw oracle and repeated seeded test.
+	# AC2: Given any filtered payable Underbed set, keep gold_patch:silk_patch:wren_gift original
+	# ticket weights 1:5:4 among remaining choices, sorted tickets, single choice RNG and deep-detached
+	# records. Independent oracle IDs and post-draw RNG state match on fixed seeds; unfiltered calls
+	# with omitted new args retain all old expectations.
 
-	# 1. Independent one-draw oracle comparison across multiple seeds
+	# 1. Independent sorted-ticket oracle comparison across all 8 combinations of payable subsets
+	var combos := [
+		{"leg": true, "stuffing": true, "fear": true, "label": "all 3 payable"},
+		{"leg": true, "stuffing": true, "fear": false, "label": "silk + gold"},
+		{"leg": true, "stuffing": false, "fear": true, "label": "silk + wren"},
+		{"leg": false, "stuffing": true, "fear": true, "label": "gold + wren"},
+		{"leg": true, "stuffing": false, "fear": false, "label": "silk only"},
+		{"leg": false, "stuffing": true, "fear": false, "label": "gold only"},
+		{"leg": false, "stuffing": false, "fear": true, "label": "wren only"},
+		{"leg": false, "stuffing": false, "fear": false, "label": "none payable"},
+	]
 	var test_seeds := [1, 7, 42, 99, 1234, 5678, 99999, 314159, 8675309, 1000000]
+	for combo in combos:
+		for s in test_seeds:
+			var oracle_rng := RandomNumberGenerator.new()
+			oracle_rng.seed = s
+			var oracle_res := _oracle_boss_underbed(oracle_rng, combo.leg, combo.stuffing, combo.fear)
+			var oracle_state := oracle_rng.state
+
+			var helper_rng := RandomNumberGenerator.new()
+			helper_rng.seed = s
+			var helper_res := StitchedS14SideDoors.offer(helper_rng, "Boss", true, combo.leg, combo.stuffing, combo.fear)
+			var helper_state := helper_rng.state
+
+			_check(helper_res.get("id", "") == oracle_res.get("id", ""),
+				"seed %d (%s): helper selected ID matches oracle" % [s, combo.label])
+			_check(helper_state == oracle_state,
+				"seed %d (%s): post-draw helper rng.state matches oracle exactly" % [s, combo.label])
+
+	# 2. Unfiltered default signature comparison against all-3 oracle across same seeds
 	for s in test_seeds:
 		var oracle_rng := RandomNumberGenerator.new()
 		oracle_rng.seed = s
-		var oracle_res := _oracle_boss_underbed(oracle_rng)
+		var oracle_res := _oracle_boss_underbed(oracle_rng, true, true, true)
 		var oracle_state := oracle_rng.state
 
 		var helper_rng := RandomNumberGenerator.new()
@@ -127,11 +350,12 @@ func _test_ac2_oracle_and_weights() -> void:
 		var helper_state := helper_rng.state
 
 		_check(helper_res.get("id") == oracle_res.id,
-			"seed %d: helper selected ID matches independent sorted-ticket oracle" % s)
+			"seed %d (unfiltered): helper selected ID matches independent oracle" % s)
 		_check(helper_state == oracle_state,
-			"seed %d: post-draw helper rng.state matches independent oracle exactly" % s)
+			"seed %d (unfiltered): post-draw helper rng.state matches independent oracle exactly" % s)
 
-	# 2. Modest deterministic sample of 400 Boss offers with underbed_taken=true
+	# 3. Sampling frequency tests verifying weights in restricted pools
+	# 3a. All 3 payable: 400 sample, gold (1) < silk (5), gold (1) < wren (4)
 	var sample_rng := RandomNumberGenerator.new()
 	sample_rng.seed = 20261108
 	var counts := {
@@ -153,14 +377,74 @@ func _test_ac2_oracle_and_weights() -> void:
 		"silk_patch trade appears in 400 sample (%d times)" % counts["underbed_leg_trade"])
 	_check(counts["underbed_fear_trade"] > 0,
 		"wren_gift trade appears in 400 sample (%d times)" % counts["underbed_fear_trade"])
-
-	# Gold (10% expected) is rarer than each of silk (50% expected) and wren_gift (40% expected)
 	_check(counts["underbed_stuffing_trade"] < counts["underbed_leg_trade"],
 		"gold patch trade (%d) is rarer than silk patch trade (%d)" % [counts["underbed_stuffing_trade"], counts["underbed_leg_trade"]])
 	_check(counts["underbed_stuffing_trade"] < counts["underbed_fear_trade"],
 		"gold patch trade (%d) is rarer than wren gift trade (%d)" % [counts["underbed_stuffing_trade"], counts["underbed_fear_trade"]])
 
-	# 3. Deterministic replay check
+	# 3b. Restricted pool: gold (1) + wren (4), leg excluded
+	var no_leg_rng := RandomNumberGenerator.new()
+	no_leg_rng.seed = 20261109
+	var no_leg_counts := {"underbed_stuffing_trade": 0, "underbed_fear_trade": 0}
+	for _i in 300:
+		var off := StitchedS14SideDoors.offer(no_leg_rng, "Boss", true, false, true, true)
+		var oid: String = off.get("id", "")
+		_check(oid != "underbed_leg_trade", "no leg trade offered when leg unpayable")
+		if no_leg_counts.has(oid):
+			no_leg_counts[oid] += 1
+	_check(no_leg_counts["underbed_stuffing_trade"] > 0 and no_leg_counts["underbed_fear_trade"] > 0,
+		"both stuffing and fear trades appear when leg excluded")
+	_check(no_leg_counts["underbed_stuffing_trade"] < no_leg_counts["underbed_fear_trade"],
+		"gold trade (%d) is rarer than wren gift trade (%d) in 1:4 restricted pool" % [
+			no_leg_counts["underbed_stuffing_trade"], no_leg_counts["underbed_fear_trade"]])
+
+	# 3c. Restricted pool: silk (5) + wren (4), stuffing excluded
+	var no_stuffing_rng := RandomNumberGenerator.new()
+	no_stuffing_rng.seed = 20261110
+	var no_stuffing_counts := {"underbed_leg_trade": 0, "underbed_fear_trade": 0}
+	for _i in 300:
+		var off := StitchedS14SideDoors.offer(no_stuffing_rng, "Boss", true, true, false, true)
+		var oid: String = off.get("id", "")
+		_check(oid != "underbed_stuffing_trade", "no stuffing trade offered when stuffing unpayable")
+		if no_stuffing_counts.has(oid):
+			no_stuffing_counts[oid] += 1
+	_check(no_stuffing_counts["underbed_leg_trade"] > 0 and no_stuffing_counts["underbed_fear_trade"] > 0,
+		"both leg and fear trades appear when stuffing excluded")
+
+	# 3d. Restricted pool: gold (1) + silk (5), fear excluded
+	var no_fear_rng := RandomNumberGenerator.new()
+	no_fear_rng.seed = 20261111
+	var no_fear_counts := {"underbed_stuffing_trade": 0, "underbed_leg_trade": 0}
+	for _i in 300:
+		var off := StitchedS14SideDoors.offer(no_fear_rng, "Boss", true, true, true, false)
+		var oid: String = off.get("id", "")
+		_check(oid != "underbed_fear_trade", "no fear trade offered when fear unpayable")
+		if no_fear_counts.has(oid):
+			no_fear_counts[oid] += 1
+	_check(no_fear_counts["underbed_stuffing_trade"] > 0 and no_fear_counts["underbed_leg_trade"] > 0,
+		"both stuffing and leg trades appear when fear excluded")
+	_check(no_fear_counts["underbed_stuffing_trade"] < no_fear_counts["underbed_leg_trade"],
+		"gold trade (%d) is rarer than silk trade (%d) in 1:5 restricted pool" % [
+			no_fear_counts["underbed_stuffing_trade"], no_fear_counts["underbed_leg_trade"]])
+
+	# 3e. Only one payable kind: 100% of draws pick that kind
+	var single_rng := RandomNumberGenerator.new()
+	single_rng.seed = 20261112
+	var all_stuffing := true
+	var all_leg := true
+	var all_fear := true
+	for _i in 100:
+		if StitchedS14SideDoors.offer(single_rng, "Boss", true, false, true, false).get("id") != "underbed_stuffing_trade":
+			all_stuffing = false
+		if StitchedS14SideDoors.offer(single_rng, "Boss", true, true, false, false).get("id") != "underbed_leg_trade":
+			all_leg = false
+		if StitchedS14SideDoors.offer(single_rng, "Boss", true, false, false, true).get("id") != "underbed_fear_trade":
+			all_fear = false
+	_check(all_stuffing, "only stuffing payable offers underbed_stuffing_trade 100% of the time")
+	_check(all_leg, "only leg payable offers underbed_leg_trade 100% of the time")
+	_check(all_fear, "only fear payable offers underbed_fear_trade 100% of the time")
+
+	# 4. Deterministic replay check
 	var replay_rng := RandomNumberGenerator.new()
 	replay_rng.seed = 20261108
 	var replay_sequence: Array[String] = []
@@ -229,11 +513,9 @@ func _test_ac3_boundaries_and_attic() -> void:
 
 	_check(attic_counts["attic_waxlight"] > 0 and attic_counts["attic_rethread"] > 0 and attic_counts["attic_headward"] > 0,
 		"all three Attic doors appeared when attic selected")
-	# Attic 3 doors are equally weighted
 	var attic_total: int = side_counts["attic"]
 	_check(attic_total > 0, "attic was selected at least once")
 	for aid in attic_counts:
-		# each should be roughly 1/3 of attic offers (expect ~100 out of ~300)
 		_check(attic_counts[aid] > 40 and attic_counts[aid] < 160,
 			"attic door %s uniformly sampled (%d / %d)" % [aid, attic_counts[aid], attic_total])
 
@@ -267,6 +549,67 @@ func _test_ac3_boundaries_and_attic() -> void:
 			boss_all_nonempty = false
 			break
 	_check(boss_all_nonempty, "Boss offers unconditionally across all test seeds")
+
+	# 6. AC4: Fully exhausted Underbed behavior
+	# 6a. underbed_taken=true: never admits Attic, returns empty dict, 0 draws consumed for Boss
+	var exh_taken_rng := RandomNumberGenerator.new()
+	exh_taken_rng.seed = 333
+	for _i in 100:
+		var before_st := exh_taken_rng.state
+		var off := StitchedS14SideDoors.offer(exh_taken_rng, "Boss", true, false, false, false)
+		_check(off.is_empty(), "exhausted Underbed with underbed_taken=true returns empty dict for Boss")
+		_check(exh_taken_rng.state == before_st,
+			"exhausted Underbed with underbed_taken=true consumes 0 RNG draws for Boss")
+
+	# 6b. underbed_taken=false: Attic unconditionally offered for Boss, uniform 3 choices, exactly 1 draw consumed
+	var exh_untaken_rng := RandomNumberGenerator.new()
+	exh_untaken_rng.seed = 444
+	var exh_attic_counts := {"attic_waxlight": 0, "attic_rethread": 0, "attic_headward": 0}
+	for _i in 300:
+		var before_st := exh_untaken_rng.state
+		var off := StitchedS14SideDoors.offer(exh_untaken_rng, "Boss", false, false, false, false)
+		_check(off.get("kind") == "attic", "exhausted Underbed with underbed_taken=false offers Attic")
+		_check(off.get("cost") == "none" and off.get("amount") == 0, "Attic offer is free")
+		var aid: String = off.get("id", "")
+		if exh_attic_counts.has(aid):
+			exh_attic_counts[aid] += 1
+		var verify_rng := RandomNumberGenerator.new()
+		verify_rng.state = before_st
+		var _d := verify_rng.randi_range(0, 2)
+		_check(exh_untaken_rng.state == verify_rng.state,
+			"exhausted Underbed Attic offer consumes exactly 1 draw (no spurious coin flip)")
+	_check(exh_attic_counts["attic_waxlight"] > 40 and exh_attic_counts["attic_rethread"] > 40 and exh_attic_counts["attic_headward"] > 40,
+		"all three Attic doors uniformly sampled when Underbed exhausted")
+
+	# 6c. Elite with exhausted Underbed:
+	# underbed_taken=true: always returns empty, consumes exactly 1 percentile draw
+	for test_seed in 50:
+		var e_rng := RandomNumberGenerator.new()
+		e_rng.seed = test_seed
+		var roll_rng := RandomNumberGenerator.new()
+		roll_rng.seed = test_seed
+		var _roll := roll_rng.randi_range(1, 100)
+		var e_off := StitchedS14SideDoors.offer(e_rng, "Elite", true, false, false, false)
+		_check(e_off.is_empty(), "Elite with exhausted Underbed and underbed_taken=true always returns empty")
+		_check(e_rng.state == roll_rng.state,
+			"Elite with exhausted Underbed and underbed_taken=true consumes exactly 1 percentile draw")
+
+	# underbed_taken=false: opens on <= 70 and offers Attic (2 draws: percentile + attic), closed on > 70 (1 draw)
+	for test_seed in 50:
+		var e_rng := RandomNumberGenerator.new()
+		e_rng.seed = test_seed
+		var roll_rng := RandomNumberGenerator.new()
+		roll_rng.seed = test_seed
+		var roll := roll_rng.randi_range(1, 100)
+		var e_off := StitchedS14SideDoors.offer(e_rng, "Elite", false, false, false, false)
+		if roll <= 70:
+			_check(e_off.get("kind") == "attic", "Elite opens and offers Attic when underbed exhausted")
+			var _attic_roll := roll_rng.randi_range(0, 2)
+			_check(e_rng.state == roll_rng.state,
+				"open Elite with exhausted Underbed consumes exactly 2 draws (70%% roll + attic draw)")
+		else:
+			_check(e_off.is_empty(), "Elite closed on roll > 70")
+			_check(e_rng.state == roll_rng.state, "closed Elite consumes exactly 1 draw")
 
 
 func _play_live_battle(session: StitchedRunSession) -> bool:
@@ -311,7 +654,7 @@ func _play_live_battle(session: StitchedRunSession) -> bool:
 
 
 func _test_ac4_session_settlement() -> void:
-	# AC4: Given real existing seeded Elite and Boss flow, door offers still settle through
+	# AC3/AC4: Given real existing seeded Elite and Boss flow, door offers still settle through
 	# unchanged session with once-only claims and authentic costs; departure, rejection and
 	# saved replay stay deterministic.
 	var witness := false
@@ -332,6 +675,32 @@ func _test_ac4_session_settlement() -> void:
 			continue
 
 		var offered: Dictionary = session.door_offer.duplicate(true)
+
+		# AC1: Assert the offer's requirements can be paid at the time it appears
+		if offered.cost == "max_hp":
+			var payable := false
+			for h in session.heroes:
+				if not h.lost and int(h.base_max_hp) - int(offered.amount) >= 10:
+					payable = true
+					break
+			_check(payable, "live offered max_hp door has a non-lost hero who can pay base_max_hp - 6 >= 10")
+		elif offered.cost == "limb":
+			var payable := false
+			for h in session.heroes:
+				if not h.lost and h.parts.has("legs") and not h.parts.legs.torn:
+					payable = true
+					break
+			_check(payable, "live offered limb door has a non-lost hero with untorn legs")
+		elif offered.cost == "fear":
+			var living := false
+			for h in session.heroes:
+				if not h.lost:
+					living = true
+					break
+			var has_gift := session.gift_pool.any(func(g: Variant) -> bool: return not g in session.gift_slots)
+			_check(living and session.kid_fear() <= 85 and has_gift,
+				"live offered fear door has living hero, fear <= 85, and unequipped gift")
+
 		var hero_id := ""
 		if offered.cost != "none" or offered.reward == "head_guard":
 			for hero in session.heroes:
@@ -351,6 +720,20 @@ func _test_ac4_session_settlement() -> void:
 		_check(not session.choose_door("fake_door", hero_id, prior)
 			and session.snapshot() == prior and session.rng.state == before_rng,
 			"live forged door choice preserves RNG and inventory")
+
+		# Negative test: stale expected state fails atomically
+		var stale := prior.duplicate(true)
+		stale.gold += 1
+		_check(not session.choose_door(str(offered.id), hero_id, stale)
+			and session.snapshot() == prior and session.rng.state == before_rng,
+			"live stale door choice preserves RNG and inventory")
+
+		# Negative test: unpayable hero cannot be chosen
+		if offered.cost == "limb":
+			# A nonexistent or lost hero cannot pay
+			_check(not session.choose_door(str(offered.id), "nonexistent_doll", prior)
+				and session.snapshot() == prior and session.rng.state == before_rng,
+				"nonexistent hero cannot pay limb trade")
 
 		if not session.choose_door(str(offered.id), hero_id, prior):
 			continue

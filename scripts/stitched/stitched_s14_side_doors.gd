@@ -38,31 +38,53 @@ static func catalog(document: Variant = null) -> Dictionary:
 	return result
 
 
-## leg_payer_available: whether any surviving doll could pay the leg bargain's price. When false
-## only the limb-cost Underbed deal leaves the weighted pool; everything else is unchanged.
+## leg_payer_available: whether any surviving doll could pay the leg bargain's price.
+## stuffing_payer_available: whether any surviving doll could pay the max-hp stuffing price.
+## fear_payer_available: whether Wren fear, living hero and an unequipped gift permit the fear trade.
+## When false, unpayable Underbed deals leave the weighted pool; everything else is unchanged.
 static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool,
-		leg_payer_available: bool = true) -> Dictionary:
+		leg_payer_available: bool = true,
+		stuffing_payer_available: bool = true,
+		fear_payer_available: bool = true) -> Dictionary:
 	var entries := catalog()
 	if rng == null or entries.is_empty() or not kind in ["Elite", "Boss"]:
 		return {}
 	# Elite doors are occasional; every boss has a final choice. No separate floor.
 	if kind == "Elite" and rng.randi_range(1, 100) > 70:
 		return {}
-	var side := "underbed" if underbed_taken or rng.randi_range(0, 1) == 0 else "attic"
-	var choices: Array = []
-	if side == "underbed":
-		for entry in entries.values():
-			if entry.kind == "underbed":
-				if not leg_payer_available and entry.cost == "limb":
-					continue
-				var weight: int = int(UNDERBED_WEIGHTS.get(entry.get("reward", ""), 0))
-				for _i in weight:
-					choices.append(entry.id)
-	else:
+
+	var underbed_choices: Array = []
+	for entry in entries.values():
+		if entry.kind == "underbed":
+			if entry.cost == "limb" and not leg_payer_available:
+				continue
+			if entry.cost == "max_hp" and not stuffing_payer_available:
+				continue
+			if entry.cost == "fear" and not fear_payer_available:
+				continue
+			var weight: int = int(UNDERBED_WEIGHTS.get(entry.get("reward", ""), 0))
+			for _i in weight:
+				underbed_choices.append(entry.id)
+	underbed_choices.sort()
+
+	var attic_choices: Array = []
+	if not underbed_taken:
 		for entry in entries.values():
 			if entry.kind == "attic":
-				choices.append(entry.id)
-	choices.sort()
-	if choices.is_empty():
+				attic_choices.append(entry.id)
+		attic_choices.sort()
+
+	var side := ""
+	if not underbed_choices.is_empty() and not attic_choices.is_empty():
+		side = "underbed" if rng.randi_range(0, 1) == 0 else "attic"
+	elif not underbed_choices.is_empty():
+		side = "underbed"
+	elif not attic_choices.is_empty():
+		side = "attic"
+	else:
 		return {}
-	return entries[choices[rng.randi_range(0, choices.size() - 1)]].duplicate(true)
+
+	var pool: Array = underbed_choices if side == "underbed" else attic_choices
+	if pool.is_empty():
+		return {}
+	return entries[pool[rng.randi_range(0, pool.size() - 1)]].duplicate(true)
