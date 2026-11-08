@@ -155,6 +155,8 @@ func _verify(run: Dictionary, kind: String, label: String) -> void:
 	for index in selected.size():
 		var id: String = str(selected[index].id)
 		var canonical := StitchedEnemyCatalog.foe_for(session.enemies, id)
+		# S15: a live battle's foes carry the Deeper Seams layer for this floor.
+		StitchedDeeperSeams.apply(canonical, session.map.get_current_floor(), kind)
 		ranks_and_kits = ranks_and_kits and not canonical.is_empty() \
 			and int(selected[index].rank) == index + 1 \
 			and selected[index].abilities == canonical.get("abilities", []) \
@@ -177,7 +179,9 @@ func _verify(run: Dictionary, kind: String, label: String) -> void:
 	var config := session.battle_config.duplicate(true)
 	var kits: Array = []
 	for id in model.ids:
-		kits.append(StitchedEnemyCatalog.foe_for(session.enemies, str(id)))
+		var kit := StitchedEnemyCatalog.foe_for(session.enemies, str(id))
+		StitchedDeeperSeams.apply(kit, session.map.get_current_floor(), kind)
+		kits.append(kit)
 	config["foes"] = kits
 	config["run_rng"] = expected_rng
 	var control := StitchedRules.new()

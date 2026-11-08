@@ -32,6 +32,8 @@ const WEAK_EXPLANATION := "Weak: outgoing direct attack damage -25% (rounded dow
 const EXPOSED_EXPLANATION := "Exposed: incoming direct attack damage +50% (rounded down)."
 const COMBINED_WEAK_EXPOSED_EXPLANATION := "With Weak on the attacker and Exposed on the target, apply combined x9/8 once, rounded down before Tangled/PROT."
 const HANGING_EXPLANATION := "Hanging by a Thread: a damaging zero-HP hit tears a remaining arm, leg or head; losing the head means LOST. A heal above zero ends Hanging and resets accumulated hits."
+const ROT_EXPLANATION := "Rot (mildew): loses 2 HP at each of its turn starts, ignoring PROT; heals on it mend half."
+const RESIST_ORDER := ["stun", "bleed", "rot", "move", "debuff"]
 const REGEN_EXPLANATION := "Regeneration: restores exactly 2 HP at the affected unit's turn start, capped at max HP, before Bleed, consumes one turn, and can bring a Hanging doll above 0."
 
 
@@ -157,6 +159,14 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			stats.append("%s: %s" % [key.to_upper(), str(unit[key])])
 	if not stats.is_empty():
 		lines.append("   ".join(stats))
+	var resist: Variant = unit.get("resist")
+	if side == "foe" and resist is Dictionary and not resist.is_empty():
+		var shown := PackedStringArray()
+		for key in RESIST_ORDER:
+			if _positive_count(resist.get(key)):
+				shown.append("%s %d%%" % [key, int(resist[key])])
+		if not shown.is_empty():
+			lines.append("RESIST: " + "  ".join(shown))
 
 	if side == "hero":
 		if _number(unit.get("fray")):
@@ -207,6 +217,8 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			lines.append(COMBINED_WEAK_EXPOSED_EXPLANATION)
 		if _positive_count(raw.get("regen")):
 			lines.append(REGEN_EXPLANATION)
+		if _positive_count(raw.get("rot")):
+			lines.append(ROT_EXPLANATION)
 	return lines
 
 

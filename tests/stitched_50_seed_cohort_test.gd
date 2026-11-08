@@ -364,11 +364,11 @@ func _init() -> void:
 			and replay.summary == two_replays[seed_number].summary,
 			"seed %d replay diverges in routes, states, receipts, or RNG" % seed_number)
 	# Measured survival baseline, not a design rule. This contiguous 1700-1749 witness
-	# measures 50 legal completed runs under the S14 fixed kits, 9 wins since Campfire
-	# Mend also repairs torn worn parts, inside the remeasured 2-12 band. Preserve
+	# measures 50 legal completed runs under the S14 fixed kits; S15 (11-09) deepens later
+	# floors and softens the Boss, 17 wins, inside the remeasured 10-24 band. Preserve
 	# replay, route, legality and roster checks.
-	_check(victories >= 2 and victories <= 12,
-		"authentic survival baseline expected 2-12 wins, observed %d" % victories)
+	_check(victories >= 10 and victories <= 24,
+		"authentic survival baseline expected 10-24 wins, observed %d" % victories)
 	print("COHORT_SUMMARY ", JSON.stringify({"runs": 50, "wins": victories,
 		"loss_floors": losses, "heroes": sampled.keys(), "replays": two_replays.keys(),
 		"checks": checks, "failures": failures.size()}))

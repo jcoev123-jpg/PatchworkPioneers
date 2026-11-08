@@ -23,6 +23,9 @@ static func entry(receipt: Dictionary, actor_name: String, ability_name: String,
 				var verdict := "MISS" if not hit else (
 					"HIT · %d damage" % damage if damage > 0 else "HIT · effect only (no damage)")
 				detail += "\n→ %s: %s" % [target_name, verdict]
+				for status in result.get("statuses", []):
+					if bool(status.get("resisted", false)):
+						detail += " · resisted " + str(status.get("status", ""))
 				targets.append({"id": target_id, "name": target_name,
 					"hit": hit, "damage": damage})
 		"move":

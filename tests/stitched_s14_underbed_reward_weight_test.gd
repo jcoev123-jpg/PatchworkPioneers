@@ -206,131 +206,51 @@ func _test_ac1_eligibility_boundaries() -> void:
 		_check(off.get("kind") == "attic", "exhausted underbed with underbed_taken=false offers Attic")
 
 	# 2. Live session battle boundary tests
-	# Case A: max-HP insufficient at base_max_hp 15 versus eligible at 16
-	# Seed 6 reaches Elite victory and chooses Underbed.
-	var s16 := StitchedRunSession.start(6)
-	var elite_id := ""
-	for id in s16.choices():
-		if s16.map.get_node(id).type == "Elite":
-			elite_id = id
-			break
-	_check(s16.enter(elite_id, s16.snapshot()), "s16 enters Elite")
-	_check(_play_live_battle(s16) and s16.battle.outcome() == "victory", "s16 wins live Elite battle")
-	for u in s16.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-			u["base_max_hp"] = 16
-	for h in s16.heroes:
-		h.parts.legs.torn = true
-		h.base_max_hp = 16
-	s16._kid_fear._fear = 86
-	s16.gift_slots = s16.gift_pool.duplicate()
-	s16._seal()
-	_check(s16.settle_battle(s16.battle), "s16 settles battle")
-	_check(s16.door_offer.get("id") == "underbed_stuffing_trade",
-		"base_max_hp 16 satisfies 16 - 6 >= 10: stuffing trade offered in live session")
-
-	var s15 := StitchedRunSession.start(6)
-	_check(s15.enter(elite_id, s15.snapshot()), "s15 enters Elite")
-	_check(_play_live_battle(s15) and s15.battle.outcome() == "victory", "s15 wins live Elite battle")
-	for u in s15.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-			u["base_max_hp"] = 15
-	for h in s15.heroes:
-		h.parts.legs.torn = true
-		h.base_max_hp = 15
-	s15._kid_fear._fear = 86
-	s15.gift_slots = s15.gift_pool.duplicate()
-	s15._seal()
-	_check(s15.settle_battle(s15.battle), "s15 settles battle")
-	_check(s15.door_offer.get("id") != "underbed_stuffing_trade" \
+	# Each pair shares one run-time witness seed (owner 2026-11-08): the seed whose real Elite
+	# victory offers the eligible deal, then the same seed with only the boundary moved. Live
+	# fights draw resist rolls (S15), so a hard-coded seed would drift with every retune.
+	var stuffing_16 := func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 16, 86, true)
+	var seed_a := _door_witness(stuffing_16, "underbed_stuffing_trade")
+	_check(seed_a >= 0, "a seeded Elite victory offers the stuffing trade at base_max_hp 16")
+	var s15 := _elite_victory(seed_a, func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 86, true))
+	_check(s15 != null and s15.door_offer.get("id") != "underbed_stuffing_trade" \
 		and s15.door_offer.get("kind") == "attic",
 		"base_max_hp 15 fails 15 - 6 >= 10: stuffing trade is never offered; Attic offered instead")
 
 	# Case B: fear 85 versus 86
-	# Seed 7 reaches Elite victory and chooses fear trade when eligible.
-	var sf85 := StitchedRunSession.start(7)
-	var elite_id7 := ""
-	for id in sf85.choices():
-		if sf85.map.get_node(id).type == "Elite":
-			elite_id7 = id
-			break
-	_check(sf85.enter(elite_id7, sf85.snapshot()), "sf85 enters Elite")
-	_check(_play_live_battle(sf85) and sf85.battle.outcome() == "victory", "sf85 wins live Elite battle")
-	for u in sf85.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-			u["base_max_hp"] = 15
-	for h in sf85.heroes:
-		h.parts.legs.torn = true
-		h.base_max_hp = 15
-	sf85._kid_fear._fear = 85
-	sf85.gift_slots = []
-	sf85._seal()
-	_check(sf85.settle_battle(sf85.battle), "sf85 settles battle")
-	_check(sf85.door_offer.get("id") == "underbed_fear_trade",
+	var fear_85 := func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 85, false)
+	var seed_b := _door_witness(fear_85, "underbed_fear_trade")
+	_check(seed_b >= 0,
 		"fear 85 <= 85 with living dolls and available gifts: fear trade offered in live session")
-
-	var sf86 := StitchedRunSession.start(7)
-	_check(sf86.enter(elite_id7, sf86.snapshot()), "sf86 enters Elite")
-	_check(_play_live_battle(sf86) and sf86.battle.outcome() == "victory", "sf86 wins live Elite battle")
-	for u in sf86.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-			u["base_max_hp"] = 15
-	for h in sf86.heroes:
-		h.parts.legs.torn = true
-		h.base_max_hp = 15
-	sf86._kid_fear._fear = 86
-	sf86.gift_slots = []
-	sf86._seal()
-	_check(sf86.settle_battle(sf86.battle), "sf86 settles battle")
-	_check(sf86.door_offer.get("id") != "underbed_fear_trade",
+	var sf86 := _elite_victory(seed_b, func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 86, false))
+	_check(sf86 != null and sf86.door_offer.get("id") != "underbed_fear_trade",
 		"fear 86 > 85: fear trade is never offered in live session")
 
 	# Case C: no free gift versus an available gift
-	var s_no_gift := StitchedRunSession.start(7)
-	_check(s_no_gift.enter(elite_id7, s_no_gift.snapshot()), "s_no_gift enters Elite")
-	_check(_play_live_battle(s_no_gift) and s_no_gift.battle.outcome() == "victory", "s_no_gift wins live Elite battle")
-	for u in s_no_gift.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-			u["base_max_hp"] = 15
-	for h in s_no_gift.heroes:
-		h.parts.legs.torn = true
-		h.base_max_hp = 15
-	s_no_gift._kid_fear._fear = 80
-	s_no_gift.gift_slots = s_no_gift.gift_pool.duplicate()
-	s_no_gift._seal()
-	_check(s_no_gift.settle_battle(s_no_gift.battle), "s_no_gift settles battle")
-	_check(s_no_gift.door_offer.get("id") != "underbed_fear_trade",
+	var s_no_gift := _elite_victory(seed_b, func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 80, true))
+	_check(s_no_gift != null and s_no_gift.door_offer.get("id") != "underbed_fear_trade",
 		"when all gifts are equipped: fear trade is never offered in live session")
 
 	# Case D: all legs torn versus an intact leg
-	# On seed 6 without modification, underbed_leg_trade was offered.
-	var s_intact := StitchedRunSession.start(6)
-	_check(s_intact.enter(elite_id, s_intact.snapshot()), "s_intact enters Elite")
-	_check(_play_live_battle(s_intact) and s_intact.battle.outcome() == "victory", "s_intact wins live battle")
-	_check(s_intact.settle_battle(s_intact.battle), "s_intact settles battle")
-	_check(s_intact.door_offer.get("id") == "underbed_leg_trade",
-		"intact legs present: leg trade offered on seed 6")
-
-	var s_torn := StitchedRunSession.start(6)
-	_check(s_torn.enter(elite_id, s_torn.snapshot()), "s_torn enters Elite")
-	_check(_play_live_battle(s_torn) and s_torn.battle.outcome() == "victory", "s_torn wins live battle")
-	for u in s_torn.battle._units.values():
-		if u.get("side") == "hero":
-			u["parts"]["legs"]["torn"] = true
-	for h in s_torn.heroes:
-		h.parts.legs.torn = true
-	s_torn._seal()
-	_check(s_torn.settle_battle(s_torn.battle), "s_torn settles battle")
-	_check(s_torn.door_offer.get("id") != "underbed_leg_trade",
-		"all legs torn: leg trade is never offered on seed 6")
+	var untouched := func(_s: StitchedRunSession) -> void: pass
+	var seed_d := _door_witness(untouched, "underbed_leg_trade")
+	_check(seed_d >= 0, "intact legs present: leg trade offered on the witness seed")
+	var s_torn := _elite_victory(seed_d, func(s: StitchedRunSession) -> void:
+		for u in s.battle._units.values():
+			if u.get("side") == "hero":
+				u["parts"]["legs"]["torn"] = true
+		for h in s.heroes:
+			h.parts.legs.torn = true)
+	_check(s_torn != null and s_torn.door_offer.get("id") != "underbed_leg_trade",
+		"all legs torn: leg trade is never offered on the witness seed")
 
 	# Case E: all living dolls LOST
-	var s_lost := StitchedRunSession.start(6)
+	var s_lost := StitchedRunSession.start(seed_d)
+	var elite_id := ""
+	for id in s_lost.choices():
+		if s_lost.map.get_node(id).type == "Elite":
+			elite_id = id
+			break
 	_check(s_lost.enter(elite_id, s_lost.snapshot()), "s_lost enters Elite")
 	_check(_play_live_battle(s_lost) and s_lost.battle.outcome() == "victory", "s_lost wins live battle")
 	for u in s_lost.battle._units.values():
@@ -679,6 +599,53 @@ func _test_ac3_boundaries_and_attic() -> void:
 			_check(e_off.is_empty(), "Elite closed on roll > 70")
 			_check(e_rng.state == roll_rng.state, "closed Elite consumes exactly 1 draw")
 
+
+
+## Lames every doll's legs (or not), sets each doll's base max HP, Wren's fear and whether every
+## gift slot is already filled, on a settled-to-be Elite victory.
+func _underbed_setup(s: StitchedRunSession, legs_torn: bool, base_max_hp: int, fear: int, gifts_full: bool) -> void:
+	for u in s.battle._units.values():
+		if u.get("side") == "hero":
+			u["parts"]["legs"]["torn"] = legs_torn
+			u["base_max_hp"] = base_max_hp
+	for h in s.heroes:
+		h.parts.legs.torn = legs_torn
+		h.base_max_hp = base_max_hp
+	s._kid_fear._fear = fear
+	s.gift_slots = s.gift_pool.duplicate() if gifts_full else []
+
+
+## The seed's first Elite, won through the public controls, then `setup` and settlement; null
+## unless the battle is a real victory that settles.
+func _elite_victory(seed_number: int, setup: Callable) -> StitchedRunSession:
+	if seed_number < 0:
+		return null
+	var s := StitchedRunSession.start(seed_number)
+	if s == null:
+		return null
+	var elite_id := ""
+	for id in s.choices():
+		if s.map.get_node(id).type == "Elite":
+			elite_id = id
+			break
+	if elite_id.is_empty() or not s.enter(elite_id, s.snapshot()):
+		return null
+	if not _play_live_battle(s) or s.battle.outcome() != "victory":
+		return null
+	setup.call(s)
+	s._seal()
+	if not s.settle_battle(s.battle):
+		return null
+	return s
+
+
+## First seed whose live Elite victory, after `setup`, offers the door `want_id`; -1 if none.
+func _door_witness(setup: Callable, want_id: String) -> int:
+	for seed_number in 80:
+		var s := _elite_victory(seed_number, setup)
+		if s != null and s.door_offer.get("id") == want_id:
+			return seed_number
+	return -1
 
 func _play_live_battle(session: StitchedRunSession) -> bool:
 	var battle: StitchedRules = session.battle

@@ -742,6 +742,9 @@ func _open_battle(kind: String) -> bool:
 						hero_inputs[index].fray = int(hero_inputs[index].fray) + 20
 			"fray":
 				fray_gains.append(carried)
+	# S15: live foes carry resists and rot attacks, and deepen with the floor.
+	for foe in foes:
+		StitchedDeeperSeams.apply(foe, map.get_current_floor(), kind)
 	battle_config = {"mode": "stitched", "seed": seed_value, "run_rng": rng,
 		"s14": s14_enabled, "s14_sockets": _battle_sockets() if s14_enabled else {},
 		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle, "gifts": gift_slots.duplicate(),
