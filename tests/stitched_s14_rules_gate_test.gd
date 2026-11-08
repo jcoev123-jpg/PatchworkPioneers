@@ -341,7 +341,7 @@ func _live_elite_side_door() -> void:
 					continue
 				if offered.cost == "max_hp" and int(hero.base_max_hp) - int(offered.amount) < 10:
 					continue
-				if offered.cost == "limb" and hero.parts.arms.torn:
+				if offered.cost == "limb" and hero.parts.legs.torn:
 					continue
 				hero_id = hero.id
 				break
