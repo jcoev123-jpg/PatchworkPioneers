@@ -244,6 +244,11 @@ static func _validate_profile(record: Dictionary, tier: String, parts: Dictionar
 		"turns_per_round": turns,
 		"abilities": abilities,
 	}
+	# Drain is an authored top-level legacy trait, not part of the Stitched profile. Only an
+	# explicit boolean true turns it on: an absent or malformed value stays off so a stray
+	# string or number can never become free self-healing through truthiness.
+	if record.get("drain") is bool and bool(record["drain"]):
+		foe["drain"] = true
 	var enemy := {
 		"id": enemy_id,
 		"name": str(record["name"]),

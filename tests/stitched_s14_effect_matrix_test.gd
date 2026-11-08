@@ -452,6 +452,15 @@ func _assert_effects(hero_id: String, ability: Dictionary, patch: Dictionary, ru
 					+ _authored_heal(rp)) - tick_bleed
 				_check(int(recipient.hp) == expected_hp,
 					label + ": the " + effect + " patch never changes the struck recipient's HP")
+			"rot":
+				expected.append({"status": "rot", "duration": amount})
+				var prior_rot := maxi(int(before.statuses.get("rot", 0)), _authored_value(rb, "rot"))
+				_check(int(recipient.statuses.get("rot", 0)) == maxi(0, maxi(prior_rot, amount) - target_ticks),
+					label + ": the rot patch rests on the struck recipient at its authored amount")
+				if target_ticks == 0:
+					_check(int(recipient.hp) == mini(int(recipient.max_hp), int(before.hp)
+						- int(rp.get("damage", 0)) + _authored_heal(rp)),
+						label + ": the rot patch never changes the struck recipient's HP on the hit")
 			"guard":
 				var expected_guard := maxi(maxi(int(run["actor_before"].statuses.get("guard", 0)), _authored_guard(rb)), amount)
 				expected.append({"status": "guard", "duration": expected_guard, "guards": target_id})
@@ -877,6 +886,16 @@ func _assert_live_patch(battle: StitchedRules, receipt: Dictionary, patch: Dicti
 		var recipient: Dictionary = battle.get_unit(str(hit.target))
 		var effect := str(patch.effect)
 		var amount := int(patch.amount)
+		# S15: a live foe may shrug off a patch its rarity does not pierce; the
+		# receipt then names the roll under the resist and the foe stays put.
+		var resisted := false
+		for entry in hit.get("statuses", []):
+			if str(entry.get("status", "")) == effect and bool(entry.get("resisted", false)):
+				resisted = int(entry.get("roll", 101)) <= int(entry.get("resist", 0))
+		if resisted:
+			_check(str(recipient.side) == "foe" and not hit.has("shift"),
+				label + ": the live " + effect + " resist is a foe's roll under its resist and moves no one")
+			continue
 		match effect:
 			"bleed", "mark", "blind", "stun":
 				_check(int(recipient.statuses.get(effect, 0)) >= amount,

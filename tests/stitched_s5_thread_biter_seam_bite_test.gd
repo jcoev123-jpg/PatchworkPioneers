@@ -77,7 +77,7 @@ func _contract() -> void:
 	var foe := StitchedEnemyCatalog.foe_for(catalog, "thread_biter")
 	var expected_foe := expected_profile.duplicate(true)
 	expected_foe.erase("trophy")
-	expected_foe.merge({"id": "thread_biter", "name": "Thread Biter"})
+	expected_foe.merge({"id": "thread_biter", "name": "Thread Biter", "drain": true})
 	for ability in expected_foe.abilities:
 		ability["launch_mask"] = StitchedParts.rank_mask(ability.launch)
 		ability["target_mask"] = StitchedParts.rank_mask(ability.target)

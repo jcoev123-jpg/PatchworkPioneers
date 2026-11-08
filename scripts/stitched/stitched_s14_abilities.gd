@@ -6,7 +6,7 @@ const HERO_PATH := "res://data/stitched/s14_hero_abilities.json"
 const PATCH_PATH := "res://data/stitched/s14_ability_patches.json"
 const RARITIES := ["cotton", "wool", "silk", "gold"]
 const EFFECTS := ["bleed", "pull", "push", "stun", "mark", "blind", "steal", "chain",
-	"regen", "cleanse", "guard", "heal"]
+	"regen", "cleanse", "guard", "heal", "rot"]
 const SOURCES := ["fight", "event", "elite", "boss"]
 
 static func _json(path: String) -> Variant:
