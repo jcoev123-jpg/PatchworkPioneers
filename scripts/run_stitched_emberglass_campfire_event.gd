@@ -29,6 +29,7 @@ const TRADE_GOLD_GAIN := 12
 const MEND_HEAL_PERCENT := 30
 const TALES_FRAY_REDUCTION := 25
 const WICK_CANDLE_RESTORE := 50
+const WORN_SLOTS: Array = ["head", "arms", "torso", "legs"]
 
 const CANONICAL_HERO_IDS := [
 	"warden",
@@ -205,6 +206,21 @@ func can_mend() -> bool:
 			continue
 		if int(hero.get("hp", 0)) < int(hero.get("max_hp", 0)):
 			return true
+		if _has_torn_worn_part(hero):
+			return true
+	return false
+
+
+static func _has_torn_worn_part(hero: Variant) -> bool:
+	if typeof(hero) != TYPE_DICTIONARY or typeof(hero.get("parts")) != TYPE_DICTIONARY:
+		return false
+	var parts: Dictionary = hero["parts"]
+	for slot: Variant in WORN_SLOTS:
+		var record: Variant = parts.get(slot)
+		if typeof(record) == TYPE_DICTIONARY:
+			var torn_val: Variant = record.get("torn", false)
+			if typeof(torn_val) == TYPE_BOOL and torn_val == true:
+				return true
 	return false
 
 

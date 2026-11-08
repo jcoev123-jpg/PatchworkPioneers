@@ -25,6 +25,7 @@ func _init() -> void:
 	_test_ac3_admission_validation_failures()
 	_test_ac1_ac2_wren_fear_actionability_and_settlement()
 	_test_ac3_wren_fear_validation_and_forgery()
+	_test_ac1_ac2_ac3_torn_worn_cloth_admission_and_settlement()
 
 	_check(rng.state == rng_state_before, "Overall: Seeded RNG state must remain completely untouched")
 	_finish()
@@ -66,6 +67,49 @@ func _standard_party(hp_offset: int = 0, fray_offset: int = 0, lost_first: bool 
 		_hero("tinker", 3, 24, 24, 0, false, use_position),
 		_hero("lantern_monk", 4, 28, 28, 0, false, use_position),
 	]
+
+
+func _worn_part(id: String, tier: int = 1, torn: bool = false, slot: String = "") -> Dictionary:
+	var p := {"id": id, "tier": tier, "torn": torn}
+	if not slot.is_empty():
+		p["slot"] = slot
+	return p
+
+
+func _party_with_worn_parts(hps: Array = [30, 25, 24, 28], frays: Array = [0, 0, 0, 0]) -> Array:
+	var party := [
+		_hero("warden", 1, hps[0], 30, frays[0]),
+		_hero("seamstress", 2, hps[1], 25, frays[1]),
+		_hero("tinker", 3, hps[2], 24, frays[2]),
+		_hero("lantern_monk", 4, hps[3], 28, frays[3]),
+	]
+	for i in range(party.size()):
+		party[i]["position"] = party[i]["rank"]
+	party[0]["parts"] = {
+		"head": _worn_part("warden_head_pot_helm_bonk", 1, false, "head"),
+		"arms": _worn_part("warden_arms_shield_catch", 1, false, "arms"),
+		"torso": _worn_part("warden_torso_iron_challenge", 1, false, "torso"),
+		"legs": _worn_part("warden_legs_rim_toss", 1, false, "legs"),
+	}
+	party[1]["parts"] = {
+		"head": _worn_part("seamstress_mending_knot_hat", 1, false, "head"),
+		"arms": _worn_part("seamstress_thread_prick_needle", 1, false, "arms"),
+		"torso": _worn_part("seamstress_shielding_hem_coat", 1, false, "torso"),
+		"legs": _worn_part("seamstress_tether_loop_spools", 1, false, "legs"),
+	}
+	party[2]["parts"] = {
+		"head": _worn_part("tinker_head_cog_shot", 1, false, "head"),
+		"arms": _worn_part("tinker_arms_scrap_bomb", 1, false, "arms"),
+		"torso": _worn_part("tinker_torso_casing_ward", 1, false, "torso"),
+		"legs": _worn_part("tinker_legs_tune_up", 1, false, "legs"),
+	}
+	party[3]["parts"] = {
+		"head": _worn_part("lantern_monk_head_moth_wink", 1, false, "head"),
+		"arms": _worn_part("lantern_monk_arms_wick_spark", 1, false, "arms"),
+		"torso": _worn_part("lantern_monk_torso_lamplight_wash", 1, false, "torso"),
+		"legs": _worn_part("lantern_monk_legs_pole_shelter", 1, false, "legs"),
+	}
+	return party
 
 
 func _find_choice(choices: Array, choice_id: String) -> Dictionary:
@@ -213,6 +257,29 @@ func _test_ac1_quote_actionability_remedies_and_scraps() -> void:
 	_check(ev_lost99.can_trim_wick(), "AC1: Trim Wick helps at candle 99 even with lost-only wounds")
 	var paid_lost99 := _find_choice(ev_lost99.preview_choices().get("choices", []), "light_the_embers")
 	_check(bool(paid_lost99.get("available", false)), "AC1: Paid choice available when candle 99 despite lost-only wounds")
+
+	# 8. Living full-health hero with torn worn cloth: full HP, 0 fray, candle 100, fear 0, 1 scrap -> paid available!
+	for slot_key: String in ["arms", "legs", "head", "torso"]:
+		var torn_living_party := _standard_party(0, 0)
+		torn_living_party[0]["parts"] = {
+			"head": _worn_part("warden_head_pot_helm_bonk", 1, false, "head"),
+			"arms": _worn_part("warden_arms_shield_catch", 1, false, "arms"),
+			"torso": _worn_part("warden_torso_iron_challenge", 1, false, "torso"),
+			"legs": _worn_part("warden_legs_rim_toss", 1, false, "legs"),
+		}
+		torn_living_party[0]["parts"][slot_key]["torn"] = true
+		var ev_torn := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, torn_living_party, 100, {"gold": 0, "scraps": 1})
+		_check(ev_torn.is_valid(), "AC1: Event valid for full-health party with torn " + slot_key)
+		_check(ev_torn.can_mend(), "AC1: can_mend=true for living torn " + slot_key)
+		_check(ev_torn.has_useful_recovery(), "AC1: has_useful_recovery=true for living torn " + slot_key)
+		_check(ev_torn.has_useful_remedy(), "AC1: has_useful_remedy=true for living torn " + slot_key)
+		var preview_torn := ev_torn.preview_choices()
+		var paid_torn := _find_choice(preview_torn.get("choices", []), "light_the_embers")
+		_check(bool(paid_torn.get("affordable", false)), "AC1: Paid choice affordable with 1 scrap for torn " + slot_key)
+		_check(bool(paid_torn.get("available", false)), "AC1: Paid choice available for living torn " + slot_key)
+		_check(bool(paid_torn.get("actionable", false)), "AC1: Paid choice actionable for living torn " + slot_key)
+		_check(paid_torn.get("service_request") == {"stop_type": "Campfire"},
+			"AC1: Service request is exactly {'stop_type': 'Campfire'} for torn " + slot_key)
 
 
 # AC2: With actionable open quote + matching node/state, one paid light_the_embers claim
@@ -650,3 +717,355 @@ func _test_ac3_wren_fear_validation_and_forgery() -> void:
 	)
 	_check(ev_open_default.is_valid(), "AC3: open() factory works with 5 arguments")
 	_check(ev_open_default.get_wren_fear() == 0, "AC3: open() factory defaults fear to 0")
+
+
+# AC1, AC2, AC3: Torn worn cloth detection, authentic claim settlement, detached Campfire Mend, and negative table.
+func _test_ac1_ac2_ac3_torn_worn_cloth_admission_and_settlement() -> void:
+	# 1. AC1 & AC2: Single authentic paid claim with living torn worn part at full health
+	var caller_party := _standard_party(0, 0)
+	caller_party[0]["parts"] = {
+		"head": _worn_part("warden_head_pot_helm_bonk", 1, false, "head"),
+		"arms": {"id": "warden_arms_shield_catch", "slot": "arms", "tier": 1, "torn": true},
+		"torso": _worn_part("warden_torso_iron_challenge", 1, false, "torso"),
+		"legs": _worn_part("warden_legs_rim_toss", 1, false, "legs"),
+	}
+	var original_party := caller_party.duplicate(true)
+	var caller_wallet := {"gold": 0, "scraps": 1}
+	var original_wallet := caller_wallet.duplicate(true)
+	var rng_before := rng.state
+
+	var ev := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, caller_party, 100, caller_wallet)
+	_check(ev.is_valid(), "AC1: Event is valid with living torn arms")
+	_check(ev.can_mend(), "AC1: can_mend=true on living torn arms at full HP")
+	_check(ev.has_useful_recovery(), "AC1: has_useful_recovery=true on living torn arms")
+	_check(ev.has_useful_remedy(), "AC1: has_useful_remedy=true on living torn arms")
+
+	var preview_open := ev.preview_choices()
+	_check(bool(preview_open.get("ok", false)), "AC1: Preview choices succeeds with torn arms")
+	var paid_preview := _find_choice(preview_open.get("choices", []), "light_the_embers")
+	_check(bool(paid_preview.get("affordable", false)), "AC1: Paid choice is affordable with 1 scrap")
+	_check(bool(paid_preview.get("available", false)), "AC1: Paid choice is available with torn arms")
+	_check(bool(paid_preview.get("actionable", false)), "AC1: Paid choice is actionable with torn arms")
+	_check(paid_preview.get("service_request") == {"stop_type": "Campfire"}, "AC1: Paid choice service_request is Campfire")
+
+	var state_before := ev.read_state()
+	_check(bool(state_before.get("ok", false)), "AC2: State before claim is ok")
+	_check(state_before.get("wallet") == {"gold": 0, "scraps": 1}, "AC2: State before claim matches wallet")
+	_check(state_before.get("candle") == 100, "AC2: State before claim has candle 100")
+	_check(state_before.get("wren_fear") == 0, "AC2: State before claim has fear 0")
+
+	var receipt := ev.choose("light_the_embers", NODE, state_before)
+	_check(bool(receipt.get("ok", false)), "AC2: Paid claim succeeds with torn worn cloth")
+	_check(receipt.get("choice_id") == "light_the_embers", "AC2: Receipt choice_id is light_the_embers")
+	_check(receipt.get("event_id") == EMBER_ID, "AC2: Receipt event_id is Emberglass")
+	_check(receipt.get("wallet") == {"gold": 0, "scraps": 0}, "AC2: Wallet scraps drop from 1 to 0, gold remains 0")
+	_check(receipt.get("service_request") == {"stop_type": "Campfire"}, "AC2: Emits exactly {'stop_type': 'Campfire'}")
+
+	# Event does not itself clear torn, heal or alter party
+	_check(ev.get_heroes() == original_party, "AC2: Event adapter does not heal, untear or mutate held party")
+	var state_after: Dictionary = receipt.get("state", {})
+	_check(state_after.get("claimed") == true, "AC2: After-state is claimed")
+	_check(state_after.get("open") == false, "AC2: After-state is closed")
+	_check(state_after.get("version") == 1, "AC2: After-state version is 1")
+	_check(state_after.get("wallet") == {"gold": 0, "scraps": 0}, "AC2: After-state wallet updated to 0 scraps")
+	_check(state_after.get("heroes") == original_party, "AC2: After-state preserves heroes untouched")
+	_check(state_after.get("heroes")[0]["parts"]["arms"]["torn"] == true, "AC2: Torn flag still true in after-state")
+	_check(state_after.get("candle") == 100, "AC2: Candle untouched by adapter")
+	_check(state_after.get("wren_fear") == 0, "AC2: Wren fear untouched by adapter")
+
+	# Duplicate and stale claims are inert
+	var dupe_receipt := ev.choose("light_the_embers", NODE, state_after)
+	_check(not bool(dupe_receipt.get("ok", false)), "AC2: Subsequent duplicate claim is refused")
+	var stale_receipt := ev.choose("light_the_embers", NODE, state_before)
+	_check(not bool(stale_receipt.get("ok", false)), "AC2: Stale claim is refused")
+	_check(ev.get_wallet() == {"gold": 0, "scraps": 0}, "AC2: Wallet unchanged after duplicate/stale claim attempts")
+
+	# Caller inputs and seeded RNG untouched
+	_check(caller_party == original_party, "AC2: Caller party array untouched by admission or claim")
+	_check(caller_wallet == original_wallet, "AC2: Caller wallet dictionary untouched by admission or claim")
+	_check(rng.state == rng_before, "AC2: Seeded RNG completely untouched")
+
+	# 2. AC2: Genuine detached RunCampfireVisit fixture proves downstream Mend clears torn flag
+	var campfire_party: Array = _party_with_worn_parts([30, 25, 24, 28], [0, 0, 0, 0])
+	campfire_party[0]["parts"]["arms"] = {"id": "warden_arms_shield_catch", "slot": "arms", "tier": 1, "torn": true}
+	var cf_original := campfire_party.duplicate(true)
+	var visit := RunCampfireVisit.new("camp_visit_torn", campfire_party, "stitched", 100)
+	_check(visit.read_state().get("status") == "stitched_open", "AC2: Genuine RunCampfireVisit opens in Stitched mode")
+	_check("mend" in visit.read_state().get("quote", {}).get("choices", []), "AC2: RunCampfireVisit offers Mend for torn arms at full HP")
+
+	var mend_receipt := visit.select("mend", "camp_visit_torn", cf_original, 100)
+	_check(bool(mend_receipt.get("ok", false)), "AC2: RunCampfireVisit Mend succeeds")
+	_check(mend_receipt.get("decision") == "mend", "AC2: Mend decision recorded in receipt")
+	var healed_party: Array = mend_receipt.get("heroes", [])
+	_check(healed_party[0]["parts"]["arms"]["torn"] == false, "AC2: Downstream Mend clears torn flag to false")
+	_check(healed_party[0]["parts"]["arms"]["id"] == "warden_arms_shield_catch", "AC2: Downstream Mend retains part id")
+	_check(healed_party[0]["parts"]["arms"]["tier"] == 1, "AC2: Downstream Mend retains part tier")
+	_check(healed_party[0]["hp"] == 30, "AC2: Warden HP remains capped at max HP 30")
+	_check(healed_party[1]["hp"] == 25 and healed_party[2]["hp"] == 24 and healed_party[3]["hp"] == 28,
+		"AC2: Other doll snapshots undamaged and HP caps respected")
+
+	# 3. AC3: Table-driven negative checks
+	var neg_cases: Array = [
+		# Case: all slots torn=false
+		{
+			"label": "no torn flag (all false)",
+			"has_parts": true,
+			"parts": {
+				"head": _worn_part("warden_head_pot_helm_bonk", 1, false, "head"),
+				"arms": _worn_part("warden_arms_shield_catch", 1, false, "arms"),
+				"torso": _worn_part("warden_torso_iron_challenge", 1, false, "torso"),
+				"legs": _worn_part("warden_legs_rim_toss", 1, false, "legs"),
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: only LOST doll has torn part
+		{
+			"label": "only LOST doll has torn part",
+			"has_parts": true,
+			"parts": {
+				"head": _worn_part("warden_head_pot_helm_bonk", 1, false, "head"),
+				"arms": _worn_part("warden_arms_shield_catch", 1, true, "arms"),
+				"torso": _worn_part("warden_torso_iron_challenge", 1, false, "torso"),
+				"legs": _worn_part("warden_legs_rim_toss", 1, false, "legs"),
+			},
+			"scraps": 1,
+			"lost": true,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: missing parts dictionary entirely
+		{
+			"label": "missing parts dictionary",
+			"has_parts": false,
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: parts is null
+		{
+			"label": "parts is null",
+			"has_parts": true,
+			"parts": null,
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: empty parts dictionary
+		{
+			"label": "empty parts dictionary",
+			"has_parts": true,
+			"parts": {},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: non-canonical slot key (satchel)
+		{
+			"label": "wrong slot key (satchel)",
+			"has_parts": true,
+			"parts": {
+				"satchel": {"id": "warden_arms_shield_catch", "tier": 1, "torn": true},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: non-canonical slot key (tail)
+		{
+			"label": "wrong slot key (tail)",
+			"has_parts": true,
+			"parts": {
+				"tail": {"id": "warden_arms_shield_catch", "tier": 1, "torn": true},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: non-Dictionary slot record (string)
+		{
+			"label": "non-dictionary slot record (string)",
+			"has_parts": true,
+			"parts": {
+				"arms": "torn",
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: non-Dictionary slot record (int)
+		{
+			"label": "non-dictionary slot record (int)",
+			"has_parts": true,
+			"parts": {
+				"arms": 123,
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: non-Dictionary slot record (bool)
+		{
+			"label": "non-dictionary slot record (bool)",
+			"has_parts": true,
+			"parts": {
+				"arms": true,
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: torn is string 'true'
+		{
+			"label": "torn is string 'true'",
+			"has_parts": true,
+			"parts": {
+				"arms": {"id": "warden_arms_shield_catch", "tier": 1, "torn": "true"},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: torn is int 1
+		{
+			"label": "torn is int 1",
+			"has_parts": true,
+			"parts": {
+				"arms": {"id": "warden_arms_shield_catch", "tier": 1, "torn": 1},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: torn is float 1.0
+		{
+			"label": "torn is float 1.0",
+			"has_parts": true,
+			"parts": {
+				"arms": {"id": "warden_arms_shield_catch", "tier": 1, "torn": 1.0},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: unrelated spare-only value
+		{
+			"label": "unrelated spare-only value",
+			"has_parts": true,
+			"parts": {
+				"spare_cloth": {"id": "warden_arms_shield_catch", "tier": 1, "torn": true},
+			},
+			"scraps": 1,
+			"lost": false,
+			"can_mend": false,
+			"paid_avail": false,
+		},
+		# Case: real torn part but 0 scraps
+		{
+			"label": "real torn part with 0 scraps (unaffordable)",
+			"has_parts": true,
+			"parts": {
+				"arms": {"id": "warden_arms_shield_catch", "tier": 1, "torn": true},
+			},
+			"scraps": 0,
+			"lost": false,
+			"can_mend": true,
+			"paid_avail": false,
+		},
+	]
+
+	for tc in neg_cases:
+		var test_label: String = tc["label"]
+		var party := _standard_party(0, 0, tc["lost"])
+		if tc.get("has_parts", false):
+			party[0]["parts"] = tc["parts"]
+		var scraps_count: int = tc["scraps"]
+		var ev_neg := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, party, 100, {"gold": 10, "scraps": scraps_count})
+		_check(ev_neg.is_valid(), "AC3: Event valid for negative case: " + test_label)
+		_check(ev_neg.can_mend() == bool(tc["can_mend"]),
+			"AC3: can_mend == %s for %s" % [str(tc["can_mend"]), test_label])
+		var preview := ev_neg.preview_choices()
+		var paid := _find_choice(preview.get("choices", []), "light_the_embers")
+		_check(bool(paid.get("available", false)) == bool(tc["paid_avail"]),
+			"AC3: paid available == %s for %s" % [str(tc["paid_avail"]), test_label])
+		_check(bool(paid.get("actionable", false)) == bool(tc["paid_avail"]),
+			"AC3: paid actionable == %s for %s" % [str(tc["paid_avail"]), test_label])
+
+		if not bool(tc["paid_avail"]):
+			_check(paid.get("service_request", {}) == {},
+				"AC3: No service request offered for unavailable %s" % test_label)
+			var claim_fail := ev_neg.choose("light_the_embers", NODE, ev_neg.read_state())
+			_check(not bool(claim_fail.get("ok", false)),
+				"AC3: Paid claim refused for unavailable %s" % test_label)
+			_check(ev_neg.is_open(), "AC3: Event remains open after refusal for %s" % test_label)
+			_check(ev_neg.get_wallet() == {"gold": 10, "scraps": scraps_count},
+				"AC3: Wallet unspent after refusal for %s" % test_label)
+
+		# Alternatives sell_cinders and leave remain authentic
+		_check(bool(_find_choice(preview.get("choices", []), "sell_cinders").get("available", false)),
+			"AC3: sell_cinders available for %s" % test_label)
+		_check(bool(_find_choice(preview.get("choices", []), "leave").get("available", false)),
+			"AC3: leave available for %s" % test_label)
+
+	# Case with carried spare_parts array: hero has intact worn parts, but spare_parts list with torn part
+	var spare_party := _party_with_worn_parts([30, 25, 24, 28], [0, 0, 0, 0])
+	spare_party[0]["spare_parts"] = [
+		{"id": "warden_arms_shield_catch", "slot": "arms", "tier": 1, "torn": true}
+	]
+	var ev_spare := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, spare_party, 100, {"gold": 10, "scraps": 1})
+	_check(ev_spare.is_valid(), "AC3: Event valid for carried spare parts case")
+	_check(not ev_spare.can_mend(), "AC3: can_mend=false for torn carried spare parts with intact worn parts")
+	var preview_spare := ev_spare.preview_choices()
+	var paid_spare := _find_choice(preview_spare.get("choices", []), "light_the_embers")
+	_check(not bool(paid_spare.get("available", false)), "AC3: Paid choice unavailable for spare-only torn part")
+
+	# 4. AC3: With real torn living part and 0 scraps, sell_cinders and leave claim successfully
+	var party_with_torn_arm := _standard_party(0, 0)
+	party_with_torn_arm[0]["parts"] = {
+		"arms": _worn_part("warden_arms_shield_catch", 1, true, "arms"),
+	}
+	var ev_trade_torn := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, party_with_torn_arm, 100, {"gold": 5, "scraps": 0})
+	var trade_receipt := ev_trade_torn.choose("sell_cinders", NODE, ev_trade_torn.read_state())
+	_check(bool(trade_receipt.get("ok", false)), "AC3: sell_cinders succeeds with torn part and 0 scraps")
+	_check(trade_receipt.get("wallet") == {"gold": 17, "scraps": 0}, "AC3: sell_cinders adds exactly 12 gold (5 + 12 = 17)")
+	_check(trade_receipt.get("service_request") == {}, "AC3: sell_cinders produces no service_request")
+
+	var ev_leave_torn := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, party_with_torn_arm, 100, {"gold": 5, "scraps": 0})
+	var leave_receipt := ev_leave_torn.leave(NODE, ev_leave_torn.read_state())
+	_check(bool(leave_receipt.get("ok", false)), "AC3: leave succeeds with torn part and 0 scraps")
+	_check(leave_receipt.get("wallet") == {"gold": 5, "scraps": 0}, "AC3: leave leaves wallet untouched")
+	_check(leave_receipt.get("service_request") == {}, "AC3: leave produces no service_request")
+
+	# 5. AC3: Existing recovery paths remain authentic
+	var ev_wounded := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, _standard_party(-10, 0), 100, {"gold": 0, "scraps": 1})
+	_check(ev_wounded.can_mend(), "AC3: Missing HP opens original mend path")
+	_check(bool(_find_choice(ev_wounded.preview_choices()["choices"], "light_the_embers")["available"]),
+		"AC3: Paid choice available for missing HP")
+
+	var ev_fray := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, _standard_party(0, 20), 100, {"gold": 0, "scraps": 1})
+	_check(ev_fray.can_tell_tales(), "AC3: Positive FRAY opens original tales path")
+	_check(bool(_find_choice(ev_fray.preview_choices()["choices"], "light_the_embers")["available"]),
+		"AC3: Paid choice available for positive FRAY")
+
+	var ev_fear := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, _standard_party(0, 0), 100, {"gold": 0, "scraps": 1}, null, 15)
+	_check(ev_fear.can_tell_tales(), "AC3: Positive Wren fear opens original tales path")
+	_check(bool(_find_choice(ev_fear.preview_choices()["choices"], "light_the_embers")["available"]),
+		"AC3: Paid choice available for positive Wren fear")
+
+	var ev_candle := RunStitchedEmberglassCampfireEvent.new(NODE, EMBER_ID, _standard_party(0, 0), 90, {"gold": 0, "scraps": 1})
+	_check(ev_candle.can_trim_wick(), "AC3: Candle < 100 opens original wick path")
+	_check(bool(_find_choice(ev_candle.preview_choices()["choices"], "light_the_embers")["available"]),
+		"AC3: Paid choice available for candle < 100")
