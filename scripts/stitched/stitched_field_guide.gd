@@ -200,10 +200,11 @@ func _input(event: InputEvent) -> void:
 				_request_close()
 			return
 		if button == JOY_BUTTON_DPAD_UP or button == JOY_BUTTON_DPAD_DOWN:
-			# Vertical focus stays in the inspector's existing enabled ring.
 			get_viewport().set_input_as_handled()
 			if _atlas_is_open():
 				_cycle_atlas_focus(button == JOY_BUTTON_DPAD_UP)
+			else:
+				_cycle_guide_focus(button == JOY_BUTTON_DPAD_UP)
 			return
 		if _atlas_is_open():
 			if button in [JOY_BUTTON_LEFT_SHOULDER, JOY_BUTTON_RIGHT_SHOULDER,
@@ -340,6 +341,23 @@ func _cycle_atlas_focus(backwards: bool) -> void:
 	var current := ring.find(get_viewport().gui_get_focus_owner())
 	var next := 0 if current < 0 else (current + (-1 if backwards else 1) + ring.size()) % ring.size()
 	ring[next].grab_focus()
+
+
+## Controller focus follows the existing six-control Tab order without
+## activating any guide action. The inspector owns a separate dynamic ring.
+func _cycle_guide_focus(backwards: bool) -> void:
+	var ring: Array[Button] = tab_buttons.duplicate()
+	ring.append(atlas_button)
+	ring.append(close_button)
+	var available: Array[Button] = []
+	for button in ring:
+		if button.is_visible_in_tree() and not button.disabled and button.focus_mode != Control.FOCUS_NONE:
+			available.append(button)
+	if available.is_empty():
+		return
+	var current := available.find(get_viewport().gui_get_focus_owner())
+	var next := 0 if current < 0 else posmod(current + (-1 if backwards else 1), available.size())
+	available[next].grab_focus()
 
 
 func _build_view() -> void:
