@@ -1679,6 +1679,21 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 					actor.hanging = false
 					actor.death_hits = 0
 				receipt.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
+		elif effect == "heal":
+			# The sewn-on Cotton/Gold healing mends the signature's actual surviving
+			# target, hero or foe alike (cycle 626's target-side principle): a foe
+			# struck by the carrying attack receives it too. Heal after the confirmed
+			# hit, cap at max HP and report the actual amount; never widen authored
+			# heal effects or resurrect the already killed (gated above).
+			if target.side in ["hero", "foe"]:
+				var before := int(target.hp)
+				target.hp = mini(int(target.max_hp), before + amount)
+				var healed := int(target.hp) - before
+				if target.side == "hero" and int(target.hp) > 0:
+					target.hanging = false
+					target.death_hits = 0
+				receipt.statuses.append({"status": "heal", "amount": healed, "patch": patch_id})
+				receipt.target_hp = int(target.hp)
 		else:
 			_apply_effects(actor, target, {"effects": {effect: amount}}, receipt)
 		receipt["patches"] = receipt.get("patches", []) + [patch_id]
