@@ -1,11 +1,11 @@
 {
   "trinkets": [
-    {"id": "quilted_coat", "price": 100},
+    {"id": "quilted_coat", "price": 90},
     {"id": "padded_vest", "price": 75},
     {"id": "double_quilt_coat", "price": 100},
     {"id": "scrap_lined_vest", "price": 70},
-    {"id": "wool_patch_cloak", "price": 90},
-    {"id": "chain_stitched_coat", "price": 100},
+    {"id": "wool_patch_cloak", "price": 85},
+    {"id": "chain_stitched_coat", "price": 95},
     {"id": "reinforced_patchcoat", "price": 105},
     {"id": "thick_felt_mantle", "price": 110}
   ]

@@ -186,7 +186,7 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(TEST_SAVE)
 	DirAccess.remove_absolute(TEST_SAVE + ".tmp")
-	var app := _app(24)
+	var app := _app(53)
 	await process_frame
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
@@ -223,8 +223,8 @@ func _run() -> void:
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and session.heroes.size() == 4 and session.walks_enabled
-		and session.picks.size() == 4 and session.seed_value == 24,
-		"real four selected dolls start seed 24 with Walks")
+		and session.picks.size() == 4 and session.seed_value == 53,
+		"real four selected dolls start seed 53 with Walks")
 	if session == null:
 		_finish(app)
 		return
@@ -237,7 +237,7 @@ func _run() -> void:
 		"intro dismissal reveals authentic legal tickets")
 	var event_ticket := _find_ticket(app, EVENT_KIND)
 	_check(event_ticket != null and str(event_ticket.get_meta("route_id", "")) in session.choices(),
-		"seed 24 offers a legal Event ticket")
+		"seed 53 offers a legal Event ticket")
 	if event_ticket == null:
 		_finish(app)
 		return

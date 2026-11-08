@@ -2,6 +2,7 @@ extends "res://tests/stitched_s6_routed_vis_a_test.gd"
 ## Earned wallets and genuine generated Shops, driven through New Run controls.
 
 const SAVE_PATH := "user://stitched_s6_routed_stuffing_live.save"
+const LiveWitness := preload("res://tests/live_witness.gd")
 var wounded_purchases := 0
 
 
@@ -479,38 +480,17 @@ func _poor_shop() -> void:
 
 
 func _lost_shop() -> void:
-	# Seed 25 re-derives the LOST witness on the Hook Drag reel: the same mounted opening Fight
-	# still loses exactly one doll and is won afterwards, its Shop is connected and f03_n3 is
-	# the reachable Sewing Circle.
-	var app: Node = await _new_run(25)
+	# The LOST witness is searched at run time (owner 11-08): the first opening Fight -> Shop -> Sewing
+	# Circle route whose mounted Fight loses exactly one doll to enemy turns and is won afterwards.
+	var witness := await LiveWitness.lost_fight(self)
+	_check(not witness.is_empty(), "enemy turns genuinely lose a doll before the survivors win")
+	if witness.is_empty():
+		return
+	var app: Node = witness.app
 	var session: StitchedRunSession = app.stitched_run_session
-	if session == null:
-		app.free()
-		return
-	var fight_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type == "Fight":
-			fight_id = id
-	_check(await _await_controls(app, "map"), "LOST witness has fresh mounted route controls")
-	_check(not fight_id.is_empty() and _press_route(app, fight_id), "LOST witness enters a genuine fight")
-	var stage: StitchedBattleScreen = app.stitched_run_battle
-	if stage == null:
-		app.free()
-		return
-	for step in range(500):
-		if stage.battle.is_over() or stage.battle.get_heroes().any(func(hero: Dictionary): return hero.lost):
-			break
-		stage._action_buttons["pass"].pressed.emit()
-	var result := _win(stage)
-	_check(result.acted > 0 and stage.battle.outcome() == "victory"
-		and stage.battle.get_heroes().any(func(hero: Dictionary): return hero.lost), "enemy turns genuinely lose a doll before the survivors win")
-	stage._action_buttons["exit"].pressed.emit()
-	var shop_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type == "Shop":
-			shop_id = id
+	var circle_id := str(witness.route[2])
 	_check(await _await_controls(app, "map"), "post-LOST battle mounts fresh route controls")
-	_check(not shop_id.is_empty() and _press_route(app, shop_id), "earned LOST roster reaches its connected Shop")
+	_check(_press_route(app, str(witness.route[1])), "earned LOST roster reaches its connected Shop")
 	if session.phase == "visit" and session.pending.service == "Peddler":
 		_check(await _await_controls(app, "visit", "Peddler"), "LOST Shop mounts fresh choice controls")
 		_stuffing_controls(app)
@@ -522,7 +502,7 @@ func _lost_shop() -> void:
 		if not living.is_empty():
 			await _buy(app, living[0].id)
 			session = app.stitched_run_session
-			_check(session.choices().has("f03_n3") and _press_route(app, "f03_n3")
+			_check(session.choices().has(circle_id) and _press_route(app, circle_id)
 				and session.pending.service == "SewingCircle", "owned stuffing continue into a genuine Sewing Circle")
 			var replacements := session.visit_actions().filter(func(action: Dictionary): return action.id == "replace" and action.enabled)
 			_check(not replacements.is_empty(), "genuine LOST doll has a mounted replacement choice")

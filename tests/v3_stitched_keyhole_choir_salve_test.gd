@@ -63,7 +63,14 @@ func _load_event_from_catalog(target_id: String) -> Dictionary:
 		return {}
 	for rec in events:
 		if rec is Dictionary and (rec as Dictionary).get("id") == target_id:
-			return (rec as Dictionary).duplicate(true)
+			var res: Dictionary = (rec as Dictionary).duplicate(true)
+			for ch in res.get("choices", []):
+				if ch is Dictionary and ch.has("stitched_effect") and ch["stitched_effect"] is Dictionary:
+					var eff: Dictionary = ch["stitched_effect"]
+					for k in ["candle", "fray", "hp", "scraps", "gold", "fear"]:
+						if eff.has(k) and eff[k] is float:
+							eff[k] = int(eff[k])
+			return res
 	return {}
 
 
@@ -107,15 +114,16 @@ func _test_catalogue_ac1(event_record: Dictionary) -> void:
 
 	var buy := _find_choice(event_record, "buy_silence")
 	_check(not buy.is_empty(), "AC1: buy_silence choice present")
-	_check(buy.get("text") == "Plug the keyhole with two scraps (-2 scraps, -12 fray each)",
-		"AC1: buy_silence authored text retained")
+	_check(buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' fray",
+		"AC1: buy_silence authored text updated")
 	var buy_effect: Dictionary = buy.get("stitched_effect", {})
 	_check(buy_effect.get("target") == "party", "AC1: buy_silence target is party")
 	_check(int(buy_effect.get("candle", -1)) == 0, "AC1: buy_silence candle is 0")
 	_check(int(buy_effect.get("fray", 0)) == -12, "AC1: buy_silence fray is -12")
 	_check(int(buy_effect.get("scraps", 0)) == -2, "AC1: buy_silence scraps is -2")
-	_check(int(buy_effect.get("min_fray", 0)) == 1, "AC1: buy_silence min_fray is 1")
-	_check(buy_effect.size() == 5, "AC1: buy_silence has exactly 5 effect keys")
+	_check(int(buy_effect.get("fear", 0)) == -8, "AC1: buy_silence fear is -8")
+	_check(buy_effect.get("require_fray_or_fear") == true, "AC1: buy_silence require_fray_or_fear is true")
+	_check(buy_effect.size() == 6, "AC1: buy_silence has exactly 6 effect keys")
 
 	var leave := _find_choice(event_record, "leave")
 	_check(not leave.is_empty(), "AC1: leave choice present")
@@ -379,10 +387,11 @@ func _test_double_claim_rejection_ac3(event_record: Dictionary) -> void:
 
 ## AC3: Unchanged negative choices (buy_silence gates and leave)
 func _test_unchanged_negative_choices_ac3(event_record: Dictionary) -> void:
-	# 1. buy_silence when all dolls at fray 0 (min_fray 1 gate fails)
+	# 1. buy_silence when all dolls at fray 0 and wren_fear is 0 (require_fray_or_fear gate fails)
 	var snap_calm := {
 		"candle": 80,
 		"scraps": 4,
+		"wren_fear": 0,
 		"party": [
 			{"id": "warden", "fray": 0},
 			{"id": "seamstress", "fray": 0},
@@ -393,15 +402,16 @@ func _test_unchanged_negative_choices_ac3(event_record: Dictionary) -> void:
 	var svc_calm := RunStitchedEventConsequence.new(event_record)
 	var prev_calm := svc_calm.preview(snap_calm)
 	var buy_calm := _find_preview_entry(prev_calm, "buy_silence")
-	_check(buy_calm.get("available") == false, "AC3: buy_silence unavailable when all fray is 0 (min_fray 1)")
+	_check(buy_calm.get("available") == false, "AC3: buy_silence unavailable when all fray is 0 and wren_fear is 0")
 	var ref_calm := svc_calm.choose("buy_silence", snap_calm)
-	_check(ref_calm.get("ok") == false, "AC3: buy_silence choose refused when all fray is 0")
-	_check(svc_calm.is_valid() and not svc_calm.is_claimed(), "AC3: min_fray refusal does not latch claim")
+	_check(ref_calm.get("ok") == false, "AC3: buy_silence choose refused when all fray is 0 and wren_fear is 0")
+	_check(svc_calm.is_valid() and not svc_calm.is_claimed(), "AC3: require_fray_or_fear refusal does not latch claim")
 
 	# 2. buy_silence when scraps < 2 (underfunded)
 	var snap_low_scraps := {
 		"candle": 80,
 		"scraps": 1,
+		"wren_fear": 20,
 		"party": [
 			{"id": "warden", "fray": 10},
 			{"id": "seamstress", "fray": 0},
@@ -417,10 +427,11 @@ func _test_unchanged_negative_choices_ac3(event_record: Dictionary) -> void:
 	_check(ref_low.get("ok") == false, "AC3: buy_silence choose refused when scraps < 2")
 	_check(svc_low.is_valid() and not svc_low.is_claimed(), "AC3: underfunded refusal does not latch claim")
 
-	# 3. buy_silence when funded and living fray >= 1: succeeds with -2 scraps and -12 fray
+	# 3. buy_silence when funded and living fray >= 1: succeeds with -2 scraps and -12 fray and -8 fear
 	var snap_funded := {
 		"candle": 80,
 		"scraps": 3,
+		"wren_fear": 20,
 		"party": [
 			{"id": "warden", "fray": 10},
 			{"id": "seamstress", "fray": 0},
@@ -437,5 +448,6 @@ func _test_unchanged_negative_choices_ac3(event_record: Dictionary) -> void:
 	_check(rec_funded.get("scraps") == 1 and rec_funded.get("scraps_delta") == -2, "AC3: buy_silence scraps delta -2")
 	_check(rec_funded.get("fray") == {"warden": -12, "seamstress": -12, "tinker": -12, "lantern_monk": -12},
 		"AC3: buy_silence fray intent -12 each")
+	_check(rec_funded.get("fear") == 12 and rec_funded.get("fear_delta") == -8, "AC3: buy_silence fear 20 - 8 = 12")
 	_check(not rec_funded.has("hp"), "AC3: buy_silence has no hp intent")
 	_check(rec_funded.get("candle") == 80, "AC3: buy_silence candle unchanged at 80")

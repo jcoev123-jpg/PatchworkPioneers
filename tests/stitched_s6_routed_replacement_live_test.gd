@@ -2,6 +2,7 @@ extends "res://tests/stitched_s6_routed_vis_a_test.gd"
 ## Genuine combat loss -> connected Shop -> mounted Circle -> onward ranked battle.
 
 const SAVE_PATH := "user://stitched_s6_routed_replacement_live.save"
+const LiveWitness := preload("res://tests/live_witness.gd")
 
 
 func _button(app: Node, id: String, arguments: Array = []) -> Button:
@@ -50,36 +51,18 @@ func _healthy_circle() -> void:
 func _lost_circle() -> void:
 	# This S6 fixture documents the legacy one-Hanging-then-LOST carry, gear transfer and
 	# replacement path. S14's escalating death door is exercised by its own gate test.
-	# Seed 0 is the witness where the opening Fight leaves exactly one LOST doll: the old
-	# 1690 route now loses two dolls in that Fight once the Moth Swarm's third-turn
-	# Tattercloud Knot joins its authored rotation.
-	var app: Node = await _new_run(0)
+	# The witness is searched at run time (owner 11-08): the first opening Fight -> Shop -> Sewing
+	# Circle route whose mounted Fight leaves exactly one LOST doll after enemy turns and is won.
+	var witness := await LiveWitness.lost_fight(self, ["Shop", "SewingCircle"], 1,
+		func(fresh: Node) -> void:
+			fresh.stitched_run_session.s14_enabled = false
+			fresh.stitched_run_session._seal()
+			fresh._present_stitched_run())
+	_check(not witness.is_empty(), "survivors earn a real victory after enemy turns")
+	if witness.is_empty():
+		return
+	var app: Node = witness.app
 	var session: StitchedRunSession = app.stitched_run_session
-	if session == null:
-		app.free()
-		return
-	session.s14_enabled = false
-	session._seal()
-	app._present_stitched_run()
-	var fight_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type == "Fight":
-			fight_id = id
-	_check(not fight_id.is_empty() and _press_route(app, fight_id), "actual route enters the loss witness fight")
-	var stage: StitchedBattleScreen = app.stitched_run_battle
-	if stage == null:
-		app.free()
-		return
-	for step in range(500):
-		if stage.battle.is_over() or stage.battle.get_heroes().any(func(hero: Dictionary): return hero.lost):
-			break
-		stage._action_buttons["pass"].pressed.emit()
-	var won := _win(stage)
-	_check(won.acted > 0 and stage.battle.outcome() == "victory", "survivors earn a real victory after enemy turns")
-	if stage.battle.outcome() != "victory":
-		app.free()
-		return
-	stage._action_buttons["exit"].pressed.emit()
 	var lost := session.heroes.filter(func(hero: Dictionary): return hero.lost)
 	_check(lost.size() == 1 and lost[0].hp == 0 and lost[0].parts == {} and session.satchel.size() >= 4,
 		"real loss publishes one zero-HP empty-parts doll and already transfers its gear")
@@ -87,11 +70,7 @@ func _lost_circle() -> void:
 		app.free()
 		return
 	var lost_id: String = lost[0].id
-	var shop_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type == "Shop":
-			shop_id = id
-	_check(not shop_id.is_empty() and _press_route(app, shop_id), "genuine loss reaches connected Peddler")
+	_check(_press_route(app, str(witness.route[1])), "genuine loss reaches connected Peddler")
 	var living: Array = session.heroes.filter(func(hero: Dictionary): return not hero.lost)
 	_check(not living.is_empty() and session.gold >= 10, "survivor and earned wallet fund an unrelated pocket witness")
 	if living.is_empty() or session.phase != "visit":
@@ -103,11 +82,8 @@ func _lost_circle() -> void:
 		return
 	tonic.pressed.emit()
 	_check(session.pockets[living[0].id] == ["thimble_tonic"], "survivor actually owns a tonic before replacement")
-	var circle_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type == "SewingCircle":
-			circle_id = id
-	_check(not circle_id.is_empty() and _press_route(app, circle_id)
+	var circle_id := str(witness.route[2])
+	_check(session.choices().has(circle_id) and _press_route(app, circle_id)
 		and session.pending.service == "SewingCircle"
 		and session.map.get_node(session.pending.node_id).type == "SewingCircle",
 		"mounted Circle is the genuine connected map node")
@@ -249,7 +225,7 @@ func _lost_circle() -> void:
 		if session.map.get_node(id).type in ["Fight", "Elite"]:
 			onward_id = id
 	_check(not onward_id.is_empty() and _press_route(app, onward_id), "replacement continues into a real connected ranked battle")
-	stage = app.stitched_run_battle
+	var stage: StitchedBattleScreen = app.stitched_run_battle
 	_check(stage != null and stage.battle == session.battle, "follow-on battle is actually mounted")
 	if stage != null:
 		var installed := stage.battle.get_unit(args[0])

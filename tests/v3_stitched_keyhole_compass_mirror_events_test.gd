@@ -19,6 +19,7 @@ const EVENTS_PATH := "res://data/events/stitched_route_effects.json"
 const BASE_CANDLE := 40
 const BASE_GOLD := 60
 const BASE_SCRAPS := 4
+const BASE_WREN_FEAR := 20
 const PARTY_FRAYS := [["warden", 40], ["seamstress", 60], ["tinker", 20], ["yarn_ranger", 10]]
 ## A distinct four-hero party that swaps the Yarn Ranger for the Lantern Monk, so
 ## the canonical ranger gate is exercised without shrinking the party.
@@ -32,7 +33,7 @@ const EXPECTED := {
 		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
 		"choices": [
 			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room": true}},
-			{"id": "buy_silence", "text": "Plug the keyhole with two scraps (-2 scraps, -12 fray each)", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "min_fray": 1}},
+			{"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' fray", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
 			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -64,7 +65,7 @@ const EXPECTED := {
 const FUNDED_FINAL := {
 	"v3_keyhole_choir": {
 		"follow_humming": {"candle": 56, "candle_delta": 16, "fray": 7, "hp": 5, "hp_delta": 5},
-		"buy_silence": {"candle": 40, "candle_delta": 0, "fray": -12, "scraps": 2, "scraps_delta": -2},
+		"buy_silence": {"candle": 40, "candle_delta": 0, "fray": -12, "scraps": 2, "scraps_delta": -2, "fear": 12, "fear_delta": -8},
 		"leave": {"candle": 40, "candle_delta": 0, "fray": 0},
 	},
 	"v3_yarn_compass_spool": {
@@ -226,6 +227,8 @@ func _load_source() -> void:
 					var eff: Dictionary = choice["stitched_effect"]
 					if eff.has("min_active_heroes") and typeof(eff["min_active_heroes"]) == TYPE_FLOAT and floor(eff["min_active_heroes"]) == eff["min_active_heroes"]:
 						eff["min_active_heroes"] = int(eff["min_active_heroes"])
+					if eff.has("fear") and typeof(eff["fear"]) == TYPE_FLOAT and floor(eff["fear"]) == eff["fear"]:
+						eff["fear"] = int(eff["fear"])
 			source_by_id[event_id] = rec_copy
 	source_snapshot = source_document.duplicate(true)
 
@@ -348,6 +351,9 @@ func _test_funded_contract() -> void:
 			if row.has("gold"):
 				_check(int(row["gold"]) == BASE_GOLD + int(row["gold_delta"]),
 					"the funded gold agree with its hardcoded delta: " + event_id + " / " + choice_id)
+			if row.has("fear"):
+				_check(int(row["fear"]) == BASE_WREN_FEAR + int(row["fear_delta"]),
+					"the funded fear agrees with its hardcoded delta: " + event_id + " / " + choice_id)
 			var snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
 			var before: Dictionary = snapshot.duplicate(true)
 			var service := RunStitchedEventConsequence.new(record)
@@ -945,6 +951,8 @@ func _test_paid_fray_relief_gates() -> void:
 			"settled_scraps": 2,
 			"fray_delta": -12,
 			"underfunded_scraps": 1,
+			"has_fear": true,
+			"fear_delta": -8,
 		},
 		{
 			"event_id": "v3_veiled_wardrobe_mirror",
@@ -954,6 +962,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"settled_scraps": 3,
 			"fray_delta": -9,
 			"underfunded_scraps": 0,
+			"has_fear": false,
 		},
 	]
 
@@ -973,6 +982,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"candle": 40,
 			"gold": 60,
 			"scraps": 4,
+			"wren_fear": 0,
 			"party": [
 				{"id": "warden", "fray": 0},
 				{"id": "seamstress", "fray": 0},
@@ -1032,6 +1042,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"candle": 40,
 			"gold": 60,
 			"scraps": 4,
+			"wren_fear": 0,
 			"party": [
 				{"id": "warden", "fray": 40, "lost": true},
 				{"id": "seamstress", "fray": 0},
@@ -1067,6 +1078,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"candle": 40,
 			"gold": 60,
 			"scraps": 4,
+			"wren_fear": 0,
 			"party": [
 				{"id": "warden", "fray": 1},
 				{"id": "seamstress", "fray": 0},
@@ -1094,8 +1106,11 @@ func _test_paid_fray_relief_gates() -> void:
 			and int(frayed_entry.get("scraps_delta")) == -price
 			and frayed_entry.get("fray") == expected_fray_map,
 			"one-living-frayed preview quotes settled scraps and -12/-9 raw fray intents: " + event_id)
-		var claim_rec: Dictionary = svc_frayed.choose(choice_id, snap_frayed)
-		_check(claim_rec == {
+		if tc.get("has_fear", false):
+			_check(int(frayed_entry.get("fear")) == 0
+				and int(frayed_entry.get("fear_delta")) == tc["fear_delta"],
+				"one-living-frayed preview quotes clamped fear 0 and delta: " + event_id)
+		var expected_claim := {
 			"ok": true,
 			"event_id": event_id,
 			"choice_id": choice_id,
@@ -1105,12 +1120,24 @@ func _test_paid_fray_relief_gates() -> void:
 			"fray": expected_fray_map,
 			"scraps_delta": -price,
 			"scraps": settled_scraps,
-		}, "one-living-frayed claim settles exact raw fray map and scraps: " + event_id)
-		_check(not claim_rec.has("gold") and not claim_rec.has("gold_delta")
-			and not claim_rec.has("hp") and not claim_rec.has("hp_delta")
-			and not claim_rec.has("fear") and not claim_rec.has("fear_delta")
-			and not claim_rec.has("part"),
-			"claim receipt omits nonexistent keys: " + event_id)
+		}
+		if tc.get("has_fear", false):
+			expected_claim["fear_delta"] = tc["fear_delta"]
+			expected_claim["fear"] = 0
+		var claim_rec: Dictionary = svc_frayed.choose(choice_id, snap_frayed)
+		_check(claim_rec == expected_claim, "one-living-frayed claim settles exact raw fray map and scraps: " + event_id)
+		if tc.get("has_fear", false):
+			_check(not claim_rec.has("gold") and not claim_rec.has("gold_delta")
+				and not claim_rec.has("hp") and not claim_rec.has("hp_delta")
+				and not claim_rec.has("part")
+				and claim_rec.has("fear") and claim_rec.has("fear_delta"),
+				"claim receipt carries fear keys and omits nonexistent keys: " + event_id)
+		else:
+			_check(not claim_rec.has("gold") and not claim_rec.has("gold_delta")
+				and not claim_rec.has("hp") and not claim_rec.has("hp_delta")
+				and not claim_rec.has("fear") and not claim_rec.has("fear_delta")
+				and not claim_rec.has("part"),
+				"claim receipt omits nonexistent keys: " + event_id)
 		_check(svc_frayed.is_claimed() and not svc_frayed.is_valid(),
 			"claim latches exactly once: " + event_id)
 		_check(svc_frayed.choose(choice_id, snap_frayed) == _refusal(40),
@@ -1124,6 +1151,53 @@ func _test_paid_fray_relief_gates() -> void:
 		_check(rng_guard.state == guard_state,
 			"claim flow draws no RNG: " + event_id)
 
+		# AC1: Living dolls all at fray 0, Wren fear 8, scraps 4 -> bargain admitted, settles fear 0, fray -12 each, scraps 2
+		if tc.get("has_fear", false):
+			var snap_ac1 := {
+				"candle": 40,
+				"gold": 60,
+				"scraps": 4,
+				"wren_fear": 8,
+				"party": [
+					{"id": "warden", "fray": 0},
+					{"id": "seamstress", "fray": 0},
+					{"id": "tinker", "fray": 0},
+					{"id": "yarn_ranger", "fray": 0},
+				],
+			}
+			var before_ac1: Dictionary = snap_ac1.duplicate(true)
+			var svc_ac1 := RunStitchedEventConsequence.new(record)
+			var prev_ac1: Dictionary = svc_ac1.preview(snap_ac1)
+			_check(prev_ac1.get("ok") == true, "AC1: living fray 0 with Wren fear 8 visit previews: " + event_id)
+			var ac1_entry := _entry(prev_ac1, choice_id)
+			_check(not ac1_entry.is_empty() and ac1_entry.get("available") == true,
+				"AC1: living fray 0 with Wren fear 8 choice is available: " + event_id)
+			_check(int(ac1_entry.get("candle")) == 40
+				and int(ac1_entry.get("candle_delta")) == 0
+				and int(ac1_entry.get("fray_delta")) == fray_delta
+				and int(ac1_entry.get("scraps")) == settled_scraps
+				and int(ac1_entry.get("scraps_delta")) == -price
+				and int(ac1_entry.get("fear")) == 0
+				and int(ac1_entry.get("fear_delta")) == tc["fear_delta"]
+				and ac1_entry.get("fray") == expected_fray_map,
+				"AC1: preview quotes settled scraps, fear 0, and raw -12 fray intents: " + event_id)
+			var rec_ac1: Dictionary = svc_ac1.choose(choice_id, snap_ac1)
+			_check(rec_ac1 == {
+				"ok": true,
+				"event_id": event_id,
+				"choice_id": choice_id,
+				"target": "party",
+				"hero_id": "",
+				"candle": 40,
+				"fray": expected_fray_map,
+				"scraps_delta": -price,
+				"scraps": settled_scraps,
+				"fear_delta": tc["fear_delta"],
+				"fear": 0,
+			}, "AC1: choose settles Wren fear to 0 plus raw -12 fray intents and scraps 2: " + event_id)
+			_check(snap_ac1 == before_ac1 and record == record_snapshot,
+				"AC1: flow mutates no caller snapshot or record: " + event_id)
+
 		# Deterministic replay check
 		var svc_replay := RunStitchedEventConsequence.new(record)
 		_check(svc_replay.preview(snap_frayed) == prev_frayed,
@@ -1136,6 +1210,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"candle": 40,
 			"gold": 60,
 			"scraps": 4,
+			"wren_fear": 0,
 			"party": [
 				{"id": "warden", "fray": 1},
 				{"id": "seamstress", "fray": 0},
@@ -1156,10 +1231,22 @@ func _test_paid_fray_relief_gates() -> void:
 		_check(entry_with_lost.get("fray") == expected_fray_living_only,
 			"preview never emits fray intent for LOST hero: " + event_id)
 		var rec_with_lost: Dictionary = svc_with_lost.choose(choice_id, snap_with_lost)
-		_check(rec_with_lost.get("ok") == true
-			and rec_with_lost.get("fray") == expected_fray_living_only
-			and int(rec_with_lost.get("scraps")) == settled_scraps,
-			"receipt never emits fray intent for LOST hero: " + event_id)
+		var expected_rec_with_lost := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": choice_id,
+			"target": "party",
+			"hero_id": "",
+			"candle": 40,
+			"fray": expected_fray_living_only,
+			"scraps_delta": -price,
+			"scraps": settled_scraps,
+		}
+		if tc.get("has_fear", false):
+			expected_rec_with_lost["fear_delta"] = tc["fear_delta"]
+			expected_rec_with_lost["fear"] = 0
+		_check(rec_with_lost == expected_rec_with_lost,
+			"receipt matches expected settled state without LOST hero: " + event_id)
 		_check(not (rec_with_lost.get("fray") as Dictionary).has("yarn_ranger"),
 			"LOST hero absent from settled fray map: " + event_id)
 
@@ -1168,6 +1255,7 @@ func _test_paid_fray_relief_gates() -> void:
 			"candle": 40,
 			"gold": 60,
 			"scraps": underfunded_scraps,
+			"wren_fear": 0,
 			"party": [
 				{"id": "warden", "fray": 1},
 				{"id": "seamstress", "fray": 0},
@@ -1213,7 +1301,7 @@ func _snapshot(candle: int, gold: int, scraps: int, frays: Array) -> Dictionary:
 	var party: Array = []
 	for pair in frays:
 		party.append({"id": pair[0], "fray": pair[1]})
-	return {"candle": candle, "party": party, "gold": gold, "scraps": scraps}
+	return {"candle": candle, "party": party, "gold": gold, "scraps": scraps, "wren_fear": BASE_WREN_FEAR}
 
 
 func _fray_map(frays: Array, delta: int) -> Dictionary:
@@ -1245,6 +1333,9 @@ func _expected_entry(choice_id: String, row: Dictionary, frays: Array) -> Dictio
 	if row.has("hp"):
 		entry["hp_delta"] = int(row["hp_delta"])
 		entry["hp"] = _fray_map(frays, int(row["hp"]))
+	if row.has("fear"):
+		entry["fear_delta"] = int(row["fear_delta"])
+		entry["fear"] = int(row["fear"])
 	return entry
 
 
@@ -1267,6 +1358,9 @@ func _expected_receipt(event_id: String, choice_id: String, row: Dictionary, fra
 	if row.has("hp"):
 		receipt["hp_delta"] = int(row["hp_delta"])
 		receipt["hp"] = _fray_map(frays, int(row["hp"]))
+	if row.has("fear"):
+		receipt["fear_delta"] = int(row["fear_delta"])
+		receipt["fear"] = int(row["fear"])
 	return receipt
 
 
