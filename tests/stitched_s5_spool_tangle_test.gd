@@ -97,10 +97,13 @@ func _sources(catalog: Dictionary) -> void:
 		_check(bool(validated.get("ok", false)) and normalized.size() == 1
 			and normalized[0] == validated.get("ability", {}),
 			"AC1: real loader publishes the complete canonical " + ability_id + " kit")
-	_check(stalker.get("stitched", {}).get("abilities", []).size() == 2
-		and stalker["stitched"]["abilities"][1]["id"] == "spool_stalk"
-		and stalker["stitched"]["abilities"][1]["effects"] == JSON.parse_string(JSON.stringify({"dodge": 5, "duration": 1})),
-		"AC1: Spool Stalk's separate buff remains untouched")
+	var stalker_ids: Array = stalker.get("stitched", {}).get("abilities", []).map(
+		func(ability: Dictionary) -> String: return str(ability.get("id", "")))
+	var stalker_kit: Array = stalker.get("stitched", {}).get("abilities", [])
+	_check(stalker_ids.find("spool_lash") == 0 and stalker_ids.find("knot_stab") == 1
+		and stalker_ids.find("spool_stalk") == 2 and stalker_ids.size() == 3
+		and stalker_kit[2]["effects"] == JSON.parse_string(JSON.stringify({"dodge": 5, "duration": 1})),
+		"AC1: Spool Stalk's separate buff remains untouched after the authored Knot Stab")
 
 
 func _battle(catalog: Dictionary, enemy_id: String, seed_value: int,
