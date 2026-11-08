@@ -21,6 +21,11 @@ const HERO_COUNT := 4
 const MIN_RANK := 1
 const MAX_RANK := 4
 
+## Process-local monotonic counter: no clock, no RNG. Each admitted visit takes
+## the next serial, so simultaneously opened visits never share an identity.
+static var _next_serial := 1
+
+var _visit_id: String = ""
 var _node_id: String = ""
 var _status: String = INVALID
 var _heroes: Array = []
@@ -55,6 +60,8 @@ func _admit(node_id: Variant, heroes: Variant, gold: Variant,
 	_heroes = roster
 	_gold = gold
 	_quoted_price = quoted_price
+	_visit_id = "peddler-bandage-visit-%d" % RunStitchedPeddlerBandage._next_serial
+	RunStitchedPeddlerBandage._next_serial += 1
 	_status = OPEN
 
 
@@ -132,13 +139,17 @@ func _bleed_outcomes() -> Array:
 
 
 ## Fully detached visit state: node, lifecycle status, Stitched mode, wallet,
-## caller quote, deep-copied roster, eligible hero IDs and consumed flag.
+## caller quote, deep-copied roster, eligible hero IDs and consumed flag, plus an
+## opaque instance-local visit_id so a snapshot from one visit can never
+## authorize a decision on another, even with identical economic state.
 func read_state() -> Dictionary:
 	if _status == INVALID:
-		return {"ok": false, "node_id": "", "status": INVALID, "mode": MODE,
-			"gold": 0, "price": 0, "heroes": [], "eligible": [], "consumed": false}
+		return {"ok": false, "visit_id": "", "node_id": "", "status": INVALID,
+			"mode": MODE, "gold": 0, "price": 0, "heroes": [], "eligible": [],
+			"consumed": false}
 	return {
 		"ok": true,
+		"visit_id": _visit_id,
 		"node_id": _node_id,
 		"status": _status,
 		"mode": MODE,
