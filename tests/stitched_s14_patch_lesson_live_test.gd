@@ -1,0 +1,325 @@
+extends SceneTree
+## S14 patch-lesson lane: the pure StitchedPatchLesson formatter and its two lines
+## inside the real Wren Drawings field guide on the mounted base screen.
+
+const SCENE := preload("res://scenes/base_screen.tscn")
+
+var failures: Array[String] = []
+var checks := 0
+var view: BaseScreen
+var original_bedroom_enabled := true
+
+
+func _initialize() -> void:
+	original_bedroom_enabled = StitchedBedroom.enabled
+	StitchedBedroom.enabled = true
+	_run.call_deferred()
+
+
+func _check(ok: bool, description: String) -> void:
+	checks += 1
+	if not ok:
+		failures.append(description)
+
+
+func _frames() -> void:
+	for _i in range(3):
+		await process_frame
+
+
+func _key(key: Key, shifted: bool = false) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.physical_keycode = key
+		event.shift_pressed = shifted
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+
+func _click(button: Button) -> void:
+	var point := button.get_global_rect().get_center()
+	_check(root.get_visible_rect().has_point(point), "visible pointer target " + button.name)
+	var motion := InputEventMouseMotion.new()
+	motion.position = point
+	root.push_input(motion, true)
+	await process_frame
+	for pressed in [true, false]:
+		var event := InputEventMouseButton.new()
+		event.position = point
+		event.button_index = MOUSE_BUTTON_LEFT
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+
+func _has_digit(text: String) -> bool:
+	for index in text.length():
+		if text[index].is_valid_int():
+			return true
+	return false
+
+
+func _collect_focusable(node: Node, out: Array) -> void:
+	if node is Control:
+		var control := node as Control
+		if control.is_visible_in_tree() and control.focus_mode != Control.FOCUS_NONE:
+			out.append(control)
+	for child in node.get_children():
+		_collect_focusable(child, out)
+
+
+## Independent source assertions plus the exact two derived lines.
+func _catalog_checks() -> void:
+	var kits := StitchedS14Abilities.kits()
+	var patches := StitchedS14Abilities.patches()
+	_check(not kits.is_empty() and patches.get("by_id", {}) is Dictionary
+		and not patches.by_id.is_empty(), "live S14 ability and patch catalogs validate")
+	var heal: Dictionary = kits.get("seamstress", {}).get("head", {})
+	_check(str(heal.get("id", "")) == "seamstress_head_mending_knot"
+		and str(heal.get("name", "")) == "Mending Knot"
+		and str(heal.get("kind", "")) == "heal"
+		and str(heal.get("target_side", "")) == "ally"
+		and int(heal.get("effects", {}).get("heal", 0)) == 5,
+		"shipped Seamstress head record is the ally heal Mending Knot with heal 5")
+	var strike: Dictionary = kits.get("warden", {}).get("torso", {})
+	_check(str(strike.get("id", "")) == "warden_torso_iron_challenge"
+		and str(strike.get("name", "")) == "Iron Challenge"
+		and str(strike.get("kind", "")) == "melee"
+		and str(strike.get("target_side", "")) == "enemy"
+		and int(strike.get("effects", {}).get("weak", 0)) == 2,
+		"shipped Warden torso record is the enemy melee Iron Challenge with weak 2")
+	var lint: Dictionary = patches.by_id.get("cotton_red_lint", {})
+	_check(str(lint.get("id", "")) == "cotton_red_lint"
+		and str(lint.get("name", "")) == "Red Lint"
+		and str(lint.get("rarity", "")) == "cotton"
+		and str(lint.get("effect", "")) == "bleed"
+		and int(lint.get("amount", 0)) == 2,
+		"shipped Red Lint record is a cotton bleed patch of amount 2")
+	var fuzz: Dictionary = patches.by_id.get("cotton_mending_fuzz", {})
+	_check(str(fuzz.get("id", "")) == "cotton_mending_fuzz"
+		and str(fuzz.get("name", "")) == "Mending Fuzz"
+		and str(fuzz.get("rarity", "")) == "cotton"
+		and str(fuzz.get("effect", "")) == "heal"
+		and int(fuzz.get("amount", 0)) == 2,
+		"shipped Mending Fuzz record is a cotton heal patch of amount 2")
+	var lines := StitchedPatchLesson.examples()
+	var expected := [
+		"PATCH EXAMPLE  |  %s + %s: the heal can also bleed the ally it heals." % [str(heal.name), str(lint.name)],
+		"PATCH EXAMPLE  |  %s + %s: the hostile hit can mend the foe it strikes if that foe survives." % [str(strike.name), str(fuzz.name)],
+	]
+	_check(lines == expected, "examples() returns exactly the two brief plain-language lines in order")
+	if lines.size() == 2:
+		_check(lines[0].contains("Mending Knot + Red Lint") and lines[0].contains("ally")
+			and lines[0].contains("bleed"),
+			"first line pairs Mending Knot + Red Lint and names the bled ally")
+		_check(lines[1].contains("Iron Challenge + Mending Fuzz") and lines[1].contains("foe")
+			and lines[1].contains("survives"),
+			"second line pairs Iron Challenge + Mending Fuzz and conditions on the surviving foe")
+		_check(not _has_digit(lines[0]) and not _has_digit(lines[1]),
+			"lesson lines print no numeric heal, bleed, damage, probability or forecast amounts")
+	_check(StitchedPatchLesson.examples(kits, patches) == expected,
+			"explicit live sources derive the same two lines")
+	seed(918273)
+	var expected_rng := randi()
+	seed(918273)
+	StitchedPatchLesson.examples()
+	StitchedPatchLesson.examples(kits, patches)
+	_check(randi() == expected_rng, "formatting consumes no global RNG")
+
+
+## Adversarial detached copies: every invalid combination fails closed to [],
+## inputs stay unmodified and the live caches are never poisoned.
+func _invalid_checks() -> void:
+	var kits := StitchedS14Abilities.kits()
+	var patches := StitchedS14Abilities.patches()
+	var kits_snapshot: Dictionary = kits.duplicate(true)
+	var patches_snapshot: Dictionary = patches.duplicate(true)
+	_check(StitchedPatchLesson.examples({}, {}) == []
+		and StitchedPatchLesson.examples(null, {}) == []
+		and StitchedPatchLesson.examples({}, null) == [],
+		"empty or half-empty sources fail closed")
+	var kit_cases: Array = []
+	var missing_heal: Dictionary = kits.duplicate(true)
+	missing_heal["seamstress"].erase("head")
+	kit_cases.append(["seamstress head ability missing", missing_heal, patches])
+	var missing_strike: Dictionary = kits.duplicate(true)
+	missing_strike["warden"].erase("torso")
+	kit_cases.append(["warden torso ability missing", missing_strike, patches])
+	var wrong_side: Dictionary = kits.duplicate(true)
+	wrong_side["seamstress"]["head"]["target_side"] = "enemy"
+	kit_cases.append(["heal target side flipped", wrong_side, patches])
+	var wrong_kind: Dictionary = kits.duplicate(true)
+	wrong_kind["warden"]["torso"]["kind"] = "heal"
+	kit_cases.append(["strike kind wrong", wrong_kind, patches])
+	var empty_effects: Dictionary = kits.duplicate(true)
+	empty_effects["warden"]["torso"]["effects"] = {}
+	kit_cases.append(["strike without authored effects", empty_effects, patches])
+	var no_heal_effect: Dictionary = kits.duplicate(true)
+	no_heal_effect["seamstress"]["head"]["effects"] = {"weak": 2}
+	kit_cases.append(["heal without a positive heal effect", no_heal_effect, patches])
+	var wrong_name: Dictionary = kits.duplicate(true)
+	wrong_name["seamstress"]["head"]["name"] = "Patchwork Knot"
+	kit_cases.append(["heal name mismatch", wrong_name, patches])
+	var wrong_id: Dictionary = kits.duplicate(true)
+	wrong_id["warden"]["torso"]["id"] = "warden_torso_other_challenge"
+	kit_cases.append(["strike id mismatch", wrong_id, patches])
+	for entry in kit_cases:
+		var before: Dictionary = (entry[1] as Dictionary).duplicate(true)
+		_check(StitchedPatchLesson.examples(entry[1], entry[2]) == [],
+			"invalid kits rejected: " + str(entry[0]))
+		_check(entry[1] == before, "invalid kit copy is not mutated: " + str(entry[0]))
+	var patch_cases: Array = []
+	var missing_lint: Dictionary = patches.duplicate(true)
+	missing_lint.by_id.erase("cotton_red_lint")
+	patch_cases.append(["red lint missing", kits, missing_lint])
+	var missing_fuzz: Dictionary = patches.duplicate(true)
+	missing_fuzz.by_id.erase("cotton_mending_fuzz")
+	patch_cases.append(["mending fuzz missing", kits, missing_fuzz])
+	var wrong_effect: Dictionary = patches.duplicate(true)
+	wrong_effect.by_id["cotton_red_lint"]["effect"] = "heal"
+	patch_cases.append(["red lint effect wrong", kits, wrong_effect])
+	var wrong_rarity: Dictionary = patches.duplicate(true)
+	wrong_rarity.by_id["cotton_mending_fuzz"]["rarity"] = "gold"
+	patch_cases.append(["mending fuzz rarity wrong", kits, wrong_rarity])
+	var wrong_patch_name: Dictionary = patches.duplicate(true)
+	wrong_patch_name.by_id["cotton_red_lint"]["name"] = "Grey Lint"
+	patch_cases.append(["red lint name wrong", kits, wrong_patch_name])
+	var zero_amount: Dictionary = patches.duplicate(true)
+	zero_amount.by_id["cotton_mending_fuzz"]["amount"] = 0
+	patch_cases.append(["mending fuzz amount not positive", kits, zero_amount])
+	for entry in patch_cases:
+		var before: Dictionary = (entry[2] as Dictionary).duplicate(true)
+		_check(StitchedPatchLesson.examples(entry[1], entry[2]) == [],
+			"invalid patches rejected: " + str(entry[0]))
+		_check(entry[2] == before, "invalid patch copy is not mutated: " + str(entry[0]))
+	_check(kits == kits_snapshot and patches == patches_snapshot
+		and StitchedS14Abilities.kits() == kits_snapshot
+		and StitchedS14Abilities.patches() == patches_snapshot,
+		"live catalogs and caches are unpoisoned after every invalid fixture")
+
+
+func _run() -> void:
+	root.size = Vector2i(1280, 720)
+	_catalog_checks()
+	_invalid_checks()
+	view = SCENE.instantiate() as BaseScreen
+	root.add_child(view)
+	await _frames()
+	var room := view.bedroom
+	var guide := view.field_guide
+	_check(room != null and guide != null and not guide.is_open(),
+		"bedroom-enabled base screen mounts the closed guide")
+	if room == null or guide == null:
+		_finish()
+		return
+	var drawings := room.spot("drawings")
+	_check(drawings != null and drawings == view.guide_button,
+		"the real Drawings hotspot is the adopted guide entry")
+	_check(view.open_village(31, 7), "bedroom host actually opens at 1280x720")
+	await _frames()
+	_check(drawings.is_visible_in_tree() and not drawings.disabled
+		and root.get_visible_rect().has_point(drawings.get_global_rect().get_center()),
+		"live Drawings hotspot is clickable")
+	seed(551109)
+	var browse_rng := randi()
+	seed(551109)
+	await _click(drawings)
+	_check(guide.is_open() and guide.is_visible_in_tree()
+		and root.gui_get_focus_owner() == guide.tab_buttons[0],
+		"Drawings opens the guide focused on tab 0")
+	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
+		and guide.TABS == ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"],
+		"four original tabs and pages remain")
+	_check(guide.get_child_count() == 2, "no extra child controls were added to the guide")
+	var focusable: Array = []
+	_collect_focusable(guide, focusable)
+	_check(focusable.size() == 6, "exactly the six original controls are focusable inside the guide")
+	await _click(guide.tab_buttons[1])
+	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree()
+		and guide.tab_buttons[1].button_pressed,
+		"tab 1 selects the Seams & retreat page")
+	var visible_pages := 0
+	for i in range(4):
+		if guide.page_labels[i].visible:
+			visible_pages += 1
+	_check(visible_pages == 1, "exactly one page is visible at a time")
+	var page := guide.page_text(1)
+	var static_phrases := ["RETREAT", "SNIPPED THREAD", "ABILITY PATCH SOCKETS", "THREAD QUALITY",
+		"EFFECTS ON THE ACTUAL TARGET", "ALLY PATCHES", "Sewing Circle",
+		"cotton < wool < silk < gold", "bleed-patched HEAL", "your own ally"]
+	var missing: Array = []
+	for phrase in static_phrases:
+		if not page.contains(phrase):
+			missing.append(phrase)
+	_check(missing.is_empty(), "all original Seams & retreat lines survive: " + str(missing))
+	var lessons := StitchedPatchLesson.examples()
+	_check(lessons.size() == 2 and page.contains(lessons[0]) and page.contains(lessons[1]),
+		"both derived examples render on the Seams & retreat page")
+	_check(page.count("Mending Knot + Red Lint") == 1
+		and page.count("Iron Challenge + Mending Fuzz") == 1,
+		"each example appears exactly once after open")
+	var scroll_bar := guide.page_scroll.get_v_scroll_bar()
+	_check(guide.page_scroll != null and scroll_bar != null
+		and guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED,
+		"page scroll remains reachable with horizontal scroll disabled")
+	var travel := maxf(0.0, scroll_bar.max_value - scroll_bar.page)
+	guide.page_scroll.scroll_vertical = int(travel)
+	await process_frame
+	_check(travel <= 0.0 or guide.page_scroll.scroll_vertical > 0,
+		"vertical scroll moves when the page overflows")
+	guide.page_scroll.scroll_vertical = 0
+	await _key(KEY_RIGHT)
+	_check(guide.page_index == 2 and root.gui_get_focus_owner() == guide.tab_buttons[2],
+		"right arrow turns exactly one page and keeps focus on its tab")
+	await _click(guide.tab_buttons[1])
+	await _key(KEY_TAB)
+	_check(focusable.has(root.gui_get_focus_owner()), "Tab keeps focus inside the guide ring, no leak")
+	await _click(guide.close_button)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == drawings,
+		"Close dismisses and restores the live Drawings focus")
+	await _click(drawings)
+	_check(guide.is_open(), "Drawings reopens the same mounted guide")
+	await _click(guide.tab_buttons[1])
+	page = guide.page_text(1)
+	_check(page.count("Mending Knot + Red Lint") == 1
+		and page.count("Iron Challenge + Mending Fuzz") == 1 and page.contains("RETREAT"),
+		"reopen shows each example exactly once with the original page intact")
+	var broken_kits: Dictionary = StitchedS14Abilities.kits().duplicate(true)
+	broken_kits["seamstress"].erase("head")
+	guide.lesson_kits = broken_kits
+	await _click(guide.close_button)
+	await _click(drawings)
+	await _click(guide.tab_buttons[1])
+	page = guide.page_text(1)
+	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[1])
+	_check(page == baseline and not page.contains("Mending Knot + Red Lint"),
+		"an invalid lesson fixture rebuilds the plain baseline with no stale line")
+	guide.lesson_kits = null
+	await _click(guide.close_button)
+	await _click(drawings)
+	await _click(guide.tab_buttons[1])
+	page = guide.page_text(1)
+	_check(page.count("Iron Challenge + Mending Fuzz") == 1 and page.contains("RETREAT"),
+		"restored live sources re-derive the examples exactly once")
+	await _key(KEY_ESCAPE)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == drawings
+		and not drawings.disabled,
+		"Escape dismisses and restores the live Drawings focus")
+	_check(randi() == browse_rng, "the whole guide browse consumed no global RNG")
+	view.queue_free()
+	await _frames()
+	_finish()
+
+
+func _finish() -> void:
+	StitchedBedroom.enabled = original_bedroom_enabled
+	if failures.is_empty():
+		print("stitched_s14_patch_lesson_live_test: PASS (%d checks)" % checks)
+		quit(0)
+	else:
+		for failure in failures:
+			printerr("FAIL: " + failure)
+		printerr("stitched_s14_patch_lesson_live_test: FAIL (%d/%d)" % [failures.size(), checks])
+		quit(1)

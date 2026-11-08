@@ -55,6 +55,8 @@ const PAGES := [
 	]
 ]
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
+## The Seams & retreat page also carries the two freshly derived S14 patch examples.
+const LESSON_PAGE := 1
 
 var tab_buttons: Array[Button] = []
 var page_labels: Array[Label] = []
@@ -67,6 +69,9 @@ var part_atlas: StitchedPartInspector
 # to prove that a partial catalog never leaves stale or selectable parts.
 var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS,
 	YARN_RANGER_PARTS, FOE_PARTS]
+# Detached lesson sources for headless regression; null reads the live S14 catalogs.
+var lesson_kits: Variant = null
+var lesson_patches: Variant = null
 var page_index := 0
 var _active := false
 
@@ -91,10 +96,24 @@ func open_guide() -> bool:
 	if _active or not is_inside_tree() or not get_parent().is_visible_in_tree():
 		return false
 	_active = true
+	_refresh_lesson_page()
 	show()
 	select_page(0)
 	tab_buttons[0].grab_focus()
 	return true
+
+
+## Rebuild only the Seams & retreat page from its fixed authored baseline plus the
+## two freshly derived patch examples. Resetting to the baseline first means repeated
+## open/close can never duplicate a lesson, and an invalid catalog leaves no stale line.
+func _refresh_lesson_page() -> void:
+	if page_labels.size() <= LESSON_PAGE:
+		return
+	var lines: Array = PAGES[LESSON_PAGE].duplicate()
+	var lesson := StitchedPatchLesson.examples(lesson_kits, lesson_patches)
+	if lesson.size() == 2:
+		lines.append_array(lesson)
+	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
 
 
 func dismiss() -> void:
