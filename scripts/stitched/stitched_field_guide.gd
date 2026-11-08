@@ -17,33 +17,41 @@ const BRASS := Color("#e0b977")
 const PAGES := [
 	[
 		"FRONT TO BACK  |  Four allied ranks run 1 (front) through 4 (back). Foes also occupy ranks 1–4. A fight begins with 2–3 foes; the fourth arrives only by summon or split.",
-		"ROUND ORDER  |  Every round, seeded RNG rolls SPEED + 1d8 for each unit. Ties favour heroes, then lower ranks. Each unit gets one turn, except certain two-turn bosses.",
-		"EQUIPPED PARTS  |  HEAD / ARMS / TORSO / LEGS: four slots, one ability each. Every ability has legal launch ranks and target ranks.",
-		"OTHER ACTIONS  |  MOVE swaps with an adjacent ally. RE-TIE is available only after that hero's thread was snipped. Or PASS."
+		"ROUND ORDER  |  Each round, seeded SPEED + 1d8 sets action order. Ties favour heroes, then lower ranks. Each unit gets one turn, except some bosses acting twice.",
+		"FOUR SIGNATURE ABILITIES  |  Each of the eight heroes has FOUR fixed, distinct signature abilities chosen for their role, not granted by worn parts. Each has legal launch ranks, target ranks and a side: foe, ally or self.",
+		"ABILITY EXAMPLES  |  Heroes may heal an ally, mark a foe, pierce ranks or guard another doll; their kits are not just generic strike and guard.",
+		"WORN LIMBS  |  HEAD, ARMS, TORSO and LEGS are sewn physical body parts with cloth patches, not sources of the four active ability names.",
+		"OTHER ACTIONS  |  MOVE swaps adjacent heroes; RE-TIE repairs a snipped shared thread; PASS ends the hero's turn."
 	],
 	[
-		"RETREAT  |  In non-boss fights, each attempt has a 75% chance to escape. Failure consumes that hero's turn. Success gives EACH hero +15 Fray and forfeits all rewards.",
-		"SNIPPED THREAD  |  A cut stops the hero's movement, and healing or guard cannot cross that cut until the thread is re-tied.",
-		"ZERO HP  |  At 0 HP, a hero is Hanging by a Thread, but can still act. The first transition tears one random non-torso part.",
-		"FURTHER HITS  |  A further hit checks the seam: 67% to hold, 33% to lose the seam."
+		"RETREAT  |  A seeded non-boss RETREAT succeeds 75% of the time. Failure consumes the acting hero's turn. Success forfeits all rewards and gives EACH hero +15 Fray.",
+		"SNIPPED THREAD  |  A cut blocks that doll's movement and ally healing or guarding across the cut until RE-TIE repairs the shared thread.",
+		"ABILITY PATCH SOCKETS  |  Found effect patches SEW ONTO a fixed ability, not body-part stats. Each ability normally has one socket; a gold patch permits two.",
+		"THREAD QUALITY  |  Rarity runs cotton < wool < silk < gold. Cotton and wool are common in fights and events; silk and gold mainly come from Elite or Boss prizes. Quality shows in thread colour, never a numeric tier.",
+		"EFFECTS ON THE ACTUAL TARGET  |  Bleed, Pull, Push, Stun, Mark, Blind, stuffing steal or Chain to the next foe affect whoever the ability actually hits. A bleed-patched HEAL can bleed your own ally.",
+		"ALLY PATCHES  |  Some patches fit ally heals or guards: regen, cleanse and extra guard. Unsew and resew ability patches at the Sewing Circle."
 	],
 	[
 		"FRAY  |  Fray ranges from 0–200. Reaching 100 triggers a resolve check.",
 		"STEADFAST  |  25% chance: return to 45 Fray, deal +10% damage, and reduce every party member's Fray by 2 on this hero's turns until the floor ends.",
 		"UNRAVELLED  |  75% chance at 100 Fray: Unravelled lasts until Fray falls below 50.",
 		"COMING APART  |  At 200 Fray, the hero Comes Apart: HP becomes 0 and Fray becomes 150. If already Hanging by a Thread, that hero is LOST.",
-		"HANGING BY A THREAD  |  At 0 HP, the hero can still act but tears one random non-torso part on first reaching 0 HP. Each later hit has a 67% chance to hold / 33% chance to be lost."
+		"HANGING BY A THREAD  |  At 0 HP the doll stays in its rank and can still act. Reaching 0 HP does not itself tear off a limb.",
+		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
+		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
+		"RECOVERY  |  Tears persist through corridor Walk and later fights. Healing above 0 resets the further-hit count but never regrows a limb. Mend at the Sewing Circle or Campfire; replace LOST dolls from available heroes at the Sewing Circle."
 	],
 	[
-		"CANDLE  |  Begins at 100. Entering each map node costs 8 Candle, clamped at 0. These bands describe your current run, not a way to change its light.",
+		"CANDLE  |  Begins at 100. Each entered routed stop in the CORRIDOR costs 8 Candle, down to 0. Visits happen in the corridor, not on a separate map screen.",
 		"BRIGHT 76–100  |  15% chance the party acts first; no penalty.",
 		"DIM 51–75  |  +10% Fray gain; +25% loot.",
 		"GLOOM 26–50  |  +20% Fray gain; foes gain +5 ACC and +10% damage; +50% loot.",
 		"DARK 1–25  |  +30% Fray gain; foes gain +10 ACC and +15% damage; +75% loot.",
 		"SNUFFED 0  |  +40% Fray gain; foes gain +25% damage; 25% chance foes act first; +100% loot.",
-		"LOOT  |  These percentages modify loot when awarded; they do not guarantee a drop.",
-		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP for each hero; Tell Tales reduces each hero's Fray by 25; Trim the Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
-		"SEWING  |  The satchel holds up to six spare parts. Swap sewn HEAD, ARMS, TORSO or LEGS parts only at a Campfire or Sewing Circle, never in a fight."
+		"LOOT  |  Candle multipliers modify loot if awarded; they do not guarantee a drop.",
+		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP each; Tell Tales reduces Fray by 25 each; Trim Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
+		"SATCHEL  |  Hold up to six spare parts. Sew worn HEAD, ARMS, TORSO and LEGS at a Campfire or Sewing Circle, not in a fight.",
+		"SIDE DOORS  |  After Elite or Boss fights, an optional door MAY appear. The under-bed door offers a silk/gold ability patch or Wren gift at a cost: limb, stuffing/max HP or Wren fear. The attic door may bless with mend all, steady candle or guard the head; ANY under-bed deal closes attic blessings for the rest of this run."
 	]
 ]
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
@@ -117,19 +125,46 @@ func _request_close() -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if not _active or not is_visible_in_tree() or not event is InputEventKey:
+	if not _active or not is_visible_in_tree():
 		return
-	if not event.pressed or event.echo:
+	if event is InputEventKey:
+		var key_event := event as InputEventKey
+		if not key_event.pressed or key_event.echo:
+			# A key repeat is not a fresh page turn; consume its directional
+			# GUI focus movement too while the guide owns focus.
+			if not _atlas_is_open() and (event.is_action("ui_left") or event.is_action("ui_right")):
+				get_viewport().set_input_as_handled()
+			return
+		if key_event.keycode == KEY_TAB and _atlas_is_open():
+			get_viewport().set_input_as_handled()
+			_cycle_atlas_focus(key_event.shift_pressed)
+			return
+		if key_event.keycode == KEY_ESCAPE:
+			get_viewport().set_input_as_handled()
+			if _atlas_is_open():
+				_close_part_atlas(true)
+			else:
+				_request_close()
+			return
+	elif event is InputEventJoypadButton:
+		if not event.pressed:
+			return
+	else:
 		return
-	if _atlas_is_open() and event.keycode == KEY_TAB:
+	# The inspector owns its own navigation. Only fresh, pressed directional
+	# actions (not releases, key repeats or events while hidden) turn pages.
+	if _atlas_is_open():
+		return
+	var direction := 0
+	if event.is_action_pressed("ui_right"):
+		direction = 1
+	elif event.is_action_pressed("ui_left"):
+		direction = -1
+	if direction != 0:
 		get_viewport().set_input_as_handled()
-		_cycle_atlas_focus(event.shift_pressed)
-	elif event.keycode == KEY_ESCAPE:
-		get_viewport().set_input_as_handled()
-		if _atlas_is_open():
-			_close_part_atlas(true)
-		else:
-			_request_close()
+		select_page(posmod(page_index + direction, tab_buttons.size()))
+		tab_buttons[page_index].grab_focus()
+
 
 
 func _on_visibility_changed() -> void:
@@ -172,7 +207,7 @@ func open_part_atlas() -> bool:
 	(part_atlas.get_node("Subtitle") as Label).text = (
 		"REFERENCE ONLY  •  Warden, Seamstress, Tinker, Yarn Ranger & spoils; no equips.")
 	part_atlas.show()
-	atlas_status.text = "REFERENCE ONLY  •  Inspect part abilities and tiers; no changes to your party."
+	atlas_status.text = "REFERENCE ONLY  •  Inspect sewn limbs and cloth patches; no changes to your party."
 	_wire_atlas_focus()
 	(part_atlas.get_node("CloseButton") as Button).grab_focus()
 	return true
@@ -335,7 +370,7 @@ func _build_view() -> void:
 
 	atlas_status = Label.new()
 	atlas_status.name = "PartAtlasStatus"
-	atlas_status.text = "REFERENCE ONLY  •  Parts & spoils lists abilities, not equipment or rewards."
+	atlas_status.text = "REFERENCE ONLY  •  Parts & spoils shows sewn limbs and cloth patches, not rewards."
 	atlas_status.add_theme_font_size_override("font_size", 16)
 	atlas_status.add_theme_color_override("font_color", BRASS)
 	atlas_status.mouse_filter = Control.MOUSE_FILTER_IGNORE

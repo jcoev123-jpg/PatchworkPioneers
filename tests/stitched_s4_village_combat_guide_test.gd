@@ -11,9 +11,11 @@ var path_calls := 0
 var tinker_calls := 0
 var warden_calls := 0
 var difficulty_calls := 0
+var original_bedroom_enabled := true
 
 
 func _initialize() -> void:
+	original_bedroom_enabled = StitchedBedroom.enabled
 	StitchedBedroom.enabled = false
 	_run.call_deferred()
 
@@ -38,6 +40,34 @@ func _key(key: Key, shifted: bool = false) -> void:
 		event.pressed = pressed
 		root.push_input(event, true)
 		await process_frame
+
+
+## Push individual events so release/repeat and the D-pad are independently asserted.
+func _direction_key(key: Key, pressed: bool, echo: bool = false) -> void:
+	var event := InputEventKey.new()
+	event.keycode = key
+	event.physical_keycode = key
+	event.pressed = pressed
+	event.echo = echo
+	root.push_input(event, true)
+	await process_frame
+
+
+func _direction_pad(button: JoyButton, pressed: bool) -> void:
+	var event := InputEventJoypadButton.new()
+	event.button_index = button
+	event.pressed = pressed
+	root.push_input(event, true)
+	await process_frame
+
+
+func _selected_page(guide: StitchedFieldGuide, index: int) -> bool:
+	if guide.page_index != index or root.gui_get_focus_owner() != guide.tab_buttons[index]:
+		return false
+	for i in range(guide.tab_buttons.size()):
+		if guide.tab_buttons[i].button_pressed != (i == index) or guide.page_labels[i].visible != (i == index):
+			return false
+	return true
 
 
 func _click(button: Button) -> void:
@@ -158,34 +188,52 @@ func _run() -> void:
 			"fourth compact button fits and every tab is focusable at 1280x720: %d" % i)
 		tab_bounds = bounds
 	var texts := [
-		["Four allied ranks", "1 (front)", "4 (back)", "Foes", "2–3 foes",
-			"fourth", "summon or split", "SPEED + 1d8", "seeded RNG",
-			"Ties favour heroes", "lower ranks", "one turn", "two-turn bosses",
-			"HEAD / ARMS / TORSO / LEGS", "one ability each", "launch ranks",
-			"target ranks", "MOVE", "adjacent ally", "RE-TIE", "snipped", "PASS"],
-		["non-boss", "75%", "consumes that hero's turn", "EACH hero +15 Fray",
-			"forfeits all rewards", "SNIPPED THREAD", "healing or guard",
-			"re-tied", "0 HP", "Hanging by a Thread", "still act",
-			"random non-torso part", "67%", "33%"],
+		["Four allied ranks", "1 (front)", "4 (back)", "2–3 foes", "summon or split",
+			"seeded SPEED + 1d8", "Ties favour heroes", "lower ranks", "one turn",
+			"FOUR SIGNATURE ABILITIES", "eight heroes", "FOUR fixed", "launch ranks",
+			"target ranks", "foe, ally or self", "heal an ally", "mark a foe",
+			"pierce ranks", "guard another doll", "HEAD, ARMS, TORSO and LEGS",
+			"not sources", "MOVE", "adjacent heroes", "RE-TIE", "PASS"],
+		["non-boss RETREAT", "seeded", "75%", "acting hero's turn",
+			"forfeits all rewards", "EACH hero +15 Fray", "SNIPPED THREAD",
+			"ally healing or guarding", "RE-TIE", "ABILITY PATCH SOCKETS",
+			"SEW ONTO a fixed ability", "not body-part stats",
+			"one socket", "gold patch permits two", "cotton < wool < silk < gold",
+			"fights and events", "Elite or Boss", "thread colour", "Bleed",
+			"Pull", "Push", "Stun", "Mark", "Blind", "stuffing steal",
+			"Chain", "whoever the ability actually hits", "bleed-patched HEAL",
+			"your own ally", "regen", "cleanse", "extra guard",
+			"Unsew and resew", "Sewing Circle"],
 		["0–200", "Reaching 100", "25%", "STEADFAST", "45 Fray",
 			"+10% damage", "every party member's Fray by 2", "floor ends",
 			"75%", "Unravelled", "below 50", "200 Fray", "Comes Apart",
 			"HP becomes 0", "Fray becomes 150", "already Hanging by a Thread",
-			"LOST", "0 HP", "still act", "random non-torso part",
-			"67%", "33%"],
-		["Begins at 100", "each map node costs 8 Candle", "clamped at 0",
-			"BRIGHT 76–100", "15% chance the party acts first", "no penalty",
+			"LOST", "HANGING BY A THREAD", "stays in its rank", "can still act",
+			"does not itself tear", "EACH further direct hit", "0 HP",
+			"seeded random remaining ARM, LEG or HEAD", "small on the first",
+			"larger on the second", "CERTAIN on the third", "HEAD means LOST",
+			"lost arm weakens strikes", "disables that arm's patched ability",
+			"lost leg prevents rank changes", "delays turns",
+			"corridor Walk", "later fights", "Healing above 0 resets",
+			"never regrows a limb", "Sewing Circle or Campfire",
+			"replace LOST dolls"],
+		["Begins at 100", "entered routed stop", "CORRIDOR",
+			"costs 8 Candle", "BRIGHT 76–100", "15% chance the party acts first",
 			"DIM 51–75", "+10% Fray gain", "+25% loot",
 			"GLOOM 26–50", "+20% Fray gain", "+5 ACC", "+10% damage", "+50% loot",
 			"DARK 1–25", "+30% Fray gain", "+10 ACC", "+15% damage", "+75% loot",
 			"SNUFFED 0", "+40% Fray gain", "+25% damage",
 			"25% chance foes act first", "+100% loot", "do not guarantee a drop",
-			"Choose ONE", "Mend heals 30% HP for each hero",
-			"Tell Tales reduces each hero's Fray by 25",
-			"Trim the Wick restores 50 Candle",
-			"Peddler candle stub restores 25 Candle",
-			"up to six spare parts", "Campfire or Sewing Circle", "never in a fight"]
+			"Choose ONE", "Mend heals 30% HP each", "Tell Tales reduces Fray by 25 each",
+			"Trim Wick restores 50 Candle", "Peddler candle stub restores 25 Candle",
+			"up to six spare parts", "Campfire or Sewing Circle", "not in a fight",
+			"SIDE DOORS", "Elite or Boss fights", "optional door MAY",
+			"under-bed", "silk/gold ability patch", "Wren gift",
+			"limb, stuffing/max HP or Wren fear", "attic", "mend all",
+			"steady candle", "guard the head", "ANY under-bed deal",
+			"rest of this run"]
 	]
+
 	for i in range(4):
 		if i > 0:
 			await _click(guide.tab_buttons[i])
@@ -206,9 +254,59 @@ func _run() -> void:
 			and not lower.contains("future s6") and not lower.contains("not active")
 			and not lower.contains("s4 play"),
 			"legible bone body and no retired/false future rules on page %d" % i)
+	# The static S14 contract must not silently retain the retired part-attack
+	# and initial-zero-HP seam-roll instructions.
+	for forbidden in ["four slots, one ability each", "one equipped part",
+			"first transition tears", "first reaching 0 HP", "67%",
+			"33%", "each map node", "go to map page"]:
+		var combined := "\n".join([
+			guide.page_text(0), guide.page_text(1), guide.page_text(2), guide.page_text(3)])
+		_check(not combined.to_lower().contains(forbidden.to_lower()),
+			"all authored pages reject retired rule: " + forbidden)
+	_check(guide.atlas_status.text.contains("sewn limbs")
+		and not guide.atlas_status.text.contains("lists abilities"),
+		"atlas summary names sewn limbs, not part-granted attacks")
+	var scroll_bar := guide.page_scroll.get_v_scroll_bar()
+	var travel := maxf(0.0, scroll_bar.max_value - scroll_bar.page)
+	guide.page_scroll.scroll_vertical = int(travel)
+	await process_frame
 	_check(guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
-		and guide.page_scroll.get_v_scroll_bar().max_value > guide.page_scroll.size.y,
-		"long Candle stop reference scrolls vertically at 1280x720 without shrinking text")
+		and guide.page_labels[3].get_theme_font_size("font_size") >= 18
+		and guide.page_labels[3].size.y > 0.0
+		and (travel <= 0.0 or guide.page_scroll.scroll_vertical > 0),
+		"legible candle guide allows vertical scrolling if page exceeds viewport")
+	guide.page_scroll.scroll_vertical = 0
+	# Non-echo pressed arrow keys and D-pad buttons turn exactly one tab.
+	# Releases, repeated keys and modal state must not affect host state/RNG.
+	await _click(guide.tab_buttons[0])
+	seed(424273)
+	var arrow_next_rng := randi()
+	seed(424273)
+	var arrow_host := _state()
+	await _direction_key(KEY_RIGHT, true)
+	_check(_selected_page(guide, 1), "right key moves one page and focuses tab 1")
+	await _direction_key(KEY_RIGHT, false)
+	_check(_selected_page(guide, 1), "right release does not move a page")
+	await _direction_key(KEY_RIGHT, true, true)
+	_check(_selected_page(guide, 1), "key echo does not move a page")
+	await _direction_key(KEY_LEFT, true)
+	_check(_selected_page(guide, 0), "left key moves one page back")
+	await _direction_key(KEY_LEFT, true)
+	_check(_selected_page(guide, 3), "left key wraps first tab to last")
+	await _direction_key(KEY_RIGHT, true)
+	_check(_selected_page(guide, 0), "right key wraps last tab to first")
+	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
+	_check(_selected_page(guide, 1), "right D-pad moves one page")
+	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, false)
+	_check(_selected_page(guide, 1), "D-pad release does not move a page")
+	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
+	_check(_selected_page(guide, 0), "left D-pad moves one page")
+	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
+	_check(_selected_page(guide, 3), "left D-pad wraps to last page")
+	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
+	_check(_selected_page(guide, 0), "right D-pad wraps to first page")
+	_check(_state() == arrow_host and randi() == arrow_next_rng,
+		"all key and D-pad page turns leave seeded RNG, host state and signals untouched")
 	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
 	var focus_ring: Array[Button] = guide.tab_buttons.duplicate()
 	focus_ring.append(guide.atlas_button)
@@ -239,6 +337,12 @@ func _run() -> void:
 		and guide.part_atlas.is_visible_in_tree()
 		and root.gui_get_focus_owner() == guide.part_atlas.get_node("CloseButton"),
 		"Parts & spoils action opens shipped inspector and focuses its Close control")
+	var atlas_page := guide.page_index
+	await _direction_key(KEY_RIGHT, true)
+	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
+	_check(guide.page_index == atlas_page and guide._atlas_is_open()
+		and guide.part_atlas.is_visible_in_tree(),
+		"nested inspector does not yield guide pages to key or D-pad directions")
 	var inspector := guide.part_atlas
 	if inspector != null and guide._atlas_is_open():
 		_check(inspector.select_owner("warden") and inspector.select_part("warden_head_pot_helm_bonk"),
@@ -343,6 +447,11 @@ func _run() -> void:
 	await _click(guide.close_button)
 	_check(not guide.is_open() and not guide.visible and root.gui_get_focus_owner() == entry
 		and not entry.disabled, "pointer Close dismisses and restores guide entry focus")
+	var closed_page := guide.page_index
+	await _direction_key(KEY_RIGHT, true)
+	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
+	_check(not guide.is_open() and guide.page_index == closed_page,
+		"inactive guide ignores pressed keyboard and D-pad input")
 	await _click(entry)
 	_check(guide.is_open(), "pointer reopens same mounted guide")
 	await _key(KEY_ESCAPE)
@@ -393,10 +502,80 @@ func _run() -> void:
 	view.close_village()
 	view.queue_free()
 	await _frames()
+	await _bedroom_route()
 	_finish()
 
 
+## A separate, bedroom-enabled BaseScreen proves the adopted real Drawings
+## hotspot, not a stand-in, opens the same sole read-only field guide.
+func _bedroom_route() -> void:
+	StitchedBedroom.enabled = true
+	_check(StitchedBedroom.has_art(), "Wren's actual bedroom artwork is present")
+	view = SCENE.instantiate() as BaseScreen
+	root.add_child(view)
+	await _frames()
+	var room := view.bedroom
+	var guide := view.field_guide
+	_check(room != null and guide != null and not guide.is_open()
+		and view.scene_file_path == "res://scenes/base_screen.tscn",
+		"fresh bedroom-enabled live BaseScreen mounts the closed guide")
+	if room == null or guide == null:
+		view.queue_free()
+		await _frames()
+		return
+	var drawings := room.spot("drawings")
+	_check(drawings != null and drawings == view.guide_button
+		and drawings.tooltip_text == StitchedBedroom.SPOT_TIPS["drawings"]
+		and drawings.get_parent() == room.room,
+		"real Wren Drawings hotspot adopts the existing guide entry")
+	_check(view.open_village(31, 7), "bedroom host actually opens")
+	await _frames()
+	if drawings == null:
+		view.queue_free()
+		await _frames()
+		return
+	_check(drawings.is_visible_in_tree() and not drawings.disabled
+		and root.get_visible_rect().has_point(drawings.get_global_rect().get_center()),
+		"live Drawings hotspot is available and clickable at 1280x720")
+	seed(7244)
+	var bedroom_rng := randi()
+	seed(7244)
+	var bedroom_state := _state()
+	var bedroom_record := room.record.duplicate(true)
+	await _click(drawings)
+	_check(guide.is_open() and guide.is_visible_in_tree()
+		and _selected_page(guide, 0)
+		and view.get_children().filter(func(node: Node) -> bool:
+			return node is StitchedFieldGuide).size() == 1,
+		"real Drawings click opens sole tab-zero StitchedFieldGuide")
+	await _direction_key(KEY_LEFT, true)
+	_check(_selected_page(guide, 3), "Wren Drawings left key wraps to tab 3")
+	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
+	_check(_selected_page(guide, 0), "Wren Drawings right D-pad wraps to tab 0")
+	await _click(guide.atlas_button)
+	_check(guide._atlas_is_open() and guide.part_atlas.is_visible_in_tree(),
+		"real Drawings guide opens existing nested Parts atlas")
+	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
+	await _direction_key(KEY_LEFT, true)
+	_check(guide.page_index == 0 and guide._atlas_is_open(),
+		"nested atlas blocks guide directions in Wren's bedroom")
+	await _key(KEY_ESCAPE)
+	_check(not guide._atlas_is_open() and guide.is_open()
+		and root.gui_get_focus_owner() == guide.atlas_button,
+		"nested atlas Escape restores guide focus in bedroom")
+	await _key(KEY_ESCAPE)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == drawings
+		and not drawings.disabled,
+		"guide Escape restores the live Wren Drawings focus")
+	_check(_state() == bedroom_state and room.record == bedroom_record
+		and randi() == bedroom_rng,
+		"bedroom browsing never mutates host choice, Wren record, signals or RNG")
+	view.queue_free()
+	await _frames()
+
+
 func _finish() -> void:
+	StitchedBedroom.enabled = original_bedroom_enabled
 	if failures.is_empty():
 		print("stitched_s4_village_combat_guide_test: PASS (%d checks)" % checks)
 		quit(0)
