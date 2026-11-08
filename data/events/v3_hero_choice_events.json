@@ -1175,6 +1175,78 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_lantern_monk_iron_snuffbox_vigil",
+      "title": "The Iron Snuffbox Vigil",
+      "description": "An iron snuffbox as wide as a doorway stands ajar between two skirting boards. Inside, a small soot-cloth keeper shelters a dying amber wick; the Lantern Monk's great lantern catches tiny stitches moving around the hinge.",
+      "required_hero": "lantern_monk",
+      "hero_choice_ids": ["refit_snuffbox_lid", "purchase_wick_bundle"],
+      "choices": [
+        {
+          "id": "refit_snuffbox_lid",
+          "text": "Bind the lid with spare thread; take the keeper's gold",
+          "outcome": {"gold": 28, "scraps": -2}
+        },
+        {
+          "id": "purchase_wick_bundle",
+          "text": "Buy the keeper's bundle of bright wicks",
+          "outcome": {"gold": -17, "scraps": 3}
+        },
+        {
+          "id": "leave",
+          "text": "Leave the little light under its iron roof",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_copper_speaking_tube",
+      "title": "The Copper Speaking Tube",
+      "description": "An enormous dented speaking tube crosses a gap in the floorboards, its copper mouthpiece turned toward the dark. The Yarn Ranger loops yarn bolas round the joint while muffled button-eyed voices murmur from the far wall.",
+      "required_hero": "yarn_ranger",
+      "hero_choice_ids": ["rewind_tube_cord", "gather_tube_ferrules"],
+      "choices": [
+        {
+          "id": "rewind_tube_cord",
+          "text": "Rebind the cracked tube; accept gold from the voices",
+          "outcome": {"gold": 29, "scraps": -2}
+        },
+        {
+          "id": "gather_tube_ferrules",
+          "text": "Gather loose brass sleeves and thread",
+          "outcome": {"gold": 0, "scraps": 2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the whispers travel without an answer",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_rag_duelist_stopped_pocket_watch",
+      "title": "The Stopped Pocket Watch",
+      "description": "A giant silver pocket watch hangs over the narrow way like a locked moon. Its motionless hands trap a little caped watchmaker; the Rag Duelist raises a ragged sleeve to shield the spring as the lid trembles.",
+      "required_hero": "rag_duelist",
+      "hero_choice_ids": ["buy_watch_springs", "salvage_watch_escapement"],
+      "choices": [
+        {
+          "id": "buy_watch_springs",
+          "text": "Buy the freed watchmaker's spare springs",
+          "outcome": {"gold": -19, "scraps": 3}
+        },
+        {
+          "id": "salvage_watch_escapement",
+          "text": "Unpin the escapement; collect the watchmaker's gold",
+          "outcome": {"gold": 23, "scraps": -1}
+        },
+        {
+          "id": "leave",
+          "text": "Slip beneath the silent hands",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
