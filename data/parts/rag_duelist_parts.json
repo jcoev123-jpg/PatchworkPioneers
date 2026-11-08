@@ -27,7 +27,7 @@
         "2": {"ability": {"effects": {"exposed": 2, "mark": 1}}},
         "3": {"ability": {"effects": {"exposed": 3, "mark": 2}}}
       },
-      "text": "Feint from ranks 1-2 at one foe in ranks 1-3: Exposed 2 at stitch tiers I-II, Exposed 3 at tier III. Tiers II-III also Mark its seam for follow-up."
+      "text": "A crimson hat feather leans over a black button eyepatch, secured with crooked gold stitches."
     },
     {
       "id": "rag_duelist_head_tattered_snare",
@@ -54,7 +54,7 @@
         "2": {"ability": {"effects": {"tangled": 3, "weak": 2}}},
         "3": {"ability": {"effects": {"tangled": 4, "weak": 2}}}
       },
-      "text": "Snap a rag-tie from ranks 1-2 around one foe in ranks 1-3: Tangled, longer at each stitch tier, and also Weak at stitch tiers II and III."
+      "text": "A knotted black rag ribbon wraps the hatband beneath the Duelist's feather, its frayed tail sewn in crimson thread."
     },
     {
       "id": "rag_duelist_arms_rapier_lunge",
