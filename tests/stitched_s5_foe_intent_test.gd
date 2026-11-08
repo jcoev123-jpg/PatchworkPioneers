@@ -119,14 +119,41 @@ func _test_pull_fixture() -> void:
 		and not bool(choice.get("multi", true))
 		and int(choice.get("base_acc", -1)) == 90
 		and choice.get("base_damage") == [0, 0]
-		and choice.get("base_effects") == {"pull": 1, "fray": 6},
-		"Spool Snare hunts the deepest living rank 4 first")
+		and choice.get("base_effects") == {"pull": 1, "fray": 6, "mark": 3},
+		"Spool Snare hunts the deepest living rank 4 first with its authored Mark 3")
 	_check(choice.get("ability_id") == expected.get("ability_id")
 		and int(choice.get("target_rank", 0)) == int(expected.get("target_rank", 0))
 		and choice.get("affected_ranks") == expected.get("affected_ranks"),
 		"independent pull-first comparator matches the real chooser")
 	_check(battle.state_snapshot() == state and battle.rng_state() == rng,
 		"pull intent projection never mutates state or consumes RNG")
+	# The same round-two reel spends its turn; the next Snare Lash turn must hunt the Mark.
+	var reel := battle.use_foe_ability("spool_snare", 4)
+	_check(bool(reel.get("ok", false)) and str(reel.get("ability", "")) == "spool_snare"
+		and reel.get("results", []).size() == 1,
+		"compact pull fixture commits its real round-two Spool Snare")
+	_check(_to(battle, snake, 3), "compact pull fixture reaches round three's Snarekeeper turn")
+	var rank_three := _hero_id_at(battle, 3)
+	_check(not rank_three.is_empty(), "precondition: a legal rank-3 doll exists on the Lash turn")
+	if not rank_three.is_empty():
+		battle._units[rank_three]["statuses"]["mark"] = 3
+		var hunt_state := battle.state_snapshot()
+		var hunt_rng := battle.rng_state()
+		var hunt := StitchedFoeIntent.choose(battle, battle.get_unit(snake))
+		_check(str(hunt.get("ability_id", "")) == "snare_lash"
+			and int(hunt.get("target_rank", 0)) == 3 and hunt.get("affected_ranks") == [3]
+			and str(hunt.get("target_side", "")) == "hero"
+			and int(hunt.get("base_mark_damage", 0)) == 3,
+			"next legal Lash turn hunts the marked rank 3 ahead of closer unmarked ranks")
+		_check(battle.state_snapshot() == hunt_state and battle.rng_state() == hunt_rng,
+			"marked Lash projection never mutates state or consumes RNG")
+		battle._units[rank_three]["statuses"].erase("mark")
+		var plain := StitchedFoeIntent.choose(battle, battle.get_unit(snake))
+		_check(str(plain.get("ability_id", "")) == "snare_lash"
+			and int(plain.get("target_rank", 0)) == 1 and plain.get("affected_ranks") == [1],
+			"an absent or expired Mark falls back to the nearest legal rank 1")
+		_check(int(plain.get("base_mark_damage", 0)) == 3,
+			"the fallback still advertises the authored Mark bonus")
 	var fallback := _pull_battle()
 	if fallback != null and _to(fallback, snake, 2):
 		fallback._units[_hero_id_at(fallback, 4)]["lost"] = true

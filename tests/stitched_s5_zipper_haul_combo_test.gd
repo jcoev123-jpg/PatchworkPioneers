@@ -35,6 +35,7 @@ func _run() -> void:
 		_test_drag(4)
 		_test_slam()
 		_test_spool_pull_and_miss()
+		_test_spool_mark_combo()
 		_test_spool_refusals()
 		_test_refusals_miss_and_blocked_pull()
 		_test_intent_and_replay()
@@ -158,14 +159,14 @@ func _test_authored_spool() -> void:
 		return
 	var lash := {
 		"id": "snare_lash", "name": "Snare Lash", "kind": "melee",
-		"launch": [1, 3], "target": [1, 2], "target_side": "enemy", "multi": false,
-		"acc": 88, "dmg": [4, 5], "crit": 0, "effects": {"tangled": 1},
+		"launch": [1, 3], "target": [1, 2, 3], "target_side": "enemy", "multi": false,
+		"acc": 88, "dmg": [4, 5], "crit": 0, "mark_damage": 3, "effects": {"tangled": 1},
 		"self_move": 0, "move": "attack2",
 	}
 	var snare := {
 		"id": "spool_snare", "name": "Spool Snare", "kind": "debuff",
 		"launch": [1, 4], "target": [2, 3, 4], "target_side": "enemy", "multi": false,
-		"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"pull": 1, "fray": 6},
+		"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"pull": 1, "fray": 6, "mark": 3},
 		"self_move": 0, "move": "skill",
 	}
 	var profile := {
@@ -208,13 +209,21 @@ func _test_authored_spool() -> void:
 			_check(foe["abilities"].has(validated["ability"]),
 				"AC1: foe_for carries the exact validated " + str(authored["id"]))
 	var selected: Dictionary = {}
+	var lash_selected: Dictionary = {}
 	for ability in foe.get("abilities", []):
 		if str(ability["id"]) == "spool_snare":
 			selected = ability
+		elif str(ability["id"]) == "snare_lash":
+			lash_selected = ability
 	_check(not selected.is_empty() and selected.get("target") == [2, 3, 4]
-		and selected.get("effects") == {"pull": 1, "fray": 6}
+		and selected.get("effects") == {"pull": 1, "fray": 6, "mark": 3}
 		and int(selected.get("acc", 0)) == 90 and selected.get("dmg") == [0, 0],
-		"AC1: Spool Snare reaches ranks 2/3/4 with authored pull 1 and Fray 6")
+		"AC1: Spool Snare reaches ranks 2/3/4 with authored pull 1, Fray 6 and Mark 3")
+	_check(not lash_selected.is_empty() and lash_selected.get("target") == [1, 2, 3]
+		and int(lash_selected.get("mark_damage", 0)) == 3
+		and lash_selected.get("effects") == {"tangled": 1}
+		and int(lash_selected.get("acc", 0)) == 88 and lash_selected.get("dmg") == [4, 5],
+		"AC1: Snare Lash reaches ranks 1/2/3 and keeps Tangled 1, ACC 88 and damage 4-5")
 	var anchor_foe := StitchedEnemyCatalog.foe_for(catalog, ZIPPER)
 	var anchor_ids: Array = []
 	for ability in anchor_foe.get("abilities", []):
@@ -397,9 +406,15 @@ func _test_spool_pull_and_miss() -> void:
 					_check(result.get("shift") == {
 						"ok": true, "from": 4, "to": 3, "swapped": front_id,
 					}, "AC2: landed Spool Snare reports the exact one-rank forward swap")
+					var immediate_tick := b.current_actor_id() == target_id
+					_check(result.get("statuses") == [{"status": "mark", "duration": 3}]
+						and int(b.get_unit(target_id)["statuses"].get("mark", 0))
+							== 3 - (1 if immediate_tick else 0),
+						"AC2: landed Spool Snare starts Mark 3 on the reeled doll")
 					var expected_target := before_target.duplicate(true)
 					expected_target["rank"] = 3
 					expected_target["fray"] = int(before_target["fray"]) + 6
+					expected_target["statuses"]["mark"] = 3 - (1 if immediate_tick else 0)
 					var expected_front := before_front.duplicate(true)
 					expected_front["rank"] = 4
 					_check(b.get_unit(target_id) == expected_target,
@@ -432,6 +447,8 @@ func _test_spool_pull_and_miss() -> void:
 					_check(_hero_ranks(m) == before_ranks
 						and int(m.get_unit(target_id)["fray"]) == int(before_target["fray"]),
 						"AC2: a missed Spool Snare causes no phantom displacement or Fray")
+					_check(not m.get_unit(target_id)["statuses"].has("mark"),
+						"AC2: a missed Spool Snare never Marks the doll")
 		if hit_seed > 0 and miss_seed > 0:
 			break
 	_check(hit_seed > 0 and miss_seed > 0,
@@ -483,8 +500,189 @@ func _test_spool_blocked(hit_seed: int) -> void:
 		_check(int(b.get_unit(target_id)["fray"]) == before_fray + 6
 			and results[0].get("fray_event", {}).get("change", 0) == 6,
 			"AC2: " + str(variant[0]) + " still applies its authored Fray 6")
+		_check(results[0].get("statuses") == [{"status": "mark", "duration": 3}]
+			and int(b.get_unit(target_id)["statuses"].get("mark", 0)) >= 1,
+			"AC2: " + str(variant[0]) + " still Marks the reeled doll on a hit")
 		_check(before_rng != b.rng_state(),
 			"AC2: " + str(variant[0]) + " spends exactly the real hit roll")
+
+
+# ---------------------------------------------------------------- AC3 marked reel and hunting lash
+
+func _spool_pull_combo(seed_value: int) -> Dictionary:
+	var battle := _spool_ready(seed_value)
+	if battle == null:
+		return {}
+	var pull := battle.use_foe_ability("spool_snare", 4)
+	var results: Array = pull.get("results", [])
+	if not bool(pull.get("ok", false)) or results.size() != 1 \
+			or not bool(results[0].get("hit", false)):
+		return {}
+	var target_id := str(results[0].get("target", ""))
+	var reeled := battle.get_unit(target_id)
+	if reeled.is_empty() or int(reeled.get("rank", 0)) != 3 \
+			or int(reeled["statuses"].get("mark", 0)) <= 0:
+		return {}
+	if not _to(battle, SNAKE, 3):
+		return {}
+	return {
+		"battle": battle,
+		"seed": seed_value,
+		"target_id": target_id,
+		"pull": pull.duplicate(true),
+		"choice": StitchedFoeIntent.choose(battle, battle.get_unit(SNAKE)),
+		"state": battle.state_snapshot(),
+		"rng": battle.rng_state(),
+	}
+
+
+func _spool_combo_trace(seed_value: int) -> Dictionary:
+	var combo := _spool_pull_combo(seed_value)
+	if combo.is_empty():
+		return {}
+	var battle: StitchedRules = combo["battle"]
+	var choice: Dictionary = combo["choice"]
+	if bool(choice.get("pass", true)):
+		return {}
+	var strike := battle.use_foe_ability(str(choice["ability_id"]), int(choice["target_rank"]))
+	return {
+		"seed": seed_value,
+		"before_state": combo["state"],
+		"before_rng": combo["rng"],
+		"pull": combo["pull"],
+		"choice": choice,
+		"strike": strike,
+		"after_state": battle.state_snapshot(),
+		"after_rng": battle.rng_state(),
+	}
+
+
+func _test_spool_mark_combo() -> void:
+	var witness: Dictionary = {}
+	var miss_witness: Dictionary = {}
+	for seed_value in range(1, 257):
+		var combo := _spool_pull_combo(seed_value)
+		if combo.is_empty():
+			continue
+		var choice: Dictionary = combo["choice"]
+		if str(choice.get("ability_id", "")) != "snare_lash" \
+				or int(choice.get("target_rank", 0)) != 3:
+			continue
+		var battle: StitchedRules = combo["battle"]
+		var target_id := str(combo["target_id"])
+		var before := battle.get_unit(target_id)
+		if int(before["statuses"].get("mark", 0)) <= 0:
+			continue
+		var strike := battle.use_foe_ability("snare_lash", 3)
+		var results: Array = strike.get("results", [])
+		if not bool(strike.get("ok", false)) or results.size() != 1:
+			continue
+		if bool(results[0].get("hit", false)):
+			if witness.is_empty():
+				witness = combo
+				witness["before"] = before
+				witness["strike"] = strike.duplicate(true)
+		elif miss_witness.is_empty():
+			miss_witness = combo
+			miss_witness["before"] = before
+			miss_witness["strike"] = strike.duplicate(true)
+		if not witness.is_empty() and not miss_witness.is_empty():
+			break
+	_check(not witness.is_empty(),
+		"AC3: non-vacuous seeded reel-to-Mark-to-Lash hit witness")
+	_check(not miss_witness.is_empty(),
+		"AC3: non-vacuous seeded reel-to-Mark-to-Lash miss witness")
+	if not miss_witness.is_empty():
+		var miss_battle: StitchedRules = miss_witness["battle"]
+		var miss_target := str(miss_witness["target_id"])
+		var miss_before: Dictionary = miss_witness["before"]
+		var miss_result: Dictionary = miss_witness["strike"]["results"][0]
+		_check(miss_result.get("hit") == false
+			and int(miss_result.get("damage", -1)) == 0
+			and miss_result.get("statuses", []).is_empty()
+			and int(miss_battle.get_unit(miss_target)["hp"]) == int(miss_before["hp"])
+			and int(miss_battle.get_unit(miss_target)["statuses"].get("tangled", 0)) == 0,
+			"AC3: a missed hunting Lash deals no damage and applies no Tangled")
+		_check(int(miss_witness["choice"].get("target_rank", 0)) == 3,
+			"AC3: the missed Lash was still aimed at the hunted rank 3")
+	if witness.is_empty():
+		return
+	var battle: StitchedRules = witness["battle"]
+	var choice: Dictionary = witness["choice"]
+	var target_id := str(witness["target_id"])
+	var before: Dictionary = witness["before"]
+	var strike: Dictionary = witness["strike"]
+	var result: Dictionary = strike["results"][0]
+	_check(str(choice.get("ability_id", "")) == "snare_lash"
+		and int(choice.get("target_rank", 0)) == 3
+		and choice.get("affected_ranks") == [3]
+		and str(choice.get("target_side", "")) == "hero"
+		and int(choice.get("base_mark_damage", 0)) == 3,
+		"AC3: the marked rank-3 doll outranks unmarked ranks 1 and 2 for Snare Lash")
+	var closer_one := _hero_at_rank(battle, 1)
+	var closer_two := _hero_at_rank(battle, 2)
+	_check(not closer_one.is_empty() and not closer_two.is_empty()
+		and int(battle.get_unit(closer_one)["statuses"].get("mark", 0)) == 0
+		and int(battle.get_unit(closer_two)["statuses"].get("mark", 0)) == 0,
+		"AC3: nearer legal ranks 1 and 2 really exist and carry no Mark")
+	_check(result.get("target") == target_id
+		and int(result.get("target_rank", 0)) == 3,
+		"AC3: the committed Lash strikes the hunted rank-3 doll, never a phantom rank")
+	var bases: Array = [StitchedRules.crit_damage(5)] if bool(result.get("crit", false)) else [4, 5]
+	var marked_expected: Array = []
+	for base in bases:
+		marked_expected.append(StitchedRules.damage_after_modifiers(
+			base, {}, before["statuses"], true, 3, int(before["prot"])))
+		_check(StitchedRules.damage_after_modifiers(
+			base, {}, before["statuses"], true, 3, int(before["prot"]))
+			== StitchedRules.damage_after_modifiers(
+				int(base) + 3, {}, before["statuses"], false, 0, int(before["prot"])),
+			"AC3: Mark adds exactly 3 to base direct damage before Weak/Exposed/Tangled/PROT")
+	_check(marked_expected.has(int(result.get("damage", -1)))
+		and int(result.get("damage", 0)) > 0,
+		"AC3: the landed Lash really uses the authored +3 versus Mark")
+	_check(result.get("statuses") == [{"status": "tangled", "duration": 1}]
+		and int(battle.get_unit(target_id)["statuses"].get("tangled", 0))
+			== (0 if battle.current_actor_id() == target_id else 1),
+		"AC3: the landed hunting Lash still applies Tangled 1")
+	_check(StitchedRules.damage_after_modifiers(5, {"weak": 1}, {"exposed": 1}, true, 3, 40)
+		== 6 and StitchedRules.damage_after_modifiers(
+			5, {"weak": 1}, {"exposed": 1}, false, 0, 40) == 3,
+		"AC3: +3 precedes combined Weak/Exposed and PROT in the shared formula")
+	var control := _spool_pull_combo(int(witness["seed"]))
+	_check(not control.is_empty(),
+		"AC3: the same seed replays the reel for the unmarked control")
+	if not control.is_empty():
+		var control_battle: StitchedRules = control["battle"]
+		var control_target := str(control["target_id"])
+		control_battle._units[control_target]["statuses"].erase("mark")
+		var fallback := StitchedFoeIntent.choose(control_battle, control_battle.get_unit(SNAKE))
+		_check(str(fallback.get("ability_id", "")) == "snare_lash"
+			and int(fallback.get("target_rank", 0)) == 1
+			and fallback.get("affected_ranks") == [1],
+			"AC3: without the Mark the same Lash turn falls back to nearest legal rank 1")
+		var control_before := control_battle.get_unit(control_target)
+		var control_strike := control_battle.use_foe_ability("snare_lash", 3)
+		var control_results: Array = control_strike.get("results", [])
+		_check(control_results.size() == 1 and bool(control_results[0].get("hit", false)),
+			"AC3: the paired unmarked control lands the same seeded hit")
+		if control_results.size() == 1:
+			var control_result: Dictionary = control_results[0]
+			var unmarked_expected: Array = []
+			for base in bases:
+				unmarked_expected.append(StitchedRules.damage_after_modifiers(
+					base, {}, control_before["statuses"], false, 0,
+					int(control_before["prot"])))
+			_check(int(control_result.get("roll", 0)) == int(result.get("roll", 0))
+				and bool(control_result.get("crit", false)) == bool(result.get("crit", false)),
+				"AC3: the unmarked control replays the identical seeded hit and crit rolls")
+			_check(unmarked_expected.has(int(control_result.get("damage", -1)))
+				and int(control_result.get("damage", 0)) < int(result.get("damage", 0)),
+				"AC3: the unmarked control takes the lower, bonus-free damage")
+	var first := _spool_combo_trace(int(witness["seed"]))
+	var second := _spool_combo_trace(int(witness["seed"]))
+	_check(not first.is_empty() and first == second,
+		"AC4: identical seed and legal choices replay intent, pull, Lash, statuses, snapshot and RNG")
 
 
 func _test_spool_refusals() -> void:
@@ -500,6 +698,17 @@ func _test_spool_refusals() -> void:
 		"AC2: rank-1 Spool Snare is refused by the real target mask")
 	_check(b.state_snapshot() == state and b.rng_state() == rng,
 		"AC2: refused Spool Snare spends no turn or RNG and mutates nothing")
+	var missing_id := _hero_at_rank(b, 4)
+	b._units[missing_id]["lost"] = true
+	state = b.state_snapshot()
+	rng = b.rng_state()
+	var missing := b.use_foe_ability("spool_snare", 4)
+	_check(missing.get("ok") == false
+		and str(missing.get("error", "")) == "no legal target in rank 4",
+		"AC4: a lost rank-4 doll leaves no legal Spool Snare target")
+	_check(b.state_snapshot() == state and b.rng_state() == rng,
+		"AC4: the lost-target refusal spends no turn or RNG and mutates nothing")
+	b._units[missing_id]["lost"] = false
 	b._units[SNAKE]["rank"] = 2
 	state = b.state_snapshot()
 	rng = b.rng_state()
@@ -509,6 +718,38 @@ func _test_spool_refusals() -> void:
 		"AC2: rank-2 Spool Snare is refused before any roll by its launch mask")
 	_check(b.state_snapshot() == state and b.rng_state() == rng,
 		"AC2: out-of-launch Spool Snare consumes no turn or RNG and mutates nothing")
+	var hero_turn := _battle(11, SNAKE)
+	if hero_turn != null:
+		for step in range(80):
+			if hero_turn.current_side() == "hero":
+				break
+			hero_turn.pass_turn()
+		_check(hero_turn.current_side() == "hero",
+			"precondition: a real hero turn is reached")
+		state = hero_turn.state_snapshot()
+		rng = hero_turn.rng_state()
+		var wrong_side := hero_turn.use_foe_ability("spool_snare", 4)
+		_check(wrong_side.get("ok") == false
+			and str(wrong_side.get("error", "")) == "it is not a foe turn",
+			"AC4: a Snarekeeper action on a hero turn is refused")
+		_check(hero_turn.state_snapshot() == state and hero_turn.rng_state() == rng,
+			"AC4: the wrong-side refusal spends no turn or RNG and mutates nothing")
+	var other_actor := _battle(11, SNAKE)
+	if other_actor != null:
+		for step in range(80):
+			if other_actor.current_actor_id() == RAGLING:
+				break
+			other_actor.pass_turn()
+		_check(other_actor.current_actor_id() == RAGLING,
+			"precondition: the Ragling's own turn is reached")
+		state = other_actor.state_snapshot()
+		rng = other_actor.rng_state()
+		var wrong_actor := other_actor.use_foe_ability("spool_snare", 4)
+		_check(wrong_actor.get("ok") == false
+			and str(wrong_actor.get("error", "")) == "the foe has no ability spool_snare",
+			"AC4: another foe cannot borrow the Snarekeeper's Spool Snare")
+		_check(other_actor.state_snapshot() == state and other_actor.rng_state() == rng,
+			"AC4: the wrong-actor refusal spends no turn or RNG and mutates nothing")
 
 
 func _spool_replay(seed_value: int) -> Dictionary:
