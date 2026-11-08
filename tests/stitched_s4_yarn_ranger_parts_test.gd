@@ -46,6 +46,103 @@ const FORBIDDEN_PATCH_WORDS := [
 	"foe", "enemy", "attack", "hit", "damage", "rank", "tier", "mark", "weak",
 	"bleed", "stun", "guard", "heal", "turn", "target", "ability", "tangle", "pull",
 ]
+## The two alternate patches whose copy moved from body-part attack instructions to the cloth
+## sewn onto the doll: their exact authored line, the textile motifs it must keep, and the
+## retired instruction that must never come back.
+const PATCH_LORE := {
+	"yarn_ranger_head_needle_arrow": {
+		"name": "Needle Arrow",
+		"slot": "head",
+		"text":
+			"A long silver knitting-needle arrow rests against the Ranger's moss-green hood, its wool-white fletching tied down with teal cross-stitches.",
+		"motifs":
+			["silver knitting-needle", "moss-green hood", "wool-white fletching", "teal cross-stitches"],
+		"old_text":
+			"Send a needle arrow into a foe in any enemy rank, rear rank included, damaging and Marking it; it hits an ALREADY-Marked foe harder.",
+	},
+	"yarn_ranger_arms_purling_barrage": {
+		"name": "Purling Barrage",
+		"slot": "arms",
+		"text":
+			"Three slender silver needles run side by side across a moss-green forearm patch, held by thick teal yarn loops and wool-white stitches.",
+		"motifs":
+			["silver needles", "moss-green forearm patch", "teal yarn loops", "wool-white stitches"],
+		"old_text":
+			"A single concentrated needle hit that Exposes a foe in enemy ranks 1-3; only stitch tier III reaches a foe in the rear rank 4.",
+	},
+}
+## The six Yarn Ranger records this task must leave untouched, with their exact authored copy.
+const OTHER_PART_TEXT := {
+	"yarn_ranger_head_needle_nock":
+		"A teal yarn knot holds a spare knitting needle against the Ranger's moss-green hood.",
+	"yarn_ranger_arms_wool_bolas":
+		"Three wool-white yarn balls are bound to a moss-green forearm cuff by loose teal cross-stitches.",
+	"yarn_ranger_torso_hood_knit":
+		"Pale wool loops edge the Ranger's ear-tipped hood, with mismatched stitches over the shoulders.",
+	"yarn_ranger_legs_reel_thread":
+		"A small teal thread reel sits on a moss-green boot cuff, with white wool looped through uneven stitches.",
+	"yarn_ranger_torso_snare_net":
+		"Cast a net over every living foe in ranks one through three and Tangle each independently; only stitch tier III also reaches a foe in the rear rank 4.",
+	"yarn_ranger_legs_endless_skein":
+		"Uncoil a great skein of yarn to damage and Tangle all living foes in range.",
+}
+## Pre-change snapshot of every non-text field on the two revised records. Only their copy may
+## differ, so the test compares the loaded record against this before-image.
+const PATCH_NON_TEXT_SNAPSHOT := {
+	"yarn_ranger_head_needle_arrow": {
+		"id": "yarn_ranger_head_needle_arrow",
+		"name": "Needle Arrow",
+		"slot": "head",
+		"owner": "yarn_ranger",
+		"stat": {"crit": 3},
+		"ability": {
+			"id": "yarn_ranger_head_needle_arrow_move",
+			"name": "Needle Arrow",
+			"kind": "ranged",
+			"launch": [2, 3, 4],
+			"target": [1, 2, 3, 4],
+			"target_side": "enemy",
+			"multi": false,
+			"acc": 93,
+			"dmg": [5, 7],
+			"crit": 0,
+			"mark_damage": 2,
+			"effects": {"mark": 1},
+			"self_move": 0,
+			"move": "attack2",
+		},
+		"tiers": {
+			"2": {"ability": {"dmg": [7, 9], "mark_damage": 3, "effects": {"mark": 2}}},
+			"3": {"ability": {"dmg": [9, 11], "mark_damage": 4, "effects": {"mark": 3}}},
+		},
+	},
+	"yarn_ranger_arms_purling_barrage": {
+		"id": "yarn_ranger_arms_purling_barrage",
+		"name": "Purling Barrage",
+		"slot": "arms",
+		"owner": "yarn_ranger",
+		"stat": {"dmg": 2},
+		"ability": {
+			"id": "yarn_ranger_arms_purling_barrage_move",
+			"name": "Purling Barrage",
+			"kind": "ranged",
+			"launch": [3, 4],
+			"target": [1, 2, 3],
+			"target_side": "enemy",
+			"multi": false,
+			"acc": 92,
+			"dmg": [5, 8],
+			"crit": 0,
+			"effects": {"exposed": 1},
+			"self_move": 0,
+			"move": "attack",
+		},
+		"tiers": {
+			"2": {"ability": {"dmg": [7, 10], "effects": {"exposed": 2}}},
+			"3": {"ability": {"target": [1, 2, 3, 4], "dmg": [9, 12], "effects": {"exposed": 3}}},
+		},
+	},
+}
 
 const HEAD_LAUNCH := [2, 3, 4]
 const BOLAS_ID := "yarn_ranger_arms_wool_bolas"
@@ -136,6 +233,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_sewn_patch_text()
+	_test_alternate_patch_lore()
 	_test_head_launch_tiers()
 	_test_arms_launch_tiers()
 	_test_purling_launch_tiers()
@@ -378,6 +476,12 @@ func _test_head_launch_tiers() -> void:
 			_check(int(ability.get("mark_damage", -1)) == int(spec["mark_damage"][tier - 1]),
 				"AC1: tier %d %s carries the authored mark_damage %d"
 					% [tier, head_id, int(spec["mark_damage"][tier - 1])])
+	# The alternate head patch describes the needle arrow sewn to the hood, not its legacy move.
+	var arrow_part: Dictionary = cat["by_id"].get(ALTERNATES["head"], {})
+	_check(not arrow_part.is_empty(),
+		"AC1: the parsed catalog still exposes Needle Arrow by its named ID")
+	if not arrow_part.is_empty():
+		_check_patch_lore(ALTERNATES["head"], arrow_part, "AC1")
 
 
 ## Wool Bolas keeps its single-target authored numbers at every tier while its launch mask
@@ -463,10 +567,8 @@ func _test_purling_launch_tiers() -> void:
 		and not raw["tiers"]["2"]["ability"].has("target")
 		and raw["tiers"]["3"]["ability"]["target"].map(func(rank): return int(rank)) == [1, 2, 3, 4],
 		"AC1: only the authored tier-III Purling Barrage override carries the widened target list")
-	var text := str(part["text"]).to_lower()
-	_check(text.contains("tier iii") and text.contains("rank 4") and text.contains("single"),
-		"AC1: Purling Barrage text credits the rear rank 4 only to tier III and stays single-target")
-
+	# The alternate arms patch describes the needles sewn across the forearm, not its legacy move.
+	_check_patch_lore(PURLING_ID, part, "AC1")
 
 
 ## Snare Net keeps its multi-target enemy debuff at every tier while its launch mask gains hero
@@ -2259,6 +2361,88 @@ func _test_sewn_patch_text() -> void:
 			"AC3: a blank in-memory copy of %s fails closed" % expected_name)
 
 
+## AC1/AC2: only the two alternate patch descriptions moved to sewn-cloth lore. Each keeps its
+## ID, name, slot, owner and every non-text field exactly as authored, the records outside this
+## task keep their exact copy, and every catalog ID is still present. Lookups go through named
+## IDs, never array positions.
+func _test_alternate_patch_lore() -> void:
+	var cat := _catalog()
+	if not bool(cat.get("ok", false)):
+		return
+	for part_id in IDS:
+		_check(not _raw_part(part_id).is_empty(),
+			"AC1: the parsed catalog still authors " + part_id)
+	var untouched: Array = []
+	for part_id in IDS:
+		if not PATCH_LORE.has(part_id):
+			untouched.append(part_id)
+	_check(untouched.size() == OTHER_PART_TEXT.size()
+		and untouched.all(func(other_id): return OTHER_PART_TEXT.has(other_id)),
+		"AC1: every Ranger part outside the two revised records keeps its authored text")
+	for part_id in PATCH_LORE:
+		var lore: Dictionary = PATCH_LORE[part_id]
+		var part: Dictionary = cat["by_id"].get(part_id, {})
+		var record := _raw_part(part_id)
+		_check(not part.is_empty() and not record.is_empty()
+			and str(record.get("id", "")) == part_id
+			and str(record.get("name", "")) == str(lore["name"])
+			and str(record.get("slot", "")) == str(lore["slot"])
+			and str(record.get("owner", "")) == "yarn_ranger"
+			and str(part.get("name", "")) == str(lore["name"])
+			and str(part.get("slot", "")) == str(lore["slot"])
+			and str(part.get("owner", "")) == "yarn_ranger",
+			"AC1: %s keeps its ID, name, slot and owner in the parsed catalog" % part_id)
+		_check_patch_lore(part_id, part, "AC1")
+		_check(_non_text_snapshot(record) == _non_text_snapshot(PATCH_NON_TEXT_SNAPSHOT[part_id]),
+			"AC2: %s changes only its text; stat, ability, tiers, masks and pose stay authored as before"
+				% part_id)
+	for part_id in OTHER_PART_TEXT:
+		var raw := _raw_part(part_id)
+		_check(not raw.is_empty()
+			and str(raw.get("text", "")) == str(OTHER_PART_TEXT[part_id]),
+			"AC1: untouched record %s keeps its exact authored text" % part_id)
+
+
+## The exact sewn-cloth line, every textile motif, and no surviving body-part attack wording.
+func _check_patch_lore(part_id: String, part: Dictionary, context: String) -> void:
+	var lore: Dictionary = PATCH_LORE[part_id]
+	var text := str(part.get("text", ""))
+	var lowered := text.to_lower()
+	var motifs_ok := not text.is_empty()
+	for motif in lore["motifs"]:
+		motifs_ok = motifs_ok and lowered.contains(str(motif).to_lower())
+	var banned := _banned_patch_words(text)
+	_check(motifs_ok and text == str(lore["text"]),
+		"%s: %s carries the exact sewn-patch copy with its textile motifs: %s"
+			% [context, part_id, str(lore["motifs"])])
+	_check(text != str(lore["old_text"])
+		and not lowered.contains(str(lore["old_text"]).to_lower()),
+		"%s: %s no longer repeats its retired attack instruction" % [context, part_id])
+	_check(banned.is_empty(),
+		"%s: %s's cloth copy keeps no attack/status/target vocabulary: %s"
+			% [context, part_id, str(banned)])
+
+
+## A parsed JSON record with its text removed and whole numbers normalized to int, so the
+## before/after comparison proves only the copy changed and not one stat, mask, tier or pose.
+func _non_text_snapshot(value: Variant) -> Variant:
+	if value is Dictionary:
+		var copy := {}
+		for key in value:
+			if str(key) == "text":
+				continue
+			copy[key] = _non_text_snapshot(value[key])
+		return copy
+	if value is Array:
+		var items: Array = []
+		for item in value:
+			items.append(_non_text_snapshot(item))
+		return items
+	if value is float and value == floorf(value):
+		return int(value)
+	return value
+
+
 ## Lowercased words of a description, treating punctuation and hyphens as separators.
 func _patch_words(text: String) -> Array:
 	var words: Array = []
@@ -2355,8 +2539,9 @@ func _test_catalog() -> void:
 			and int(ability["mark_damage"]) == int(spec["mark_damage"][0])
 			and int(ability["self_move"]) == 0 and str(ability["move"]) == "attack2",
 			"AC1: %s keeps every authored value and its own target ranks" % head_id)
-	_check(str(cat["by_id"][ALTERNATES["head"]]["text"]).contains("ALREADY-Marked foe harder"),
-		"AC1: Needle Arrow's rules text says it hits an ALREADY-Marked foe harder")
+	_check(str(cat["by_id"][ALTERNATES["head"]]["text"]) == str(PATCH_LORE[ALTERNATES["head"]]["text"])
+		and str(cat["by_id"][ALTERNATES["arms"]]["text"]) == str(PATCH_LORE[ALTERNATES["arms"]]["text"]),
+		"AC1: both revised alternate patches carry their exact authored sewn-cloth copy")
 	for other_id in UNCHANGED_PARTS:
 		var other: Dictionary = cat["by_id"][other_id]
 		var expected: Dictionary = UNCHANGED_PARTS[other_id]
