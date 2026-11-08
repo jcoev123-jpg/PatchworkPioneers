@@ -7000,16 +7000,37 @@ func _test_require_candle_room_lantern_bobbin_ferry() -> void:
 	var path := "res://data/events/s6_stitched_lantern_bobbin_ferry.json"
 	var source := FileAccess.get_file_as_string(path)
 	var doc: Variant = JSON.parse_string(source)
+	var choices: Array = doc.get("choices", []) if doc is Dictionary else []
+	var ch0: Dictionary = choices[0] if choices.size() > 0 and choices[0] is Dictionary else {}
+	var ch1: Dictionary = choices[1] if choices.size() > 1 and choices[1] is Dictionary else {}
+	var ch2: Dictionary = choices[2] if choices.size() > 2 and choices[2] is Dictionary else {}
+	var eff0: Dictionary = ch0.get("stitched_effect", {})
+	var eff1: Dictionary = ch1.get("stitched_effect", {})
+	var eff2: Dictionary = ch2.get("stitched_effect", {})
 	_check(doc is Dictionary and doc.get("id") == "s6_stitched_lantern_bobbin_ferry"
 		and doc.get("title") == "Lantern Bobbin Ferry"
-		and doc.get("choices") is Array and doc["choices"].size() == 3
-		and doc["choices"][0].get("id") == "pay_gold"
-		and doc["choices"][0].get("stitched_effect") == {"target":"party","candle":0,"fray":0,"gold":-10,"scraps":2}
-		and doc["choices"][1].get("id") == "mend_wick"
-		and doc["choices"][1].get("text") == "Spend a scrap to rekindle the ferry lantern"
-		and doc["choices"][1].get("stitched_effect") == {"target":"party","candle":25,"fray":0,"gold":0,"scraps":-1,"require_candle_room":true}
-		and doc["choices"][2].get("id") == "leave"
-		and doc["choices"][2].get("stitched_effect") == {"target":"party","candle":0,"fray":0,"gold":0,"scraps":0},
+		and choices.size() == 3
+		and ch0.get("id") == "pay_gold"
+		and ch0.get("text") == "Pay 10 gold for 2 scraps"
+		and eff0.get("target") == "party"
+		and int(eff0.get("candle")) == 0
+		and int(eff0.get("fray")) == 0
+		and int(eff0.get("gold")) == -10
+		and int(eff0.get("scraps")) == 2
+		and ch1.get("id") == "mend_wick"
+		and ch1.get("text") == "Spend a scrap to rekindle the ferry lantern"
+		and eff1.get("target") == "party"
+		and int(eff1.get("candle")) == 25
+		and int(eff1.get("fray")) == 0
+		and int(eff1.get("gold")) == 0
+		and int(eff1.get("scraps")) == -1
+		and eff1.get("require_candle_room") == true
+		and ch2.get("id") == "leave"
+		and eff2.get("target") == "party"
+		and int(eff2.get("candle")) == 0
+		and int(eff2.get("fray")) == 0
+		and int(eff2.get("gold")) == 0
+		and int(eff2.get("scraps")) == 0,
 		"AC1: genuine s6_stitched_lantern_bobbin_ferry.json preserves 3 choices, mend_wick 25 candle and rekindle text")
 	var ferry_event: Dictionary = (doc as Dictionary).duplicate(true)
 	var event_snapshot: Dictionary = ferry_event.duplicate(true)
