@@ -190,7 +190,7 @@
         "2": {"stat": {"speed": 2}, "ability": {"effects": {"tangled": 2}}},
         "3": {"stat": {"speed": 3}, "ability": {"effects": {"tangled": 3}, "target": [1, 2, 3, 4]}}
       },
-      "text": "Loop trailing thread around one foe in ranks 1-3 for Tangled 2; at stitch tier III reach rank 4 with Tangled 3."
+      "text": "Two cream spools are stitched to a dusty-purple boot cuff, their scarlet threads looped together beneath a crooked silver pin."
     },
     {
       "id": "seamstress_bobbin_snag_spools",
@@ -217,11 +217,10 @@
         "2": {"stat": {"dodge": 4}, "ability": {"effects": {"mark": 2, "tangled": 2}}},
         "3": {
           "stat": {"dodge": 5},
-          "ability": {"effects": {"mark": 3, "tangled": 2}},
-          "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 3 and Tangled 2."
+          "ability": {"effects": {"mark": 3, "tangled": 2}}
         }
       },
-      "text": "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2."
+      "text": "Three mismatched plum bobbins crowd a cream ankle patch, with loose red thread snagged beneath uneven cross-stitches."
     }
   ]
 }

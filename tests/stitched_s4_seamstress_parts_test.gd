@@ -147,6 +147,26 @@ const TORSO_FORBIDDEN_COPY_WORDS := [
 	"action", "actions", "turn", "turns", "buff", "buffs", "effect", "effects",
 	"duration", "self", "cast",
 ]
+## S14 sewn-cloth appearance copy for the two LEGS patches. The Seamstress's four fixed
+## signature abilities live in data/stitched/s14_hero_abilities.json; these two records only
+## describe the spools and bobbins sewn to her boots, never a part-granted snare.
+const TETHER_SPOOLS_ID := "seamstress_tether_loop_spools"
+const BOBBIN_SNAG_ID := "seamstress_bobbin_snag_spools"
+const LEG_PATCH_IDS := [TETHER_SPOOLS_ID, BOBBIN_SNAG_ID]
+const EXPECTED_TETHER_SPOOLS_TEXT := "Two cream spools are stitched to a dusty-purple boot cuff, their scarlet threads looped together beneath a crooked silver pin."
+const EXPECTED_BOBBIN_SNAG_TEXT := "Three mismatched plum bobbins crowd a cream ankle patch, with loose red thread snagged beneath uneven cross-stitches."
+## The retired cast instructions the two leg patches used to print, kept only as witnesses.
+const RETIRED_TETHER_SPOOLS_TEXT := "Loop trailing thread around one foe in ranks 1-3 for Tangled 2; at stitch tier III reach rank 4 with Tangled 3."
+const RETIRED_BOBBIN_SNAG_TEXT := "Snag one foe in ranks 1-3 on knotted bobbins: Mark 2 and Tangled 2."
+const RETIRED_BOBBIN_SNAG_TIER_TEXT := "Snag one foe in ranks 1-3 on knotted bobbins: Mark 3 and Tangled 2."
+## Whole words that would turn a leg appearance sentence back into an obsolete part-action
+## promise. Matched whole (and after splitting hyphens) so ordinary cloth words never trip it.
+const LEG_FORBIDDEN_COPY_WORDS := [
+	"rank", "ranks", "tier", "tiers", "foe", "foes", "enemy", "enemies",
+	"tangled", "mark", "marks", "damage", "dodge", "ability", "abilities",
+	"skill", "skills", "target", "targets", "cast", "casts", "attack", "attacks",
+	"heal", "heals", "turn", "turns",
+]
 
 ## The authored acceptance contract, one row per part id, indexed by tier - 1.
 const EXPECTED := {
@@ -258,6 +278,7 @@ var _checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_torso_patch_appearance_text()
+	_test_leg_patch_appearance_text()
 	_test_tiers()
 	_test_live_tier_stats()
 	_test_negatives()
@@ -587,6 +608,183 @@ func _test_torso_patch_appearance_text() -> void:
 		_check(_int_dict(StitchedParts.stat_at_tier(after, 1)) == _int_dict({str(EXPECTED[part_id]["stat_key"]): int(EXPECTED[part_id]["stat"][0])})
 			and str(after["ability"]["id"]) == str(EXPECTED[part_id]["ability_id"]),
 			"AC3: " + part_id + " keeps its legacy tier-I stat and ability after the validation")
+
+
+# ---------------------------------------------------------------- AC1/AC2/AC3: leg sewn patches
+
+## Both LEGS wearables now read as sewn spool patches, exactly like the head, arms and torso rows.
+## Their legacy stat/ability/tier dictionaries above stay as compatibility contracts and are
+## proven by _test_catalog/_test_tiers/_test_snare_timelines; this helper proves the two top-level
+## appearance sentences, the tier-resolved copy, and the raw JSON shape of Bobbin's tier III.
+func _test_leg_patch_appearance_text() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the Seamstress catalog loads for the leg patch appearance contract")
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	var expected := {
+		TETHER_SPOOLS_ID: {
+			"name": "Tether Loop Spools", "text": EXPECTED_TETHER_SPOOLS_TEXT,
+			"retired": RETIRED_TETHER_SPOOLS_TEXT,
+			"motifs": ["cream", "spools", "stitched", "dusty", "purple", "boot",
+				"cuff", "scarlet", "threads", "silver", "pin"],
+		},
+		BOBBIN_SNAG_ID: {
+			"name": "Bobbin Snag Spools", "text": EXPECTED_BOBBIN_SNAG_TEXT,
+			"retired": RETIRED_BOBBIN_SNAG_TEXT,
+			"motifs": ["plum", "bobbins", "cream", "ankle", "patch", "red",
+				"thread", "cross", "stitches"],
+		},
+	}
+	for part_id in LEG_PATCH_IDS:
+		_check(by_id.has(part_id), "AC1: the catalog authors the leg patch " + part_id)
+		if not by_id.has(part_id):
+			continue
+		var part: Dictionary = by_id[part_id]
+		var spec: Dictionary = expected[part_id]
+		var spec_numbers: Dictionary = EXPECTED[part_id]
+		var want := str(spec["text"])
+		_check(str(part["id"]) == part_id, "AC1: " + part_id + " keeps its authored id")
+		_check(str(part["name"]) == str(spec["name"]), "AC1: " + part_id + " keeps its authored name")
+		_check(str(part["owner"]) == OWNER and str(part["slot"]) == "legs",
+			"AC1: " + part_id + " stays a seamstress legs patch")
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC1: " + part_id + " still validates with its sewn-patch description")
+		_check(str(part["text"]) == want,
+			"AC1: " + part_id + " carries its exact authored sewn-patch description")
+		# The retired spool-snare instruction survives nowhere on this record.
+		_check(not str(part["text"]).contains(str(spec["retired"])),
+			"AC2: " + part_id + " no longer prints its retired cast instruction")
+		# Materials and palette: cream spools on a purple boot cuff, plum bobbins on a cream patch.
+		var low := str(part["text"]).to_lower()
+		for word in spec["motifs"]:
+			_check(_contains_whole_word(low, str(word)),
+				"AC2: " + part_id + " names the sewn detail " + str(word))
+		_check(_leg_copy_violation(low).is_empty(),
+			"AC2: %s promises no rank/tier/status/action/number (%s)"
+				% [part_id, _leg_copy_violation(low)])
+		# Compatibility only: every legacy stat, ability and tier number stays exactly as shipped.
+		_check(_int_dict(part["stat"])
+			== {str(spec_numbers["stat_key"]): int(spec_numbers["stat"][0])},
+			"AC3: " + part_id + " keeps its tier-I stat")
+		_check(str(part["ability"]["id"]) == str(spec_numbers["ability_id"])
+			and _int_list(part["ability"]["launch"]) == _int_list(spec_numbers["launch"])
+			and _int_list(part["ability"]["target"]) == _int_list(spec_numbers["target"])
+			and _int_dict(part["ability"]["effects"])
+				== _int_dict(spec_numbers["effects"][0]),
+			"AC3: " + part_id + " keeps its legacy ability id, ranks and effects")
+		_check(_int_dict(StitchedParts.stat_at_tier(part, 3))
+			== {str(spec_numbers["stat_key"]): int(spec_numbers["stat"][2])}
+			and _int_dict(StitchedParts.ability_at_tier(part, 3)["effects"])
+				== _int_dict(spec_numbers["effects"][2]),
+			"AC3: " + part_id + " keeps its tier-III stat and effect numbers")
+		# Every tier's appearance copy resolves to the new base sentence through the runtime cue
+		# helper, including Bobbin tier III now that its obsolete tier text override is gone.
+		for tier in [1, 2, 3]:
+			var cue := StitchedPartActionCues.format_action(
+				{"id": "seamstress", "name": "Seamstress", "rank": 2},
+				"legs", {"id": part_id, "tier": tier, "torn": false}, by_id, true, "")
+			var full := str(cue.get("full", ""))
+			_check(full.contains(want),
+				"AC2: %s tier %d resolves the new base patch sentence" % [part_id, tier])
+			_check(not full.contains(str(spec["retired"]))
+				and not full.contains(RETIRED_BOBBIN_SNAG_TIER_TEXT),
+				"AC2: %s tier %d resolves no retired cast instruction" % [part_id, tier])
+		# Deep-copy fail-closed: a blank patch description is still refused, and the shipped
+		# record is left untouched by the rejected validations.
+		var shipped_text := str(part["text"])
+		for blank in ["", "   "]:
+			var blanked: Dictionary = part.duplicate(true)
+			blanked["text"] = blank
+			_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+				"AC3: %s with %s top-level text is refused"
+					% [part_id, "blank" if blank.is_empty() else "whitespace-only"])
+		_check(str(by_id[part_id]["text"]) == shipped_text,
+			"AC3: the rejected blank text never changes the shipped " + part_id + " record")
+	# The two leg patches describe different spool clusters, not the same sentence twice, and no
+	# other part reprints either new sentence.
+	var tether_low := str(by_id[TETHER_SPOOLS_ID]["text"]).to_lower()
+	var bobbin_low := str(by_id[BOBBIN_SNAG_ID]["text"]).to_lower()
+	_check(tether_low != bobbin_low,
+		"AC2: the two leg patches describe visually distinct sewn cloth")
+	_check(_contains_whole_word(tether_low, "spools") and _contains_whole_word(tether_low, "boot")
+		and _contains_whole_word(tether_low, "pin") and _contains_whole_word(tether_low, "cuff"),
+		"AC2: Tether Loop names its cream spools, boot cuff and crooked silver pin")
+	_check(_contains_whole_word(bobbin_low, "bobbins") and _contains_whole_word(bobbin_low, "ankle")
+		and _contains_whole_word(bobbin_low, "stitches"),
+		"AC2: Bobbin Snag names its plum bobbins, ankle patch and uneven cross-stitches")
+	_check(not _contains_whole_word(tether_low, "bobbins")
+		and not _contains_whole_word(bobbin_low, "spools")
+		and not _contains_whole_word(bobbin_low, "pin"),
+		"AC2: the spool-cluster and bobbin-cluster descriptions stay visually distinct")
+	for part_id in ALL_PART_IDS:
+		if part_id in LEG_PATCH_IDS or not by_id.has(part_id):
+			continue
+		var other := str(by_id[part_id]["text"])
+		_check(other != EXPECTED_TETHER_SPOOLS_TEXT and other != EXPECTED_BOBBIN_SNAG_TEXT,
+			"AC2: the other " + part_id + " does not duplicate a leg patch sentence")
+	# The whole-word gate is proven, not vacuous: every retired instruction and a plain digit fail
+	# it, while ordinary stitched-cloth prose never trips on an accidental substring.
+	for retired in [RETIRED_TETHER_SPOOLS_TEXT, RETIRED_BOBBIN_SNAG_TEXT,
+			RETIRED_BOBBIN_SNAG_TIER_TEXT]:
+		_check(not _leg_copy_violation(str(retired).to_lower()).is_empty(),
+			"AC2: the retired leg cast instruction fails the appearance gate: " + str(retired))
+	_check(not _leg_copy_violation("The patch holds 2 spools.").is_empty(),
+		"AC2: a stated digit fails the leg appearance gate")
+	_check(_leg_copy_violation("Two cream spools looped on a dusty-purple boot cuff.").is_empty(),
+		"AC2: plain stitched-spool prose passes the leg appearance gate")
+	# Raw JSON: both new sentences are authored verbatim, and Bobbin's tier-III object stays with
+	# its stat/ability numbers but no text field.
+	var raw: Variant = _read_json(PARTS_PATH)
+	if raw is Dictionary:
+		var document: Dictionary = raw
+		var raw_parts: Variant = document.get("parts")
+		_check(raw_parts is Array, "AC3: the raw parts file holds the authored parts array")
+		if raw_parts is Array:
+			var raw_tether := _raw_part_for(raw_parts, TETHER_SPOOLS_ID)
+			var raw_bobbin := _raw_part_for(raw_parts, BOBBIN_SNAG_ID)
+			_check(not raw_tether.is_empty() and not raw_bobbin.is_empty(),
+				"AC1: the raw JSON authors both leg records")
+			var tether_index := _raw_index_of(raw_parts, TETHER_SPOOLS_ID)
+			var bobbin_index := _raw_index_of(raw_parts, BOBBIN_SNAG_ID)
+			_check(tether_index >= 0 and bobbin_index == tether_index + 1,
+				"AC3: the two legs records keep their authored adjacent order")
+			if not raw_tether.is_empty() and not raw_bobbin.is_empty():
+				_check(str(raw_tether.get("text", "")) == EXPECTED_TETHER_SPOOLS_TEXT,
+					"AC1: the raw Tether Loop text is exactly the new sewn-cloth sentence")
+				_check(str(raw_bobbin.get("text", "")) == EXPECTED_BOBBIN_SNAG_TEXT,
+					"AC1: the raw Bobbin Snag text is exactly the new sewn-cloth sentence")
+				var raw_tiers: Dictionary = raw_bobbin.get("tiers", {})
+				var raw_third: Dictionary = raw_tiers.get("3", {})
+				_check(not raw_third.is_empty(),
+					"AC2: the raw Bobbin Snag tier-III object is retained")
+				_check(not raw_third.has("text"),
+					"AC2: the raw Bobbin Snag tier-III override carries no text field")
+				var raw_third_stat: Dictionary = raw_third.get("stat", {})
+				var raw_third_ability: Dictionary = raw_third.get("ability", {})
+				_check(_int_dict(raw_third_stat) == {"dodge": 5},
+					"AC2: the raw Bobbin Snag tier-III stat stays Dodge 5")
+				var raw_third_effects: Dictionary = raw_third_ability.get("effects", {})
+				_check(_int_dict(raw_third_effects) == {"mark": 3, "tangled": 2},
+					"AC2: the raw Bobbin Snag tier-III effects stay Mark 3 and Tangled 2")
+				var tether_tiers: Dictionary = raw_tether.get("tiers", {})
+				var tether_third: Dictionary = tether_tiers.get("3", {})
+				var bobbin_second: Dictionary = raw_tiers.get("2", {})
+				_check(not tether_third.has("text") and not bobbin_second.has("text"),
+					"AC2: no other leg tier override prints obsolete tier text")
+
+
+## The first whole-word combat promise or numeric digit in a leg-patch sentence, or "" when the
+## copy is pure stitched-cloth appearance. The retired instructions are run through it so the gate
+## is proven to catch real violations rather than passing on an empty list.
+func _leg_copy_violation(lowered: String) -> String:
+	if _contains_digit(lowered):
+		return "digit"
+	for word in LEG_FORBIDDEN_COPY_WORDS:
+		if _contains_whole_word(lowered, word):
+			return word
+	return ""
 
 
 # ---------------------------------------------------------------- AC3: tiers, masks and keys
@@ -2485,6 +2683,16 @@ func _raw_part_for(raw_parts: Variant, part_id: String) -> Dictionary:
 	return {}
 
 
+func _raw_index_of(raw_parts: Variant, part_id: String) -> int:
+	if not raw_parts is Array:
+		return -1
+	for index in range(raw_parts.size()):
+		var entry: Variant = raw_parts[index]
+		if entry is Dictionary and str(entry.get("id", "")) == part_id:
+			return index
+	return -1
+
+
 func _raw_launch_for(raw_parts: Variant, part_id: String) -> Array:
 	if not raw_parts is Array:
 		return []
@@ -2735,14 +2943,18 @@ func _test_tether_reach_contract() -> void:
 				"AC1: the tier-III override touches no launch, ACC, damage or pose")
 			_check(not raw_three_ability.has("target_mask"),
 				"AC1: the authored tier-III override never hard-codes a derived mask")
-	# The printed reach is truthful about Tangled 2 and the tier-III rank-4 extension.
+	# The legs row now prints sewn-cloth appearance copy instead of a retired snare instruction.
+	# The tier-III rank-4 reach stays proven above by the ability numbers and masks, and in real
+	# combat by the rear-Tether hit/miss/rejection witnesses below.
 	var text := str(part["text"])
-	_check(text == "Loop trailing thread around one foe in ranks 1-3 for Tangled 2; at stitch tier III reach rank 4 with Tangled 3.",
-		"AC1: the Tether Loop text states Tangled 2 and the tier-III rank-4 reach")
+	_check(text == EXPECTED_TETHER_SPOOLS_TEXT,
+		"AC1: the Tether Loop text is the S14 sewn-cloth patch sentence")
 	_check(not text.contains("Tangled 1"),
-		"AC1: the Tether Loop text no longer claims Tangled 1")
-	_check(text.contains("rank 4") and text.contains("tier III") and text.contains("Tangled 3"),
-		"AC1: the Tether Loop text names its tier-III rank 4 and Tangled 3")
+		"AC1: the Tether Loop text claims no obsolete Tangled 1")
+	_check(text == text.strip_edges() and not text.is_empty(),
+		"AC1: the Tether Loop text stays nonempty trimmed rules text")
+	_check(_leg_copy_violation(text.to_lower()).is_empty(),
+		"AC1: the Tether Loop text promises no rank/tier/status/action or digit")
 	# The seven sibling records keep their exact tier-resolved target ranks and text.
 	for other_id in ALL_PART_IDS:
 		if other_id == TETHER_LOOP_PART:
