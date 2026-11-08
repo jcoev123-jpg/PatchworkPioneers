@@ -5,6 +5,8 @@ extends "res://tests/stitched_s14_rules_gate_test.gd"
 func _initialize() -> void:
 	_departure()
 	_leg_trade()
+	_leg_payer_provider()
+	_all_torn_real_victory()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_side_door_departure_test: %d checks, %d failures" % [checks, failures.size()])
@@ -367,6 +369,132 @@ func _leg_trade() -> void:
 		and restored.journal == session.journal and restored.rng.state == session.rng.state
 		and restored.door_history.size() == 1 and restored.ability_inventory.size() == prior_inventory_size + 1,
 		"paid leg, silk reward and onward visit or battle replay exactly with journal and RNG")
+
+
+## The provider's leg-payer input: only the limb-cost Underbed deal leaves the pool, and every
+## draw count, order and Attic/Elite rule is otherwise identical to the old behaviour.
+func _leg_payer_provider() -> void:
+	var seen_without := {}
+	var seen_with := {}
+	var identical := true
+	var trajectory_same := true
+	var attic_same := true
+	var attic_seen := 0
+	var elite_same := true
+	var elite_admitted := 0
+
+	for seed_number in 200:
+		var base := RandomNumberGenerator.new()
+		base.seed = seed_number
+		var legacy := StitchedS14SideDoors.offer(base, "Boss", true)
+		var yes := RandomNumberGenerator.new()
+		yes.seed = seed_number
+		var with_payer := StitchedS14SideDoors.offer(yes, "Boss", true, true)
+		var replay := RandomNumberGenerator.new()
+		replay.seed = seed_number
+		var replayed := StitchedS14SideDoors.offer(replay, "Boss", true, true)
+		var no := RandomNumberGenerator.new()
+		no.seed = seed_number
+		var without := StitchedS14SideDoors.offer(no, "Boss", true, false)
+		identical = identical and legacy == with_payer and with_payer == replayed
+		trajectory_same = trajectory_same and base.state == yes.state and yes.state == replay.state
+		seen_with[str(with_payer.get("id", ""))] = true
+		seen_without[str(without.get("id", ""))] = true
+
+		# Attic path (underbed not yet taken): unaffected by the eligibility input.
+		var a := RandomNumberGenerator.new()
+		a.seed = seed_number
+		var a_yes := StitchedS14SideDoors.offer(a, "Boss", false, true)
+		var b := RandomNumberGenerator.new()
+		b.seed = seed_number
+		var b_no := StitchedS14SideDoors.offer(b, "Boss", false, false)
+		if str(a_yes.get("kind", "")) == "attic":
+			attic_seen += 1
+			attic_same = attic_same and a_yes == b_no and a.state == b.state
+		# Elite: the old 70% check is the first draw and is unchanged either way.
+		var e := RandomNumberGenerator.new()
+		e.seed = seed_number
+		var e_yes := StitchedS14SideDoors.offer(e, "Elite", true, true)
+		var f := RandomNumberGenerator.new()
+		f.seed = seed_number
+		var e_no := StitchedS14SideDoors.offer(f, "Elite", true, false)
+		var check := RandomNumberGenerator.new()
+		check.seed = seed_number
+		var admitted := check.randi_range(1, 100) <= 70
+		elite_same = elite_same and e_yes.is_empty() == (not admitted) and e_no.is_empty() == (not admitted)
+		if admitted:
+			elite_admitted += 1
+			elite_same = elite_same and not e_no.is_empty() and str(e_no.get("id", "")) != "underbed_leg_trade"
+	_check(identical and trajectory_same,
+		"with a leg payer the offer and RNG trajectory equal the historical default, and replay identically")
+	_check(seen_with.has("underbed_leg_trade") and seen_with.has("underbed_stuffing_trade")
+		and seen_with.has("underbed_fear_trade"),
+		"with a leg payer every Underbed deal, including the leg trade, stays reachable")
+	_check(not seen_without.has("underbed_leg_trade") and seen_without.has("underbed_stuffing_trade")
+		and seen_without.has("underbed_fear_trade"),
+		"without a leg payer the leg trade is never offered while the other Underbed deals remain")
+	_check(attic_seen > 0 and attic_same, "Attic offers and RNG are unaffected by leg eligibility")
+	_check(elite_admitted > 0 and elite_same, "Elite 70% admission is unchanged and never offers an unpayable leg trade")
+
+	# Per-ID catalog rows keep their costs and rewards.
+	var doors := StitchedS14SideDoors.catalog()
+	_check(doors.has("underbed_leg_trade") and doors.underbed_leg_trade.cost == "limb"
+		and doors.underbed_leg_trade.amount == 1 and doors.underbed_leg_trade.reward == "silk_patch"
+		and doors.underbed_stuffing_trade.cost == "max_hp" and doors.underbed_stuffing_trade.amount == 6
+		and doors.underbed_stuffing_trade.reward == "gold_patch"
+		and doors.underbed_fear_trade.cost == "fear" and doors.underbed_fear_trade.amount == 15
+		and doors.underbed_fear_trade.reward == "wren_gift",
+		"underbed rows keep their costs, amounts and reward IDs")
+	_check(StitchedS14SideDoors.UNDERBED_WEIGHTS == {"gold_patch": 1, "silk_patch": 5, "wren_gift": 4},
+		"original 1:5:4 weights are unchanged")
+
+
+## Real seeded victorious Elite settlements with every doll's legs torn beforehand: the
+## settled roster has no leg payer, so session.settle_battle never publishes the leg bargain.
+func _all_torn_real_victory() -> void:
+	var victories := 0
+	var offers := 0
+	var leg_offers := 0
+	var roster_ok := true
+	for seed_number in 80:
+		if offers >= 2:
+			break
+		var candidate := StitchedRunSession.start(seed_number)
+		if candidate == null:
+			continue
+		var elite_id := ""
+		for id in candidate.choices():
+			if candidate.map.get_node(id).type == "Elite":
+				elite_id = id
+				break
+		if elite_id.is_empty():
+			continue
+		var calc := StitchedRules.new()
+		calc._parts = candidate.catalog
+		calc._s14 = true
+		for hero in candidate.heroes:
+			if hero.parts.has("legs"):
+				hero.parts.legs.torn = true
+			calc._recompute_stats(hero)
+			hero.hp = mini(int(hero.hp), int(hero.max_hp))
+		candidate._seal()
+		if not candidate.is_consistent() or not candidate.enter(elite_id, candidate.snapshot()):
+			continue
+		if not _play_live_battle(candidate) or candidate.battle.outcome() != "victory" \
+				or not candidate.settle_battle(candidate.battle):
+			continue
+		victories += 1
+		for hero in candidate.heroes:
+			if not hero.lost and hero.parts.has("legs") and not hero.parts.legs.torn:
+				roster_ok = false
+		if not candidate.door_offer.is_empty():
+			offers += 1
+			if str(candidate.door_offer.get("id", "")) == "underbed_leg_trade":
+				leg_offers += 1
+	_check(victories > 0 and roster_ok,
+		"real victorious Elite settlements with torn legs have no leg payer in the settled roster")
+	_check(leg_offers == 0, "no unpayable leg bargain is published after an all-torn real Elite victory")
+	_check(offers > 0, "the all-torn real settlements still publish other legal side doors")
 
 
 func _assert_leg_refusal(session: StitchedRunSession, door_id: String, hero_id: String,
