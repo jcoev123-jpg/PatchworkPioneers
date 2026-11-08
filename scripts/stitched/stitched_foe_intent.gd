@@ -97,6 +97,16 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			if frayed_rank <= 0:
 				continue
 			scan_ranks = [frayed_rank]
+		elif _hunts_open_seam(actor, ability):
+			# The Scissor Bailiff's Unpick Verdict unpicks a seam that is already parting:
+			# a legal doll with one or two of its three limbs torn, then any legal doll that
+			# still owns an untorn limb. With nothing left to unpick it keeps the ordinary
+			# closest legal attack so the authored damage can still land. The torso never
+			# counts, and the same legality authority is asked rank by rank, so a lost,
+			# fallen, absent, out-of-reach or stunned doll can never be chosen here.
+			var seam_rank := _open_seam_rank(battle, actor, ability)
+			if seam_rank > 0:
+				scan_ranks = [seam_rank]
 		for rank in scan_ranks:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
@@ -304,6 +314,73 @@ static func _most_frayed_legal_rank(
 				best_rank = rank
 				best_fray = fray
 	return best_rank
+
+
+## True only for the Scissor Bailiff's own authored Unpick Verdict. Every other ability on
+## every other foe keeps its existing Mark, FRAY, pull or nearest-legal-rank order.
+static func _hunts_open_seam(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "scissor_bailiff" \
+		and str(ability.get("id", "")) == "bailiff_unpick"
+
+
+## Lowest legal hero rank whose worn doll is still worth unpicking: preferably a partly torn
+## seam (one or two of head/arms/legs torn, so at least one stays intact), otherwise the first
+## doll with any untorn non-torso slot. Only the passed ability's own target authority decides
+## what is legal, and only ranks 1 and 2 are asked because Unpick Verdict can reach no further.
+## A doll that is lost, fallen, absent, empty or outside that reach is never a candidate, and
+## the torso never counts as a seam. Returns 0 when neither shape exists, which keeps the
+## ordinary nearest-legal attack (the damage-only possibility) or the original pass/fallback.
+## Read-only: it never mutates the battle or draws RNG.
+static func _open_seam_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var tearable_rank := 0
+	for rank in [1, 2]:
+		for target in battle._legal_targets(actor, ability, rank):
+			if not _is_live_doll(target):
+				continue
+			var torn := _torn_limb_count(target)
+			if torn >= 1 and torn <= 2 and _has_untorn_limb(target):
+				return rank
+			if tearable_rank == 0 and _has_untorn_limb(target):
+				tearable_rank = rank
+	return tearable_rank
+
+
+## A doll the Bailiff may unpick at all: a living, non-LOST hero still holding its own record.
+static func _is_live_doll(unit: Dictionary) -> bool:
+	return str(unit.get("side", "")) == "hero" \
+		and not bool(unit.get("dead", false)) \
+		and not bool(unit.get("lost", false)) \
+		and int(unit.get("hp", 0)) > 0
+
+
+## Torn non-torso seams on one doll: 0 to 3, counted only from equipped head/arms/legs parts
+## whose own torn flag is set. The torso is never a seam, so it is never read, and an absent
+## part contributes nothing rather than pretending to be torn.
+static func _torn_limb_count(unit: Dictionary) -> int:
+	var worn: Variant = unit.get("parts", {})
+	if not worn is Dictionary:
+		return 0
+	var torn := 0
+	for slot in ["head", "arms", "legs"]:
+		var part: Variant = worn.get(slot, {})
+		if part is Dictionary and bool(part.get("torn", false)):
+			torn += 1
+	return torn
+
+
+## True when the doll still owns at least one equipped, untorn non-torso part, so a further
+## Unpick could really tear it. Missing slots are never untorn seams; the torso never counts.
+static func _has_untorn_limb(unit: Dictionary) -> bool:
+	var worn: Variant = unit.get("parts", {})
+	if not worn is Dictionary:
+		return false
+	for slot in ["head", "arms", "legs"]:
+		var part: Variant = worn.get(slot, {})
+		if part is Dictionary and not part.is_empty() and not bool(part.get("torn", false)):
+			return true
+	return false
 
 
 ## True only for the Needle Marshal's own authored Iron Discipline. Every other ability on
