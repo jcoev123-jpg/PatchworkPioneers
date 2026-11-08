@@ -25,6 +25,19 @@ const ALL_IDS := [
 ## advertised; those mechanics live in data/stitched/s14_hero_abilities.json instead.
 const COG_SHOT_TEXT := "Three chipped copper cogs are stitched around the Tinker's mismatched goggle lenses, their teeth caught in mustard thread."
 const CASING_WARD_TEXT := "Dented copper plates overlap the Tinker's moss-green torso, secured by crooked mustard stitches and little brass buttons."
+## S14: Tinker's two leg patches are worn patches as well, so their base copy describes the
+## linen, spanner, screws and cloth a player sees instead of the retired part-granted heal,
+## Dodge or rank swap. Their legacy S4 ability payloads stay in place for compatibility.
+const TUNE_UP_TEXT := "A pale linen leg joint, a little spanner and a sewing needle are stitched into slate-blue cloth with uneven black thread."
+const SPARE_SCREWS_TEXT := "Loose screws, washers and a small button scatter across an oatmeal cloth patch ringed with thick dark stitches."
+const LEG_PATCH_FORBIDDEN_WORDS := [
+	"hp", "heal", "dodge", "swap", "rank", "turn", "attack", "damage", "stun", "card", "cost",
+]
+## The exact sentences the two leg patches used to advertise as part-cast moves.
+const LEG_PATCH_OLD_SENTENCES := [
+	"Repair a little HP and tune your joints for one turn of temporary Dodge.",
+	"Scatter spare screws, gain temporary Dodge, and swap one rank backward.",
+]
 const PATCH_FORBIDDEN_WORDS := [
 	"rank", "hit", "mark", "thorns", "guard", "heal", "damage", "crit", "card", "cost",
 	"activate", "attack",
@@ -36,6 +49,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_starter_patch_appearance_text()
+	_test_leg_patch_appearance_text()
 	_test_spring_clamp_catalog()
 	_test_spring_clamp_mark_setup()
 	_test_spring_clamp_next_foe_attack()
@@ -486,6 +500,72 @@ func _test_starter_patch_appearance_text() -> void:
 		for raw_part in accepted["parts"]:
 			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
 		_check(not lingering, "AC2: no Tinker part still carries the retired sentence: " + str(retired))
+
+
+## AC1/AC2/AC3: Tinker's two leg patches keep their IDs, names, owner, legs slot, original stats
+## and legacy S4 ability IDs, while their base copy describes the sewn cloth and hardware the
+## player actually sees. Neither retired move sentence survives, no retired instruction word
+## appears as a whole word, and a blank duplicate still fails validation without touching the
+## loaded source record.
+func _test_leg_patch_appearance_text() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)), "AC1: StitchedParts.load_catalog accepts Tinker for the leg patch copy")
+	if not bool(accepted.get("ok", false)):
+		return
+	var expected := {
+		"tinker_legs_tune_up": {
+			"name": "Tune Up", "stat": {"speed": 2, "dodge": 2},
+			"ability": "tinker_tune_up_move", "text": TUNE_UP_TEXT,
+			"visual": ["linen", "spanner", "needle", "slate-blue"],
+		},
+		"tinker_legs_spare_screws": {
+			"name": "Spare Screws", "stat": {"speed": 1, "dodge": 3},
+			"ability": "tinker_spare_screws_move", "text": SPARE_SCREWS_TEXT,
+			"visual": ["screws", "washers", "button", "oatmeal"],
+		},
+	}
+	var forbidden := RegEx.new()
+	_check(forbidden.compile("(?i)\\b(%s)\\b" % "|".join(LEG_PATCH_FORBIDDEN_WORDS)) == OK,
+		"AC3: the whole-word forbidden-vocabulary check compiles")
+	for retired in LEG_PATCH_OLD_SENTENCES:
+		_check(not forbidden.search_all(str(retired)).is_empty(),
+			"AC3: the forbidden-vocabulary check really flags the retired sentence: " + str(retired))
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(accepted["by_id"].has(id), "AC1: leg patch keeps its named ID: " + id)
+		if not accepted["by_id"].has(id):
+			continue
+		var part: Dictionary = accepted["by_id"][id]
+		_check(str(part["name"]) == str(spec["name"]) and str(part["slot"]) == "legs"
+			and str(part["owner"]) == "tinker" and part["stat"] == spec["stat"],
+			"AC1: leg patch keeps its name, legs slot, Tinker owner and authored stat: " + id)
+		_check(str(part["ability"]["id"]) == str(spec["ability"]),
+			"AC2: leg patch keeps its legacy S4 ability ID untouched: " + id)
+		var text := str(part.get("text", ""))
+		_check(not text.is_empty(), "AC2: leg patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: leg patch base copy is the exact sewn-cloth sentence: " + id)
+		_check(not (text in LEG_PATCH_OLD_SENTENCES),
+			"AC2: leg patch no longer carries a retired move sentence: " + id)
+		var visual_ok := true
+		for phrase in spec["visual"]:
+			visual_ok = visual_ok and text.to_lower().contains(str(phrase))
+		_check(visual_ok, "AC2: leg patch copy names its visible sewn patch pieces: " + id)
+		var matches := forbidden.search_all(text)
+		_check(matches.is_empty(),
+			"AC3: leg patch copy promises no heal, Dodge, swap, turn or other retired vocabulary: %s%s"
+				% [id, "" if matches.is_empty() else " (" + matches[0].get_string() + ")"])
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+		_check(str(part.get("text", "")) == str(spec["text"]),
+			"AC2: blank-copy validation leaves the loaded source record unchanged: " + id)
+	for retired in LEG_PATCH_OLD_SENTENCES:
+		var lingering := false
+		for raw_part in accepted["parts"]:
+			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
+		_check(not lingering, "AC2: no Tinker part still carries the retired leg sentence: " + str(retired))
 
 
 func _test_every_tier_in_real_combat() -> void:
