@@ -59,7 +59,7 @@ const PAGES := [
 	]
 ]
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
-## The Seams & retreat page also carries four catalog-derived examples and three gold notes.
+## Seams & retreat carries four catalog-derived examples, three gold notes and three S15 notes.
 const LESSON_PAGE := 1
 
 var tab_buttons: Array[Button] = []
@@ -74,9 +74,10 @@ var part_atlas: StitchedPartInspector
 var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS,
 	YARN_RANGER_PARTS, FOE_PARTS, LANTERN_MONK_PARTS, BUTTON_GOLEM_PARTS,
 	RAG_DUELIST_PARTS, SCARECROW_PARTS]
-# Detached lesson sources for headless regression; null reads the live S14 catalogs.
+# Detached lesson sources for headless regression; null reads the live catalogs.
 var lesson_kits: Variant = null
 var lesson_patches: Variant = null
+var s15_source: Variant = null
 var page_index := 0
 var _active := false
 # Button-down edges only; retain across hide/reopen to reject held/stale input.
@@ -115,9 +116,8 @@ func open_guide() -> bool:
 	return true
 
 
-## Rebuild only the Seams & retreat page from its fixed authored baseline plus the
-## four patch examples, then the source-checked gold notes. Resetting to the baseline
-## means reopen never duplicates a lesson and invalid inputs leave no stale lines.
+## Rebuild the Seams page from its fixed baseline, S14 examples and gold notes,
+## then validated S15 notes. Reopening never duplicates or retains stale text.
 func _refresh_lesson_page() -> void:
 	if page_labels.size() <= LESSON_PAGE:
 		return
@@ -126,6 +126,7 @@ func _refresh_lesson_page() -> void:
 	if lesson.size() == 4:
 		lines.append_array(lesson)
 		lines.append_array(StitchedGoldThreadNotes.examples(lesson_patches))
+	lines.append_array(StitchedS15FieldNotes.examples(s15_source))
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
 
 
