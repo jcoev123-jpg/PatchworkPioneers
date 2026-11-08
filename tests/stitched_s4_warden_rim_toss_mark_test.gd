@@ -134,12 +134,16 @@ func _test_catalog(catalog: Dictionary) -> void:
 		and str(part.get("owner", "")) == WARDEN \
 		and part.get("stat", {}) == {"speed": 1, "dodge": 2},
 		"AC1: Rim Toss retains identity, slot, owner and stats")
+	# S14 retires part-granted actions, so this top-level text now describes the sewn-on patch
+	# instead of advertising the ranks, tiers and Mark the worn legs used to grant. The move's
+	# own authored fields below still carry all of that unchanged.
 	var wording := str(part.get("text", ""))
 	var lower := wording.to_lower()
-	_check(wording.contains("Mark 2") and not lower.contains("block") \
-		and not lower.contains("card") and lower.contains("tier iii") \
-		and lower.contains("rank 4") and lower.contains("ranks 1-3"),
-		"AC1: tooltip truthfully credits ranks 1-3 to tiers I-II and rank 4 to tier III")
+	_check(wording.contains("slate-blue boot") and wording.contains("rivets") \
+		and not lower.contains("block") and not lower.contains("card") \
+		and not lower.contains("mark") and not lower.contains("tier") \
+		and not lower.contains("rank"),
+		"AC1: tooltip names the sewn boot patch, not the retired rank/tier/Mark promise")
 	for tier in [1, 2, 3]:
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var label := "AC1: tier %d" % tier
