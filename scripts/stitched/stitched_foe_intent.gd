@@ -58,6 +58,13 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			var marked_rank := _nearest_marked_rank(battle, actor, ability)
 			if marked_rank > 0:
 				scan_ranks = [marked_rank]
+		elif _hunts_tangled(actor, ability):
+			# The Spool Stalker's Knot Stab follows the nearest doll it already lashed into
+			# Tangled, even past a closer untangled doll. With no legal Tangled doll left it
+			# keeps the ordinary nearest-legal-rank fallback below.
+			var tangled_rank := _nearest_tangled_rank(battle, actor, ability)
+			if tangled_rank > 0:
+				scan_ranks = [tangled_rank]
 		elif _hunts_fray(actor, ability):
 			# The Moth Swarm's Wing Dust follows the most-frayed legal doll instead of the
 			# nearest rank. The same legality authority is asked rank by rank, so a lost,
@@ -117,6 +124,30 @@ static func _nearest_marked_rank(
 	for rank in range(1, 5):
 		for target in battle._legal_targets(actor, ability, rank):
 			if int(target.get("statuses", {}).get("mark", 0)) > 0:
+				return rank
+	return 0
+
+
+## True only for the Spool Stalker's own authored Knot Stab. Every other ability on every
+## other foe keeps the ordinary round-rotated first-legal-rank order.
+static func _hunts_tangled(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "spool_stalker" \
+		and str(ability.get("id", "")) == "knot_stab"
+
+
+## Nearest legal living hero rank (1-3, Knot Stab's authored reach) already carrying current
+## Tangled. The passed ability's own launch/target masks are the authority, so a lost, dead,
+## empty or out-of-reach rank can never be chosen. Exact tangles keep the lower rank because
+## ranks are scanned ascending. Returns 0 when no legal Tangled doll remains, which lets the
+## ordinary nearest-legal fallback apply. Read-only: never mutates the battle or draws RNG.
+static func _nearest_tangled_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	for rank in range(1, 4):
+		for target in battle._legal_targets(actor, ability, rank):
+			if str(target.get("side", "")) != "hero":
+				continue
+			if int(target.get("statuses", {}).get("tangled", 0)) > 0:
 				return rank
 	return 0
 

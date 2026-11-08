@@ -249,6 +249,24 @@
           "move": "attack2"
         },
         {
+          "id": "knot_stab",
+          "name": "Knot Stab",
+          "kind": "melee",
+          "launch": [1, 3],
+          "target": [1, 2, 3],
+          "target_side": "enemy",
+          "multi": false,
+          "acc": 87,
+          "dmg": [4, 6],
+          "crit": 0,
+          "effects": {
+            "snip": 1,
+            "fray": 4
+          },
+          "self_move": 0,
+          "move": "attack3"
+        },
+        {
           "id": "spool_stalk",
           "name": "Spool Stalk",
           "kind": "buff",
