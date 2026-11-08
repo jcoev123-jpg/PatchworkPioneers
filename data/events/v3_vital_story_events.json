@@ -1573,6 +1573,36 @@
           "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_washbasin_moon",
+      "title": "The Washbasin Moon",
+      "description": "A cracked porcelain washbasin fills a doll-high alcove below the stairs. Its black water holds a tiny cloth moon; a brass tap ticks above a red thread stretched across the plug.",
+      "choices": [
+        {"id": "seal_basin_moon", "text": "Stitch the moon into the basin lining", "outcome": {"gold": -16, "scraps": -1, "hp": 5, "max_hp": 1}},
+        {"id": "drain_last_glimmer", "text": "Pull out the silver plug", "outcome": {"gold": 28, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Leave the moon trembling in the water", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_black_doorknocker",
+      "title": "The Black Door Knocker",
+      "description": "A soot-black door rises above the dolls like a cliff. Its huge brass knocker has a plush bird sewn inside the ring; every quiet tap makes the bird's button eye turn.",
+      "choices": [
+        {"id": "brace_knocker", "text": "Sew the cold brass into your lining", "outcome": {"gold": -20, "scraps": 0, "hp": 0, "max_hp": 3}},
+        {"id": "borrow_hinge", "text": "Lift the loose hinge for salvage", "outcome": {"gold": 0, "scraps": 3, "hp": -6, "max_hp": 0}},
+        {"id": "leave", "text": "Pass without waking the little bird", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_cracked_serving_bell",
+      "title": "The Cracked Serving Bell",
+      "description": "A serving bell the size of a chapel stands in the candlelit skirting-board passage. Beneath its split silver dome, a button-eyed felt mouse holds the clapper with a fraying purple string.",
+      "choices": [
+        {"id": "retie_bell_clapper", "text": "Tie the clapper shut with spare thread", "outcome": {"gold": 0, "scraps": -2, "hp": 7, "max_hp": 2}},
+        {"id": "trade_bell_lining", "text": "Trade a strong seam for polished silver", "outcome": {"gold": 25, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Leave the mouse holding the silent bell", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
     }
   ]
 }
