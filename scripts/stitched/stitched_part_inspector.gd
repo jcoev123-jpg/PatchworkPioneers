@@ -5,8 +5,10 @@ extends Control
 signal close_requested
 
 const SLOTS := ["head", "arms", "torso", "legs"]
-const OWNERS := ["all", "warden", "seamstress", "tinker", "yarn_ranger", "any"]
-const OWNER_LABELS := ["All", "Warden", "Seamstress", "Tinker", "Yarn Ranger", "Spoils"]
+const OWNERS := ["all", "warden", "seamstress", "tinker", "yarn_ranger",
+    "lantern_monk", "button_golem", "any"]
+const OWNER_LABELS := ["All", "Warden", "Seamstress", "Tinker", "Yarn Ranger",
+    "Lantern Monk", "Button Golem", "Spoils"]
 const TIER_LABELS := ["I", "II", "III"]
 
 @onready var _rows: VBoxContainer = $CatalogPanel/PartScroll/PartRows
