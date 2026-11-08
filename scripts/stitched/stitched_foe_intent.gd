@@ -141,6 +141,18 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			var seam_rank := _open_seam_rank(battle, actor, ability)
 			if seam_rank > 0:
 				scan_ranks = [seam_rank]
+		elif _snips_fresh_thread(actor, ability):
+			# The Scissor Crab's Thread Snip is only worth spending on a seam that is still
+			# whole: a doll whose thread has already been cut behind it cannot be cut again.
+			# It therefore sews the snip on the closest living legal intact doll. With every
+			# reachable thread already severed it steps on to the next authored ability
+			# (normally Pinch) or passes, exactly like any other ability with no legal
+			# target. This stays inside the ordinary rotation, so a Pinch-first round is
+			# never overridden.
+			var fresh_rank := _nearest_uncut_thread_rank(battle, actor, ability)
+			if fresh_rank <= 0:
+				continue
+			scan_ranks = [fresh_rank]
 		for rank in scan_ranks:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
@@ -434,6 +446,35 @@ static func _has_untorn_limb(unit: Dictionary) -> bool:
 		if part is Dictionary and not part.is_empty() and not bool(part.get("torn", false)):
 			return true
 	return false
+
+
+## True only for the canonical Scissor Crab's own authored Thread Snip. Every other ability
+## on every other foe keeps its existing Mark, FRAY, pull, seam or nearest-rank order.
+static func _snips_fresh_thread(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "scissor_crab" \
+		and str(ability.get("id", "")) == "thread_snip"
+
+
+## Lowest legal living hero rank 1-3 whose canonical id is not already a key in the battle's
+## thread-cut map, or 0 when every reachable legal seam has already been cut. Thread Snip's
+## own authored reach (ranks 1-3) and the battle's read-only legality authority decide what
+## can be reached, so rank 4, a lost, dead, empty or out-of-reach rank can never be chosen.
+## Ranks are scanned ascending, so equal states keep the closest doll. Never mutates the
+## battle or draws RNG.
+static func _nearest_uncut_thread_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var cuts: Dictionary = battle.thread_cuts()
+	for rank in range(1, 4):
+		for target in battle._legal_targets(actor, ability, rank):
+			if not _is_live_doll(target):
+				continue
+			if int(target.get("rank", 0)) >= StitchedRules.MAX_RANK:
+				continue
+			if cuts.has(str(target.get("id", ""))):
+				continue
+			return rank
+	return 0
 
 
 ## True only for the Needle Marshal's own authored Iron Discipline. Every other ability on

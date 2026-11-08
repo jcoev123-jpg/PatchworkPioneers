@@ -28,6 +28,43 @@ func _reload(app: Node, label: String) -> void:
 		label + " restores exact snapshot and authenticated choices through mounted Save/Reload")
 
 
+## The genuine Circle may sit on a branch whose very next stop is not a fight. Walk
+## connected non-battle stops (preferring neutral ones) until a real Fight or Elite is
+## offered, so the replaced doll still continues into an actual ranked battle.
+func _advance_to_battle(app: Node) -> bool:
+	var session: StitchedRunSession = app.stitched_run_session
+	for step in range(10):
+		if session.phase == "battle":
+			return true
+		if session.phase != "map":
+			return false
+		var battle_id := ""
+		for id in session.choices():
+			if str(session.map.get_node(id).type) in ["Fight", "Elite"]:
+				battle_id = id
+				break
+		if not battle_id.is_empty():
+			return _press_route(app, battle_id)
+		var next_id := ""
+		var fallback := ""
+		for id in session.choices():
+			var kind := str(session.map.get_node(id).type)
+			if fallback.is_empty():
+				fallback = id
+			if kind in ["Treasure", "SewingCircle", "PatchStall", "Unpicker", "Shop", "Event"]:
+				next_id = id
+				break
+		if next_id.is_empty():
+			next_id = fallback
+		if next_id.is_empty() or not _press_route(app, next_id):
+			return false
+		if session.phase == "visit" and not _finish_visit(app):
+			return false
+		if session.phase == "battle":
+			return true
+	return session.phase == "battle"
+
+
 func _healthy_circle() -> void:
 	var witness := _seed_with_kind("SewingCircle")
 	_check(not witness.is_empty(), "healthy Circle has a genuine generated opening witness")
@@ -220,11 +257,12 @@ func _lost_circle() -> void:
 	leave.pressed.emit()
 	_check(session.phase == "map" and session.receipts.back().steps[0].action == "replace",
 		"existing Leave settles the Circle with its truthful replacement step")
-	var onward_id := ""
-	for id in session.choices():
-		if session.map.get_node(id).type in ["Fight", "Elite"]:
-			onward_id = id
-	_check(not onward_id.is_empty() and _press_route(app, onward_id), "replacement continues into a real connected ranked battle")
+	var prebattle: Dictionary = {}
+	for hero in session.heroes:
+		if str(hero.get("id", "")) == str(args[0]):
+			prebattle = hero.duplicate(true)
+	_check(not prebattle.is_empty() and _advance_to_battle(app),
+		"replacement continues into a real connected ranked battle")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
 	_check(stage != null and stage.battle == session.battle, "follow-on battle is actually mounted")
 	if stage != null:
@@ -232,8 +270,8 @@ func _lost_circle() -> void:
 		# The mounted battle opens with foe initiative, so the replacement can
 		# legitimately take authenticated opening damage before this check.
 		# Derive the exact post-opening HP from the canonical receipts instead of
-		# the starter's pre-battle full HP.
-		var opening_hp: int = expected_hero.hp
+		# the replacement's pre-battle HP.
+		var opening_hp: int = int(prebattle.get("hp", expected_hero.hp))
 		var opening_bleed := 0
 		for receipt in stage.receipts:
 			for hit in receipt.get("results", []):
@@ -248,7 +286,8 @@ func _lost_circle() -> void:
 		# only when the applied duration has actually decremented.
 		if opening_bleed > 0 and int(installed.get("statuses", {}).get("bleed", 0)) < opening_bleed:
 			opening_hp -= opening_bleed
-		_check(not installed.is_empty() and installed.parts == expected_hero.parts and installed.rank == expected_hero.rank
+		_check(not installed.is_empty() and installed.parts == prebattle.get("parts", expected_hero.parts)
+			and installed.rank == int(prebattle.get("rank", expected_hero.rank))
 			and installed.hp == opening_hp and not installed.lost
 			and stage.battle.get_unit(lost_id).is_empty(), "follow-on battle owns the replacement's truthful identity, rank, gear and HP")
 		var restored := StitchedRunSave.restore(StitchedRunSave.capture(session))
