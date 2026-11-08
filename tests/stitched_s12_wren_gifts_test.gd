@@ -315,15 +315,77 @@ func _once_per_fight() -> void:
 
 func _profile() -> void:
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE + StitchedWrenGifts.STAGED_SUFFIX))
 	_check(StitchedWrenGifts.load_profile(PROFILE).best_floor == 0, "a missing profile starts empty")
+	var floor4 := JSON.stringify({"best_floor": 4, "boss_wins": 0}).to_utf8_buffer()
+	var full_run := JSON.stringify({"best_floor": 12, "boss_wins": 1}).to_utf8_buffer()
 	var opened := StitchedWrenGifts.record_progress(4, false, PROFILE)
 	_check(opened.has("point") and opened.has("lullaby") and not opened.has("tip_over"), "a run to floor 4 opens its gifts")
+	_check(_profile_bytes() == floor4, "the floor 4 run publishes its exact progress bytes")
+	_check(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE))
+		== StitchedWrenGifts.pool_for({"best_floor": 4, "boss_wins": 0}), "the floor 4 bytes derive their gift pool")
 	_check(StitchedWrenGifts.record_progress(3, false, PROFILE).is_empty(), "a shorter run opens nothing")
+	_check(_profile_bytes() == floor4, "the no-op run leaves the accepted bytes untouched")
+	var published_pool := StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE))
+	_check(StitchedWrenGifts.draw_offer(19, 0, published_pool, StitchedWrenGifts.basics(), false)
+		== StitchedWrenGifts.draw_offer(19, 0, published_pool, StitchedWrenGifts.basics(), false),
+		"the published profile draws a deterministic offer")
 	opened = StitchedWrenGifts.record_progress(12, true, PROFILE)
 	_check(opened.has("tip_over") and opened.has("nightlight") and opened.has("whisper"), "beating the boss opens the rest")
+	_check(_profile_bytes() == full_run, "the boss run publishes its exact progress bytes")
 	_check(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE)).size()
 		== StitchedWrenGifts.pool_for({"best_floor": 12, "boss_wins": 1}).size(), "the profile file keeps the progress")
+	# The staged path is blocked while a valid accepted profile exists: a run that
+	# would open gifts must announce nothing, keep the accepted bytes and strand nothing.
+	_profile_write(JSON.stringify({"best_floor": 4, "boss_wins": 0}))
+	var staged := ProjectSettings.globalize_path(PROFILE + StitchedWrenGifts.STAGED_SUFFIX)
+	if DirAccess.dir_exists_absolute(staged) or DirAccess.make_dir_absolute(staged) == OK:
+		_check(StitchedWrenGifts.record_progress(12, true, PROFILE).is_empty(),
+			"a blocked staged path announces no unlocks")
+		_check(_profile_bytes() == floor4, "a blocked staged path preserves the accepted bytes")
+		_check(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE))
+			== StitchedWrenGifts.pool_for({"best_floor": 4, "boss_wins": 0}),
+			"a blocked staged path keeps the old gift pool")
+		_check(not FileAccess.file_exists(staged), "a blocked staged path strands no staged file")
+		DirAccess.remove_absolute(staged)
+		_check(not DirAccess.dir_exists_absolute(staged), "the staged path obstacle is removed")
+		opened = StitchedWrenGifts.record_progress(12, true, PROFILE)
+		_check(opened.has("tip_over") and opened.has("nightlight") and opened.has("whisper"),
+			"the retry publishes and opens the rest")
+		_check(_profile_bytes() == full_run, "the retry publishes the exact boss bytes")
+		_check(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE))
+			== StitchedWrenGifts.pool_for({"best_floor": 12, "boss_wins": 1}),
+			"the retry's published profile derives the full pool")
+	else:
+		_check(false, "staged path obstacle was created")
+	# An existing file that is not a profile (valid JSON of the wrong shape, so the
+	# witness stays quiet) is kept byte for byte: nothing is guessed, opened or cleaned.
+	_profile_write("\"torn profile\"")
+	_check(StitchedWrenGifts.load_profile(PROFILE).best_floor == 0, "a malformed profile still loads as empty")
+	_check(StitchedWrenGifts.record_progress(4, false, PROFILE).is_empty(),
+		"a malformed existing profile announces no unlocks")
+	_check(_profile_bytes() == "\"torn profile\"".to_utf8_buffer(),
+		"a malformed existing profile keeps its exact bytes")
+	_check(StitchedWrenGifts.pool_for(StitchedWrenGifts.load_profile(PROFILE))
+		== StitchedWrenGifts.pool_for({}), "a malformed profile derives the first-run pool")
+	_check(not FileAccess.file_exists(staged), "a malformed profile strands no staged file")
+	# Once the malformed file is gone a fresh first run publishes again.
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE))
+	opened = StitchedWrenGifts.record_progress(4, false, PROFILE)
+	_check(opened.has("point") and _profile_bytes() == floor4, "a fresh first run publishes again")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE))
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(PROFILE + StitchedWrenGifts.STAGED_SUFFIX))
+
+
+func _profile_bytes() -> PackedByteArray:
+	return FileAccess.get_file_as_bytes(PROFILE)
+
+
+func _profile_write(text: String) -> void:
+	var writer := FileAccess.open(PROFILE, FileAccess.WRITE)
+	if writer != null:
+		writer.store_string(text)
+		writer.close()
 
 
 ## A run on the map with a genuine gift offer, reached by finishing a first-floor Event.

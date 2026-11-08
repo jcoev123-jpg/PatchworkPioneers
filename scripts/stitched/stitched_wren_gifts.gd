@@ -8,6 +8,7 @@ extends RefCounted
 
 const PATH := "res://data/kid/gifts.json"
 const PROFILE_PATH := "user://wren_gifts_profile.json"
+const STAGED_SUFFIX := ".tmp"
 const SLOTS := 4
 const OFFER_SIZE := 3
 const TARGETS := ["doll", "foe", "none"]
@@ -190,6 +191,10 @@ static func load_profile(path: String = PROFILE_PATH) -> Dictionary:
 
 
 ## Records a run's progress; returns the gifts this newly opens for later runs.
+## The new profile is staged beside the accepted file, verified byte for byte and
+## value for value, then renamed into place, so the accepted file is never opened
+## for a truncating write: a failed stage or publish keeps the previous good
+## profile and opens nothing.
 static func record_progress(floor_reached: int, boss_won: bool, path: String = PROFILE_PATH) -> Array:
 	var before := load_profile(path)
 	var after := before.duplicate()
@@ -198,14 +203,107 @@ static func record_progress(floor_reached: int, boss_won: bool, path: String = P
 		after.boss_wins = int(before.boss_wins) + 1
 	if after == before:
 		return []
-	var file := FileAccess.open(path, FileAccess.WRITE)
-	if file == null:
+	# A missing profile is a genuine first run and may be created from the default
+	# progress. An existing file whose bytes do not read as a profile is kept exactly
+	# as it is: without its true progress nothing is guessed, overwritten or opened.
+	if FileAccess.file_exists(path) and not _reads_as_profile(path):
 		return []
-	file.store_string(JSON.stringify(after))
-	file.close()
+	if not _publish_profile(path, JSON.stringify(after), after):
+		return []
+	# Unlock differences are derived only from the profile the publish verified.
 	var opened: Array = []
 	var old_pool := pool_for(before)
 	for id in pool_for(after):
 		if not id in old_pool:
 			opened.append(id)
 	return opened
+
+
+## True when the file's bytes parse into a profile dictionary the way load_profile reads it.
+static func _reads_as_profile(path: String) -> bool:
+	var file := FileAccess.open(path, FileAccess.READ)
+	if file == null:
+		return false
+	var parsed: Variant = JSON.parse_string(file.get_as_text())
+	file.close()
+	return parsed is Dictionary
+
+
+## Stages the payload beside the accepted profile, proves the staged bytes and values,
+## renames the stage over the destination and proves the published file: any failure
+## leaves the previously accepted bytes in place and consumes the disposable stage.
+static func _publish_profile(path: String, payload: String, after: Dictionary) -> bool:
+	var staged := path + STAGED_SUFFIX
+	var file := FileAccess.open(staged, FileAccess.WRITE)
+	if file == null:
+		return false
+	file.store_string(payload)
+	file.close()
+	if not _staged_profile_matches(staged, payload, after):
+		DirAccess.remove_absolute(staged)
+		return false
+	# The previously accepted profile is the exact state a failed publish must leave
+	# in the file, so its bytes are read before any replace happens.
+	var had_prior := FileAccess.file_exists(path)
+	var prior := PackedByteArray()
+	if had_prior:
+		var previous := FileAccess.open(path, FileAccess.READ)
+		if previous != null:
+			prior = previous.get_buffer(previous.get_length())
+			previous.close()
+	# The staged bytes hold the complete new profile. The rename itself replaces the
+	# old target, which is never removed first, so a failed replace leaves the
+	# previously accepted profile intact.
+	if DirAccess.rename_absolute(staged, path) != OK:
+		DirAccess.remove_absolute(staged)
+		return false
+	# A fresh readback of the published file proves later runs load exactly the new
+	# progress, never stale or partial bytes.
+	var published := FileAccess.open(path, FileAccess.READ)
+	if published == null:
+		_undo_replaced_publish(path, had_prior, prior)
+		return false
+	var readback := published.get_buffer(published.get_length())
+	published.close()
+	if readback == payload.to_utf8_buffer():
+		return true
+	# A readback that fails its proof after the replace is still a failed publish:
+	# the previously accepted profile goes back byte for byte.
+	_undo_replaced_publish(path, had_prior, prior)
+	return false
+
+
+## A staged candidate only counts when its fresh readback holds the complete bytes
+## and parses into exactly the expected progress. JSON reads whole numbers as
+## floats, so the values are compared as the integer progress they must carry.
+static func _staged_profile_matches(staged: String, payload: String, after: Dictionary) -> bool:
+	var file := FileAccess.open(staged, FileAccess.READ)
+	if file == null:
+		return false
+	var readback := file.get_buffer(file.get_length())
+	file.close()
+	if readback != payload.to_utf8_buffer():
+		return false
+	var parsed: Variant = JSON.parse_string(readback.get_string_from_utf8())
+	if not parsed is Dictionary or parsed.size() != after.size():
+		return false
+	for key in after:
+		if not (parsed.get(key) is float or parsed.get(key) is int) or int(parsed[key]) != int(after[key]):
+			return false
+	return true
+
+
+## Best-effort rollback of a publish whose final verification failed after the
+## replace: put the previously accepted profile's exact bytes back, or remove the
+## published file again when no prior profile existed.
+static func _undo_replaced_publish(path: String, had_prior: bool, prior: PackedByteArray) -> void:
+	if not had_prior:
+		DirAccess.remove_absolute(path)
+		return
+	if prior.is_empty():
+		return
+	var restored := FileAccess.open(path, FileAccess.WRITE)
+	if restored == null:
+		return
+	restored.store_buffer(prior)
+	restored.close()
