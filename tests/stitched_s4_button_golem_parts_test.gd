@@ -249,10 +249,10 @@ func _test_catalog() -> void:
 
 
 ## AC1/AC2: S14 gives each hero four fixed signature abilities and retires part-granted moves, so
-## all four starter Button Golem patch texts and the two obsolete alternate move descriptions
-## now describe the sewn-on buttons, felt and thread instead of promising the old part actions.
-## Both ids, slots, stats and every legacy mechanic field stay as authored; only the top-level
-## `text` strings changed.
+## all eight Button Golem patch texts (four starters and four alternates) now describe the
+## sewn-on buttons, felt and thread instead of promising the old part actions. Both ids, slots,
+## stats and every legacy mechanic field stay as authored; only the top-level `text` strings
+## changed.
 func _test_s14_patch_text() -> void:
 	var catalog := _catalog()
 	_check(bool(catalog.get("ok", false)),
@@ -266,11 +266,14 @@ func _test_s14_patch_text() -> void:
 		STARTERS["legs"]: "Two slate-blue felt threadwheels are stitched to the Golem's stubby boots, each with a brass button hub and loose walnut thread tails.",
 		ALTERNATES["head"]: "A stretched buttonhole gapes in the Golem's walnut-felt brow patch, tied at its edges by thick slate-blue stitches and a brass pin.",
 		ALTERNATES["arms"]: "A fan of loose brass buttons is sewn across the Golem's bulky walnut-felt sleeve, each hole crossed by thick slate-blue thread.",
+		ALTERNATES["torso"]: "A ring of brass eyelets pins a broad walnut-felt chest flap to the Golem's slate-blue quilting, with coarse thread crossing each hole.",
+		ALTERNATES["legs"]: "Two oversized brass buttons sit along the Golem's stubby slate-blue ankle cuffs, their walnut thread loops curling like little wheels.",
 	}
 	var slots := {
 		STARTERS["head"]: "head", STARTERS["arms"]: "arms",
 		STARTERS["torso"]: "torso", STARTERS["legs"]: "legs",
 		ALTERNATES["head"]: "head", ALTERNATES["arms"]: "arms",
+		ALTERNATES["torso"]: "torso", ALTERNATES["legs"]: "legs",
 	}
 	# The fabric details each corrected patch description must actually name.
 	var motifs := {
@@ -279,12 +282,18 @@ func _test_s14_patch_text() -> void:
 			"thread tails"],
 		ALTERNATES["head"]: ["buttonhole", "walnut-felt", "slate-blue stitches"],
 		ALTERNATES["arms"]: ["brass buttons", "walnut-felt sleeve", "slate-blue thread"],
+		ALTERNATES["torso"]: ["brass eyelets", "walnut-felt chest flap", "slate-blue quilting",
+			"thread", "hole"],
+		ALTERNATES["legs"]: ["brass buttons", "slate-blue ankle cuffs", "walnut thread loops",
+			"wheels"],
 	}
 	var old_sentences := [
 		"Pop a loose button to Mark a front foe for a later hit.",
 		"Punch a front foe with a button fist; a Mark makes the hit stronger.",
 		"Restitch the seams into prickly Thorns, not a Block counter.",
 		"Roll back one rank, swapping the adjacent ally and gaining temporary Dodge.",
+		"Protect one ally by intercepting their blows with Guard.",
+		"Roll forward one rank and swap with the adjacent ally; gain temporary Dodge.",
 	]
 	# Wording the retired part actions used to advertise.
 	var legacy_phrases := ["pop a loose button", "punch a front", "for a later",
@@ -367,7 +376,7 @@ func _test_s14_patch_text() -> void:
 		and str(StitchedParts.ability_at_tier(legs, 1)["id"])
 			== "button_golem_legs_threadwheel_roll_move",
 		"AC3: the corrected torso and legs patches keep their legacy ability ids")
-	# The two alternate patch texts sit beside frozen S13 compatibility records: ids, names,
+	# The four alternate patch texts sit beside frozen S13 compatibility records: ids, names,
 	# owners, slots, slot stats, base ability dictionaries and tier overrides stay unchanged.
 	var raw := _raw_parts_by_id()
 	_check(not raw.is_empty(), "AC3: raw Button Golem JSON parses for the frozen alternates")
@@ -397,6 +406,33 @@ func _test_s14_patch_text() -> void:
 			"tiers": {
 				"2": {"ability": {"dmg": [3, 4], "mark_damage": 3}},
 				"3": {"ability": {"dmg": [4, 6], "mark_damage": 4}},
+			},
+		},
+		ALTERNATES["torso"]: {
+			"name": "Eyelet Guard", "slot": "torso", "stat": {"max_hp": 5, "prot": 5},
+			"ability": {
+				"id": "button_golem_torso_eyelet_guard_move", "name": "Eyelet Guard",
+				"kind": "guard", "launch": [1, 2, 3], "target": [1, 2, 3, 4],
+				"target_side": "ally", "multi": false, "acc": 100, "dmg": [0, 0],
+				"crit": 0, "effects": {"guard": 2}, "self_move": 0, "move": "guard",
+			},
+			"tiers": {
+				"2": {"stat": {"max_hp": 7, "prot": 6}, "ability": {"effects": {"guard": 3}}},
+				"3": {"stat": {"max_hp": 9, "prot": 8}, "ability": {"effects": {"guard": 4}}},
+			},
+		},
+		ALTERNATES["legs"]: {
+			"name": "Button Roll", "slot": "legs", "stat": {"dodge": 5},
+			"ability": {
+				"id": "button_golem_legs_button_roll_move", "name": "Button Roll",
+				"kind": "move", "launch": [2, 3, 4], "target": [2, 3, 4],
+				"target_side": "self", "multi": false, "acc": 100, "dmg": [0, 0],
+				"crit": 0, "effects": {"dodge": 5, "duration": 2}, "self_move": -1,
+				"move": "skill",
+			},
+			"tiers": {
+				"2": {"ability": {"effects": {"dodge": 7, "duration": 2}}},
+				"3": {"ability": {"effects": {"dodge": 10, "duration": 3}}},
 			},
 		},
 	}
