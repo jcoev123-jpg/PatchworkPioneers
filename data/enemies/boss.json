@@ -203,7 +203,7 @@
           "acc": 80,
           "dmg": [4, 6],
           "crit": 0,
-          "effects": {"pull": 1},
+          "effects": {"pull": 1, "fray": 6},
           "self_move": 0,
           "move": "attack3"
         },
