@@ -64,9 +64,18 @@ const ALL_PART_IDS := [
 	"rag_duelist_legs_cape_slip",
 	"rag_duelist_legs_cape_flourish",
 ]
+## The two legs patches are the only wearables whose slot stat climbs with the stitch tier: tiers
+## II and III add persistent Dodge over the tier-I record. Every other part keeps one stat.
+const TIER_STATS := {
+	"rag_duelist_legs_cape_slip": [{"dodge": 6}, {"dodge": 8}, {"dodge": 10}],
+	"rag_duelist_legs_cape_flourish": [
+		{"speed": 1, "dodge": 5}, {"speed": 1, "dodge": 7}, {"speed": 1, "dodge": 9},
+	],
+}
 
 ## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
-## indexed by tier - 1; the slot stat is constant across the three stitch tiers.
+## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
+## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
 const EXPECTED := {
 	"rag_duelist_head_feather_feint": {
 		"name": "Feather Feint", "slot": "head", "stat": {"acc": 4},
@@ -179,6 +188,7 @@ var _cached_catalog: Dictionary = {}
 func _initialize() -> void:
 	_test_catalog()
 	_test_tiers()
+	_test_legs_tier_stats()
 	_test_lunge_mark_contract()
 	_test_flourish_catalog()
 	_test_cape_slip_text()
@@ -335,8 +345,11 @@ func _test_tiers() -> void:
 				_check(false, "AC1: " + tag + " resolves its ability")
 				continue
 			_check(bool(StitchedParts.validate_ability(ability).get("ok", false)), "AC1: " + tag + " ability validates")
-			_check(_int_dict(stat) == _int_dict(spec["stat"]),
-				"AC1: " + tag + " keeps the slot-legal stat " + str(spec["stat"]))
+			# The two named legs patches are the only exception to the tier-constant stat; their
+			# full ladders are asserted independently in _test_legs_tier_stats.
+			var expected_stat := _expected_stat(part_id, tier)
+			_check(_int_dict(stat) == _int_dict(expected_stat),
+				"AC1: " + tag + " keeps the slot-legal stat " + str(expected_stat))
 			for key in stat:
 				_check(str(key) in StitchedParts.SLOT_STATS[slot],
 					"AC1: " + tag + " stat " + str(key) + " belongs in the " + slot + " slot")
@@ -407,6 +420,108 @@ func _test_tiers() -> void:
 				"AC1: %s tier %d really overrides its own damage or effects" % [part_id, tier])
 			previous_dmg = dmg
 			previous_effects = effects
+
+
+# ---------------------------------------------------------------- AC1: the two legs tier stat ladders
+
+## Only the Cape Slip starter and the Cape Flourish alternative gain persistent Dodge at stitch
+## tiers II and III: this asserts each complete per-tier stat dictionary by named id, that the
+## raw authored file carries exactly those two new stat overrides beside the untouched ability
+## overrides, and that the other six parts keep one tier-constant stat.
+func _test_legs_tier_stats() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the catalog loads for the two legs tier-stat ladders")
+	if not bool(catalog.get("ok", false)):
+		return
+	var slip_id := str(STARTER_PARTS["legs"])
+	var flourish_id := str(ALTERNATE_PARTS["legs"])
+	_check(slip_id == "rag_duelist_legs_cape_slip" and flourish_id == "rag_duelist_legs_cape_flourish",
+		"AC1: the ladders name Cape Slip and Cape Flourish by id, never by list position")
+	for part_id in TIER_STATS:
+		var id := str(part_id)
+		_check(catalog["by_id"].has(id), "AC1: the catalog authors the ladder part " + id)
+		if not catalog["by_id"].has(id):
+			continue
+		var part: Dictionary = catalog["by_id"][id]
+		var ladder: Array = TIER_STATS[id]
+		_check(_int_dict(part["stat"]) == _int_dict(ladder[0]),
+			"AC1: %s keeps its unchanged tier-I base stat %s" % [id, str(ladder[0])])
+		for tier in [1, 2, 3]:
+			var stat := StitchedParts.stat_at_tier(part, tier)
+			_check(_int_dict(stat) == _int_dict(ladder[tier - 1]),
+				"AC1: %s tier %d stat is exactly %s" % [id, tier, str(ladder[tier - 1])])
+			for key in stat:
+				_check(str(key) in StitchedParts.SLOT_STATS["legs"],
+					"AC1: %s tier %d stat %s belongs in the legs slot" % [id, tier, str(key)])
+	# Cape Slip's persistent Dodge climbs 6/8/10 with no other stat at any tier.
+	var slip: Dictionary = catalog["by_id"][slip_id]
+	for tier in [1, 2, 3]:
+		var slip_stat := StitchedParts.stat_at_tier(slip, tier)
+		_check(slip_stat.size() == 1 and int(slip_stat.get("dodge", -1)) == 6 + 2 * (tier - 1),
+			"AC1: Cape Slip tier %d grants only Dodge %d" % [tier, 6 + 2 * (tier - 1)])
+	# Cape Flourish inherits the base SPEED +1 unchanged while its Dodge climbs 5/7/9.
+	var flourish: Dictionary = catalog["by_id"][flourish_id]
+	for tier in [1, 2, 3]:
+		var flourish_stat := StitchedParts.stat_at_tier(flourish, tier)
+		_check(int(flourish_stat.get("speed", 0)) == 1,
+			"AC1: Cape Flourish keeps exactly +1 SPEED at tier %d" % tier)
+		_check(int(flourish_stat.get("dodge", -1)) == 5 + 2 * (tier - 1),
+			"AC1: Cape Flourish tier %d grants Dodge %d" % [tier, 5 + 2 * (tier - 1)])
+	# The raw authored file: only the two legs records put a stat dictionary in tiers II and III,
+	# and their ability overrides are the ones they already had.
+	var raw: Variant = _read_json(PARTS_PATH)
+	var raw_by_id := {}
+	if raw is Dictionary and raw.get("parts") is Array:
+		for entry in raw["parts"]:
+			if entry is Dictionary:
+				raw_by_id[str(entry.get("id", ""))] = entry
+	else:
+		_check(false, "AC1: the parts file parses as a JSON object for the raw tier overrides")
+	for part_id in ALL_PART_IDS:
+		var entry: Dictionary = raw_by_id.get(part_id, {})
+		_check(not entry.is_empty(), "AC1: the raw parts file still authors " + part_id)
+		if entry.is_empty():
+			continue
+		var overrides: Dictionary = entry.get("tiers", {})
+		var spec: Dictionary = EXPECTED[part_id]
+		var expects_stat: bool = TIER_STATS.has(part_id)
+		for tier_key in ["2", "3"]:
+			var override: Dictionary = overrides.get(tier_key, {})
+			_check(not override.is_empty(), "AC1: raw %s authors tier %s" % [part_id, tier_key])
+			_check(override.has("stat") == expects_stat,
+				"AC1: only the two legs patches author a raw tier-%s stat override: %s"
+					% [tier_key, part_id])
+			if not expects_stat:
+				continue
+			var expected: Dictionary = TIER_STATS[part_id][int(tier_key) - 1]
+			var expected_dodge := int(expected.get("dodge", -1))
+			var raw_stat: Dictionary = override.get("stat", {})
+			_check(raw_stat.size() == 1 and _int_dict(raw_stat) == {"dodge": expected_dodge},
+				"AC1: raw %s tier %s overrides only Dodge %d, never SPEED"
+					% [part_id, tier_key, expected_dodge])
+			var ability_override: Dictionary = override.get("ability", {})
+			_check(override.size() == 2 and ability_override.size() == 1
+				and ability_override.has("effects"),
+				"AC1: raw %s tier %s keeps only its existing effects ability override"
+					% [part_id, tier_key])
+			_check(_int_dict(ability_override.get("effects", {}))
+				== _int_dict(spec["effects"][int(tier_key) - 1]),
+				"AC1: raw %s tier %s ability effects are unchanged" % [part_id, tier_key])
+		_check(_int_dict(entry.get("stat", {})) == _int_dict(spec["stat"]),
+			"AC1: raw %s keeps its unchanged base stat" % part_id)
+
+
+## The expected stat for one part at one tier: the explicit legs ladders, or the tier-constant
+## authored slot stat for the other six wearables.
+func _expected_stat(part_id: String, tier: int) -> Dictionary:
+	if TIER_STATS.has(part_id):
+		var ladder: Array = TIER_STATS[part_id]
+		var ladder_stat: Dictionary = ladder[tier - 1]
+		return ladder_stat
+	var spec: Dictionary = EXPECTED[part_id]
+	var base_stat: Dictionary = spec["stat"]
+	return base_stat
 
 
 # ---------------------------------------------------------------- AC1: Rapier Lunge Mark payoff contract
@@ -888,6 +1003,36 @@ func _test_live_stats() -> void:
 				"AC3: " + tag + " reaches live SPEED")
 			_check(int(hero["dodge"]) == DUELIST_DODGE + int(totals["dodge"]),
 				"AC3: " + tag + " reaches live DODGE")
+	# AC2: independent real-actor witness for the two legs patches. The living Duelist's persistent
+	# Dodge must be the fixture base 4 plus the explicit ladder value plus only the S13 hidden
+	# bonus, so a tier override that never reaches the battle cannot pass this check.
+	for part_id in TIER_STATS:
+		var legs_id := str(part_id)
+		for tier in [1, 2, 3]:
+			var tag := "worn %s tier %d" % [legs_id, tier]
+			var battle := _build_battle(11, tier, _kit_for(legs_id), 0, false)
+			if battle == null:
+				_check(false, "AC2: the shipped preview builds with the " + tag)
+				continue
+			var hero := battle.get_unit(OWNER)
+			_check(str(hero["parts"]["legs"]["id"]) == legs_id
+				and int(hero["parts"]["legs"]["tier"]) == tier,
+				"AC2: the live Duelist really wears the " + tag)
+			var hidden := StitchedSewnPatches.hidden_bonus(
+				OWNER, hero["parts"], hero.get("patch_wear", {}))
+			var ladder_stat: Dictionary = TIER_STATS[legs_id][tier - 1]
+			var expected_dodge := DUELIST_DODGE + int(ladder_stat.get("dodge", 0)) \
+				+ int(hidden.get("dodge", 0))
+			_check(int(hero["dodge"]) == expected_dodge,
+				"AC2: " + tag + " reaches exactly live DODGE %d" % expected_dodge)
+			var expected_speed := DUELIST_SPEED + int(ladder_stat.get("speed", 0)) \
+				+ int(hidden.get("speed", 0))
+			_check(int(hero["speed"]) == expected_speed,
+				"AC2: " + tag + " reaches exactly live SPEED %d" % expected_speed)
+			_check(int(hero["dodge"]) == DUELIST_DODGE
+				+ int(StitchedParts.stat_at_tier(_catalog()["by_id"][legs_id], tier).get("dodge", 0))
+				+ int(hidden.get("dodge", 0)),
+				"AC2: " + tag + " live DODGE matches the resolved tier stat and only the hidden bonus")
 
 
 # ---------------------------------------------------------------- AC2: every part on real turns
