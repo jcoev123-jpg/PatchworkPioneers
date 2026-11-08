@@ -171,7 +171,7 @@ func _coat_quote_checks() -> void:
 	var rows := {"quilted_coat": [100, 6], "padded_vest": [80, 4],
 		"double_quilt_coat": [100, 8], "scrap_lined_vest": [70, 3],
 		"wool_patch_cloak": [90, 5], "chain_stitched_coat": [100, 7],
-		"reinforced_patchcoat": [100, 9], "thick_felt_mantle": [130, 10]}
+		"reinforced_patchcoat": [100, 9], "thick_felt_mantle": [110, 10]}
 	var authored: Dictionary = RunStitchedPeddlerStock._authored_patches()
 	var coat_defs := {}
 	for record in JSON.parse_string(FileAccess.get_file_as_string(
@@ -220,7 +220,7 @@ func _coat_quote_checks() -> void:
 		witnessed += 1
 	_check(witnessed == rows.size(), "all eight coat quotes were exercised")
 	# One genuinely affordable purchase charges its price once and rejects replay.
-	var buy_offer := {"id": "thick_felt_mantle", "price": 130}
+	var buy_offer := {"id": "thick_felt_mantle", "price": 110}
 	var service := RunStitchedPeddlerStock.open_stitched("coat_buy", 200, [], buy_offer)
 	var before := service.read_state()
 	var forged := before.duplicate(true)
@@ -229,8 +229,8 @@ func _coat_quote_checks() -> void:
 		and not service.buy_patch("thick_felt_mantle", "other", before).ok
 		and service.read_state() == before, "forged or wrong-node buy refuses without spend")
 	var receipt := service.buy_patch("thick_felt_mantle", "coat_buy", before)
-	_check(receipt.get("ok", false) and receipt.charged_gold == 130 and receipt.price == 130
-		and receipt.gold == 70 and receipt.ledger.gold == 70
+	_check(receipt.get("ok", false) and receipt.charged_gold == 110 and receipt.price == 110
+		and receipt.gold == 90 and receipt.ledger.gold == 90
 		and receipt.ledger.owned_patch_ids == ["thick_felt_mantle"]
 		and not receipt.has("max_hp_bonus") and not receipt.has("hp"),
 		"affordable coat charges its authored price once with the unchanged receipt")
@@ -258,7 +258,7 @@ func _card_free_source_checks() -> void:
 		"thick_felt_mantle": 10}
 	var expected_price := {"scrap_lined_vest": 70, "padded_vest": 80, "wool_patch_cloak": 90,
 		"quilted_coat": 100,"chain_stitched_coat": 100, "double_quilt_coat": 100,
-		"reinforced_patchcoat": 100, "thick_felt_mantle": 130}
+		"reinforced_patchcoat": 100, "thick_felt_mantle": 110}
 	var retired := ["stitched_badge", "spare_spool", "button_eye", "pincushion_arm",
 		"switchback_button", "bloodstitch_bonnet", "button_glass_visor", "stern_seam_cap",
 		"reinforced_browband", "hemguard_cuff", "red_bobbin_cuff", "loose_thread_glove",
