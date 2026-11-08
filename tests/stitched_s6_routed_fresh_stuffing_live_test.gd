@@ -470,6 +470,64 @@ func _buy(app: Node, hero_id: String) -> void:
 	await _save_reload(app, "post-purchase map")
 
 
+## AC1 regression: remount the SAME visit without any state change, emit the old
+## purchase and Leave buttons, and prove no phase, wallet, pocket, RNG, receipt or
+## journal mutation; the freshly remounted controls then finish the real scenario.
+func _remount_same_visit(app: Node) -> void:
+	if not await _await_controls(app, "visit", "Peddler"):
+		return
+	var session: StitchedRunSession = app.stitched_run_session
+	if session == null or session.phase != "visit" or str(session.pending.get("service", "")) != "Peddler":
+		return
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	var rng_state := session.rng.state
+	var wallet := session.gold
+	var pockets := session.pockets.duplicate(true)
+	var receipts := session.receipts.duplicate(true)
+	var old_page: Control = app.stitched_run_panel
+	var old_buttons: Array = app.stitched_run_buttons.duplicate()
+	var old_buy := _visit_button(app, "buy_fresh_stuffing", ["warden"])
+	var old_leave := _visit_button(app, "leave")
+	_check(old_buy != null and not old_buy.disabled and wallet >= 10,
+		"earned Peddler mounts an enabled old purchase control before the remount")
+	_check(old_leave != null and not old_leave.disabled,
+		"earned Peddler mounts an enabled old Leave control before the remount")
+	if old_buy == null or old_leave == null:
+		return
+	# Remount the very same visit: the session object and its sealed snapshot stay.
+	app._present_stitched_run()
+	_check(app.stitched_run_session == session and session.snapshot() == before and session.journal == journal,
+		"same-visit remount keeps the original session and sealed snapshot unchanged")
+	_check(is_instance_valid(app.stitched_run_panel) and app.stitched_run_panel != old_page
+		and app.stitched_run_panel.is_visible_in_tree() and app.stitched_run_panel.get_parent() == app,
+		"the remount mounted a genuinely fresh attached page over the old one")
+	# The detached pre-remount controls are still retained objects: emit them all,
+	# then the old purchase and Leave again, before any deferred freeing.
+	for button in old_buttons:
+		if is_instance_valid(button):
+			button.pressed.emit()
+	old_buy.pressed.emit()
+	old_leave.pressed.emit()
+	_check(session.phase == "visit" and str(session.pending.get("service", "")) == "Peddler"
+		and session.snapshot() == before and session.journal == journal
+		and session.gold == wallet and session.pockets == pockets
+		and session.rng.state == rng_state and session.receipts == receipts
+		and session.map.export_state() == before.map,
+		"detached purchase and Leave buttons cannot mutate phase, wallet, pockets, RNG, receipts or journal")
+	_check(await _await_controls(app, "visit", "Peddler"),
+		"the remounted same visit mounts fresh valid controls")
+	session = app.stitched_run_session
+	var fresh_buy := _visit_button(app, "buy_fresh_stuffing", ["warden"])
+	var fresh_leave := _visit_button(app, "leave")
+	_check(fresh_buy != null and fresh_leave != null and fresh_buy != old_buy and fresh_leave != old_leave
+		and not fresh_buy.disabled and not fresh_leave.disabled
+		and not app.stitched_run_buttons.has(old_buy) and not app.stitched_run_buttons.has(old_leave),
+		"fresh purchase and Leave controls replace the detached pre-remount ones")
+	_check(session.phase == "visit" and session.snapshot() == before and session.journal == journal,
+		"reacquiring the fresh controls changes nothing; the real buys press them next")
+
+
 func _earned_cap_route() -> void:
 	var app: Node = await _new_run(201)
 	var session: StitchedRunSession = app.stitched_run_session
@@ -500,6 +558,9 @@ func _earned_cap_route() -> void:
 			shops += 1
 			_stuffing_controls(app)
 			_reject_choices(session)
+			if shops == 1:
+				await _remount_same_visit(app)
+				session = app.stitched_run_session
 			if shops <= 2:
 				_check(fights == 3 and session.gold >= 10, "three genuine victories funded this purchase")
 				var stale_button := _visit_button(app, "buy_fresh_stuffing", ["warden"])

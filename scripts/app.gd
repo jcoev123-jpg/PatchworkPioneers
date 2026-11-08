@@ -4962,9 +4962,20 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 
 func _stitched_visit_choices(session: StitchedRunSession, choices_box: VBoxContainer, expected: Dictionary) -> Array[Button]:
 	var made: Array[Button] = []
+	# Ownership guard: each choice captures its page, epoch, service and session at
+	# creation. A detached or remounted page's buttons never dispatch, even when the
+	# original session and its sealed snapshot are unchanged.
+	var page := stitched_run_panel
+	var epoch := _stitched_run_epoch
+	var service := str(session.pending.get("service", "Event"))
 	for action in session.visit_actions():
 		var button := _stitched_run_action(choices_box, str(action.text), func():
-			if stitched_run_session == session and session.choose_visit(action.id, action.arguments, expected):
+			if stitched_run_session == session and stitched_run_panel == page \
+					and epoch == _stitched_run_epoch and is_instance_valid(page) \
+					and page.get_parent() == self and page.is_visible_in_tree() \
+					and session.phase == "visit" \
+					and str(session.pending.get("service", "Event")) == service \
+					and session.choose_visit(action.id, action.arguments, expected):
 				_present_stitched_run(), action.enabled)
 		made.append(button)
 		button.custom_minimum_size = Vector2(0, 44)
