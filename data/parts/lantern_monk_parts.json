@@ -222,7 +222,7 @@
               "guard": 3
             }
           },
-          "text": "Plant the lantern pole to Guard one ally for three turns, taking its blows."
+          "text": "A little robed doll huddles under a slanted cloth shelter beside a hanging lantern, sewn in dark stitches on cream fabric."
         },
         "3": {
           "ability": {
@@ -236,10 +236,10 @@
               "guard": 4
             }
           },
-          "text": "Plant the lantern pole to Guard one ally for four turns, even from rear rank 4, taking its blows."
+          "text": "A little robed doll huddles under a slanted cloth shelter beside a hanging lantern, sewn in dark stitches on cream fabric."
         }
       },
-      "text": "Plant the lantern pole to Guard one ally for two turns, taking its blows."
+      "text": "A little robed doll huddles under a slanted cloth shelter beside a hanging lantern, sewn in dark stitches on cream fabric."
     },
     {
       "id": "lantern_monk_head_moth_cloud",
@@ -478,7 +478,7 @@
           }
         }
       },
-      "text": "Wrap one ally in a fluttering moth shroud, granting temporary Dodge for two turns."
+      "text": "A button-eyed doll curls inside swirling cloth strips while tiny moths flutter above it on a deep plum sewn patch."
     }
   ]
 }

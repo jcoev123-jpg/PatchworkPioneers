@@ -20,6 +20,10 @@ const IDS := [
 	"lantern_monk_head_moth_cloud", "lantern_monk_arms_snuff_flame",
 	"lantern_monk_torso_vigil_ring", "lantern_monk_legs_moth_shroud",
 ]
+## S14 sewn-cloth copy: the two leg patches describe the fabric art the player sees, not the
+## retired S4 part-granted combat move. Both tier text overrides repeat the Pole Shelter sentence.
+const POLE_SHELTER_COPY := "A little robed doll huddles under a slanted cloth shelter beside a hanging lantern, sewn in dark stitches on cream fabric."
+const MOTH_SHROUD_COPY := "A button-eyed doll curls inside swirling cloth strips while tiny moths flutter above it on a deep plum sewn patch."
 ## The parts this task must leave frozen: base ability shape, slot stat and label.
 ## Lamplight Wash and Moth Cloud are the two rear-rank parts and have their own contracts.
 const FROZEN_PARTS := {
@@ -89,6 +93,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_patch_copy()
+	_test_leg_patch_copy()
 	_test_lamplight_wash_launch()
 	_test_wick_spark_launch()
 	_test_moth_cloud_fourth_rank()
@@ -315,6 +320,71 @@ func _test_patch_copy() -> void:
 		for phrase in obsolete:
 			_check(not text.to_lower().contains(str(phrase)),
 				"AC1: named patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
+
+
+## S14 leg patch identity copy: both Lantern Monk leg patches describe the sewn cloth art the
+## player actually sees, never a retired part-granted combat move. Every player-facing string is
+## looked up by named ID (never list position) and must stay free of Guard/Dodge/rank/target
+## promises, while the authored tier ability data keeps the real S4 mechanics.
+func _test_leg_patch_copy() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named leg patch copy checks")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["legs"]: {
+			"name": "Pole Shelter", "stat": {"speed": 1, "dodge": 3},
+			"text": POLE_SHELTER_COPY,
+			"nouns": ["robed doll", "cloth shelter", "lantern", "cream"],
+		},
+		ALTERNATES["legs"]: {
+			"name": "Moth Shroud", "stat": {"speed": 1, "dodge": 4},
+			"text": MOTH_SHROUD_COPY,
+			"nouns": ["button-eyed", "cloth", "moths", "plum"],
+		},
+	}
+	var forbidden := RegEx.new()
+	_check(forbidden.compile("\\b(guard|dodge|heal|attack|enemy|ally|target|rank|turn|damage|duration|card|tier)\\b") == OK,
+		"AC3: combat-promise word pattern compiles")
+	_check(forbidden.search("guard one ally for two turns") != null,
+		"AC3: the combat-promise pattern really rejects an old Guard sentence")
+	for id in expected:
+		var want: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: named leg patch record present: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["name"]) == str(want["name"]) and str(part["owner"]) == "lantern_monk"
+			and str(part["slot"]) == "legs" and part["stat"] == want["stat"],
+			"AC1: leg patch keeps its name, owner, legs slot and stat: " + id)
+		var text := str(part["text"])
+		_check(text == str(want["text"]),
+			"AC1: leg patch base copy is exactly the authored cloth sentence: " + id)
+		for noun in want["nouns"]:
+			_check(text.to_lower().contains(str(noun)),
+				"AC1: leg patch copy names the icon motif '%s': %s" % [str(noun), id])
+		var fields := {id + " base": text}
+		var tiers: Dictionary = part.get("tiers", {})
+		for tier in ["2", "3"]:
+			if tiers.has(tier) and tiers[tier].has("text"):
+				fields[id + " tier " + tier] = str(tiers[tier]["text"])
+		for label in fields:
+			_check(forbidden.search(str(fields[label]).to_lower()) == null,
+				"AC3: no combat-promise word in %s: %s" % [str(label), str(fields[label])])
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a blank leg patch base text still fails closed: " + id)
+	var pole: Dictionary = cat["by_id"][STARTERS["legs"]]
+	var pole_tiers: Dictionary = pole.get("tiers", {})
+	for tier in ["2", "3"]:
+		_check(pole_tiers.has(tier) and pole_tiers[tier].has("text")
+			and str(pole_tiers[tier]["text"]) == POLE_SHELTER_COPY,
+			"AC1: Pole Shelter tier %s text is the same neutral cloth sentence" % tier)
+		var blank_tier: Dictionary = pole.duplicate(true)
+		blank_tier["tiers"][tier]["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank_tier).get("ok", false)),
+			"AC3: a blank Pole Shelter tier %s text still fails closed" % tier)
 
 
 ## The starter torso launches from hero ranks 2-4 with an all-ally multi heal. Every field,
@@ -1372,8 +1442,8 @@ func _test_rank4_moth_shroud(
 			"%s: Moth Shroud tier %d never targets rank %d" % [label, tier, rank])
 	_check(StitchedParts.stat_at_tier(part, tier) == {"speed": 1, "dodge": 4},
 		"%s: Moth Shroud tier %d keeps its authored slot stat" % [label, tier])
-	_check(str(part["text"]) == "Wrap one ally in a fluttering moth shroud, granting temporary Dodge for two turns.",
-		"%s: Moth Shroud keeps its current short rules text" % label)
+	_check(str(part["text"]) == MOTH_SHROUD_COPY,
+		"%s: Moth Shroud describes its sewn plum moth patch, not a combat move" % label)
 	_check(part["ability"]["launch"] == rear_launch and part["ability"]["target"] == [1, 2, 3, 4]
 		and int(part["ability"]["effects"]["dodge"]) == 10,
 		"%s: tier reads never replace Moth Shroud's base fields in memory" % label)
@@ -1539,8 +1609,8 @@ func _test_pole_shelter_rear_launch() -> void:
 		and str(part["ability"]["id"]) == "lantern_monk_legs_pole_shelter_move"
 		and part["stat"] == {"speed": 1, "dodge": 3},
 		"AC1: Pole Shelter keeps its id, name, legs slot, owner, ability id and +1 SPEED/+3 DODGE stat")
-	_check(str(part["text"]) == "Plant the lantern pole to Guard one ally for two turns, taking its blows.",
-		"AC1: Pole Shelter keeps its authored short rules text")
+	_check(str(part["text"]) == POLE_SHELTER_COPY,
+		"AC1: Pole Shelter describes its sewn cream shelter patch, not a combat move")
 	var expected_guard := {1: 2, 2: 3, 3: 4}
 	for tier in [1, 2, 3]:
 		var ability := StitchedParts.ability_at_tier(part, tier)
@@ -1590,11 +1660,10 @@ func _test_pole_shelter_rear_launch() -> void:
 		"AC3: a tier-III Pole Shelter override with rank 5 still fails validation")
 
 
-## AC1/AC2: Pole Shelter's misleading higher-tier rules text is repaired with authored tier
-## overrides on the one existing record. Tier I keeps the accurate two-turn base sentence,
-## tier II reads three turns and tier III reads four turns plus the extra rear-rank-4 launch.
-## The numeric ability is untouched: Guard 2/3/4 is a longer duration, the launch masks stay
-## [1,2,3]/[1,2,3]/[1,2,3,4] and the ally target ranks stay 1-4 for a single guarded ally.
+## AC1/AC2: both of Pole Shelter's authored tier text overrides now repeat the same neutral
+## sewn-cloth sentence as its base record: S14 keeps the legacy Guard numbers as compatibility
+## data, never as player promises. The numeric ability is untouched: Guard 2/3/4, the launch
+## masks [1,2,3]/[1,2,3]/[1,2,3,4] and the ally target ranks 1-4 for a single guarded ally.
 func _test_pole_shelter_tier_text() -> void:
 	var cat := StitchedParts.load_catalog(CATALOG_PATH)
 	_check(bool(cat.get("ok", false)),
@@ -1608,18 +1677,17 @@ func _test_pole_shelter_tier_text() -> void:
 	if part.is_empty():
 		return
 	var base_text := str(part.get("text", ""))
-	_check(base_text == "Plant the lantern pole to Guard one ally for two turns, taking its blows.",
-		"AC1: tier-I base text stays the accurate two-turn Guard sentence")
+	_check(base_text == POLE_SHELTER_COPY,
+		"AC1: tier-I base text is the neutral sewn-shelter description")
 	var tiers: Dictionary = part.get("tiers", {})
-	var expected_words := {1: "two turns", 2: "three turns", 3: "four turns"}
-	var stale_words := {
-		1: ["three turns", "four turns", "rear rank 4"],
-		2: ["two turns", "four turns", "rear rank 4"],
-		3: ["two turns", "three turns"],
-	}
 	var expected_guard := {1: 2, 2: 3, 3: 4}
 	var expected_launch := {1: [1, 2, 3], 2: [1, 2, 3], 3: [1, 2, 3, 4]}
 	var target_mask := StitchedParts.rank_mask([1, 2, 3, 4])
+	var forbidden := RegEx.new()
+	_check(forbidden.compile("\\b(guard|dodge|heal|attack|enemy|ally|target|rank|turn|damage|duration|card|tier)\\b") == OK,
+		"AC3: combat-promise word pattern compiles for Pole Shelter text")
+	_check(forbidden.search("wrap one ally in a fluttering shroud") != null,
+		"AC3: the combat-promise pattern really rejects the old ally-shroud sentence")
 	for tier in [1, 2, 3]:
 		# Same fallback the schema and the shipped inspectors/cues use: the base text for
 		# tier I, and an authored per-tier "text" override when one exists.
@@ -1628,21 +1696,11 @@ func _test_pole_shelter_tier_text() -> void:
 			_check(tiers.has(str(tier)) and tiers[str(tier)].has("text"),
 				"AC1: Pole Shelter tier %d carries an authored text override" % tier)
 			effective = str(tiers.get(str(tier), {}).get("text", base_text))
-		_check(effective.contains(str(expected_words[tier])),
-			"AC1: Pole Shelter tier %d effective text says %s: %s"
-				% [tier, str(expected_words[tier]), effective])
-		for stale in stale_words[tier]:
-			_check(not effective.to_lower().contains(str(stale)),
-				"AC1: Pole Shelter tier %d text drops the stale claim '%s'" % [tier, str(stale)])
-		if tier == 3:
-			_check(effective.to_lower().contains("rear rank 4"),
-				"AC1: Pole Shelter tier III text credits the extra rear-rank-4 launch")
-		_check(effective.to_lower().contains("one ally"),
-			"AC1: Pole Shelter tier %d text still Guards exactly one ally" % tier)
-		for overreach in ["second", "another ally", "allies", "each ally", "every ally"]:
-			_check(not effective.to_lower().contains(str(overreach)),
-				"AC1: Pole Shelter tier %d text never promises extra guarded allies (%s)"
-					% [tier, str(overreach)])
+		_check(effective == POLE_SHELTER_COPY,
+			"AC1: Pole Shelter tier %d effective text is the neutral cloth sentence: %s"
+				% [tier, effective])
+		_check(forbidden.search(effective.to_lower()) == null,
+			"AC3: Pole Shelter tier %d text promises no combat outcome" % tier)
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var valid := StitchedParts.validate_ability(ability)
 		_check(bool(valid.get("ok", false)),
