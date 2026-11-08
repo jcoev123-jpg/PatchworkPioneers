@@ -1587,6 +1587,24 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "ribbon_bind",
+          "name": "Ribbon Bind",
+          "kind": "debuff",
+          "launch": [1, 2, 3, 4],
+          "target": [1, 2],
+          "target_side": "enemy",
+          "multi": true,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "tangled": 2,
+            "fray": 3
+          },
+          "self_move": 0,
+          "move": "skill"
         }
       ]
     }
