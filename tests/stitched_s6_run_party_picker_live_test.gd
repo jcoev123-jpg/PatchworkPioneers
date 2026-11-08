@@ -118,14 +118,118 @@ func _default(picker: StitchedRunPartyPicker, app: Node) -> void:
 				or art.texture != null)
 			and nameplate != null and nameplate.text.contains(id.replace("_", " ").capitalize()),
 			"authored picture path, readable name, checked and focusable real hit area for " + id)
+	_check_hints(picker, picker.tiles, "mounted default")
 	_check(not app.stitched_run_buttons[0].disabled
 		and app.stitched_run_buttons[0].focus_mode == Control.FOCUS_ALL
 		and app.stitched_run_session == null and app.run_rng == null and app.deck == null,
 		"default picker enables Set out but allocates no run or old deck")
 
 
+## Real pointer motion must land on the original Button, not a new hint control.
+func _hover(tile: Button) -> void:
+	var motion := InputEventMouseMotion.new()
+	motion.position = tile.get_global_rect().get_center()
+	root.push_input(motion, true)
+	await process_frame
+
+
+## Independently reconstruct displayed strings from shipped S14 records rather
+## than comparing the formatter with itself or keeping a second ability table.
+func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context: String) -> void:
+	if picker == null:
+		_check(false, context + ": picker is present for hints")
+		return
+	var catalog := StitchedS14Abilities.kits()
+	_check(not catalog.is_empty(), context + ": validated S14 catalog loads")
+	var sides := {"enemy": "Foe", "ally": "Ally", "self": "Self"}
+	var slots := ["head", "arms", "torso", "legs"]
+	var focusable := 0
+	for child in picker.get_children():
+		if child is Control and child.focus_mode != Control.FOCUS_NONE:
+			focusable += 1
+	_check(picker.get_child_count() == StitchedPartyAdmission.HERO_IDS.size()
+		and focusable == StitchedPartyAdmission.HERO_IDS.size(),
+		context + ": hints add no visible or focusable controls")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var tile: Button = picker.tiles.get(id)
+		var kit: Variant = catalog.get(id)
+		if tile == null or not kit is Dictionary:
+			_check(false, context + ": real tile and validated kit exist for " + id)
+			continue
+		var lines: Array[String] = []
+		for slot in slots:
+			var entry: Variant = kit.get(slot)
+			if not entry is Dictionary or not sides.has(entry.get("target_side", null)):
+				_check(false, context + ": complete authored " + slot + " entry for " + id)
+				continue
+			lines.append("%s — %s · %s" % [
+				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]]])
+		_check(lines.size() == 4 and tile.tooltip_text == "\n".join(lines)
+			and tile.tooltip_text.split("\n").size() == 4,
+			context + ": " + id + " names all four S14 slots and their actual target sides in order")
+		_check(tile == originals.get(id) and tile.name == "HeroTile_" + id
+			and tile.get_meta("hero_id") == id and tile.focus_mode == Control.FOCUS_ALL
+			and tile.get_node_or_null("Portrait") is TextureRect
+			and tile.get_node_or_null("DollName") is Label,
+			context + ": original portrait/name/focusable Button remains attached to " + id)
+	_check(picker.tiles["warden"].tooltip_text.contains("Head — Pot Helm Command · Foe")
+		and picker.tiles["warden"].tooltip_text.contains("Arms — Shield Catch · Ally")
+		and picker.tiles["warden"].tooltip_text.contains("Torso — Iron Challenge · Foe")
+		and picker.tiles["warden"].tooltip_text.contains("Legs — Rim Toss · Foe"),
+		context + ": Warden's four contrasting authored move names are legible")
+	_check(picker.tiles["seamstress"].tooltip_text.contains("Head — Mending Knot · Ally")
+		and picker.tiles["seamstress"].tooltip_text.contains("Arms — Needle Prick · Foe")
+		and picker.tiles["seamstress"].tooltip_text.contains("Torso — Shielding Hem · Ally")
+		and picker.tiles["seamstress"].tooltip_text.contains("Legs — Tether Spools · Foe"),
+		context + ": Seamstress's ally and foe moves are distinguished")
+	_check(picker.tiles["tinker"].tooltip_text.contains("Torso — Casing Ward · Self"),
+		context + ": Tinker's self-only move is labelled Self")
+
+
+func _invalid_hints() -> void:
+	var source := StitchedS14Abilities.kits()
+	_check(not source.is_empty() and source.has("warden") and source.has("tinker"),
+		"negative projections start from genuine validated S14 kits")
+	_check(StitchedPartyKitHints.tooltip("not_a_doll", source) == ""
+		and StitchedPartyKitHints.tooltip("warden", {}) == ""
+		and StitchedPartyKitHints.tooltip("warden", []) == "",
+		"unknown hero, absent kit and invalid source claim no ability names")
+	var bad := source.duplicate(true)
+	bad.erase("warden")
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "missing hero kit fails closed")
+	bad = source.duplicate(true)
+	bad["warden"].erase("legs")
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "incomplete four-slot kit fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["arms"]["slot"] = "head"
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "mismatched slot fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["arms"] = bad["warden"]["head"].duplicate(true)
+	bad["warden"]["arms"]["slot"] = "arms"
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "duplicate move IDs fail closed")
+	bad = source.duplicate(true)
+	bad["warden"]["head"]["target_side"] = "friend"
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "unknown side fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["head"].erase("target_side")
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "missing side fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["torso"]["name"] = ""
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "empty move name fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["legs"]["acc"] = -1
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "invalid S14 ability field fails closed")
+	bad = source.duplicate(true)
+	bad["warden"]["extra_slot"] = bad["warden"]["head"].duplicate(true)
+	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "fifth unexpected slot fails closed")
+	_check(StitchedS14Abilities.kits() == source
+		and not StitchedPartyKitHints.tooltip("warden").is_empty(),
+		"in-memory corruptions neither poison the shipped cache nor prevent later hints")
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
+	_invalid_hints()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
 	var app: Node = (load("res://scenes/app.tscn") as PackedScene).instantiate()
 	_check(app != null, "production res://scenes/app.tscn instantiates")
@@ -149,6 +253,12 @@ func _run() -> void:
 	await process_frame
 	_default(picker, app)
 	var original_tiles: Dictionary = picker.tiles.duplicate()
+	var draft_receipts: Array = []
+	picker.draft_changed.connect(func(picks: Array) -> void: draft_receipts.append(picks.duplicate()))
+	await _hover(original_tiles["warden"])
+	_check(root.gui_get_hovered_control() == original_tiles["warden"]
+		and not original_tiles["warden"].tooltip_text.is_empty(),
+		"physical pointer hovers original Warden Button with a native S14 tooltip")
 	var wallet_before := [app.session_gold, app.run_scraps]
 	var reachable: Dictionary = {}
 	for step in range(StitchedPartyAdmission.HERO_IDS.size() + 3):
@@ -195,6 +305,12 @@ func _run() -> void:
 	_check_order(picker, ["seamstress", "tinker", "lantern_monk"],
 		["warden", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
 		"incomplete draft has pick order but no invented rank receipt")
+	_check(draft_receipts == [["seamstress", "tinker", "lantern_monk"]],
+		"one real Space dispatch emits exactly one unchanged draft_changed receipt")
+	_check_hints(picker, original_tiles, "after physical deselect and reflow")
+	await _hover(original_tiles["warden"])
+	_check(root.gui_get_hovered_control() == original_tiles["warden"],
+		"reflowed original Warden tile still accepts physical pointer hover")
 	# A directly emitted disabled action is also fail-closed, not only a pointer click.
 	app.stitched_run_buttons[0].pressed.emit()
 	_check(app.stitched_run_session == null and app.run_rng == null,
@@ -212,6 +328,12 @@ func _run() -> void:
 	_check_order(picker, expected_ranks,
 		["warden", "scarecrow", "yarn_ranger", "button_golem"],
 		"alternate admitted order visibly differs from the click-order draft")
+	_check(draft_receipts == [["seamstress", "tinker", "lantern_monk"], expected_picks],
+		"physical replacement emits one further stable draft_changed pick-order receipt")
+	_check_hints(picker, original_tiles, "after replacement and canonical rank reorder")
+	await _hover(original_tiles["rag_duelist"])
+	_check(root.gui_get_hovered_control() == original_tiles["rag_duelist"],
+		"reordered original Rag Duelist tile still accepts physical pointer hover")
 	_check(picker.selected_ids() != picker.displayed_rank_ids(),
 		"visible rank order is intentionally distinct from the four-ID draft")
 	for id in StitchedPartyAdmission.HERO_IDS:

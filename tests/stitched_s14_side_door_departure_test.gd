@@ -4,6 +4,7 @@ extends "res://tests/stitched_s14_rules_gate_test.gd"
 
 func _initialize() -> void:
 	_departure()
+	_leg_trade()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_side_door_departure_test: %d checks, %d failures" % [checks, failures.size()])
@@ -121,7 +122,7 @@ func _departure() -> void:
 					continue
 				if offer.cost == "max_hp" and int(hero.base_max_hp) - int(offer.amount) < 10:
 					continue
-				if offer.cost == "limb" and hero.parts.arms.torn:
+				if offer.cost == "limb" and hero.parts.legs.torn:
 					continue
 				claim_hero = hero.id
 				break
@@ -167,3 +168,213 @@ func _departure() -> void:
 			_check(original.settle_battle(original.battle) and original.is_consistent()
 				and not original.choices().is_empty(),
 				"the next ranked battle settles and exposes further legal routes")
+
+
+## The leg bargain is reached from a seeded real Elite victory, never an
+## injected offer. Both eligible and refused claims use the public transaction.
+func _leg_trade() -> void:
+	var session: StitchedRunSession
+	var next_id := ""
+	var hero_id := ""
+	for seed_number in 300:
+		var candidate := StitchedRunSession.start(seed_number)
+		if candidate == null:
+			continue
+		var elite_id := ""
+		for id in candidate.choices():
+			if candidate.map.get_node(id).type == "Elite":
+				elite_id = id
+				break
+		if elite_id.is_empty() or not candidate.enter(elite_id, candidate.snapshot()):
+			continue
+		if not _play_live_battle(candidate) or candidate.battle.outcome() != "victory" \
+				or not candidate.settle_battle(candidate.battle) \
+				or str(candidate.door_offer.get("id", "")) != "underbed_leg_trade":
+			continue
+		var eligible := ""
+		for hero in candidate.heroes:
+			if not hero.lost and int(hero.hp) > 0 and hero.parts.has("legs") \
+					and not hero.parts.legs.torn and not hero.parts.arms.torn:
+				eligible = hero.id
+				break
+		if eligible.is_empty():
+			continue
+		var onward := ""
+		for id in candidate.choices():
+			onward = id
+			break
+		if onward.is_empty():
+			continue
+		session = candidate
+		next_id = onward
+		hero_id = eligible
+		break
+	_check(session != null and not next_id.is_empty() and not hero_id.is_empty(),
+		"real seeded Elite victory offers the exact leg trade to a living doll with an onward route")
+	if session == null:
+		return
+	var offer := session.door_offer.duplicate(true)
+	var door_node := session.map.get_current_node_id()
+	var hero_before: Dictionary = {}
+	for hero in session.heroes:
+		if hero.id == hero_id:
+			hero_before = hero.duplicate(true)
+			break
+	_check(offer.get("id") == "underbed_leg_trade" and offer.get("cost") == "limb"
+		and offer.get("reward") == "silk_patch" and offer.get("node_id") == door_node
+		and session.phase == "map" and session.is_consistent()
+		and not hero_before.is_empty() and not hero_before.lost and int(hero_before.hp) > 0
+		and not hero_before.parts.legs.torn and not hero_before.parts.arms.torn,
+		"authenticated underbed offer and live recipient start with both intact limbs")
+	if hero_before.is_empty():
+		return
+	var saved := StitchedRunSave.capture(session)
+	_check(not saved.is_empty(), "offered live leg bargain captures before any transaction")
+	if saved.is_empty():
+		return
+
+	# An invalid claim must preserve the entire sealed offer, resources,
+	# journal and run RNG, not merely refuse an inventory reward.
+	_assert_leg_refusal(session, "forged_door", hero_id, session.snapshot(),
+		"forged door id fails atomically")
+	_assert_leg_refusal(session, "underbed_leg_trade", "missing_doll", session.snapshot(),
+		"forged recipient fails atomically")
+	var stale := session.snapshot()
+	stale.gold += 1
+	_assert_leg_refusal(session, "underbed_leg_trade", hero_id, stale,
+		"stale expected state fails atomically")
+
+	for blocked_case in ["torn_legs", "lost_doll", "wrong_node", "forged_offer"]:
+		var refused := StitchedRunSave.restore(saved)
+		_check(refused != null, blocked_case + " fixture restores from the actual offered run")
+		if refused == null:
+			continue
+		var victim: Dictionary = {}
+		for hero in refused.heroes:
+			if hero.id == hero_id:
+				victim = hero
+				break
+		_check(not victim.is_empty() and not victim.lost and not victim.parts.legs.torn,
+			blocked_case + " fixture begins with an eligible live hero")
+		if victim.is_empty():
+			continue
+		match blocked_case:
+			"torn_legs":
+				victim.parts.legs.torn = true
+				var calc := StitchedRules.new()
+				calc._parts = refused.catalog
+				calc._s14 = true
+				calc._recompute_stats(victim)
+				victim.hp = mini(int(victim.hp), int(victim.max_hp))
+			"lost_doll":
+				victim.lost = true
+				victim.hp = 0
+			"wrong_node":
+				refused.door_offer.node_id = "forged_node"
+			"forged_offer":
+				refused.door_offer.amount = 2
+		refused._seal()
+		_check(refused.is_consistent() and (blocked_case != "torn_legs" or victim.parts.legs.torn)
+			and (blocked_case != "lost_doll" or victim.lost)
+			and (blocked_case != "wrong_node" or refused.door_offer.node_id != door_node)
+			and (blocked_case != "forged_offer" or refused.door_offer.amount != offer.amount),
+			blocked_case + " controlled invalid precondition is sealed before the claim")
+		_assert_leg_refusal(refused, "underbed_leg_trade", hero_id, refused.snapshot(),
+			blocked_case + " rejects without spending, reseeding or consuming offer")
+
+	# A previously torn arm is not this bargain's price or eligibility gate.
+	var arm_torn := StitchedRunSave.restore(saved)
+	_check(arm_torn != null, "torn-arm fixture restores from the real offer")
+	if arm_torn != null:
+		var arm_inventory_before := arm_torn.ability_inventory.size()
+		var arm_victim: Dictionary = {}
+		for hero in arm_torn.heroes:
+			if hero.id == hero_id:
+				arm_victim = hero
+				break
+		if not arm_victim.is_empty():
+			arm_victim.parts.arms.torn = true
+			var calc := StitchedRules.new()
+			calc._parts = arm_torn.catalog
+			calc._s14 = true
+			calc._recompute_stats(arm_victim)
+			arm_victim.hp = mini(int(arm_victim.hp), int(arm_victim.max_hp))
+			arm_torn._seal()
+		_check(not arm_victim.is_empty() and arm_torn.is_consistent()
+			and arm_victim.parts.arms.torn and not arm_victim.parts.legs.torn,
+			"controlled torn-arm fixture is valid and still has an intact leg")
+		if not arm_victim.is_empty():
+			_check(arm_torn.choose_door("underbed_leg_trade", hero_id, arm_torn.snapshot())
+				and arm_victim.parts.arms.torn and arm_victim.parts.legs.torn
+				and arm_torn.ability_inventory.size() == arm_inventory_before + 1
+				and arm_torn.ability_inventory.back().rarity == "silk"
+				and arm_torn.door_history.size() == 1 and arm_torn.underbed_taken,
+				"an intact leg pays the real trade despite a pre-torn arm")
+
+	var prior := session.snapshot()
+	var prior_journal := session.journal.duplicate(true)
+	var prior_rng := session.rng.state
+	var prior_inventory_size := session.ability_inventory.size()
+	var accepted := session.choose_door("underbed_leg_trade", hero_id, prior)
+	_check(accepted, "authentic leg trade commits through public choose_door")
+	if not accepted:
+		return
+	var paid: Dictionary = {}
+	for hero in session.heroes:
+		if hero.id == hero_id:
+			paid = hero
+			break
+	var earned: Dictionary = session.door_history[0].get("reward", {}) if session.door_history.size() == 1 else {}
+	_check(not paid.is_empty() and paid.parts.legs.torn
+		and paid.parts.arms == hero_before.parts.arms and paid.base_max_hp == hero_before.base_max_hp
+		and session.ability_inventory.size() == prior_inventory_size + 1
+		and earned.get("rarity") == "silk" and earned == session.ability_inventory.back()
+		and session.underbed_taken and session.door_history.size() == 1
+		and session.door_history[0].id == "underbed_leg_trade"
+		and session.door_history[0].hero == hero_id
+		and session.door_offer.is_empty()
+		and session.journal.size() == prior_journal.size() + 1
+		and session.journal.back() == {"action": "door", "id": "underbed_leg_trade", "hero": hero_id}
+		and session.is_consistent(),
+		"paid trade tears only legs, grants one silk patch and journals exactly one underbed deal")
+	if paid.is_empty():
+		return
+	var recomputed := paid.duplicate(true)
+	var rules := StitchedRules.new()
+	rules._parts = session.catalog
+	rules._s14 = true
+	rules._recompute_stats(recomputed)
+	_check(paid.max_hp == recomputed.max_hp and paid.hp <= paid.max_hp
+		and paid.dmg_bonus == recomputed.dmg_bonus,
+		"paid limb injury immediately recomputes the real doll's combat stats")
+	var committed := session.snapshot()
+	_assert_leg_refusal(session, "underbed_leg_trade", hero_id, prior,
+		"stale second payment cannot duplicate patch or history")
+	_check(session.snapshot() == committed and session.rng.state == session.snapshot().rng,
+		"spent trade remains sealed after rejected repeat")
+	_check(session.choices().has(next_id) and session.enter(next_id, session.snapshot())
+		and session.map.get_current_node_id() == next_id and session.is_consistent(),
+		"paid leg bargain preserves legal onward entry without implicit decline")
+	var after := session.snapshot()
+	_check(after.s14.door_history.size() == 1 and after.s14.door_history[0].id == "underbed_leg_trade"
+		and after.s14.inventory.size() == prior_inventory_size + 1
+		and session.journal.back() == {"action": "enter", "node_id": next_id}
+		and session.journal.size() == prior_journal.size() + 2,
+		"onward entry keeps one leg payment and one reward with no duplicate underbed record")
+	var document := StitchedRunSave.capture(session)
+	var restored := StitchedRunSave.restore(bytes_to_var(var_to_bytes(document))) if not document.is_empty() else null
+	_check(not document.is_empty() and restored != null and restored.snapshot() == after
+		and restored.journal == session.journal and restored.rng.state == session.rng.state
+		and restored.door_history.size() == 1 and restored.ability_inventory.size() == prior_inventory_size + 1,
+		"paid leg, silk reward and onward visit or battle replay exactly with journal and RNG")
+
+
+func _assert_leg_refusal(session: StitchedRunSession, door_id: String, hero_id: String,
+		expected: Dictionary, label: String) -> void:
+	var before := session.snapshot()
+	var journal_before := session.journal.duplicate(true)
+	var rng_before := session.rng.state
+	_check(not session.choose_door(door_id, hero_id, expected)
+		and session.snapshot() == before and session.journal == journal_before
+		and session.rng.state == rng_before and session.is_consistent(),
+		label)

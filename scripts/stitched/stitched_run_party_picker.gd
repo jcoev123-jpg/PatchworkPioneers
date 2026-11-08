@@ -28,6 +28,7 @@ func build(default_picks: Array) -> void:
 		child.queue_free()
 	tiles.clear()
 	_selected.clear()
+	var signature_kits := StitchedS14Abilities.kits()
 	for id in StitchedPartyAdmission.HERO_IDS:
 		if id in default_picks and not id in _selected and _selected.size() < MAX_PICKS:
 			_selected.append(id)
@@ -35,6 +36,7 @@ func build(default_picks: Array) -> void:
 		var tile := Button.new()
 		tile.name = "HeroTile_" + id
 		tile.set_meta("hero_id", id)
+		tile.tooltip_text = StitchedPartyKitHints.tooltip(id, signature_kits)
 		tile.toggle_mode = true
 		tile.focus_mode = Control.FOCUS_ALL
 		tile.custom_minimum_size = Vector2(516, 94)

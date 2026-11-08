@@ -560,6 +560,7 @@ func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool
 		return false
 	if source.kind == "attic" and underbed_taken:
 		return false
+	var limb_slot := "legs" if door_id == "underbed_leg_trade" else "arms"
 	var target: Dictionary = {}
 	for hero in heroes:
 		if hero.id == hero_id and not hero.lost:
@@ -574,7 +575,7 @@ func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool
 			if int(target.base_max_hp) - int(source.amount) < 10:
 				return false
 		"limb":
-			if not target.parts.has("arms") or target.parts.arms.torn:
+			if not target.parts.has(limb_slot) or target.parts[limb_slot].torn:
 				return false
 		"fear":
 			if source.amount != StitchedKidFear.LOST_FEAR_DELTA or kid_fear() + source.amount > 100:
@@ -596,7 +597,7 @@ func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool
 			target.max_hp = maxi(10, int(target.max_hp) - int(source.amount))
 			target.hp = mini(int(target.hp), int(target.max_hp))
 		"limb":
-			target.parts.arms.torn = true
+			target.parts[limb_slot].torn = true
 			var calc := StitchedRules.new()
 			calc._parts = catalog
 			calc._s14 = true
