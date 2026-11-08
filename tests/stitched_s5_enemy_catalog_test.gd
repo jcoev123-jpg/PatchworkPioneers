@@ -950,6 +950,10 @@ func _test_spool_live_intents(catalog: Dictionary, seed_value: int) -> void:
 		and fallback_before == battle.state_snapshot(),
 		"Hexer AC3: rank change falls through original illegal moves to legal tag without phantom bonus")
 	battle._units = units.duplicate(true)
+	# The live history already cut the rank-1 thread, so the rank-3 Bailiff now correctly
+	# skips Seize Thread and has no other legal move. Reopen that seam so this unrelated-foe
+	# presentation check keeps a real legal action to display.
+	battle._thread_cuts.clear()
 	var unrelated := StitchedFoeIntent.choose(battle, battle.get_unit("scissor_bailiff"))
 	stage._foe_tickets[1].present_intent(unrelated, 3)
 	_check(not unrelated.get("pass", true) and unrelated.get("base_mark_damage", -1) == 0
