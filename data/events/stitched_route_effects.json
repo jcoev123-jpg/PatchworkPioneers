@@ -116,8 +116,7 @@
             "candle": 24,
             "fray": -6,
             "scraps": -2,
-            "require_candle_room": true,
-            "min_fray": 1
+            "require_candle_room": true
           }
         },
         {

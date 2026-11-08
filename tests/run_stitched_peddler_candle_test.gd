@@ -22,6 +22,7 @@ func _initialize() -> void:
 	_test_effective_quote()
 	_test_purchase_and_leave()
 	_test_refusals_and_legacy_isolation()
+	_test_two_visit_identity()
 	_test_band_forecast()
 	_check(randi() == next_draw,
 		"Stitched open, quote, buys, Leaves and every refusal draw no global RNG")
@@ -65,6 +66,79 @@ func _reject(visit: RunPeddlerVisit, decision: Variant, node: Variant,
 		label + ": no drift in candle, wallet, status or retry right")
 	_check(result.get("decision", "x") == "" and result.get("charged_gold", 1) == 0,
 		label + ": no phantom decision or charge")
+
+
+## AC1-AC2: two independently opened visits with identical node, candle, wallet
+## and price carry distinct private identities, so a callback captured from the
+## first can neither buy nor leave on the second.
+func _test_two_visit_identity() -> void:
+	var a := _open(60, 120, 45)
+	var b := _open(60, 120, 45)
+	var a_snap := a.read_state()
+	var b_snap := b.read_state()
+	var a_id: Variant = a_snap.get("visit_id")
+	var b_id: Variant = b_snap.get("visit_id")
+	_check(a_id is String and b_id is String and not str(a_id).is_empty()
+		and not str(b_id).is_empty() and a_id != b_id,
+		"twin visits carry distinct nonempty visit_id values")
+	_check(a.read_state() == a_snap and b.read_state() == b_snap
+		and a.read_state()["visit_id"] == a_id and b.read_state()["visit_id"] == b_id,
+		"each visit_id is stable across repeated reads")
+	var detached := a.read_state()
+	detached["visit_id"] = "forged"
+	_check(a.read_state()["visit_id"] == a_id,
+		"mutating a returned snapshot cannot alter the visit identity")
+	_check(not a.quote().has("visit_id"),
+		"the identity is not part of the player-facing quote")
+	# Old callbacks from visit A are refused on the identical visit B.
+	var b_before := b.read_state()
+	_reject(b, "buy_candle_stub", NODE, a_snap, "old visit snapshot buy")
+	_reject(b, "leave", NODE, a_snap, "old visit snapshot leave")
+	_check(b.read_state() == b_before and b.is_open() and not b.is_consumed()
+		and b.read_state()["gold"] == 120 and b.read_state()["candle"] == 60,
+		"the second visit stays open and unchanged after both old callbacks")
+	# Forged identity or altered fields cannot bypass the gate.
+	var forged := b_snap.duplicate(true)
+	forged["visit_id"] = a_id
+	_reject(b, "buy_candle_stub", NODE, forged, "forged identity buy")
+	var missing := b_snap.duplicate(true)
+	missing.erase("visit_id")
+	_reject(b, "buy_candle_stub", NODE, missing, "missing identity buy")
+	var repriced := a_snap.duplicate(true)
+	repriced["visit_id"] = b_id
+	repriced["item"]["price"] = 1
+	_reject(b, "buy_candle_stub", NODE, repriced, "repriced own identity")
+	_reject(b, "buy_candle_stub", "other-node", b_snap, "own snapshot wrong node")
+	# Visit A can still decide against its own snapshot.
+	var a_paid := _buy(a, NODE, a_snap)
+	_check(a_paid.get("ok") == true and a_paid.get("candle") == 85
+		and a_paid.get("gold") == 75 and a.is_consumed()
+		and a.read_state()["visit_id"] == a_id,
+		"the first visit still buys with its own snapshot; identity survives")
+	# B's own fresh snapshot buys exactly once.
+	var b_paid := _buy(b, NODE, b.read_state())
+	_check(b_paid.get("ok") == true and b_paid.get("candle") == 85
+		and b_paid.get("gold") == 75 and b_paid.get("charged_gold") == 45
+		and b_paid.get("restored") == RESTORE and b.is_consumed()
+		and b.read_state()["visit_id"] == b_id,
+		"the second visit's own snapshot buys +25 for exactly 45 once")
+	_reject(b, "buy_candle_stub", NODE, b_snap, "replay of the open snapshot")
+	_reject(b, "leave", NODE, b.read_state(), "leave after the buy")
+	# Leave path on a third twin with its own snapshot.
+	var c := _open(60, 120, 45)
+	var d := _open(60, 120, 45)
+	var c_snap := c.read_state()
+	_check(c_snap["visit_id"] != d.read_state()["visit_id"],
+		"further twins also get distinct identities")
+	_reject(d, "leave", NODE, c_snap, "twin leave with foreign snapshot")
+	var d_left := _leave(d, NODE, d.read_state())
+	_check(d_left.get("ok") == true and d_left.get("charged_gold") == 0
+		and d.is_consumed() and d.read_state()["gold"] == 120,
+		"the second twin's own snapshot leaves free and once")
+	# Legacy constructor state gains no Stitched visit identity.
+	var legacy := RunPeddlerVisit.new()
+	_check(not legacy.read_state().has("visit_id"),
+		"the legacy constructor state has no visit identity")
 
 
 ## AC1: a valid node, 0..100 candle, non-negative wallet and positive quoted

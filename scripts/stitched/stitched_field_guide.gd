@@ -59,7 +59,7 @@ const PAGES := [
 	]
 ]
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
-## The Seams & retreat page also carries four catalog-derived S14 patch examples.
+## The Seams & retreat page also carries four catalog-derived examples and three gold notes.
 const LESSON_PAGE := 1
 
 var tab_buttons: Array[Button] = []
@@ -116,8 +116,8 @@ func open_guide() -> bool:
 
 
 ## Rebuild only the Seams & retreat page from its fixed authored baseline plus the
-## four freshly derived patch examples. Resetting to the baseline first means repeated
-## open/close can never duplicate a lesson, and an invalid catalog leaves no stale line.
+## four patch examples, then the source-checked gold notes. Resetting to the baseline
+## means reopen never duplicates a lesson and invalid inputs leave no stale lines.
 func _refresh_lesson_page() -> void:
 	if page_labels.size() <= LESSON_PAGE:
 		return
@@ -125,6 +125,7 @@ func _refresh_lesson_page() -> void:
 	var lesson := StitchedPatchLesson.examples(lesson_kits, lesson_patches)
 	if lesson.size() == 4:
 		lines.append_array(lesson)
+		lines.append_array(StitchedGoldThreadNotes.examples(lesson_patches))
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
 
 

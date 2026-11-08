@@ -43,6 +43,9 @@ var _stitched := false
 var _candle := 0
 var _gold := 0
 var _quoted_price := 0
+# Private per-opening identity (instance-derived: no RNG, no clock). Set only
+# on a valid Stitched opening and never shown in quote() or the UI.
+var _visit_id := ""
 
 
 func _init(node_id: Variant = null, party_ids: Variant = null,
@@ -226,6 +229,7 @@ func _open_stitched_candle(node_id: Variant, candle: Variant, gold: Variant,
 	_candle = candle
 	_gold = gold
 	_quoted_price = quoted_price
+	_visit_id = "stitched_visit_%d" % get_instance_id()
 	_status = STITCHED_OPEN
 
 
@@ -237,6 +241,7 @@ func _stitched_state() -> Dictionary:
 		"node_id": _node_id,
 		"status": _status,
 		"mode": STITCHED,
+		"visit_id": _visit_id,
 		"candle": _candle,
 		"gold": _gold,
 		"item": {
