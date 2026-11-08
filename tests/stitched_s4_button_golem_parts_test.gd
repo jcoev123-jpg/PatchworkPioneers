@@ -27,6 +27,7 @@ var checks := 0
 
 func _initialize() -> void:
 	_test_catalog()
+	_test_s14_patch_text()
 	_test_torso_tier_stats()
 	_test_buttonhole_tiers()
 	_test_all_tiers()
@@ -226,6 +227,80 @@ func _test_catalog() -> void:
 		"AC3: illegal IV tier rejected")
 	_check(not bool(StitchedParts.build_catalog([c["parts"][0], c["parts"][0]]).get("ok", false)),
 		"AC3: duplicate part IDs fail closed")
+
+
+## AC1/AC2: S14 gives each hero four fixed signature abilities and retires part-granted moves, so
+## the two starter Button Golem patch texts now describe the sewn-on buttons and felt instead of
+## promising the old Mark attacks. Both ids, slots, stats and every legacy mechanic field stay as
+## authored; only the two top-level `text` strings changed.
+func _test_s14_patch_text() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: shipped Button Golem catalog loads for the S14 patch copy")
+	if not bool(catalog.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["head"]: "A loose brass button dangles above the tiny button eyes, tied to a slate-blue felt brow with coarse walnut thread.",
+		STARTERS["arms"]: "Scuffed brass buttons stack into a rounded fist, cross-stitched to a bulky walnut felt sleeve.",
+	}
+	var slots := {STARTERS["head"]: "head", STARTERS["arms"]: "arms"}
+	var old_sentences := [
+		"Pop a loose button to Mark a front foe for a later hit.",
+		"Punch a front foe with a button fist; a Mark makes the hit stronger.",
+	]
+	# Wording the retired part actions used to advertise.
+	var legacy_phrases := ["pop a loose button", "punch a front", "for a later",
+		"makes the hit stronger"]
+	# Any term that would still promise an action, target, rank, tier or combat effect.
+	var retired_words := ["mark", "foe", "attack", "hit", "damage", "rank", "tier",
+		"bleed", "weak", "stun", "guard", "heal", "ability"]
+	var present := true
+	for id in expected:
+		present = present and catalog["by_id"].has(id)
+		_check(catalog["by_id"].has(id), "AC1: starter patch present: " + id)
+		if not catalog["by_id"].has(id):
+			continue
+		var part: Dictionary = catalog["by_id"][id]
+		_check(str(part["id"]) == id and str(part["slot"]) == slots[id]
+			and str(part["owner"]) == "button_golem" and not str(part["name"]).is_empty(),
+			"AC1: %s keeps its id, name, slot and button_golem owner" % id)
+		var text := str(part.get("text", ""))
+		_check(not text.is_empty() and text == expected[id],
+			"AC1: %s text is exactly the authored sewn-patch sentence" % id)
+		var lower := text.to_lower()
+		for word in retired_words:
+			_check(not lower.contains(str(word)),
+				"AC2: %s patch text does not mention the retired term '%s'" % [id, str(word)])
+		for phrase in legacy_phrases:
+			_check(not lower.contains(str(phrase)),
+				"AC2: %s patch text no longer promises '%s'" % [id, str(phrase)])
+		_check(not (text in old_sentences),
+			"AC2: %s no longer carries the retired Mark-attack sentence" % id)
+	if not present:
+		return
+	# The legacy mechanics the starter parts still carry stay untouched beside the new copy.
+	var head: Dictionary = catalog["by_id"][STARTERS["head"]]
+	var arms: Dictionary = catalog["by_id"][STARTERS["arms"]]
+	_check(int(StitchedParts.ability_at_tier(head, 1)["effects"]["mark"]) == 2
+		and int(StitchedParts.ability_at_tier(head, 2)["effects"]["mark"]) == 3
+		and int(StitchedParts.ability_at_tier(head, 3)["effects"]["mark"]) == 4,
+		"AC3: the starter head keeps its legacy Mark 2/3/4 beside the new patch copy")
+	_check(int(StitchedParts.ability_at_tier(arms, 1)["mark_damage"]) == 3
+		and int(StitchedParts.ability_at_tier(arms, 2)["mark_damage"]) == 5
+		and int(StitchedParts.ability_at_tier(arms, 3)["mark_damage"]) == 7,
+		"AC3: the starter arms keep their legacy Mark payoff 3/5/7 beside the new patch copy")
+	_check(StitchedParts.stat_at_tier(head, 1) == {"acc": 5}
+		and StitchedParts.stat_at_tier(arms, 1) == {"dmg": 1},
+		"AC3: both starter patches keep their authored slot stats")
+	_check(str(StitchedParts.ability_at_tier(head, 1)["id"]) == "button_golem_head_loose_pop_move"
+		and str(StitchedParts.ability_at_tier(arms, 1)["id"]) == "button_golem_arms_button_fist_move",
+		"AC3: both starter patches keep their legacy ability ids")
+	# Fail-closed: the catalog still refuses a patch copy whose text is blank.
+	for id in expected:
+		var blank: Dictionary = catalog["by_id"][id].duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
 
 
 ## AC1/AC2: both existing Button Golem torso patches gain defensive stats at stitch tiers II
