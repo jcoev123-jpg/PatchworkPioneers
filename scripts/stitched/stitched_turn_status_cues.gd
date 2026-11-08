@@ -31,6 +31,8 @@ const THORNS_EXPLANATION := "Thorns: reaction damage retaliation on a confirmed 
 const WEAK_EXPLANATION := "Weak: outgoing direct attack damage -25% (rounded down)."
 const EXPOSED_EXPLANATION := "Exposed: incoming direct attack damage +50% (rounded down)."
 const COMBINED_WEAK_EXPOSED_EXPLANATION := "With Weak on the attacker and Exposed on the target, apply combined x9/8 once, rounded down before Tangled/PROT."
+const HANGING_EXPLANATION := "Hanging by a Thread: a damaging zero-HP hit tears a remaining arm, leg or head; losing the head means LOST. A heal above zero ends Hanging and resets accumulated hits."
+const REGEN_EXPLANATION := "Regeneration: restores exactly 2 HP at the affected unit's turn start, capped at max HP, before Bleed, consumes one turn, and can bring a Hanging doll above 0."
 
 
 static func _number(value: Variant) -> bool:
@@ -167,7 +169,7 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 		if not torn.is_empty():
 			lines.append("Torn parts: " + ", ".join(torn))
 		if unit.get("hanging") is bool and unit["hanging"]:
-			lines.append("Hanging by a Thread: another hit has 67% seam hold / 33% hero lost.")
+			lines.append(HANGING_EXPLANATION)
 
 	var raw: Variant = unit.get("statuses")
 	if raw is Dictionary:
@@ -203,6 +205,8 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			lines.append(EXPOSED_EXPLANATION)
 		if _positive_count(raw.get("weak")) and _positive_count(raw.get("exposed")):
 			lines.append(COMBINED_WEAK_EXPOSED_EXPLANATION)
+		if _positive_count(raw.get("regen")):
+			lines.append(REGEN_EXPLANATION)
 	return lines
 
 

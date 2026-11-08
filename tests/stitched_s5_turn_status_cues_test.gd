@@ -255,7 +255,12 @@ func _run() -> void:
 	_check(info.contains("HP: 0 / ") and info.contains("FRAY: 145 / 200") and
 		info.contains("Resolve: bitter") and info.contains("+4 fray/turn") and
 		info.contains("Torn parts: Head, Arms") and
-		info.contains("67% seam hold / 33% hero lost") and
+		info.contains("damaging zero-HP hit") and
+		info.contains("tears a remaining arm, leg or head") and
+		info.contains("losing the head means LOST") and
+		info.contains("heal above zero ends Hanging") and
+		info.contains("resets accumulated hits") and
+		not info.contains("67%") and not info.contains("33%") and not info.contains("seam hold") and
 		info.contains("Statuses: guard 3, mark 2, stun 1") and
 		not info.contains("weak 0") and not info.contains("bleed -1"),
 		"complete seam warning, genuine resolve, ordered torn slots and sorted positive counters")
@@ -1550,7 +1555,7 @@ func _run() -> void:
 
 	# Every existing cue must remain complete at the narrowest nine-tag capacity.
 	var all_cues: Array = resolve_snapshots.duplicate(true)
-	for status in ["stun", "bleed", "riposte", "thorns", "blind", "tangled", "mark", "weak", "exposed"]:
+	for status in ["stun", "bleed", "riposte", "thorns", "blind", "tangled", "mark", "weak", "exposed", "regen"]:
 		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
 		sample.statuses = {status: 2}
 		all_cues.append(sample)
@@ -1604,12 +1609,254 @@ func _run() -> void:
 		ribbon.marker_at(0).text.is_empty(),
 		"reset hides stale cues, portrait, focus overlay and tooltips without new tag nodes")
 
+	# S14 (lane4): Accurate Hanging and Regeneration turn-status tooltips (AC1, AC2, AC3)
+	var s14_test_tag := ribbon.tag_at(0)
+	var s14_help_text: Label = s14_test_tag.get_node("FocusTooltip/TooltipText")
+	var s14_tip_font := s14_help_text.get_theme_font("font")
+	var s14_tip_font_sz := s14_help_text.get_theme_font_size("font_size")
+
+	# AC1: Public four-doll StitchedRules hero snapshots at HP 0, hanging=true and death_hits in 0..2
+	var four_heroes: Array = battle.get_heroes()
+	for h_idx in range(four_heroes.size()):
+		for dh in [0, 1, 2]:
+			var d_hero: Dictionary = four_heroes[h_idx].duplicate(true)
+			d_hero["hp"] = 0
+			d_hero["hanging"] = true
+			d_hero["death_hits"] = dh
+			var d_snapshot := d_hero.duplicate(true)
+
+			# SEAM marker priority
+			_check(StitchedTurnStatusCues.cue(d_hero) == "SEAM",
+				"AC1: hero %d at HP 0 hanging=true death_hits=%d gives SEAM cue" % [h_idx, dh])
+
+			var d_tip := StitchedTurnStatusCues.tooltip(d_hero)
+			_check(d_tip.contains(StitchedTurnStatusCues.HANGING_EXPLANATION),
+				"AC1: hero %d death_hits=%d tooltip contains full truthful HANGING_EXPLANATION" % [h_idx, dh])
+			_check(d_tip.contains("a damaging zero-HP hit tears a remaining arm, leg or head") and
+				d_tip.contains("losing the head means LOST") and
+				d_tip.contains("A heal above zero ends Hanging and resets accumulated hits"),
+				"AC1: hero %d death_hits=%d describes arm/leg/head loss, head=LOST, and heal ending Hanging" % [h_idx, dh])
+			_check(not d_tip.contains("67%") and not d_tip.contains("33%") and not d_tip.contains("seam hold"),
+				"AC1: hero %d death_hits=%d contains no obsolete 67%%/33%% seam-check claims" % [h_idx, dh])
+
+			# Verify input snapshot was not mutated
+			_check(d_hero == d_snapshot, "AC1: caller snapshot was not mutated by cue or tooltip")
+
+			# Mounted ribbon equivalence under keyboard focus and mouse hover
+			ribbon.show_order([d_hero], "", false)
+			var h_tag := ribbon.tag_at(0)
+			_check(ribbon.marker_at(0).text == "SEAM", "AC1: mounted ribbon slot 0 displays SEAM marker")
+			_check(h_tag.tooltip_text == d_tip, "AC1: mounted tag tooltip_text matches pure tooltip")
+
+			h_tag.grab_focus()
+			await process_frame
+			_check(h_tag.has_focus() and h_tag.get_node("FocusTooltip").visible and
+				h_tag.get_node("FocusTooltip/TooltipText").text == d_tip,
+				"AC1: hero %d death_hits=%d keyboard focus exposes exact death-door tooltip" % [h_idx, dh])
+			h_tag.release_focus()
+			_check(not h_tag.get_node("FocusTooltip").visible, "AC1: blur hides tooltip")
+
+			h_tag.mouse_entered.emit()
+			_check(h_tag.get_node("FocusTooltip").visible and
+				h_tag.get_node("FocusTooltip/TooltipText").text == d_tip,
+				"AC1: hero %d death_hits=%d mouse hover exposes identical tooltip to focus" % [h_idx, dh])
+			h_tag.mouse_exited.emit()
+			_check(not h_tag.get_node("FocusTooltip").visible, "AC1: hover exit hides tooltip")
+
+			# Font bounds check inside 280x198 box
+			var d_measured := s14_tip_font.get_multiline_string_size(d_tip, HORIZONTAL_ALIGNMENT_LEFT, s14_help_text.size.x, s14_tip_font_sz)
+			_check(d_measured.y <= s14_help_text.size.y,
+				"AC1: hero %d death_hits=%d tooltip fits inside 280x198 bounds (%d <= %d)" % [h_idx, dh, int(d_measured.y), int(s14_help_text.size.y)])
+
+	# AC2: Live-shaped hero or foe statuses dictionary with regen=2
+	var live_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var live_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	live_hero["statuses"] = {"regen": 2}
+	live_foe["statuses"] = {"regen": 2}
+
+	var hero_reg_snapshot := live_hero.duplicate(true)
+	var foe_reg_snapshot := live_foe.duplicate(true)
+
+	_check(StitchedTurnStatusCues.cue(live_hero) == "HERO", "AC2: hero with regen 2 yields HERO cue (no new marker)")
+	_check(StitchedTurnStatusCues.cue(live_foe) == "FOE", "AC2: foe with regen 2 yields FOE cue (no new marker)")
+
+	var live_h_tip := StitchedTurnStatusCues.tooltip(live_hero)
+	var live_f_tip := StitchedTurnStatusCues.tooltip(live_foe)
+
+	_check(live_h_tip.contains("Statuses: regen 2"), "AC2: hero tooltip contains Statuses: regen 2 counter")
+	_check(live_f_tip.contains("Statuses: regen 2"), "AC2: foe tooltip contains Statuses: regen 2 counter")
+
+	_check(live_h_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION),
+		"AC2: hero tooltip contains exact REGEN_EXPLANATION")
+	_check(live_f_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION),
+		"AC2: foe tooltip contains exact REGEN_EXPLANATION")
+
+	for check_tip in [live_h_tip, live_f_tip]:
+		_check(check_tip.contains("restores exactly 2 HP") and
+			check_tip.contains("at the affected unit's turn start") and
+			check_tip.contains("capped at max HP") and
+			check_tip.contains("before Bleed") and
+			check_tip.contains("consumes one turn") and
+			check_tip.contains("can bring a Hanging doll above 0"),
+			"AC2: tooltip explains 2 HP restore, turn start, max HP cap, before Bleed, consumes 1 turn, brings Hanging doll above 0")
+
+	_check(live_hero == hero_reg_snapshot, "AC2: hero input dictionary was not mutated")
+	_check(live_foe == foe_reg_snapshot, "AC2: foe input dictionary was not mutated")
+
+	# Mounted ribbon equivalence for hero and foe with regen=2
+	ribbon.show_order([live_hero, live_foe], "", false)
+	for reg_idx in range(2):
+		var reg_unit: Dictionary = live_hero if reg_idx == 0 else live_foe
+		var reg_exp_tip: String = live_h_tip if reg_idx == 0 else live_f_tip
+		var reg_tag := ribbon.tag_at(reg_idx)
+		var exp_marker := "HERO" if reg_idx == 0 else "FOE"
+		_check(ribbon.marker_at(reg_idx).text == exp_marker, "AC2: slot %d displays %s marker" % [reg_idx, exp_marker])
+		_check(reg_tag.tooltip_text == reg_exp_tip, "AC2: slot %d tooltip_text matches pure tooltip" % reg_idx)
+
+		reg_tag.grab_focus()
+		await process_frame
+		_check(reg_tag.has_focus() and reg_tag.get_node("FocusTooltip").visible and
+			reg_tag.get_node("FocusTooltip/TooltipText").text == reg_exp_tip,
+			"AC2: slot %d keyboard focus reveals exact regen tooltip" % reg_idx)
+		reg_tag.release_focus()
+		_check(not reg_tag.get_node("FocusTooltip").visible, "AC2: slot %d blur hides tooltip" % reg_idx)
+
+		reg_tag.mouse_entered.emit()
+		_check(reg_tag.get_node("FocusTooltip").visible and
+			reg_tag.get_node("FocusTooltip/TooltipText").text == reg_exp_tip,
+			"AC2: slot %d mouse hover reveals identical tooltip to keyboard focus" % reg_idx)
+		reg_tag.mouse_exited.emit()
+		_check(not reg_tag.get_node("FocusTooltip").visible, "AC2: slot %d hover exit hides tooltip" % reg_idx)
+
+		var reg_measured := s14_tip_font.get_multiline_string_size(reg_exp_tip, HORIZONTAL_ALIGNMENT_LEFT, s14_help_text.size.x, s14_tip_font_sz)
+		_check(reg_measured.y <= s14_help_text.size.y,
+			"AC2: slot %d regen tooltip fits inside 280x198 bounds (%d <= %d)" % [reg_idx, int(reg_measured.y), int(s14_help_text.size.y)])
+
+	# AC2: With regen=0 or negative or absent, no Regeneration explanation appears
+	for non_pos_val in [0, -1, -3]:
+		var h_non_pos: Dictionary = battle.get_heroes()[0].duplicate(true)
+		var f_non_pos: Dictionary = battle.get_foes()[0].duplicate(true)
+		h_non_pos["statuses"] = {"regen": non_pos_val}
+		f_non_pos["statuses"] = {"regen": non_pos_val}
+		var h_np_tip := StitchedTurnStatusCues.tooltip(h_non_pos)
+		var f_np_tip := StitchedTurnStatusCues.tooltip(f_non_pos)
+		_check(not h_np_tip.contains("Regeneration:") and not h_np_tip.contains("regen"),
+			"AC2: hero with non-positive regen %d displays no Regeneration explanation or counter" % non_pos_val)
+		_check(not f_np_tip.contains("Regeneration:") and not f_np_tip.contains("regen"),
+			"AC2: foe with non-positive regen %d displays no Regeneration explanation or counter" % non_pos_val)
+
+	var h_absent: Dictionary = battle.get_heroes()[0].duplicate(true)
+	h_absent["statuses"] = {}
+	_check(not StitchedTurnStatusCues.tooltip(h_absent).contains("Regeneration:"),
+		"AC2: hero with absent regen displays no Regeneration explanation")
+
+	for inv_regen in ["2", 2.0, null, [], {}]:
+		var h_inv_r: Dictionary = battle.get_heroes()[0].duplicate(true)
+		h_inv_r["statuses"] = {"regen": inv_regen}
+		var inv_tip := StitchedTurnStatusCues.tooltip(h_inv_r)
+		_check(not inv_tip.contains("Regeneration:") and not inv_tip.contains("regen"),
+			"AC2: invalid regen %s fails closed without explanation or counter" % str(inv_regen))
+
+	# AC2: Unit with both regen and bleed proves wording mentions regen before bleed
+	var dual_rb: Dictionary = battle.get_heroes()[0].duplicate(true)
+	dual_rb["statuses"] = {"regen": 2, "bleed": 1}
+	var dual_rb_tip := StitchedTurnStatusCues.tooltip(dual_rb)
+	_check(StitchedTurnStatusCues.cue(dual_rb) == "BLD",
+		"AC2: hero with regen and bleed yields BLD cue (bleed cue priority unchanged)")
+	_check(dual_rb_tip.contains("Statuses: bleed 1, regen 2"),
+		"AC2: sorted status overview lists bleed 1 before regen 2")
+	_check(dual_rb_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION),
+		"AC2: coexisting regen and bleed displays Regeneration explanation")
+	_check(dual_rb_tip.contains("before Bleed"),
+		"AC2: Regeneration wording explicitly mentions healing occurs before Bleed ticks")
+
+	# AC3: Overlapping Hanging, Stun, Torn, FRAY, Bleed and Regeneration
+	var over_unit: Dictionary = battle.get_heroes()[0].duplicate(true)
+	over_unit["statuses"] = {"regen": 2}
+
+	# Hanging overrides regen -> SEAM
+	over_unit["hp"] = 0
+	over_unit["hanging"] = true
+	_check(StitchedTurnStatusCues.cue(over_unit) == "SEAM", "AC3: SEAM overrides regen")
+	var over_h_tip := StitchedTurnStatusCues.tooltip(over_unit)
+	_check(over_h_tip.contains(StitchedTurnStatusCues.HANGING_EXPLANATION) and
+		over_h_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION) and
+		over_h_tip.contains("Statuses: regen 2"),
+		"AC3: hanging unit with regen displays both Hanging and Regen explanations in tooltip")
+
+	# STUN overrides regen -> STUN
+	over_unit["hanging"] = false
+	over_unit["hp"] = 10
+	over_unit["statuses"] = {"regen": 2, "stun": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "STUN", "AC3: STUN overrides regen")
+	var over_s_tip := StitchedTurnStatusCues.tooltip(over_unit)
+	_check(over_s_tip.contains(StitchedTurnStatusCues.STUN_EXPLANATION) and
+		over_s_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION) and
+		over_s_tip.contains("Statuses: regen 2, stun 1"),
+		"AC3: stun + regen displays sorted counters and both explanations")
+
+	# TORN overrides regen -> TORN
+	over_unit["statuses"] = {"regen": 2}
+	over_unit["parts"]["head"]["torn"] = true
+	_check(StitchedTurnStatusCues.cue(over_unit) == "TORN", "AC3: TORN overrides regen")
+	over_unit["parts"]["head"]["torn"] = false
+
+	# Resolve overrides regen -> STFD
+	over_unit["resolve"] = "steadfast"
+	_check(StitchedTurnStatusCues.cue(over_unit) == "STFD", "AC3: resolve overrides regen")
+	over_unit["resolve"] = ""
+
+	# FRAY >= 100 overrides regen -> FRAY
+	over_unit["fray"] = 120
+	_check(StitchedTurnStatusCues.cue(over_unit) == "FRAY", "AC3: FRAY >= 100 overrides regen")
+	over_unit["fray"] = 20
+
+	# Bleed overrides regen -> BLD
+	over_unit["statuses"] = {"regen": 2, "bleed": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "BLD", "AC3: BLD overrides regen")
+
+	# Guard overrides regen -> GRD
+	var ally_guardian_id: String = str(battle.get_heroes()[1]["id"])
+	over_unit["statuses"] = {"regen": 2, "guard": 2}
+	over_unit["guard_target"] = ally_guardian_id
+	_check(StitchedTurnStatusCues.cue(over_unit) == "GRD", "AC3: GRD overrides regen")
+
+	# Riposte overrides regen -> RIP
+	over_unit["guard_target"] = ""
+	over_unit["statuses"] = {"regen": 2, "riposte": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "RIP", "AC3: RIP overrides regen")
+
+	# Thorns overrides regen -> THRN
+	over_unit["statuses"] = {"regen": 2, "thorns": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "THRN", "AC3: THRN overrides regen")
+
+	# Blind overrides regen -> BLND
+	over_unit["statuses"] = {"regen": 2, "blind": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "BLND", "AC3: BLND overrides regen")
+
+	# Tangled overrides regen -> TNGL
+	over_unit["statuses"] = {"regen": 2, "tangled": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "TNGL", "AC3: TNGL overrides regen")
+
+	# Mark overrides regen -> MARK
+	over_unit["statuses"] = {"regen": 2, "mark": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "MARK", "AC3: MARK overrides regen")
+
+	# Weak overrides regen -> WEAK
+	over_unit["statuses"] = {"regen": 2, "weak": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "WEAK", "AC3: WEAK overrides regen")
+
+	# Exposed overrides regen -> EXPD
+	over_unit["statuses"] = {"regen": 2, "exposed": 1}
+	_check(StitchedTurnStatusCues.cue(over_unit) == "EXPD", "AC3: EXPD overrides regen")
+
 	for repetition in range(4):
 		ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
 		ribbon.tag_at(0).mouse_entered.emit()
 		ribbon.tag_at(0).mouse_exited.emit()
 		ribbon.tag_at(0).grab_focus()
 		ribbon.tag_at(0).release_focus()
+
 	_check(battle.state_snapshot() == snapshot and battle.rng_state() == rng and
 		randi() == expected_global and ribbon.get_child_count() == 9 and
 		ribbon.displayed_entries.size() == 7,
