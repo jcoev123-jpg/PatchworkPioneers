@@ -89,6 +89,17 @@ const SACK_GLARE_TEXT := "A burlap brow patch creases above the Scarecrow's croo
 	+ "held by pumpkin-orange thread."
 const FORK_JAB_TEXT := "A denim cuff binds the pitchfork arm, with loose straw tucked beneath thick " \
 	+ "orange running stitches."
+## S14: the two crow legs parts are worn cloth patches too. Their base copy names only the sewn
+## feathers, denim, straw and thread a player sees; the retired part-granted attacks are no
+## longer advertised.
+const CROW_DIVE_PATCH_TEXT := "A long black crow feather is sewn diagonally across a frayed denim " \
+	+ "shin with bright pumpkin-orange thread."
+const CROW_PECK_PATCH_TEXT := "Three short black feathers fan across a straw-stuffed denim knee, " \
+	+ "held by uneven pumpkin-orange cross-stitches."
+## The exact sentences the two crow legs parts used to advertise as part-cast attacks.
+const CROW_DIVE_OLD_TEXT := "Send the shoulder crow at enemy ranks 1-3; marked foes take extra " \
+	+ "damage. Upgraded, it reaches rank 4."
+const CROW_PECK_OLD_TEXT := "Peck a chosen foe and Mark it; already Marked targets take extra damage."
 const PATCH_FORBIDDEN_WORDS := [
 	"foe", "enemy", "attack", "hit", "damage", "rank", "tier", "mark", "weak", "bleed",
 	"stun", "guard", "heal", "turn", "target", "ability",
@@ -102,6 +113,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_starter_patch_appearance_text()
+	_test_crow_leg_patch_appearance_text()
 	_test_each_tier()
 	_test_area_and_effects()
 	_test_guard_and_dodge()
@@ -354,6 +366,55 @@ func _test_starter_patch_appearance_text() -> void:
 		blank["text"] = ""
 		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
 			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+
+
+## AC1/AC2: both crow legs parts keep their IDs, names, owner and legs slot, while their base
+## copy now describes the sewn feather patch a player actually sees. Neither sentence may
+## advertise a retired part-granted attack, status, target, rank, damage or stitch-tier
+## mechanic, and each patch still fails closed when its description is blanked.
+func _test_crow_leg_patch_appearance_text() -> void:
+	var cat := _catalog()
+	_check(bool(cat.get("ok", false)), "AC1: Scarecrow catalog loads for the crow legs patch copy")
+	if not bool(cat.get("ok", false)):
+		return
+	var expected := {
+		STARTERS["legs"]: {
+			"name": "Crow Dive", "slot": "legs",
+			"text": CROW_DIVE_PATCH_TEXT, "old": CROW_DIVE_OLD_TEXT,
+		},
+		ALTERNATES["legs"]: {
+			"name": "Crow Peck", "slot": "legs",
+			"text": CROW_PECK_PATCH_TEXT, "old": CROW_PECK_OLD_TEXT,
+		},
+	}
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: crow legs patch keeps its named ID: " + id)
+		if not cat["by_id"].has(id):
+			continue
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["slot"]) == str(spec["slot"]) and str(part["owner"]) == "scarecrow"
+			and str(part["name"]) == str(spec["name"]),
+			"AC1: crow legs patch keeps its slot, Scarecrow owner and name: " + id)
+		var text := str(part.get("text", ""))
+		_check(not text.is_empty(), "AC2: crow legs patch base copy is nonempty: " + id)
+		_check(text == str(spec["text"]),
+			"AC1: crow legs patch base copy is the exact sewn-cloth sentence: " + id)
+		_check(text != str(spec["old"]) and not text.contains(str(spec["old"])),
+			"AC2: crow legs patch no longer carries its retired part-action sentence: " + id)
+		var lowered := text.to_lower()
+		for word in PATCH_FORBIDDEN_WORDS:
+			_check(not lowered.contains(word),
+				"AC2: crow legs patch copy never advertises retired '%s': %s" % [word, id])
+		# Fail-closed: the shipped catalog still refuses a patch copy with blank text.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a duplicate of %s with blank patch text is rejected fail-closed" % id)
+	_check(CROW_DIVE_OLD_TEXT != CROW_DIVE_PATCH_TEXT,
+		"AC2: the retired Crow Dive attack sentence genuinely differs from its patch copy")
+	_check(CROW_PECK_OLD_TEXT != CROW_PECK_PATCH_TEXT,
+		"AC2: the retired Crow Peck attack sentence genuinely differs from its patch copy")
 
 
 func _test_each_tier() -> void:
@@ -670,9 +731,8 @@ func _test_leg_rank4_data() -> void:
 					and int(ability["target_mask"]) == StitchedParts.ALL_RANKS_MASK
 					and StitchedParts.ranks_allowed(int(ability["target_mask"]), 4),
 					"AC1: Crow Dive tier %d reaches enemy rank 4" % tier)
-		_check(str(cat["by_id"][STARTERS["legs"]]["text"])
-			== "Send the shoulder crow at enemy ranks 1-3; marked foes take extra damage. Upgraded, it reaches rank 4.",
-			"AC1: Crow Dive text states tier-I front-three reach and upgraded rear reach")
+		_check(str(cat["by_id"][STARTERS["legs"]]["text"]) == CROW_DIVE_PATCH_TEXT,
+			"AC1: Crow Dive base copy is its exact sewn feather patch sentence, not an attack")
 		for tier in [2, 3]:
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			var tier_spec: Dictionary = spec["tier" + str(tier)]
