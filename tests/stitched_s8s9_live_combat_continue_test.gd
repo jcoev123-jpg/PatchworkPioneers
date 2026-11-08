@@ -129,8 +129,10 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(SAVE_PATH)
 	DirAccess.remove_absolute(SAVE_PATH + ".tmp")
-	# Seed 68: the appended doll-scale route-effect stories shift the sorted Event pool's
-	# single draw, so this witness seed must reach a lawful Event Leave and a next Fight.
+	# Seed 68's live Event draw is pinned to the real Silver Shoehorn Ramp here so shared
+	# catalog growth cannot retarget this witness: its free Leave action keeps the lawful
+	# Event Leave and next Fight legs of this run deterministic.
+	StitchedRunSession.pinned_event_id = "v3_silver_shoehorn_ramp"
 	var app := _app(68)
 	await process_frame
 	await process_frame
@@ -292,6 +294,7 @@ func _run() -> void:
 		"resumed next mounted action exactly matches uninterrupted combat, foe turns and RNG")
 	_finish(fresh)
 func _finish(app: Node) -> void:
+	StitchedRunSession.pinned_event_id = ""
 	if is_instance_valid(app):
 		app.free()
 	DirAccess.remove_absolute(SAVE_PATH)
