@@ -1,0 +1,128 @@
+{
+  "patches": [
+    {
+      "id": "cotton_red_lint",
+      "name": "Red Lint",
+      "rarity": "cotton",
+      "effect": "bleed",
+      "amount": 2
+    },
+    {
+      "id": "cotton_guard_stitch",
+      "name": "Guard Stitch",
+      "rarity": "cotton",
+      "effect": "guard",
+      "amount": 1
+    },
+    {
+      "id": "cotton_mending_fuzz",
+      "name": "Mending Fuzz",
+      "rarity": "cotton",
+      "effect": "heal",
+      "amount": 2
+    },
+    {
+      "id": "wool_mark_thread",
+      "name": "Mark Thread",
+      "rarity": "wool",
+      "effect": "mark",
+      "amount": 2
+    },
+    {
+      "id": "wool_hook_stitch",
+      "name": "Hook Stitch",
+      "rarity": "wool",
+      "effect": "pull",
+      "amount": 1
+    },
+    {
+      "id": "wool_heel_knot",
+      "name": "Heel Knot",
+      "rarity": "wool",
+      "effect": "push",
+      "amount": 1
+    },
+    {
+      "id": "wool_steady_hem",
+      "name": "Steady Hem",
+      "rarity": "wool",
+      "effect": "guard",
+      "amount": 2
+    },
+    {
+      "id": "silk_moth_veil",
+      "name": "Moth Veil",
+      "rarity": "silk",
+      "effect": "blind",
+      "amount": 1
+    },
+    {
+      "id": "silk_pin_prick",
+      "name": "Pin Prick",
+      "rarity": "silk",
+      "effect": "stun",
+      "amount": 1
+    },
+    {
+      "id": "silk_life_loop",
+      "name": "Life Loop",
+      "rarity": "silk",
+      "effect": "regen",
+      "amount": 2
+    },
+    {
+      "id": "silk_clean_seam",
+      "name": "Clean Seam",
+      "rarity": "silk",
+      "effect": "cleanse",
+      "amount": 1
+    },
+    {
+      "id": "gold_hungry_button",
+      "name": "Hungry Button",
+      "rarity": "gold",
+      "effect": "steal",
+      "amount": 3
+    },
+    {
+      "id": "gold_chain_thread",
+      "name": "Chain Thread",
+      "rarity": "gold",
+      "effect": "chain",
+      "amount": 1
+    },
+    {
+      "id": "gold_heart_knot",
+      "name": "Heart Knot",
+      "rarity": "gold",
+      "effect": "heal",
+      "amount": 5
+    }
+  ],
+  "weights": {
+    "fight": [
+      82,
+      17,
+      1,
+      0
+    ],
+    "event": [
+      70,
+      25,
+      5,
+      0
+    ],
+    "elite": [
+      20,
+      35,
+      35,
+      10
+    ],
+    "boss": [
+      5,
+      15,
+      45,
+      35
+    ]
+  }
+}

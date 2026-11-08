@@ -48,14 +48,16 @@ func _healthy_circle() -> void:
 
 
 func _lost_circle() -> void:
-	# Seed 1690 re-derives the LOST witness on the Hook Drag reel: the same mounted opening Fight
-	# still loses exactly one doll and is won afterwards, its connected Shop funds a pocket, and
-	# the connected Sewing Circle leads on into a real ranked battle.
+	# This S6 fixture documents the legacy one-Hanging-then-LOST carry, gear transfer and
+	# replacement path. S14's escalating death door is exercised by its own gate test.
 	var app: Node = await _new_run(1690)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null:
 		app.free()
 		return
+	session.s14_enabled = false
+	session._seal()
+	app._present_stitched_run()
 	var fight_id := ""
 	for id in session.choices():
 		if session.map.get_node(id).type == "Fight":
@@ -286,6 +288,9 @@ func _hanging_circle() -> void:
 	if session == null:
 		app.free()
 		return
+	session.s14_enabled = false
+	session._seal()
+	app._present_stitched_run()
 	var fight_id := ""
 	for id in session.choices():
 		if session.map.get_node(id).type == "Fight":

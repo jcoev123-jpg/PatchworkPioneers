@@ -35,7 +35,11 @@ static func restore(document: Variant) -> StitchedRunSession:
 		return null
 	if _digest(document) != document.digest:
 		return null
-	var candidate := StitchedRunSession.start(document.seed, document.picks, document.initial)
+	var legacy_s14: bool = not document.state.has("s14")
+	if not legacy_s14 and (not document.state.s14 is Dictionary or not document.state.s14.get("enabled") is bool):
+		return null
+	var candidate := StitchedRunSession.start(document.seed, document.picks, document.initial,
+		false if legacy_s14 else bool(document.state.s14.enabled))
 	if candidate == null:
 		return null
 	# Pre-S8f saves have no Walk block and never walked.
@@ -75,6 +79,20 @@ static func restore(document: Variant) -> StitchedRunSession:
 	var replayed := candidate.snapshot()
 	if legacy_walk:
 		replayed.erase("walk")
+	if legacy_s14:
+		replayed.erase("s14")
+		# Pre-S14 saves contain neither death-hit counters nor head-ward fields;
+		# compare only their authored historical schema, then return the safely
+		# replayed candidate in the current schema.
+		for hero in replayed.get("heroes", []):
+			hero.erase("death_hits")
+			hero.erase("head_ward")
+		if replayed.get("battle") is Dictionary:
+			replayed.battle.erase("s14")
+			for unit in replayed.battle.get("units", []):
+				if unit.get("side") == "hero":
+					unit.erase("death_hits")
+					unit.erase("head_ward")
 	if legacy_pockets:
 		replayed.erase("pockets")
 	if legacy_fear:
@@ -98,14 +116,37 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 		"enter":
 			return command.size() == 2 and command.get("node_id") is String and session.enter(command.node_id, session.snapshot())
 		"visit":
+			if command.size() != 3 and command.size() != 4:
+				return false
+			if command.size() == 4 and (not command.has("ability_patch") or not command.ability_patch is Dictionary):
+				return false
 			if command.get("id") == "replace":
 				var args: Variant = command.get("arguments")
 				if not args is Array or args.size() != 2 or not args[0] is String or not args[1] is String:
 					return false
-			return command.size() == 3 and command.get("id") is String and command.get("arguments") is Array \
-				and session.choose_visit(command.id, command.arguments, session.snapshot())
+			if not command.get("id") is String or not command.get("arguments") is Array \
+					or not session.choose_visit(command.id, command.arguments, session.snapshot()):
+				return false
+			if command.has("ability_patch"):
+				return not session.ability_inventory.is_empty() \
+					and session.ability_inventory.back() == command.ability_patch
+			return true
 		"settle":
-			return command.size() == 1 and session.settle_battle(session.battle)
+			if command.size() != 1 and command.size() != 2:
+				return false
+			if command.size() == 2 and (not command.has("ability_patch") or not command.ability_patch is Dictionary):
+				return false
+			if not session.settle_battle(session.battle):
+				return false
+			return not command.has("ability_patch") or (not session.receipts.is_empty() \
+				and session.receipts.back().reward.get("ability_patch", {}) == command.ability_patch)
+		"socket":
+			return command.size() == 5 and command.get("uid") is int and command.get("hero") is String \
+				and command.get("ability") is String and command.get("replace") is int \
+				and session.socket_ability(command.uid, command.hero, command.ability, command.replace, session.snapshot())
+		"door":
+			return command.size() == 3 and command.get("id") is String and command.get("hero") is String \
+				and session.choose_door(command.id, command.hero, session.snapshot())
 		"gift":
 			return command.size() == 3 and command.get("id") is String and command.get("swap") is String \
 				and session.choose_gift(command.id, command.swap, session.snapshot())
@@ -120,7 +161,7 @@ static func _replay(session: StitchedRunSession, command: Variant) -> bool:
 			if not args is Array:
 				return false
 			match method:
-				"use_part", "use_foe_ability":
+				"use_part", "use_ability", "use_foe_ability":
 					if args.size() != 2 or not args[0] is String or not args[1] is int:
 						return false
 				"move":

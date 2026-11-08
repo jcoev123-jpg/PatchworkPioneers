@@ -1,0 +1,46 @@
+{
+  "doors": [
+    {
+      "id": "underbed_stuffing_trade",
+      "kind": "underbed",
+      "cost": "max_hp",
+      "amount": 6,
+      "reward": "gold_patch"
+    },
+    {
+      "id": "underbed_leg_trade",
+      "kind": "underbed",
+      "cost": "limb",
+      "amount": 1,
+      "reward": "silk_patch"
+    },
+    {
+      "id": "underbed_fear_trade",
+      "kind": "underbed",
+      "cost": "fear",
+      "amount": 15,
+      "reward": "wren_gift"
+    },
+    {
+      "id": "attic_waxlight",
+      "kind": "attic",
+      "cost": "none",
+      "amount": 0,
+      "reward": "candle"
+    },
+    {
+      "id": "attic_rethread",
+      "kind": "attic",
+      "cost": "none",
+      "amount": 0,
+      "reward": "mend"
+    },
+    {
+      "id": "attic_headward",
+      "kind": "attic",
+      "cost": "none",
+      "amount": 0,
+      "reward": "head_guard"
+    }
+  ]
+}

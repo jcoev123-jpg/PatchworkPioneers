@@ -265,16 +265,28 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 		return {"ok": false, "error": "invalid actor"}
 	var candidates: Array = []
 	var abilities: Array = []
+	var can_strike := false
 	if actor.side == "hero":
-		for slot in ["head", "arms", "torso", "legs"]:
-			if not actor.get("parts", {}).has(slot):
-				continue
-			var worn: Dictionary = actor.parts[slot]
-			if worn.get("torn", true) or not catalog.has(str(worn.get("id", ""))):
-				continue
-			var ability: Dictionary = StitchedParts.ability_at_tier(catalog[worn.id], int(worn.tier))
-			if not ability.is_empty():
-				abilities.append({"id": worn.id, "ability": ability})
+		if bool(battle._s14):
+			# S14: fixed kits. A torn socket limb removes its signature action.
+			for ability in actor.get("abilities", []):
+				var slot := str(ability.get("slot", ""))
+				if actor.get("parts", {}).has(slot) and bool(actor.parts[slot].get("torn", false)):
+					continue
+				abilities.append({"id": str(ability.id), "ability": ability, "signature": true})
+				can_strike = can_strike or str(ability.get("target_side", "")) == "enemy" \
+					and int(ability.get("dmg", [0, 0]).back()) > 0
+		else:
+			for slot in ["head", "arms", "torso", "legs"]:
+				if not actor.get("parts", {}).has(slot):
+					continue
+				var worn: Dictionary = actor.parts[slot]
+				if worn.get("torn", true) or not catalog.has(str(worn.get("id", ""))):
+					continue
+				var ability: Dictionary = StitchedParts.ability_at_tier(catalog[worn.id], int(worn.tier))
+				if not ability.is_empty():
+					abilities.append({"id": worn.id, "ability": ability})
+					can_strike = can_strike or str(ability.get("target_side", "")) == "enemy"
 	else:
 		for ability in actor.get("abilities", []):
 			abilities.append({"id": ability.id, "ability": ability})
@@ -293,25 +305,23 @@ func _battle_command(battle: StitchedRules, catalog: Dictionary) -> Dictionary:
 				if alive.is_empty() or int(alive.back().rank) != rank:
 					continue
 			candidates.append({"id": entry.id, "rank": rank,
+				"signature": bool(entry.get("signature", false)),
 				"score": _ability_score(ability, targets, actor)})
-	if not candidates.is_empty():
+	var stuck: bool = actor.side == "hero" and not can_strike
+	if not candidates.is_empty() and not stuck:
 		candidates.sort_custom(func(a: Dictionary, b: Dictionary):
 			if a.score == b.score:
 				return str(a.id) < str(b.id) if a.id != b.id else a.rank < b.rank
 			return a.score > b.score)
 		var chosen: Dictionary = candidates[0]
-		return battle.use_part(chosen.id, chosen.rank) if actor.side == "hero" \
-			else battle.use_foe_ability(chosen.id, chosen.rank)
+		if actor.side != "hero":
+			return battle.use_foe_ability(chosen.id, chosen.rank)
+		return battle.use_ability(chosen.id, chosen.rank) if chosen.signature \
+			else battle.use_part(chosen.id, chosen.rank)
+	# The rules' own shift gate decides torn legs, tangles, held dolls and ally swaps.
 	if actor.side == "hero":
-		for direction in [-1, 1]:
-			var target_rank: int = int(actor.rank) + direction
-			if target_rank < 1 or target_rank > 4:
-				continue
-			var neighbor := battle.get_heroes().filter(func(h: Dictionary):
-				return not h.lost and int(h.rank) == target_rank)
-			if int(actor.statuses.get("tangled", 0)) == 0 and not battle.is_held(actor_id) \
-					and battle.thread_cuts().is_empty() and (neighbor.is_empty() \
-					or int(neighbor[0].statuses.get("tangled", 0)) == 0):
+		for direction in ([-1] if stuck else [-1, 1]):
+			if bool(battle._shift_valid(actor, direction).get("ok", false)):
 				return battle.move(direction)
 	return battle.pass_turn()
 
@@ -373,7 +383,17 @@ func _to_terminal(session: StitchedRunSession, label: String) -> Dictionary:
 				if session.battle.is_over():
 					ok = session.settle_battle(session.battle)
 					if ok:
-						_check(session.journal.back() == {"action": "settle"}
+						var awarded: Dictionary = session.receipts.back().get("reward", {}).get("ability_patch", {})
+						var expected_settle := {"action": "settle"}
+						var award_ok := true
+						if session.s14_enabled:
+							expected_settle["ability_patch"] = awarded
+							if session.receipts.back().get("outcome") == "victory":
+								award_ok = not awarded.is_empty() and not session.ability_inventory.is_empty() \
+									and session.ability_inventory.back() == awarded
+							else:
+								award_ok = awarded.is_empty()
+						_check(award_ok and session.journal.back() == expected_settle
 							and session.receipts.size() == previous_receipts + 1,
 							label + " one authentic Fight settlement")
 				else:
@@ -585,11 +605,17 @@ func _run() -> void:
 		and app.stitched_run_battle == null and app.stitched_run_panel != null \
 		and app.stitched_run_panel.is_visible_in_tree() and app.find_children("CorridorFight", "Control", true, false).is_empty(),
 		"only Continue returns to a live routed map, never a second Fight")
+	var settled_award: Dictionary = session.receipts.back().get("reward", {}).get("ability_patch", {})
+	var settled: Dictionary = {"action": "settle"}
+	if session.s14_enabled:
+		settled["ability_patch"] = settled_award
 	_check(session.receipts.size() == previous_receipts.size() + 1 \
 		and session.receipts.slice(0, previous_receipts.size()) == previous_receipts \
 		and session.journal.size() == previous_journal.size() + 1 \
 		and session.journal.slice(0, previous_journal.size()) == previous_journal \
-		and session.journal.back() == {"action": "settle"} \
+		and session.journal.back() == settled \
+		and (not session.s14_enabled or (not settled_award.is_empty() \
+			and session.ability_inventory.back() == settled_award)) \
 		and session.walk_receipts == previous_walks and session.is_consistent(),
 		"one and only one Fight settlement receipt, journal settle and intact old Walk receipts")
 	if session.receipts.size() != previous_receipts.size() + 1:
@@ -602,7 +628,8 @@ func _run() -> void:
 	expected_satchel.append_array(awarded)
 	_check(receipt.get("node_id") == fight_id and receipt.get("kind") == "Fight" \
 		and receipt.get("outcome") == "victory" and reward.has("gold") \
-		and reward.has("scraps") and reward.has("parts") and awarded.size() <= 1,
+		and reward.has("scraps") and reward.has("parts") and awarded.size() <= 1 \
+		and reward.get("ability_patch", {}) == settled_award and not settled_award.is_empty(),
 		"receipt belongs to exactly the won routed Fight and describes its real random award")
 	_check(session.gold == gold_before + int(reward.get("gold", -999)) \
 		and session.scraps == scraps_before + int(reward.get("scraps", -999)) \

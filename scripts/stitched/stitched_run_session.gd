@@ -15,7 +15,24 @@ class RankedBattle extends StitchedRules:
 	func use_part(part_id: String, rank: int) -> Dictionary:
 		if not _admitted():
 			return {"ok": false}
+		if _s14:
+			if current_side() != "hero":
+				return {"ok": false}
+			# Temporary old HUD bridge: part buttons dispatch the fixed ability at
+			# the same limb slot, never the part's retired authored skill.
+			var actor := _current_unit()
+			for slot in StitchedParts.SLOTS:
+				if actor.parts.has(slot) and actor.parts[slot].id == part_id:
+					for candidate in actor.abilities:
+						if candidate.slot == slot:
+							return _remember(super.use_ability(candidate.id, rank), "use_part", [part_id, rank])
+			return {"ok": false}
 		return _remember(super.use_part(part_id, rank), "use_part", [part_id, rank])
+
+	func use_ability(ability_id: String, rank: int) -> Dictionary:
+		if not _admitted():
+			return {"ok": false}
+		return _remember(super.use_ability(ability_id, rank), "use_ability", [ability_id, rank])
 
 	func use_foe_ability(ability_id: String, rank: int) -> Dictionary:
 		if not _admitted():
@@ -112,17 +129,29 @@ var gift_slots: Array = StitchedWrenGifts.basics()
 var gift_pool: Array = StitchedWrenGifts.pool_for({})
 var gift_offer: Array = []
 var gift_offers_made := 0
+## S14: unique run-owned ability patches, per-ability sockets and optional side doors.
+var s14_enabled := true
+var ability_inventory: Array = []
+var ability_sockets: Dictionary = {}
+var ability_serial := 0
+var door_offer: Dictionary = {}
+var door_history: Array = []
+var underbed_taken := false
 ## Tests pin the drawn Event record for every session, so save/replay meets it too; the draw
 ## still spends its seeded roll. Empty in real play.
 static var pinned_event_id := ""
 
 
-static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}) -> StitchedRunSession:
+static func start(seed_number: int, selected: Array = DEFAULT_PICKS, initial: Dictionary = {}, s14: bool = true) -> StitchedRunSession:
 	var session := StitchedRunSession.new()
 	var config := starter_config(selected)
 	if config.is_empty():
 		return null
 	session.seed_value = seed_number
+	session.s14_enabled = s14
+	if s14 and (StitchedS14Abilities.kits().is_empty() or StitchedS14Abilities.patches().is_empty() \
+			or StitchedS14SideDoors.catalog().is_empty()):
+		return null
 	session.picks = selected.duplicate()
 	session.catalog = StitchedParts.build_catalog(config.parts).by_id
 	session.enemies = StitchedEnemyCatalog.load_catalog()
@@ -175,7 +204,11 @@ func snapshot() -> Dictionary:
 		"walk": {"enabled": walks_enabled, "state": walk.snapshot() if walk != null else {},
 			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)},
 		"gifts": {"slots": gift_slots.duplicate(), "pool": gift_pool.duplicate(),
-			"offer": gift_offer.duplicate(), "made": gift_offers_made}}
+			"offer": gift_offer.duplicate(), "made": gift_offers_made},
+		"s14": {"enabled": s14_enabled, "inventory": ability_inventory.duplicate(true),
+			"sockets": ability_sockets.duplicate(true), "serial": ability_serial,
+			"door_offer": door_offer.duplicate(true), "door_history": door_history.duplicate(true),
+			"underbed_taken": underbed_taken}}
 
 
 func _seal() -> void:
@@ -378,6 +411,8 @@ func _finish_walk() -> bool:
 			hero.max_hp = maximum
 			hero.hp = mini(doll.hp, maximum)
 			hero.hanging = hero.hp == 0 and not hero.lost
+			if s14_enabled and hero.hp > 0:
+				hero.death_hits = 0
 			var gained: int = doll.fray - int(hero.get("fray", 0)) - (20 if doll.id in cut else 0)
 			if gained > 0:
 				walk_carry.append({"kind": "fray", "target": doll.id, "amount": gained})
@@ -394,6 +429,220 @@ func _finish_walk() -> bool:
 		return true
 	phase = "visit"
 	return _open_visit({"Rest": "Campfire", "Shop": "Peddler", "Treasure": "Event"}.get(node_type, node_type))
+
+
+## S14 owned-item records have unique serials. S13 worn patches and Button purchases
+## stay in their existing, independent ledgers.
+func _award_ability_patch(source: String, rarity: String = "") -> Dictionary:
+	var patch := StitchedS14Abilities.draw_patch(rng, source, rarity)
+	if patch.is_empty():
+		return {}
+	ability_serial += 1
+	var item := {"uid": ability_serial, "id": patch.id, "rarity": patch.rarity}
+	ability_inventory.append(item)
+	return item.duplicate(true)
+
+
+## The party material a successful Event choice can change. A free Leave, decline
+## or escape leaves every value equal, so choose_visit can tell it apart from a
+## genuinely consequential choice without hard-coding one exit id per Event.
+func _event_material_state() -> Dictionary:
+	var row: Array = []
+	for hero in heroes:
+		row.append([str(hero.id), int(hero.hp), int(hero.fray), str(hero.resolve),
+			bool(hero.lost), bool(hero.hanging), hero.parts.duplicate(true)])
+	return {"gold": gold, "scraps": scraps, "candle": candle,
+		"satchel": satchel.duplicate(true), "patches": patches.duplicate(true),
+		"pockets": pockets.duplicate(true), "heroes": row}
+
+
+func _battle_sockets() -> Dictionary:
+	var loadout := {}
+	for hero in heroes:
+		if hero.lost:
+			continue
+		var owned := {}
+		for ability_id in ability_sockets.get(hero.id, {}):
+			var ids: Array = []
+			for uid in ability_sockets[hero.id][ability_id]:
+				for item in ability_inventory:
+					if item.uid == uid:
+						ids.append(item.id)
+			owned[ability_id] = ids
+		loadout[hero.id] = owned
+	return loadout
+
+
+## Authenticated Sewing Circle resewing; no item, money or RNG changes on a refusal.
+## uid=0 removes replace_uid, otherwise swaps a found patch onto a fixed signature.
+func socket_ability(uid: int, hero_id: String, ability_id: String, replace_uid: int, expected: Dictionary) -> bool:
+	if not s14_enabled or phase != "visit" or str(pending.get("service", "")) != "SewingCircle" \
+			or expected != snapshot() or not is_consistent() or (uid <= 0 and replace_uid <= 0) \
+			or scraps < SEWING_COST or (uid > 0 and uid == replace_uid):
+		return false
+	var owner: Dictionary = {}
+	for hero in heroes:
+		if hero.id == hero_id and not hero.lost:
+			owner = hero
+	if owner.is_empty() or StitchedS14Abilities.ability(hero_id, ability_id).is_empty():
+		return false
+	var item_id := ""
+	if uid > 0:
+		for item in ability_inventory:
+			if item.uid == uid:
+				item_id = str(item.id)
+		if item_id.is_empty():
+			return false
+	var proposed: Array = ability_sockets.get(hero_id, {}).get(ability_id, []).duplicate()
+	if replace_uid > 0:
+		if not replace_uid in proposed:
+			return false
+		proposed.erase(replace_uid)
+	if uid > 0:
+		for hero_key in ability_sockets:
+			for key in ability_sockets[hero_key]:
+				if uid in ability_sockets[hero_key][key] and uid != replace_uid:
+					return false
+		if uid in proposed:
+			return false
+		proposed.append(uid)
+	var ids: Array = []
+	for new_uid in proposed:
+		var found := false
+		for item in ability_inventory:
+			if item.uid == new_uid:
+				ids.append(item.id)
+				found = true
+		if not found:
+			return false
+	if proposed.size() > StitchedS14Abilities.socket_limit(ids):
+		return false
+	if not ability_sockets.has(hero_id):
+		ability_sockets[hero_id] = {}
+	if proposed.is_empty():
+		ability_sockets[hero_id].erase(ability_id)
+	else:
+		ability_sockets[hero_id][ability_id] = proposed
+	scraps -= SEWING_COST
+	pending.steps.append({"action": "socket", "uid": uid, "hero": hero_id, "ability": ability_id,
+		"replace": replace_uid, "scraps": scraps})
+	journal.append({"action": "socket", "uid": uid, "hero": hero_id, "ability": ability_id,
+		"replace": replace_uid})
+	_open_visit("SewingCircle")
+	_seal()
+	changed.emit()
+	return true
+
+
+## The door offer is sealed by the completed node, not supplied by the caller. Boss
+## victory remains terminal; the door is an optional side transaction, never another map step.
+func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool:
+	if not s14_enabled or door_offer.is_empty() or not phase in ["map", "victory"] \
+			or str(door_offer.get("node_id", "")) != map.get_current_node_id() \
+			or not is_consistent() or expected != snapshot() or (door_id != "" and door_id != door_offer.id):
+		return false
+	if door_id == "":
+		if hero_id != "":
+			return false
+		door_history.append({"id": "", "node_id": door_offer.node_id})
+		door_offer.clear()
+		journal.append({"action": "door", "id": "", "hero": ""})
+		_seal()
+		changed.emit()
+		return true
+	var source: Dictionary = StitchedS14SideDoors.catalog().get(door_id, {})
+	if source.is_empty() or str(source.kind) != str(door_offer.kind) \
+			or source.duplicate(true) != _door_record():
+		return false
+	if source.kind == "attic" and underbed_taken:
+		return false
+	var target: Dictionary = {}
+	for hero in heroes:
+		if hero.id == hero_id and not hero.lost:
+			target = hero
+	if source.cost != "none" or source.reward == "head_guard":
+		if target.is_empty():
+			return false
+	elif not hero_id.is_empty():
+		return false
+	match str(source.cost):
+		"max_hp":
+			if int(target.base_max_hp) - int(source.amount) < 10:
+				return false
+		"limb":
+			if not target.parts.has("arms") or target.parts.arms.torn:
+				return false
+		"fear":
+			if source.amount != StitchedKidFear.LOST_FEAR_DELTA or kid_fear() + source.amount > 100:
+				return false
+		"none":
+			pass
+		_:
+			return false
+	if source.reward == "wren_gift":
+		var available := gift_pool.filter(func(gift: Variant) -> bool: return not gift in gift_slots)
+		if available.is_empty():
+			return false
+	if source.reward in ["silk_patch", "gold_patch"] and StitchedS14Abilities.patches().is_empty():
+		return false
+	# Everything above is a pure preflight. Commit the price and reward together.
+	match str(source.cost):
+		"max_hp":
+			target.base_max_hp -= source.amount
+			target.max_hp = maxi(10, int(target.max_hp) - int(source.amount))
+			target.hp = mini(int(target.hp), int(target.max_hp))
+		"limb":
+			target.parts.arms.torn = true
+			var calc := StitchedRules.new()
+			calc._parts = catalog
+			calc._s14 = true
+			calc._recompute_stats(target)
+			target.hp = mini(int(target.hp), int(target.max_hp))
+		"fear":
+			_kid_fear.apply_observed_event({"kind": "lost"})
+	var earned: Dictionary = {}
+	match str(source.reward):
+		"gold_patch", "silk_patch":
+			earned = _award_ability_patch("boss" if source.reward == "gold_patch" else "elite",
+				"gold" if source.reward == "gold_patch" else "silk")
+		"wren_gift":
+			var eligible: Array = gift_pool.filter(func(gift: Variant) -> bool: return not gift in gift_slots)
+			eligible.sort()
+			var chosen: String = eligible[rng.randi_range(0, eligible.size() - 1)]
+			if gift_slots.size() == StitchedWrenGifts.SLOTS:
+				gift_slots[0] = chosen
+			else:
+				gift_slots.append(chosen)
+			earned = {"gift": chosen}
+		"candle":
+			candle = mini(100, candle + 25)
+		"mend":
+			for hero in heroes:
+				if hero.lost:
+					continue
+				for slot in hero.parts:
+					hero.parts[slot].torn = false
+				var calc := StitchedRules.new()
+				calc._parts = catalog
+				calc._s14 = true
+				calc._recompute_stats(hero)
+		"head_guard":
+			target.head_ward = true
+	if source.kind == "underbed":
+		underbed_taken = true
+	door_history.append({"node_id": door_offer.node_id, "id": door_id,
+		"hero": hero_id, "reward": earned.duplicate(true)})
+	door_offer.clear()
+	journal.append({"action": "door", "id": door_id, "hero": hero_id})
+	_seal()
+	changed.emit()
+	return true
+
+
+func _door_record() -> Dictionary:
+	var entry := door_offer.duplicate(true)
+	entry.erase("node_id")
+	return entry
 
 
 func _hero_inputs() -> Array:
@@ -478,6 +727,7 @@ func _open_battle(kind: String) -> bool:
 			"fray":
 				fray_gains.append(carried)
 	battle_config = {"mode": "stitched", "seed": seed_value, "run_rng": rng,
+		"s14": s14_enabled, "s14_sockets": _battle_sockets() if s14_enabled else {},
 		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle, "gifts": gift_slots.duplicate(),
 		"title": "Floor %02d / %s" % [map.get_current_floor(), kind],
 		"walk_mimic": walk_carry.any(func(carried: Dictionary): return carried.kind == "mimic"), "walk_cuts": cuts}
@@ -543,6 +793,8 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 	heroes = ending
 	satchel = battle.satchel()
 	var reward := {"gold": 0, "scraps": 0, "parts": []}
+	if s14_enabled:
+		reward["ability_patch"] = {}
 	if outcome == "victory":
 		var elite: bool = pending.kind != "Fight"
 		reward.gold = rng.randi_range(RunVictoryGold.ELITE_MIN if elite else RunVictoryGold.NORMAL_MIN,
@@ -560,6 +812,13 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 			if satchel.size() < 6:
 				satchel.append(spare)
 				reward.parts.append(spare.duplicate(true))
+	if outcome == "victory" and s14_enabled:
+		var source := "boss" if pending.kind == "Boss" else "elite" if pending.kind == "Elite" else "fight"
+		reward.ability_patch = _award_ability_patch(source)
+		if pending.kind in ["Elite", "Boss"]:
+			door_offer = StitchedS14SideDoors.offer(rng, str(pending.kind), underbed_taken)
+			if not door_offer.is_empty():
+				door_offer["node_id"] = pending.node_id
 	# Floor resolve and cut cleanup belongs to the rules authority.
 	battle.end_floor()
 	for hero in heroes:
@@ -573,7 +832,10 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 	pending.clear()
 	battle = null
 	battle_config.clear()
-	journal.append({"action": "settle"})
+	var settled_command := {"action": "settle"}
+	if s14_enabled:
+		settled_command["ability_patch"] = reward.ability_patch
+	journal.append(settled_command)
 	_seal()
 	changed.emit()
 	return true
@@ -928,6 +1190,7 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	var kind: String = pending.service
 	var displaced_patch := ""
 	var tell_tales_fear := false
+	var event_before: Dictionary = _event_material_state() if kind == "Event" else {}
 	match kind:
 		"Campfire":
 			if action_id == "swap":
@@ -1028,6 +1291,11 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 	if result.get("ok") != true:
 		return false
 	_apply_receipt(result)
+	var event_patch: Dictionary = {}
+	# A free Leave/decline/escape changes no party material, so it finds no patch.
+	# Only a genuinely consequential Event choice can carry S14 loot.
+	if s14_enabled and kind == "Event" and _event_material_state() != event_before:
+		event_patch = _award_ability_patch("event")
 	if tell_tales_fear:
 		# The run ledger is the only writer of Wren's FEAR; it must land on the service's capped value.
 		var relief := _kid_fear.apply_observed_event({"kind": "tell_tales"})
@@ -1042,7 +1310,10 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 		"gold": gold, "scraps": scraps, "candle": candle})
 	if kind == "Campfire" and action_id == "swap":
 		pending["swapped"] = true
-	journal.append({"action": "visit", "id": action_id, "arguments": arguments.duplicate(true)})
+	var visit_command := {"action": "visit", "id": action_id, "arguments": arguments.duplicate(true)}
+	if not event_patch.is_empty():
+		visit_command["ability_patch"] = event_patch
+	journal.append(visit_command)
 	if action_id == "swap" or (kind == "SewingCircle" and action_id in ["mend", "upgrade", "replace", "double_stitch"]):
 		_open_visit(kind)
 	elif not result.get("service_request", {}).is_empty():
@@ -1118,6 +1389,7 @@ func _apply_receipt(result: Dictionary) -> void:
 		var target_id: String = str(result.get("target_hero_id", result.get("hero_id", "")))
 		var authority := StitchedRules.new()
 		authority._valid = true
+		authority._s14 = s14_enabled
 		authority._rng = rng
 		authority._parts = catalog
 		authority._candle = candle
@@ -1131,6 +1403,8 @@ func _apply_receipt(result: Dictionary) -> void:
 			else:
 				target_unit.hp = mini(int(target_unit.max_hp), int(target_unit.hp) + hp_delta)
 				target_unit.hanging = target_unit.hp == 0 and not target_unit.lost
+				if s14_enabled and target_unit.hp > 0:
+					target_unit.death_hits = 0
 		satchel = authority.satchel()
 	for hero in heroes:
 		if hero.fray < StitchedRules.FRAY_RECOVER and hero.resolve in StitchedS1BEffects.RESOLVE_TRAITS:
@@ -1144,6 +1418,22 @@ func _apply_receipt(result: Dictionary) -> void:
 		hero.max_hp = maximum
 		hero.hp = mini(hero.hp, maximum)
 		hero.hanging = hero.hp == 0 and not hero.lost
+		if s14_enabled and hero.hp > 0:
+			hero.death_hits = 0
+		# A visit service can report a changed FRAY without the resolve trait the
+		# battle rules attach at the threshold. Settle that crossing here through
+		# the one seeded gate so the next battle never opens on an invalid doll.
+		if hero.lost:
+			continue
+		if int(hero.fray) < StitchedRules.FRAY_RECOVER \
+				and str(hero.resolve) in StitchedS1BEffects.RESOLVE_TRAITS:
+			hero.resolve = ""
+		elif int(hero.fray) >= StitchedRules.FRAY_RESOLVE and str(hero.resolve).is_empty():
+			if StitchedS1BEffects.percent_roll_succeeds(rng.randi_range(1, 100), 25):
+				hero.resolve = "steadfast"
+				hero.fray = 45
+			else:
+				hero.resolve = StitchedS1BEffects.trait_for_roll(rng.randi_range(0, 4))
 
 
 func _open_event() -> bool:

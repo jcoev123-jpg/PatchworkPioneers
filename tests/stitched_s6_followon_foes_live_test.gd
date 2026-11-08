@@ -46,38 +46,116 @@ func _mount(app: Node) -> StitchedBattleScreen:
 	return app.stitched_fight_view
 
 
+## The signature action a doll would use from this limb slot in the mounted battle.
+## S14 kits are fixed; a torn socket limb has no action. Legacy battles keep the
+## worn part's authored ability.
+func _slot_ability(stage: StitchedBattleScreen, actor: Dictionary, slot: String) -> Dictionary:
+	if stage.battle != null and bool(stage.battle._s14):
+		for candidate in actor.get("abilities", []):
+			if str(candidate.get("slot", "")) != slot:
+				continue
+			if actor.get("parts", {}).has(slot) and bool(actor.parts[slot].get("torn", false)):
+				return {}
+			return candidate
+		return {}
+	var equipped: Dictionary = actor.get("parts", {}).get(slot, {})
+	var id := str(equipped.get("id", ""))
+	if id.is_empty() or not stage.parts.has(id):
+		return {}
+	return StitchedParts.ability_at_tier(stage.parts[id], int(equipped.get("tier", 1)))
+
+
+func _strike_from_rank(battle: StitchedRules, actor: Dictionary, rank: int) -> bool:
+	if battle == null or not bool(battle._s14):
+		return false
+	for ability in actor.get("abilities", []):
+		if str(ability.get("target_side", "")) != "enemy" \
+				or int(ability.get("dmg", [0, 0]).back()) <= 0:
+			continue
+		var slot := str(ability.get("slot", ""))
+		if actor.get("parts", {}).has(slot) and bool(actor.parts[slot].get("torn", false)):
+			continue
+		if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), rank) \
+				or not battle._self_move_gate(actor, ability).is_empty():
+			continue
+		for target_rank in range(1, 5):
+			if not battle._legal_targets(actor, ability, target_rank).is_empty():
+				return true
+	return false
+
+
+func _try_move(stage: StitchedBattleScreen, key: String) -> bool:
+	var button: Button = stage._action_buttons.get(key)
+	if button == null or button.disabled:
+		return false
+	var before := stage.receipts.size()
+	button.pressed.emit()
+	return stage.receipts.size() > before
+
+
 func _act(stage: StitchedBattleScreen) -> bool:
 	if stage.battle == null or stage.battle.is_over() or stage.battle.current_side() != "hero":
 		return false
-	var actor: Dictionary = stage.battle.get_unit(stage.battle.current_actor_id())
+	var battle: StitchedRules = stage.battle
+	var actor: Dictionary = battle.get_unit(battle.current_actor_id())
 	var best_slot := ""
 	var best_target := ""
-	var best_score := -10000
+	var best_score := -10000.0
 	for slot in PART_SLOTS:
-		if not stage._valid_part(actor, actor["parts"][slot]) or not stage.select_part(slot):
+		if not actor.get("parts", {}).has(slot) or not stage.select_part(slot):
 			continue
-		var part: Dictionary = actor["parts"][slot]
-		var ability: Dictionary = StitchedParts.ability_at_tier(
-			stage.parts[str(part["id"])], int(part["tier"]))
+		var ability := _slot_ability(stage, actor, slot)
+		if ability.is_empty():
+			continue
+		# The mounted buttons still project the worn part, so a slot may be enabled
+		# where the fixed signature cannot launch or is locked by its own move.
+		if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(actor.get("rank", 0))) \
+				or not battle._self_move_gate(actor, ability).is_empty():
+			continue
 		for key in stage.legal_targets():
 			var pieces := str(key).split("_")
 			if pieces.size() != 2:
 				continue
-			var score := -25
-			if pieces[0] == "foe":
-				score = int(ability.get("dmg", [0, 0])[1]) * 4 \
-					+ int(ability.get("dmg", [0, 0])[0])
-				if int(pieces[1]) == 1:
-					score += 3
-			elif pieces[0] == "hero" and ability.get("kind") == "heal":
-				var ally: Dictionary = stage._unit_at("hero", int(pieces[1]))
-				var missing := int(ally.get("max_hp", 0)) - int(ally.get("hp", 0))
-				if missing >= 8:
-					score = 38 + missing
+			var rank := int(pieces[1])
+			# The mounted button lights this rank, and the fixed signature must
+			# also accept that rank. Score the ability's real committed targets.
+			var targets := battle._legal_targets(actor, ability, rank)
+			if targets.is_empty():
+				continue
+			var score := -1000.0
+			if str(ability.get("target_side", "")) == "enemy":
+				# Focus the weakest real target so a normal foe stops contributing
+				# damage instead of racing a full-health elite.
+				for target in targets:
+					score += 300.0 - float(target.get("hp", 0)) * 3.0
+				score += float(int(ability.get("dmg", [0, 0])[0])
+					+ int(ability.get("dmg", [0, 0]).back()))
+			elif str(ability.get("kind", "")) == "heal":
+				var dying := false
+				var missing := 0
+				for target in targets:
+					if int(target.get("hp", 0)) <= 0 and not bool(target.get("lost", false)):
+						dying = true
+					missing = maxi(missing, int(target.get("max_hp", 0)) - int(target.get("hp", 0)))
+				# Reviving a zero-HP doll is worth a turn; routine topping-up is not,
+				# so the party shortens the fight instead of healing chip damage.
+				if dying:
+					score = 500.0 + missing
 			if score > best_score:
 				best_score = score
 				best_slot = slot
 				best_target = str(key)
+	# A doll with no legal action at all steps to a rank where it can act.
+	if best_slot.is_empty() and bool(battle._s14) \
+			and not _strike_from_rank(battle, actor, int(actor.rank)):
+		for key in ["move_back", "move_front"]:
+			var direction := 1 if key == "move_back" else -1
+			if not bool(battle._shift_valid(actor, direction).get("ok", false)):
+				continue
+			if not _strike_from_rank(battle, actor, int(actor.rank) + direction):
+				continue
+			if _try_move(stage, key):
+				return true
 	if best_slot.is_empty():
 		var before := stage.receipts.size()
 		stage._action_buttons["pass"].pressed.emit()

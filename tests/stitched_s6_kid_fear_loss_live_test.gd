@@ -84,6 +84,22 @@ func _continue_saved(app: Node, label: String) -> Node:
 	return loaded
 
 
+func _direct_head_loss(value: Variant) -> bool:
+	if value is Dictionary:
+		var door: Variant = value.get("death_door", value.get("attacker_death_door"))
+		if door is Dictionary and bool(door.get("lost", false)) \
+				and str(door.get("tear", {}).get("slot", "")) == "head":
+			return true
+		for key in value:
+			if _direct_head_loss(value[key]):
+				return true
+	elif value is Array:
+		for item in value:
+			if _direct_head_loss(item):
+				return true
+	return false
+
+
 func _first_loss(seed_number: int) -> Node:
 	var app: Node = await _new_run(seed_number)
 	var session: StitchedRunSession = app.stitched_run_session
@@ -105,6 +121,7 @@ func _first_loss(seed_number: int) -> Node:
 	_check(not session.settle_battle(stage.battle) and session.snapshot() == entered
 		and session.journal == journal, "unfinished mounted exit and settlement are fully atomic")
 	var hanging_seen := false
+	var head_loss_seen := false
 	var passes := 0
 	for step in range(500):
 		if stage.battle.is_over() or stage.battle.get_heroes().any(func(hero: Dictionary): return hero.lost):
@@ -114,11 +131,13 @@ func _first_loss(seed_number: int) -> Node:
 		if stage.receipts.size() == count:
 			break
 		passes += 1
+		for receipt in stage.receipts.slice(count):
+			head_loss_seen = head_loss_seen or _direct_head_loss(receipt)
 		hanging_seen = hanging_seen or stage.battle.get_heroes().any(func(hero: Dictionary): return hero.hanging)
 		_fear(session, 0, 0, "hits, fray and Hanging never publish an unrelated fear event")
 	var won := _win(stage)
 	var lost := stage.battle.get_heroes().filter(func(hero: Dictionary): return hero.lost)
-	_check(passes > 0 and hanging_seen and won.acted > 0 and lost.size() == 1
+	_check(passes > 0 and (hanging_seen or head_loss_seen) and won.acted > 0 and lost.size() == 1
 		and stage.battle.outcome() == "victory", "public Pass and ability controls genuinely lose one doll then win")
 	if lost.size() != 1 or stage.battle.outcome() != "victory":
 		return app
@@ -128,16 +147,22 @@ func _first_loss(seed_number: int) -> Node:
 	expected_rng.state = session.rng.state
 	expected_rng.randi_range(RunVictoryGold.NORMAL_MIN, RunVictoryGold.NORMAL_MAX)
 	expected_rng.randi_range(0, 1)
+	var drawn: Dictionary = StitchedS14Abilities.draw_patch(expected_rng, "fight")
 	journal = session.journal.duplicate(true)
 	stage._action_buttons["exit"].pressed.emit()
 	_fear(session, 15, 1, "one newly LOST identity applies exactly one +15 service event")
+	var awarded: Dictionary = session.journal.back().get("ability_patch", {})
+	var expected_command := {"action": "settle", "ability_patch": awarded}
 	_check(session.is_consistent() and session.rng.state == expected_rng.state
-		and session.journal == journal + [{"action": "settle"}],
-		"fear seals with settlement, consumes no extra RNG and adds only the existing settle command")
+		and not drawn.is_empty() and awarded == session.ability_inventory.back()
+		and session.receipts.back().get("reward", {}).get("ability_patch", {}) == awarded
+		and awarded.get("id") == drawn.id and awarded.get("rarity") == drawn.rarity
+		and session.journal == journal + [expected_command],
+		"fear seals with settlement, consumes no extra RNG and awards only its real seeded patch")
 	var settled := session.snapshot()
 	stage._action_buttons["exit"].pressed.emit()
 	_check(not session.settle_battle(completed) and session.snapshot() == settled
-		and session.journal == journal + [{"action": "settle"}], "duplicate exit and stale settlement cannot count twice")
+		and session.journal == journal + [expected_command], "duplicate exit and stale settlement cannot count twice")
 	await _ledger(app, "settled map")
 	var twin := StitchedRunSave.restore(StitchedRunSave.capture(session))
 	_check(twin != null and twin.snapshot() == settled, "authenticated replay reproduces every ledger and RNG")
@@ -152,7 +177,9 @@ func _first_loss(seed_number: int) -> Node:
 
 
 func _carried_loss() -> void:
-	var app: Node = await _first_loss(42)
+	# Seed 101 re-derives the carried-LOST witness under S14: the opening Fight loses
+	# exactly one doll and is won, and its chain reaches a Shop, a Campfire and a real Elite.
+	var app: Node = await _first_loss(101)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null or session.phase != "map":
 		app.free()
@@ -201,10 +228,10 @@ func _carried_loss() -> void:
 
 
 func _replacement_loss() -> void:
-	# Seed 1690 re-derives the replacement witness on the Hook Drag reel: the opening Fight still
-	# loses exactly one doll and is won, its connected Shop leads to the connected Sewing Circle
-	# and on into a genuine onward Elite.
-	var app: Node = await _first_loss(1690)
+	# Seed 911 re-derives the replacement witness under S14: the opening Fight still
+	# loses exactly one doll and is won, its connected Shop leads to the connected Sewing
+	# Circle and on into a genuine onward Elite.
+	var app: Node = await _first_loss(911)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null or session.phase != "map":
 		app.free()

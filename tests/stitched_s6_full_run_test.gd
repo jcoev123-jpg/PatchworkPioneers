@@ -412,6 +412,11 @@ func _exercise_partial_carry() -> void:
 	if session == null:
 		app.free()
 		return
+	# Preserve the old S6 one-LOST carry witness on its documented pre-S14
+	# combat branch; the S14 gate separately exercises escalating death hits.
+	session.s14_enabled = false
+	session._seal()
+	app._present_stitched_run()
 	var fight_id := ""
 	for id in session.choices():
 		if session.map.get_node(id).type == "Fight":

@@ -1,0 +1,884 @@
+{
+  "abilities": [
+    {
+      "hero": "warden",
+      "slot": "head",
+      "id": "warden_head_pot_helm_command",
+      "name": "Pot Helm Command",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "mark": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "warden",
+      "slot": "arms",
+      "id": "warden_arms_shield_catch",
+      "name": "Shield Catch",
+      "kind": "guard",
+      "target_side": "ally",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "guard": 2
+      },
+      "move": "guard"
+    },
+    {
+      "hero": "warden",
+      "slot": "torso",
+      "id": "warden_torso_iron_challenge",
+      "name": "Iron Challenge",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        3,
+        5
+      ],
+      "effects": {
+        "weak": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "warden",
+      "slot": "legs",
+      "id": "warden_legs_rim_toss",
+      "name": "Rim Toss",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        2,
+        4
+      ],
+      "effects": {
+        "push": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "seamstress",
+      "slot": "head",
+      "id": "seamstress_head_mending_knot",
+      "name": "Mending Knot",
+      "kind": "heal",
+      "target_side": "ally",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "heal": 5
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "seamstress",
+      "slot": "arms",
+      "id": "seamstress_arms_needle_prick",
+      "name": "Needle Prick",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        2,
+        4
+      ],
+      "effects": {
+        "bleed": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "seamstress",
+      "slot": "torso",
+      "id": "seamstress_torso_shielding_hem",
+      "name": "Shielding Hem",
+      "kind": "guard",
+      "target_side": "ally",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "guard": 2
+      },
+      "move": "guard"
+    },
+    {
+      "hero": "seamstress",
+      "slot": "legs",
+      "id": "seamstress_legs_tether_spools",
+      "name": "Tether Spools",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "tangled": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "tinker",
+      "slot": "head",
+      "id": "tinker_head_cog_shot",
+      "name": "Cog Shot",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        3,
+        5
+      ],
+      "effects": {
+        "mark": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "tinker",
+      "slot": "arms",
+      "id": "tinker_arms_scrap_bomb",
+      "name": "Scrap Bomb",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        2,
+        3
+      ],
+      "effects": {
+        "exposed": 1
+      },
+      "move": "attack",
+      "multi": true
+    },
+    {
+      "hero": "tinker",
+      "slot": "torso",
+      "id": "tinker_torso_casing_ward",
+      "name": "Casing Ward",
+      "kind": "buff",
+      "target_side": "self",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "thorns": 2
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "tinker",
+      "slot": "legs",
+      "id": "tinker_legs_tune_up",
+      "name": "Tune Up",
+      "kind": "heal",
+      "target_side": "ally",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "heal": 3
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "lantern_monk",
+      "slot": "head",
+      "id": "lantern_monk_head_moth_wink",
+      "name": "Moth Wink",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "blind": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "lantern_monk",
+      "slot": "arms",
+      "id": "lantern_monk_arms_wick_spark",
+      "name": "Wick Spark",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        3,
+        4
+      ],
+      "effects": {
+        "bleed": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "lantern_monk",
+      "slot": "torso",
+      "id": "lantern_monk_torso_lamplight_wash",
+      "name": "Lamplight Wash",
+      "kind": "heal",
+      "target_side": "ally",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "heal": 4
+      },
+      "move": "skill",
+      "multi": true
+    },
+    {
+      "hero": "lantern_monk",
+      "slot": "legs",
+      "id": "lantern_monk_legs_pole_shelter",
+      "name": "Pole Shelter",
+      "kind": "guard",
+      "target_side": "ally",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "guard": 1
+      },
+      "move": "guard"
+    },
+    {
+      "hero": "rag_duelist",
+      "slot": "head",
+      "id": "rag_duelist_head_rapier_wink",
+      "name": "Rapier Wink",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "mark": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "rag_duelist",
+      "slot": "arms",
+      "id": "rag_duelist_arms_seam_thrust",
+      "name": "Seam Thrust",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        5,
+        7
+      ],
+      "effects": {
+        "exposed": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "rag_duelist",
+      "slot": "torso",
+      "id": "rag_duelist_torso_feint_stitch",
+      "name": "Feint Stitch",
+      "kind": "buff",
+      "target_side": "self",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "dodge": 15,
+        "duration": 1
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "rag_duelist",
+      "slot": "legs",
+      "id": "rag_duelist_legs_heel_spin",
+      "name": "Heel Spin",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        2,
+        3
+      ],
+      "effects": {
+        "push": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "scarecrow",
+      "slot": "head",
+      "id": "scarecrow_head_straw_gaze",
+      "name": "Straw Gaze",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "blind": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "scarecrow",
+      "slot": "arms",
+      "id": "scarecrow_arms_crow_peck",
+      "name": "Crow Peck",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        3,
+        5
+      ],
+      "effects": {
+        "bleed": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "scarecrow",
+      "slot": "torso",
+      "id": "scarecrow_torso_sack_of_thorns",
+      "name": "Sack of Thorns",
+      "kind": "buff",
+      "target_side": "self",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "thorns": 3
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "scarecrow",
+      "slot": "legs",
+      "id": "scarecrow_legs_startle_step",
+      "name": "Startle Step",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "pull": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "yarn_ranger",
+      "slot": "head",
+      "id": "yarn_ranger_head_thread_sight",
+      "name": "Thread Sight",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "mark": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "yarn_ranger",
+      "slot": "arms",
+      "id": "yarn_ranger_arms_spool_arrow",
+      "name": "Spool Arrow",
+      "kind": "ranged",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 90,
+      "dmg": [
+        4,
+        6
+      ],
+      "effects": {
+        "tangled": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "yarn_ranger",
+      "slot": "torso",
+      "id": "yarn_ranger_torso_knot_snare",
+      "name": "Knot Snare",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "tangled": 2
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "yarn_ranger",
+      "slot": "legs",
+      "id": "yarn_ranger_legs_backstep_ward",
+      "name": "Backstep Ward",
+      "kind": "guard",
+      "target_side": "ally",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "guard": 1
+      },
+      "move": "guard"
+    },
+    {
+      "hero": "button_golem",
+      "slot": "head",
+      "id": "button_golem_head_button_brow",
+      "name": "Button Brow",
+      "kind": "debuff",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2,
+        3
+      ],
+      "target": [
+        1,
+        2,
+        3
+      ],
+      "acc": 90,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "stun": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "button_golem",
+      "slot": "arms",
+      "id": "button_golem_arms_brass_knuckle",
+      "name": "Brass Knuckle",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        5,
+        8
+      ],
+      "effects": {
+        "weak": 1
+      },
+      "move": "attack"
+    },
+    {
+      "hero": "button_golem",
+      "slot": "torso",
+      "id": "button_golem_torso_button_plating",
+      "name": "Button Plating",
+      "kind": "buff",
+      "target_side": "self",
+      "launch": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "target": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "acc": 85,
+      "dmg": [
+        0,
+        0
+      ],
+      "effects": {
+        "thorns": 3
+      },
+      "move": "skill"
+    },
+    {
+      "hero": "button_golem",
+      "slot": "legs",
+      "id": "button_golem_legs_stamping_heel",
+      "name": "Stamping Heel",
+      "kind": "melee",
+      "target_side": "enemy",
+      "launch": [
+        1,
+        2
+      ],
+      "target": [
+        1,
+        2
+      ],
+      "acc": 85,
+      "dmg": [
+        3,
+        5
+      ],
+      "effects": {
+        "push": 1
+      },
+      "move": "attack"
+    }
+  ]
+}

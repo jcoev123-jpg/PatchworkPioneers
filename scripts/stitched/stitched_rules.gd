@@ -81,6 +81,9 @@ var _gifts: Array = StitchedKidHandActions.IDS.duplicate()
 var _gifts_spent: Array = []
 var _covered: Dictionary = {}
 var _nightlight := false
+## S14 signature actions are opt-in at battle creation (legacy S1 fixtures remain independent).
+var _s14 := false
+var _s14_sockets: Dictionary = {}
 
 
 ## Builds a stitched battle from authored data:
@@ -259,8 +262,17 @@ func end_floor() -> Dictionary:
 	if not _valid or _outcome == "ongoing":
 		return _reject("floor", "", "floor cannot end during battle")
 	for hero in _units_of_side("hero"):
-		if str(hero.get("resolve", "")) == "steadfast":
+		if str(hero.get("resolve", "")) == "steadfast" and not bool(hero.get("lost", false)):
 			hero["resolve"] = ""
+			# Steadfast calms the party "until the floor ends", but a doll still
+			# above the resolve threshold cannot leave it without a trait: settle
+			# that crossing exactly as the normal 100-fray resolve check does.
+			if int(hero.get("fray", 0)) >= FRAY_RESOLVE:
+				if StitchedS1BEffects.percent_roll_succeeds(_rng.randi_range(1, 100), 25):
+					hero["resolve"] = "steadfast"
+					hero["fray"] = 45
+				else:
+					hero["resolve"] = StitchedS1BEffects.trait_for_roll(_rng.randi_range(0, 4))
 	return {"ok": true, "action": "floor"}
 
 
@@ -309,6 +321,7 @@ func state_snapshot() -> Dictionary:
 		"thread_cuts": _thread_cuts.duplicate(true),
 		"satchel": _satchel.duplicate(true),
 		"turn_events": _turn_events.duplicate(true),
+		"s14": {"enabled": _s14, "sockets": _s14_sockets.duplicate(true)},
 		"hand": {
 			"round_used": _hand_round,
 			"shield_round": _shield_round,
@@ -549,7 +562,44 @@ func skip_lost_strings_turn() -> Dictionary:
 ## A hero's turn: use one equipped, untorn part ability from a legal launch rank against a
 ## legal target rank. Validates everything (including rank masks and target presence) before
 ## the first RNG draw, then spends the turn.
+
+## Four hero-specific signature abilities; sewn equipment changes stats, not action IDs.
+func use_ability(ability_id: String, target_rank: int) -> Dictionary:
+	var gate := _require_side_turn("ability", "hero")
+	if not gate.is_empty():
+		return gate
+	if not _s14:
+		return _reject("ability", current_actor_id(), "signature kit is not enabled")
+	var actor := _current_unit()
+	var ability: Dictionary = {}
+	for candidate in actor.abilities:
+		if candidate.id == ability_id:
+			ability = candidate
+			break
+	if ability.is_empty():
+		return _reject("ability", str(actor.id), "unknown signature ability")
+	if actor.parts.has(ability.slot) and actor.parts[ability.slot].torn:
+		return _reject("ability", str(actor.id), "the attached limb is torn")
+	if not StitchedParts.ranks_allowed(int(ability.launch_mask), int(actor.rank)):
+		return _reject("ability", str(actor.id), "invalid launch rank")
+	var targets := _legal_targets(actor, ability, target_rank)
+	if targets.is_empty():
+		return _reject("ability", str(actor.id), "illegal target rank or side")
+	var blocked := _self_move_gate(actor, ability)
+	if not blocked.is_empty():
+		return blocked
+	if str(actor.resolve) == "cowering" and ability.kind == "melee" \
+			and StitchedS1BEffects.percent_roll_succeeds(_rng.randi_range(1, 100), 30):
+		_advance_turn()
+		return {"ok": true, "action": "refused", "actor": str(actor.id)}
+	var result := _resolve_ability(actor, ability, targets, "")
+	_advance_turn()
+	return result
+
+
 func use_part(part_id: String, target_rank: int) -> Dictionary:
+	if _s14:
+		return _reject("ability", current_actor_id(), "body-part abilities are retired")
 	var gate := _require_side_turn("ability", "hero")
 	if not gate.is_empty():
 		return gate
@@ -632,6 +682,8 @@ func move(direction: int) -> Dictionary:
 	if not gate.is_empty():
 		return gate
 	var actor := _current_unit()
+	if _s14 and actor.parts.has("legs") and actor.parts.legs.torn:
+		return _reject("move", str(actor.id), "torn legs cannot change rank")
 	if int(actor["statuses"].get("tangled", 0)) > 0:
 		return _reject("move", str(actor["id"]), "a tangled hero cannot move")
 	if _thread_cuts.has(str(actor["id"])):
@@ -838,6 +890,23 @@ func _setup(config: Dictionary) -> String:
 	var foes: Variant = config.get("foes")
 	if not foes is Array or foes.size() < MIN_FOES or foes.size() > MAX_FOES:
 		return "stitched mode starts with two or three foes, never four"
+	var enabled: Variant = config.get("s14", false)
+	if not enabled is bool:
+		return "invalid S14 mode"
+	_s14 = enabled
+	if _s14:
+		if StitchedS14Abilities.kits().is_empty() or StitchedS14Abilities.patches().is_empty():
+			return "invalid S14 catalogs"
+		var sockets: Variant = config.get("s14_sockets", {})
+		if not sockets is Dictionary:
+			return "invalid S14 sockets"
+		for hero_entry in heroes:
+			if not hero_entry is Dictionary or not StitchedS14Abilities.valid_loadout(str(hero_entry.get("id", "")), sockets.get(str(hero_entry.get("id", "")), {})):
+				return "invalid S14 hero sockets"
+		for owner in sockets:
+			if not heroes.any(func(h: Variant) -> bool: return h is Dictionary and h.get("id") == owner):
+				return "S14 socket owner is outside the party"
+		_s14_sockets = sockets.duplicate(true)
 	var gifts: Variant = config.get("gifts", StitchedKidHandActions.IDS)
 	if not gifts is Array or gifts.is_empty() or gifts.size() > StitchedWrenGifts.SLOTS:
 		return "Wren carries one to four gifts"
@@ -1033,6 +1102,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		"statuses": starting_statuses,
 		"parts": parts,
 		"abilities": [],
+		"death_hits": 0,
+		"head_ward": false,
 		"is_boss": false,
 		"turns_per_round": 1,
 		"hanging": false,
@@ -1044,6 +1115,18 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 		# S13: how many fights each worn patch has sat on this doll (the run session keeps it).
 		"patch_wear": (entry.get("patch_wear") as Dictionary).duplicate(true) if entry.get("patch_wear") is Dictionary else {},
 	}
+	if _s14 and not carried_lost:
+		var kit: Dictionary = StitchedS14Abilities.kits().get(unit_id, {})
+		if kit.is_empty():
+			return {"ok": false, "error": "hero has no S14 kit", "unit": {}}
+		for slot in StitchedParts.SLOTS:
+			unit.abilities.append(kit[slot].duplicate(true))
+	var hits: Variant = entry.get("death_hits", 0)
+	var ward: Variant = entry.get("head_ward", false)
+	if typeof(hits) != TYPE_INT or hits < 0 or hits > 2 or not ward is bool:
+		return {"ok": false, "error": "invalid death-door carry", "unit": {}}
+	unit.death_hits = hits
+	unit.head_ward = ward
 	_recompute_stats(unit)
 	# Optional carry is in actual HP after worn-part modifiers, never base HP.
 	# Zero is an already-Hanging survivor; do not re-tear it or roll extra RNG.
@@ -1054,6 +1137,8 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 			return {"ok": false, "error": "hero " + unit_id + " has invalid starting hp", "unit": {}}
 		unit["hp"] = int(starting_hp)
 		unit["hanging"] = int(starting_hp) == 0
+		if unit.hp > 0 and unit.death_hits != 0:
+			return {"ok": false, "error": "healed hero retains death hits", "unit": {}}
 	else:
 		unit["hp"] = int(unit["max_hp"])
 	if entry.has("lost"):
@@ -1210,9 +1295,13 @@ func _recompute_stats(unit: Dictionary) -> void:
 	unit["crit"] = int(totals["crit"])
 	# Arms grant damage: the equipped parts' dmg stat is a flat bonus on every direct attack.
 	unit["dmg_bonus"] = int(totals["dmg"])
+	if _s14 and parts.has("arms") and parts.arms.torn:
+		unit["dmg_bonus"] -= 2
 	unit["max_hp"] = int(unit["base_max_hp"]) + int(totals["max_hp"])
 	unit["prot"] = int(unit["base_prot"]) + int(totals["prot"])
 	unit["speed"] = int(unit["base_speed"]) + int(totals["speed"])
+	if _s14 and parts.has("legs") and parts.legs.torn:
+		unit["speed"] = maxi(0, int(unit["speed"]) - 2)
 	unit["dodge"] = int(unit["base_dodge"]) + int(totals["dodge"])
 
 
@@ -1340,6 +1429,12 @@ func _enter_turn() -> void:
 ## Start-of-turn status tick. Returns true when the turn is consumed (stun or bleed death).
 func _tick_turn_start(unit: Dictionary) -> bool:
 	var statuses: Dictionary = unit["statuses"]
+	if _s14 and str(unit.side) == "hero" and int(unit.hp) > 0 and int(statuses.get("regen", 0)) > 0:
+		unit.hp = mini(int(unit.max_hp), int(unit.hp) + 2)
+		unit.death_hits = 0
+		statuses.regen -= 1
+		if statuses.regen <= 0:
+			statuses.erase("regen")
 	var stunned := int(statuses.get("stun", 0)) > 0
 	if stunned:
 		statuses["stun"] = int(statuses["stun"]) - 1
@@ -1476,7 +1571,29 @@ func _resolve_ability(
 		# A prior hit may have lost another hero through the shared FRAY cascade.
 		if str(target["side"]) == "hero" and bool(target["lost"]):
 			continue
-		results.append(_resolve_single(actor, ability, target))
+		var hit_result := _resolve_single(actor, ability, target)
+		results.append(hit_result)
+		if _s14 and str(actor.side) == "hero" and hit_result.hit:
+			_s14_apply_patches(actor, ability, hit_result)
+			var patched: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
+			var catalog := StitchedS14Abilities.patches()
+			var chain := false
+			for patch_id in patched:
+				if catalog.by_id[patch_id].effect == "chain":
+					chain = true
+			if chain and str(ability.target_side) == "enemy":
+				var original: Dictionary = _units.get(str(hit_result.target), {})
+				if not original.is_empty():
+					for rank in range(int(original.rank) + 1, MAX_RANK + 1):
+						var next := _foe_at(rank)
+						if next.is_empty() or not StitchedParts.ranks_allowed(int(ability.target_mask), rank):
+							continue
+						var chained := _resolve_single(actor, ability, next)
+						chained["chained"] = true
+						results.append(chained)
+						if chained.hit:
+							_s14_apply_patches(actor, ability, chained)
+						break
 	var receipt := {
 		"ok": true,
 		"action": "ability",
@@ -1492,6 +1609,41 @@ func _resolve_ability(
 	if self_move != 0 and _can_act(actor):
 		receipt["self_move"] = _shift(actor, self_move)
 	return receipt
+
+
+func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Dictionary) -> void:
+	var target: Dictionary = _units.get(str(receipt.target), {})
+	if target.is_empty() or target.get("dead", false) or target.get("lost", false):
+		return
+	var attached: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
+	var catalog := StitchedS14Abilities.patches()
+	for patch_id in attached:
+		var patch: Dictionary = catalog.by_id[patch_id]
+		var effect: String = patch.effect
+		var amount: int = int(patch.amount)
+		if effect == "chain":
+			continue
+		if effect == "regen":
+			target.statuses["regen"] = maxi(int(target.statuses.get("regen", 0)), amount)
+			receipt.statuses.append({"status": "regen", "duration": amount, "patch": patch_id})
+		elif effect == "cleanse":
+			for key in ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stun"]:
+				target.statuses.erase(key)
+			receipt.statuses.append({"status": "cleanse", "patch": patch_id})
+		elif effect == "steal":
+			# A gold steal on an ally heal harms that ally too: the patch always
+			# affects the actual target, not just the opposing side.
+			if target.side in ["hero", "foe"]:
+				var actual := mini(int(target.hp), amount)
+				_damage_target(target, actual, receipt)
+				actor.hp = mini(int(actor.max_hp), int(actor.hp) + actual)
+				if actor.hp > 0:
+					actor.hanging = false
+					actor.death_hits = 0
+				receipt.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
+		else:
+			_apply_effects(actor, target, {"effects": {effect: amount}}, receipt)
+		receipt["patches"] = receipt.get("patches", []) + [patch_id]
 
 
 func _resolve_single(actor: Dictionary, ability: Dictionary, target: Dictionary) -> Dictionary:
@@ -1643,6 +1795,8 @@ func _apply_effects(
 				target["hp"] = mini(int(target["max_hp"]), before + value)
 				if int(target["hp"]) > 0:
 					target["hanging"] = false
+					if _s14:
+						target["death_hits"] = 0
 				receipt["statuses"].append({
 					"status": "heal",
 					"amount": int(target["hp"]) - before,
@@ -1679,6 +1833,17 @@ func _damage_target(target: Dictionary, damage: int, receipt: Dictionary) -> voi
 	target["hp"] = maxi(0, int(target["hp"]) - damage)
 	receipt["target_hp"] = int(target["hp"])
 	if side == "hero":
+		if _s14 and damage <= 0:
+			return
+		if _s14 and damage > 0 and int(target.hp) == 0:
+			var door := _death_door_hit(target)
+			receipt["death_door"] = door
+			receipt["tear"] = door.get("tear", {})
+			receipt["hanging"] = not was_hanging
+			receipt["lost"] = bool(target.lost)
+			if target.lost:
+				receipt["satchel"] = door.get("satchel", {})
+			return
 		if int(target["hp"]) == 0:
 			if was_hanging:
 				var seam_roll := _rng.randi_range(1, 100)
@@ -1706,6 +1871,12 @@ func _damage_attacker(
 	actor["hp"] = maxi(0, int(actor["hp"]) - amount)
 	receipt["attacker_hp"] = int(actor["hp"])
 	if str(actor["side"]) == "hero":
+		if _s14 and amount > 0 and int(actor.hp) == 0:
+			var door := _death_door_hit(actor)
+			receipt["attacker_death_door"] = door
+			receipt["attacker_tear"] = door.get("tear", {})
+			receipt["attacker_lost"] = bool(actor.lost)
+			return
 		if int(actor["hp"]) == 0:
 			if was_hanging:
 				var seam_roll := _rng.randi_range(1, 100)
@@ -1735,6 +1906,8 @@ func _shift_valid(unit: Dictionary, direction: int) -> Dictionary:
 		return {"ok": false, "reason": "there is no rank %d" % destination}
 	if destination < MIN_RANK or destination > MAX_RANK:
 		return {"ok": false, "reason": "there is no rank %d" % destination}
+	if _s14 and str(unit.side) == "hero" and unit.parts.has("legs") and unit.parts.legs.torn:
+		return {"ok": false, "reason": "torn legs cannot move"}
 	if int(unit["statuses"].get("tangled", 0)) > 0:
 		return {"ok": false, "reason": "tangled units cannot move"}
 	if str(unit["side"]) == "hero" and (_thread_cuts.has(str(unit["id"])) or _crosses_cut(from, destination)):
@@ -1745,6 +1918,8 @@ func _shift_valid(unit: Dictionary, direction: int) -> Dictionary:
 		var other := _hero_at(destination)
 		if not other.is_empty() and is_held(str(other["id"])):
 			return {"ok": false, "reason": "Wren is holding that doll back"}
+		if _s14 and not other.is_empty() and other.parts.has("legs") and other.parts.legs.torn:
+			return {"ok": false, "reason": "the other doll has torn legs"}
 		if not other.is_empty() and int(other["statuses"].get("tangled", 0)) > 0:
 			return {"ok": false, "reason": "a tangled ally cannot be swapped"}
 		if not other.is_empty() and _thread_cuts.has(str(other["id"])):
@@ -2040,6 +2215,10 @@ func _party_fray(except_id: String, amount: int) -> void:
 ## Entering Hanging tears precisely one random non-torso part, only on its first
 ## entry. The part remains equipped but torn (no stat/ability) until Sewing Circle.
 func _enter_hanging(hero: Dictionary) -> Dictionary:
+	if _s14:
+		if hero.lost or hero.hanging:
+			return _reject("hanging", str(hero.id), "doll already at death's door")
+		return {"ok": true, "torn": _death_door_hit(hero).get("tear", {})}
 	if bool(hero["lost"]) or bool(hero["hanging"]):
 		return _reject("hanging", str(hero["id"]), "hero is already Hanging or lost")
 	hero["hp"] = 0
@@ -2047,6 +2226,36 @@ func _enter_hanging(hero: Dictionary) -> Dictionary:
 	var tear := _tear_random(hero)
 	_party_fray(str(hero["id"]), 8)
 	return {"ok": true, "torn": tear}
+
+
+## One limb on each damaging zero-HP hit: first head 10%, second 45%, third 100%.
+## A head tear is terminal and uses the existing LOST/satchel/replacement machinery.
+func _death_door_hit(hero: Dictionary) -> Dictionary:
+	if hero.lost or hero.side != "hero":
+		return {"ok": false}
+	hero.hp = 0
+	hero.hanging = true
+	var hits := mini(3, int(hero.get("death_hits", 0)) + 1)
+	hero.death_hits = mini(2, hits)
+	var roll := 100 if hits >= 3 else _rng.randi_range(1, 100)
+	var head := hits >= 3 or roll <= (10 if hits == 1 else 45)
+	var options: Array = []
+	for slot in ["arms", "legs"]:
+		if hero.parts.has(slot) and not hero.parts[slot].torn:
+			options.append(slot)
+	if head and hero.get("head_ward", false) and hits < 3 and not options.is_empty():
+		head = false
+		hero.head_ward = false
+	var slot := "head" if head or options.is_empty() else str(options[_rng.randi_range(0, options.size() - 1)])
+	if slot == "head":
+		if hero.parts.has("head"):
+			hero.parts.head.torn = true
+		var lost := _lose_hero(hero)
+		return {"ok": true, "hits": hits, "roll": roll, "tear": {"slot": "head"}, "lost": true, "satchel": lost}
+	hero.parts[slot].torn = true
+	_recompute_stats(hero)
+	_party_fray(str(hero.id), 8)
+	return {"ok": true, "hits": hits, "roll": roll, "tear": {"slot": slot}, "lost": false}
 
 
 func _tear_random(hero: Dictionary) -> Dictionary:
@@ -2059,9 +2268,13 @@ func _tear_random(hero: Dictionary) -> Dictionary:
 	if eligible.is_empty():
 		return _reject("tear", str(hero["id"]), "no untorn non-torso part")
 	var slot := str(eligible[_rng.randi_range(0, eligible.size() - 1)])
+	var part_id := str(hero.parts[slot].id)
 	hero["parts"][slot]["torn"] = true
-	_recompute_stats(hero)
-	return {"ok": true, "action": "tear", "hero": str(hero["id"]), "slot": slot, "part": str(hero["parts"][slot]["id"])}
+	if _s14 and slot == "head":
+		_lose_hero(hero)
+	else:
+		_recompute_stats(hero)
+	return {"ok": true, "action": "tear", "hero": str(hero.id), "slot": slot, "part": part_id}
 
 
 ## A lost doll leaves combat permanently and its equipped parts fill at most six

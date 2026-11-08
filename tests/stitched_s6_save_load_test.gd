@@ -100,6 +100,11 @@ func _lost_save() -> void:
 	if session == null:
 		app.free()
 		return
+	# This S6 fixture deliberately exercises the pre-S14 legacy Hanging and
+	# save-migration path. Opt out before its first journaled action.
+	session.s14_enabled = false
+	session._seal()
+	app._present_stitched_run()
 	var fight_id := ""
 	for id in session.choices():
 		if session.map.get_node(id).type == "Fight":

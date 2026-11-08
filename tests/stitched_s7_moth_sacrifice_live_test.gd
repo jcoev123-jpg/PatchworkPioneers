@@ -3,17 +3,16 @@ extends "res://tests/stitched_s6_full_run_test.gd"
 
 const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
 # This seed's mounted run wins f01_n1 with a real drop and one scrap, buys a distinct
-# second spare at the f02_n1 Peddler, and enters the f03_n1 Event (pinned to the Moth).
-const RICH_SEED := 588735
-# The merged roadside Event packs shifted the seeded selector; this empty-satchel floor-1
-# witness still reaches the authored Moth with zero scraps.
-const POOR_SEED := 744
+# second spare at the f02_n0 Peddler, and enters the f03_n0 Event (pinned to the Moth).
+# Re-derived for the S14 fixed kits: the old 588735 fight no longer rolls a part drop.
+const RICH_SEED := 25
+# The genuine unpinned floor-one Moth selector was remeasured under S14 at seed 3242.
+# Keep a short deterministic fallback, and verify the actual selected Event before claiming it.
+const POOR_SEED := 3242
 const FIRST_NODE := "f01_n1"
-const SHOP_NODE := "f02_n1"
-const MOTH_NODE := "f03_n1"
-## The poor witness is the first seed from POOR_SEED whose floor-one Event is the Moth, so new
-## events shifting the seeded draws do not retire it.
-const POOR_SEARCH := 4000
+const SHOP_NODE := "f02_n0"
+const MOTH_NODE := "f03_n0"
+const POOR_SEARCH := 64
 var settled_branches := 0
 
 
@@ -188,24 +187,38 @@ func _settle(app: Node, id: String, arguments: Array, keyboard: bool) -> void:
 		delta = 2
 	elif id == "fumigate":
 		delta = -1
+	# A consequential Moth choice carries S14 Event loot; the free escape carries none.
+	var expected_rng := RandomNumberGenerator.new()
+	expected_rng.state = before.rng
+	var drawn: Dictionary = {}
+	if id != "escape":
+		drawn = StitchedS14Abilities.draw_patch(expected_rng, "event")
+	var awarded: Dictionary = session.journal.back().get("ability_patch", {})
 	_check(session.phase == "map" and session.pending.is_empty() and session.is_consistent()
 		and session.satchel == expected_satchel and session.scraps == before.scraps + delta,
 		"branch settles exactly its catalog scrap delta and selected spare, preserving order/identity")
 	_check(session.gold == before.gold and session.candle == before.candle and session.heroes == before.heroes
 		and session.patches == before.patches and session.pockets == before.pockets
 		and session.snapshot().kid_fear == before.kid_fear
-		and session.map.export_state() == before.map and session.rng.state == before.rng,
-		"branch has no generic Event double-effect, unrelated spend, route mutation or RNG draw")
+		and session.map.export_state() == before.map and session.rng.state == expected_rng.state
+		and (awarded.is_empty() if drawn.is_empty() else (not awarded.is_empty()
+			and awarded.id == drawn.id and awarded.rarity == drawn.rarity
+			and int(awarded.uid) == int(before.s14.serial) + 1
+			and session.ability_inventory.back() == awarded)),
+		"branch has no generic Event double-effect, unrelated spend or route mutation, and only its seeded patch draw")
 	_check(service.is_claimed() and not service.is_open() and service.get_version() == 1,
 		"mounted action actually claimed the guarded service once")
 	if session.phase == "map" and service.is_claimed():
 		settled_branches += 1
+	var expected_journal := {"action": "visit", "id": id, "arguments": arguments}
+	if not awarded.is_empty():
+		expected_journal["ability_patch"] = awarded
 	_check(session.receipts.size() == before.receipts.size() + 1
 		and session.receipts.back() == {"node_id": before.pending.node_id, "kind": "Event", "decision": id,
 			"event_id": "moth_infestation", "steps": [{"action": id, "arguments": arguments,
 				"gold": before.gold, "scraps": before.scraps + delta, "candle": before.candle}]}
 		and session.journal.size() == journal.size() + 1
-		and session.journal.back() == {"action": "visit", "id": id, "arguments": arguments},
+		and session.journal.back() == expected_journal,
 		"one exact node receipt and deterministic journal command")
 	_check(session.snapshot() == replay.snapshot() and session.journal == replay.journal,
 		"mounted path and public replay have identical complete state")
@@ -327,17 +340,24 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 
 
 ## [seed, node] of the first run from POOR_SEED that meets the Moth on floor one.
+## One session per candidate seed is enough: the standing Event selector draws its
+## record from the run RNG before reading any node id, so every floor-one Event of a
+## seed reaches the same authored Event. The same session is reused for `enter`.
 func _poor_witness() -> Array:
 	for seed_number in range(POOR_SEED, POOR_SEED + POOR_SEARCH):
-		var probe := StitchedRunSession.start(seed_number)
-		if probe == null:
+		var session := StitchedRunSession.start(seed_number)
+		if session == null:
 			continue
-		for id in probe.choices():
-			if probe.map.get_node(str(id)).type != "Event":
-				continue
-			var session := StitchedRunSession.start(seed_number)
-			if session.enter(str(id), session.snapshot()) and session.pending.get("event_id") == "moth_infestation":
-				return [seed_number, str(id)]
+		var first_event := ""
+		for id in session.choices():
+			if session.map.get_node(str(id)).type == "Event":
+				first_event = str(id)
+				break
+		if first_event.is_empty():
+			continue
+		if session.enter(first_event, session.snapshot()) \
+				and session.pending.get("event_id") == "moth_infestation":
+			return [seed_number, first_event]
 	return [POOR_SEED, ""]
 
 
