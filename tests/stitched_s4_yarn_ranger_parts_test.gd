@@ -20,14 +20,32 @@ const IDS := [
 	"yarn_ranger_head_needle_arrow", "yarn_ranger_arms_purling_barrage",
 	"yarn_ranger_torso_snare_net", "yarn_ranger_legs_endless_skein",
 ]
-## S14 sewn-patch identity: these two starter patches describe the doll's stitched look instead
+## S14 sewn-patch identity: these four starter patches describe the doll's stitched look instead
 ## of advertising the pre-S14 move the legacy ability fields still carry.
 const SEWN_PATCH_TEXT := {
 	"yarn_ranger_head_needle_nock":
 		"A teal yarn knot holds a spare knitting needle against the Ranger's moss-green hood.",
 	"yarn_ranger_torso_hood_knit":
 		"Pale wool loops edge the Ranger's ear-tipped hood, with mismatched stitches over the shoulders.",
+	"yarn_ranger_arms_wool_bolas":
+		"Three wool-white yarn balls are bound to a moss-green forearm cuff by loose teal cross-stitches.",
+	"yarn_ranger_legs_reel_thread":
+		"A small teal thread reel sits on a moss-green boot cuff, with white wool looped through uneven stitches.",
 }
+## The retired pre-S14 body-part attack instructions these two worn patches used to advertise.
+## Kept only so the reversion check can prove they never come back.
+const OLD_SEWN_PATCH_TEXT := {
+	"yarn_ranger_arms_wool_bolas":
+		"Hurl weighted wool across enemy ranks to damage and Tangle a foe.",
+	"yarn_ranger_legs_reel_thread":
+		"Tighten a thread around a rear foe, applying Tangled; this does not pull enemies.",
+}
+## Old action vocabulary that must not survive in a worn-patch description. Whole words only,
+## so ordinary cloth nouns such as thread, stitching, white wool, cuff or reel stay legal.
+const FORBIDDEN_PATCH_WORDS := [
+	"foe", "enemy", "attack", "hit", "damage", "rank", "tier", "mark", "weak",
+	"bleed", "stun", "guard", "heal", "turn", "target", "ability", "tangle", "pull",
+]
 
 const HEAD_LAUNCH := [2, 3, 4]
 const BOLAS_ID := "yarn_ranger_arms_wool_bolas"
@@ -2175,8 +2193,8 @@ func _test_reel_thread_rank_four_target() -> void:
 			print("AC2 Reel Thread rank-four foe tier %d witness seed %d" % [tier, witness_seed])
 
 
-## S14 sewn-patch identity: the two starter patches describe the doll's stitched look instead of
-## advertising the obsolete pre-S14 move their legacy ability fields still carry. Lookups go
+## S14 sewn-patch identity: every starter patch describes the doll's stitched look instead of
+## advertising the obsolete pre-S14 move its legacy ability fields still carry. Lookups go
 ## through the loaded catalog's named IDs, never array positions.
 func _test_sewn_patch_text() -> void:
 	var cat := _catalog()
@@ -2202,6 +2220,73 @@ func _test_sewn_patch_text() -> void:
 	_check(not torso_text.contains("guard") and not torso_text.contains("block")
 		and not torso_text.contains("draw") and not torso_text.contains("ally"),
 		"AC2: Hood Knit's text promises no ally Guard, Block or draw action")
+	# The guard must genuinely bite before its silence on the new prose means anything.
+	_check(not _banned_patch_words(
+			OLD_SEWN_PATCH_TEXT["yarn_ranger_arms_wool_bolas"]).is_empty()
+		and not _banned_patch_words(
+			OLD_SEWN_PATCH_TEXT["yarn_ranger_legs_reel_thread"]).is_empty(),
+		"AC2: the vocabulary guard really flags both retired attack instructions")
+	_check(_banned_patch_words("white wool cuff and stitching").is_empty(),
+		"AC2: the vocabulary guard keeps ordinary cloth words legal")
+	# The remaining two starters describe worn cloth too. Their legacy ability fields stay in
+	# place for old compatibility tests, but neither description may advertise them as S14 actions.
+	var uniforms := {
+		"yarn_ranger_arms_wool_bolas": ["Wool Bolas", "arms"],
+		"yarn_ranger_legs_reel_thread": ["Reel Thread", "legs"],
+	}
+	for part_id in uniforms:
+		var expected_name := str(uniforms[part_id][0])
+		var expected_slot := str(uniforms[part_id][1])
+		var part: Dictionary = cat["by_id"].get(part_id, {})
+		var text := str(part.get("text", ""))
+		_check(not part.is_empty() and str(part["owner"]) == "yarn_ranger"
+			and str(part["name"]) == expected_name and str(part["slot"]) == expected_slot
+			and not text.is_empty() and text == SEWN_PATCH_TEXT[part_id],
+			"AC1: %s keeps its named Yarn Ranger %s identity and the exact new sewn-cloth text"
+				% [expected_name, expected_slot])
+		_check(text != OLD_SEWN_PATCH_TEXT[part_id]
+			and not text.to_lower().contains(OLD_SEWN_PATCH_TEXT[part_id].to_lower()),
+			"AC2: %s no longer repeats its retired attack instruction" % expected_name)
+		var banned := _banned_patch_words(text)
+		_check(banned.is_empty(),
+			"AC2: %s's cloth text keeps no attack/status/target vocabulary: %s"
+				% [expected_name, str(banned)])
+		# The shipped catalog is never touched: only this in-memory copy goes blank.
+		var blank: Dictionary = part.duplicate(true)
+		blank["text"] = ""
+		_check(not part.is_empty()
+			and not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: a blank in-memory copy of %s fails closed" % expected_name)
+
+
+## Lowercased words of a description, treating punctuation and hyphens as separators.
+func _patch_words(text: String) -> Array:
+	var words: Array = []
+	var current := ""
+	var lowered := text.to_lower()
+	var alphabet := "abcdefghijklmnopqrstuvwxyz"
+	for index in range(lowered.length()):
+		var character := lowered[index]
+		if alphabet.contains(character):
+			current += character
+		elif not current.is_empty():
+			words.append(current)
+			current = ""
+	if not current.is_empty():
+		words.append(current)
+	return words
+
+
+## Whole-word stem matches only: "white" is cloth, not the banned "hit", while a real "hits"
+## or "enemies" would still be caught.
+func _banned_patch_words(text: String) -> Array:
+	var banned: Array = []
+	for word in _patch_words(text):
+		for stem in FORBIDDEN_PATCH_WORDS:
+			if word.begins_with(stem):
+				banned.append(word)
+				break
+	return banned
 
 
 func _test_catalog() -> void:
