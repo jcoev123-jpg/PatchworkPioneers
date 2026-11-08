@@ -62,6 +62,8 @@ func _initialize() -> void:
 	_test_stitched_mend_ends_hanging()
 	_test_mend_repairs_torn_worn_parts()
 	_test_mend_torn_availability()
+	_test_mend_clears_death_hits()
+	_test_mend_death_hits_untouched_elsewhere()
 	_finish()
 
 
@@ -2691,3 +2693,142 @@ func _test_mend_torn_availability() -> void:
 	var old_full := _stitched_party(FULL_HPS, NO_FRAY)
 	_check(RunCampfireVisit.new("camp_old_full", old_full, "stitched", 100).read_state()["quote"]["choices"] == ["leave"],
 		"a full-health older fixture without parts still hides Mend")
+
+
+const DOOR_NODE := "camp_door"
+
+
+## Four dolls with worn parts: rank 1 Hanging at 0 HP carrying `hits` death hits,
+## rank 2 wounded (18 HP, torn arms) carrying 2 hits, rank 3 at 0 HP with torn
+## legs and no Hanging flag (death_hits carried only when third_has_hits),
+## rank 4 LOST at 0 HP carrying 2 hits.
+func _death_door_party(hits: int, third_has_hits: bool) -> Array:
+	var party := _torn_party([0, 18, 0, 0])
+	party[0]["hanging"] = true
+	party[0]["death_hits"] = hits
+	party[1]["death_hits"] = 2
+	party[2].erase("hanging")
+	party[2].erase("death_hits")
+	if third_has_hits:
+		party[2]["death_hits"] = hits
+	party[3]["hanging"] = true
+	party[3]["death_hits"] = 2
+	return party
+
+
+func _test_mend_clears_death_hits() -> void:
+	seed(551203)
+	var expected_next := randi()
+	seed(551203)
+	for case in [[1, true], [2, true], [1, false]]:
+		var hits: int = case[0]
+		var third_has_hits: bool = case[1]
+		var label := "death door %d/%s" % [hits, str(third_has_hits)]
+		var source := _death_door_party(hits, third_has_hits)
+		var original := source.duplicate(true)
+		_check(original[0]["hp"] == 0 and original[0]["death_hits"] == hits
+			and original[0]["hanging"] == true and original[0].get("lost", false) != true
+			and original[2]["hp"] == 0 and not original[2].has("hanging")
+			and original[2].has("death_hits") == third_has_hits
+			and original[1]["hp"] == 18 and original[1]["death_hits"] == 2
+			and original[3]["lost"] == true and original[3]["hp"] == 0,
+			label + ": fixture is a real death-door roster")
+		var visit := RunCampfireVisit.new(DOOR_NODE, source, "stitched", 40)
+		var open := visit.read_state()
+		_check(open.get("status") == "stitched_open" and open["heroes"] == original
+			and open["quote"]["choices"][0] == "mend", label + ": opens offering Mend")
+		# Refusals mutate nothing: wrong node, stale heroes, bad candle, bad fear.
+		_assert_stitched_refused(visit, "mend", "camp_other", original, 40, label + " wrong node")
+		var stale := original.duplicate(true)
+		stale[0]["death_hits"] = 0
+		_assert_stitched_refused(visit, "mend", DOOR_NODE, stale, 40, label + " stale death_hits")
+		_assert_stitched_refused(visit, "mend", DOOR_NODE, original, 41, label + " stale candle")
+		_assert_stitched_refused(visit, "mend", DOOR_NODE, original, "40", label + " malformed candle")
+		_assert_fear_refused(visit, "mend", DOOR_NODE, original, 40, 10, label + " unexpected fear")
+		_check(visit.read_state() == open and source == original,
+			label + ": refusals leave state and input untouched")
+		var receipt := visit.select("mend", DOOR_NODE, original, 40)
+		var expected := original.duplicate(true)
+		expected[0]["hp"] = 12
+		expected[0]["hanging"] = false
+		expected[0]["death_hits"] = 0
+		expected[1]["hp"] = 27
+		expected[1]["parts"]["arms"]["torn"] = false
+		expected[2]["hp"] = 7
+		expected[2]["parts"]["legs"]["torn"] = false
+		if third_has_hits:
+			expected[2]["death_hits"] = 0
+		_check(receipt.get("ok") == true and receipt.get("decision") == "mend"
+			and receipt.get("node_id") == DOOR_NODE and receipt.get("candle") == 40
+			and receipt.get("heroes") == expected, label + ": receipt is the exact expected post-state")
+		var healed: Array = receipt["heroes"]
+		_check(healed[0]["hp"] == 12 and healed[0]["hanging"] == false and healed[0]["death_hits"] == 0,
+			label + ": Hanging doll gets floor(30%) of 40, loses Hanging and death hits")
+		_check(healed[2]["hp"] == 7 and not healed[2].has("hanging")
+			and healed[2].has("death_hits") == third_has_hits
+			and (not third_has_hits or healed[2]["death_hits"] == 0),
+			label + ": 0-HP doll without Hanging flag resets hits, absent keys stay absent")
+		_check(healed[1]["death_hits"] == 2 and healed[1]["parts"]["arms"]["torn"] == false
+			and healed[2]["parts"]["legs"]["torn"] == false,
+			label + ": positive-HP doll keeps its hits; torn worn parts still repaired")
+		_check(healed[3] == original[3] and healed[3]["death_hits"] == 2 and healed[3]["hanging"] == true,
+			label + ": LOST doll keeps its whole record")
+		_check(visit.read_state()["heroes"] == expected and visit.read_state()["status"] == "stitched_decided"
+			and visit.read_state()["heroes"][0]["death_hits"] == 0, label + ": read_state carries the reset")
+		_check(source == original, label + ": caller input is not modified")
+		# Replays after commit are refused without mutation.
+		var committed := visit.read_state()
+		_assert_stitched_refused(visit, "mend", DOOR_NODE, expected, 40, label + " replayed Mend")
+		_assert_stitched_refused(visit, "leave", DOOR_NODE, expected, 40, label + " Leave after Mend")
+		_check(visit.read_state() == committed, label + ": replays leave the committed visit untouched")
+		# A fresh visit from the same input replays an identical receipt.
+		var again := RunCampfireVisit.new(DOOR_NODE, original.duplicate(true), "stitched", 40)
+		_check(again.select("mend", DOOR_NODE, original, 40) == receipt,
+			label + ": fresh same-input visit replays the identical receipt")
+	_check(randi() == expected_next, "death-door Mend, refusals and replays draw no global RNG")
+
+
+func _test_mend_death_hits_untouched_elsewhere() -> void:
+	# No eligible recovery: full health, intact parts, a LOST doll at 0 HP with hits.
+	var clean := _torn_party([40, 30, 26, 0], NO_FRAY)
+	for hero in clean:
+		for slot in hero["parts"]:
+			hero["parts"][slot]["torn"] = false
+	clean[3]["death_hits"] = 2
+	clean[3]["hanging"] = true
+	clean[0]["death_hits"] = 1
+	var clean_original := clean.duplicate(true)
+	var clean_visit := RunCampfireVisit.new("camp_dd_clean", clean, "stitched", 100)
+	_check(clean_visit.read_state()["quote"]["choices"] == ["leave"],
+		"no eligible recovery offers only Leave")
+	_assert_stitched_refused(clean_visit, "mend", "camp_dd_clean", clean_original, 100,
+		"Mend with no eligible recovery")
+	var clean_left := clean_visit.select("leave", "camp_dd_clean", clean_original, 100)
+	_check(clean_left.get("ok") == true and clean_left["heroes"] == clean_original
+		and clean_left["heroes"][0]["death_hits"] == 1 and clean_left["heroes"][3]["death_hits"] == 2,
+		"Leave keeps every death_hits value exactly")
+	# Tell Tales and Trim the Wick never modify death_hits on a death-door roster.
+	for choice in ["tell_tales", "trim_the_wick"]:
+		var party := _death_door_party(1, true)
+		var party_original := party.duplicate(true)
+		var visit := RunCampfireVisit.new("camp_dd_" + choice, party, "stitched", 40)
+		_check(visit.read_state()["quote"]["choices"].has(choice), choice + ": offered on death-door roster")
+		var receipt := visit.select(choice, "camp_dd_" + choice, party_original, 40)
+		_check(receipt.get("ok") == true, choice + ": commits")
+		if receipt.get("ok") != true:
+			continue
+		for i in range(4):
+			_check(receipt["heroes"][i].get("death_hits") == party_original[i].get("death_hits")
+				and receipt["heroes"][i]["hp"] == party_original[i]["hp"]
+				and receipt["heroes"][i].get("hanging") == party_original[i].get("hanging"),
+				"%s: doll %d keeps death_hits, HP and Hanging" % [choice, i])
+		_check(receipt["heroes"][0]["death_hits"] == 1 and receipt["heroes"][0]["hp"] == 0,
+			choice + ": Hanging doll stays at 0 HP with its hit")
+	# The legacy three-hero heal path is unchanged and never touches death_hits.
+	var legacy := _party([35, 18, 0])
+	legacy[2]["death_hits"] = 1
+	var legacy_original := legacy.duplicate(true)
+	var legacy_receipt := RunCampfireVisit.new("camp_dd_legacy", legacy).choose_heal("camp_dd_legacy", legacy_original)
+	_check(legacy_receipt.get("ok") == true and legacy_receipt["heroes"][2]["death_hits"] == 1
+		and legacy_receipt["heroes"][2]["hp"] == 8,
+		"legacy three-hero heal leaves death_hits alone")

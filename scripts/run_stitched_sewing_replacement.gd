@@ -104,6 +104,10 @@ func replace(lost_id: Variant, candidate_id: Variant, expected_node_id: Variant,
 	var hero: Dictionary = candidate.duplicate(true)
 	hero["rank"] = rank
 	hero["lost"] = false
+	# S14: a replacement is a fresh living doll, never a heal of the old one. Neither the LOST record's
+	# nor a stale template's death-door history is carried over.
+	hero["hanging"] = false
+	hero["death_hits"] = 0
 	_party[party_index] = hero
 	_open = false
 	_version += 1

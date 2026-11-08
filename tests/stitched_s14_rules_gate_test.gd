@@ -47,6 +47,7 @@ func _initialize() -> void:
 	_death_door()
 	_doors()
 	_event_max_hp_patch()
+	_event_fear_patch()
 	_sewing_circle_sockets()
 	_live_elite_side_door()
 	_session_replay()
@@ -420,6 +421,306 @@ func _event_max_hp_negative(seed_number: int) -> void:
 		and run.rng.state == rng_before
 		and not run.journal.back().has("ability_patch"),
 		"neutral Leave grants no patch, spends no reward RNG and keeps the wallet")
+
+
+## S14/S9a: an authenticated fear-bearing Event choice is genuinely consequential
+## material. It settles Wren's fear through the run's one ledger exactly once and
+## carries the seeded event-source ability patch, while a Leave, a clamped
+## no-change outcome or any refused request grants nothing and draws no reward
+## RNG. The visit is the real pinned authenticated Keyhole Choir.
+func _event_fear_patch() -> void:
+	var seeds: Array = [234]
+	for seed_number in 80:
+		seeds.append(seed_number)
+	var found := -1
+	for seed_number in seeds:
+		var candidate := StitchedRunSession.start(seed_number)
+		if candidate == null:
+			continue
+		if not _event_node_id(candidate).is_empty():
+			found = seed_number
+			break
+	_check(found >= 0, "seeded route exposes an Event node for the S14 fear gate")
+	if found < 0:
+		return
+	StitchedRunSession.pinned_event_id = "v3_keyhole_choir"
+	_event_fear_live(found)
+	_event_fear_only_patch(found)
+	_event_fear_negative(found)
+	_event_fear_replay(found)
+	StitchedRunSession.pinned_event_id = ""
+
+
+## The shipped Keyhole Choir itself: its authored buy_silence bargain quiets
+## Wren from 20 to 12, eases every living doll's fray by the authored 12, spends
+## its two scraps and earns the event patch, all through the real service on the
+## live route. Save/replay is proven separately in _event_fear_replay, because a
+## replay rebuilds the run from its journal alone and cannot reproduce the
+## test-authored opening fear/fray state (the same reason _event_max_hp_positive
+## keeps its own fixture out of the roundtrip).
+func _event_fear_live(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "live pinned choir session starts")
+		return
+	run.scraps = 2
+	run._kid_fear.reset(20)
+	for hero in run.heroes:
+		hero.fray = 20
+	run._seal()
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "live pinned choir visit mounts the Keyhole Choir")
+		return
+	_check(run.pending.service == "Event" and run._service is RunStitchedEventConsequence
+		and run.pending.event_id == "v3_keyhole_choir",
+		"authenticated choir visit serves the real Event consequence service")
+	var offered_silence := false
+	for offered in run.visit_actions():
+		if offered.id == "buy_silence":
+			offered_silence = bool(offered.enabled)
+	_check(offered_silence, "authored buy_silence bargain is offered and enabled")
+	var sequence_before: int = run._kid_fear.get_sequence()
+	var rng_before := run.rng.state
+	var snapshot_before := run.snapshot()
+	_check(run.choose_visit("buy_silence", [], snapshot_before),
+		"authored buy_silence commits through the public visit path")
+	_check(run.kid_fear() == 12 and run._kid_fear.get_sequence() == sequence_before + 1,
+		"authored choir silence quiets Wren from 20 to 12 through one ledger step")
+	_check(run.scraps == 0, "authored choir silence spends its two scraps")
+	for hero in run.heroes:
+		if not hero.lost:
+			_check(int(hero.fray) == 8, "authored choir silence eases every living doll's fray by 12")
+	_check(run.ability_inventory.size() == 1 and run.ability_serial == 1
+		and int(run.ability_inventory[0].uid) == 1
+		and run.journal.back().has("ability_patch"),
+		"live fear-bearing Event choice awards exactly one ability patch")
+	var patches := StitchedS14Abilities.patches()
+	_check(patches.by_id.has(run.ability_inventory[0].id)
+		and run.ability_inventory[0].rarity in StitchedS14Abilities.RARITIES,
+		"the live fear-driven reward is a catalog-valid ability patch")
+	_check(run.rng.state != rng_before, "the live fear-driven reward consumed the run's seeded reward RNG")
+	_check(run.receipts.size() == 1 and run.receipts[0].decision == "buy_silence"
+		and run.receipts[0].event_id == "v3_keyhole_choir",
+		"the committed choir silence leaves its node receipt")
+	_check(run.phase == "map" and run.is_consistent(),
+		"the concluded choir visit returns sealed to the map")
+
+
+## A fear-only consequence (no wallet, HP, fray or part change) grants exactly
+## one catalog-valid event-source patch with a new inventory serial and stamps
+## the journal; a pending Lose the Strings interruption survives the relief, and
+## a clamped no-change outcome grants nothing and draws no reward RNG. The
+## mounted choir keeps offering its real actions; only the service is swapped
+## for a real RunStitchedEventConsequence carrying a minimal validated record,
+## because the shipped catalog has no fear-only outcome.
+func _event_fear_only_patch(seed_number: int) -> void:
+	var record := {
+		"id": "v3_hush_the_hum_fixture",
+		"title": "Hush the Hum",
+		"description": "A test-only fear bargain keeping the real service contract.",
+		"choices": [
+			{"id": "buy_silence", "text": "Hush the humming (quiet Wren)",
+				"stitched_effect": {"target": "party", "candle": 0, "fray": 0, "fear": -6}},
+			{"id": "leave", "text": "Leave the humming behind",
+				"stitched_effect": {"target": "party", "candle": 0, "fray": 0}},
+		],
+	}
+	_check(RunStitchedEventConsequence.new(record).is_valid(),
+		"fear-only fixture record passes the real Event envelope validation")
+	# 1. Fear-only material change carries the patch.
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "fear-only Event session starts")
+		return
+	run.scraps = 5
+	run._kid_fear.reset(30)
+	run._seal()
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "fear-only Event visit mounts")
+		return
+	run._service = RunStitchedEventConsequence.new(record)
+	var before := run.snapshot()
+	var rng_before := run.rng.state
+	var sequence_before: int = run._kid_fear.get_sequence()
+	var fray_before: Array = []
+	for hero in run.heroes:
+		fray_before.append(int(hero.fray))
+	_check(run.choose_visit("buy_silence", [], before),
+		"fear-only Event choice commits through the public visit path")
+	_check(run.kid_fear() == 24 and run._kid_fear.get_sequence() == sequence_before + 1
+		and run.scraps == before.scraps and run.gold == before.gold
+		and run.candle == before.candle,
+		"the committed consequence changes only Wren's fear through one ledger step")
+	for index in run.heroes.size():
+		_check(int(run.heroes[index].fray) == fray_before[index],
+			"the committed fear-only consequence leaves every doll's fray untouched")
+	_check(run.ability_inventory.size() == 1 and run.ability_serial == 1
+		and int(run.ability_inventory[0].uid) == 1,
+		"fear-only Event material grants exactly one patch with a new serial")
+	var patches := StitchedS14Abilities.patches()
+	_check(patches.by_id.has(run.ability_inventory[0].id)
+		and run.ability_inventory[0].rarity in StitchedS14Abilities.RARITIES,
+		"the fear-only reward is a catalog-valid ability patch")
+	var command: Dictionary = run.journal.back()
+	_check(str(command.get("action", "")) == "visit"
+		and command.get("ability_patch", {}) == run.ability_inventory[0],
+		"the fear-only reward rides the committed visit journal entry")
+	_check(run.rng.state != rng_before, "the fear-only reward consumed the run's seeded reward RNG")
+	_check(run.is_consistent(), "fear-only Event result leaves the run sealed and consistent")
+
+	# 2. A pending Lose the Strings interruption survives fear relief.
+	var shaken := StitchedRunSession.start(seed_number)
+	if shaken == null:
+		_check(false, "pending-interruption choir session starts")
+		return
+	shaken.scraps = 5
+	shaken._kid_fear.reset(100)
+	shaken._seal()
+	node_id = _event_node_id(shaken)
+	if not shaken.enter(node_id, shaken.snapshot()) or shaken.phase != "visit":
+		_check(false, "pending-interruption choir visit mounts")
+		return
+	shaken._service = RunStitchedEventConsequence.new(record)
+	_check(shaken.choose_visit("buy_silence", [], shaken.snapshot()),
+		"fear relief commits while the interruption is pending")
+	_check(shaken.kid_fear() == 94 and shaken._kid_fear.has_pending_lost_strings()
+		and shaken.ability_inventory.size() == 1,
+		"fear relief below 100 never cancels the pending interruption and still earns the patch")
+
+	# 3. A clamped no-change outcome grants nothing and draws no reward RNG.
+	var calm := StitchedRunSession.start(seed_number)
+	if calm == null:
+		_check(false, "clamped no-change choir session starts")
+		return
+	calm.scraps = 5
+	calm._kid_fear.reset(0)
+	for hero in calm.heroes:
+		hero.fray = 1
+	calm._seal()
+	node_id = _event_node_id(calm)
+	if not calm.enter(node_id, calm.snapshot()) or calm.phase != "visit":
+		_check(false, "clamped no-change choir visit mounts")
+		return
+	calm._service = RunStitchedEventConsequence.new(record)
+	var calm_before: Dictionary = calm.snapshot()
+	var calm_rng := calm.rng.state
+	var calm_sequence: int = calm._kid_fear.get_sequence()
+	var calm_journal := calm.journal.size()
+	_check(calm.choose_visit("buy_silence", [], calm_before),
+		"clamped no-change Event choice still commits")
+	_check(calm.kid_fear() == 0 and calm._kid_fear.get_sequence() == calm_sequence + 1,
+		"the clamped fear floor advances the ledger without changing fear")
+	_check(calm.ability_inventory.is_empty() and calm.ability_serial == 0
+		and calm.journal.size() == calm_journal + 1
+		and not calm.journal.back().has("ability_patch")
+		and calm.scraps == calm_before.scraps and calm.rng.state == calm_rng,
+		"a clamped no-change Event outcome grants no patch and draws no reward RNG")
+	_check(calm.is_consistent(), "the clamped no-change Event result stays sealed and consistent")
+
+
+## Underfunded, stale and forged choir requests change nothing: Wren's ledger,
+## the wallet, the patch inventory, the journal and the reward RNG all survive.
+## A neutral Leave grants nothing, and a consequential fear-free choice keeps
+## its authored behaviour without ever touching the fear ledger.
+func _event_fear_negative(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "refusal choir session starts")
+		return
+	var stale := run.snapshot()
+	run.scraps = 1
+	run._kid_fear.reset(20)
+	run._seal()
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "refusal choir visit mounts for refusal checks")
+		return
+	var sealed := run.snapshot()
+	var rng_before := run.rng.state
+	var journal_size := run.journal.size()
+	var ledger_before: Dictionary = run._kid_fear.state_snapshot()
+	var silence_offered := false
+	var underfunded := false
+	for offered in run.visit_actions():
+		if offered.id == "buy_silence":
+			silence_offered = true
+			underfunded = not bool(offered.enabled)
+	_check(silence_offered and underfunded, "the underfunded choir bargain is offered but disabled")
+	_check(not run.choose_visit("buy_silence", [], sealed),
+		"the underfunded choir choice is refused")
+	_check(not run.choose_visit("buy_silence", [], stale),
+		"stale expected snapshot is refused before any Event work")
+	_check(not run.choose_visit("forged_choice", [], sealed)
+		and not run.choose_visit("leave", ["bogus"], sealed),
+		"unoffered or argument-forged choir choices are refused")
+	_check(sealed == run.snapshot() and rng_before == run.rng.state
+		and run.ability_inventory.is_empty() and run.ability_serial == 0
+		and run.journal.size() == journal_size
+		and run._kid_fear.state_snapshot() == ledger_before,
+		"refused choir requests change no ledger, wallet, inventory, journal or RNG")
+	_check(run.choose_visit("leave", [], sealed),
+		"neutral choir Leave commits through the public visit path")
+	_check(run.kid_fear() == 20 and run._kid_fear.get_sequence() == int(ledger_before["sequence"])
+		and run.ability_inventory.is_empty() and run.ability_serial == 0
+		and run.scraps == sealed.scraps and run.rng.state == rng_before
+		and not run.journal.back().has("ability_patch"),
+		"neutral choir Leave keeps the fear ledger and grants no patch or RNG spend")
+
+	# A consequential fear-free choice keeps its authored behaviour and never
+	# touches Wren's ledger.
+	var humming := StitchedRunSession.start(seed_number)
+	if humming == null:
+		_check(false, "fear-free choir session starts")
+		return
+	humming.candle = 40
+	humming.scraps = 5
+	humming._kid_fear.reset(20)
+	humming._seal()
+	node_id = _event_node_id(humming)
+	if not humming.enter(node_id, humming.snapshot()) or humming.phase != "visit":
+		_check(false, "fear-free choir visit mounts")
+		return
+	var ledger_free: Dictionary = humming._kid_fear.state_snapshot()
+	_check(humming.choose_visit("follow_humming", [], humming.snapshot()),
+		"fear-free choir choice commits through the public visit path")
+	_check(humming.kid_fear() == 20
+		and humming._kid_fear.state_snapshot() == ledger_free,
+		"the fear-free choir choice never touches Wren's fear ledger")
+	_check(humming.ability_inventory.size() == 1,
+		"the fear-free consequential choice still earns its event patch")
+
+
+## Authenticated save/replay around the Event: the whole compared snapshot
+## carries Wren's fear ledger, the patch inventory and serial, the journal and
+## the RNG, and a re-digested fear forgery fails closed. The replay rebuilds a
+## run from its journal alone, so the roundtrip rides the real pure-command
+## route (the mounted choir's own Leave) rather than test-authored fear state;
+## the visit command replays through the same choose_visit/_choose_event path
+## the fear settlement lives in.
+func _event_fear_replay(seed_number: int) -> void:
+	var run := StitchedRunSession.start(seed_number)
+	if run == null:
+		_check(false, "replay choir session starts")
+		return
+	var node_id := _event_node_id(run)
+	if not run.enter(node_id, run.snapshot()) or run.phase != "visit":
+		_check(false, "replay choir visit mounts")
+		return
+	_check(run.choose_visit("leave", [], run.snapshot()),
+		"pure-command choir Leave commits for the save/replay roundtrip")
+	var settled := run.snapshot()
+	var document := StitchedRunSave.capture(run)
+	var restored := StitchedRunSave.restore(document)
+	_check(not document.is_empty() and restored != null
+		and restored.snapshot() == settled and restored.is_consistent(),
+		"authenticated Event save/replay reproduces ledger, inventory, serial, journal and RNG")
+	var corrupt := document.duplicate(true)
+	corrupt.state.kid_fear.fear = 12
+	corrupt.digest = StitchedRunSave._digest(corrupt)
+	_check(StitchedRunSave.restore(corrupt) == null and run.snapshot() == settled,
+		"rehashed fear ledger forgery fails closed")
 
 
 func _play_live_battle(session: StitchedRunSession) -> bool:

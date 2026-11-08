@@ -453,7 +453,9 @@ func _award_ability_patch(source: String, rarity: String = "") -> Dictionary:
 ## genuinely consequential choice without hard-coding one exit id per Event.
 ## A receipt can also re-sew a living doll's base maximum HP (max_hp_delta)
 ## before this projection is compared, so both maximum-HP values are material:
-## a max-HP-only seam still counts as a genuinely consequential choice.
+## a max-HP-only seam still counts as a genuinely consequential choice. Wren's
+## actual fear is material the same way: a fear-only Event choice is genuinely
+## consequential, while a Leave or a clamped no-change outcome is not.
 func _event_material_state() -> Dictionary:
 	var row: Array = []
 	for hero in heroes:
@@ -462,7 +464,7 @@ func _event_material_state() -> Dictionary:
 			bool(hero.lost), bool(hero.hanging), hero.parts.duplicate(true)])
 	return {"gold": gold, "scraps": scraps, "candle": candle,
 		"satchel": satchel.duplicate(true), "patches": patches.duplicate(true),
-		"pockets": pockets.duplicate(true), "heroes": row}
+		"pockets": pockets.duplicate(true), "heroes": row, "wren_fear": kid_fear()}
 
 
 func _battle_sockets() -> Dictionary:
@@ -1618,6 +1620,15 @@ func _convert_event(raw: Dictionary, overrides: Dictionary = {}) -> Dictionary:
 				if amount == null:
 					return {}
 				effect[key] = amount
+		# JSON decoding hands authored numbers back as whole floats, while the
+		# Event service's Wren-fear contract is a native int: normalize the
+		# fear delta here exactly like a part tier, failing the whole Event on
+		# fractions or booleans rather than silently dropping the choice.
+		if effect.has("fear"):
+			var fear_amount: Variant = _event_amount(effect.get("fear"))
+			if fear_amount == null:
+				return {}
+			effect["fear"] = fear_amount
 		var authored: Variant = event_overrides.get(choice.id, {})
 		if not authored is Dictionary:
 			return {}
@@ -1661,7 +1672,8 @@ func _event_snapshot() -> Dictionary:
 	for hero in heroes:
 		if not hero.lost:
 			party.append({"id": hero.id, "fray": int(hero.fray)})
-	return {"candle": candle, "party": party, "gold": gold, "scraps": scraps, "satchel_count": satchel.size()}
+	return {"candle": candle, "party": party, "gold": gold, "scraps": scraps, "satchel_count": satchel.size(),
+		"wren_fear": kid_fear()}
 
 
 func _choose_event(choice_id: String, arguments: Array) -> Dictionary:
@@ -1696,6 +1708,20 @@ func _choose_event(choice_id: String, arguments: Array) -> Dictionary:
 			return visit.upgrade(arguments[0], arguments[1], pending.node_id, visit.read_state())
 	var result: Dictionary = _service.choose(choice_id, _event_snapshot(), catalog)
 	if result.get("ok") == true:
+		# S9a/S14: a fear-bearing Event choice settles through Wren's one run
+		# ledger. Validate the receipt's projected fear first, then commit the
+		# signed delta exactly once, before any other Event material settles.
+		# Rejected and fear-free choices never reach the ledger.
+		if result.has("fear") or result.has("fear_delta"):
+			var fear_delta: Variant = result.get("fear_delta", null)
+			var projected_fear: Variant = result.get("fear", null)
+			if typeof(fear_delta) != TYPE_INT or typeof(projected_fear) != TYPE_INT \
+					or clampi(kid_fear() + int(fear_delta), StitchedKidFear.FEAR_MIN,
+						StitchedKidFear.FEAR_MAX) != int(projected_fear):
+				return {"ok": false}
+			var settled_fear: Dictionary = _kid_fear.apply_event_delta(int(fear_delta))
+			if settled_fear.get("ok") != true or int(settled_fear.get("fear")) != int(projected_fear):
+				return {"ok": false}
 		if result.has("part"):
 			var part: Dictionary = result.part.duplicate(true)
 			part["slot"] = catalog[part.id].slot

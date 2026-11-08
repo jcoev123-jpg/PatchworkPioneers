@@ -29,6 +29,7 @@ func _init() -> void:
 		_test_admission()
 		_test_quote()
 		_test_replace_receipt()
+		_test_clean_death_door_state()
 		_test_rejections()
 		_test_leave()
 		_test_closed_and_replay()
@@ -99,6 +100,8 @@ func _party(lost_index: int = 2) -> Array:
 			"name": "Doll " + ids[index],
 			"rank": index + 1,
 			"lost": index == lost_index,
+			"hanging": index == lost_index or index == 1,
+			"death_hits": 2 if index == lost_index else (1 if index == 1 else 0),
 			"hp": 0 if index == lost_index or index == 1 else 12 + index,
 			"max_hp": 30 + index,
 			"fray": 3 * index,
@@ -328,6 +331,9 @@ func _test_replace_receipt() -> void:
 	var hero: Dictionary = receipt["hero_after"]
 	_check(str(hero["id"]) == "scarecrow" and int(hero["rank"]) == 3 and not bool(hero["lost"]), "installed record is Scarecrow at rank 3, not lost")
 	_check(int(hero["max_hp"]) == 34 and int(hero["hp"]) == 34, "Scarecrow keeps its own profile HP 34/34, no bonus")
+	_check(bool(receipt["hero_before"]["hanging"]) and int(receipt["hero_before"]["death_hits"]) == 2, "hero_before still shows the old LOST injury")
+	_check(typeof(hero.get("hanging")) == TYPE_BOOL and not bool(hero["hanging"]) and typeof(hero.get("death_hits")) == TYPE_INT and int(hero["death_hits"]) == 0, "installed Scarecrow is clean: hanging false, death_hits 0")
+	_check(typeof(receipt["state"]["party"][2].get("hanging")) == TYPE_BOOL and not bool(receipt["state"]["party"][2]["hanging"]) and int(receipt["state"]["party"][2]["death_hits"]) == 0, "state.party[2] is clean")
 	for slot in STARTERS:
 		_check(_snap(hero["parts"][slot]) == _snap(_worn(STARTERS[slot])), "Scarecrow wears its actual starter " + slot)
 	_check(receipt["unchanged_ids"] == ["doll_a", "doll_b", "doll_d"], "receipt lists the three preserved dolls")
@@ -351,6 +357,57 @@ func _test_replace_receipt() -> void:
 	_check(str(service.read_state()["party"][2]["id"]) == "scarecrow" and str(service.read_state()["party"][2]["parts"]["head"]["id"]) == STARTERS["head"], "mutating a receipt does not reach the visit")
 	_check(not bool(service.quote()["can_replace"]) and service.quote()["candidates"].is_empty(), "closed visit quotes no candidates")
 	_check(not bool(service.quote()["leave"]["available"]), "closed visit has no Leave")
+
+
+## S14: the displaced LOST doll carries death-door history and the candidate template carries stale values;
+## the installed doll is still a fresh living doll with hanging false and death_hits 0.
+func _test_clean_death_door_state() -> void:
+	var party := _party()
+	party[2]["hanging"] = true
+	party[2]["death_hits"] = 2
+	var template := _scarecrow()
+	template["hanging"] = true
+	template["death_hits"] = 3
+	template["stale_flag"] = "opaque"
+	var service := RunStitchedSewingReplacement.new(NODE, party, [template], catalog)
+	var before := service.read_state()
+	_check(bool(before["ok"]), "stale-template visit is admitted")
+	if not bool(before["ok"]):
+		return
+	_check(bool(before["party"][2]["lost"]) and bool(before["party"][2]["hanging"]) and int(before["party"][2]["death_hits"]) == 2, "precondition: LOST doll carries hanging true / death_hits 2")
+	_check(bool(before["candidates"][0]["hanging"]) and int(before["candidates"][0]["death_hits"]) == 3, "precondition: candidate template carries stale values")
+	var receipt := service.replace("doll_c", "scarecrow", NODE, before)
+	_check(bool(receipt["ok"]), "replace succeeds with stale values present")
+	if not bool(receipt["ok"]):
+		return
+	var hero: Dictionary = receipt["hero_after"]
+	_check(typeof(hero["hanging"]) == TYPE_BOOL and not bool(hero["hanging"]), "new doll hanging is false")
+	_check(typeof(hero["death_hits"]) == TYPE_INT and int(hero["death_hits"]) == 0, "new doll death_hits is 0")
+	_check(str(hero["id"]) == "scarecrow" and int(hero["rank"]) == 3 and not bool(hero["lost"]), "new Scarecrow at rank 3, not lost")
+	_check(int(receipt["party_index"]) == 2 and str(receipt["state"]["party"][2]["id"]) == "scarecrow", "new doll sits at the old party index")
+	_check(int(hero["hp"]) == 34 and int(hero["max_hp"]) == 34, "candidate HP kept")
+	for slot in STARTERS:
+		_check(_snap(hero["parts"][slot]) == _snap(_worn(STARTERS[slot])), "catalog starter part kept: " + slot)
+	_check(str(hero.get("stale_flag", "")) == "opaque", "other candidate properties are kept")
+	_check(bool(receipt["hero_before"]["hanging"]) and int(receipt["hero_before"]["death_hits"]) == 2, "hero_before keeps the old injury")
+	var after: Dictionary = receipt["state"]
+	for index in [0, 1, 3]:
+		_check(_snap(after["party"][index]) == _snap(before["party"][index]), "other doll %d unchanged" % index)
+	_check(bool(after["party"][1]["hanging"]) and int(after["party"][1]["death_hits"]) == 1, "Hanging doll_b keeps its own death-door state")
+	_check(_snap(after["candidates"]) == _snap(before["candidates"]), "candidate template list unchanged")
+	_check(receipt["unchanged_ids"] == ["doll_a", "doll_b", "doll_d"] and receipt["changed_heroes"].size() == 1, "receipt describes only this one swap")
+	_check(int(receipt["charged_gold"]) == 0 and int(receipt["charged_scraps"]) == 0 and int(receipt["healed"]) == 0, "no charge and no heal")
+	# Deterministic: an equivalent visit gives an identical state.
+	var twin_party := _party()
+	twin_party[2]["hanging"] = true
+	twin_party[2]["death_hits"] = 2
+	var twin := RunStitchedSewingReplacement.new(NODE, twin_party, [template.duplicate(true)], catalog)
+	var twin_receipt := twin.replace("doll_c", "scarecrow", NODE, twin.read_state())
+	_check(bool(twin_receipt["ok"]) and _snap(twin_receipt["state"]) == _snap(after), "equivalent inputs give the same state")
+	# Detached: mutating the receipt does not reach the visit.
+	receipt["hero_after"]["hanging"] = true
+	receipt["state"]["party"][2]["death_hits"] = 9
+	_check(not bool(service.read_state()["party"][2]["hanging"]) and int(service.read_state()["party"][2]["death_hits"]) == 0, "mutating the receipt does not reach the visit")
 
 
 func _test_rejections() -> void:
