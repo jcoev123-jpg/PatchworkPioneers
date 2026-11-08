@@ -18,7 +18,9 @@ const SLOTS := ["head", "arms", "torso", "legs"]
 static var _cache: Dictionary = {}
 
 
-static func data() -> Dictionary:
+## The authoritative cached catalog: internal lookups read it directly, so a
+## rule lookup never pays for a deep copy.
+static func _cached() -> Dictionary:
 	if _cache.is_empty():
 		var file := FileAccess.open(PATH, FileAccess.READ)
 		var parsed: Variant = JSON.parse_string(file.get_as_text()) if file != null else null
@@ -26,16 +28,22 @@ static func data() -> Dictionary:
 	return _cache
 
 
+## A detached deep copy: whatever a caller sews onto it can never reach the
+## cached rules the fights use, nor the authored JSON underneath.
+static func data() -> Dictionary:
+	return _cached().duplicate(true)
+
+
 static func thread_of(part_id: String) -> String:
-	return str(data().get("threads", {}).get(part_id, ""))
+	return str(_cached().get("threads", {}).get(part_id, ""))
 
 
 static func is_foe_patch(part_id: String) -> bool:
-	return part_id in data().get("foe_patches", [])
+	return part_id in _cached().get("foe_patches", [])
 
 
 static func favoured_slot(hero_id: String) -> String:
-	return str(data().get("favoured", {}).get(hero_id, ""))
+	return str(_cached().get("favoured", {}).get(hero_id, ""))
 
 
 ## Thread -> how many untorn worn patches carry it.
@@ -73,7 +81,7 @@ static func broken_in(hero_id: String, slot: String, worn: Dictionary, wear: Dic
 	var record: Variant = wear.get(slot, {})
 	if not record is Dictionary or str(record.get("id", "")) != str(worn.get("id", "")):
 		return false
-	var needed := int(data().get("broken_in_fights_favoured" if slot == favoured_slot(hero_id) else "broken_in_fights", 3))
+	var needed := int(_cached().get("broken_in_fights_favoured" if slot == favoured_slot(hero_id) else "broken_in_fights", 3))
 	return int(record.get("fights", 0)) >= needed
 
 
@@ -84,13 +92,13 @@ static func hidden_bonus(hero_id: String, parts: Dictionary, wear: Dictionary = 
 	for thread in counts:
 		var count := int(counts[thread])
 		if count >= SLOTS.size():
-			_add(totals, data().get("whole_cloth_bonus", {}).get(thread, {}))
+			_add(totals, _cached().get("whole_cloth_bonus", {}).get(thread, {}))
 		elif count >= 2:
-			_add(totals, data().get("pair_bonus", {}).get(thread, {}))
+			_add(totals, _cached().get("pair_bonus", {}).get(thread, {}))
 	for slot in parts:
 		var worn: Variant = parts[slot]
 		if worn is Dictionary and not bool(worn.get("torn", false)) and broken_in(hero_id, slot, worn, wear):
-			_add(totals, data().get("broken_in_bonus", {}).get(slot, {}))
+			_add(totals, _cached().get("broken_in_bonus", {}).get(slot, {}))
 	return totals
 
 
@@ -101,7 +109,7 @@ static func ill_fitting_fray(hero_id: String, parts: Dictionary) -> int:
 		var worn: Variant = parts[slot]
 		if worn is Dictionary and not bool(worn.get("torn", false)) \
 				and is_foe_patch(str(worn.get("id", ""))) and slot != favoured_slot(hero_id):
-			total += int(data().get("ill_fitting_fray", 0))
+			total += int(_cached().get("ill_fitting_fray", 0))
 	return total
 
 
