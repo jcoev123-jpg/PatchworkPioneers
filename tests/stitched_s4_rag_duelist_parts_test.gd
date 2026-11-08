@@ -73,6 +73,22 @@ const TIER_STATS := {
 	],
 }
 
+## S14: the S4 cape-leg records are worn limbs and S13 sewn-patch identities, so their
+## player-readable text is a sewn-fabric description rather than a part-granted combat move.
+const CAPE_LEG_TEXT := {
+	"rag_duelist_legs_cape_slip": "A narrow strip of black cape cloth is sewn across a crimson boot cuff, its frayed hem held by crooked gold stitches.",
+	"rag_duelist_legs_cape_flourish": "A broad ragged cape-tail is patched to a black boot with crimson thread and one tarnished gold button.",
+}
+
+## Whole words the two cape-leg descriptions must never promise, matched case-insensitively on
+## word boundaries so prose like "patched" or "cuff" cannot satisfy or trip a check by accident.
+const CAPE_LEG_FORBIDDEN_WORDS := [
+	"rank", "ranks", "tier", "tiers", "attack", "hit", "dodge", "turn", "duration",
+	"ability", "move", "target", "damage", "guard", "heal", "weak", "bleed", "status",
+	"skill", "step", "forward", "backward", "swap", "swapping", "ally", "gain", "grants",
+	"temporary", "chance", "evade", "evasion", "effect", "spend", "action",
+]
+
 ## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
 ## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
 ## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
@@ -191,7 +207,7 @@ func _initialize() -> void:
 	_test_legs_tier_stats()
 	_test_lunge_mark_contract()
 	_test_flourish_catalog()
-	_test_cape_slip_text()
+	_test_cape_legs_text()
 	_test_tattered_snare_text()
 	_test_rapier_lunge_text()
 	_test_negatives()
@@ -693,38 +709,68 @@ func _test_flourish_catalog() -> void:
 		"AC1: Cape Flourish is the single backward-moving part in this kit")
 
 
-# ---------------------------------------------------------------- AC1: Cape Slip rules text
+# ---------------------------------------------------------------- AC1/AC2: the two cape-leg texts
 
-## The shipped Cape Slip copy must admit every legal launch rank and describe its one-turn Dodge
-## as helpful rather than guaranteed, without adopting Cape Flourish's backward step. These are
-## semantic checks on the loaded record, not a copy of one long literal sentence.
-func _test_cape_slip_text() -> void:
-	var catalog := _catalog()
+## S14 keeps the S4 part records as worn limbs and S13 sewn-patch identities while the hero fights
+## with its fixed signature kit, so the two player-readable cape-leg descriptions are sewn-fabric
+## copy only: no rank, tier, Dodge, movement, turn count, target, status or numeric combat promise.
+## Both named records are checked against the authored sentences, their identity fields and the
+## hero's crimson/black/gold palette, using whole words (never accidental substrings) for the
+## forbidden combat vocabulary.
+func _test_cape_legs_text() -> void:
+	var catalog := StitchedParts.load_catalog(PARTS_PATH)
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the complete shipped catalog loads for the cape-leg text check: "
+			+ str(catalog.get("error", "")))
 	if not bool(catalog.get("ok", false)):
-		_check(false, "AC1: the shipped catalog loads for the Cape Slip text check")
 		return
-	var slip_id := str(STARTER_PARTS["legs"])
-	if not catalog["by_id"].has(slip_id):
-		_check(false, "AC1: the Cape Slip text check needs the starter legs part")
-		return
-	var text := str(catalog["by_id"][slip_id].get("text", "")).strip_edges()
-	_check(not text.is_empty(), "AC1: Cape Slip carries rules text")
-	var lower := text.to_lower()
-	# Rank 4 is really legal, so the copy must not stop at the old 1-3 claim.
-	_check(text.contains("1-4") or lower.contains("any rank"),
-		"AC1: Cape Slip text allows rank 4 as well as ranks 1-3: " + text)
-	_check(not text.contains("1-3"),
-		"AC1: Cape Slip text no longer claims the false ranks 1-3 limit: " + text)
-	# Its Dodge is temporary and lasts exactly one turn.
-	_check(lower.contains("dodge"), "AC1: Cape Slip text names the Dodge it grants: " + text)
-	_check(lower.contains("one turn") or lower.contains("1 turn"),
-		"AC1: Cape Slip text states the one-turn duration: " + text)
-	# The Dodge lowers the chance to be hit; it never guarantees a miss.
-	_check(lower.contains("can still hit") or lower.contains("not guarante"),
-		"AC1: Cape Slip text says the Dodge is not guaranteed evasion: " + text)
-	# Cape Flourish is the different legs ability; its backward step must not leak into this copy.
-	_check(not lower.contains("backward") and not lower.contains("step"),
-		"AC1: Cape Slip text never claims Cape Flourish's backward step: " + text)
+	var by_id: Dictionary = catalog["by_id"]
+	for part_id in CAPE_LEG_TEXT:
+		var id := str(part_id)
+		var sentence := str(CAPE_LEG_TEXT[id])
+		_check(by_id.has(id), "AC1: the catalog authors the named cape-leg record " + id)
+		if not by_id.has(id):
+			continue
+		var part: Dictionary = by_id[id]
+		var spec: Dictionary = EXPECTED[id]
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC3: validate_part accepts the shipped " + id)
+		_check(str(part.get("id", "")) == id, "AC1: " + id + " keeps its authored id")
+		_check(str(part.get("name", "")) == str(spec["name"]),
+			"AC1: " + id + " keeps its authored name " + str(spec["name"]))
+		_check(str(part.get("owner", "")) == OWNER, "AC1: " + id + " stays owned by the rag_duelist")
+		_check(str(part.get("slot", "")) == "legs", "AC1: " + id + " stays a legs patch")
+		var text := str(part.get("text", ""))
+		_check(text == sentence, "AC1: " + id + " carries its authored sewn-fabric sentence: " + text)
+		var words := _whole_words(text)
+		# Visible cape cloth and stitching: a cape and a boot, plus cloth-and-stitch or thread.
+		for word in ["cape", "boot"]:
+			_check(word in words, "AC2: " + id + " names the visible " + word + ": " + text)
+		var stitched_cloth: bool = "cloth" in words \
+			and ("stitch" in words or "stitches" in words)
+		_check(stitched_cloth or "thread" in words,
+			"AC2: " + id + " names the sewn cloth or thread that holds the patch: " + text)
+		_check("sewn" in words or "patched" in words,
+			"AC2: " + id + " says the patch is sewn on rather than granted: " + text)
+		for colour in ["crimson", "black", "gold"]:
+			_check(colour in words, "AC2: " + id + " keeps the hero palette word " + colour + ": " + text)
+		for word in CAPE_LEG_FORBIDDEN_WORDS:
+			_check(not str(word) in words,
+				"AC2: " + id + " promises no combat term " + str(word) + ": " + text)
+		for digit in range(10):
+			_check(not text.contains(str(digit)),
+				"AC2: " + id + " states no number " + str(digit) + ": " + text)
+		_check(text.find("rank") < 0 and text.find("1-4") < 0 and text.find("1-3") < 0,
+			"AC2: " + id + " no longer advertises a rank or rank band: " + text)
+		# The same record cloned in memory with its text emptied still fails closed.
+		var blank := part.duplicate(true)
+		blank["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blank).get("ok", false)),
+			"AC3: " + id + " with empty text is refused")
+		var whitespace := part.duplicate(true)
+		whitespace["text"] = "   "
+		_check(not bool(StitchedParts.validate_part(whitespace).get("ok", false)),
+			"AC3: " + id + " with whitespace-only text is refused")
 
 
 # ---------------------------------------------------------------- AC1: Tattered Snare rules text
@@ -2614,6 +2660,25 @@ func _mark_after_exposed(base: int, statuses: Dictionary, mark_damage: int, prot
 
 
 # ---------------------------------------------------------------- value helpers
+
+## Case-insensitive word tokens of a sentence, split on anything that is not a letter, so
+## "cape-tail" yields "cape" and "tail" and prose like "patched"/"cuff" never matches "patch"/"cut".
+func _whole_words(text: String) -> Array:
+	var out: Array = []
+	var current := ""
+	var lower := text.to_lower()
+	for index in range(lower.length()):
+		var code := lower.unicode_at(index)
+		if code >= 97 and code <= 122:
+			current += lower[index]
+		else:
+			if not current.is_empty():
+				out.append(current)
+			current = ""
+	if not current.is_empty():
+		out.append(current)
+	return out
+
 
 func _is_int(value: Variant) -> bool:
 	if typeof(value) == TYPE_INT:
