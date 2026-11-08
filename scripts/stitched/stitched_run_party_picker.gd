@@ -282,19 +282,83 @@ func _on_tile_toggled(pressed: bool, id: String) -> void:
 	draft_changed.emit(_selected.duplicate())
 
 
-## The App calls this only after authenticating the live draft_changed event,
-## or when building the initial draft. Incomplete drafts clear all warnings.
-## A pending legitimate reflow is allowed; a foreign tile order is not.
+## An accepted draft must still belong to this visible, mounted App page.
+## This check does not depend on transient focus or the pending layout order.
+func _mounted_for_hints() -> bool:
+	if not is_inside_tree() or not is_visible_in_tree():
+		return false
+	var content := get_parent() as Control
+	var frame := content.get_parent() if content != null else null
+	var page := frame.get_parent() as Control if frame != null else null
+	var app := page.get_parent() if page != null else null
+	return content != null and page != null and page.name == "StitchedRunPage" \
+		and page.get_meta("page_kind", "") == "picker" and page.is_visible_in_tree() \
+		and app != null and app.get("stitched_run_panel") == page \
+		and get_meta("stitched_run_epoch", -1) == app.get("_stitched_run_epoch") \
+		and app.get("stitched_run_draft") == _selected
+
+
+## Hidden/detached boards keep only their original four catalog lines.
+func _clear_rank_claims() -> void:
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var tile: Button = tiles.get(id)
+		if not is_instance_valid(tile) or tile.get_parent() != self:
+			continue
+		_set_opening_rank_cue(id, {})
+		tile.tooltip_text = _base_tooltips.get(id, "")
+
+
+func _notification(what: int) -> void:
+	if what == NOTIFICATION_VISIBILITY_CHANGED and is_inside_tree() and not is_visible_in_tree():
+		_clear_rank_claims()
+
+
+func _exit_tree() -> void:
+	_clear_rank_claims()
+
+
+## Four base slot/name/side lines are retained and annotated only for an
+## authenticated complete four-doll admission. Targets may still be missing.
+func _rank_fit_tooltip(id: String, fit: Dictionary, cue: Dictionary) -> String:
+	var base: String = _base_tooltips.get(id, "")
+	if not fit.is_empty() and not base.is_empty():
+		var raw_lines := base.split("\n")
+		var slots: Variant = fit.get("slots", {})
+		if raw_lines.size() == StitchedParts.SLOTS.size() and slots is Dictionary \
+				and slots.size() == StitchedParts.SLOTS.size():
+			var annotated: Array[String] = []
+			for index in StitchedParts.SLOTS.size():
+				var slot: String = StitchedParts.SLOTS[index]
+				if not slots.get(slot) is bool:
+					return base
+				annotated.append(raw_lines[index] + (" · From this rank" if slots[slot] \
+					else " · Needs another rank") + " (launch only; target may be unavailable)")
+			base = "\n".join(annotated)
+	if not cue.is_empty():
+		base += "\n%s at rank %d cannot launch a signature move; Move/Pass remain possible." % [
+			cue["name"], cue["rank"]]
+	return base
+
+
+## The App calls this only for the live initial draft and accepted changes.
+## An authorized pending reflow uses admission, never temporary child order.
 func update_opening_rank_cues(accepted_picks: Array) -> void:
-	if accepted_picks != _selected or not tiles_match_draft():
+	if accepted_picks != _selected:
+		return
+	if not tiles_match_draft() or not _mounted_for_hints():
+		_clear_rank_claims()
 		return
 	var warnings := {}
+	var fits := {}
 	if accepted_picks.size() == MAX_PICKS:
 		var receipt := StitchedPartyAdmission.admit(accepted_picks)
 		if receipt.get("ok") != true:
+			_clear_rank_claims()
 			return
 		if not _reorder_pending and displayed_rank_ids() != receipt.get("hero_ids", []):
+			_clear_rank_claims()
 			return
+		fits = StitchedPartyKitHints.opening_launch_fit(accepted_picks)
 		for hero in StitchedPartyKitHints.opening_rank_stranded(accepted_picks):
 			var id: String = hero["id"]
 			var rank: int = hero["rank"]
@@ -305,7 +369,10 @@ func update_opening_rank_cues(accepted_picks: Array) -> void:
 		if not is_instance_valid(tile) or tile.get_parent() != self:
 			return
 	for id in StitchedPartyAdmission.HERO_IDS:
-		_set_opening_rank_cue(id, warnings.get(id, {}))
+		var cue: Dictionary = warnings.get(id, {})
+		_set_opening_rank_cue(id, cue)
+		# Never short-circuit tooltip refresh merely because a red cue is unchanged.
+		tiles[id].tooltip_text = _rank_fit_tooltip(id, fits.get(id, {}), cue)
 
 
 ## Recolour the already-skinned original Button using copies of its existing

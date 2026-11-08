@@ -40,6 +40,66 @@ static func tooltip(hero_id: String, kits_source: Variant = null) -> String:
 	return "\n".join(lines)
 
 
+## A complete, independently admitted four-doll lineup gets one authenticated
+## launch-only boolean per fixed S14 slot. A forged or partial catalog yields no
+## fit claims for *any* hero; target legality is deliberately not inferred.
+## Structure: hero id -> {"rank": 1..4, "slots": {slot: bool}}.
+static func opening_launch_fit(picks: Variant, kits_source: Variant = null) -> Dictionary:
+	var receipt := StitchedPartyAdmission.admit(picks)
+	if receipt.get("ok") != true:
+		return {}
+	var ordered: Variant = receipt.get("hero_ids")
+	var heroes: Variant = receipt.get("heroes")
+	if not ordered is Array or ordered.size() != StitchedPartyAdmission.RANK_COUNT \
+			or not heroes is Array or heroes.size() != ordered.size():
+		return {}
+	var authentic := StitchedS14Abilities.kits()
+	var source: Variant = authentic if kits_source == null else kits_source
+	if authentic.is_empty() or not source is Dictionary:
+		return {}
+	var fit := {}
+	var seen_moves := {}
+	for index in ordered.size():
+		var hero_id: Variant = ordered[index]
+		var hero: Variant = heroes[index]
+		if not hero_id is String or not hero is Dictionary or hero.get("id") != hero_id \
+				or hero.get("rank") != index + 1 or not hero.get("name") is String:
+			return {}
+		var kit: Variant = source.get(hero_id)
+		var canonical: Variant = authentic.get(hero_id)
+		if not kit is Dictionary or not canonical is Dictionary \
+				or kit.size() != StitchedParts.SLOTS.size():
+			return {}
+		var seen_names := {}
+		var slots := {}
+		for slot in StitchedParts.SLOTS:
+			var entry: Variant = kit.get(slot)
+			# Equality to the validated shipped kit prevents valid-looking but
+			# substituted names, ids, sides or launch ranks claiming authority.
+			if not entry is Dictionary or entry.get("slot") != slot \
+					or entry != canonical.get(slot) or not entry.get("launch") is Array:
+				return {}
+			var raw: Dictionary = entry.duplicate(true)
+			raw.erase("slot")
+			var checked := StitchedParts.validate_ability(raw)
+			if checked.get("ok") != true:
+				return {}
+			var ability: Dictionary = checked["ability"]
+			var move_id: String = ability["id"]
+			var move_name: String = ability["name"]
+			if seen_moves.has(move_id) or seen_names.has(move_name) \
+					or not SIDE_LABELS.has(ability["target_side"]):
+				return {}
+			seen_moves[move_id] = true
+			seen_names[move_name] = true
+			for rank in entry["launch"]:
+				if not rank is int:
+					return {}
+			slots[slot] = (index + 1 in ability["launch"])
+		fit[hero_id] = {"rank": index + 1, "slots": slots}
+	return fit
+
+
 ## Only opening launch ranks are projected: targets and mutable battle state are
 ## deliberately not considered. A missing/forged signature silences *all* advice.
 ## One validated authority supplies both the native Set out advisory and tile cues.

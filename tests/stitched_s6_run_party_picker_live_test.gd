@@ -176,6 +176,14 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 	_check(not catalog.is_empty(), context + ": validated S14 catalog loads")
 	var sides := {"enemy": "Foe", "ally": "Ally", "self": "Self"}
 	var slots := ["head", "arms", "torso", "legs"]
+	var receipt := StitchedPartyAdmission.admit(picker.selected_ids())
+	var four_admitted: bool = receipt.get("ok") == true
+	var admitted_ids: Array = receipt.get("hero_ids", [])
+	if picker.selected_ids().size() == StitchedPartyAdmission.RANK_COUNT:
+		_check(four_admitted and picker.displayed_rank_ids() == admitted_ids,
+			context + ": displayed four ranks are the authenticated admission, not pick order")
+	var launchable := 0
+	var blocked := 0
 	var focusable := 0
 	for child in picker.get_children():
 		if child is Control and child.focus_mode != Control.FOCUS_NONE:
@@ -195,14 +203,24 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			if not entry is Dictionary or not sides.has(entry.get("target_side", null)):
 				_check(false, context + ": complete authored " + slot + " entry for " + id)
 				continue
-			lines.append("%s — %s · %s" % [
-				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]]])
+			var line := "%s — %s · %s" % [
+				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]]]
+			if four_admitted and id in admitted_ids:
+				var rank: int = admitted_ids.find(id) + 1
+				var can_launch: bool = rank in entry["launch"]
+				line += (" · From this rank" if can_launch else " · Needs another rank") \
+					+ " (launch only; target may be unavailable)"
+				if can_launch:
+					launchable += 1
+				else:
+					blocked += 1
+			lines.append(line)
 		var expected_tooltip := "\n".join(lines)
 		if id == marked_id:
 			expected_tooltip += "\n" + WARN_SUFFIX
 		_check(lines.size() == 4 and tile.tooltip_text == expected_tooltip
 			and tile.tooltip_text.split("\n").size() == (5 if id == marked_id else 4),
-			context + ": " + id + " keeps all four S14 lines and only its authentic warning suffix")
+			context + ": " + id + " matches four source-derived rank-only launch/target-caveat lines and warning suffix")
 		var nameplate: Label = tile.get_node("DollName")
 		_check(tile.get_child_count() == 2 and nameplate.get_theme_color("font_color")
 			== (StitchedRunPartyPicker.WARNING_BONE if id == marked_id else (
@@ -220,6 +238,9 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			and tile.get_node_or_null("Portrait") is TextureRect
 			and tile.get_node_or_null("DollName") is Label,
 			context + ": original portrait/name/focusable Button remains attached to " + id)
+	_check((launchable + blocked == StitchedPartyAdmission.RANK_COUNT * StitchedParts.SLOTS.size()
+		and launchable > 0) if four_admitted else (launchable == 0 and blocked == 0),
+		context + ": all sixteen selected slot fits are checked (or none for incomplete picks)")
 	_check(picker.tiles["warden"].tooltip_text.contains("Head — Pot Helm Command · Foe")
 		and picker.tiles["warden"].tooltip_text.contains("Arms — Shield Catch · Ally")
 		and picker.tiles["warden"].tooltip_text.contains("Torso — Iron Challenge · Foe")
@@ -425,6 +446,77 @@ func _advisory_fixtures() -> void:
 		"negative fixture mutations cannot corrupt cached real S14 signatures")
 
 
+## Pure fit projection must agree with source launch arrays for all four admitted
+## ranks, not with the tooltip formatter or the older stranded-only reduction.
+func _fit_projection_fixtures() -> void:
+	var catalog := StitchedS14Abilities.kits()
+	var snapshot := catalog.duplicate(true)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 124911
+	var rng_state := rng.state
+	var default_picks: Array = StitchedRunSession.DEFAULT_PICKS.duplicate()
+	var mixed := ["rag_duelist", "scarecrow", "button_golem", "yarn_ranger"]
+	var stranded := ["rag_duelist", "scarecrow", "button_golem", "warden"]
+	for picks in [default_picks, mixed, stranded]:
+		var receipt := StitchedPartyAdmission.admit(picks)
+		var fit := StitchedPartyKitHints.opening_launch_fit(picks, catalog)
+		var all_slots: bool = receipt.get("ok") == true and fit.size() == StitchedPartyAdmission.RANK_COUNT
+		var launchable := 0
+		var blocked := 0
+		if all_slots:
+			for index in receipt["hero_ids"].size():
+				var id: String = receipt["hero_ids"][index]
+				var entry: Dictionary = fit.get(id, {})
+				var flags: Dictionary = entry.get("slots", {})
+				all_slots = all_slots and entry.get("rank") == index + 1 \
+					and flags.size() == StitchedParts.SLOTS.size()
+				for slot in StitchedParts.SLOTS:
+					var expected: bool = index + 1 in catalog[id][slot]["launch"]
+					all_slots = all_slots and flags.get(slot) == expected
+					if expected:
+						launchable += 1
+					else:
+						blocked += 1
+		_check(all_slots and launchable + blocked == 16
+			and (blocked == 0 if picks == default_picks else blocked > 0)
+			and (fit.get("warden", {}).get("slots", {}).values().count(false) == 4 if picks == stranded else true)
+			and (launchable > 0),
+			"pure per-slot opening projection equals direct S14 launch arrays for " + str(picks))
+		_check(StitchedPartyKitHints.opening_launch_fit(picks) == fit,
+			"source-injected and authoritative projections agree for " + str(picks))
+	for bad_picks in [[], ["warden"], ["warden", "seamstress", "tinker", "warden"],
+			["warden", "seamstress", "tinker", "bogus"],
+			["warden", "seamstress", "tinker", "lantern_monk", "scarecrow"], "bad"]:
+		_check(StitchedPartyKitHints.opening_launch_fit(bad_picks, catalog).is_empty(),
+			"no pure fit claims for malformed, short, repeated, unknown or overfull picks")
+	var invalid_catalogs: Array = [[], {}]
+	for field in ["slot", "id", "name", "launch", "target_side", "target", "missing_slot", "missing_hero"]:
+		var forged := catalog.duplicate(true)
+		match field:
+			"slot":
+				forged["warden"]["arms"]["slot"] = "head"
+			"id":
+				forged["warden"]["arms"]["id"] = forged["warden"]["head"]["id"]
+			"name":
+				forged["warden"]["head"]["name"] = "A convincing forged name"
+			"launch":
+				forged["warden"]["head"]["launch"] = [4]
+			"target_side":
+				forged["warden"]["head"]["target_side"] = "neutral"
+			"target":
+				forged["warden"]["head"]["target"] = [4]
+			"missing_slot":
+				forged["warden"].erase("legs")
+			"missing_hero":
+				forged.erase("warden")
+		invalid_catalogs.append(forged)
+	for invalid in invalid_catalogs:
+		_check(StitchedPartyKitHints.opening_launch_fit(stranded, invalid).is_empty(),
+			"forged or incomplete signature source cannot project any rank-fit claims")
+	_check(catalog == snapshot and StitchedS14Abilities.kits() == snapshot and rng.state == rng_state,
+		"pure projection never mutates the injected catalog, authoritative cache or RNG")
+
+
 ## Drive the actual mounted picker through the stranded quartet, a safe re-pick,
 ## and the same production Set out Button. Return to a fresh default picker so
 ## the existing focus, Cancel, rapid reflow and full-run checks stay intact.
@@ -485,6 +577,12 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 		and actions[0].tooltip_text == "" and not actions[0].disabled,
 		"safe four-doll replacement clears old warning and leaves Set out available")
 	_check_hints(picker, originals, "safe yarn-ranger replacement has no marks")
+	var mixed_counts := _source_opening_counts(safe, StitchedS14Abilities.kits())
+	_check(mixed_counts.size() == 4 and mixed_counts.get("button_golem", -1) == 1
+		and mixed_counts.get("rag_duelist", -1) > 0
+		and mixed_counts.get("scarecrow", -1) > 0
+		and mixed_counts.get("yarn_ranger", -1) > 0,
+		"genuine safe replacement mixes Button Golem blocked/launchable slots without a stranded warning")
 	await _mouse(picker.tiles["yarn_ranger"])
 	await _mouse(picker.tiles["warden"])
 	_check(picker.selected_ids() == witness and actions[0].tooltip_text == warning,
@@ -506,9 +604,12 @@ func _exercise_opening_warning(app: Node, picker: StitchedRunPartyPicker) -> Sti
 		and app.stitched_run_session == null and originals["warden"].tooltip_text.ends_with(WARN_SUFFIX),
 		"stale epoch draft_changed cannot rewrite previous Set out tooltip or tile cue")
 	app._stitched_run_epoch = active_epoch
+	originals["warden"].tooltip_text = "stale line after return to genuine epoch"
 	picker.draft_changed.emit(witness)
-	_check(actions[0].tooltip_text == warning,
-		"accepted same-draft signal restores truthful warning after stale signal")
+	_check(actions[0].tooltip_text == warning
+		and originals["warden"].tooltip_text.ends_with(WARN_SUFFIX),
+		"accepted same-draft signal restores truthful warning and slot hints even when cue is unchanged")
+	_check_hints(picker, originals, "re-authenticated same-cue refresh", "warden")
 	await _mouse(actions[0])
 	var session: StitchedRunSession = app.stitched_run_session
 	var expected := StitchedRunSession.start(7311, witness)
@@ -624,11 +725,16 @@ func _exercise_shoulders(app: Node, picker: StitchedRunPartyPicker) -> StitchedR
 		"non-picker page kind refuses shoulder navigation")
 	app.stitched_run_panel.set_meta("page_kind", "picker")
 	picker.hide()
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(originals[id].tooltip_text == StitchedPartyKitHints.tooltip(id),
+			"hidden original tile loses transient rank-fit lines: " + id)
 	await _shoulder(JOY_BUTTON_RIGHT_SHOULDER)
 	_check(receipts.is_empty() and picker.selected_ids() == initial_picks,
 		"hidden picker never changes its draft from shoulders")
 	picker.show()
 	await process_frame
+	picker.update_opening_rank_cues(initial_picks)
+	_check_hints(picker, originals, "visible authenticated draft rebuilds rank hints")
 	originals["warden"].grab_focus()
 	# South/A is the native ui_accept event on the currently focused tile.
 	await _pad_accept()
@@ -640,6 +746,7 @@ func _exercise_shoulders(app: Node, picker: StitchedRunPartyPicker) -> StitchedR
 	_check_order(picker, incomplete,
 		["warden", "rag_duelist", "scarecrow", "yarn_ranger", "button_golem"],
 		"shoulder incomplete draft visual order")
+	_check_hints(picker, originals, "controller deselect clears all fit claims")
 	originals["warden"].grab_focus()
 	var incomplete_order: Array = _visual_tile_ids(picker)
 	for i in range(8):
@@ -659,6 +766,7 @@ func _exercise_shoulders(app: Node, picker: StitchedRunPartyPicker) -> StitchedR
 	_check_order(picker, admission.get("hero_ids", []),
 		["warden", "scarecrow", "yarn_ranger", "button_golem"],
 		"shoulder four-doll canonical reflow")
+	_check_hints(picker, originals, "controller fourth choice restores admitted slot launch fits")
 	var canonical_order: Array = _visual_tile_ids(picker)
 	originals[canonical_order[0]].grab_focus()
 	for i in range(8):
@@ -871,6 +979,7 @@ func _exercise_number_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> St
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_advisory_fixtures()
+	_fit_projection_fixtures()
 	_invalid_hints()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
 	var app: Node = (load("res://scenes/app.tscn") as PackedScene).instantiate()
@@ -1022,10 +1131,16 @@ func _run() -> void:
 	app.stitched_run_buttons[0].pressed.emit()
 	_check(app.stitched_run_session == null and app.run_rng == null,
 		"confirmation rejects an internally tampered on-screen rank order")
+	picker.update_opening_rank_cues(expected_picks)
+	for id in StitchedPartyAdmission.HERO_IDS:
+		_check(original_tiles[id].tooltip_text == StitchedPartyKitHints.tooltip(id),
+			"unsolicited grid reorder cannot retain or attach rank-fit claims: " + id)
 	picker.move_child(picker.tiles["rag_duelist"], 0)
 	_check_order(picker, expected_ranks,
 		["warden", "scarecrow", "yarn_ranger", "button_golem"],
 		"restoring the genuine rank display re-enables authentic admission")
+	picker.update_opening_rank_cues(expected_picks)
+	_check_hints(picker, original_tiles, "restored authenticated rank order and fit annotations")
 	var expected_admission := StitchedPartyAdmission.admit(expected_picks)
 	_check(expected_admission.get("ok") == true
 		and expected_admission.hero_ids == expected_ranks
