@@ -300,9 +300,10 @@ func _replacement_loss() -> void:
 
 
 func _no_loss(hanging: bool) -> void:
-	# Seed 43 keeps the no-loss full route winning under the Behemoth Maul tear witness
-	# re-derived in stitched_s6_full_run_test.
-	var app: Node = await _new_run(0 if hanging else 43)
+	# Seed 46 keeps the no-loss full route winning after the roadside event catalog
+	# grew (two appended lane8 corridor events redraw the seeded event rotation);
+	# seed 43's old route now drops a mid-route battle, so this witness is re-derived.
+	var app: Node = await _new_run(0 if hanging else 46)
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and _route_kind(app, "Fight"), "no-loss witness mounts a genuine fight")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
