@@ -365,6 +365,75 @@
           "outcome": {"gold": 0, "scraps": 0}
         }
       ]
+    },
+    {
+      "id": "v3_moonlit_sundial_chasm",
+      "title": "The Moonlit Sundial Chasm",
+      "description": "A giant brass sundial bridges a crack beneath the skirting board. Its shadow falls across four button-eyed watchmen sewn into the dial's hour marks; their thread-spears bar the only dry crossing.",
+      "fight_choice_id": "break_sundial_watch",
+      "choices": [
+        {
+          "id": "break_sundial_watch",
+          "text": "Cut through the watchmen and cross the sundial (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "buy_dial_pass",
+          "text": "Pay 18 gold for a brass hour-token",
+          "outcome": {"gold": -18, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Follow the shadow back under the floorboard (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_porcelain_pillbox_gate",
+      "title": "The Porcelain Pillbox Gate",
+      "description": "The lid of an enormous porcelain pillbox stands half-open like a fortress portcullis. Round stitched guards cling to its painted hinge while loose pins rattle in the tiny compartments beyond.",
+      "fight_choice_id": "lift_pillbox_lid",
+      "choices": [
+        {
+          "id": "lift_pillbox_lid",
+          "text": "Raise the heavy lid and fight its guards (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "brace_pillbox_hinge",
+          "text": "Spend 2 scraps to brace the hinge for passage",
+          "outcome": {"gold": 0, "scraps": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Withdraw into the dark seam beside the box (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_velvet_glove_ferry",
+      "title": "The Velvet Glove Ferry",
+      "description": "A fallen velvet glove stretches its fingers over a black puddle like five narrow ferries. Tiny spool-armoured ferrymen pull the fingers taut with red thread and demand a toll before the dolls may cross.",
+      "fight_choice_id": "challenge_glove_ferryman",
+      "choices": [
+        {
+          "id": "challenge_glove_ferryman",
+          "text": "Challenge the ferrymen on the glove's knuckles (Fight)",
+          "outcome": {"gold": 0, "scraps": 0}
+        },
+        {
+          "id": "buy_glove_ferry_pass",
+          "text": "Pay 15 gold to cross on a velvet finger",
+          "outcome": {"gold": -15, "scraps": 0}
+        },
+        {
+          "id": "leave",
+          "text": "Retreat along the dry stitching (Leave)",
+          "outcome": {"gold": 0, "scraps": 0}
+        }
+      ]
     }
   ]
 }
