@@ -28,7 +28,7 @@ const EXPECTED := {
 		"title": "The Glass-Eyed Pendulum",
 		"description": "A toppled hall clock blocks the doll-sized corridor. Its pendulum swings past a black glass eye, and a button-eyed keeper holds the wick beneath its ticking teeth.",
 		"choices": [
-			{"id": "feed_brass_wick", "text": "Feed the clock's wick and quiet the dolls", "effect": {"target": "party", "candle": 24, "fray": -6, "scraps": -2, "require_candle_room": true, "min_fray": 1}},
+			{"id": "feed_brass_wick", "text": "Feed the clock's wick and quiet the dolls", "effect": {"target": "party", "candle": 24, "fray": -6, "scraps": -2, "require_candle_room": true}},
 			{"id": "pluck_clock_tooth", "text": "Break off a brass tooth and take its spool", "effect": {"target": "party", "candle": -12, "fray": 10, "scraps": 3, "require_full_candle": true}},
 			{"id": "leave", "text": "Back away from the ticking glass", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
@@ -278,9 +278,9 @@ func _test_funded_contract() -> void:
 		"previews and claims never touch an unrelated seeded RNG")
 
 
-## The paid wick feed is denied at scraps 1, at all-zero fray and at a full
-## candle; each refusal claims nothing, mutates nothing, and another legal
-## option still commits on the very same visit.
+## The paid wick feed is denied at scraps 1 and at a full candle; all surviving
+## fray 0 can still refill the wick and ease fray. Each refusal claims nothing,
+## mutates nothing, and another legal option still commits on the very same visit.
 func _test_wick_boundaries() -> void:
 	var event_id := "v3_glasseye_pendulum"
 	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
@@ -329,29 +329,43 @@ func _test_wick_boundaries() -> void:
 	_check(snapshot_scraps == before_scraps and record == record_snapshot,
 		"the under-scrapped flow mutates neither snapshot nor record")
 
-	# 2. All surviving fray 0 cannot satisfy min_fray 1.
+	# 2. All surviving fray 0 can refill the wick when funded and candle room exists.
+	var rng_guard_zero := RandomNumberGenerator.new()
+	rng_guard_zero.seed = 626262
+	var guard_state_zero: int = rng_guard_zero.state
 	var snapshot_zero := _funded_snapshot()
 	snapshot_zero["party"] = _party_with_frays([["warden", 0], ["seamstress", 0], ["tinker", 0], ["lantern_monk", 0]])
 	var before_zero: Dictionary = snapshot_zero.duplicate(true)
 	var service_zero := RunStitchedEventConsequence.new(record)
 	var preview_zero: Dictionary = service_zero.preview(snapshot_zero)
+	_check(preview_zero.get("ok") == true, "all-zero fray visit previews successfully")
 	var wick_zero := _entry(preview_zero, "feed_brass_wick")
-	_check(wick_zero.get("available") == false
-		and int(wick_zero.get("candle")) == BASE_CANDLE
-		and wick_zero.get("fray") == {},
-		"all-zero fray quotes the wick feed unavailable with empty fray intents")
-	_check(_entry(preview_zero, "leave").get("available") == true,
-		"leave stays selectable at all-zero fray")
-	_check(service_zero.choose("feed_brass_wick", snapshot_zero) == _refusal(BASE_CANDLE),
-		"the all-zero-fray wick feed is refused")
-	_check(service_zero.is_valid() and not service_zero.is_claimed(),
-		"the all-zero-fray refusal keeps the visit open and unclaimed")
-	var leave_zero: Dictionary = service_zero.choose("leave", snapshot_zero)
-	_check(leave_zero == _expected_receipt(event_id, "leave", FUNDED_FINAL[event_id]["leave"]),
-		"leave commits on the same visit after the all-zero-fray refusal")
+	var expected_wick_zero_entry: Dictionary = _expected_entry("feed_brass_wick", FUNDED_FINAL[event_id]["feed_brass_wick"])
+	_check(wick_zero.get("available") == true
+		and int(wick_zero.get("candle")) == 66
+		and int(wick_zero.get("candle_delta")) == 24
+		and int(wick_zero.get("scraps")) == 3
+		and int(wick_zero.get("scraps_delta")) == -2
+		and wick_zero.get("fray") == _fray_map(-6),
+		"all-zero fray quotes the wick feed available with candle 66, scraps 3 and raw -6 intents")
+	_check(wick_zero == expected_wick_zero_entry,
+		"all-zero fray preview matches the hardcoded funded oracle entry exactly")
+	var receipt_zero: Dictionary = service_zero.choose("feed_brass_wick", snapshot_zero)
+	var expected_receipt_zero: Dictionary = _expected_receipt(event_id, "feed_brass_wick", FUNDED_FINAL[event_id]["feed_brass_wick"])
+	_check(receipt_zero == expected_receipt_zero,
+		"all-zero fray claims the wick feed, settling candle 66, scraps 3 and raw -6 fray intents")
 	_check(service_zero.is_claimed() and not service_zero.is_valid(),
-		"the post-refusal leave claim latches once")
-	_check(snapshot_zero == before_zero, "the all-zero-fray flow mutates no snapshot")
+		"the all-zero-fray wick claim latches once")
+	_check(service_zero.choose("feed_brass_wick", snapshot_zero) == _refusal(BASE_CANDLE),
+		"a settled all-zero-fray visit refuses a replay")
+	_check(service_zero.choose("leave", snapshot_zero) == _refusal(BASE_CANDLE),
+		"a settled all-zero-fray visit refuses alternate choices")
+	_check(service_zero.preview(snapshot_zero) == _denied_preview(),
+		"a spent visit offers no further preview after all-zero claim")
+	_check(snapshot_zero == before_zero and record == record_snapshot,
+		"the all-zero-fray flow mutates neither snapshot nor record")
+	_check(rng_guard_zero.state == guard_state_zero,
+		"the all-zero-fray preview and claim draw nothing from RNG")
 
 	# 3. A full candle has no candle room for the +24 wick feed.
 	var snapshot_full := _funded_snapshot()
@@ -618,9 +632,9 @@ func _test_shell_silence_boundaries() -> void:
 
 
 ## A LOST hero's fray never satisfies min_fray and never receives a fray intent:
-## with the warden LOST at fray 100 and three living dolls at fray 0, both
-## min_fray bargains are denied, while the monk echo pays fray only to the
-## living dolls.
+## with the warden LOST at fray 100 and three living dolls at fray 0, the clock
+## wick refill still succeeds without fraying the warden, while the shell silence
+## is denied and the monk echo frays only the living dolls.
 func _test_lost_hero_cannot_satisfy_min_fray() -> void:
 	var lost_party: Array = [
 		{"id": "warden", "fray": 100, "lost": true},
@@ -629,30 +643,49 @@ func _test_lost_hero_cannot_satisfy_min_fray() -> void:
 		{"id": "lantern_monk", "fray": 0},
 	]
 
-	# 1. The wick feed is denied: only the LOST warden carries fray.
+	# 1. The clock wick succeeds with sufficient scraps and candle room, excluding Warden from FRAY intents.
 	var clock_record: Dictionary = (source_by_id["v3_glasseye_pendulum"] as Dictionary).duplicate(true)
+	var clock_record_snapshot: Dictionary = clock_record.duplicate(true)
 	var snapshot_wick := {"candle": BASE_CANDLE, "party": lost_party, "gold": BASE_GOLD, "scraps": BASE_SCRAPS}
 	var before_wick: Dictionary = snapshot_wick.duplicate(true)
 	var service_wick := RunStitchedEventConsequence.new(clock_record)
 	var preview_wick: Dictionary = service_wick.preview(snapshot_wick)
+	_check(preview_wick.get("ok") == true, "the LOST-warden clock visit previews")
 	var wick_entry := _entry(preview_wick, "feed_brass_wick")
-	_check(wick_entry.get("available") == false
-		and int(wick_entry.get("candle")) == BASE_CANDLE
-		and wick_entry.get("fray") == {},
-		"a LOST hero's fray cannot satisfy the wick feed's min_fray")
-	_check(service_wick.choose("feed_brass_wick", snapshot_wick) == _refusal(BASE_CANDLE),
-		"the wick feed is refused when only a LOST hero is frayed")
-	_check(service_wick.is_valid() and not service_wick.is_claimed(),
-		"the LOST-hero refusal keeps the clock visit open and unclaimed")
-	var leave_wick: Dictionary = service_wick.choose("leave", snapshot_wick)
-	_check(leave_wick == _expected_receipt("v3_glasseye_pendulum", "leave", FUNDED_FINAL["v3_glasseye_pendulum"]["leave"]),
-		"leave commits on the same visit after the LOST-hero wick refusal")
+	var expected_living_fray := {"seamstress": -6, "tinker": -6, "lantern_monk": -6}
+	_check(wick_entry.get("available") == true
+		and int(wick_entry.get("candle")) == 66
+		and int(wick_entry.get("candle_delta")) == 24
+		and int(wick_entry.get("scraps")) == 3
+		and int(wick_entry.get("scraps_delta")) == -2
+		and wick_entry.get("fray") == expected_living_fray,
+		"the wick feed is available when living dolls are at fray 0, excluding Warden from fray intents")
+	var receipt_wick: Dictionary = service_wick.choose("feed_brass_wick", snapshot_wick)
+	var expected_receipt_wick := {
+		"ok": true,
+		"event_id": "v3_glasseye_pendulum",
+		"choice_id": "feed_brass_wick",
+		"target": "party",
+		"hero_id": "",
+		"candle": 66,
+		"fray": expected_living_fray,
+		"scraps": 3,
+		"scraps_delta": -2,
+	}
+	_check(receipt_wick == expected_receipt_wick,
+		"the wick refill succeeds with Warden LOST at fray 100, excluding Warden from FRAY intents")
 	_check(service_wick.is_claimed() and not service_wick.is_valid(),
-		"the post-refusal leave claim latches once")
-	_check(snapshot_wick == before_wick, "the LOST-hero wick flow mutates no snapshot")
+		"the post-claim wick visit latches once")
+	_check(service_wick.choose("feed_brass_wick", snapshot_wick) == _refusal(BASE_CANDLE),
+		"the spent LOST-warden wick visit refuses a replay")
+	_check(service_wick.preview(snapshot_wick) == _denied_preview(),
+		"a spent LOST-warden wick visit offers no further preview")
+	_check(snapshot_wick == before_wick and clock_record == clock_record_snapshot,
+		"the LOST-hero wick flow mutates neither snapshot nor record")
 
 	# 2. The paid silence is denied the same way.
 	var shell_record: Dictionary = (source_by_id["v3_skirting_listening_shell"] as Dictionary).duplicate(true)
+	var shell_record_snapshot: Dictionary = shell_record.duplicate(true)
 	var snapshot_silence := {"candle": BASE_CANDLE, "party": lost_party, "gold": BASE_GOLD, "scraps": BASE_SCRAPS}
 	var before_silence: Dictionary = snapshot_silence.duplicate(true)
 	var service_silence := RunStitchedEventConsequence.new(shell_record)
@@ -682,7 +715,10 @@ func _test_lost_hero_cannot_satisfy_min_fray() -> void:
 		"the monk echo settles on the LOST-warden party, fraying only the living dolls")
 	_check(service_silence.is_claimed() and not service_silence.is_valid(),
 		"the post-refusal echo claim latches once")
-	_check(snapshot_silence == before_silence, "the LOST-hero shell flow mutates no snapshot")
+	_check(service_silence.choose("monk_answer_echo", snapshot_silence) == _refusal(BASE_CANDLE),
+		"the settled LOST-warden shell visit refuses a replay")
+	_check(snapshot_silence == before_silence and shell_record == shell_record_snapshot,
+		"the LOST-hero shell flow mutates neither snapshot nor record")
 
 
 ## Same-seed fresh visits are identical and no flow draws from a caller RNG;
