@@ -1705,6 +1705,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_hushed_fob_watch",
+      "title": "The Hushed Fob Watch",
+      "description": "A brass fob watch hangs over a dark nursery stair like a pendulum moon; far below its cracked glass, a small oxblood watchkeeper winds the chain with mitten hands as one candle glows through the motionless gears.",
+      "choices": [
+        {
+          "id": "buy_watch_spring",
+          "text": "Pay 16 gold for three coils of watchspring thread (+3 scraps)",
+          "outcome": { "gold": -16, "scraps": 3 }
+        },
+        {
+          "id": "rethread_watch_chain",
+          "text": "Spend 2 scraps rethreading the hanging chain (earn 27 gold)",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the frozen hands keep their midnight secret",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_bonewhite_breadbox",
+      "title": "The Bonewhite Breadbox",
+      "description": "A breadbox as broad as a cellar yawns open on the pantry floor; a round button-eyed baker in a flour-white hood counts lost spool crumbs behind its moonlit glass door while black lace hangs from the hinges.",
+      "choices": [
+        {
+          "id": "buy_crumb_thread",
+          "text": "Pay 12 gold for two bundles of crumb-wrapped thread (+2 scraps)",
+          "outcome": { "gold": -12, "scraps": 2 }
+        },
+        {
+          "id": "mend_breadbox_hinge",
+          "text": "Spend 1 scrap bracing the heavy breadbox hinge (earn 19 gold)",
+          "outcome": { "gold": 19, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Close the glass door before the crumbs begin to move",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_silver_shoehorn_ramp",
+      "title": "The Silver Shoehorn Ramp",
+      "description": "A tarnished shoehorn bridges two giant boot heels above a crack in the floorboards; its curved silver back shines in amber candlelight as a tiny plum-cloth cobbler tightens the worn leather grip.",
+      "choices": [
+        {
+          "id": "brace_shoehorn_span",
+          "text": "Spend 2 scraps bracing the silver ramp (earn 31 gold)",
+          "outcome": { "gold": 31, "scraps": -2 }
+        },
+        {
+          "id": "buy_leather_lacing",
+          "text": "Pay 19 gold for three bundles of leather-grip lacing (+3 scraps)",
+          "outcome": { "gold": -19, "scraps": 3 }
+        },
+        {
+          "id": "leave",
+          "text": "Walk beneath the shoehorn and leave the crossing to the cobbler",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }

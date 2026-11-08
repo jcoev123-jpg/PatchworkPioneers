@@ -1,9 +1,11 @@
 extends "res://tests/stitched_s6_full_run_test.gd"
 ## Paid patch/foreign-part stock must survive real routed controls and V1 replay.
-const ROUTE := [
-	"f01_n0", "f02_n0", "f03_n0", "f04_n0", "f05_n0",
-	"f06_n0", "f07_n3", "f08_n1", "f09_n0", "f10_n0", "f11_n0",
-]
+const LiveWitness := preload("res://tests/live_witness.gd")
+# Ten stops without a Peddler, then the floor-eleven Peddler; fights first so the wallet is earned.
+# The witness seed and route are searched at run time (owner 11-08): the old pinned seed-21 route broke
+# whenever a lane retuned a fight on it.
+const KINDS := ["!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "!Shop", "Shop"]
+const PREFER := ["Fight", "Campfire", "SewingCircle", "Treasure", "Rest"]
 const SAVE := "user://stitched_s6_peddler_patch_live.save"
 
 
@@ -16,38 +18,26 @@ func _button(app: Node, id: String, args: Array = []) -> Button:
 
 
 func _run() -> void:
-	var app: Node = await _new_run(21)
-	var session: StitchedRunSession = app.stitched_run_session
-	_check(session != null and session.map.get_floors().size() == 12, "authentic seeded twelve-floor public route")
-	if session == null:
-		_finish(app)
+	var witness := await LiveWitness.first_played(self, LiveWitness.candidates(KINDS, 0, 2, PREFER),
+		func(app: Node, _played: Dictionary) -> bool:
+			var found: StitchedRunSession = app.stitched_run_session
+			return found.phase == "visit" and found.pending.service == "Peddler" and found.gold >= 100)
+	_check(not witness.is_empty(), "a searched seed and route reach a floor-eleven Peddler with an earned wallet")
+	if witness.is_empty():
+		_finish(null)
 		return
-	var bosses := 0
-	for node_id in ROUTE:
-		if session.phase != "map":
-			break
-		_check(session.choices().has(node_id), "precomputed next node is connected " + node_id)
-		if not session.choices().has(node_id):
-			break
-		var kind: String = session.map.get_node(node_id).type
-		_check(_press_route(app, node_id), "press a real map button " + node_id + "/" + kind)
-		if session.phase == "battle":
-			var stage: StitchedBattleScreen = app.stitched_run_battle
-			var result: Dictionary = _win(stage)
-			_check(stage.battle.is_over() and result.acted > 0 and stage.battle.outcome() == "victory",
-				"battle-earned wallet comes from genuine mounted ranked turns " + node_id)
-			if stage.battle.outcome() != "victory":
-				break
-			stage._action_buttons["exit"].pressed.emit()
-			bosses += 1 if kind == "Boss" else 0
-		elif kind != "Shop":
-			_check(_finish_visit(app), "public stop visit completes " + node_id)
-		else:
-			break
+	print("Peddler witness: seed=%d route=%s fights=%s" % [witness.seed, witness.route, witness.played.fights])
+	var app: Node = witness.app
+	var session: StitchedRunSession = app.stitched_run_session
+	_check(session.map.get_floors().size() == 12, "authentic seeded twelve-floor public route")
+	_check(session.map.get_route() == witness.route, "the mounted run followed the searched route")
+	var fights: Array = witness.played.fights
+	_check(fights.size() >= 3 and fights.all(func(fight: Dictionary): return fight.acted > 0 and fight.outcome == "victory"),
+		"battle-earned wallet comes from genuine mounted ranked turns: %s" % [fights])
 	_check(session.phase == "visit" and session.pending.service == "Peddler"
-		and session.pending.node_id == "f11_n0" and session.gold >= 100
+		and session.map.get_node(session.pending.node_id).floor == 11 and session.gold >= 100
 		and session.receipts.size() == 10,
-		"real six ranked victories fund the eleventh-floor Peddler patch")
+		"real ranked victories fund the eleventh-floor Peddler patch")
 	if session.phase != "visit" or session.pending.service != "Peddler":
 		_finish(app)
 		return
