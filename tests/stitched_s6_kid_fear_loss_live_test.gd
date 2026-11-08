@@ -84,6 +84,79 @@ func _continue_saved(app: Node, label: String) -> Node:
 	return loaded
 
 
+const ROUTE_BATTLES := ["Fight", "Elite", "Boss"]
+
+
+## A connected route matching the wanted node types in order, walking only through
+## non-battle stops between them. Empty when no such route exists.
+func _plan(map: RunMap, from_id: String, wants: Array) -> Array:
+	for child in map.get_node(from_id).get("outgoing", []):
+		var path := _plan_node(map, str(child), wants)
+		if not path.is_empty():
+			return path
+	return []
+
+
+func _plan_node(map: RunMap, id: String, wants: Array) -> Array:
+	if wants.is_empty():
+		return []
+	var node := map.get_node(id)
+	var kind := str(node.type)
+	if kind == str(wants[0]):
+		if wants.size() == 1:
+			return [id]
+		var tail := _plan(map, id, wants.slice(1))
+		return [id] + tail if not tail.is_empty() else []
+	if kind in ROUTE_BATTLES:
+		return []
+	for child in node.get("outgoing", []):
+		var path := _plan_node(map, str(child), wants)
+		if not path.is_empty():
+			return [id] + path
+	return []
+
+
+## A Campfire may offer mend, wick trimming, a tale or Leave; any enabled recovery is a
+## real mounted visit action, so the carry fixture never demands one exact option.
+func _campfire_action(app: Node, twin: StitchedRunSession) -> bool:
+	var session: StitchedRunSession = app.stitched_run_session
+	var actions: Array = session.visit_actions()
+	for wanted in ["mend", "trim_the_wick", "tell_tales", "leave"]:
+		for index in actions.size():
+			if actions[index].id == wanted and actions[index].enabled:
+				app.stitched_run_buttons[index].pressed.emit()
+				_replay_future(twin, session, "loaded future Campfire " + wanted)
+				return true
+	if _finish_visit(app):
+		_replay_future(twin, session, "loaded future Campfire leave")
+		return true
+	return false
+
+
+## Follow the planned connected route, replaying every mounted command.
+func _walk_plan(app: Node, twin: StitchedRunSession, route: Array, seen: Dictionary) -> bool:
+	var session: StitchedRunSession = app.stitched_run_session
+	for id in route:
+		var kind := str(session.map.get_node(str(id)).type)
+		if not _press_route(app, str(id)):
+			return false
+		_replay_future(twin, session, "loaded future " + kind)
+		seen[kind] = true
+		if kind in ROUTE_BATTLES:
+			return session.phase == "battle"
+		if session.phase == "visit":
+			if kind == "Campfire":
+				if not _campfire_action(app, twin):
+					return false
+			elif not _finish_visit(app):
+				return false
+			else:
+				_replay_future(twin, session, "loaded future stop leave")
+		elif session.phase != "map":
+			return false
+	return false
+
+
 func _direct_head_loss(value: Variant) -> bool:
 	if value is Dictionary:
 		var door: Variant = value.get("death_door", value.get("attacker_death_door"))
@@ -177,9 +250,10 @@ func _first_loss(seed_number: int) -> Node:
 
 
 func _carried_loss() -> void:
-	# Seed 101 re-derives the carried-LOST witness under S14: the opening Fight loses
-	# exactly one doll and is won, and its chain reaches a Shop, a Campfire and a real Elite.
-	var app: Node = await _first_loss(101)
+	# Seed 93 re-derives the carried-LOST witness after the Scissor Crab learned to snip
+	# fresh seams: the opening Fight still loses exactly one doll and is won, and its
+	# connected chain reaches a Shop, a Campfire and a real Elite.
+	var app: Node = await _first_loss(93)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null or session.phase != "map":
 		app.free()
@@ -189,20 +263,14 @@ func _carried_loss() -> void:
 	var twin := StitchedRunSave.restore(StitchedRunSave.capture(session))
 	_check(twin != null, "loaded future has an independent authenticated replay")
 	# Apply the very same mounted commands to the replay, checking the entire state after each.
-	_check(_route_kind(app, "Shop"), "carried LOST reaches the connected Shop")
-	_replay_future(twin, session, "loaded future Shop")
-	var leave := _visit_button(app, "leave")
-	if leave != null:
-		leave.pressed.emit()
-	_replay_future(twin, session, "loaded future unrelated visit")
-	_check(_route_kind(app, "Campfire"), "carried LOST reaches the connected Campfire")
-	_replay_future(twin, session, "loaded future Campfire")
-	var mend := _visit_button(app, "mend")
-	if mend != null:
-		mend.pressed.emit()
-	_replay_future(twin, session, "loaded future recovery")
-	_check(_route_kind(app, "Elite"), "carried LOST enters a valid next encounter")
-	_replay_future(twin, session, "loaded future next encounter including opening foe turns")
+	var route := _plan(session.map, session.map.get_current_node_id(), ["Shop", "Campfire", "Elite"])
+	var seen := {}
+	_check(not route.is_empty(), "carried LOST has a connected Shop, Campfire and Elite route")
+	if not route.is_empty():
+		_walk_plan(app, twin, route, seen)
+	_check(seen.has("Shop"), "carried LOST reaches the connected Shop")
+	_check(seen.has("Campfire"), "carried LOST reaches the connected Campfire")
+	_check(seen.has("Elite"), "carried LOST enters a valid next encounter including opening foe turns")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
 	_check(stage != null and stage.battle.get_heroes().filter(func(hero: Dictionary): return hero.lost).size() == 1,
 		"the next actual battle contains the previously LOST ID")
@@ -300,10 +368,9 @@ func _replacement_loss() -> void:
 
 
 func _no_loss(hanging: bool) -> void:
-	# Seed 46 keeps the no-loss full route winning after the roadside event catalog
-	# grew (two appended lane8 corridor events redraw the seeded event rotation);
-	# seed 43's old route now drops a mid-route battle, so this witness is re-derived.
-	var app: Node = await _new_run(0 if hanging else 46)
+	# The no-loss full route's winning seed is searched at run time (_winning_seed), so
+	# appended Events that redraw the seeded rotation no longer break this witness.
+	var app: Node = await _new_run(0 if hanging else await _winning_seed())
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and _route_kind(app, "Fight"), "no-loss witness mounts a genuine fight")
 	var stage: StitchedBattleScreen = app.stitched_run_battle

@@ -107,7 +107,7 @@ func _walk_to_stop(app: Node, node_id: String, ordinal: int) -> bool:
 				and walker.event_buttons.size() == offered.size(),
 				"placed curio offers genuine mounted choices")
 			if offered.is_empty() or walker.event_buttons.size() != offered.size() \
-				or not _press(walker.event_buttons[0], "placed curio " + str(curio.id)):
+					or not _press(walker.event_buttons[0], "placed curio " + str(curio.id)):
 				return false
 			await process_frame
 			_check(session.journal.size() == previous + 1 and session.journal.back().action == "walk"
