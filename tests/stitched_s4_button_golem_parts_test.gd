@@ -230,9 +230,9 @@ func _test_catalog() -> void:
 
 
 ## AC1/AC2: S14 gives each hero four fixed signature abilities and retires part-granted moves, so
-## the two starter Button Golem patch texts now describe the sewn-on buttons and felt instead of
-## promising the old Mark attacks. Both ids, slots, stats and every legacy mechanic field stay as
-## authored; only the two top-level `text` strings changed.
+## all four starter Button Golem patch texts now describe the sewn-on buttons, felt and thread
+## instead of promising the old part actions. Both ids, slots, stats and every legacy mechanic
+## field stay as authored; only the top-level `text` strings changed.
 func _test_s14_patch_text() -> void:
 	var catalog := _catalog()
 	_check(bool(catalog.get("ok", false)),
@@ -242,18 +242,32 @@ func _test_s14_patch_text() -> void:
 	var expected := {
 		STARTERS["head"]: "A loose brass button dangles above the tiny button eyes, tied to a slate-blue felt brow with coarse walnut thread.",
 		STARTERS["arms"]: "Scuffed brass buttons stack into a rounded fist, cross-stitched to a bulky walnut felt sleeve.",
+		STARTERS["torso"]: "A quilted walnut-felt chest patch is fastened with three dull brass buttons and broad slate-blue cross-stitches.",
+		STARTERS["legs"]: "Two slate-blue felt threadwheels are stitched to the Golem's stubby boots, each with a brass button hub and loose walnut thread tails.",
 	}
-	var slots := {STARTERS["head"]: "head", STARTERS["arms"]: "arms"}
+	var slots := {
+		STARTERS["head"]: "head", STARTERS["arms"]: "arms",
+		STARTERS["torso"]: "torso", STARTERS["legs"]: "legs",
+	}
+	# The fabric details each corrected starter description must actually name.
+	var motifs := {
+		STARTERS["torso"]: ["walnut-felt", "brass buttons", "cross-stitches"],
+		STARTERS["legs"]: ["slate-blue felt threadwheels", "boots", "brass button hub",
+			"thread tails"],
+	}
 	var old_sentences := [
 		"Pop a loose button to Mark a front foe for a later hit.",
 		"Punch a front foe with a button fist; a Mark makes the hit stronger.",
+		"Restitch the seams into prickly Thorns, not a Block counter.",
+		"Roll back one rank, swapping the adjacent ally and gaining temporary Dodge.",
 	]
 	# Wording the retired part actions used to advertise.
 	var legacy_phrases := ["pop a loose button", "punch a front", "for a later",
 		"makes the hit stronger"]
 	# Any term that would still promise an action, target, rank, tier or combat effect.
 	var retired_words := ["mark", "foe", "attack", "hit", "damage", "rank", "tier",
-		"bleed", "weak", "stun", "guard", "heal", "ability"]
+		"bleed", "weak", "stun", "guard", "heal", "ability",
+		"block", "thorns", "dodge", "roll back", "swap", "move", "turn"]
 	var present := true
 	for id in expected:
 		present = present and catalog["by_id"].has(id)
@@ -275,9 +289,14 @@ func _test_s14_patch_text() -> void:
 			_check(not lower.contains(str(phrase)),
 				"AC2: %s patch text no longer promises '%s'" % [id, str(phrase)])
 		_check(not (text in old_sentences),
-			"AC2: %s no longer carries the retired Mark-attack sentence" % id)
+			"AC2: %s no longer carries the retired combat sentence" % id)
 	if not present:
 		return
+	for id in motifs:
+		var cloth := str(expected[id]).to_lower()
+		for motif in motifs[id]:
+			_check(cloth.contains(str(motif)),
+				"AC2: %s patch text names the sewn detail '%s'" % [id, str(motif)])
 	# The legacy mechanics the starter parts still carry stay untouched beside the new copy.
 	var head: Dictionary = catalog["by_id"][STARTERS["head"]]
 	var arms: Dictionary = catalog["by_id"][STARTERS["arms"]]
@@ -295,6 +314,34 @@ func _test_s14_patch_text() -> void:
 	_check(str(StitchedParts.ability_at_tier(head, 1)["id"]) == "button_golem_head_loose_pop_move"
 		and str(StitchedParts.ability_at_tier(arms, 1)["id"]) == "button_golem_arms_button_fist_move",
 		"AC3: both starter patches keep their legacy ability ids")
+	# The two newly corrected patch texts sit beside untouched legacy mechanics too: the torso's
+	# Thorns ladder and frozen defensive stats, and the legs' wheel movement and Dodge duration.
+	var torso: Dictionary = catalog["by_id"][STARTERS["torso"]]
+	var legs: Dictionary = catalog["by_id"][STARTERS["legs"]]
+	_check(int(StitchedParts.ability_at_tier(torso, 1)["effects"]["thorns"]) == 2
+		and int(StitchedParts.ability_at_tier(torso, 2)["effects"]["thorns"]) == 3
+		and int(StitchedParts.ability_at_tier(torso, 3)["effects"]["thorns"]) == 5
+		and StitchedParts.stat_at_tier(torso, 1) == {"max_hp": 6, "prot": 3}
+		and StitchedParts.stat_at_tier(torso, 2) == {"max_hp": 8, "prot": 4}
+		and StitchedParts.stat_at_tier(torso, 3) == {"max_hp": 10, "prot": 5}
+		and int(StitchedParts.ability_at_tier(torso, 1)["self_move"]) == 0,
+		"AC3: the starter torso keeps its legacy Thorns 2/3/5 and frozen max_hp/prot stats")
+	_check(StitchedParts.stat_at_tier(legs, 1) == {"speed": 2}
+		and StitchedParts.stat_at_tier(legs, 2) == {"speed": 2}
+		and StitchedParts.stat_at_tier(legs, 3) == {"speed": 2}
+		and int(StitchedParts.ability_at_tier(legs, 1)["self_move"]) == 1
+		and int(StitchedParts.ability_at_tier(legs, 1)["effects"]["dodge"]) == 6
+		and int(StitchedParts.ability_at_tier(legs, 2)["effects"]["dodge"]) == 8
+		and int(StitchedParts.ability_at_tier(legs, 3)["effects"]["dodge"]) == 11
+		and int(StitchedParts.ability_at_tier(legs, 1)["effects"]["duration"]) == 2
+		and int(StitchedParts.ability_at_tier(legs, 2)["effects"]["duration"]) == 2
+		and int(StitchedParts.ability_at_tier(legs, 3)["effects"]["duration"]) == 3,
+		"AC3: the starter legs keep their legacy speed 2, self-move 1 and Dodge 6/2, 8/2, 11/3")
+	_check(str(StitchedParts.ability_at_tier(torso, 1)["id"])
+			== "button_golem_torso_seam_resew_move"
+		and str(StitchedParts.ability_at_tier(legs, 1)["id"])
+			== "button_golem_legs_threadwheel_roll_move",
+		"AC3: the corrected torso and legs patches keep their legacy ability ids")
 	# Fail-closed: the catalog still refuses a patch copy whose text is blank.
 	for id in expected:
 		var blank: Dictionary = catalog["by_id"][id].duplicate(true)
