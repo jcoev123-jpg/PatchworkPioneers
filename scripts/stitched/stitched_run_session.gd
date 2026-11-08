@@ -833,11 +833,23 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 		reward.ability_patch = _award_ability_patch(source)
 		if pending.kind in ["Elite", "Boss"]:
 			var leg_payer := false
+			var stuffing_payer := false
+			var living_hero := false
 			for settled_hero in heroes:
-				if not settled_hero.lost and settled_hero.parts.has("legs") and not settled_hero.parts.legs.torn:
-					leg_payer = true
+				if not settled_hero.lost:
+					living_hero = true
+					if int(settled_hero.base_max_hp) - 6 >= 10:
+						stuffing_payer = true
+					if settled_hero.parts.has("legs") and not settled_hero.parts.legs.torn:
+						leg_payer = true
+			var has_gift := false
+			for gift in gift_pool:
+				if not gift in gift_slots:
+					has_gift = true
 					break
-			door_offer = StitchedS14SideDoors.offer(rng, str(pending.kind), underbed_taken, leg_payer)
+			var fear_payer: bool = living_hero and kid_fear() <= 85 and has_gift
+			door_offer = StitchedS14SideDoors.offer(rng, str(pending.kind), underbed_taken,
+					leg_payer, stuffing_payer, fear_payer)
 			if not door_offer.is_empty():
 				door_offer["node_id"] = pending.node_id
 	# Floor resolve and cut cleanup belongs to the rules authority.
