@@ -1603,6 +1603,36 @@
         {"id": "trade_bell_lining", "text": "Trade a strong seam for polished silver", "outcome": {"gold": 25, "scraps": 0, "hp": 0, "max_hp": -2}},
         {"id": "leave", "text": "Leave the mouse holding the silent bell", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
       ]
+    },
+    {
+      "id": "v3_oxblood_banister_heart",
+      "title": "The Oxblood Banister Heart",
+      "description": "A stitched handrail climbs the vast staircase like a sleeping red serpent; inside its brass heart a round button-eyed keeper winds a thread that beats in time with the dolls.",
+      "choices": [
+        {"id": "sew_banister_heart", "text": "Trade thread for a lasting heart seam", "outcome": {"gold": 0, "scraps": -2, "hp": 0, "max_hp": 3}},
+        {"id": "sell_banister_seam", "text": "Sell a heart seam for a bag of brass coins", "outcome": {"gold": 24, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Leave the stitched handrail asleep", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_glassmouth_wall_vent",
+      "title": "The Glassmouth Wall Vent",
+      "description": "A huge oval vent breathes amber light through a wall of black quilted plaster; a squat cream-cloth keeper holds fresh stuffing beneath its glass teeth.",
+      "choices": [
+        {"id": "buy_vent_lining", "text": "Pay the keeper to mend and deepen a heart seam", "outcome": {"gold": -18, "scraps": 0, "hp": 6, "max_hp": 1}},
+        {"id": "trade_vent_stitch", "text": "Surrender a heart seam for spare thread", "outcome": {"gold": 0, "scraps": 2, "hp": 0, "max_hp": -1}},
+        {"id": "leave", "text": "Let the vent breathe untroubled", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_silkstrap_lift",
+      "title": "The Silkstrap Lift",
+      "description": "A doll-sized lift hangs inside a giant hollow wall on two fraying plum silk straps; a hunched moss-felt liftkeeper grips the wheel as its shadow sways over the black floor.",
+      "choices": [
+        {"id": "brace_lift_seam", "text": "Take the pulley's cut for a stronger heart seam", "outcome": {"gold": 0, "scraps": 0, "hp": -5, "max_hp": 2}},
+        {"id": "sell_lift_stitch", "text": "Trade a heart seam for the hidden purse", "outcome": {"gold": 28, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Leave the lift hanging above the dark floor", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
     }
   ]
 }
