@@ -19,6 +19,29 @@ func _check(ok: bool, message: String) -> void:
 		failures.append(message)
 
 
+func _mouse_move(point: Vector2) -> void:
+	var event := InputEventMouseMotion.new()
+	event.position = point
+	root.push_input(event, true)
+	await process_frame
+
+
+## Real GUI action events, not direct focus traversal or synthetic button presses.
+func _key(key: Key, shifted: bool = false) -> void:
+	for pressed in [true, false]:
+		var event := InputEventKey.new()
+		event.keycode = key
+		event.physical_keycode = key
+		event.shift_pressed = shifted
+		event.pressed = pressed
+		root.push_input(event, true)
+		await process_frame
+
+
+func _count_hotspot_press(counter: Dictionary, id: String) -> void:
+	counter[id] = int(counter.get(id, 0)) + 1
+
+
 func _ended(phase: String) -> StitchedRunSession:
 	var session := StitchedRunSession.start(42)
 	session.phase = phase
@@ -198,6 +221,198 @@ func _room_rules() -> void:
 	room.free()
 
 
+## Mounted App -> BaseScreen -> adopted Wren hotspots. Every arrow is a
+## root-pushed key press/release; never a hand-set focus_neighbor traversal.
+func _directional_base(view: BaseScreen, app: Node) -> void:
+	var room := view.bedroom
+	var record_before: Dictionary = app.bedroom_record.duplicate(true)
+	var wallet_before: String = view.wallet_label.text
+	var seed_before: int = app.run_seed
+	var counts := {}
+	for id in StitchedBedroom.SPOTS:
+		var button := room.spot(id)
+		counts[id] = 0
+		_check(is_instance_valid(button) and button.get_parent() == room.room
+			and button.is_visible_in_tree(), "live %s is the painted room control" % id)
+		button.pressed.connect(_count_hotspot_press.bind(counts, id))
+	var links := {
+		"door": {"left": "shelf", "right": "drawings", "bottom": "tin"},
+		"drawings": {"left": "door", "right": "window", "bottom": "candle"},
+		"window": {"left": "drawings", "bottom": "candle"},
+		"candle": {"top": "window", "left": "drawings"},
+		"shelf": {"right": "door", "bottom": "tin"},
+		"tin": {"top": "shelf", "right": "door"},
+	}
+	for id in links:
+		var source: Button = room.spot(id)
+		for direction in links[id]:
+			var target: Button = room.spot(links[id][direction])
+			var path: NodePath = source.get("focus_neighbor_" + direction)
+			_check(not path.is_empty() and source.get_node_or_null(path) == target,
+				"post-adoption %s %s reaches live %s" % [id, direction, links[id][direction]])
+	_check(root.gui_get_focus_owner() == room.spot("door"), "real entry starts at the adopted door")
+
+	var arrows := [
+		[KEY_RIGHT, "drawings"], [KEY_RIGHT, "window"], [KEY_DOWN, "candle"],
+		[KEY_UP, "window"], [KEY_LEFT, "drawings"], [KEY_LEFT, "door"],
+		[KEY_LEFT, "shelf"], [KEY_DOWN, "tin"], [KEY_UP, "shelf"],
+	]
+	for next_step in arrows:
+		await _key(next_step[0])
+		var expected: String = next_step[1]
+		_check(root.gui_get_focus_owner() == room.spot(expected),
+			"real directional key focuses adopted %s" % expected)
+		if expected == "shelf":
+			_check(room.inspector.visible and room.inspector.entry_order.size() == StitchedPartyAdmission.HERO_IDS.size(),
+				"direction into shelf shows only the existing passive first-night ledger")
+		elif expected == "tin":
+			_check(room.inspector.visible and room.inspector.empty_label.text == "No outing has ended yet",
+				"direction into tin shows the existing passive no-history inspector")
+		else:
+			_check(not room.inspector.visible, "leaving shelf/tin by arrow dismisses its inspector")
+	room.spot("door").grab_focus()
+	await _key(KEY_DOWN)
+	_check(root.gui_get_focus_owner() == room.spot("tin") and room.inspector.visible,
+		"door down directly reaches the live tin and its passive inspector")
+	room.spot("door").grab_focus()
+	await process_frame
+	_check(not room.inspector.visible, "leaving tin for door dismisses the inspector")
+
+	# Refreshes and record presentations must not revert to a queued-for-free
+	# pre-adoption button, and must leave the host's Tab order independent.
+	view.present_bedroom(StitchedBedroomRecord.fresh())
+	view._wire_focus()
+	await _key(KEY_RIGHT)
+	_check(root.gui_get_focus_owner() == room.spot("drawings"),
+		"post-present and post-host-focus-refresh arrows retain the adopted drawings")
+	var forward := {}
+	room.spot("door").grab_focus()
+	for index in range(12):
+		await _key(KEY_TAB)
+		var owner := root.gui_get_focus_owner()
+		if owner != null:
+			for id in ["door", "shelf", "drawings", "window", "tin"]:
+				if owner == room.spot(id):
+					forward[id] = true
+			if owner == view.back_button:
+				forward["back"] = true
+	for id in ["door", "shelf", "drawings", "window", "tin", "back"]:
+		_check(forward.has(id), "real Tab still reaches %s" % id)
+	var reverse := {}
+	room.spot("door").grab_focus()
+	for index in range(12):
+		await _key(KEY_TAB, true)
+		var owner := root.gui_get_focus_owner()
+		if owner != null:
+			for id in ["door", "shelf", "drawings", "window", "tin"]:
+				if owner == room.spot(id):
+					reverse[id] = true
+			if owner == view.back_button:
+				reverse["back"] = true
+	for id in ["door", "shelf", "drawings", "window", "tin", "back"]:
+		_check(reverse.has(id), "real Shift-Tab still reaches %s" % id)
+
+	# Window activation by keyboard reveals only the pre-existing legal row.
+	room.spot("window").grab_focus()
+	await _key(KEY_ENTER)
+	_check(view._difficulty_row.visible, "window accepts normal keyboard activation")
+	var legal: Button = null
+	for button in view.difficulty_buttons:
+		if not button.disabled:
+			legal = button
+	_check(legal != null, "mounted host has an unlocked difficulty control")
+	if legal != null:
+		var reached := false
+		room.spot("door").grab_focus()
+		for index in range(14):
+			await _key(KEY_TAB)
+			if root.gui_get_focus_owner() == legal:
+				reached = true
+		_check(reached, "real Tab reaches the legal difficulty choice")
+		reached = false
+		for index in range(14):
+			await _key(KEY_TAB, true)
+			if root.gui_get_focus_owner() == legal:
+				reached = true
+		_check(reached, "real Shift-Tab reaches the legal difficulty choice")
+	room.spot("window").grab_focus()
+	await _key(KEY_ENTER)
+	_check(not view._difficulty_row.visible, "window toggles its original difficulty row closed")
+
+	for id in counts:
+		_check(counts[id] == (2 if id == "window" else 0),
+			"directions/Tab never press %s; only two deliberate window activations" % id)
+	_check(app.stitched_run_session == null and app.stitched_run_panel == null
+		and not view.field_guide.is_open() and view.has_open_village()
+		and app.bedroom_record == record_before and view.wallet_label.text == wallet_before
+		and app.run_seed == seed_before,
+		"focus-only navigation preserves live run, record, seed and wallet")
+
+	# Existing guide consumes its own arrows and restores the Drawings source.
+	room.spot("drawings").grab_focus()
+	await _key(KEY_ENTER)
+	_check(view.field_guide.is_open() and counts["drawings"] == 1,
+		"keyboard activation on drawings opens exactly one existing field guide")
+	var guide := view.field_guide
+	_check(guide.is_ancestor_of(root.gui_get_focus_owner()), "guide takes focus from the bedroom")
+	for direction in [KEY_RIGHT, KEY_DOWN, KEY_LEFT, KEY_UP]:
+		await _key(direction)
+		_check(guide.is_ancestor_of(root.gui_get_focus_owner()),
+			"direction in the guide cannot steal focus back to room")
+	await _key(KEY_ESCAPE)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == room.spot("drawings"),
+		"Escape closes guide and returns focus to actual drawings hotspot")
+
+	# Tin's original Parts path nests an atlas; Escape returns via its
+	# original modal and finally to the adopted Tin button.
+	room.spot("tin").grab_focus()
+	await _key(KEY_ENTER)
+	_check(guide.is_open() and guide._atlas_is_open() and counts["tin"] == 1,
+		"normal tin activation opens the original part atlas once")
+	for direction in [KEY_LEFT, KEY_UP, KEY_RIGHT, KEY_DOWN]:
+		await _key(direction)
+		_check(guide.is_ancestor_of(root.gui_get_focus_owner()),
+			"direction inside part atlas stays in its modal")
+	await _key(KEY_ESCAPE)
+	_check(guide.is_open() and not guide._atlas_is_open(),
+		"first Escape only closes part atlas")
+	await _key(KEY_ESCAPE)
+	_check(not guide.is_open() and root.gui_get_focus_owner() == room.spot("tin"),
+		"second Escape closes guide and restores live tin hotspot")
+	_check(counts["door"] == 0 and counts["shelf"] == 0 and counts["candle"] == 0,
+		"navigation and both modal visits never press a route or candle")
+
+	# Real pointer movement still hovers the lifted image and passive readout.
+	room.spot("door").grab_focus()
+	await process_frame
+	await _mouse_move(room.spot("shelf").get_global_rect().get_center())
+	_check(room.inspector.visible and room.inspector.entry_order.size() == StitchedPartyAdmission.HERO_IDS.size(),
+		"mounted pointer over shelf reveals the passive doll ledger")
+	await _mouse_move(room.spot("tin").get_global_rect().get_center())
+	_check(room.inspector.visible and room.inspector.empty_label.text == "No outing has ended yet",
+		"pointer moving to tin replaces shelf with no-history inspector")
+	await _mouse_move(Vector2(700, 610))
+	_check(not room.inspector.visible and counts["shelf"] == 0 and counts["tin"] == 1,
+		"moving pointer away dismisses inspector without pressing any hotspot")
+
+	# A hidden base is not a keyboard route: re-show it for the original
+	# mounted run and aftermath assertions below.
+	var before := counts.duplicate()
+	view.hide()
+	await process_frame
+	for direction in [KEY_RIGHT, KEY_DOWN, KEY_ENTER]:
+		await _key(direction)
+	_check(not guide.is_open() and view.has_open_village()
+		and app.stitched_run_session == null and counts == before,
+		"hidden bedroom cannot activate a route or steal keyboard input")
+	view.show()
+	view._wire_focus()
+	room.spot("door").grab_focus()
+	await _key(KEY_RIGHT)
+	_check(root.gui_get_focus_owner() == room.spot("drawings"),
+		"reshown base immediately restores live directional neighbors")
+
+
 func _live_base(app: Node) -> void:
 	app.base_button.pressed.emit()
 	await process_frame
@@ -213,6 +428,7 @@ func _live_base(app: Node) -> void:
 		"the door is focused and still says Set out")
 	for panel in [view.path_panel, view.tinker_panel, view.warden_panel, view.heroes_house_button, view.camp_house_button]:
 		_check(not panel.visible, "card-era village board hidden: " + panel.name)
+	await _directional_base(view, app)
 	var loop := {}
 	var at: Control = view.set_out_button
 	for step in range(12):
@@ -252,9 +468,9 @@ func _live_base(app: Node) -> void:
 	room.spot("shelf").grab_focus()
 	await process_frame
 	await _shot("night")
-	room.spot("shelf").pressed.emit()
-	await process_frame
-	_check(app.stitched_run_panel != null and not view.visible, "the shelf leads to choosing four dolls")
+	await _key(KEY_ENTER)
+	_check(app.stitched_run_panel != null and not view.visible,
+		"normal keyboard activation of the shelf leads to choosing four dolls")
 	app.stitched_run_buttons[0].pressed.emit()
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
@@ -309,6 +525,22 @@ func _live_base(app: Node) -> void:
 		and view.bedroom.inspector.status_labels.lantern_monk.text == "FRAY 160/200\nFACING WALL",
 		"mounted loss shelf hover reveals the full correct aftermath")
 	await _shot("after_loss")
+	var closed_record: Dictionary = app.bedroom_record.duplicate(true)
+	var closed_wallet: String = view.wallet_label.text
+	var closed_presses := {}
+	for id in StitchedBedroom.SPOTS:
+		closed_presses[id] = 0
+		view.bedroom.spot(id).pressed.connect(_count_hotspot_press.bind(closed_presses, id))
+	view.close_village()
+	await process_frame
+	for key in [KEY_RIGHT, KEY_DOWN, KEY_ENTER]:
+		await _key(key)
+	_check(not view.has_open_village() and not view.is_visible_in_tree()
+		and not view.field_guide.is_open() and app.bedroom_record == closed_record
+		and view.wallet_label.text == closed_wallet,
+		"closed base remains inert and preserves its saved record and wallet")
+	for id in closed_presses:
+		_check(closed_presses[id] == 0, "closed room cannot activate %s by key" % id)
 
 
 func _shot(label: String) -> void:

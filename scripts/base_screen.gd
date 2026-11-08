@@ -1370,6 +1370,19 @@ func _on_base_visibility_changed() -> void:
 func _wire_focus() -> void:
 	_sync_house_shortcuts()
 	_sync_guide_button()
+	# The guide owns all directional GUI focus while its full-screen modal is
+	# open. Suppress bedroom and Back/difficulty candidates until it closes.
+	if bedroom != null:
+		var guide_open := _guide_is_open()
+		for id in StitchedBedroom.SPOTS:
+			var hotspot := bedroom.spot(id)
+			if is_instance_valid(hotspot):
+				hotspot.focus_mode = Control.FOCUS_NONE if guide_open else Control.FOCUS_ALL
+		if is_instance_valid(back_button):
+			back_button.focus_mode = Control.FOCUS_NONE if guide_open else Control.FOCUS_ALL
+		for button in difficulty_buttons:
+			if is_instance_valid(button):
+				button.focus_mode = Control.FOCUS_NONE if guide_open else Control.FOCUS_ALL
 	if _guide_is_open():
 		return
 	var loop: Array[Control] = []
@@ -1403,12 +1416,18 @@ func _wire_focus() -> void:
 	for button in difficulty_buttons:
 		if not button.disabled and button.is_visible_in_tree():
 			loop.append(button)
-	if loop.is_empty():
+	# Hidden village house and Path controls must not interrupt the bedroom's
+	# existing forward/reverse loop: Godot otherwise skips them geometrically.
+	var visible_loop: Array[Control] = []
+	for node in loop:
+		if node.is_visible_in_tree() and node.focus_mode != Control.FOCUS_NONE:
+			visible_loop.append(node)
+	if visible_loop.is_empty():
 		return
-	for index in range(loop.size()):
-		var node := loop[index]
-		node.focus_next = node.get_path_to(loop[(index + 1) % loop.size()])
-		node.focus_previous = node.get_path_to(loop[(index - 1 + loop.size()) % loop.size()])
+	for index in range(visible_loop.size()):
+		var node := visible_loop[index]
+		node.focus_next = node.get_path_to(visible_loop[(index + 1) % visible_loop.size()])
+		node.focus_previous = node.get_path_to(visible_loop[(index - 1 + visible_loop.size()) % visible_loop.size()])
 
 
 func _build_difficulty() -> void:
