@@ -1976,7 +1976,7 @@
           "acc": 88,
           "dmg": [3, 4],
           "crit": 0,
-          "effects": {},
+          "effects": {"bleed": 1},
           "self_move": 0,
           "move": "attack2"
         },
@@ -1987,13 +1987,11 @@
           "launch": [1, 4],
           "target": [1, 2, 3, 4],
           "target_side": "enemy",
-          "multi": false,
+          "multi": true,
           "acc": 90,
           "dmg": [0, 0],
           "crit": 0,
-          "effects": {
-            "weak": 1
-          },
+          "effects": {"fray": 4},
           "self_move": 0,
           "move": "skill"
         },

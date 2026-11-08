@@ -3,10 +3,12 @@ extends SceneTree
 ## Bobbin Drop.
 ##
 ## Pure source-record contract: the shipped run_enemies.json still carries each foe's untouched
-## legacy card identity/intent plus its two original Stitched actions, and each kit gains exactly
-## one appended authored action. The new records are validated by the real StitchedParts rules,
-## resolved through the real StitchedEnemyCatalog normal-foe loader and matched to the existing
-## authored attack3 paper-puppet poses. Per-ID lookups only: no catalog total or full ID order.
+## legacy card identity/intent. The Hound keeps its two original Stitched actions and gains one
+## appended authored action; the Bobbin keeps its authored Bobbin Drop as the one appended
+## follow-through while its first two actions are deliberately retuned (Dive bleeds, Shriek
+## frays the whole line). Every record is validated by the real StitchedParts rules, resolved
+## through the real StitchedEnemyCatalog normal-foe loader and matched to the existing authored
+## paper-puppet poses. Per-ID lookups only: no catalog total or full ID order.
 ## No RNG, scene, render or reserved battle/status file is involved.
 
 const RUN := "res://data/enemies/run_enemies.json"
@@ -41,12 +43,13 @@ const HOUND_INTENT := {"target": "front", "actions": [
 const BOBBIN_DIVE := {
 	"id": "bobbin_dive", "name": "Bobbin Dive", "kind": "melee",
 	"launch": [1, 3], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 88, "dmg": [3, 4], "crit": 0, "effects": {}, "self_move": 0, "move": "attack2",
+	"acc": 88, "dmg": [3, 4], "crit": 0, "effects": {"bleed": 1},
+	"self_move": 0, "move": "attack2",
 }
 const SONAR_SHRIEK := {
 	"id": "sonar_shriek", "name": "Sonar Shriek", "kind": "debuff",
-	"launch": [1, 4], "target": [1, 2, 3, 4], "target_side": "enemy", "multi": false,
-	"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"weak": 1}, "self_move": 0, "move": "skill",
+	"launch": [1, 4], "target": [1, 2, 3, 4], "target_side": "enemy", "multi": true,
+	"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"fray": 4}, "self_move": 0, "move": "skill",
 }
 const BOBBIN_DROP := {
 	"id": "bobbin_drop", "name": "Bobbin Drop", "kind": "ranged",
@@ -108,6 +111,13 @@ func _authored(record: Dictionary, ability_id: String) -> Array:
 		return entry is Dictionary and str(entry.get("id", "")) == ability_id)
 
 
+func _catalog_ability(foe: Dictionary, ability_id: String) -> Dictionary:
+	for ability in foe.get("abilities", []):
+		if ability is Dictionary and str(ability.get("id", "")) == ability_id:
+			return ability
+	return {}
+
+
 func _pose(enemy_id: String, move: String) -> Dictionary:
 	var poses: Variant = JSON.parse_string(FileAccess.get_file_as_string(POSES))
 	_check(poses is Dictionary, "AC2/AC3: " + POSES + " parses as a JSON object")
@@ -130,8 +140,8 @@ func _check_ranks(ability: Dictionary, launch: Array, target: Array, label: Stri
 
 
 func _test_common(enemy_id: String, name: String, legacy_hp: int, flag: String,
-		legacy_intent: Dictionary, trophy: String, old_abilities: Array,
-		new_ability: Dictionary) -> Dictionary:
+		legacy_intent: Dictionary, trophy: String, kept_abilities: Array,
+		appended_ability: Dictionary) -> Dictionary:
 	var record := _source(enemy_id)
 	if record.is_empty():
 		return {}
@@ -157,20 +167,20 @@ func _test_common(enemy_id: String, name: String, legacy_hp: int, flag: String,
 			"AC1: %s kit keeps unique ability ids, never overwriting one" % enemy_id)
 		seen[ability_id] = true
 	var old_ids: Dictionary = {}
-	for expected in old_abilities:
+	for expected in kept_abilities:
 		var old_id := str(expected["id"])
 		old_ids[old_id] = true
 		var matches := _authored(record, old_id)
 		_check(matches.size() == 1 and matches[0] == _json(expected),
-			"AC1: %s original %s stays byte-exact" % [enemy_id, old_id])
+			"AC1: %s authored %s stays byte-exact" % [enemy_id, old_id])
 	var appended: Array = []
 	for ability in abilities:
 		if not old_ids.has(str(ability.get("id", ""))):
 			appended.append(ability)
-	_check(appended.size() == 1 and appended[0] == _json(new_ability),
-		"AC1: %s kit gains exactly the one authored follow-through record" % enemy_id)
-	_check(_authored(record, str(new_ability["id"])).size() == 1,
-		"AC1: %s names %s exactly once in its kit" % [enemy_id, str(new_ability["id"])])
+	_check(appended.size() == 1 and appended[0] == _json(appended_ability),
+		"AC1: %s kit keeps exactly its authored records plus one appended follow-through" % enemy_id)
+	_check(_authored(record, str(appended_ability["id"])).size() == 1,
+		"AC1: %s names %s exactly once in its kit" % [enemy_id, str(appended_ability["id"])])
 	return record
 
 
@@ -220,6 +230,47 @@ func _test_bat() -> void:
 		"bobbin_bat_wing", [BOBBIN_DIVE, SONAR_SHRIEK], BOBBIN_DROP)
 	if record.is_empty():
 		return
+	var dive_validated := StitchedParts.validate_ability(BOBBIN_DIVE, "bobbin_dive")
+	_check(bool(dive_validated.get("ok", false)),
+		"AC2: Bobbin Dive validates through the real ability rules: "
+			+ str(dive_validated.get("error", "")))
+	if bool(dive_validated.get("ok", false)):
+		var dive: Dictionary = dive_validated["ability"]
+		_check(str(dive["id"]) == "bobbin_dive" and str(dive["name"]) == "Bobbin Dive"
+			and str(dive["kind"]) == "melee" and dive["launch"] == [1, 3]
+			and dive["target"] == [1] and str(dive["target_side"]) == "enemy"
+			and not bool(dive["multi"]) and int(dive["acc"]) == 88
+			and dive["dmg"] == [3, 4] and int(dive["crit"]) == 0
+			and int(dive["mark_damage"]) == 0 and dive["effects"] == {"bleed": 1}
+			and int(dive["self_move"]) == 0 and str(dive["move"]) == "attack2",
+			"AC2: Bobbin Dive is the authored ACC-88 3-4 front-rank Bleed 1 dive")
+		_check_ranks(dive, [1, 3], [1], "Bobbin Dive")
+	var shriek_validated := StitchedParts.validate_ability(SONAR_SHRIEK, "sonar_shriek")
+	_check(bool(shriek_validated.get("ok", false)),
+		"AC2: Sonar Shriek validates through the real ability rules: "
+			+ str(shriek_validated.get("error", "")))
+	if bool(shriek_validated.get("ok", false)):
+		var shriek: Dictionary = shriek_validated["ability"]
+		_check(str(shriek["id"]) == "sonar_shriek" and str(shriek["name"]) == "Sonar Shriek"
+			and str(shriek["kind"]) == "debuff" and shriek["launch"] == [1, 4]
+			and shriek["target"] == [1, 2, 3, 4] and str(shriek["target_side"]) == "enemy"
+			and bool(shriek["multi"]) and int(shriek["acc"]) == 90
+			and shriek["dmg"] == [0, 0] and int(shriek["crit"]) == 0
+			and int(shriek["mark_damage"]) == 0 and shriek["effects"] == {"fray": 4}
+			and int(shriek["self_move"]) == 0 and str(shriek["move"]) == "skill",
+			"AC2: Sonar Shriek is the authored multi-target ACC-90 Fray 4 wave")
+		_check(not shriek["effects"].has("weak"),
+			"AC2: the Stitched Sonar Shriek no longer applies Weak")
+		_check_ranks(shriek, [1, 4], [1, 2, 3, 4], "Sonar Shriek")
+	var dive_pose := _pose(BAT, "attack2")
+	_check(str(dive_pose.get("name", "")) == "Fang Bite"
+		and str(dive_pose.get("art", "")) == "res://assets/paper/enemies/bobbin_bat_attack2.png",
+		"AC2: Bobbin Dive keeps its authored attack2 Fang Bite paper-puppet art")
+	var shriek_pose := _pose(BAT, "skill")
+	_check(str(shriek_pose.get("name", "")) == "Screech"
+		and str(shriek_pose.get("art", "")) == "res://assets/paper/enemies/bobbin_bat_skill.png"
+		and "debuff" in shriek_pose.get("covers", []),
+		"AC2: Sonar Shriek keeps its authored skill Screech paper-puppet art")
 	var validated := StitchedParts.validate_ability(BOBBIN_DROP, "bobbin_drop")
 	_check(bool(validated.get("ok", false)),
 		"AC3: Bobbin Drop validates through the real ability rules: "
@@ -254,6 +305,19 @@ func _test_bat() -> void:
 		"AC3: Bobbin Drop keeps its authored attack3 paper-puppet art")
 	_check_catalog(BAT, "Bobbin Bat", "bobbin_bat_wing",
 		BOBBIN_DROP, ["bobbin_dive", "sonar_shriek"])
+	var loaded := StitchedEnemyCatalog.foe_for(catalog, BAT)
+	_check(not loaded.is_empty()
+		and _catalog_ability(loaded, "bobbin_dive")
+			== StitchedParts.validate_ability(BOBBIN_DIVE)["ability"],
+		"AC2: the loader publishes the normalized bleeding Bobbin Dive")
+	_check(not loaded.is_empty()
+		and _catalog_ability(loaded, "sonar_shriek")
+			== StitchedParts.validate_ability(SONAR_SHRIEK)["ability"],
+		"AC2: the loader publishes the normalized multi-target fraying Sonar Shriek")
+	_check_refusals(record, "bobbin_dive", {"effects": {"bleed": 0}},
+		{"target": [5]}, "Bobbin Dive")
+	_check_refusals(record, "sonar_shriek", {"effects": {"fray": 0}},
+		{"launch": [5]}, "Sonar Shriek")
 	_check_refusals(record, "bobbin_drop", {"effects": {"pull": 2}},
 		{"target": [1, 5]}, "Bobbin Drop")
 
@@ -274,12 +338,12 @@ func _check_catalog(enemy_id: String, name: String, trophy: String, new_ability:
 	var matches: Array = foe.get("abilities", []).filter(func(entry: Dictionary) -> bool:
 		return str(entry.get("id", "")) == str(new_ability["id"]))
 	_check(matches.size() == 1 and matches[0] == normalized,
-		"AC4: the loader publishes the exact normalized follow-through for " + enemy_id)
-	for old_id in old_ids:
-		var old_matches: Array = foe.get("abilities", []).filter(func(entry: Dictionary) -> bool:
-			return str(entry.get("id", "")) == str(old_id))
-		_check(old_matches.size() == 1,
-			"AC4: the loader still publishes original " + str(old_id) + " for " + enemy_id)
+		"AC4: the loader publishes the exact normalized appended record for " + enemy_id)
+	for kept_id in old_ids:
+		var kept_matches: Array = foe.get("abilities", []).filter(func(entry: Dictionary) -> bool:
+			return str(entry.get("id", "")) == str(kept_id))
+		_check(kept_matches.size() == 1,
+			"AC4: the loader still publishes authored " + str(kept_id) + " for " + enemy_id)
 	var other := BAT if enemy_id == HOUND else HOUND
 	_check(StitchedEnemyCatalog.trophy_for(catalog, other)
 		!= StitchedEnemyCatalog.trophy_for(catalog, enemy_id),
@@ -293,11 +357,11 @@ func _check_refusals(record: Dictionary, ability_id: String, effects_change: Dic
 	_check(before.size() == 1, "AC4: " + label + " shipped record is available to copy")
 	if before.size() != 1:
 		return
-	var bad_pull: Dictionary = before[0].duplicate(true)
+	var bad_effects: Dictionary = before[0].duplicate(true)
 	for key in effects_change:
-		bad_pull[key] = effects_change[key].duplicate(true)
-	_check(not bool(StitchedParts.validate_ability(bad_pull).get("ok", true)),
-		"AC4: %s with pull=2 fails closed" % label)
+		bad_effects[key] = effects_change[key].duplicate(true)
+	_check(not bool(StitchedParts.validate_ability(bad_effects).get("ok", true)),
+		"AC4: %s with an invalid effect value fails closed" % label)
 	var bad_rank: Dictionary = before[0].duplicate(true)
 	for key in rank_change:
 		bad_rank[key] = rank_change[key].duplicate(true)
@@ -308,11 +372,12 @@ func _check_refusals(record: Dictionary, ability_id: String, effects_change: Dic
 		"AC4: the rejected copies leave the shipped " + label + " record byte-exact")
 
 
-## The full canonical build refuses in-memory copies of each new record with bad pull / ranks.
+## The full canonical build refuses in-memory copies of each new record with malformed effects / ranks.
 func _test_catalog_refusals() -> void:
 	var parts: Array = _parts()
 	_check(not parts.is_empty(), "AC4: the real enemy part catalog is available")
-	for pair in [[HOUND, "redline_reel"], [BAT, "bobbin_drop"]]:
+	for pair in [[HOUND, "redline_reel"], [BAT, "bobbin_dive"], [BAT, "sonar_shriek"],
+			[BAT, "bobbin_drop"]]:
 		var enemy_id := str(pair[0])
 		var ability_id := str(pair[1])
 		var bad_pull := _build_with(enemy_id, ability_id, {"effects": {"pull": 2}})
