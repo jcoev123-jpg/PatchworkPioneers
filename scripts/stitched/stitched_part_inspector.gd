@@ -6,9 +6,9 @@ signal close_requested
 
 const SLOTS := ["head", "arms", "torso", "legs"]
 const OWNERS := ["all", "warden", "seamstress", "tinker", "yarn_ranger",
-    "lantern_monk", "button_golem", "any"]
+    "lantern_monk", "button_golem", "rag_duelist", "any"]
 const OWNER_LABELS := ["All", "Warden", "Seamstress", "Tinker", "Yarn Ranger",
-    "Lantern Monk", "Button Golem", "Spoils"]
+    "Lantern Monk", "Button Golem", "Rag Duelist", "Spoils"]
 const TIER_LABELS := ["I", "II", "III"]
 
 @onready var _rows: VBoxContainer = $CatalogPanel/PartScroll/PartRows
