@@ -1,8 +1,10 @@
 extends SceneTree
-## S8f rescue: real title -> Event Walk -> Leave -> Fight Walk -> corridor Save -> title Continue.
+## S8f: title -> junction door -> Event Walk -> in-place consequential Event ->
+## Fight Walk -> 2-3-foe corridor -> mounted S14 signature -> corridor Save -> title Continue.
 const TEST_SAVE := "user://stitched_s8f_corridor_save_gate_test.save"
 const EVENT_KIND := "Event"
 const FIGHT_KIND := "Fight"
+const PINNED_EVENT := "v3_thimble_raincollector"
 var checks := 0
 var failures: Array[String] = []
 
@@ -34,52 +36,103 @@ func _app(seed_number: int) -> Node:
 	return app
 
 
-func _find_ticket(app: Node, kind: String) -> Button:
+## The road map is the live junction: assert the mounted page and its doors.
+func _junction(app: Node, label: String) -> StitchedCorridorJunction:
 	var session: StitchedRunSession = app.stitched_run_session
-	if session == null or session.phase != "map":
+	var junction: StitchedCorridorJunction = app.stitched_run_panel as StitchedCorridorJunction
+	_check(junction != null and junction.name == "StitchedRunPage"
+		and str(junction.get_meta("page_kind", "")) == "map"
+		and junction.is_visible_in_tree() and session != null and session.phase == "map",
+		label + ": the road map is the live in-corridor junction")
+	if junction == null or session == null:
 		return null
+	var choices: Array = session.choices()
+	_check(not choices.is_empty() and junction.doors.size() == choices.size()
+		and junction.sides.size() == choices.size(),
+		label + ": every legal choice has exactly one junction door and side")
+	for id in choices:
+		var door: Button = junction.doors.get(id)
+		_check(door != null and door.is_visible_in_tree() and not door.disabled
+			and str(door.get_meta("route_id", "")) == str(id)
+			and str(door.get_meta("node_kind", "")) == str(session.map.get_node(id).type)
+			and str(junction.sides.get(id, "")) in ["left", "forward", "right"],
+			label + ": junction door " + str(id) + " is a visible enabled mounted control")
+	var save_button: Button
 	for button: Button in app.stitched_run_buttons:
-		var node_id := str(button.get_meta("route_id", ""))
-		if session.choices().has(node_id) and str(session.map.get_node(node_id).type) == kind:
+		if button.text == "Save run" and button.is_visible_in_tree():
+			save_button = button
+			break
+	_check(save_button != null, label + ": the junction corner offers the public Save run")
+	return junction
+
+
+func _door(app: Node, kinds: Array) -> Button:
+	var session: StitchedRunSession = app.stitched_run_session
+	if session == null:
+		return null
+	var junction: StitchedCorridorJunction = app.stitched_run_panel as StitchedCorridorJunction
+	if junction == null:
+		return null
+	for id in session.choices():
+		if str(session.map.get_node(id).type) in kinds:
+			var door: Button = junction.doors.get(id)
+			if door != null:
+				return door
+	return null
+
+
+func _visit_button(app: Node, action_id: String) -> Button:
+	for button: Button in app.stitched_run_buttons:
+		if str(button.get_meta("action_id", "")) == action_id and not button.disabled:
 			return button
 	return null
 
 
-func _walk_to_stop(app: Node, node_id: String, ordinal: int) -> void:
+func _walk_to_stop(app: Node, node_id: String, ordinal: int) -> bool:
 	var session: StitchedRunSession = app.stitched_run_session
-	_check(session != null and session.phase == "walk" and session.walk != null,
+	_check(session != null and session.phase == "walk" and session.walk != null
+		and is_instance_valid(app.stitched_run_walk),
 		"Walk %d is an authenticated mounted route" % ordinal)
-	if session == null or session.walk == null or app.stitched_run_walk == null:
-		return
+	if session == null or session.walk == null or not is_instance_valid(app.stitched_run_walk):
+		return false
 	var walker: StitchedWalkScreen = app.stitched_run_walk
 	_check(walker.host == session and walker.walk == session.walk and walker.is_visible_in_tree(),
 		"Walk %d uses the real hosted Walk screen" % ordinal)
-	var previous_journal := session.journal.size()
 	var steps := 0
-	while app.stitched_run_walk != null and steps < 40:
+	while is_instance_valid(app.stitched_run_walk) and steps < 40:
+		walker = app.stitched_run_walk
+		var curio: Dictionary = walker.current_curio()
+		if not curio.is_empty() and not walker.walk.tug_unresolved():
+			var previous := session.journal.size()
+			var offered := walker.walk.curio_choices(str(curio.instance))
+			_check(not offered.is_empty() and walker.event_panel.is_visible_in_tree()
+				and walker.event_buttons.size() == offered.size(),
+				"placed curio offers genuine mounted choices")
+			if offered.is_empty() or walker.event_buttons.size() != offered.size() \
+					or not _press(walker.event_buttons[0], "placed curio " + str(curio.id)):
+				return false
+			await process_frame
+			_check(session.journal.size() == previous + 1 and session.journal.back().action == "walk"
+				and session.journal.back().command.kind == "curio" and session.is_consistent(),
+				"curio resolves once through its visible player choice")
+			continue
 		steps += 1
-		var old_count := session.journal.size()
-		var old_walker: StitchedWalkScreen = app.stitched_run_walk
-		if not _press(old_walker.forward_button, "Walk %d forward / tug %d" % [ordinal, steps]):
-			break
+		var next_horror := walker.walk.tug_unresolved()
+		var previous_journal := session.journal.size()
+		if not _press(walker.forward_button, "Walk %d forward / tug %d" % [ordinal, steps]):
+			return false
 		await process_frame
-		var new_entries: Array = session.journal.slice(old_count)
-		var step_journaled: bool = (not new_entries.is_empty() and new_entries[0] is Dictionary
-			and new_entries[0].get("action") == "walk"
-			and str(new_entries[0].get("command", {}).get("kind", "")) in ["forward", "tug"])
-		var legitimate_fight_open := true
-		for entry in new_entries.slice(1):
-			legitimate_fight_open = (legitimate_fight_open and session.phase == "battle"
-				and entry is Dictionary and entry.get("action") == "battle")
-		_check(step_journaled and legitimate_fight_open,
-			"Walk %d step %d journals forward/tug first; any follow-on actions begin real combat" % [ordinal, steps])
-	_check(steps > 0 and steps < 40 and app.stitched_run_walk == null
-		and session.walk == null and session.phase in ["visit", "battle"],
-		"Walk %d reaches a real Event/Fight stop" % ordinal)
-	_check(session.journal.size() > previous_journal
-		and session.walk_receipts.size() == ordinal
-		and str(session.walk_receipts.back().get("node_id", "")) == node_id,
-		"Walk %d journals its route and publishes its own stop receipt" % ordinal)
+		if next_horror:
+			_check(session.journal.size() == previous_journal + 1
+				and session.journal.back().get("command", {}).get("kind") == "tug",
+				"real tug horror is settled by the mounted Walk button")
+	var arrived := steps > 0 and steps < 40 and session.walk == null \
+		and not is_instance_valid(app.stitched_run_walk) and session.phase in ["visit", "battle"] \
+		and session.walk_receipts.size() == ordinal \
+		and str(session.walk_receipts.back().get("node_id", "")) == node_id
+	_check(arrived, "Walk %d arrives with exactly its true stop receipt" % ordinal)
+	return arrived
+
 
 ## Save a real partially traversed corridor, then independently Continue it from
 ## a fresh title. Both mounted buttons must make the same next seeded command.
@@ -160,6 +213,52 @@ func _check_fight(app: Node, session: StitchedRunSession, label: String) -> void
 			label + ": corridor view wraps the actual gameplay engine")
 
 
+## One legal fixed S14 signature action through the mounted part buttons and hit targets only.
+func _mounted_commit(corridor: StitchedCorridorFight, session: StitchedRunSession) -> Dictionary:
+	var screen: StitchedBattleScreen = corridor.engine
+	if session.battle == null or session.battle.is_over() or session.battle.current_side() != "hero":
+		return {}
+	var actor: Dictionary = session.battle.get_unit(session.battle.current_actor_id())
+	var kits := StitchedS14Abilities.kits()
+	for slot in ["arms", "legs", "torso", "head"]:
+		if corridor.part_buttons[slot].disabled:
+			continue
+		if screen._selected_part == slot:
+			corridor.choose_part(slot)
+		var before := session.journal.size()
+		var result := corridor.choose_part(slot)
+		if session.journal.size() == before:
+			if str(result.get("pending", "")) != slot:
+				continue
+			var targets := screen.legal_targets()
+			if targets.is_empty():
+				corridor.choose_part(slot)
+				continue
+			var key := ""
+			for candidate in targets:
+				if str(candidate).begins_with("foe_"):
+					key = str(candidate)
+					break
+			if key.is_empty():
+				key = str(targets.keys()[0])
+			result = corridor.click_figure(key.get_slice("_", 0), int(key.get_slice("_", 1)))
+		if session.journal.size() == before:
+			continue
+		var signature: Dictionary = kits.get(str(actor.get("id", "")), {}).get(slot, {})
+		var results: Array = result.get("results", [])
+		var struck_side := ""
+		if not results.is_empty():
+			struck_side = str(session.battle.get_unit(str(results[0].get("target", ""))).get("side", ""))
+		var expected_side := "foe" if str(signature.get("target_side", "")) == "enemy" else "hero"
+		return {"ok": result.get("ok") == true and not signature.is_empty()
+				and str(result.get("ability", "")) == str(signature.get("id", ""))
+				and not results.is_empty() and struck_side == expected_side,
+			"slot": slot, "signature": str(signature.get("id", "")),
+			"entry": session.journal[before], "results": results,
+			"struck": str(results[0].get("target", "")) if not results.is_empty() else ""}
+	return {}
+
+
 func _write_document(document: Variant) -> void:
 	var file := FileAccess.open(TEST_SAVE, FileAccess.WRITE)
 	_check(file != null, "isolated negative save opens for write")
@@ -186,7 +285,11 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(TEST_SAVE)
 	DirAccess.remove_absolute(TEST_SAVE + ".tmp")
-	var app := _app(53)
+	# Seed 18's live Event draw is pinned to the real Thimble Raincollector so shared
+	# catalog growth cannot retarget this witness: its free non-Leave action grants one
+	# scrap and one S14 ability patch, with an authentic placed curio and thread-tug horror.
+	StitchedRunSession.pinned_event_id = PINNED_EVENT
+	var app := _app(18)
 	await process_frame
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
@@ -223,72 +326,138 @@ func _run() -> void:
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
 	_check(session != null and session.heroes.size() == 4 and session.walks_enabled
-		and session.picks.size() == 4 and session.seed_value == 53,
-		"real four selected dolls start seed 53 with Walks")
+		and session.picks.size() == 4 and session.seed_value == 18 and session.s14_enabled,
+		"real four selected dolls start seed 18 with Walks and fixed S14 signatures")
 	if session == null:
 		_finish(app)
 		return
 	var intro: Control = app.stitched_run_intro
-	var begin: Button = intro.find_child("WrenIntroBegin", true, false) as Button if is_instance_valid(intro) else null
-	_check(intro != null and intro.is_visible_in_tree(), "intro is mounted before the first ticket")
+	var begin: Button = intro.find_child("WrenIntroBegin", true, false) as Button \
+		if is_instance_valid(intro) else null
+	_check(intro != null and intro.is_visible_in_tree(), "intro is mounted before the first door")
 	_press(begin, "intro Begin the night")
 	await process_frame
 	_check(app.stitched_run_intro == null and session.phase == "map",
-		"intro dismissal reveals authentic legal tickets")
-	var event_ticket := _find_ticket(app, EVENT_KIND)
-	_check(event_ticket != null and str(event_ticket.get_meta("route_id", "")) in session.choices(),
-		"seed 53 offers a legal Event ticket")
-	if event_ticket == null:
+		"intro dismissal reveals the live junction")
+	if _junction(app, "post-intro") == null:
 		_finish(app)
 		return
-	var event_id := str(event_ticket.get_meta("route_id"))
-	_press(event_ticket, "legal Event ticket")
+	var event_door := _door(app, [EVENT_KIND])
+	_check(event_door != null and str(event_door.get_meta("node_kind", "")) == EVENT_KIND,
+		"seed 18 offers a legal visible Event junction door")
+	if event_door == null:
+		_finish(app)
+		return
+	var event_id := str(event_door.get_meta("route_id"))
+	var before_event_entry := session.snapshot()
+	var event_entries := session.journal.size()
+	if not _press(event_door, "legal Event junction door"):
+		_finish(app)
+		return
 	await process_frame
-	_check(session.phase == "walk" and session.pending.node_id == event_id
-		and str(session.pending.kind) == EVENT_KIND and session.journal.back().action == "enter",
-		"Event ticket enters via live Walk and journals its exact node")
+	_check(session.phase == "walk" and session.pending.get("node_id") == event_id
+		and str(session.pending.kind) == EVENT_KIND
+		and session.journal.size() == event_entries + 1
+		and session.journal.back() == {"action": "enter", "node_id": event_id}
+		and session.candle == maxi(0, int(before_event_entry.candle) - StitchedRunSession.NODE_CANDLE_COST)
+		and session.receipts.is_empty() and session.walk_receipts.is_empty(),
+		"the Event door charges exactly one candle toll and opens its own live Walk")
 	await _walk_save_replay(app)
-	await _walk_to_stop(app, event_id, 1)
-	if session.phase != "visit":
+	if not await _walk_to_stop(app, event_id, 1):
 		_finish(app)
 		return
-	_check(session.pending.node_id == event_id and session.pending.service == "Event",
-		"Event Walk arrives at actual live event service")
-	var leave: Button
-	for button: Button in app.stitched_run_buttons:
-		if str(button.get_meta("action_id", "")) in ["leave", "decline_trade", "leave_rookery", "leave_chapel"] and not button.disabled:
-			leave = button
-			break
-	_check(leave != null, "Event offers enabled Leave / decline without spending")
-	if leave == null:
+	var visit: StitchedCorridorVisit = app.stitched_run_panel as StitchedCorridorVisit
+	_check(visit != null and visit.name == "StitchedRunPage"
+		and str(visit.get_meta("page_kind", "")) == "visit:" + EVENT_KIND
+		and visit.is_visible_in_tree() and session.phase == "visit"
+		and session.pending.get("service") == EVENT_KIND
+		and str(session.pending.get("event_id", "")) == PINNED_EVENT,
+		"the Event happens in place on the corridor visit page")
+	var event_choice := _visit_button(app, "collect_gutter_offcuts")
+	_check(event_choice != null and session.visit_actions().any(func(action: Dictionary):
+			return action.id == "collect_gutter_offcuts" and action.enabled),
+		"the pinned Event offers its enabled consequential collect choice")
+	if event_choice == null:
 		_finish(app)
 		return
-	var event_exit_id := str(leave.get_meta("action_id"))
-	var wallet_before := [session.gold, session.scraps, session.candle, session.rng.state]
-	var walk_receipts_before := session.walk_receipts.duplicate(true)
-	_press(leave, "Event Leave")
+	var before_event := session.snapshot()
+	var event_receipts := session.receipts.size()
+	var before_journal := session.journal.size()
+	var inventory_before := session.ability_inventory.size()
+	var refused := session.choose_visit("forged", [], before_event)
+	var stale := before_event.duplicate(true)
+	stale.candle += 1
+	var stale_refused := session.choose_visit("collect_gutter_offcuts", [], stale)
+	_check(not refused and not stale_refused and session.snapshot() == before_event
+		and session.journal.size() == before_journal
+		and session.receipts.size() == event_receipts
+		and session.rng.state == before_event.rng,
+		"forged and stale Event commands cannot spend or draw")
+	if not _press(event_choice, "mounted Event collect gutter offcuts"):
+		_finish(app)
+		return
 	await process_frame
-	_check(session.phase == "map" and session.journal.back().action == "visit"
-		and session.journal.back().id == event_exit_id and session.walk_receipts == walk_receipts_before
-		and [session.gold, session.scraps, session.candle, session.rng.state] == wallet_before,
-		"public Leave journals event resolution, with prior Walk receipt intact")
-	var fight_ticket := _find_ticket(app, FIGHT_KIND)
-	_check(fight_ticket != null, "Event Leave unlocks a legal Fight ticket")
-	if fight_ticket == null:
+	_check(session.phase == "map" and session.receipts.size() == event_receipts + 1
+		and session.receipts.back().get("decision") == "collect_gutter_offcuts"
+		and session.receipts.back().get("event_id") == PINNED_EVENT
+		and session.scraps == int(before_event.scraps) + 1
+		and session.ability_inventory.size() == inventory_before + 1
+		and session.gold == int(before_event.gold) and session.candle == int(before_event.candle)
+		and session.journal.size() == before_journal + 1
+		and session.journal.back().get("id") == "collect_gutter_offcuts"
+		and session.is_consistent(),
+		"one authenticated consequential Event receipt grants exactly one scrap and one ability patch")
+	var event_settled := session.snapshot()
+	_check(not session.choose_visit("collect_gutter_offcuts", [], before_event)
+		and session.snapshot() == event_settled and session.rng.state == event_settled.rng,
+		"duplicate Event command cannot repeat reward or RNG draw")
+	if _junction(app, "post-Event") == null:
 		_finish(app)
 		return
-	var fight_id := str(fight_ticket.get_meta("route_id"))
-	_check(session.choices().has(fight_id), "fight ticket is among generated legal choices")
-	_press(fight_ticket, "legal Fight ticket")
+	var fight_door := _door(app, [FIGHT_KIND])
+	_check(fight_door != null, "the settled Event unlocks a legal Fight junction door")
+	if fight_door == null:
+		_finish(app)
+		return
+	var fight_id := str(fight_door.get_meta("route_id"))
+	var before_fight_entry := session.snapshot()
+	var fight_entries := session.journal.size()
+	if not _press(fight_door, "legal Fight junction door"):
+		_finish(app)
+		return
 	await process_frame
-	_check(session.phase == "walk" and session.pending.node_id == fight_id
-		and str(session.pending.kind) == "Fight" and session.journal.back().action == "enter",
-		"Fight ticket journals entry into a second distinct hosted Walk")
-	await _walk_to_stop(app, fight_id, 2)
+	_check(session.phase == "walk" and session.pending.get("node_id") == fight_id
+		and str(session.pending.kind) == FIGHT_KIND
+		and session.journal.size() == fight_entries + 1
+		and session.journal.back() == {"action": "enter", "node_id": fight_id}
+		and session.candle == maxi(0, int(before_fight_entry.candle) - StitchedRunSession.NODE_CANDLE_COST)
+		and session.receipts.size() == event_receipts + 1,
+		"the Fight door pays one toll and opens a second distinct hosted Walk")
+	if not await _walk_to_stop(app, fight_id, 2):
+		_finish(app)
+		return
 	_check_fight(app, session, "after second Walk")
 	if app.stitched_run_battle == null or _corridors(app).size() != 1:
 		_finish(app)
 		return
+	var foes := session.battle.get_foes().size()
+	_check(foes in [2, 3], "the seeded corridor Fight fields 2-3 live foes, not a fixture mob")
+	var torn_carry: Array = []
+	for walk_receipt in session.walk_receipts:
+		for item in walk_receipt.get("pending", []):
+			if item.get("kind") == "torn_part":
+				torn_carry.append(item)
+	var torn_battle: Array = []
+	for hero in session.battle.get_heroes():
+		for slot in hero.parts:
+			if bool(hero.parts[slot].get("torn", false)):
+				torn_battle.append([str(hero.id), str(slot)])
+	_check(not torn_carry.is_empty() and torn_battle.size() == torn_carry.size(),
+		"every torn limb in the live battle comes from the Walk's carried tears")
+	for item in torn_carry:
+		_check(torn_battle.has([str(item.get("target", "")), str(item.get("effects", {}).get("slot", ""))]),
+			"torn carry " + str(item.get("target", "")) + ":" + str(item.get("effects", {}).get("slot", ""))
+			+ " reaches the battle as a genuinely torn limb")
 	var corridor: StitchedCorridorFight = _corridors(app)[0] as StitchedCorridorFight
 	_check(corridor.more_buttons.has("save"), "mounted corridor exposes More > Save run")
 	_press(corridor.more_button, "corridor More")
@@ -304,17 +473,18 @@ func _run() -> void:
 	_check(captured != null and captured.snapshot() == before and captured.journal == journal
 		and captured.receipts == preserved_receipts and captured.walk_receipts == preserved_walks
 		and captured.rng.state == session.rng.state,
-		"corridor Save replays complete party, Fight, hand budget, fear, wallet, receipts and RNG")
-	var hand_before := session.journal.size()
-	_check(corridor.hand_buttons.has("shield_candle"), "actual corridor displays Wren's Shield hand")
-	if corridor.hand_buttons.has("shield_candle"):
-		_press(corridor.hand_buttons["shield_candle"], "Wren Shield the Candle on uninterrupted Fight")
-	var hand_after := session.snapshot()
-	var hand_journal := session.journal.duplicate(true)
-	_check(session.journal.size() == hand_before + 1
-		and session.journal.back().get("method") == "use_hand_action"
-		and session.journal.back().get("arguments", [])[0] == "shield_candle"
-		and session.is_consistent(), "Wren's genuine hand commits one budgeted battle receipt")
+		"corridor Save replays complete party, Fight, sockets, fear, wallet, receipts and RNG")
+	var commit := _mounted_commit(corridor, session)
+	_check(not commit.is_empty() and commit.ok
+		and commit.entry.get("action") == "battle" and commit.entry.get("method") == "use_part"
+		and commit.results.size() > 0 and str(commit.signature) != "",
+		"the uninterrupted mounted part button commits the legal fixed S14 signature on the struck side")
+	if commit.is_empty() or not commit.ok:
+		_finish(app)
+		return
+	await process_frame
+	var commit_after := session.snapshot()
+	var commit_journal := session.journal.duplicate(true)
 	app.free()
 	await process_frame
 	var fresh := _app(999)
@@ -334,19 +504,22 @@ func _run() -> void:
 	_check(resumed.heroes == before.heroes and resumed.pending == before.pending
 		and resumed.candle == before.candle and resumed.kid_fear() == before.kid_fear.fear
 		and resumed.gold == before.gold and resumed.scraps == before.scraps
-		and resumed.battle.state_snapshot() == before.battle and resumed.journal == journal,
-		"explicit party, pending Fight, resources, fear, battle and journal equal saved values")
+		and resumed.battle.state_snapshot() == before.battle and resumed.journal == journal
+		and resumed.snapshot().s14 == before.s14,
+		"explicit party, pending Fight, resources, fear, sockets, battle and journal equal saved values")
 	_check_fight(fresh, resumed, "after fresh title Continue")
-	if _corridors(fresh).size() == 1:
-		var reloaded_fight: StitchedCorridorFight = _corridors(fresh)[0]
-		_check(reloaded_fight.hand_buttons.has("shield_candle"),
-			"restored Fight exposes the same Wren hand")
-		if reloaded_fight.hand_buttons.has("shield_candle"):
-			_press(reloaded_fight.hand_buttons["shield_candle"], "Wren Shield the Candle after Fight reload")
-		_check(resumed.snapshot() == hand_after and resumed.journal == hand_journal
-			and resumed.receipts == preserved_receipts and resumed.walk_receipts == preserved_walks
-			and resumed.rng.state == hand_after.rng and resumed.is_consistent(),
-			"independent next Wren hand command reproduces exact Fight state, budget, journal and RNG")
+	if _corridors(fresh).size() != 1:
+		_finish(fresh)
+		return
+	var reloaded_fight: StitchedCorridorFight = _corridors(fresh)[0] as StitchedCorridorFight
+	var recommit := _mounted_commit(reloaded_fight, resumed)
+	_check(not recommit.is_empty() and recommit.ok and recommit.entry == commit.entry
+		and recommit.results == commit.results and recommit.signature == commit.signature,
+		"independent next mounted S14 signature reproduces the exact commit, journal and results")
+	_check(resumed.snapshot() == commit_after and resumed.journal == commit_journal
+		and resumed.receipts == preserved_receipts and resumed.walk_receipts == preserved_walks
+		and resumed.rng.state == commit_after.rng and resumed.is_consistent(),
+		"independent next mounted command reproduces exact Fight state, journal and RNG")
 	if _corridors(fresh).size() == 1:
 		var preserved := resumed.snapshot()
 		DirAccess.remove_absolute(TEST_SAVE)
@@ -364,6 +537,7 @@ func _run() -> void:
 
 
 func _finish(app: Node) -> void:
+	StitchedRunSession.pinned_event_id = ""
 	if is_instance_valid(app):
 		app.free()
 	DirAccess.remove_absolute(TEST_SAVE)

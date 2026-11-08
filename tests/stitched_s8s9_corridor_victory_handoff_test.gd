@@ -34,6 +34,29 @@ func _app(seed_number: int) -> Node:
 	return app
 
 
+func _junction(app: Node, label: String) -> StitchedCorridorJunction:
+	var session: StitchedRunSession = app.stitched_run_session
+	var junction: StitchedCorridorJunction = app.stitched_run_panel as StitchedCorridorJunction
+	_check(junction != null and junction.name == "StitchedRunPage"
+		and str(junction.get_meta("page_kind", "")) == "map"
+		and junction.is_visible_in_tree() and session != null and session.phase == "map",
+		label + ": the road map is the live in-corridor junction")
+	if junction == null or session == null:
+		return null
+	var choices: Array = session.choices()
+	_check(not choices.is_empty() and junction.doors.size() == choices.size()
+		and junction.sides.size() == choices.size(),
+		label + ": every legal choice has exactly one junction door and side")
+	for id in choices:
+		var door: Button = junction.doors.get(id)
+		_check(door != null and door.is_visible_in_tree() and not door.disabled
+			and str(door.get_meta("route_id", "")) == str(id)
+			and str(door.get_meta("node_kind", "")) == str(session.map.get_node(id).type)
+			and str(junction.sides.get(id, "")) in ["left", "forward", "right"],
+			label + ": junction door " + str(id) + " is a visible enabled mounted control")
+	return junction
+
+
 func _ticket(app: Node, kind: String = "") -> Button:
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null or session.phase != "map":
@@ -99,32 +122,36 @@ func _corridor(app: Node, session: StitchedRunSession) -> StitchedCorridorFight:
 		and views.size() == 1 and is_instance_valid(engine) and engine.battle == session.battle \
 		and engine.is_visible_in_tree() and not app.title_view.visible
 	var fight: StitchedCorridorFight = views[0] as StitchedCorridorFight if views.size() == 1 else null
-	_check(good and fight != null and fight.engine == engine and fight.battle == session.battle \
+	_check(good and fight != null and fight.engine == engine and fight.battle == session.battle
 		and fight.is_visible_in_tree() and fight.get_parent() == engine,
 		"exactly one live corridor overlays the session's authoritative Fight")
 	return fight if good else null
 
 
+## AC2: the dolls win through the mounted part buttons only; every commit is the legal
+## fixed S14 signature at that limb, and a torn limb shows as a disabled torn button.
 func _fight_to_victory(fight: StitchedCorridorFight, session: StitchedRunSession) -> bool:
 	var screen: StitchedBattleScreen = fight.engine
-	var hand_before := session.journal.size()
-	_check(fight.hand_buttons.has("shield_candle") and session.battle.hand_action_open(),
-		"Wren's free Shield hand is mounted and unspent on the public hero turn")
-	if fight.hand_buttons.has("shield_candle"):
-		_press(fight.hand_buttons["shield_candle"], "Wren's mounted Shield the Candle hand")
-	_check(session.journal.size() == hand_before + 1
-		and session.journal.back().get("action") == "battle"
-		and session.journal.back().get("method") == "use_hand_action"
-		and session.journal.back().get("arguments", [])[0] == "shield_candle"
-		and session.is_consistent(), "Wren's hand commits exactly one authentic budgeted battle receipt")
+	var kits := StitchedS14Abilities.kits()
 	var attacks := 0
 	var waits := 0
 	var turns := 0
+	var torn_turns := 0
 	while not session.battle.is_over() and turns < 250:
 		turns += 1
 		if session.battle.current_side() != "hero":
 			_check(false, "the real engine returns to a playable doll turn")
 			break
+		var actor: Dictionary = session.battle.get_unit(session.battle.current_actor_id())
+		for slot in actor.get("parts", {}):
+			if not bool(actor.parts[slot].get("torn", false)):
+				continue
+			var button: TextureButton = fight.part_buttons[slot]
+			var move_label: Label = button.get_node("Move") as Label
+			_check(button.disabled and str(move_label.text) == "torn",
+				"the torn " + str(slot) + " of " + str(actor.get("id", ""))
+				+ " is a disabled torn-labelled part button on its doll's turn")
+			torn_turns += 1
 		var committed := false
 		# Prefer damaging parts. A one-target part may commit immediately in choose_part.
 		for slot in ["arms", "legs", "torso", "head"]:
@@ -142,8 +169,13 @@ func _fight_to_victory(fight: StitchedCorridorFight, session: StitchedRunSession
 							break
 					result = fight.click_figure(target.get_slice("_", 0), int(target.get_slice("_", 1)))
 			if session.journal.size() > before:
-				_check(result.get("ok") == true and session.journal.back().get("action") == "battle" \
-					and session.is_consistent(), "mounted body-part attack commits one real battle command")
+				var signature := str(kits.get(str(actor.get("id", "")), {}).get(slot, {}).get("id", ""))
+				_check(result.get("ok") == true and signature != ""
+					and session.journal[before].get("action") == "battle"
+					and session.journal[before].get("method") == "use_part"
+					and str(result.get("ability", "")) == signature
+					and not result.get("results", []).is_empty() and session.is_consistent(),
+					"mounted body-part attack commits the legal fixed S14 signature once with real results")
 				attacks += 1
 				committed = true
 				break
@@ -161,8 +193,8 @@ func _fight_to_victory(fight: StitchedCorridorFight, session: StitchedRunSession
 			waits += 1
 		await process_frame
 	var won := session.battle != null and session.battle.is_over() and session.battle.outcome() == "victory"
-	_check(won and turns < 250 and attacks >= 3, 
-		"four dolls genuinely win seeded corridor Fight with %d part actions and %d passes in %d turns" % [attacks, waits, turns])
+	_check(won and turns < 250 and attacks >= 3 and torn_turns > 0,
+		"four dolls genuinely win the seeded corridor Fight with %d signature actions and %d passes in %d turns" % [attacks, waits, turns])
 	return won
 
 
@@ -423,6 +455,11 @@ func _to_terminal(session: StitchedRunSession, label: String) -> Dictionary:
 		_check(session.phase == "defeat" and bosses.size() <= 1
 			and (bosses.is_empty() or bosses[0].outcome == "defeat"),
 			label + " authentic defeat has no fabricated Boss victory")
+		if bosses.size() == 1:
+			_check(route.size() == 12 and session.map.get_current_floor() == 12
+				and session.map.get_node(bosses[0].node_id).type == "Boss"
+				and bosses[0].node_id == route.back(),
+				label + " the authentic defeat happens at the one floor-12 Boss")
 	return {"state": session.snapshot(), "journal": session.journal.duplicate(true),
 		"receipts": session.receipts.duplicate(true),
 		"walks": session.walk_receipts.duplicate(true), "rng": session.rng.state,
@@ -446,11 +483,11 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(SAVE_PATH)
 	DirAccess.remove_absolute(SAVE_PATH + ".tmp")
-	# Seed 18's live Event draw is pinned to the real Thimble Raincollector here so
+	# Seed 21's live Event draw is pinned to the real Thimble Raincollector here so
 	# shared catalog growth cannot retarget this witness: its free non-Leave action
-	# grants one scrap, with an authentic placed curio and thread-tug horror.
+	# grants one scrap, and its walk carries a genuine thread-tug torn limb.
 	StitchedRunSession.pinned_event_id = "v3_thimble_raincollector"
-	var app := _app(18)
+	var app := _app(21)
 	await process_frame
 	await process_frame
 	_check(app.title_view.is_visible_in_tree() and app.stitched_run_session == null,
@@ -464,8 +501,8 @@ func _run() -> void:
 		return
 	await process_frame
 	var session: StitchedRunSession = app.stitched_run_session
-	_check(session != null and session.seed_value == 18 and session.heroes.size() == 4 \
-		and session.walks_enabled and session.is_consistent(), "real seed 53 four-doll Walk session")
+	_check(session != null and session.seed_value == 21 and session.heroes.size() == 4 \
+		and session.walks_enabled and session.is_consistent(), "real seed 21 four-doll Walk session")
 	if session == null:
 		_finish(app)
 		return
@@ -475,10 +512,19 @@ func _run() -> void:
 		_finish(app)
 		return
 	await process_frame
+	if _junction(app, "post-intro") == null:
+		_finish(app)
+		return
 	var event := _ticket(app, "Event")
+	var junction: StitchedCorridorJunction = app.stitched_run_panel as StitchedCorridorJunction
+	_check(event != null and junction != null and junction.doors.get(str(event.get_meta("route_id", ""))) == event,
+		"the legal Event ticket is the junction's own visible door")
+	if event == null:
+		_finish(app)
+		return
 	var before_event_entry := session.snapshot()
 	var event_entries := session.journal.size()
-	if not _press(event, "legal Event ticket"):
+	if not _press(event, "legal Event door"):
 		_finish(app)
 		return
 	var event_id := str(event.get_meta("route_id"))
@@ -495,17 +541,19 @@ func _run() -> void:
 		return
 	var first_carry: Array = session.walk_receipts[0].get("pending", [])
 	var torn: Array = first_carry.filter(func(item: Dictionary): return item.get("kind") == "torn_part")
-	var torn_hero := session.heroes.filter(func(hero: Dictionary):
-		return hero.id == "lantern_monk")
-	_check(torn.size() == 1 and torn[0].get("target") == "lantern_monk"
-		and torn[0].get("effects", {}).get("slot") == "torso"
-		and torn_hero.size() == 1 and torn_hero[0].parts.torso.torn
+	_check(answered_horrors >= 1 and not torn.is_empty()
+		and str(torn[0].get("source", "")) == "thread_tug"
 		and session.walk_receipts.size() == 1 and session.is_consistent(),
-		"the thread-tug horror tears exactly the reported equipped torso once")
-	_check(explored_curios >= 1 and answered_horrors >= 1
-		and session.walk_receipts[0].get("pending", []).any(func(item: Dictionary):
+		"the answered thread-tug horror carries its reported torn limb")
+	for item in torn:
+		var slot := str(item.get("effects", {}).get("slot", ""))
+		var torn_hero := session.heroes.filter(func(hero: Dictionary):
+			return hero.id == item.get("target") and bool(hero.parts.get(slot, {}).get("torn", false)))
+		_check(torn_hero.size() == 1,
+			"the thread-tug tear is genuinely applied to the carried doll's limb")
+	_check(session.walk_receipts[0].get("pending", []).any(func(item: Dictionary):
 			return item.get("kind") in ["torn_part", "mimic", "cut_thread"]),
-		"first public Walk resolves placed curio and horror with real pending carry")
+		"first public Walk resolves its horror with a real pending carry")
 	var event_receipts := session.receipts.size()
 	var before_event := session.snapshot()
 	var before_event_journal := session.journal.size()
@@ -542,10 +590,17 @@ func _run() -> void:
 	_check(not session.choose_visit("collect_gutter_offcuts", [], before_event)
 		and session.snapshot() == event_settled and session.rng.state == event_settled.rng,
 		"duplicate Event command cannot repeat reward or RNG draw")
+	if _junction(app, "post-Event") == null:
+		_finish(app)
+		return
 	var fight_ticket := _ticket(app, "Fight")
+	junction = app.stitched_run_panel as StitchedCorridorJunction
+	_check(fight_ticket != null and junction != null
+		and junction.doors.get(str(fight_ticket.get_meta("route_id", ""))) == fight_ticket,
+		"the next legal Fight ticket is the junction's own visible door")
 	var before_fight_entry := session.snapshot()
 	var fight_entries := session.journal.size()
-	if not _press(fight_ticket, "next legal Fight ticket"):
+	if not _press(fight_ticket, "next legal Fight door"):
 		_finish(app)
 		return
 	var fight_id := str(fight_ticket.get_meta("route_id"))
@@ -564,6 +619,24 @@ func _run() -> void:
 		return
 	_check(corridor.find_children("FoeIntent*", "", true, false).is_empty(),
 		"owner 11-08: live mounted corridor shows no foe intent plates")
+	var foes_count := session.battle.get_foes().size()
+	_check(foes_count in [2, 3], "the seeded corridor Fight fields 2-3 live foes")
+	var torn_carry: Array = []
+	for walk_receipt in session.walk_receipts:
+		for item in walk_receipt.get("pending", []):
+			if item.get("kind") == "torn_part":
+				torn_carry.append(item)
+	var torn_battle: Array = []
+	for hero in session.battle.get_heroes():
+		for hero_slot in hero.parts:
+			if bool(hero.parts[hero_slot].get("torn", false)):
+				torn_battle.append([str(hero.id), str(hero_slot)])
+	_check(torn_carry.size() >= 1 and torn_battle.size() == torn_carry.size(),
+		"the battle's torn limbs are exactly the Walks' carried tears")
+	for item in torn_carry:
+		_check(torn_battle.has([str(item.get("target", "")), str(item.get("effects", {}).get("slot", ""))]),
+			"carried tear " + str(item.get("target", "")) + ":"
+			+ str(item.get("effects", {}).get("slot", "")) + " reaches the live battle")
 	_check(session.receipts.filter(func(receipt: Dictionary): return receipt.get("kind") == "Fight").is_empty() \
 		and session.walk_receipts.size() == 2 and not corridor.continue_button.visible \
 		and not session.battle.is_over(),
@@ -651,6 +724,9 @@ func _run() -> void:
 		if button.text == "Save run" and button.is_visible_in_tree():
 			save = button
 			break
+	_check(app.stitched_run_panel is StitchedCorridorJunction
+		and str(app.stitched_run_panel.get_meta("page_kind", "")) == "map",
+		"the post-victory map Save sits on the live junction corner")
 	if not _press(save, "mounted map Save run"):
 		_finish(app)
 		return
@@ -683,6 +759,9 @@ func _run() -> void:
 	if restored == null:
 		_finish(fresh)
 		return
+	if _junction(fresh, "reloaded") == null:
+		_finish(fresh)
+		return
 	var next_ticket := _ticket(fresh)
 	_check(next_ticket != null and restored.choices().size() > 0 \
 		and restored.candle >= StitchedRunSession.NODE_CANDLE_COST,
@@ -701,7 +780,7 @@ func _run() -> void:
 	var old_pockets := restored.pockets.duplicate(true)
 	var old_patches := restored.patches.duplicate(true)
 	var old_fear := restored.kid_fear()
-	if not _press(next_ticket, "restored legal non-Boss route ticket"):
+	if not _press(next_ticket, "restored legal non-Boss route door"):
 		_finish(fresh)
 		return
 	await process_frame
@@ -709,7 +788,7 @@ func _run() -> void:
 		and restored.walk != null and is_instance_valid(fresh.stitched_run_walk) \
 		and fresh.stitched_run_walk.is_visible_in_tree() \
 		and fresh.stitched_run_walk.host == restored and fresh.stitched_run_walk.walk == restored.walk,
-		"one fresh hosted Walk is mounted from a legal restored route ticket")
+		"one fresh hosted Walk is mounted from a legal restored route door")
 	_check(restored.candle == old_candle - StitchedRunSession.NODE_CANDLE_COST \
 		and restored.journal.size() == old_journal + 1 \
 		and restored.journal.back() == {"action": "enter", "node_id": new_id} \
@@ -755,7 +834,10 @@ func _run() -> void:
 	_check(not uninterrupted.is_empty() and uninterrupted == resumed_result,
 		"same seed after title Continue reaches identical actual defeat/Boss ending, route, journal, receipts, pockets, heroes and RNG")
 	if not resumed_result.is_empty():
-		print("S8S9_ROUTE_END seed=18 outcome=%s floor=%d route_nodes=%d receipt_nodes=%d" % [
+		_check(str(resumed_result.get("outcome", "")) == "defeat"
+			and restored.map.get_current_floor() == 12 and restored.map.get_route().size() == 12,
+			"the seeded run converges on one authentic floor-12 Boss defeat")
+		print("S8S9_ROUTE_END seed=21 outcome=%s floor=%d route_nodes=%d receipt_nodes=%d" % [
 			restored.phase, restored.map.get_current_floor(), restored.map.get_route().size(), restored.receipts.size()])
 	_finish(fresh)
 
