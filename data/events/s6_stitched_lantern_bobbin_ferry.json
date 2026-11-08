@@ -23,7 +23,7 @@
 				"fray": 0,
 				"gold": 0,
 				"scraps": -1,
-				"require_candle_room": true
+				"require_full_candle_gain": true
 			}
 		},
 		{
