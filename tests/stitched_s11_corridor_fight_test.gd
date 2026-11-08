@@ -15,79 +15,18 @@ func _check(ok: bool, why: String) -> void:
 		failures.append(why)
 
 
-## Every visible threat comes from the same read-only projection as the live
-## driver. A fourth rank is checked too when the fixture has one.
+## Owner 11-08: the corridor fight shows no foe intent plates and no puppet hands;
+## the living-foe count still matches the fixture.
 func _verify_live_intents(fight: StitchedCorridorFight, expected: int) -> void:
-	var found := 0
 	var occupied := 0
 	for rank in range(1, 5):
-		var foe: Dictionary = fight.engine._unit_at("foe", rank)
-		var projected: Dictionary = StitchedFoeIntent.choose(fight.battle, foe)
-		var ticket: StitchedFoeIntentPlate = fight.intent_tickets[rank]
-		var tag: Label = fight.intent_tags[rank]
-		if foe.is_empty():
-			_check(projected.is_empty() and not ticket.visible and ticket.foe_id.is_empty()
-				and not ticket.glyph.visible and ticket.tooltip_text.is_empty()
-				and not tag.visible and not fight.intent_projections.has(rank),
-				"empty/dead/heap foe R%d has no cached projection, glyph, or plaque" % rank)
-			continue
-		occupied += 1
-		_check(not projected.is_empty(), "live foe R%d has an actual next projection" % rank)
-		if projected.is_empty():
-			continue
-		found += 1
-		_check(ticket.is_visible_in_tree() and tag.is_visible_in_tree()
-			and ticket.texture == StitchedFoeIntentPlate.PLATE_TEXTURE
-			and ticket.foe_id == projected["foe_id"] and ticket.foe_rank == rank
-			and fight.intent_projections.get(rank, {}) == projected
-			and ticket.tooltip_text.contains(str(projected["foe_name"]))
-			and tag.text.begins_with("FOE R%d" % rank),
-			"mounted foe R%d has its own authored projection, ID/name and rank" % rank)
-		var primary_font: Font = ticket.primary.get_theme_font("font")
-		var heading_px := ticket.primary.get_theme_font_size("font_size")
-		_check(ticket.size.x >= 170 and heading_px >= 16 and heading_px <= 24
-			and primary_font != null
-			and primary_font.get_string_size(ticket.primary.text,
-				HORIZONTAL_ALIGNMENT_LEFT, -1, heading_px).x <= ticket.primary.size.x
-			and primary_font.get_height(heading_px) <= ticket.primary.size.y
-			and ticket.secondary.get_theme_font_size("font_size") >= 17
-			and ticket.get_global_rect().end.x <= 1280
-			and ticket.get_global_rect().position.y > fight.ribbon.get_global_rect().end.y
-			and ticket.get_global_rect().end.y < StitchedCorridorFight.BAR_TOP
-			and ticket.focus_mode == Control.FOCUS_ALL,
-			"R%d native text and accessible plaque clear top ribbon and lower bar" % rank)
-		# Compare live hit shapes, not hard-coded screen coordinates: the
-		# threat strip must never steal a click from a 3D figure or Wren.
-		for key in fight.hits:
-			if fight.hits[key].visible:
-				_check(not ticket.get_global_rect().intersects(fight.hits[key].get_global_rect()),
-					"foe intent R%d clears the actual %s figure hit zone" % [rank, key])
-		for action_id in fight.hand_buttons:
-			_check(not ticket.get_global_rect().intersects(fight.hand_buttons[action_id].get_global_rect()),
-				"foe intent R%d clears Wren's %s hand" % [rank, action_id])
-		if bool(projected.get("stun", false)) or bool(projected.get("pass", false)):
-			_check(ticket.primary.text in ["STUN", "PASS"] and ticket.secondary.text == "NO ACTION"
-				and not ticket.glyph.visible and tag.text.contains("NO ACTION"),
-				"R%d STUN/PASS is NO ACTION with no ghost strike" % rank)
-		else:
-			_check(ticket.tooltip_text.contains(str(projected["ability_name"]))
-				and ticket.tooltip_text.contains("Kind: " + str(projected["ability_kind"]).to_upper())
-				and tag.text.contains(str(projected["ability_kind"]).to_upper())
-				and ticket.tooltip_text.contains("BASE ACC")
-				and ticket.tooltip_text.contains("BASE DMG")
-				and ticket.ability_kind == projected["ability_kind"],
-				"R%d displays full authored ability name/kind/base details" % rank)
-			var target_line: String = ticket.secondary.text
-			var ranks := PackedStringArray()
-			for affected in projected.get("affected_ranks", []):
-				ranks.append(str(affected))
-			var side := "HERO" if projected.get("target_side", "") == "hero" else "FOE"
-			_check(not ranks.is_empty() and target_line.contains(side)
-				and target_line.contains(",".join(ranks))
-				and ticket.tooltip_text.contains("rank"),
-				"R%d displays ALL exact affected %s ranks %s" % [rank, side, ",".join(ranks)])
-	_check(occupied == expected and found == expected,
-		"non-vacuous corridor intent count %d/%d matches %d living foes" % [found, occupied, expected])
+		if not fight.engine._unit_at("foe", rank).is_empty():
+			occupied += 1
+	_check(occupied == expected, "corridor fight has %d/%d living foes" % [occupied, expected])
+	_check(fight.find_children("FoeIntent*", "", true, false).is_empty(),
+		"no foe intent plates over the corridor fight")
+	_check(not fight.kid_view.get_node("KidHandsLayer").visible,
+		"no puppet hands or strings over the corridor fight")
 
 
 func _verify_inspection(fight: StitchedCorridorFight) -> void:
@@ -99,36 +38,12 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 	var hand_pending := screen._hand_pending
 	var hand_budget := fight.battle.hand_action_open()
 	fight.refresh()
+	fight.refresh()
 	_verify_live_intents(fight, 3)
-	var ticket: StitchedFoeIntentPlate = fight.intent_tickets[1]
-	_check(ticket.visible and not ticket.tooltip_text.is_empty(), "precondition: a live foe's sewn ticket is inspectable")
-	ticket.mouse_entered.emit()
-	_check(fight.intent_disclosure.visible and fight.intent_detail.text.contains(ticket.tooltip_text)
-		and fight.intent_detail.text.contains("FOE R1") and fight.intent_disclosure.texture == StitchedCorridorFight.FELT
-		and fight.intent_detail.get_theme_font_size("font_size") >= 18
-		and ticket.primary.get_theme_color("font_color") == StitchedFoeIntentPlate.BRASS
-		and ticket._get_tooltip(Vector2.ZERO).is_empty(),
-		"actual hovered ticket opens pale bone sewn full-detail disclosure, never a stock tooltip")
-	_check(fight.intent_detail.get_visible_line_count() == fight.intent_detail.get_line_count()
-		and fight.intent_detail.get_theme_color("font_color") == StitchedCorridorFight.BONE,
-		"all authoritative disclosure lines fit the pale-bone authored panel without clipping")
-	for key in fight.hits:
-		if fight.hits[key].visible:
-			_check(not fight.intent_disclosure.get_global_rect().intersects(fight.hits[key].get_global_rect()),
-				"hovered sewn disclosure clears actual 3D figure %s click zone (panel=%s hit=%s)" % [key, str(fight.intent_disclosure.get_global_rect()), str(fight.hits[key].get_global_rect())])
-	ticket.mouse_exited.emit()
-	_check(not fight.intent_disclosure.visible and fight.intent_detail.text.is_empty(),
-		"hover exit closes the sewn details")
-	ticket.grab_focus()
-	_check(ticket.has_focus() and fight.intent_disclosure.visible
-		and fight.intent_detail.text.contains(ticket.tooltip_text),
-		"keyboard focus opens the identical complete intent details")
-	ticket.release_focus()
-	_check(not fight.intent_disclosure.visible, "keyboard focus exit hides the disclosure")
 	_check(fight.battle.state_snapshot() == pristine and fight.battle.rng_state() == rng
 		and screen.receipts == receipts and screen._selected_part == part
 		and screen._hand_pending == hand_pending and fight.battle.hand_action_open() == hand_budget,
-		"idle refresh, hover and keyboard focus spend no battle state, RNG, part or hand")
+		"idle refresh spends no battle state, RNG, part or hand")
 
 
 func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
@@ -157,33 +72,7 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	battle._units.erase(str(extra["id"]))
 	fight.refresh()
 	_verify_live_intents(fight, 3)
-	_check(not fight.intent_tickets[4].visible and fight.intent_tickets[4].foe_id.is_empty(),
-		"retired fourth foe never leaves a stale intent")
 	var actor: Dictionary = battle._units[str(original["id"])]
-	for state in ["PASS", "STUN", "MULTI"]:
-		actor["abilities"] = []
-		actor["statuses"] = {}
-		if state == "STUN":
-			actor["statuses"] = {"stun": 1}
-		elif state == "MULTI":
-			var ability: Dictionary = original["abilities"][0].duplicate(true)
-			ability["name"] = "A Long Tangle of Moonlit Needles and Unravelling Threads"
-			ability["multi"] = true
-			ability["target_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
-			ability["launch_mask"] = StitchedParts.rank_mask([1, 2, 3, 4])
-			actor["abilities"] = [ability]
-		fight.refresh()
-		_verify_live_intents(fight, 3)
-		var threat: StitchedFoeIntentPlate = fight.intent_tickets[1]
-		if state == "MULTI":
-			_check(fight.intent_projections[1].get("affected_ranks", []) == [1, 2, 3, 4]
-				and threat.secondary.text.contains("1,2,3,4")
-				and threat.tooltip_text.contains("A Long Tangle of Moonlit Needles")
-				and threat.glyph.visible,
-				"four-rank splash keeps the exact ranks, authored full name and glyph")
-		else:
-			_check(threat.primary.text == state and threat.secondary.text == "NO ACTION"
-				and not threat.glyph.visible, state + " cannot show a stale attack")
 	battle._units[str(original["id"])] = original.duplicate(true)
 	# Dead units and their scrap heaps are not intent-bearing actors.
 	var down: Dictionary = battle._units[str(original["id"])]
@@ -193,8 +82,8 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	battle._heaps.append({"rank": 1, "hp": 5, "max_hp": 5})
 	fight.refresh()
 	_verify_live_intents(fight, 2)
-	_check(fight.plates["foe_1"].visible and fight.plates["foe_1"].get_node("Name").text == "Scrap heap"
-		and not fight.intent_tickets[1].visible, "a visible fallen foe's heap never has a phantom threat")
+	_check(fight.plates["foe_1"].visible and fight.plates["foe_1"].get_node("Name").text == "Scrap heap",
+		"a visible fallen foe still shows its scrap heap")
 	battle._heaps = original_heaps
 	battle._units[str(original["id"])] = original.duplicate(true)
 	fight.refresh()
@@ -251,8 +140,6 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	fight.refresh()
 	fight._hover("foe_1", true)
 	fight._hover("foe_1", false)
-	fight.intent_tickets[1].mouse_entered.emit()
-	fight.intent_tickets[1].mouse_exited.emit()
 	var no_choice := fight.click_figure("foe", 4)
 	await process_frame
 	_check(not bool(no_choice.get("ok", false)) and stage.camera.transform == baseline

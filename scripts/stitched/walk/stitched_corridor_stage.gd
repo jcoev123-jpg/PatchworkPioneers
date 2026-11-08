@@ -35,6 +35,13 @@ const FIGHT_FOG := 0.6
 const WALK_FOV := 70.0
 const WALK_LIGHT := Vector3(0.35, -0.25, -0.35)
 const FIGHT_LIGHT := Vector3(0.0, 0.4, -2.3)
+## Owner 11-08 maze junction: how far the crossing is, how long each opening runs before
+## its end wall, where the eye waits, and how deep the stops stand in the openings.
+const JUNCTION_STEPS := 2
+const JUNCTION_RUN := 12.0
+const JUNCTION_BACK := 3.4
+const JUNCTION_SIDE_IN := 1.1
+const JUNCTION_AHEAD_IN := 2.6
 
 var viewport: SubViewport
 var world: Node3D
@@ -156,6 +163,116 @@ func build(area_name: String, step_count: int) -> void:
 		surface(area, "wall"), Vector2.ONE)
 	go_to(0, false)
 	turn(false, false)
+
+
+## Owner 11-08: a maze junction with no dead ends. The corridor runs up to a crossing that
+## opens left, forward and/or right (`open`); every closed side is a wall. Figures are cleared.
+func build_junction(area_name: String, open: Array) -> void:
+	area = area_name
+	steps = JUNCTION_STEPS
+	for child in corridor.get_children():
+		corridor.remove_child(child)
+		child.free()
+	clear_figures()
+	var half := WIDTH / 2.0
+	var cross := junction_z()
+	var back := MARGIN * SEGMENT
+	var main := back - (cross + half)
+	var middle := (back + cross + half) / 2.0
+	_quad("Floor", Vector2(WIDTH, main), Vector3(0, 0, middle), Vector3(-PI / 2, 0, 0),
+		surface(area, "floor"), Vector2(1, main / SEGMENT))
+	_quad("Ceiling", Vector2(WIDTH, main), Vector3(0, HEIGHT, middle), Vector3(PI / 2, 0, 0),
+		surface(area, "ceiling"), Vector2(1, main / SEGMENT))
+	_quad("LeftWall", Vector2(main, HEIGHT), Vector3(-half, HEIGHT / 2, middle), Vector3(0, PI / 2, 0),
+		surface(area, "wall"), Vector2(main / SEGMENT, 1))
+	_quad("RightWall", Vector2(main, HEIGHT), Vector3(half, HEIGHT / 2, middle), Vector3(0, -PI / 2, 0),
+		surface(area, "wall"), Vector2(main / SEGMENT, 1))
+	_quad("NearEnd", Vector2(WIDTH, HEIGHT), Vector3(0, HEIGHT / 2, back), Vector3(0, PI, 0),
+		surface(area, "wall"), Vector2.ONE)
+	_quad("CrossFloor", Vector2(WIDTH, WIDTH), Vector3(0, 0, cross), Vector3(-PI / 2, 0, 0),
+		surface(area, "floor"), Vector2.ONE)
+	_quad("CrossCeiling", Vector2(WIDTH, WIDTH), Vector3(0, HEIGHT, cross), Vector3(PI / 2, 0, 0),
+		surface(area, "ceiling"), Vector2.ONE)
+	var run := JUNCTION_RUN
+	var reps := run / SEGMENT
+	for side: String in ["left", "right"]:
+		var sign: float = -1.0 if side == "left" else 1.0
+		var facing: float = PI / 2 if side == "left" else -PI / 2
+		var title := side.capitalize()
+		if not open.has(side):
+			_quad(title + "Shut", Vector2(WIDTH, HEIGHT), Vector3(sign * half, HEIGHT / 2, cross), Vector3(0, facing, 0),
+				surface(area, "wall"), Vector2.ONE)
+			continue
+		var along := sign * (half + run / 2.0)
+		_quad(title + "Floor", Vector2(run, WIDTH), Vector3(along, 0, cross), Vector3(-PI / 2, 0, 0),
+			surface(area, "floor"), Vector2(reps, 1))
+		_quad(title + "Ceiling", Vector2(run, WIDTH), Vector3(along, HEIGHT, cross), Vector3(PI / 2, 0, 0),
+			surface(area, "ceiling"), Vector2(reps, 1))
+		_quad(title + "FarSide", Vector2(run, HEIGHT), Vector3(along, HEIGHT / 2, cross - half), Vector3.ZERO,
+			surface(area, "wall"), Vector2(reps, 1))
+		_quad(title + "NearSide", Vector2(run, HEIGHT), Vector3(along, HEIGHT / 2, cross + half), Vector3(0, PI, 0),
+			surface(area, "wall"), Vector2(reps, 1))
+		_quad(title + "End", Vector2(WIDTH, HEIGHT), Vector3(sign * (half + run), HEIGHT / 2, cross), Vector3(0, facing, 0),
+			surface(area, "wall"), Vector2.ONE)
+	if open.has("forward"):
+		var ahead := cross - half - run / 2.0
+		_quad("AheadFloor", Vector2(WIDTH, run), Vector3(0, 0, ahead), Vector3(-PI / 2, 0, 0),
+			surface(area, "floor"), Vector2(1, reps))
+		_quad("AheadCeiling", Vector2(WIDTH, run), Vector3(0, HEIGHT, ahead), Vector3(PI / 2, 0, 0),
+			surface(area, "ceiling"), Vector2(1, reps))
+		_quad("AheadLeftWall", Vector2(run, HEIGHT), Vector3(-half, HEIGHT / 2, ahead), Vector3(0, PI / 2, 0),
+			surface(area, "wall"), Vector2(reps, 1))
+		_quad("AheadRightWall", Vector2(run, HEIGHT), Vector3(half, HEIGHT / 2, ahead), Vector3(0, -PI / 2, 0),
+			surface(area, "wall"), Vector2(reps, 1))
+		_quad("FarEnd", Vector2(WIDTH, HEIGHT), Vector3(0, HEIGHT / 2, cross - half - run), Vector3.ZERO,
+			surface(area, "wall"), Vector2.ONE)
+	else:
+		_quad("FarEnd", Vector2(WIDTH, HEIGHT), Vector3(0, HEIGHT / 2, cross - half), Vector3.ZERO,
+			surface(area, "wall"), Vector2.ONE)
+	fighting = false
+	camera.fov = WALK_FOV
+	candle_light.position = WALK_LIGHT
+	looking_back = false
+	stop()
+	camera.position = junction_eye()
+	camera.rotation = Vector3.ZERO
+	set_candle(band)
+
+
+func junction_z() -> float:
+	return -JUNCTION_STEPS * SEGMENT
+
+
+## Where the eye waits: far enough back that all three openings are in view.
+func junction_eye() -> Vector3:
+	return Vector3(0, EYE, junction_z() + JUNCTION_BACK)
+
+
+## Where a stop stands in an opening, seen in the fog; `slot`/`of` share the way ahead.
+func junction_point(side: String, slot: int = 0, of: int = 1) -> Vector3:
+	var cross := junction_z()
+	match side:
+		"left":
+			return Vector3(-(WIDTH / 2.0 + JUNCTION_SIDE_IN), 0, cross - 0.5)
+		"right":
+			return Vector3(WIDTH / 2.0 + JUNCTION_SIDE_IN, 0, cross - 0.5)
+	var spread := 0.0 if of <= 1 else lerpf(-0.65, 0.65, float(slot) / float(of - 1))
+	return Vector3(spread, 0, cross - WIDTH / 2.0 - JUNCTION_AHEAD_IN)
+
+
+## Arriving through a junction opening: the eye starts turned toward where it came from
+## and swings round to face down the new corridor. Purely a camera beat.
+func arrive_from(side: String, animate: bool = true) -> Tween:
+	if side != "left" and side != "right":
+		return null
+	stop()
+	if not animate or not is_inside_tree():
+		return null
+	var home := camera.rotation
+	camera.rotation = home + Vector3(0, -PI / 2 if side == "left" else PI / 2, 0)
+	walk_tween = create_tween()
+	walk_tween.tween_property(camera, "rotation", home, TURN_TIME * 1.6).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	return walk_tween
 
 
 func _quad(title: String, extent: Vector2, where: Vector3, rotation_angles: Vector3, texture: Texture2D, repeats: Vector2) -> void:

@@ -41,7 +41,7 @@ const EXPECTED := {
 		"description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
 		"choices": [
 			{"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
-			{"id": "buy_quiet_bearing", "text": "Buy the safe bearing for 10 gold (-8 fray each)", "effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10}},
+			{"id": "buy_quiet_bearing", "text": "Trade gold for a quiet bearing to calm the dolls", "effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10, "min_fray": 1}},
 			{"id": "leave", "text": "Leave the needle turning in circles", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -166,6 +166,7 @@ func _initialize() -> void:
 	_test_full_candle_keyhole()
 	_test_unknown_choice_refusals()
 	_test_stale_effect_fails()
+	_test_compass_fray_gates()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	var before_draw: int = rng_guard.state
 	rng_guard.randi()
@@ -685,6 +686,236 @@ func _test_stale_effect_fails() -> void:
 			"the stale-effect flow mutates no snapshot: " + event_id)
 		_check(service.choose("leave", snapshot).get("ok") == true,
 			"Leave still commits after a stale-effect refusal: " + event_id)
+
+
+## AC2 / AC3: Compass of Loose Ends min_fray gate on buy_quiet_bearing.
+## Fixture A: living dolls all at fray 0 -> buy choice unavailable / hidden from available choices, choose refused.
+## Fixture B: only a LOST doll has positive fray -> refused the same way.
+## Fixture C: one living doll at fray 1, gold 10 -> paid choice available, commits -10 gold, -8 fray each once.
+## Fixture D: gold 9, fray positive -> choice unavailable, Leave preserved.
+func _test_compass_fray_gates() -> void:
+	var event_id := "v3_yarn_compass_spool"
+	var choice_id := "buy_quiet_bearing"
+	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+	var record_snapshot: Dictionary = record.duplicate(true)
+
+	# --- Fixture A: four distinct valid living heroes (including yarn_ranger), gold 10, candle 40, every living fray 0 ---
+	var snap_a := {
+		"candle": 40,
+		"gold": 10,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 0},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 0},
+			{"id": "yarn_ranger", "fray": 0},
+		],
+	}
+	var before_a: Dictionary = snap_a.duplicate(true)
+	var svc_a := RunStitchedEventConsequence.new(record)
+	var prev_a: Dictionary = svc_a.preview(snap_a)
+	_check(prev_a.get("ok") == true and prev_a.get("event_id") == event_id,
+		"Fixture A: zero living fray compass visit previews")
+	var buy_a := _entry(prev_a, choice_id)
+	_check(buy_a.is_empty() or buy_a.get("available") == false,
+		"Fixture A: buy choice hidden or unavailable when living fray is zero")
+	if not buy_a.is_empty():
+		_check(buy_a.get("available") == false
+			and buy_a.get("fray") == {}
+			and int(buy_a.get("candle")) == 40
+			and int(buy_a.get("gold")) == 10
+			and int(buy_a.get("candle_delta")) == 0
+			and int(buy_a.get("fray_delta")) == -8
+			and int(buy_a.get("gold_delta")) == -10,
+			"Fixture A: unavailable buy choice quotes caller state, empty fray map, and deltas")
+	_check(_entry(prev_a, "follow_yarn_bolas").get("available") == true,
+		"Fixture A: follow_yarn_bolas remains available with yarn_ranger and sufficient candle")
+	_check(_entry(prev_a, "leave").get("available") == true,
+		"Fixture A: leave remains available")
+	_check(svc_a.choose(choice_id, snap_a) == _refusal(40),
+		"Fixture A: direct choose refused without spend when living fray is zero")
+	_check(svc_a.is_valid() and not svc_a.is_claimed(),
+		"Fixture A: refused choose does not latch the visit")
+	_check(snap_a == before_a and record == record_snapshot,
+		"Fixture A: refused choose mutates no snapshot and no record")
+	_check(rng_guard.state == guard_state,
+		"Fixture A: refused choose draws no RNG")
+	# follow_yarn_bolas remains claimable on the same visit
+	var bolas_rec: Dictionary = svc_a.choose("follow_yarn_bolas", snap_a)
+	_check(bolas_rec.get("ok") == true
+		and bolas_rec.get("choice_id") == "follow_yarn_bolas"
+		and int(bolas_rec.get("candle")) == 31
+		and int(bolas_rec.get("scraps")) == 6
+		and bolas_rec.get("fray") == {"warden": 6, "seamstress": 6, "tinker": 6, "yarn_ranger": 6},
+		"Fixture A: follow_yarn_bolas settles after buy refusal")
+	_check(svc_a.is_claimed() and not svc_a.is_valid(),
+		"Fixture A: follow_yarn_bolas claim latches once")
+
+	# Fixture A Leave alternative on independent visit:
+	var svc_a_leave := RunStitchedEventConsequence.new(record)
+	_check(svc_a_leave.choose(choice_id, snap_a) == _refusal(40),
+		"Fixture A: choose refused on independent visit")
+	var leave_a_rec: Dictionary = svc_a_leave.choose("leave", snap_a)
+	_check(leave_a_rec.get("ok") == true
+		and leave_a_rec.get("choice_id") == "leave"
+		and int(leave_a_rec.get("candle")) == 40
+		and leave_a_rec.get("fray") == {},
+		"Fixture A: leave settles on independent visit after buy refusal")
+	_check(svc_a_leave.is_claimed() and not svc_a_leave.is_valid(),
+		"Fixture A: leave claim latches once")
+
+	# --- Fixture B: only a LOST hero has positive fray ---
+	var snap_b := {
+		"candle": 40,
+		"gold": 10,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 40, "lost": true},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 0},
+			{"id": "yarn_ranger", "fray": 0},
+		],
+	}
+	var before_b: Dictionary = snap_b.duplicate(true)
+	var svc_b := RunStitchedEventConsequence.new(record)
+	var prev_b: Dictionary = svc_b.preview(snap_b)
+	_check(prev_b.get("ok") == true, "Fixture B: only-lost-fray compass visit previews")
+	var buy_b := _entry(prev_b, choice_id)
+	_check(buy_b.is_empty() or buy_b.get("available") == false,
+		"Fixture B: buy choice hidden or unavailable when only lost hero has fray")
+	if not buy_b.is_empty():
+		_check(buy_b.get("available") == false and buy_b.get("fray") == {},
+			"Fixture B: unavailable buy choice projects empty fray")
+	_check(_entry(prev_b, "follow_yarn_bolas").get("available") == true,
+		"Fixture B: follow_yarn_bolas remains available")
+	_check(_entry(prev_b, "leave").get("available") == true,
+		"Fixture B: leave remains available")
+	_check(svc_b.choose(choice_id, snap_b) == _refusal(40),
+		"Fixture B: direct choose refused when only lost hero has positive fray")
+	_check(svc_b.is_valid() and not svc_b.is_claimed(),
+		"Fixture B: refused choose leaves visit unclaimed and valid")
+	_check(snap_b == before_b and record == record_snapshot,
+		"Fixture B: refused choose mutates no snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"Fixture B: refused choose draws no RNG")
+	var leave_b_rec: Dictionary = svc_b.choose("leave", snap_b)
+	_check(leave_b_rec.get("ok") == true and leave_b_rec.get("choice_id") == "leave",
+		"Fixture B: leave succeeds after buy refusal")
+	_check(svc_b.is_claimed() and not svc_b.is_valid(),
+		"Fixture B: leave claim latches once")
+
+	# --- Fixture C: one living doll fray 1 (others 0), gold 10 ---
+	var snap_c := {
+		"candle": 40,
+		"gold": 10,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 1},
+			{"id": "seamstress", "fray": 0},
+			{"id": "tinker", "fray": 0},
+			{"id": "yarn_ranger", "fray": 0},
+		],
+	}
+	var before_c: Dictionary = snap_c.duplicate(true)
+	var svc_c := RunStitchedEventConsequence.new(record)
+	var prev_c: Dictionary = svc_c.preview(snap_c)
+	_check(prev_c.get("ok") == true, "Fixture C: single living fray 1 visit previews")
+	var buy_c := _entry(prev_c, choice_id)
+	_check(not buy_c.is_empty() and buy_c.get("available") == true,
+		"Fixture C: paid choice exists and is available with one living doll at fray 1")
+	var expected_fray_c := {
+		"warden": -8, "seamstress": -8, "tinker": -8, "yarn_ranger": -8,
+	}
+	_check(int(buy_c.get("candle")) == 40
+		and int(buy_c.get("candle_delta")) == 0
+		and int(buy_c.get("fray_delta")) == -8
+		and int(buy_c.get("gold")) == 0
+		and int(buy_c.get("gold_delta")) == -10
+		and buy_c.get("fray") == expected_fray_c,
+		"Fixture C: preview projects 0 gold, 40 candle, and -8 party fray intent each")
+	var rec_c: Dictionary = svc_c.choose(choice_id, snap_c)
+	_check(rec_c == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": choice_id,
+		"target": "party",
+		"hero_id": "",
+		"candle": 40,
+		"fray": expected_fray_c,
+		"gold_delta": -10,
+		"gold": 0,
+	}, "Fixture C: paid choice commits a -10 gold / -8 party fray intent once")
+	_check(not rec_c.has("scraps") and not rec_c.has("scraps_delta")
+		and not rec_c.has("hp") and not rec_c.has("hp_delta")
+		and not rec_c.has("fear") and not rec_c.has("fear_delta")
+		and not rec_c.has("part"),
+		"Fixture C: omission of nonexistent zero/bonus keys on paid receipt")
+	_check(svc_c.is_claimed() and not svc_c.is_valid(),
+		"Fixture C: paid claim latches once")
+	_check(svc_c.choose(choice_id, snap_c) == _refusal(40),
+		"Fixture C: replay after claim is refused")
+	_check(svc_c.choose("leave", snap_c) == _refusal(40),
+		"Fixture C: alternate choice after claim is refused")
+	_check(snap_c == before_c and record == record_snapshot,
+		"Fixture C: flow mutates no caller snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"Fixture C: flow draws no RNG")
+
+	# Fixture C replay check: fresh instance with identical snapshot yields identical preview and receipt
+	var svc_c_replay := RunStitchedEventConsequence.new(record)
+	var prev_c_replay: Dictionary = svc_c_replay.preview(snap_c)
+	var rec_c_replay: Dictionary = svc_c_replay.choose(choice_id, snap_c)
+	_check(prev_c_replay == prev_c, "Fixture C: deterministic replay preview matches")
+	_check(rec_c_replay == rec_c, "Fixture C: deterministic replay receipt matches")
+
+	# --- Fixture D: gold 9, fray positive ---
+	var snap_d := {
+		"candle": 40,
+		"gold": 9,
+		"scraps": 4,
+		"party": [
+			{"id": "warden", "fray": 10},
+			{"id": "seamstress", "fray": 5},
+			{"id": "tinker", "fray": 2},
+			{"id": "yarn_ranger", "fray": 1},
+		],
+	}
+	var before_d: Dictionary = snap_d.duplicate(true)
+	var svc_d := RunStitchedEventConsequence.new(record)
+	var prev_d: Dictionary = svc_d.preview(snap_d)
+	_check(prev_d.get("ok") == true, "Fixture D: gold 9 visit previews")
+	var buy_d := _entry(prev_d, choice_id)
+	_check(not buy_d.is_empty() and buy_d.get("available") == false,
+		"Fixture D: with 9 gold and positive fray, choice is unavailable")
+	_check(int(buy_d.get("candle")) == 40
+		and int(buy_d.get("gold")) == 9
+		and int(buy_d.get("gold_delta")) == -10
+		and int(buy_d.get("fray_delta")) == -8
+		and buy_d.get("fray") == {},
+		"Fixture D: unavailable choice quotes caller gold 9 and empty fray projection")
+	_check(_entry(prev_d, "leave").get("available") == true,
+		"Fixture D: leave stays available")
+	_check(_entry(prev_d, "follow_yarn_bolas").get("available") == true,
+		"Fixture D: follow_yarn_bolas stays available")
+	_check(svc_d.choose(choice_id, snap_d) == _refusal(40),
+		"Fixture D: underfunded choice refused without latching")
+	_check(svc_d.is_valid() and not svc_d.is_claimed(),
+		"Fixture D: refused choose leaves service valid and unclaimed")
+	_check(snap_d == before_d and record == record_snapshot,
+		"Fixture D: refused choose mutates no snapshot or record")
+	_check(rng_guard.state == guard_state,
+		"Fixture D: refused choose draws no RNG")
+	var leave_d_rec: Dictionary = svc_d.choose("leave", snap_d)
+	_check(leave_d_rec.get("ok") == true
+		and leave_d_rec.get("choice_id") == "leave"
+		and int(leave_d_rec.get("candle")) == 40
+		and leave_d_rec.get("fray") == {},
+		"Fixture D: leave preserved and succeeds on the same visit")
+	_check(not leave_d_rec.has("gold") and not leave_d_rec.has("gold_delta")
+		and not leave_d_rec.has("scraps") and not leave_d_rec.has("scraps_delta"),
+		"Fixture D: omission of nonexistent zero keys on Leave receipt")
+	_check(svc_d.is_claimed() and not svc_d.is_valid(),
+		"Fixture D: leave latches once")
 
 
 func _funded_snapshot(gold: int, scraps: int) -> Dictionary:

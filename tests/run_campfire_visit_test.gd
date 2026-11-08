@@ -47,6 +47,7 @@ func _initialize() -> void:
 	_test_stitched_per_doll_quote()
 	_test_stitched_noop_refusals()
 	_test_stitched_lost_dolls_not_mended()
+	_test_tales_ignores_lost_dolls()
 	_test_swap_admission_and_quote()
 	_test_swap_exchanges_and_decisions()
 	_test_swap_refusals_and_isolation()
@@ -677,6 +678,8 @@ func _mend_oracle(party: Array) -> int:
 func _fray_oracle(party: Array) -> int:
 	var total: int = 0
 	for hero in party:
+		if hero.get("lost", false) == true:
+			continue
 		total += mini(RunCampfireVisit.TALES_FRAY_REDUCTION, int(hero["fray"]))
 	return total
 
@@ -768,17 +771,25 @@ func _test_stitched_quote_actual_totals() -> void:
 	_check(only_receipt.get("ok") == true and only_receipt["fear"] == 5
 		and only_receipt["heroes"] == _stitched_party(FULL_HPS, NO_FRAY),
 		"FEAR-only Tales soothes exactly 15 FEAR and changes no doll")
-	# A LOST record still counts toward the Tales relief and stays LOST.
-	var lost_fray := _lost_party([40, 30, 26, 0], [3], [0, 0, 0, 200])
+	# A LOST record is excluded from the quoted Tales relief and stays untouched.
+	var lost_fray := _lost_party([40, 30, 26, 0], [3], [0, 1, 0, 200])
+	var lost_fray_before := lost_fray.duplicate(true)
 	var lost_visit := RunCampfireVisit.new("camp_tot_l", lost_fray, "stitched", 100)
 	var lost_quote: Dictionary = lost_visit.read_state()["quote"]
-	_check(lost_quote["choices"] == ["tell_tales", "leave"]
-		and lost_quote["text"].find("Tell Tales up to 25 FRAY each (-25 FRAY now)") != -1,
-		"a LOST doll's FRAY still counts toward the quoted Tales relief")
-	var lost_receipt: Dictionary = lost_visit.select("tell_tales", "camp_tot_l", lost_fray, 100)
-	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][3]["fray"] == 175
-		and lost_receipt["heroes"][3]["lost"] == true and lost_receipt["heroes"][3]["hp"] == 0,
-		"Tales still unravels a LOST doll's FRAY and never revives it")
+	var lost_gain := _fray_oracle(lost_fray_before)
+	_check(lost_gain == 1 and lost_quote["choices"] == ["tell_tales", "leave"]
+		and lost_quote["text"].find("Tell Tales up to 25 FRAY each (-%d FRAY now)" % lost_gain) != -1
+		and lost_quote["text"].find(_doll_name(lost_fray_before[3])) == -1,
+		"a LOST doll's FRAY is excluded from the quoted Tales relief and beneficiary list")
+	var lost_receipt: Dictionary = lost_visit.select("tell_tales", "camp_tot_l", lost_fray_before, 100)
+	var lost_actual: int = 0
+	for i in range(4):
+		lost_actual += int(lost_fray_before[i]["fray"]) - int(lost_receipt["heroes"][i]["fray"])
+	_check(lost_receipt.get("ok") == true and lost_actual == lost_gain
+		and lost_receipt["heroes"][1]["fray"] == 0
+		and lost_receipt["heroes"][3] == lost_fray_before[3]
+		and lost_receipt["heroes"][3]["fray"] == 200 and lost_receipt["heroes"][3]["hp"] == 0,
+		"Tales relieves only the survivor and never touches or revives the LOST doll")
 	# AC3: the quoted Wick gain is cap-aware at CANDLE 0/60/99 and absent at 100.
 	for candle in [0, 60, 99]:
 		var gain := mini(RunCampfireVisit.WICK_CANDLE_RESTORE,
@@ -1002,7 +1013,7 @@ func _test_stitched_per_doll_quote() -> void:
 		and mixed_text.find(_doll_name(mixed[1]) + " -25 FRAY]") != -1
 		and mixed_text.find(_doll_name(mixed[0])) == -1,
 		"single beneficiary shows one entry for Mend and for Tales")
-	# LOST doll: excluded from Mend, still counted in Tales (existing semantics).
+	# LOST doll: excluded from both Mend and Tales (survivor-only breakdowns).
 	var lost := _lost_party([40, 15, 0, 12], [3], [0, 8, 75, 25])
 	for i in range(4):
 		lost[i]["max_hp"] = maxes[i]
@@ -1014,20 +1025,21 @@ func _test_stitched_per_doll_quote() -> void:
 	var lost_tales_head := "Tell Tales up to 25 FRAY each (-%d FRAY now)" % lost_fray
 	var lost_mend_bracket := _bracket_after(lost_text, lost_mend_head)
 	var lost_tales_bracket := _bracket_after(lost_text, lost_tales_head)
-	_check(lost_mend == 24 and lost_fray == 58
+	_check(lost_mend == 24 and lost_fray == 33
 		and lost_mend_bracket == _bracket_oracle(lost, [0, 9, 15, 0], "+%d HP")
 		and lost_mend_bracket.find(_doll_name(lost[3])) == -1,
 		"LOST doll is absent from Mend and the Hanging doll shows its floor(30%) amount")
-	_check(lost_tales_bracket == _bracket_oracle(lost, [0, 8, 25, 25], "-%d FRAY")
-		and lost_tales_bracket.find(_doll_name(lost[3]) + " -25 FRAY") != -1,
-		"LOST doll's FRAY stays in the Tell Tales breakdown and total")
+	_check(lost_tales_bracket == _bracket_oracle(lost, [0, 8, 25, 0], "-%d FRAY")
+		and lost_tales_bracket != "" and lost_tales_bracket.find(_doll_name(lost[3])) == -1,
+		"LOST doll's FRAY is absent from the Tell Tales breakdown and total (survivors only)")
 	var lost_receipt: Dictionary = lost_visit.select("tell_tales", "camp_pd_l",
 		lost.duplicate(true), 100)
 	var lost_delta: int = 0
 	for i in range(4):
 		lost_delta += int(lost[i]["fray"]) - int(lost_receipt["heroes"][i]["fray"])
-	_check(lost_receipt.get("ok") == true and lost_delta == lost_fray,
-		"LOST doll's FRAY relief appears in the actual receipt")
+	_check(lost_receipt.get("ok") == true and lost_delta == lost_fray
+		and lost_receipt["heroes"][3] == lost[3] and lost_receipt["heroes"][3]["fray"] == 25,
+		"the actual receipt relieves exactly the quoted survivor total and spares the LOST doll")
 	# Refusals stay fully active on the new quote.
 	var refusal := {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
 	var held := visit.read_state()
@@ -1138,9 +1150,10 @@ func _test_stitched_lost_dolls_not_mended() -> void:
 	var tales_party := _lost_party([0, 30, 26, 48], [0], [20, 0, 30, 0])
 	var tales_visit := RunCampfireVisit.new("camp_only4", tales_party, "stitched", 100)
 	var tales := tales_visit.select("tell_tales", "camp_only4", tales_party, 100)
-	_check(tales.get("ok") == true and tales["heroes"][0]["fray"] == 0 and tales["heroes"][0]["hp"] == 0
+	_check(tales.get("ok") == true and tales["heroes"][0] == tales_party[0]
+		and tales["heroes"][0]["fray"] == 20 and tales["heroes"][0]["hp"] == 0
 		and tales["heroes"][0]["lost"] == true and tales["heroes"][2]["fray"] == 5,
-		"Tell Tales still unravels 25 FRAY and keeps the lost doll lost")
+		"Tell Tales unravels the survivor's 25 FRAY and leaves the lost record untouched")
 	# Mend stays available when even one non-lost doll can recover, Hanging included.
 	var hanging_party := _lost_party([0, 30, 0, 48], [0])
 	var hanging_visit := RunCampfireVisit.new("camp_hang", hanging_party, "stitched", 100)
@@ -1162,6 +1175,93 @@ func _test_stitched_lost_dolls_not_mended() -> void:
 	_check(swap_visit.read_state().get("ok") == true
 		and swap_visit.read_state()["quote"]["choices"] == ["leave"],
 		"satchel visit with only a lost deficit quotes no Mend")
+
+
+## Tell Tales is survivor-only: a LOST doll's FRAY neither offers the choice,
+## nor enters the quote, nor is reduced; FEAR stays independent.
+func _test_tales_ignores_lost_dolls() -> void:
+	seed(909090)
+	var expected_next := randi()
+	seed(909090)
+	var refusal := {"ok": false, "decision": "", "node_id": "", "heroes": [], "candle": 0}
+	# (a) A 200-FRAY LOST doll beside calm survivors: Leave only, Tales refused.
+	for fear in [null, 0]:
+		var calm := _lost_party(FULL_HPS, [3], [0, 0, 0, 200])
+		var calm_before := calm.duplicate(true)
+		var calm_visit := RunCampfireVisit.new("camp_tl_a", calm, "stitched", 100, fear)
+		var calm_state := calm_visit.read_state()
+		_check(calm_state["status"] == "stitched_open" and calm_state["heroes"] == calm_before
+			and calm_state["quote"]["choices"] == ["leave"]
+			and calm_state["quote"]["text"].find("Tell Tales") == -1,
+			"LOST-only FRAY (fear %s) offers only Leave" % str(fear))
+		_check(calm_visit.select("tell_tales", "camp_tl_a", calm_before, 100, fear) == refusal
+			and calm_visit.read_state() == calm_state,
+			"Tell Tales is refused with no mutation when only a LOST doll is frayed (fear %s)" % str(fear))
+		var leave: Dictionary = calm_visit.select("leave", "camp_tl_a", calm_before, 100, fear)
+		_check(leave.get("ok") == true and leave["heroes"] == calm_before,
+			"the one-use right survives the refusal: Leave still commits (fear %s)" % str(fear))
+	# (b) LOST FRAY 25 beside surviving FRAY 1/25/200: only survivors decrease.
+	var mixed := _lost_party(FULL_HPS, [0], [25, 1, 25, 200])
+	var mixed_before := mixed.duplicate(true)
+	var mixed_visit := RunCampfireVisit.new("camp_tl_b", mixed, "stitched", 100)
+	var mixed_text: String = mixed_visit.read_state()["quote"]["text"]
+	var mixed_deltas: Array = [0, 1, 25, 25]
+	var mixed_total := _fray_oracle(mixed_before)
+	var mixed_head := "Tell Tales up to 25 FRAY each (-%d FRAY now)" % mixed_total
+	_check(mixed_total == 51 and mixed_text.find(mixed_head) != -1
+		and _bracket_after(mixed_text, mixed_head) == _bracket_oracle(mixed_before, mixed_deltas, "-%d FRAY")
+		and _bracket_after(mixed_text, mixed_head).find(_doll_name(mixed_before[0])) == -1,
+		"quote total 51 and beneficiary list are survivor-only")
+	var mixed_receipt: Dictionary = mixed_visit.select("tell_tales", "camp_tl_b", mixed_before, 100)
+	var mixed_actual: int = 0
+	if mixed_receipt.get("ok") == true:
+		for i in range(4):
+			mixed_actual += int(mixed_before[i]["fray"]) - int(mixed_receipt["heroes"][i]["fray"])
+	_check(mixed_receipt.get("ok") == true and mixed_actual == mixed_total
+		and mixed_receipt["heroes"][0] == mixed_before[0]
+		and [mixed_receipt["heroes"][1]["fray"], mixed_receipt["heroes"][2]["fray"],
+			mixed_receipt["heroes"][3]["fray"]] == [0, 0, 175],
+		"receipt reduces only survivors by min(25, FRAY) and spares the LOST record")
+	for i in range(1, 4):
+		var kept: Dictionary = mixed_receipt["heroes"][i].duplicate(true)
+		kept["fray"] = mixed_before[i]["fray"]
+		_check(kept == mixed_before[i], "survivor %d keeps every other stat" % (i + 1))
+	_assert_stitched_refused(mixed_visit, "tell_tales", "camp_tl_b", mixed_receipt["heroes"], 100,
+		"replayed Tell Tales")
+	# (c) Resolve: survivor crossing to 49 clears; exactly 50 keeps; LOST keeps its trait.
+	var cross := _lost_party(FULL_HPS, [0], [74, 74, 75, 0])
+	cross[0]["resolve"] = "frantic"
+	cross[1]["resolve"] = "bitter"
+	cross[2]["resolve"] = "hollow"
+	var cross_before := cross.duplicate(true)
+	var cross_visit := RunCampfireVisit.new("camp_tl_c", cross, "stitched", 100)
+	var cross_text := _tales_quote_text(cross_visit)
+	_check(cross_text.find(" [Resolve clears: %s (bitter)]" % _doll_name(cross_before[1])) != -1
+		and cross_text.find("frantic") == -1 and cross_text.find("hollow") == -1,
+		"forecast names only the survivor crossing to 49")
+	var cross_receipt: Dictionary = cross_visit.select("tell_tales", "camp_tl_c", cross_before, 100)
+	_check(cross_receipt.get("ok") == true and cross_receipt["heroes"][0] == cross_before[0]
+		and cross_receipt["heroes"][1]["fray"] == 49 and cross_receipt["heroes"][1]["resolve"] == ""
+		and cross_receipt["heroes"][2]["fray"] == 50 and cross_receipt["heroes"][2]["resolve"] == "hollow",
+		"survivor clears at 49, keeps at exactly 50, LOST keeps FRAY 74 and Frantic")
+	# (d) FEAR 15 alone keeps Tales actionable despite LOST FRAY, once.
+	var fear_party := _lost_party(FULL_HPS, [3], [0, 0, 0, 200])
+	var fear_before := fear_party.duplicate(true)
+	var fear_visit := RunCampfireVisit.new("camp_tl_d", fear_party, "stitched", 100, 15)
+	var fear_quote: Dictionary = fear_visit.read_state()["quote"]
+	_check(fear_quote["choices"] == ["tell_tales", "leave"]
+		and fear_quote["text"].find("(-0 FRAY now; -15 Wren FEAR now)") != -1
+		and fear_quote["text"].find("[") == -1,
+		"FEAR 15 keeps Tales offered with zero survivor FRAY relief")
+	var fear_receipt: Dictionary = fear_visit.select("tell_tales", "camp_tl_d", fear_before, 100, 15)
+	_check(fear_receipt.get("ok") == true and fear_receipt["fear"] == 0
+		and fear_receipt["heroes"] == fear_before and fear_receipt["heroes"][3]["fray"] == 200,
+		"FEAR falls 15 -> 0 and no doll record changes")
+	_check(fear_visit.select("tell_tales", "camp_tl_d", fear_before, 100, 0) == refusal
+		and fear_visit.read_state()["fear"] == 0
+		and fear_visit.read_state()["status"] == "stitched_decided",
+		"Tell Tales commits only once")
+	_check(randi() == expected_next, "survivor-only Tell Tales draws no global RNG")
 
 
 const ARMS_SHIELD := "warden_arms_shield_catch"
@@ -2129,25 +2229,30 @@ func _test_tales_clears_unravelled_below_threshold() -> void:
 	_check(mixed_receipt.get("ok") == true and mixed_heroes.size() == 4,
 		"mixed LOST/empty/unknown/missing fixture commits")
 	if mixed_heroes.size() == 4:
-		_check(mixed_heroes[0]["lost"] == true and mixed_heroes[0]["hp"] == 0
-			and mixed_heroes[0]["fray"] == 35 and mixed_heroes[0]["resolve"] == "",
-			"a LOST doll stays LOST at 0 HP and FRAY 35, and its Cowering clears below 50")
+		_check(mixed_heroes[0] == mixed_before[0] and mixed_heroes[0]["lost"] == true
+			and mixed_heroes[0]["hp"] == 0 and mixed_heroes[0]["fray"] == 60
+			and mixed_heroes[0]["resolve"] == "cowering",
+			"a LOST doll's whole record (FRAY 60, Cowering) is preserved")
 		_check(mixed_heroes[1]["fray"] == 45 and mixed_heroes[1]["resolve"] == "",
 			"empty resolve stays empty")
 		_check(mixed_heroes[2]["fray"] == 5 and mixed_heroes[2]["resolve"] == "mystery",
 			"unknown resolve is left unchanged")
 		_check(mixed_heroes[3]["fray"] == 15 and not mixed_heroes[3].has("resolve"),
 			"missing resolve is not invented")
-	# A LOST doll below the threshold after Tales also clears its named trait.
-	var lost_low := _lost_party([0, 30, 26, 48], [0], [60, 0, 0, 0])
+	# A LOST doll that would fall below the threshold keeps its trait and FRAY;
+	# a survivor crossing to 49 clears, and one staying at exactly 50 keeps it.
+	var lost_low := _lost_party([0, 30, 26, 48], [0], [74, 74, 75, 0])
 	lost_low[0]["resolve"] = "reckless"
-	lost_low[0]["fray"] = 74
+	lost_low[1]["resolve"] = "bitter"
+	lost_low[2]["resolve"] = "hollow"
+	var lost_low_before := lost_low.duplicate(true)
 	var lost_visit := RunCampfireVisit.new("camp_lowlost", lost_low, "stitched", 100)
-	var lost_receipt := lost_visit.select("tell_tales", "camp_lowlost", lost_low, 100)
-	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0]["lost"] == true
-		and lost_receipt["heroes"][0]["hp"] == 0 and lost_receipt["heroes"][0]["fray"] == 49
-		and lost_receipt["heroes"][0]["resolve"] == "",
-		"a LOST doll is not revived but its FRAY drop still clears the trait")
+	var lost_receipt := lost_visit.select("tell_tales", "camp_lowlost", lost_low_before, 100)
+	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0] == lost_low_before[0]
+		and lost_receipt["heroes"][0]["fray"] == 74 and lost_receipt["heroes"][0]["resolve"] == "reckless"
+		and lost_receipt["heroes"][1]["fray"] == 49 and lost_receipt["heroes"][1]["resolve"] == ""
+		and lost_receipt["heroes"][2]["fray"] == 50 and lost_receipt["heroes"][2]["resolve"] == "hollow",
+		"LOST record preserved; survivor clears at 49 and keeps at exactly 50")
 	# Optional Wren FEAR: -15 alongside the same FRAY/resolve rule.
 	var fear_party := _stitched_party([35, 18, 0, 48], [74, 75, 25, 100])
 	fear_party[0]["resolve"] = "frantic"
@@ -2272,19 +2377,29 @@ func _test_tales_resolve_clear_forecast() -> void:
 	var low_receipt := low_visit.select("tell_tales", "camp_low", low_snapshot, 100)
 	_check(low_receipt.get("ok") == true and low_receipt["heroes"][1]["resolve"] == "",
 		"an already-low trait is cleared by the matching receipt")
-	# LOST dolls are named for their trait but never revived.
-	var lost := _lost_party([0, 30, 26, 48], [0], [74, 0, 0, 0])
+	# A LOST doll's trait is never forecast nor cleared; the survivor's is.
+	var lost := _lost_party([0, 30, 26, 48], [0], [74, 74, 0, 0])
 	lost[0]["resolve"] = "cowering"
+	lost[1]["resolve"] = "frantic"
 	var lost_snapshot := lost.duplicate(true)
 	var lost_visit := RunCampfireVisit.new("camp_lostfc", lost, "stitched", 100)
 	var lost_text := _tales_quote_text(lost_visit)
-	_check(lost_text.find(" [Resolve clears: %s (cowering)]" % str(lost_snapshot[0]["name"])) != -1
-		and lost_text.to_lower().find("revive") == -1,
-		"a LOST doll's trait is forecast without any revival claim")
+	_check(lost_text.find(" [Resolve clears: %s (frantic)]" % str(lost_snapshot[1]["name"])) != -1
+		and lost_text.find("cowering") == -1 and lost_text.to_lower().find("revive") == -1,
+		"only the survivor's trait is forecast; the LOST doll's cowering is not")
 	var lost_receipt := lost_visit.select("tell_tales", "camp_lostfc", lost_snapshot, 100)
-	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0]["lost"] == true
-		and lost_receipt["heroes"][0]["hp"] == 0 and lost_receipt["heroes"][0]["resolve"] == "",
-		"the LOST doll stays LOST at 0 HP while its trait clears")
+	_check(lost_receipt.get("ok") == true and lost_receipt["heroes"][0] == lost_snapshot[0]
+		and lost_receipt["heroes"][0]["lost"] == true and lost_receipt["heroes"][0]["fray"] == 74
+		and lost_receipt["heroes"][0]["resolve"] == "cowering"
+		and lost_receipt["heroes"][1]["fray"] == 49 and lost_receipt["heroes"][1]["resolve"] == "",
+		"the LOST record is untouched while the survivor's trait clears")
+	# A LOST-only Unravelled doll gives no forecast and no Tell Tales choice.
+	var lost_only := _lost_party([0, 30, 26, 48], [0], [74, 0, 0, 0])
+	lost_only[0]["resolve"] = "cowering"
+	var lost_only_visit := RunCampfireVisit.new("camp_lostfc2", lost_only, "stitched", 100)
+	_check(lost_only_visit.read_state()["quote"]["choices"] == ["leave"]
+		and _tales_quote_text(lost_only_visit).find(RESOLVE_CLEARS_MARK) == -1,
+		"a LOST-only Unravelled doll yields no Tell Tales choice and no forecast")
 	# Steadfast, empty, unknown and absent resolves are never forecast.
 	var none := _stitched_party(FULL_HPS, [30, 40, 20, 10])
 	none[0]["resolve"] = "steadfast"

@@ -11,6 +11,13 @@ func _fear(session: StitchedRunSession, amount: int, sequence: int, label: Strin
 
 func _ledger(app: Node, label: String) -> void:
 	await process_frame
+	# Owner 11-08: with walks on, the map is a corridor junction with no numeric ledger;
+	# Wren's fear lives in the session (checked by _fear) and shows as light, never a number.
+	if app.stitched_run_panel is StitchedCorridorJunction:
+		_check(app.stitched_run_panel.is_visible_in_tree()
+			and app.stitched_run_panel.find_child("RunLedger", true, false) == null,
+			label + " mounts the corridor junction with no fear number")
+		return
 	var ledger: Label = app.stitched_run_panel.find_child("RunLedger", true, false)
 	_check(ledger != null and ledger.is_visible_in_tree()
 		and ledger.text.ends_with("WREN FEAR %d / 100" % app.stitched_run_session.snapshot().kid_fear.fear),

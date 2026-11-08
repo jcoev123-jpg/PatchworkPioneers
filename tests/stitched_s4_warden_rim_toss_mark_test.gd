@@ -1,7 +1,8 @@
 extends SceneTree
 ## Warden Rim Toss: authentic equipped Mark survives one foe turn, allowing an
-## equipped tier-II Rivet Pummel follow-up. All combat calls use the shipped
-## StitchedParts catalog and StitchedRules.create/use_part/turn advancement.
+## equipped tier-II Rivet Pummel follow-up, and only the tier-III throw reaches
+## the legal rear enemy rank 4. All combat calls use the shipped StitchedParts
+## catalog and StitchedRules.create/use_part/turn advancement.
 
 const WARDEN_PATH := "res://data/parts/warden_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
@@ -10,8 +11,10 @@ const PUMMEL := "warden_arms_rivet_pummel"
 const WARDEN := "warden"
 const FOE := "fray_scavenger"
 const OTHER_FOES := ["scissor_crab", "moth_scribe"]
+const RANK_FOUR_FOE := "moth_scribe"
 const SEED_LIMIT := 220
 const RIM_DMG := [[5, 8], [6, 10], [8, 12]]
+const RIM_TARGETS := [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]]
 
 var failures: Array[String] = []
 var checks := 0
@@ -26,6 +29,8 @@ func _initialize() -> void:
 		_test_live_chain(catalog)
 		_test_miss(catalog)
 		_test_refusals(catalog)
+		_test_rank_four(catalog)
+		_test_rank_four_refusals(catalog)
 	for message in failures:
 		printerr(message)
 	print("stitched_s4_warden_rim_toss_mark_test: ",
@@ -47,7 +52,8 @@ func _read_preview() -> Dictionary:
 
 
 func _battle(catalog: Dictionary, seed_value: int, tier: int = 2,
-		torn: bool = false, zero_prot: bool = false, warden_rank: int = 1) -> StitchedRules:
+		torn: bool = false, zero_prot: bool = false, warden_rank: int = 1,
+		rank_four: bool = false) -> StitchedRules:
 	var config := _read_preview()
 	if config.is_empty():
 		return null
@@ -65,7 +71,15 @@ func _battle(catalog: Dictionary, seed_value: int, tier: int = 2,
 	var created := StitchedRules.create(config)
 	if not bool(created.get("ok", false)):
 		return null
-	return created["battle"]
+	var battle: StitchedRules = created["battle"]
+	if rank_four:
+		# The real preview keeps its three foes; the existing third foe takes the
+		# legal rear rank 4 (a summon/split or a Wren shove can produce this),
+		# leaving ranks 1-2 occupied and rank 3 vacant.
+		if not battle._units.has(RANK_FOUR_FOE):
+			return null
+		battle._units[RANK_FOUR_FOE]["rank"] = 4
+	return battle
 
 
 func _to(b: StitchedRules, id: String, limit: int = 32) -> bool:
@@ -121,12 +135,15 @@ func _test_catalog(catalog: Dictionary) -> void:
 		and part.get("stat", {}) == {"speed": 1, "dodge": 2},
 		"AC1: Rim Toss retains identity, slot, owner and stats")
 	var wording := str(part.get("text", ""))
-	_check(wording.contains("Mark 2") and not wording.to_lower().contains("block") \
-		and not wording.to_lower().contains("card"),
-		"AC1: tooltip describes Mark 2 without retired card/Block terms")
+	var lower := wording.to_lower()
+	_check(wording.contains("Mark 2") and not lower.contains("block") \
+		and not lower.contains("card") and lower.contains("tier iii") \
+		and lower.contains("rank 4") and lower.contains("ranks 1-3"),
+		"AC1: tooltip truthfully credits ranks 1-3 to tiers I-II and rank 4 to tier III")
 	for tier in [1, 2, 3]:
 		var ability := StitchedParts.ability_at_tier(part, tier)
 		var label := "AC1: tier %d" % tier
+		var expected_target: Array = RIM_TARGETS[tier - 1]
 		_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
 			label + " is a valid ability")
 		_check(ability.get("effects", {}) == {"mark": 2},
@@ -136,10 +153,12 @@ func _test_catalog(catalog: Dictionary) -> void:
 			and int(ability.get("crit", -1)) == 0,
 			label + " preserves authored damage, ACC and crit")
 		_check(ability.get("launch", []) == [1, 2] \
-			and ability.get("target", []) == [1, 2, 3] \
+			and ability.get("target", []) == expected_target \
 			and int(ability.get("launch_mask", 0)) == StitchedParts.rank_mask([1, 2]) \
-			and int(ability.get("target_mask", 0)) == StitchedParts.rank_mask([1, 2, 3]),
-			label + " preserves launch and target ranks/masks")
+			and int(ability.get("target_mask", 0)) == StitchedParts.rank_mask(expected_target),
+			label + " preserves launch and targets exactly " + str(expected_target))
+		_check(StitchedParts.ranks_allowed(int(ability.get("target_mask", 0)), 4) == (tier == 3),
+			label + " reaches enemy rank 4 only at tier III")
 		_check(str(ability.get("id", "")) == "legs_rim_toss_move" \
 			and str(ability.get("name", "")) == "Rim Toss" \
 			and str(ability.get("kind", "")) == "ranged" \
@@ -150,6 +169,22 @@ func _test_catalog(catalog: Dictionary) -> void:
 			label + " preserves other authored ability fields")
 		_check(StitchedParts.stat_at_tier(part, tier) == {"speed": 1, "dodge": 2},
 			label + " preserves leg stats")
+	var raw_parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(WARDEN_PATH))
+	var raw_part := {}
+	if raw_parsed is Dictionary:
+		for entry in raw_parsed.get("parts", []):
+			if str(entry.get("id", "")) == RIM:
+				raw_part = entry
+				break
+	var raw_ok: bool = not raw_part.is_empty() and raw_part.has("ability") \
+		and raw_part["ability"].get("target", []).map(func(rank): return int(rank)) == [1, 2, 3] \
+		and raw_part.get("tiers", {}).has("2") and raw_part["tiers"]["2"].has("ability") \
+		and not raw_part["tiers"]["2"]["ability"].has("target") \
+		and raw_part["tiers"].has("3") and raw_part["tiers"]["3"].has("ability") \
+		and raw_part["tiers"]["3"]["ability"].get("target", []).map(
+			func(rank): return int(rank)) == [1, 2, 3, 4]
+	_check(raw_ok,
+		"AC1: only the authored tier-III override widens the target ranks to 1-4")
 	var arms := StitchedParts.ability_at_tier(by_id[PUMMEL], 2)
 	_check(int(arms.get("mark_damage", 0)) == 4 \
 		and arms.get("effects", {}) == {"tangled": 2} \
@@ -404,3 +439,150 @@ func _test_refusals(catalog: Dictionary) -> void:
 			"AC3: illegal hero launch rank 3 spends nothing")
 	else:
 		_check(false, "AC3: wrong-launch witness reaches Warden")
+
+
+## The real four-hero/three-foe preview with only the existing third foe moved to
+## enemy rank 4 in this battle's own memory: ranks 1-2 keep their foes and rank 3
+## stays vacant, as a summon/split or a Wren shove can leave the field.
+func _rank_four_structure(b: StitchedRules) -> bool:
+	return b != null and b.get_heroes().size() == 4 and b.get_foes().size() == 3 \
+		and int(b.get_unit(RANK_FOUR_FOE).get("rank", 0)) == 4 \
+		and not bool(b.get_unit(RANK_FOUR_FOE).get("dead", true)) \
+		and int(b.get_unit(RANK_FOUR_FOE).get("hp", 0)) > 0 \
+		and int(b.get_unit(FOE).get("rank", 0)) == 1 \
+		and int(b.get_unit(OTHER_FOES[0]).get("rank", 0)) == 2 \
+		and b.get_foes().all(func(foe): return int(foe["rank"]) != 3)
+
+
+func _rank_four_battle(catalog: Dictionary, seed_value: int, tier: int,
+		warden_rank: int = 1) -> StitchedRules:
+	var b := _battle(catalog, seed_value, tier, false, false, warden_rank, true)
+	if b == null or not _rank_four_structure(b):
+		return null
+	return b
+
+
+func _rank_four_cast(catalog: Dictionary, tier: int, seed_value: int) -> Dictionary:
+	var b := _rank_four_battle(catalog, seed_value, tier)
+	if b == null or not _to(b, WARDEN) or not _equipped(b, tier):
+		return {}
+	var before := b.get_unit(RANK_FOUR_FOE)
+	var before_snapshot := b.state_snapshot()
+	var before_rng := b.rng_state()
+	var receipt := b.use_part(RIM, 4)
+	return {
+		"battle": b, "receipt": receipt, "before": before, "seed": seed_value,
+		"before_snapshot": before_snapshot, "before_rng": before_rng,
+		"after_snapshot": b.state_snapshot(), "after_rng": b.rng_state(),
+	}
+
+
+## A real seeded tier-III Rim Toss lands on the living rank-4 foe, leaves Mark 2,
+## and spends exactly one turn and one seeded RNG stream.
+func _test_rank_four(catalog: Dictionary) -> void:
+	var found := {}
+	for seed_value in range(1, SEED_LIMIT):
+		var trial := _rank_four_cast(catalog, 3, seed_value)
+		if trial.is_empty():
+			continue
+		var hit := _result(trial["receipt"])
+		if not bool(trial["receipt"].get("ok", false)) or not bool(hit.get("hit", false)):
+			continue
+		if str(hit.get("target", "")) != RANK_FOUR_FOE \
+			or int(hit.get("target_rank", 0)) != 4:
+			continue
+		# If the target is the very next actor, its start-of-turn tick already
+		# reduced the counter; keep a witness readable at the authored amount.
+		if (trial["battle"] as StitchedRules).current_actor_id() == RANK_FOUR_FOE:
+			continue
+		found = trial
+		break
+	_check(not found.is_empty(),
+		"AC2: equipped tier-III Rim Toss lands a seeded hit on the living rank-4 foe")
+	if found.is_empty():
+		return
+	var b: StitchedRules = found["battle"]
+	var receipt: Dictionary = found["receipt"]
+	var hit: Dictionary = _result(receipt)
+	var before: Dictionary = found["before"]
+	var victim := b.get_unit(RANK_FOUR_FOE)
+	_check(_rank_four_structure(b) and _equipped(b, 3) \
+		and int(b.get_unit(WARDEN)["rank"]) in [1, 2],
+		"AC2: the rank-4 hit runs in a real four-hero/three-foe battle from Warden rank 1 or 2")
+	_check(str(receipt.get("actor", "")) == WARDEN \
+		and str(receipt.get("part", "")) == RIM \
+		and str(receipt.get("ability", "")) == "legs_rim_toss_move" \
+		and str(hit.get("target", "")) == RANK_FOUR_FOE \
+		and str(hit.get("target_side", "")) == "foe" \
+		and int(hit.get("target_rank", 0)) == 4,
+		"AC2: the real receipt names the tier-III throw and the rank-4 foe")
+	_check(int(hit.get("roll", 101)) <= int(hit.get("hit_chance", 0)),
+		"AC2: the rank-4 hit is a natural seeded roll, not a planted status")
+	var mark_receipt := {}
+	for entry in hit.get("statuses", []):
+		if str(entry.get("status", "")) == "mark":
+			mark_receipt = entry
+	_check(int(mark_receipt.get("duration", 0)) == 2 \
+		and int(victim["statuses"].get("mark", 0)) == 2,
+		"AC2: the rank-4 hit leaves exactly Mark 2 in receipt and on the foe")
+	_check(int(hit.get("damage", 0)) > 0 \
+		and int(victim["hp"]) == int(before["hp"]) - int(hit.get("damage", 0)),
+		"AC2: the rank-4 hit deals its rolled damage to the real foe HP")
+	_check(found["before_snapshot"] != found["after_snapshot"] \
+		and b.current_actor_id() != WARDEN \
+		and int(found["before_rng"]) != int(found["after_rng"]),
+		"AC2: the accepted rank-4 throw spends one turn and seeded RNG")
+	var replay := _rank_four_cast(catalog, 3, int(found["seed"]))
+	_check(not replay.is_empty() and replay["receipt"] == found["receipt"] \
+		and replay["before_snapshot"] == found["before_snapshot"] \
+		and replay["after_snapshot"] == found["after_snapshot"] \
+		and int(replay["after_rng"]) == int(found["after_rng"]),
+		"AC2: equal-seed replay reproduces the rank-4 receipt, state and RNG")
+
+
+## Tiers I-II stay authored to ranks 1-3, so a living rank-4 foe is refused
+## exactly. Tier III still refuses to launch from hero rank 3. No rejection
+## spends the turn, state, HP or seeded RNG.
+func _test_rank_four_refusals(catalog: Dictionary) -> void:
+	for tier in [1, 2]:
+		var b := _rank_four_battle(catalog, 1, tier)
+		var label := "AC2: tier-%d rank-4 refusal" % tier
+		_check(b != null and _to(b, WARDEN) and _equipped(b, tier),
+			label + " reaches its equipped Warden in the real fixture")
+		if b == null or not _to(b, WARDEN) or not _equipped(b, tier):
+			continue
+		var before := b.state_snapshot()
+		var rng := b.rng_state()
+		var actor := b.current_actor_id()
+		var target_before := b.get_unit(RANK_FOUR_FOE)
+		var refused := b.use_part(RIM, 4)
+		_check(not bool(refused.get("ok", true)) \
+			and str(refused.get("error", "")) == "no legal target in rank 4",
+			label + " exactly refuses foe rank 4")
+		_check(before == b.state_snapshot() and rng == b.rng_state() \
+			and b.current_actor_id() == actor \
+			and b.get_unit(RANK_FOUR_FOE) == target_before,
+			label + " spends no turn, state, HP or RNG")
+	var tier_two := _rank_four_battle(catalog, 1, 2)
+	var tier_three := _rank_four_battle(catalog, 1, 3)
+	_check(tier_two != null and tier_three != null \
+		and tier_two.turn_order() == tier_three.turn_order() \
+		and tier_two.rng_state() == tier_three.rng_state() \
+		and tier_two.get_unit(RANK_FOUR_FOE) == tier_three.get_unit(RANK_FOUR_FOE),
+		"AC2: identical-seed tier-II and tier-III fixtures start from the same battle state")
+	var rear := _rank_four_battle(catalog, 1, 3, 3)
+	if rear != null and _to(rear, WARDEN):
+		var before := rear.state_snapshot()
+		var rng := rear.rng_state()
+		var target_before := rear.get_unit(RANK_FOUR_FOE)
+		var refused := rear.use_part(RIM, 4)
+		_check(int(rear.get_unit(WARDEN)["rank"]) == 3 \
+			and not bool(refused.get("ok", true)) \
+			and str(refused.get("error", "")) == "part cannot launch from rank 3",
+			"AC2: tier-III Rim Toss cannot launch from hero rank 3 at foe rank 4")
+		_check(before == rear.state_snapshot() and rng == rear.rng_state() \
+			and rear.current_actor_id() == WARDEN \
+			and rear.get_unit(RANK_FOUR_FOE) == target_before,
+			"AC2: hero rank-3 launch refusal spends no turn, state, HP or RNG")
+	else:
+		_check(false, "AC2: hero rank-3 rank-4 witness reaches Warden")

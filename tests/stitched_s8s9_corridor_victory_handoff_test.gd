@@ -540,12 +540,8 @@ func _run() -> void:
 	if corridor == null:
 		_finish(app)
 		return
-	_check(not corridor.intent_projections.is_empty()
-		and corridor.intent_projections.values().any(func(projection: Dictionary):
-			return not projection.is_empty() and projection.has("ability_kind"))
-		and corridor.intent_tickets.values().any(func(plate: StitchedFoeIntentPlate):
-			return plate.visible),
-		"live mounted corridor discloses at least one projected foe intent")
+	_check(corridor.find_children("FoeIntent*", "", true, false).is_empty(),
+		"owner 11-08: live mounted corridor shows no foe intent plates")
 	_check(session.receipts.filter(func(receipt: Dictionary): return receipt.get("kind") == "Fight").is_empty() \
 		and session.walk_receipts.size() == 2 and not corridor.continue_button.visible \
 		and not session.battle.is_over(),

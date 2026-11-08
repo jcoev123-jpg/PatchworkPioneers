@@ -638,6 +638,12 @@ func _graph_walk_and_rejections() -> void:
 	if session == null or session.phase != "map":
 		app.free()
 		return
+	# Owner 11-08: with walks on the map is a corridor junction. The atlas still serves the
+	# no-walk page, so its admission checks run there on this same walk-enabled session.
+	_check(app.stitched_run_panel is StitchedCorridorJunction, "graph Walk opening mounts the corridor junction")
+	app.stitched_walks = false
+	app._present_stitched_run()
+	await process_frame
 	_assert_book(app, "graph Walk opening")
 	await _exercise_graph_inspection(app, "graph Walk opening")
 	var book := app.stitched_run_panel.find_child("StitchedRouteBookView", true, false) as StitchedRouteBookView
@@ -717,6 +723,9 @@ func _graph_walk_and_rejections() -> void:
 	await process_frame
 	if is_instance_valid(keyboard_app.stitched_run_intro):
 		keyboard_app.stitched_run_intro.find_child("WrenIntroBegin", true, false).pressed.emit()
+	keyboard_app.stitched_walks = false   # the atlas page; walks stay on in the session
+	keyboard_app._present_stitched_run()
+	await process_frame
 	var keyboard_session: StitchedRunSession = keyboard_app.stitched_run_session
 	var keyboard_graph := keyboard_app.stitched_run_panel.find_child("StitchedRouteGraphView", true, false) as StitchedRouteGraphView
 	var keyboard_button := keyboard_graph.find_child("GraphNode_" + id, true, false).get_node("GraphNodeActivate") as Button

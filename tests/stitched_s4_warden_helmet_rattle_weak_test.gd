@@ -37,7 +37,8 @@ const RATTLE_TEXT := "Rattle a nearby foe into Weakness; at tier III the clang r
 ## Upper bound on the deterministic seed searches (never a wall-clock or random search).
 const SEED_SEARCH_LIMIT := 200
 
-## The seven other authored Warden parts that must keep their original tier outputs.
+## The seven other authored Warden parts that must keep their original tier outputs;
+## Rim Toss's authorized tier-III rear-rank reach is listed per tier.
 const SIBLING_EXPECTED := {
 	"warden_head_pot_helm_bonk": {
 		"slot": "head",
@@ -108,6 +109,7 @@ const SIBLING_EXPECTED := {
 		"stat": {"speed": 1, "dodge": 2},
 		"launch": [1, 2],
 		"target": [1, 2, 3],
+		"target_by_tier": [[1, 2, 3], [1, 2, 3], [1, 2, 3, 4]],
 		"side": "enemy",
 		"pose": "attack2",
 		"dmg": [[5, 8], [6, 10], [8, 12]],
@@ -310,6 +312,9 @@ func _test_real_catalog() -> void:
 		for tier in [1, 2, 3]:
 			var label: String = "AC2: " + str(sibling_id) + " tier " + str(tier)
 			var ability := StitchedParts.ability_at_tier(sibling, tier)
+			var expected_targets: Array = expected.get("target_by_tier", [])
+			var expected_target: Array = expected["target"] if expected_targets.is_empty() \
+				else expected_targets[tier - 1]
 			_check(bool(StitchedParts.validate_ability(ability).get("ok", false)),
 				label + " validates")
 			_check(ability.get("dmg", []) == expected["dmg"][tier - 1],
@@ -321,11 +326,11 @@ func _test_real_catalog() -> void:
 			_check(ability.get("effects", {}) == expected["effects"][tier - 1],
 				label + " keeps its original effects " + str(expected["effects"][tier - 1]))
 			_check(ability.get("launch", []) == expected["launch"]
-				and ability.get("target", []) == expected["target"],
+				and ability.get("target", []) == expected_target,
 				label + " keeps its original launch and target ranks")
 			_check(int(ability.get("launch_mask", 0)) == StitchedParts.rank_mask(expected["launch"])
 				and int(ability.get("target_mask", 0))
-					== StitchedParts.rank_mask(expected["target"]),
+					== StitchedParts.rank_mask(expected_target),
 				label + " keeps its original rank masks")
 			_check(str(ability.get("target_side", "")) == str(expected["side"])
 				and str(ability.get("move", "")) == str(expected["pose"]),
