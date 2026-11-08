@@ -295,11 +295,18 @@ func select(decision: Variant, expected_node_id: Variant,
 				# receives exactly this heal, with no revive-first bonus.
 				@warning_ignore("integer_division")
 				var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
-				hero["hp"] = mini(max_hp, int(hero["hp"]) + amount)
+				var hp_before: int = int(hero["hp"])
+				hero["hp"] = mini(max_hp, hp_before + amount)
 				# Any heal above 0 HP ends Hanging. Only an explicit true flag
 				# is cleared; an absent key is never fabricated.
 				if hero.get("hanging", false) == true and int(hero["hp"]) > 0:
 					hero["hanging"] = false
+				# S14: a 0-HP death-door doll healed above 0 also loses its
+				# carried death hits (as in combat healing), even when the
+				# Hanging flag is absent. A missing key stays missing and a
+				# doll that was already above 0 HP is never touched.
+				if hp_before == 0 and int(hero["hp"]) > 0 and hero.has("death_hits"):
+					hero["death_hits"] = 0
 				# Stitches torn at 0 HP are mended too: only an explicit
 				# torn == true on a worn slot is cleared; id and tier stay.
 				if typeof(hero.get("parts")) == TYPE_DICTIONARY:
