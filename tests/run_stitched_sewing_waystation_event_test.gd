@@ -19,9 +19,13 @@ func _init() -> void:
 
 	if _load_catalog():
 		_test_ac1_preview_actionability_and_post_toll_check()
+		_test_ac1_canonical_lost_doll_threadmill_replacement()
 		_test_ac2_authenticated_claim_and_isolation()
+		_test_ac2_canonical_lost_doll_moonlace_replacement()
 		_test_ac3_unaffordable_actionless_trades_and_leave()
+		_test_ac3_replacement_insufficient_funds_and_alternative_choices()
 		_test_ac3_failures_rejections_and_invalid_inputs()
+		_test_ac4_malformed_and_hanging_negative_replacement_cases()
 		_test_ac4_catalog_integrity()
 
 	_check(rng.state == rng_state_before, "Overall: Seeded RNG state must remain completely untouched")
@@ -87,6 +91,45 @@ func _party(tier: int = 1, torn: bool = false) -> Array:
 			"candle": 4 - i,
 			"patches": i,
 			"statuses": {"guard": i},
+		})
+	return heroes
+
+
+func _canonical_replacement_party() -> Array:
+	var ids := ["warden", "seamstress", "tinker", "lantern_monk"]
+	var heroes: Array = []
+	var gear := {
+		"head": _worn("warden_head_pot_helm_bonk", 3, false),
+		"arms": _worn("warden_arms_shield_catch", 3, false),
+		"torso": _worn("warden_torso_iron_challenge", 3, false),
+		"legs": _worn("warden_legs_rim_toss", 3, false),
+	}
+	heroes.append({
+		"id": ids[0],
+		"name": "Warden Doll",
+		"rank": 1,
+		"parts": gear,
+		"hp": 20,
+		"max_hp": 30,
+		"fray": 0,
+		"candle": 4,
+		"patches": 0,
+		"statuses": {},
+		"lost": false,
+	})
+	for i in range(1, 4):
+		heroes.append({
+			"id": ids[i],
+			"name": ids[i].capitalize() + " Doll",
+			"rank": i + 1,
+			"parts": {},
+			"hp": 0,
+			"max_hp": 25,
+			"fray": 0,
+			"candle": 0,
+			"patches": 0,
+			"statuses": {},
+			"lost": true,
 		})
 	return heroes
 
@@ -569,3 +612,369 @@ func _test_ac4_catalog_integrity() -> void:
 	var moonlace: Dictionary = found_ids.get("v3_moonlace_darning_parlor", {})
 	_check(moonlace.get("service_kind") == "SewingCircle", "AC4: Moonlace service_kind is SewingCircle")
 	_check(moonlace.get("service_choice_id") == "sew_at_parlor", "AC4: Moonlace service_choice_id is sew_at_parlor")
+
+
+# AC1: Authentic Sewing Circle admission for LOST-doll replacement (Threadmill Loft).
+func _test_ac1_canonical_lost_doll_threadmill_replacement() -> void:
+	var heroes := _canonical_replacement_party()
+	var heroes_snap := JSON.stringify(heroes, "", true)
+	var satchel: Array = []
+	var mend_cost := 2
+	var upgrade_cost := 2
+	var wallet := {"gold": 12, "scraps": 0}
+	var wallet_snap := JSON.stringify(wallet, "", true)
+
+	var event := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		heroes,
+		satchel,
+		wallet,
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	_check(event.is_valid(), "AC1: Threadmill event is valid with canonical replacement party")
+	_check(event.is_open(), "AC1: Threadmill event is open")
+	_check(not event.is_claimed(), "AC1: Threadmill event is unclaimed")
+
+	var preview := event.preview_choices()
+	_check(bool(preview.get("ok", false)), "AC1: Preview succeeds")
+	var choices: Array = preview.get("choices", [])
+	var paid_choice := _find_choice(choices, "borrow_spools")
+	_check(bool(paid_choice.get("affordable", false)), "AC1: borrow_spools is affordable at 12 gold")
+	_check(bool(paid_choice.get("available", false)), "AC1: borrow_spools is available for genuine LOST doll replacement")
+	_check(bool(paid_choice.get("actionable", false)), "AC1: borrow_spools is actionable")
+	_check(paid_choice.get("service_request", {}).get("stop_type") == "SewingCircle", "AC1: Preview returns original SewingCircle service_request")
+	_check(paid_choice.get("wallet", {}).get("gold") == 0 and paid_choice.get("wallet", {}).get("scraps") == 0, "AC1: Post-toll wallet preview is gold=0, scraps=0")
+
+	_check(JSON.stringify(heroes, "", true) == heroes_snap, "AC1: Input heroes not mutated by preview")
+	_check(JSON.stringify(wallet, "", true) == wallet_snap, "AC1: Input wallet not mutated by preview")
+
+	var state_before := event.read_state()
+	var rng_before := rng.state
+
+	var claim := event.choose("borrow_spools", NODE, state_before)
+	_check(rng.state == rng_before, "AC1: RNG untouched during claim")
+	_check(bool(claim.get("ok", false)), "AC1: Claim borrow_spools succeeds")
+	_check(claim.get("event_id") == "v3_threadmill_sewing_circle", "AC1: Claim event_id matches")
+	_check(claim.get("choice_id") == "borrow_spools", "AC1: Claim choice_id matches")
+	_check(claim.get("wallet", {}).get("gold") == 0 and claim.get("wallet", {}).get("scraps") == 0, "AC1: Settled wallet leaves gold=0, scraps=0")
+	_check(claim.get("service_request", {}).get("stop_type") == "SewingCircle", "AC1: Claim returns SewingCircle service_request")
+	_check(event.is_claimed(), "AC1: Event is claimed")
+	_check(not event.is_open(), "AC1: Event is closed")
+	_check(not event.is_valid(), "AC1: Claimed event is invalid for new claims")
+
+	# Duplicate choose fails and never repeats toll
+	var state_after := event.read_state()
+	var dup_claim := event.choose("borrow_spools", NODE, state_after)
+	_check(not bool(dup_claim.get("ok", false)), "AC1: Duplicate choose fails")
+	_check(event.get_wallet().get("gold") == 0 and event.get_wallet().get("scraps") == 0, "AC1: Wallet unchanged on duplicate claim refusal")
+	_check((dup_claim.get("service_request", {}) as Dictionary).is_empty(), "AC1: Refusal returns empty service_request")
+
+
+# AC2: Authentic Sewing Circle admission for LOST-doll replacement (Moonlace Darning Parlour).
+func _test_ac2_canonical_lost_doll_moonlace_replacement() -> void:
+	var heroes := _canonical_replacement_party()
+	var heroes_snap := JSON.stringify(heroes, "", true)
+	var satchel: Array = []
+	var mend_cost := 2
+	var upgrade_cost := 2
+	var wallet := {"gold": 0, "scraps": 2}
+	var wallet_snap := JSON.stringify(wallet, "", true)
+
+	var event := RunStitchedSewingWaystationEvent.new(
+		"v3_moonlace_darning_parlor",
+		NODE,
+		heroes,
+		satchel,
+		wallet,
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	_check(event.is_valid(), "AC2: Moonlace event is valid with canonical replacement party")
+	var preview := event.preview_choices()
+	_check(bool(preview.get("ok", false)), "AC2: Moonlace preview succeeds")
+	var choices: Array = preview.get("choices", [])
+	var paid_choice := _find_choice(choices, "sew_at_parlor")
+	_check(bool(paid_choice.get("affordable", false)), "AC2: sew_at_parlor is affordable at 2 scraps")
+	_check(bool(paid_choice.get("available", false)), "AC2: sew_at_parlor is available for genuine LOST replacement")
+	_check(bool(paid_choice.get("actionable", false)), "AC2: sew_at_parlor is actionable")
+	_check(paid_choice.get("service_request", {}).get("stop_type") == "SewingCircle", "AC2: Preview returns original SewingCircle service_request")
+	_check(paid_choice.get("wallet", {}).get("gold") == 0 and paid_choice.get("wallet", {}).get("scraps") == 0, "AC2: Post-toll wallet preview is gold=0, scraps=0")
+
+	var state_before := event.read_state()
+	var rng_before := rng.state
+
+	var claim := event.choose("sew_at_parlor", NODE, state_before)
+	_check(rng.state == rng_before, "AC2: RNG untouched during Moonlace claim")
+	_check(bool(claim.get("ok", false)), "AC2: Claim sew_at_parlor succeeds")
+	_check(claim.get("event_id") == "v3_moonlace_darning_parlor", "AC2: Moonlace event_id matches")
+	_check(claim.get("choice_id") == "sew_at_parlor", "AC2: Moonlace choice_id matches")
+	_check(claim.get("wallet", {}).get("gold") == 0, "AC2: Gold untouched at 0")
+	_check(claim.get("wallet", {}).get("scraps") == 0, "AC2: Toll costs exactly 2 scraps, leaving scraps=0")
+	_check(claim.get("service_request", {}).get("stop_type") == "SewingCircle", "AC2: Issues established SewingCircle service_request")
+	_check(claim.keys().has("service_request") and not claim.has("replacement_fee"), "AC2: No extra replacement fee in receipt")
+	_check(event.is_claimed(), "AC2: Moonlace event is claimed")
+	_check(not event.is_open(), "AC2: Moonlace event is closed")
+
+	var state_after := event.read_state()
+	var dup_claim := event.choose("sew_at_parlor", NODE, state_after)
+	_check(not bool(dup_claim.get("ok", false)), "AC2: Moonlace duplicate choose fails")
+	_check(event.get_wallet().get("scraps") == 0, "AC2: Scraps unchanged on duplicate claim refusal")
+
+
+# AC3: Insufficient toll funds refuse admission even with replaceable LOST dolls; trade and Leave remain accessible.
+func _test_ac3_replacement_insufficient_funds_and_alternative_choices() -> void:
+	var heroes := _canonical_replacement_party()
+	var satchel: Array = []
+	var mend_cost := 2
+	var upgrade_cost := 2
+
+	# Threadmill with gold=11, scraps=0 (insufficient gold for 12 gold toll)
+	var t_underfunded := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		heroes,
+		satchel,
+		{"gold": 11, "scraps": 0},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var t_prev := t_underfunded.preview_choices()
+	var t_paid := _find_choice(t_prev.get("choices", []), "borrow_spools")
+	_check(not bool(t_paid.get("affordable", false)), "AC3: Threadmill borrow_spools unaffordable at 11 gold")
+	_check(not bool(t_paid.get("available", false)), "AC3: borrow_spools unavailable when underfunded, even with LOST doll")
+	_check((t_paid.get("service_request", {}) as Dictionary).is_empty(), "AC3: service_request empty when underfunded")
+
+	var t_state := t_underfunded.read_state()
+	var t_refuse := t_underfunded.choose("borrow_spools", NODE, t_state)
+	_check(not bool(t_refuse.get("ok", false)), "AC3: Choosing unaffordable borrow_spools fails")
+	_check(t_underfunded.is_open(), "AC3: Refusal does not close visit")
+	_check(not t_underfunded.is_claimed(), "AC3: Refusal does not latch visit")
+	_check(t_underfunded.get_wallet().get("gold") == 11, "AC3: Caller gold unchanged on refusal")
+
+	# Alternative trade choice untie_scraps remains claimable
+	var trade_claim := t_underfunded.choose("untie_scraps", NODE, t_state)
+	_check(bool(trade_claim.get("ok", false)), "AC3: untie_scraps succeeds on fresh underfunded visit")
+	_check(t_underfunded.is_claimed(), "AC3: untie_scraps latches visit")
+	# Replay / alternate choice after successful claim fails
+	var after_trade_state := t_underfunded.read_state()
+	var alt_after_claim := t_underfunded.choose("leave", NODE, after_trade_state)
+	_check(not bool(alt_after_claim.get("ok", false)), "AC3: Attempting choice after claim fails")
+
+	# Moonlace with gold=0, scraps=1 (insufficient scraps for 2 scraps toll)
+	var m_underfunded := RunStitchedSewingWaystationEvent.new(
+		"v3_moonlace_darning_parlor",
+		NODE,
+		heroes,
+		satchel,
+		{"gold": 0, "scraps": 1},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var m_prev := m_underfunded.preview_choices()
+	var m_paid := _find_choice(m_prev.get("choices", []), "sew_at_parlor")
+	_check(not bool(m_paid.get("affordable", false)), "AC3: Moonlace sew_at_parlor unaffordable at 1 scrap")
+	_check(not bool(m_paid.get("available", false)), "AC3: sew_at_parlor unavailable when underfunded, even with LOST doll")
+	_check((m_paid.get("service_request", {}) as Dictionary).is_empty(), "AC3: Moonlace service_request empty when underfunded")
+
+	var m_state := m_underfunded.read_state()
+	var m_refuse := m_underfunded.choose("sew_at_parlor", NODE, m_state)
+	_check(not bool(m_refuse.get("ok", false)), "AC3: Moonlace underfunded claim fails")
+	_check(m_underfunded.get_wallet().get("scraps") == 1, "AC3: Moonlace scraps unchanged on refusal")
+
+	# Alternative Leave remains claimable
+	var leave_claim := m_underfunded.leave(NODE, m_state)
+	_check(bool(leave_claim.get("ok", false)), "AC3: Leave succeeds on underfunded visit")
+	_check(m_underfunded.is_claimed(), "AC3: Leave latches visit")
+	_check(m_underfunded.get_wallet().get("scraps") == 1, "AC3: Leave leaves wallet untouched")
+
+
+# AC4: Malformed LOST states, invented IDs, and HP-0 non-LOST survivors are rejected as replacement evidence.
+func _test_ac4_malformed_and_hanging_negative_replacement_cases() -> void:
+	var mend_cost := 2
+	var upgrade_cost := 2
+	var satchel: Array = []
+
+	# Subcase A: Invented IDs (hero_a..hero_d) with genuine LOST shape (lost=true, hp=0, parts={})
+	# Must NOT admit replacement evidence!
+	var invented_party: Array = []
+	var fake_ids := ["hero_a", "hero_b", "hero_c", "hero_d"]
+	invented_party.append({
+		"id": fake_ids[0],
+		"name": "Fake Survivor",
+		"rank": 1,
+		"parts": {
+			"head": _worn("warden_head_pot_helm_bonk", 3, false),
+			"arms": _worn("warden_arms_shield_catch", 3, false),
+			"torso": _worn("warden_torso_iron_challenge", 3, false),
+			"legs": _worn("warden_legs_rim_toss", 3, false),
+		},
+		"hp": 20,
+		"max_hp": 30,
+		"fray": 0,
+		"candle": 4,
+		"patches": 0,
+		"statuses": {},
+		"lost": false,
+	})
+	for i in range(1, 4):
+		invented_party.append({
+			"id": fake_ids[i],
+			"name": "Fake Lost " + fake_ids[i],
+			"rank": i + 1,
+			"parts": {},
+			"hp": 0,
+			"max_hp": 25,
+			"fray": 0,
+			"candle": 0,
+			"patches": 0,
+			"statuses": {},
+			"lost": true,
+		})
+	var ev_invented := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		invented_party,
+		satchel,
+		{"gold": 12, "scraps": 0},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var prev_invented := ev_invented.preview_choices()
+	var paid_invented := _find_choice(prev_invented.get("choices", []), "borrow_spools")
+	_check(not bool(paid_invented.get("available", false)), "AC4: Invented IDs cannot serve as replacement evidence; borrow_spools unavailable")
+	_check((paid_invented.get("service_request", {}) as Dictionary).is_empty(), "AC4: Invented IDs paid choice returns empty service_request")
+
+	# Subcase B: Canonical IDs, but LOST doll is malformed (lost=true, but parts is still equipped)
+	var malformed_lost_party: Array = []
+	var canon_ids := ["warden", "seamstress", "tinker", "lantern_monk"]
+	malformed_lost_party.append({
+		"id": canon_ids[0],
+		"name": "Warden Doll",
+		"rank": 1,
+		"parts": {
+			"head": _worn("warden_head_pot_helm_bonk", 3, false),
+			"arms": _worn("warden_arms_shield_catch", 3, false),
+			"torso": _worn("warden_torso_iron_challenge", 3, false),
+			"legs": _worn("warden_legs_rim_toss", 3, false),
+		},
+		"hp": 20,
+		"max_hp": 30,
+		"fray": 0,
+		"candle": 4,
+		"patches": 0,
+		"statuses": {},
+		"lost": false,
+	})
+	for i in range(1, 4):
+		malformed_lost_party.append({
+			"id": canon_ids[i],
+			"name": canon_ids[i].capitalize() + " Doll",
+			"rank": i + 1,
+			"parts": {
+				"head": _worn("warden_head_pot_helm_bonk", 3, false),
+				"arms": _worn("warden_arms_shield_catch", 3, false),
+				"torso": _worn("warden_torso_iron_challenge", 3, false),
+				"legs": _worn("warden_legs_rim_toss", 3, false),
+			},
+			"hp": 0,
+			"max_hp": 25,
+			"fray": 0,
+			"candle": 0,
+			"patches": 0,
+			"statuses": {},
+			"lost": true,
+		})
+	var ev_malformed := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		malformed_lost_party,
+		satchel,
+		{"gold": 12, "scraps": 0},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var prev_malformed := ev_malformed.preview_choices()
+	var paid_malformed := _find_choice(prev_malformed.get("choices", []), "borrow_spools")
+	_check(not bool(paid_malformed.get("available", false)), "AC4: LOST-but-equipped malformed fixture is not genuine replacement; unavailable")
+
+	# Subcase C: Canonical IDs, but HP=0 non-LOST doll (lost=false, hp=0: Hanging by a Thread)
+	# All dolls have torn parts, scraps=0, satchel empty -> cannot swap, cannot mend, cannot upgrade.
+	# The HP-0 doll has lost=false (Hanging by a Thread). It must NOT count as LOST.
+	var hanging_party: Array = []
+	hanging_party.append({
+		"id": canon_ids[0],
+		"name": "Warden Survivor",
+		"rank": 1,
+		"parts": {
+			"head": _worn("warden_head_pot_helm_bonk", 3, true),
+			"arms": _worn("warden_arms_shield_catch", 3, true),
+			"torso": _worn("warden_torso_iron_challenge", 3, true),
+			"legs": _worn("warden_legs_rim_toss", 3, true),
+		},
+		"hp": 10,
+		"max_hp": 30,
+		"fray": 0,
+		"candle": 4,
+		"patches": 0,
+		"statuses": {},
+		"lost": false,
+	})
+	for i in range(1, 4):
+		hanging_party.append({
+			"id": canon_ids[i],
+			"name": canon_ids[i].capitalize() + " Hanging",
+			"rank": i + 1,
+			"parts": {
+				"head": _worn("warden_head_pot_helm_bonk", 3, true),
+				"arms": _worn("warden_arms_shield_catch", 3, true),
+				"torso": _worn("warden_torso_iron_challenge", 3, true),
+				"legs": _worn("warden_legs_rim_toss", 3, true),
+			},
+			"hp": 0,
+			"max_hp": 25,
+			"fray": 0,
+			"candle": 0,
+			"patches": 0,
+			"statuses": {},
+			"lost": false,
+		})
+	var ev_hanging := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		hanging_party,
+		satchel,
+		{"gold": 12, "scraps": 0},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var prev_hanging := ev_hanging.preview_choices()
+	var paid_hanging := _find_choice(prev_hanging.get("choices", []), "borrow_spools")
+	_check(not bool(paid_hanging.get("available", false)), "AC4: HP-0 non-LOST (Hanging) doll must not count as replacement evidence")
+
+	# Subcase D: Deep copy / detached input / RNG untouched assertions
+	var rng_before := rng.state
+	var good_heroes := _canonical_replacement_party()
+	var ev_rng := RunStitchedSewingWaystationEvent.new(
+		"v3_threadmill_sewing_circle",
+		NODE,
+		good_heroes,
+		satchel,
+		{"gold": 12, "scraps": 0},
+		catalog,
+		mend_cost,
+		upgrade_cost
+	)
+	var prev_rng := ev_rng.preview_choices()
+	_check(rng.state == rng_before, "AC4: RNG state untouched across preview")
+	var claim_rng := ev_rng.choose("borrow_spools", NODE, ev_rng.read_state())
+	_check(rng.state == rng_before, "AC4: RNG state untouched across choose")
+	_check(bool(claim_rng.get("ok", false)), "AC4: Canonical claim succeeds")
