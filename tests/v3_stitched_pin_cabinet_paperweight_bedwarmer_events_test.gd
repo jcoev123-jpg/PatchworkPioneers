@@ -45,8 +45,8 @@ const EXPECTED := {
 		"title": "The Cinder-Brass Bedwarmer",
 		"description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
 		"choices": [
-			{"id": "rent_ember_lid", "text": "Pay 11 gold to borrow glowing embers (requires candle below 100, +22 candle, +5 fray each)", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true}},
-			{"id": "sift_cooling_ashes", "text": "Let the embers cool and sift loose screws (+2 scraps, -12 candle, -6 fray each)", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
+			{"id": "rent_ember_lid", "text": "When the candle gutters, borrow embers; gain light but fray the dolls", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true, "required_candle_bands": ["snuffed", "dark", "gloom"]}},
+			{"id": "sift_cooling_ashes", "text": "Sift cooling ashes for scraps; dim the candle and ease fray", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -441,104 +441,182 @@ func _test_stale_effect_fails() -> void:
 		"the stale-effect flow mutates no snapshot")
 
 
-## Authentic full-candle witness: at candle 100 with gold >= 11, the genuine
-## Bedwarmer record quotes "rent_ember_lid" as unavailable (preserving opening
-## candle/gold and empty fray intent), choose() refuses without consuming the visit
-## or mutating state, and alternate choices ("sift_cooling_ashes" and "leave")
-## remain claimable. At near-full candle 99, embers remain available and claimable.
+## Authentic low-band and disallowed-band Bedwarmer witness (AC2, AC3):
+## At opening candles 0, 25, 26, 50 (snuffed, dark, gloom) with gold >= 11,
+## rent_ember_lid is available in preview and claims once, settling candle 22, 47, 48, 72,
+## -11 gold and +5 fray per active doll.
+## At disallowed opening candles 51, 75, 76, 99, 100 (dim, bright, full candle),
+## rent_ember_lid is unavailable in preview (empty fray intent, base purse), choose() refuses
+## with exact uniform refusal shape without consuming the visit or mutating snapshot/record/RNG,
+## and sift_cooling_ashes (candle >= 12) and leave remain claimable on the same visit.
 func _test_full_candle_bedwarmer() -> void:
 	var event_id := "v3_cinder_brass_bedwarmer"
 	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
 	var record_snapshot: Dictionary = record.duplicate(true)
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 334455
+	var guard_state: int = rng_guard.state
 
-	# 1. Full candle 100 with ample gold (60)
-	var snapshot_100 := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
-	snapshot_100["candle"] = 100
-	var before_100: Dictionary = snapshot_100.duplicate(true)
-	var service_100 := RunStitchedEventConsequence.new(record)
-	_check(service_100.is_valid() and not service_100.is_claimed(),
-		"a fresh full-candle visit opens: " + event_id)
-	var preview_100: Dictionary = service_100.preview(snapshot_100)
-	_check(preview_100.get("ok") == true and int(preview_100.get("candle")) == 100,
-		"full-candle preview succeeds: " + event_id)
-	var rent_entry := _entry(preview_100, "rent_ember_lid")
-	_check(rent_entry.get("available") == false
-		and int(rent_entry.get("candle")) == 100
-		and int(rent_entry.get("candle_delta")) == 22
-		and int(rent_entry.get("gold")) == BASE_GOLD
-		and int(rent_entry.get("gold_delta")) == -11
-		and int(rent_entry.get("fray_delta")) == 5
-		and rent_entry.get("fray") == {},
-		"full candle quotes rent_ember_lid as unavailable with original deltas, base purse, and empty fray")
-	_check(_entry(preview_100, "sift_cooling_ashes").get("available") == true,
-		"sift_cooling_ashes remains available at full candle")
-	_check(_entry(preview_100, "leave").get("available") == true,
-		"leave remains available at full candle")
+	# 1. Low-band boundary positives: candles 0, 25, 26, 50 with exact gold 11
+	var low_band_cases := [
+		{"opening": 0, "expected_candle": 22},
+		{"opening": 25, "expected_candle": 47},
+		{"opening": 26, "expected_candle": 48},
+		{"opening": 50, "expected_candle": 72},
+	]
+	for c_case in low_band_cases:
+		var c: int = c_case["opening"]
+		var exp_candle: int = c_case["expected_candle"]
+		var snapshot := _funded_snapshot(11, BASE_SCRAPS)
+		snapshot["candle"] = c
+		var before: Dictionary = snapshot.duplicate(true)
+		var service := RunStitchedEventConsequence.new(record)
+		_check(service.is_valid() and not service.is_claimed(),
+			"fresh visit opens for low-band bedwarmer: candle " + str(c))
+		var preview: Dictionary = service.preview(snapshot)
+		_check(preview.get("ok") == true and int(preview.get("candle")) == c,
+			"preview ok for low-band bedwarmer: candle " + str(c))
+		var rent := _entry(preview, "rent_ember_lid")
+		_check(rent.get("available") == true
+			and int(rent.get("candle")) == exp_candle
+			and int(rent.get("candle_delta")) == 22
+			and int(rent.get("gold")) == 0
+			and int(rent.get("gold_delta")) == -11
+			and int(rent.get("fray_delta")) == 5
+			and rent.get("fray") == _fray_map(5),
+			"candle " + str(c) + " quotes rent_ember_lid available, settled candle " + str(exp_candle) + ", gold 0, fray +5")
+		var receipt: Dictionary = service.choose("rent_ember_lid", snapshot)
+		var expected_receipt := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": "rent_ember_lid",
+			"target": "party",
+			"hero_id": "",
+			"candle": exp_candle,
+			"fray": _fray_map(5),
+			"gold": 0,
+			"gold_delta": -11,
+		}
+		_check(receipt == expected_receipt,
+			"candle " + str(c) + " claims rent_ember_lid settling candle " + str(exp_candle) + ", gold 0, fray +5")
+		_check(service.is_claimed() and not service.is_valid(),
+			"visit latches after low-band claim at candle " + str(c))
+		_check(service.choose("rent_ember_lid", snapshot) == _refusal(c),
+			"replay refusal at candle " + str(c))
+		_check(service.choose("leave", snapshot) == _refusal(c),
+			"spent visit refuses alternative at candle " + str(c))
+		_check(snapshot == before,
+			"claim mutates no caller snapshot at candle " + str(c))
+		_check(record == record_snapshot,
+			"claim mutates no source record at candle " + str(c))
+		_check(rng_guard.state == guard_state,
+			"claim draws no RNG at candle " + str(c))
 
-	# choose("rent_ember_lid") refuses at candle 100 without latching
-	var refusal: Dictionary = service_100.choose("rent_ember_lid", snapshot_100)
-	_check(refusal == _refusal(100),
-		"rent_ember_lid is refused at candle 100 with uniform refusal shape")
-	_check(service_100.is_valid() and not service_100.is_claimed(),
-		"refusal on full candle leaves the visit unclaimed and open")
-	_check(snapshot_100 == before_100,
-		"refusal on full candle mutates no caller snapshot")
-	_check(record == record_snapshot,
-		"refusal on full candle mutates no source record")
+	# 2. Disallowed-band negatives: candles 51, 75, 76, 99, 100 with ample gold 60
+	var disallowed_candles := [51, 75, 76, 99, 100]
+	for c in disallowed_candles:
+		var snapshot := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		snapshot["candle"] = c
+		var before: Dictionary = snapshot.duplicate(true)
+		var service := RunStitchedEventConsequence.new(record)
+		_check(service.is_valid() and not service.is_claimed(),
+			"fresh visit opens for disallowed-band bedwarmer: candle " + str(c))
+		var preview: Dictionary = service.preview(snapshot)
+		_check(preview.get("ok") == true and int(preview.get("candle")) == c,
+			"preview ok for disallowed-band bedwarmer: candle " + str(c))
+		var rent := _entry(preview, "rent_ember_lid")
+		_check(rent.get("available") == false
+			and int(rent.get("candle")) == c
+			and int(rent.get("candle_delta")) == 22
+			and int(rent.get("gold")) == BASE_GOLD
+			and int(rent.get("gold_delta")) == -11
+			and int(rent.get("fray_delta")) == 5
+			and rent.get("fray") == {},
+			"disallowed candle " + str(c) + " quotes rent_ember_lid unavailable with base purse and empty fray")
+		_check(_entry(preview, "sift_cooling_ashes").get("available") == true,
+			"sift_cooling_ashes remains available at disallowed candle " + str(c))
+		_check(_entry(preview, "leave").get("available") == true,
+			"leave remains available at disallowed candle " + str(c))
 
-	# Alternative choice succeeds on the same visit after refusal
-	var sift_receipt: Dictionary = service_100.choose("sift_cooling_ashes", snapshot_100)
-	_check(sift_receipt.get("ok") == true
-		and int(sift_receipt.get("candle")) == 88
-		and int(sift_receipt.get("scraps")) == BASE_SCRAPS + 2
-		and sift_receipt.get("fray") == _fray_map(-6),
-		"sift_cooling_ashes claims successfully on the same visit after rent_ember_lid refusal")
-	_check(service_100.is_claimed() and not service_100.is_valid(),
-		"visit latches once after alternative claim")
+		# choose("rent_ember_lid") refuses without latching or mutating state/RNG
+		var refusal: Dictionary = service.choose("rent_ember_lid", snapshot)
+		_check(refusal == _refusal(c),
+			"rent_ember_lid is refused at disallowed candle " + str(c) + " with uniform refusal shape")
+		_check(service.is_valid() and not service.is_claimed(),
+			"refusal on disallowed candle " + str(c) + " leaves visit unclaimed and open")
+		_check(snapshot == before,
+			"refusal on disallowed candle " + str(c) + " mutates no caller snapshot")
+		_check(record == record_snapshot,
+			"refusal on disallowed candle " + str(c) + " mutates no source record")
+		_check(rng_guard.state == guard_state,
+			"refusal on disallowed candle " + str(c) + " draws no RNG")
 
-	# Independent full-candle visit where leave succeeds after refusal
-	var service_leave := RunStitchedEventConsequence.new(record)
-	var snapshot_leave := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
-	snapshot_leave["candle"] = 100
-	_check(service_leave.choose("rent_ember_lid", snapshot_leave) == _refusal(100),
-		"rent_ember_lid refusal on second independent visit")
-	var leave_receipt: Dictionary = service_leave.choose("leave", snapshot_leave)
-	var expected_leave := {
-		"ok": true,
-		"event_id": event_id,
-		"choice_id": "leave",
-		"target": "party",
-		"hero_id": "",
-		"candle": 100,
-		"fray": {},
-	}
-	_check(leave_receipt == expected_leave,
-		"leave succeeds after rent_ember_lid refusal at candle 100")
+		# Alternative choice (sift_cooling_ashes) succeeds on the same visit after refusal
+		var sift_receipt: Dictionary = service.choose("sift_cooling_ashes", snapshot)
+		var expected_sift := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": "sift_cooling_ashes",
+			"target": "party",
+			"hero_id": "",
+			"candle": c - 12,
+			"fray": _fray_map(-6),
+			"scraps": BASE_SCRAPS + 2,
+			"scraps_delta": 2,
+		}
+		_check(sift_receipt == expected_sift,
+			"sift_cooling_ashes claims successfully on same visit after rent refusal at candle " + str(c))
+		_check(service.is_claimed() and not service.is_valid(),
+			"visit latches after sift claim at candle " + str(c))
 
-	# 2. Near-full candle 99 with exact gold (11)
-	var snapshot_99 := _funded_snapshot(11, BASE_SCRAPS)
-	snapshot_99["candle"] = 99
-	var before_99: Dictionary = snapshot_99.duplicate(true)
-	var service_99 := RunStitchedEventConsequence.new(record)
-	var preview_99: Dictionary = service_99.preview(snapshot_99)
-	var rent_99 := _entry(preview_99, "rent_ember_lid")
-	_check(rent_99.get("available") == true
-		and int(rent_99.get("candle")) == 100
-		and int(rent_99.get("gold")) == 0
-		and rent_99.get("fray") == _fray_map(5),
-		"candle 99 with gold 11 quotes rent_ember_lid available, clamped candle 100, gold 0, fray +5")
-	var receipt_99: Dictionary = service_99.choose("rent_ember_lid", snapshot_99)
-	_check(receipt_99.get("ok") == true
-		and int(receipt_99.get("candle")) == 100
-		and int(receipt_99.get("gold")) == 0
-		and receipt_99.get("fray") == _fray_map(5),
-		"candle 99 with gold 11 claims rent_ember_lid settling clamped candle 100, gold 0, fray +5")
-	_check(service_99.is_claimed() and not service_99.is_valid(),
-		"visit latches after funded near-full claim")
-	_check(service_99.choose("rent_ember_lid", snapshot_99) == _refusal(99),
-		"replay refusal on near-full claim")
-	_check(snapshot_99 == before_99,
-		"claim mutates no caller snapshot")
+		# Independent visit: leave succeeds after rent refusal
+		var service_leave := RunStitchedEventConsequence.new(record)
+		var snapshot_leave := _funded_snapshot(BASE_GOLD, BASE_SCRAPS)
+		snapshot_leave["candle"] = c
+		_check(service_leave.choose("rent_ember_lid", snapshot_leave) == _refusal(c),
+			"rent_ember_lid refusal on independent visit at candle " + str(c))
+		var leave_receipt: Dictionary = service_leave.choose("leave", snapshot_leave)
+		var expected_leave := {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": "leave",
+			"target": "party",
+			"hero_id": "",
+			"candle": c,
+			"fray": {},
+		}
+		_check(leave_receipt == expected_leave,
+			"leave succeeds after rent refusal at candle " + str(c))
+		_check(service_leave.is_claimed() and not service_leave.is_valid(),
+			"visit latches after leave claim at candle " + str(c))
+
+	# 3. Insufficient gold (10 vs required 11) within a low candle band (candle 25)
+	var snapshot_underfunded := _funded_snapshot(10, BASE_SCRAPS)
+	snapshot_underfunded["candle"] = 25
+	var before_underfunded: Dictionary = snapshot_underfunded.duplicate(true)
+	var service_underfunded := RunStitchedEventConsequence.new(record)
+	var preview_underfunded: Dictionary = service_underfunded.preview(snapshot_underfunded)
+	var rent_underfunded := _entry(preview_underfunded, "rent_ember_lid")
+	_check(rent_underfunded.get("available") == false
+		and int(rent_underfunded.get("candle")) == 25
+		and int(rent_underfunded.get("gold")) == 10
+		and rent_underfunded.get("fray") == {},
+		"insufficient gold 10 at candle 25 quotes rent_ember_lid unavailable with base purse and empty fray")
+	_check(_entry(preview_underfunded, "sift_cooling_ashes").get("available") == true,
+		"sift_cooling_ashes remains available with insufficient gold at candle 25")
+	_check(_entry(preview_underfunded, "leave").get("available") == true,
+		"leave remains available with insufficient gold at candle 25")
+	_check(service_underfunded.choose("rent_ember_lid", snapshot_underfunded) == _refusal(25),
+		"rent_ember_lid refused with insufficient gold 10 at candle 25")
+	_check(service_underfunded.is_valid() and not service_underfunded.is_claimed(),
+		"visit remains unclaimed after insufficient-gold refusal at candle 25")
+	_check(snapshot_underfunded == before_underfunded,
+		"snapshot unchanged after insufficient-gold refusal at candle 25")
+	var sift_underfunded: Dictionary = service_underfunded.choose("sift_cooling_ashes", snapshot_underfunded)
+	_check(sift_underfunded.get("ok") == true and int(sift_underfunded.get("candle")) == 13,
+		"sift_cooling_ashes succeeds on same visit after insufficient-gold refusal at candle 25")
+	_check(service_underfunded.is_claimed() and not service_underfunded.is_valid(),
+		"visit latches on sift after insufficient-gold refusal")
 
 
 ## Authentic full-candle witness for the Pin Cabinet (AC3): at candle 100 with scraps >= 2,

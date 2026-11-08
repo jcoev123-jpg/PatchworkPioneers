@@ -6176,28 +6176,43 @@ func _test_require_candle_room_shipped_bedwarmer() -> void:
 		"AC3: leave succeeds after refusal at candle 100")
 	_check(svc_leave.is_claimed() and not svc_leave.is_valid(), "AC3: visit latches on leave")
 
-	# AC2: Candle 99 and gold >= 11 (tested with exact gold 11)
+	# AC2: Candle 99 and gold >= 11 (tested with exact gold 11): unavailable due to required_candle_bands
 	var snap_99 := _gold_scraps_four(99, 4, 11, [10, 20, 30, 40])
 	var before_99: Dictionary = snap_99.duplicate(true)
 	var svc_99 := RunStitchedEventConsequence.new(bedwarmer)
 	var prev_99: Dictionary = svc_99.preview(snap_99)
 	var rent_99 := _entry(prev_99, "rent_ember_lid")
-	_check(rent_99.get("available") == true
-		and int(rent_99.get("candle")) == 100
-		and int(rent_99.get("gold")) == 0
-		and rent_99.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
-		"AC2: candle 99 with gold 11 quotes available, clamped candle 100, gold 0, fray +5")
-	var receipt_99: Dictionary = svc_99.choose("rent_ember_lid", snap_99)
-	_check(receipt_99.get("ok") == true
-		and int(receipt_99.get("candle")) == 100
-		and int(receipt_99.get("gold")) == 0
-		and int(receipt_99.get("gold_delta")) == -11
-		and receipt_99.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
-		"AC2: candle 99 with gold 11 claims rent_ember_lid, clamped candle 100, gold 0, fray +5")
-	_check(svc_99.is_claimed() and not svc_99.is_valid(), "AC2: latched once")
-	_assert_rejected(svc_99, "rent_ember_lid", snap_99, 99, "AC2: replay refusal")
-	_assert_rejected(svc_99, "leave", snap_99, 99, "AC2: spent visit refuses alternative")
+	_check(rent_99.get("available") == false
+		and int(rent_99.get("candle")) == 99
+		and int(rent_99.get("gold")) == 11
+		and rent_99.get("fray") == {},
+		"AC2: candle 99 with gold 11 quotes unavailable due to candle band")
+	_assert_rejected(svc_99, "rent_ember_lid", snap_99, 99, "AC2: candle 99 rejection")
+	_check(svc_99.is_valid() and not svc_99.is_claimed(), "AC2: visit remains open after candle 99 refusal")
 	_check(snap_99 == before_99, "AC2: snapshot undisturbed")
+
+	# AC2: Candle 50 and gold >= 11 (tested with exact gold 11): top of gloom band
+	var snap_50 := _gold_scraps_four(50, 4, 11, [10, 20, 30, 40])
+	var before_50: Dictionary = snap_50.duplicate(true)
+	var svc_50 := RunStitchedEventConsequence.new(bedwarmer)
+	var prev_50: Dictionary = svc_50.preview(snap_50)
+	var rent_50 := _entry(prev_50, "rent_ember_lid")
+	_check(rent_50.get("available") == true
+		and int(rent_50.get("candle")) == 72
+		and int(rent_50.get("gold")) == 0
+		and rent_50.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 50 with gold 11 quotes available, settled candle 72, gold 0, fray +5")
+	var receipt_50: Dictionary = svc_50.choose("rent_ember_lid", snap_50)
+	_check(receipt_50.get("ok") == true
+		and int(receipt_50.get("candle")) == 72
+		and int(receipt_50.get("gold")) == 0
+		and int(receipt_50.get("gold_delta")) == -11
+		and receipt_50.get("fray") == {"warden": 5, "seamstress": 5, "tinker": 5, "button_golem": 5},
+		"AC2: candle 50 with gold 11 claims rent_ember_lid, settled candle 72, gold 0, fray +5")
+	_check(svc_50.is_claimed() and not svc_50.is_valid(), "AC2: latched once")
+	_assert_rejected(svc_50, "rent_ember_lid", snap_50, 50, "AC2: replay refusal")
+	_assert_rejected(svc_50, "leave", snap_50, 50, "AC2: spent visit refuses alternative")
+	_check(snap_50 == before_50, "AC2: snapshot undisturbed")
 
 	# AC2: Candle 40 and gold 60 yields candle 62 and gold 49
 	var snap_40 := _gold_scraps_four(40, 4, 60, [10, 20, 30, 40])
