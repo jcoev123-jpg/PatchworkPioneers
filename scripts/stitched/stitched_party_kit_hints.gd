@@ -36,9 +36,50 @@ static func tooltip(hero_id: String, kits_source: Variant = null) -> String:
 			return ""
 		seen_ids[id] = true
 		seen_names[name] = true
-		lines.append("%s — %s · %s" % [slot.capitalize(), name, SIDE_LABELS[side]])
+		lines.append("%s — %s · %s · %s" % [slot.capitalize(), name, SIDE_LABELS[side], _effect_summary(record)])
 	return "\n".join(lines)
 
+
+## Only describe the validated bare signature, never a socketed patch or a
+## forecast. Slot/side/identity validation happens before any line is returned.
+## Effect ordering follows the shared validator's key set, not JSON key order.
+static func _effect_summary(ability: Dictionary) -> String:
+	var actions: Array[String] = []
+	if ability["dmg"][1] > 0:
+		actions.append("strike")
+	var effects: Dictionary = ability["effects"]
+	for key in StitchedParts.EFFECT_KEYS:
+		if key == "duration" or not effects.has(key):
+			continue
+		var verb := ""
+		match key:
+			"mark": verb = "mark"
+			"guard": verb = "guard"
+			"heal": verb = "mend"
+			"weak": verb = "weaken"
+			"exposed": verb = "expose"
+			"bleed": verb = "bleed"
+			"tangled": verb = "tangle"
+			"blind": verb = "blind"
+			"stun": verb = "stun"
+			"thorns": verb = "return harm"
+			"push": verb = "push back"
+			"pull": verb = "pull forward"
+			"dodge": verb = "evade"
+			"riposte": verb = "counterattack"
+			_: verb = "apply " + key.replace("_", " ")
+		actions.append(verb)
+	var phrase := "use this move"
+	if actions.size() == 1:
+		phrase = actions[0]
+	elif actions.size() > 1:
+		phrase = ", ".join(actions.slice(0, actions.size() - 1)) + " and " + actions[-1]
+	if ability["multi"]:
+		match ability["target_side"]:
+			"enemy": phrase += " several eligible foes"
+			"ally": phrase += " several eligible allies"
+			_: phrase += " across eligible targets"
+	return "Can " + phrase
 
 ## A complete, independently admitted four-doll lineup gets one authenticated
 ## launch-only boolean per fixed S14 slot. A forged or partial catalog yields no
