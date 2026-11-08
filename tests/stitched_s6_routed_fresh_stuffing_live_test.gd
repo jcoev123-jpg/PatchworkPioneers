@@ -1,7 +1,9 @@
 extends "res://tests/stitched_s6_routed_vis_a_test.gd"
 ## Earned wallets and genuine generated Shops, driven through New Run controls.
 
-const SAVE_PATH := "user://stitched_s6_routed_stuffing_live.save"
+## Lane suites can execute this same test in different Godot processes at once;
+## unique public save paths prevent cross-process seals from racing via user://.
+var SAVE_PATH := "user://stitched_s6_routed_stuffing_live_%d.save" % OS.get_process_id()
 const LiveWitness := preload("res://tests/live_witness.gd")
 var wounded_purchases := 0
 
