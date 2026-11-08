@@ -42,7 +42,15 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		# hunts the closest already-Marked legal rank before falling back to the
 		# ordinary nearest-legal-rank order. Everything else keeps that same order.
 		var scan_ranks: Array[int] = [1, 2, 3, 4]
-		if str(ability.get("target_side", "")) == "enemy" \
+		if _wards_wounded_ally(actor, ability):
+			# The Needle Marshal's Iron Discipline is a single ally ward chosen by need,
+			# never by the nearest rank. An ineligible line falls through to the next
+			# authored action exactly like any other ability with no legal target.
+			var ward_rank := _wounded_ally_rank(battle, actor, ability)
+			if ward_rank <= 0:
+				continue
+			scan_ranks = [ward_rank]
+		elif str(ability.get("target_side", "")) == "enemy" \
 				and int(ability.get("effects", {}).get("pull", 0)) == 1:
 			scan_ranks = [4, 3, 2, 1]
 		elif _hunts_mark(ability):
@@ -101,3 +109,45 @@ static func _nearest_marked_rank(
 			if int(target.get("statuses", {}).get("mark", 0)) > 0:
 				return rank
 	return 0
+
+
+## True only for the Needle Marshal's own authored Iron Discipline. Every other ability on
+## every other foe keeps the ordinary round-rotated first-legal-rank order.
+static func _wards_wounded_ally(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "needle_marshal" \
+		and str(ability.get("id", "")) == "iron_discipline"
+
+
+## Legal living foe rank with the smallest current HP/max_hp fraction; exact ties keep the
+## lower (closer) rank. Fractions compare with integer cross-products so no float rounding
+## can decide a ward. Dead, lost, empty and scrap-heap ranks are never ward candidates.
+## Read-only: it asks the same legality authority and never mutates the battle or draws RNG.
+static func _wounded_ally_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var best_rank := 0
+	var best_hp := 0
+	var best_max := 1
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			if not _is_wardable_ally(target):
+				continue
+			var hp := int(target["hp"])
+			var maximum := int(target["max_hp"])
+			# hp / maximum < best_hp / best_max, without floats. Equal ratios keep the
+			# earlier, lower rank already recorded.
+			if best_rank == 0 or hp * best_max < best_hp * maximum:
+				best_rank = rank
+				best_hp = hp
+				best_max = maximum
+	return best_rank
+
+
+## A ward may only land on the caster's own living line: never a hero, scrap heap or the
+## already-fallen.
+static func _is_wardable_ally(unit: Dictionary) -> bool:
+	return str(unit.get("side", "")) == "foe" \
+		and not bool(unit.get("dead", false)) \
+		and not bool(unit.get("lost", false)) \
+		and int(unit.get("hp", 0)) > 0 \
+		and int(unit.get("max_hp", 0)) > 0
