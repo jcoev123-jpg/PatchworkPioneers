@@ -31,6 +31,22 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 		result["stun"] = true
 		return result
 	var authored: Array = actor.get("abilities", [])
+	# Emergency: the Moth Queen's already-authored Moth Veil is a defensive answer to a
+	# critically wounded escort, and it outranks her ordinary round rotation. Only the
+	# authoritative living Queen can reach this branch, and the veil still has to launch
+	# legally from her real rank and find a legal living ally through the same read-only
+	# authority as every ordinary candidate below.
+	if _is_moth_queen(actor):
+		var veil := _authored_ability(actor, "moth_veil")
+		if not veil.is_empty() and _needs_emergency_veil(battle, actor, veil) \
+				and StitchedParts.ranks_allowed(int(veil["launch_mask"]), int(actor["rank"])) \
+				and battle._self_move_gate(actor, veil).is_empty():
+			for rank in range(1, 5):
+				var allies: Array = battle._legal_targets(actor, veil, rank)
+				if allies.is_empty():
+					continue
+				_record_choice(result, veil, allies, rank)
+				return result
 	var offset := (battle.round_number() - 1) % maxi(1, authored.size())
 	for step in range(authored.size()):
 		var ability: Dictionary = authored[(offset + step) % authored.size()]
@@ -85,31 +101,94 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
 				continue
-			var ranks: Array[int] = []
-			for target in targets:
-				var target_rank := int(target["rank"])
-				if not ranks.has(target_rank):
-					ranks.append(target_rank)
-			ranks.sort()
-			result["ability_id"] = str(ability["id"])
-			result["ability_name"] = str(ability["name"])
-			result["ability_kind"] = str(ability.get("kind", ""))
-			result["target_rank"] = rank
-			result["target_side"] = str(targets[0]["side"])
-			result["affected_ranks"] = ranks
-			result["multi"] = bool(ability["multi"])
-			# Authored, unmodified numbers only; never a hit/damage forecast.
-			# Deep copies prevent callers from editing the live ability catalog.
-			var authored_damage: Array = ability.get("dmg", [0, 0])
-			var authored_effects: Dictionary = ability.get("effects", {})
-			result["base_acc"] = int(ability.get("acc", 0))
-			result["base_damage"] = authored_damage.duplicate(true)
-			result["base_crit"] = int(ability.get("crit", 0))
-			result["base_mark_damage"] = int(ability.get("mark_damage", 0))
-			result["base_effects"] = authored_effects.duplicate(true)
-			result["pass"] = false
+			_record_choice(result, ability, targets, rank)
 			return result
 	return result
+
+
+## Writes the shared normalized projection fields for one chosen ability and its real
+## legal targets. Authored, unmodified numbers only; deep copies prevent callers from
+## editing the live ability catalog.
+static func _record_choice(
+	result: Dictionary, ability: Dictionary, targets: Array, rank: int
+) -> void:
+	var ranks: Array[int] = []
+	for target in targets:
+		var target_rank := int(target["rank"])
+		if not ranks.has(target_rank):
+			ranks.append(target_rank)
+	ranks.sort()
+	result["ability_id"] = str(ability["id"])
+	result["ability_name"] = str(ability["name"])
+	result["ability_kind"] = str(ability.get("kind", ""))
+	result["target_rank"] = rank
+	result["target_side"] = str(targets[0]["side"])
+	result["affected_ranks"] = ranks
+	result["multi"] = bool(ability["multi"])
+	var authored_damage: Array = ability.get("dmg", [0, 0])
+	var authored_effects: Dictionary = ability.get("effects", {})
+	result["base_acc"] = int(ability.get("acc", 0))
+	result["base_damage"] = authored_damage.duplicate(true)
+	result["base_crit"] = int(ability.get("crit", 0))
+	result["base_mark_damage"] = int(ability.get("mark_damage", 0))
+	result["base_effects"] = authored_effects.duplicate(true)
+	result["pass"] = false
+
+
+## True only for the canonical Moth Queen. Every other foe keeps its existing priorities.
+static func _is_moth_queen(actor: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "moth_queen"
+
+
+## The Queen's own authored ability with this id, unchanged from the live kit ({} when the
+## record does not carry it).
+static func _authored_ability(actor: Dictionary, ability_id: String) -> Dictionary:
+	for ability in actor.get("abilities", []):
+		if str(ability.get("id", "")) == ability_id:
+			return ability
+	return {}
+
+
+## Emergency veil trigger: at least one OTHER living, non-LOST foe at positive HP no more
+## than half its own maximum and with no active temporary Dodge buff. The passed ability's
+## own ally target authority is asked rank by rank, so a dead escort, a LOST unit, a scrap
+## heap or a missing rank can never satisfy it. Read-only: no RNG, no mutation.
+static func _needs_emergency_veil(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> bool:
+	var queen_id := str(actor.get("id", ""))
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			if str(target.get("id", "")) == queen_id:
+				continue
+			if _is_critically_wounded_escort(target):
+				return true
+	return false
+
+
+## A living foe escort at 2*HP <= max HP that is not already sheltered by temporary Dodge.
+## Dead, LOST and empty records are excluded before any HP comparison.
+static func _is_critically_wounded_escort(unit: Dictionary) -> bool:
+	if str(unit.get("side", "")) != "foe":
+		return false
+	if bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+		return false
+	var hp := int(unit.get("hp", 0))
+	var maximum := int(unit.get("max_hp", 0))
+	if hp <= 0 or maximum <= 0:
+		return false
+	if 2 * hp > maximum:
+		return false
+	return not _has_active_dodge_buff(unit)
+
+
+## A temporary Dodge veil is active only while it still carries amount and turns. The
+## permanent `dodge` stat is never consulted: it is not the authored veil.
+static func _has_active_dodge_buff(unit: Dictionary) -> bool:
+	var buff: Variant = unit.get("dodge_buff", {})
+	if not buff is Dictionary or buff.is_empty():
+		return false
+	return int(buff.get("amount", 0)) > 0 and int(buff.get("turns", 0)) > 0
 
 
 ## True for a single-target attack on the other side that is authored with a Mark bonus.

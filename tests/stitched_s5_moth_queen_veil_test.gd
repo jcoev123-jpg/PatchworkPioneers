@@ -60,6 +60,10 @@ func _initialize() -> void:
 		_test_combat(catalog, PAIR)
 		_test_combat(catalog, TRIO)
 		_test_launch_refusal(catalog)
+		_test_emergency_priority(catalog, PAIR, "scissor_crab", "rank-one")
+		_test_emergency_priority(catalog, ["scissor_crab", "moth_scribe", "moth_queen"],
+			"scissor_crab", "rank-three")
+		_test_emergency_negatives(catalog)
 	if failures.is_empty():
 		print("stitched_s5_moth_queen_veil_test: PASS (", checks, " checks)")
 	else:
@@ -514,3 +518,671 @@ func _test_launch_refusal(catalog: Dictionary) -> void:
 	var valid := battle.use_foe_ability("queen_devour", 1)
 	_expect(valid.get("ok", false) and valid.get("ability") == "queen_devour",
 		"AC4: the refused veil leaves the Queen's real turn intact")
+## ------------------------------------------------------------------ Emergency escort veil.
+##
+## A critically wounded living escort makes the real Queen project Moth Veil ahead of the
+## round's ordinary rotation. Every wound below is dealt by an authentic hero part attack in
+## the seeded battle; nothing here edits _units or fabricates an effect receipt.
+
+func _test_emergency_priority(catalog: Dictionary, ids: Array, escort_id: String, note: String) -> void:
+	var chosen := _find_emergency_seed(catalog, ids, escort_id)
+	_expect(chosen > 0, "AC1/AC2: a bounded seeded %s Queen battle honestly wounds an escort" % note)
+	if chosen == 0:
+		return
+	var first := _emergency_script(catalog, chosen, ids, escort_id, true)
+	_expect(not first.is_empty(), "AC1/AC2: the real %s emergency Veil script completes" % note)
+	if first.is_empty():
+		return
+	recording = false
+	var replay := _emergency_script(catalog, chosen, ids, escort_id, true)
+	recording = true
+	_expect(not replay.is_empty() and first == replay,
+		"AC4: identical seed, wounds, legal turns and cast replay the %s intent, receipts, state and RNG" % note)
+	_driver_emergency(catalog, chosen, ids, escort_id, note)
+
+
+## The real mounted battle screen's own foe driver must commit the same emergency Veil, not
+## only the read-only projection: the screen already dispatches choose() through
+## StitchedRules.use_foe_ability().
+func _driver_emergency(catalog: Dictionary, seed_value: int, ids: Array, escort_id: String,
+		note: String) -> void:
+	var stage := StitchedBattleScreen.new()
+	var started := stage.begin(_screen_config(catalog, seed_value, ids))
+	_expect(started and stage.battle != null,
+		"AC1: the live battle screen accepts the %s emergency fight" % note)
+	if stage.battle == null:
+		stage.free()
+		return
+	var setup_receipts: Array = []
+	if not _wound_escort(stage.battle, escort_id, setup_receipts) \
+			or not _to_queen(stage.battle, 3, setup_receipts):
+		_expect(false, "AC1: the live screen fight reaches the %s emergency Queen turn" % note)
+		stage.free()
+		return
+	stage._drive_foes()
+	var veiled := false
+	for receipt in stage.receipts:
+		if str(receipt.get("actor", "")) != "moth_queen" \
+				or str(receipt.get("ability", "")) != "moth_veil":
+			continue
+		veiled = bool(receipt.get("ok", false)) \
+			and receipt.get("results", []).size() == ids.size()
+	_expect(veiled, "AC1/AC2: the live foe driver commits the %s emergency Moth Veil" % note)
+	stage.free()
+
+
+func _screen_config(catalog: Dictionary, seed_value: int, ids: Array) -> Dictionary:
+	var preview: Variant = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW))
+	if not preview is Dictionary:
+		return {}
+	var foes: Array = []
+	for enemy_id in ids:
+		var foe := StitchedEnemyCatalog.foe_for(catalog, str(enemy_id))
+		if foe.is_empty():
+			return {}
+		foes.append(foe)
+	var parts: Array = preview["parts"].duplicate(true)
+	parts.append_array(catalog["parts"])
+	return {"mode": "stitched", "seed": seed_value, "candle": 100,
+		"heroes": preview["heroes"].duplicate(true), "parts": parts, "foes": foes}
+
+
+func _find_emergency_seed(catalog: Dictionary, ids: Array, escort_id: String) -> int:
+	recording = false
+	var found := 0
+	for seed_value in range(1, 49):
+		if not _emergency_script(catalog, seed_value, ids, escort_id, false).is_empty():
+			found = seed_value
+			break
+	recording = true
+	return found
+
+
+## One complete emergency script: authentic hero hits wound a real escort to at most half HP,
+## the Queen's live projection then prioritises Veil over its rotation, the real cast veils
+## every living foe, an already-veiled escort drops the emergency, and each veil expires at
+## the recipient's own public turn.
+func _emergency_script(catalog: Dictionary, seed_value: int, ids: Array, escort_id: String,
+		deep: bool) -> Dictionary:
+	var battle := _battle(catalog, seed_value, ids)
+	if battle == null:
+		return {}
+	var receipts: Array = []
+	var wound := _wound_escort(battle, escort_id, receipts)
+	if not bool(wound.get("ok", false)):
+		return {}
+	if not _to_queen(battle, 3, receipts):
+		return {}
+	var queen := battle.get_unit("moth_queen")
+	var escort := battle.get_unit(escort_id)
+	var round_value := battle.round_number()
+	var expected := _expected_rotation(battle, queen)
+	if expected.is_empty() or expected == "moth_veil":
+		return {}
+	if int(queen.get("rank", 0)) not in [1, 3]:
+		return {}
+	if not _is_critical_escort(escort):
+		return {}
+	_expect(int(wound.get("hits", 0)) > 0,
+		"AC1: authentic legal hero hits, not a forged wound, lowered the real escort")
+	_expect(round_value >= 1 and round_value <= 3,
+		"AC1: the emergency turn is a real round where the ordinary rotation is not Veil")
+	var occupied := _occupied_foe_ranks(battle, ids)
+	if occupied.is_empty():
+		return {}
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, queen)
+	_expect(snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC4: the emergency projection mutates no state and draws no RNG")
+	_expect(not intent.is_empty() and not bool(intent.get("pass", true))
+		and str(intent.get("ability_id", "")) == "moth_veil"
+		and str(intent.get("ability_name", "")) == "Moth Veil"
+		and str(intent.get("ability_kind", "")) == "buff"
+		and str(intent.get("target_side", "")) == "foe"
+		and intent.get("affected_ranks") == occupied
+		and bool(intent.get("multi", false))
+		and int(intent.get("base_acc", 0)) == 100
+		and intent.get("base_damage") == [0, 0]
+		and int(intent.get("base_crit", -1)) == 0
+		and intent.get("base_effects") == {"dodge": 8, "duration": 1},
+		"AC1: critically wounded escort makes the real Queen project Moth Veil on every living foe rank")
+	_expect(str(intent.get("ability_id", "")) != expected,
+		"AC1: Veil outranks the ordinary round rotation (%s, not %s)" % [expected, intent.get("ability_id")])
+	_expect(int(intent.get("target_rank", 0)) == 1,
+		"AC1: the projected Veil aims at the first legal ally rank")
+	if str(intent.get("ability_id", "")) != "moth_veil":
+		return {}
+	var live_probe := intent.duplicate(true)
+	live_probe["base_effects"]["dodge"] = 99
+	_expect(StitchedFoeIntent.choose(battle, queen).get("base_effects") == {"dodge": 8, "duration": 1}
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC4: editing a detached emergency projection cannot edit the live ability or battle")
+
+	var foes_before: Array = battle.get_foes()
+	var base_dodge: Dictionary = {}
+	for foe in foes_before:
+		base_dodge[str(foe["id"])] = int(foe["dodge"])
+	var hero_dodge: Dictionary = {}
+	for hero in battle.get_heroes():
+		hero_dodge[str(hero["id"])] = StitchedRules.effective_dodge(hero)
+	var order_before := battle.turn_order()
+	var receipt: Dictionary = battle.use_foe_ability("moth_veil", int(intent["target_rank"]))
+	receipts.append(receipt)
+	if not _expect(receipt.get("ok", false) and receipt.get("actor") == "moth_queen"
+		and receipt.get("ability") == "moth_veil" and receipt.get("results", []).size() == ids.size(),
+		"AC2: the projected Moth Veil really commits once for every living foe"):
+		return {}
+	_expect(battle.turn_order() == order_before and battle.turn_order().count("moth_queen") == 2,
+		"AC2: the emergency cast leaves the seeded order and both boss turns intact")
+	var ranks: Array = []
+	for result in receipt["results"]:
+		ranks.append(int(result["target_rank"]))
+		var old: Dictionary = {}
+		for foe in foes_before:
+			if str(foe["id"]) == str(result["target"]):
+				old = foe
+		_expect(not old.is_empty() and int(old["rank"]) == int(result["target_rank"]),
+			"AC2: each veil receipt names the real foe in its own rank")
+		var now := battle.get_unit(str(result["target"]))
+		_expect(result.get("target_side") == "foe" and result.get("hit") == true
+			and int(result.get("damage", -1)) == 0 and int(result.get("target_hp", -1)) == int(old["hp"])
+			and not result.has("roll") and result.get("crit") == false,
+			"AC2: veil remains a 0-damage hit that never rolls")
+		_expect(result.get("statuses") == [{"status": "dodge", "amount": 8, "duration": 1}],
+			"AC2: the receipt reports exactly Dodge 8 / duration 1")
+		_expect(now.get("dodge_buff") == {"amount": 8, "turns": 1, "skip": false},
+			"AC2: the temporary buff is installed with the self-cast skip spent")
+		_expect(int(now["hp"]) == int(old["hp"]) and int(now["rank"]) == int(old["rank"])
+			and int(now["dodge"]) == int(old["dodge"])
+			and StitchedRules.effective_dodge(now) == int(old["dodge"]) + 8
+			and not now["statuses"].has("dodge"),
+			"AC2: the veil raises effective Dodge by eight without damage, rank or permanent status")
+		_expect(now["abilities"] == old["abilities"],
+			"AC2: the cast never rewrites an authored ability")
+	ranks.sort()
+	_expect(ranks == occupied, "AC2: every occupied foe rank gains the veil and no empty heap does")
+	for hero in battle.get_heroes():
+		_expect(hero["dodge_buff"].is_empty()
+			and StitchedRules.effective_dodge(hero) == int(hero_dodge.get(str(hero["id"]), -1))
+			and not hero["statuses"].has("dodge"), "AC2: the emergency veil never buffs a doll")
+	if deep:
+		_expect(battle.state_snapshot() != snapshot, "AC2: the committed cast is a real state change")
+
+	# The same real battle now carries an already-veiled, still-wounded escort: the emergency
+	# must be off at the Queen's next turn, restoring the ordinary round rotation.
+	var second_queen := _to_queen(battle, 3, receipts)
+	if not second_queen:
+		return {}
+	var veiled_escort := battle.get_unit(escort_id)
+	if not _has_active_veil(veiled_escort):
+		return {}
+	var expected_second := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	if expected_second.is_empty() or expected_second == "moth_veil":
+		return {}
+	var second_snapshot := battle.state_snapshot()
+	var second_rng := battle.rng_state()
+	var second_intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	_expect(second_snapshot == battle.state_snapshot() and second_rng == battle.rng_state(),
+		"AC4: the already-veiled projection never mutates state or RNG")
+	_expect(str(second_intent.get("ability_id", "")) == expected_second
+		and str(second_intent.get("ability_id", "")) != "moth_veil",
+		"AC3: an already temporary-Dodge-protected wounded escort restores the ordinary rotation")
+	_expect(int(veiled_escort.get("hp", 0)) > 0
+		and 2 * int(veiled_escort.get("hp", 0)) <= int(veiled_escort.get("max_hp", 0))
+		and _has_active_veil(veiled_escort),
+		"AC3: the escort is still critically wounded while its temp Dodge keeps the emergency off")
+
+	if not _expire_veil(battle, receipts, ids, base_dodge):
+		return {}
+	return {"receipts": receipts, "order": battle.turn_order(), "state": battle.state_snapshot(),
+		"rng": battle.rng_state(), "heroes": battle.get_heroes().duplicate(true),
+		"foes": battle.get_foes().duplicate(true), "round": round_value,
+		"expected": expected, "hits": int(wound.get("hits", 0)),
+		"wound_hp": int(escort["hp"]), "wound_max": int(escort["max_hp"])}
+
+
+func _wound_escort(battle: StitchedRules, escort_id: String, receipts: Array) -> Dictionary:
+	var hits := 0
+	for step in range(180):
+		if battle.is_over():
+			return {}
+		var escort := battle.get_unit(escort_id)
+		if escort.is_empty() or bool(escort.get("dead", false)) or bool(escort.get("lost", false)) \
+				or int(escort.get("hp", 0)) <= 0:
+			return {}
+		if _is_critical_escort(escort):
+			return {"ok": hits > 0, "hits": hits}
+		var actor := battle.get_unit(battle.current_actor_id())
+		if str(actor.get("side", "")) == "hero":
+			var receipt := _attack_foe(battle, actor, escort_id)
+			if receipt.is_empty():
+				var passed := battle.pass_turn()
+				receipts.append(passed)
+				if not bool(passed.get("ok", false)):
+					return {}
+			else:
+				receipts.append(receipt)
+				for result in receipt.get("results", []):
+					if str(result.get("target", "")) == escort_id \
+							and bool(result.get("hit", false)) and int(result.get("damage", 0)) > 0:
+						hits += 1
+		else:
+			var passed_other := battle.pass_turn()
+			receipts.append(passed_other)
+			if not bool(passed_other.get("ok", false)):
+				return {}
+	return {}
+
+
+## One real hero part attack on the escort. Returns {} when no worn part can legally fire.
+func _attack_foe(battle: StitchedRules, hero: Dictionary, foe_id: String) -> Dictionary:
+	var foe := battle.get_unit(foe_id)
+	if foe.is_empty() or bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+		return {}
+	var foe_rank := int(foe.get("rank", 0))
+	for slot in ["arms", "head", "legs", "torso"]:
+		var equipped: Dictionary = hero.get("parts", {}).get(slot, {})
+		if equipped.is_empty() or bool(equipped.get("torn", false)):
+			continue
+		if not battle._parts.has(str(equipped.get("id", ""))):
+			continue
+		var ability := StitchedParts.ability_at_tier(
+			battle._parts[str(equipped["id"])], int(equipped.get("tier", 1)))
+		if ability.is_empty() or str(ability.get("target_side", "")) != "enemy" \
+				or int(ability.get("dmg", [0, 0])[1]) <= 0:
+			continue
+		if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(hero.get("rank", 0))):
+			continue
+		if not StitchedParts.ranks_allowed(int(ability["target_mask"]), foe_rank):
+			continue
+		if not battle._self_move_gate(hero, ability).is_empty():
+			continue
+		var receipt := battle.use_part(str(equipped["id"]), foe_rank)
+		if bool(receipt.get("ok", false)):
+			return receipt
+	return {}
+
+
+func _is_critical_escort(unit: Dictionary) -> bool:
+	if unit.is_empty() or str(unit.get("side", "")) != "foe":
+		return false
+	if bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+		return false
+	var hp := int(unit.get("hp", 0))
+	var maximum := int(unit.get("max_hp", 0))
+	if hp <= 0 or maximum <= 0:
+		return false
+	if 2 * hp > maximum:
+		return false
+	var buff: Variant = unit.get("dodge_buff", {})
+	if buff is Dictionary and not buff.is_empty() \
+			and int(buff.get("amount", 0)) > 0 and int(buff.get("turns", 0)) > 0:
+		return false
+	return true
+
+
+func _has_active_veil(unit: Dictionary) -> bool:
+	var buff: Variant = unit.get("dodge_buff", {})
+	return buff is Dictionary and not buff.is_empty() \
+		and int(buff.get("amount", 0)) > 0 and int(buff.get("turns", 0)) > 0
+
+
+func _occupied_foe_ranks(battle: StitchedRules, ids: Array) -> Array:
+	var ranks: Array = []
+	for enemy_id in ids:
+		var foe := battle.get_unit(str(enemy_id))
+		if foe.is_empty() or bool(foe.get("dead", false)) or bool(foe.get("lost", false)) \
+				or int(foe.get("hp", 0)) <= 0:
+			continue
+		ranks.append(int(foe.get("rank", 0)))
+	ranks.sort()
+	return ranks
+
+
+## The Queen's ordinary round-rotated first legal ability, computed independently from the
+## canonical authored kit and the same public legality authority the chooser uses.
+func _expected_rotation(battle: StitchedRules, queen: Dictionary) -> String:
+	var authored: Array = queen.get("abilities", [])
+	if authored.is_empty():
+		return ""
+	var offset := (battle.round_number() - 1) % authored.size()
+	for step in range(authored.size()):
+		var ability: Dictionary = authored[(offset + step) % authored.size()]
+		if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(queen.get("rank", 0))):
+			continue
+		if not battle._self_move_gate(queen, ability).is_empty():
+			continue
+		for rank in range(1, 5):
+			if not battle._legal_targets(queen, ability, rank).is_empty():
+				return str(ability.get("id", ""))
+	return ""
+
+
+## Public turns only. Each veiled foe keeps the +8 at its own turn, then its one-turn veil
+## expires and leaves the permanent Dodge stat untouched. Heroes only pass, so a wounded
+## escort is never killed here.
+func _expire_veil(battle: StitchedRules, receipts: Array, ids: Array, base_dodge: Dictionary) -> bool:
+	var expired: Dictionary = {}
+	for foe_id in ids:
+		expired[str(foe_id)] = false
+	for step in range(240):
+		if battle.is_over():
+			return false
+		var actor := battle.get_unit(battle.current_actor_id())
+		var actor_id := str(actor.get("id", ""))
+		if str(actor.get("side", "")) == "foe" and _has_active_veil(actor):
+			var base := int(base_dodge.get(actor_id, -1))
+			_expect(StitchedRules.effective_dodge(actor) == base + 8,
+				"AC2: " + actor_id + "'s emergency veil still feeds effective Dodge at its own turn")
+			var passed := battle.pass_turn()
+			receipts.append(passed)
+			if not _expect(passed.get("ok", false), "AC2: a legal pass spends the veil holder's turn"):
+				return false
+			var after := battle.get_unit(actor_id)
+			_expect(after.get("dodge_buff", {}).is_empty()
+				and StitchedRules.effective_dodge(after) == base and int(after.get("dodge", -1)) == base,
+				"AC2: " + actor_id + "'s emergency veil expires after its turn with no permanent Dodge")
+			expired[actor_id] = true
+		else:
+			var passed_other := battle.pass_turn()
+			receipts.append(passed_other)
+			if not _expect(passed_other.get("ok", false), "AC2: a legal pass advances an unveiled turn"):
+				return false
+		var done := true
+		for foe_id in ids:
+			done = done and bool(expired.get(str(foe_id), false))
+		if done:
+			return true
+	return false
+
+
+## ------------------------------------------------------------------ Emergency negatives.
+
+func _test_emergency_negatives(catalog: Dictionary) -> void:
+	_expect(_no_damage_negative(catalog), "AC3: no wounded escort keeps the ordinary round rotation")
+	_expect(_above_half_negative(catalog), "AC3: an escort above half HP keeps the ordinary rotation")
+	_expect(_dead_escort_negative(catalog), "AC3: a dead escort never forces Veil while its living peer is healthy")
+	_expect(_solo_queen_negative(catalog), "AC3: a battle with no living escort has the emergency rule off")
+	_expect(_illegal_rank_negative(catalog), "AC3: a rank-two Queen never forces an illegal Veil")
+
+
+func _no_damage_negative(catalog: Dictionary) -> bool:
+	var seed_value := _find_negative_seed(catalog, PAIR, "no_damage")
+	if seed_value == 0:
+		return false
+	var battle := _battle(catalog, seed_value, PAIR)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	if not _to_queen(battle, 3, receipts):
+		return false
+	var escort := battle.get_unit("scissor_crab")
+	_expect(int(escort.get("hp", 0)) == int(escort.get("max_hp", 0))
+		and escort.get("dodge_buff", {}).is_empty(),
+		"AC3: the no-damage fixture really reaches the Queen with full, unbuffed escorts")
+	var expected := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	_expect(not expected.is_empty() and expected != "moth_veil"
+		and str(intent.get("ability_id", "")) == expected
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: with no wounded escort the chooser keeps the original rotation")
+	return true
+
+
+func _above_half_negative(catalog: Dictionary) -> bool:
+	var seed_value := _find_negative_seed(catalog, PAIR, "above_half")
+	if seed_value == 0:
+		return false
+	var battle := _battle(catalog, seed_value, PAIR)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	if not _one_hit_above_half(battle, "scissor_crab", receipts):
+		return false
+	if not _to_queen(battle, 3, receipts):
+		return false
+	var escort := battle.get_unit("scissor_crab")
+	_expect(int(escort.get("hp", 0)) > 0 and 2 * int(escort.get("hp", 0)) > int(escort.get("max_hp", 0))
+		and escort.get("dodge_buff", {}).is_empty(),
+		"AC3: a real landed hit leaves the escort alive, unbuffed and above half HP")
+	var expected := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	_expect(not expected.is_empty() and expected != "moth_veil"
+		and str(intent.get("ability_id", "")) == expected
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: an escort above half HP never triggers the emergency veil")
+	return true
+
+
+func _one_hit_above_half(battle: StitchedRules, escort_id: String, receipts: Array) -> bool:
+	for step in range(140):
+		if battle.is_over():
+			return false
+		var escort := battle.get_unit(escort_id)
+		if escort.is_empty() or bool(escort.get("dead", false)) or int(escort.get("hp", 0)) <= 0:
+			return false
+		if 2 * int(escort.get("hp", 0)) <= int(escort.get("max_hp", 0)):
+			return false
+		var actor := battle.get_unit(battle.current_actor_id())
+		if str(actor.get("side", "")) == "hero":
+			var receipt := _attack_foe(battle, actor, escort_id)
+			if receipt.is_empty():
+				var passed := battle.pass_turn()
+				receipts.append(passed)
+				if not bool(passed.get("ok", false)):
+					return false
+			else:
+				receipts.append(receipt)
+				var landed := false
+				for result in receipt.get("results", []):
+					if str(result.get("target", "")) == escort_id and bool(result.get("hit", false)) \
+							and int(result.get("damage", 0)) > 0:
+						landed = true
+				if landed:
+					var after := battle.get_unit(escort_id)
+					return not bool(after.get("dead", false)) and int(after.get("hp", 0)) > 0 \
+						and 2 * int(after.get("hp", 0)) > int(after.get("max_hp", 0)) \
+						and after.get("dodge_buff", {}).is_empty()
+		else:
+			var passed_other := battle.pass_turn()
+			receipts.append(passed_other)
+			if not bool(passed_other.get("ok", false)):
+				return false
+	return false
+
+
+func _dead_escort_negative(catalog: Dictionary) -> bool:
+	var ids := ["scissor_crab", "moth_scribe", "moth_queen"]
+	var seed_value := _find_negative_seed(catalog, ids, "dead_escort")
+	if seed_value == 0:
+		return false
+	var battle := _battle(catalog, seed_value, ids)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	if not _kill_escort(battle, "scissor_crab", receipts):
+		return false
+	if not _to_queen(battle, 3, receipts):
+		return false
+	var dead := battle.get_unit("scissor_crab")
+	var living := battle.get_unit("moth_scribe")
+	_expect(bool(dead.get("dead", false)) and int(dead.get("hp", -1)) == 0,
+		"AC3: the dead escort really fell to authentic hero hits")
+	_expect(not bool(living.get("dead", false)) and int(living.get("hp", 0)) > 0
+		and 2 * int(living.get("hp", 0)) > int(living.get("max_hp", 0)),
+		"AC3: the surviving peer is alive and above half HP, so only the dead record looks wounded")
+	var expected := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	_expect(not expected.is_empty() and expected != "moth_veil"
+		and str(intent.get("ability_id", "")) == expected
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: a dead escort never satisfies the emergency, even with 2*HP <= max")
+	return true
+
+
+func _solo_queen_negative(catalog: Dictionary) -> bool:
+	var seed_value := _find_negative_seed(catalog, PAIR, "solo_queen")
+	if seed_value == 0:
+		return false
+	var battle := _battle(catalog, seed_value, PAIR)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	if not _kill_escort(battle, "scissor_crab", receipts):
+		return false
+	if not _to_queen(battle, 3, receipts):
+		return false
+	var living_escorts := 0
+	for foe in battle.get_foes():
+		if str(foe.get("id", "")) == "moth_queen":
+			continue
+		if not bool(foe.get("dead", false)) and not bool(foe.get("lost", false)) \
+				and int(foe.get("hp", 0)) > 0:
+			living_escorts += 1
+	_expect(living_escorts == 0, "AC3: the real two-foe fight is reduced to the Queen alone")
+	var expected := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	_expect(not expected.is_empty() and expected != "moth_veil"
+		and str(intent.get("ability_id", "")) == expected
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: a solo Queen never enters the emergency branch")
+	return true
+
+
+func _illegal_rank_negative(catalog: Dictionary) -> bool:
+	var ids := ["ragling", "moth_queen"]
+	var seed_value := _find_negative_seed(catalog, ids, "illegal_rank")
+	if seed_value == 0:
+		return false
+	var battle := _battle(catalog, seed_value, ids)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	if not _wound_escort(battle, "ragling", receipts):
+		return false
+	if not _to_queen(battle, 3, receipts):
+		return false
+	var queen := battle.get_unit("moth_queen")
+	_expect(int(queen.get("rank", 0)) == 2,
+		"AC3: the authentic Queen stands in illegal veil launch rank 2")
+	var expected := _expected_rotation(battle, queen)
+	var snapshot := battle.state_snapshot()
+	var rng := battle.rng_state()
+	var intent := StitchedFoeIntent.choose(battle, queen)
+	_expect(not expected.is_empty() and expected != "moth_veil"
+		and str(intent.get("ability_id", "")) == expected
+		and str(intent.get("ability_id", "")) != "moth_veil"
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: the Queen in rank 2 keeps the rotation and never asks for an illegal Veil")
+	var rejected := battle.use_foe_ability("moth_veil", 1)
+	_expect(not bool(rejected.get("ok", true))
+		and rejected.get("error") == "ability cannot launch from rank 2"
+		and snapshot == battle.state_snapshot() and rng == battle.rng_state(),
+		"AC3: the direct rank-two Veil remains refused with no state or RNG spend")
+	return true
+
+
+func _kill_escort(battle: StitchedRules, escort_id: String, receipts: Array) -> bool:
+	for step in range(280):
+		if battle.is_over():
+			return false
+		var escort := battle.get_unit(escort_id)
+		if bool(escort.get("dead", false)) or int(escort.get("hp", 0)) <= 0:
+			return true
+		var actor := battle.get_unit(battle.current_actor_id())
+		if str(actor.get("side", "")) == "hero":
+			var receipt := _attack_foe(battle, actor, escort_id)
+			if receipt.is_empty():
+				var passed := battle.pass_turn()
+				receipts.append(passed)
+				if not bool(passed.get("ok", false)):
+					return false
+			else:
+				receipts.append(receipt)
+		else:
+			var passed_other := battle.pass_turn()
+			receipts.append(passed_other)
+			if not bool(passed_other.get("ok", false)):
+				return false
+	return false
+
+
+func _find_negative_seed(catalog: Dictionary, ids: Array, kind: String) -> int:
+	recording = false
+	var found := 0
+	for seed_value in range(1, 97):
+		if _negative_script(catalog, seed_value, ids, kind):
+			found = seed_value
+			break
+	recording = true
+	return found
+
+
+func _negative_script(catalog: Dictionary, seed_value: int, ids: Array, kind: String) -> bool:
+	var battle := _battle(catalog, seed_value, ids)
+	if battle == null:
+		return false
+	var receipts: Array = []
+	match kind:
+		"no_damage":
+			if not _to_queen(battle, 3, receipts):
+				return false
+		"above_half":
+			if not _one_hit_above_half(battle, "scissor_crab", receipts):
+				return false
+			if not _to_queen(battle, 3, receipts):
+				return false
+		"dead_escort":
+			if not _kill_escort(battle, "scissor_crab", receipts):
+				return false
+			if not _to_queen(battle, 3, receipts):
+				return false
+			var peer := battle.get_unit("moth_scribe")
+			if bool(peer.get("dead", false)) or int(peer.get("hp", 0)) <= 0 \
+					or 2 * int(peer.get("hp", 0)) <= int(peer.get("max_hp", 0)):
+				return false
+		"solo_queen":
+			if not _kill_escort(battle, "scissor_crab", receipts):
+				return false
+			if not _to_queen(battle, 3, receipts):
+				return false
+		"illegal_rank":
+			if not _wound_escort(battle, "ragling", receipts):
+				return false
+			if not _to_queen(battle, 3, receipts):
+				return false
+			if int(battle.get_unit("moth_queen").get("rank", 0)) != 2:
+				return false
+		_:
+			return false
+	var expected := _expected_rotation(battle, battle.get_unit("moth_queen"))
+	if expected.is_empty() or expected == "moth_veil":
+		return false
+	var intent := StitchedFoeIntent.choose(battle, battle.get_unit("moth_queen"))
+	if str(intent.get("ability_id", "")) != expected:
+		return false
+	return true
+
+
+func _to_queen(battle: StitchedRules, max_round: int, receipts: Array) -> bool:
+	for step in range(160):
+		if battle.is_over():
+			return false
+		if battle.current_actor_id() == "moth_queen":
+			return battle.round_number() <= max_round
+		if battle.round_number() > max_round:
+			return false
+		var passed := battle.pass_turn()
+		receipts.append(passed)
+		if not bool(passed.get("ok", false)):
+			return false
+	return false
