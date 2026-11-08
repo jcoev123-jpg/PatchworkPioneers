@@ -1074,6 +1074,24 @@
           },
           "self_move": 0,
           "move": "skill"
+        },
+        {
+          "id": "tattercloud_knot",
+          "name": "Tattercloud Knot",
+          "kind": "debuff",
+          "launch": [1, 2, 3, 4],
+          "target": [1, 2, 3],
+          "target_side": "enemy",
+          "multi": true,
+          "acc": 88,
+          "dmg": [0, 0],
+          "crit": 0,
+          "effects": {
+            "tangled": 1,
+            "fray": 3
+          },
+          "self_move": 0,
+          "move": "skill"
         }
       ]
     }

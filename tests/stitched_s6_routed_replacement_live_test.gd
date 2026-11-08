@@ -50,7 +50,10 @@ func _healthy_circle() -> void:
 func _lost_circle() -> void:
 	# This S6 fixture documents the legacy one-Hanging-then-LOST carry, gear transfer and
 	# replacement path. S14's escalating death door is exercised by its own gate test.
-	var app: Node = await _new_run(1690)
+	# Seed 0 is the witness where the opening Fight leaves exactly one LOST doll: the old
+	# 1690 route now loses two dolls in that Fight once the Moth Swarm's third-turn
+	# Tattercloud Knot joins its authored rotation.
+	var app: Node = await _new_run(0)
 	var session: StitchedRunSession = app.stitched_run_session
 	if session == null:
 		app.free()

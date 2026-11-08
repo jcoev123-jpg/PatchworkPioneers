@@ -39,8 +39,9 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			continue
 		# A pulling strike reels the deepest reachable doll forward, so it scans the
 		# back rank first. A single-target attack authored to bite into a Marked doll
-		# hunts the closest already-Marked legal rank before falling back to the
-		# ordinary nearest-legal-rank order. Everything else keeps that same order.
+		# hunts the closest already-Marked legal rank. The Moth Swarm's Wing Dust instead
+		# follows the most-frayed legal doll. Everything else keeps the ordinary
+		# nearest-legal-rank order.
 		var scan_ranks: Array[int] = [1, 2, 3, 4]
 		if _wards_wounded_ally(actor, ability):
 			# The Needle Marshal's Iron Discipline is a single ally ward chosen by need,
@@ -57,6 +58,15 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 			var marked_rank := _nearest_marked_rank(battle, actor, ability)
 			if marked_rank > 0:
 				scan_ranks = [marked_rank]
+		elif _hunts_fray(actor, ability):
+			# The Moth Swarm's Wing Dust follows the most-frayed legal doll instead of the
+			# nearest rank. The same legality authority is asked rank by rank, so a lost,
+			# dead, empty or out-of-reach rank can never be chosen; equal FRAY keeps the
+			# lower rank because only a strictly greater reading replaces the best.
+			var frayed_rank := _most_frayed_legal_rank(battle, actor, ability)
+			if frayed_rank <= 0:
+				continue
+			scan_ranks = [frayed_rank]
 		for rank in scan_ranks:
 			var targets: Array = battle._legal_targets(actor, ability, rank)
 			if targets.is_empty():
@@ -109,6 +119,35 @@ static func _nearest_marked_rank(
 			if int(target.get("statuses", {}).get("mark", 0)) > 0:
 				return rank
 	return 0
+
+
+## True only for the Moth Swarm's own authored Wing Dust. Every other ability on every
+## other foe keeps the ordinary round-rotated first-legal-rank order.
+static func _hunts_fray(actor: Dictionary, ability: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "moth_swarm" \
+		and str(ability.get("id", "")) == "wing_dust"
+
+
+## Legal living hero rank carrying the greatest current FRAY; exact ties keep the lower
+## (closer) rank. The passed ability's own target mask is the authority, so Wing Dust's
+## authored [1, 3] can never reach rank 2 or rank 4. Dead, lost, empty and non-hero ranks
+## are never candidates. Read-only: it never mutates the battle or draws RNG.
+static func _most_frayed_legal_rank(
+	battle: StitchedRules, actor: Dictionary, ability: Dictionary
+) -> int:
+	var best_rank := 0
+	var best_fray := 0
+	for rank in range(1, 5):
+		for target in battle._legal_targets(actor, ability, rank):
+			# _legal_targets already withholds lost dolls and empty ranks; the side check
+			# keeps a malformed cross-side record from ever becoming a hero target.
+			if str(target.get("side", "")) != "hero":
+				continue
+			var fray := int(target.get("fray", 0))
+			if best_rank == 0 or fray > best_fray:
+				best_rank = rank
+				best_fray = fray
+	return best_rank
 
 
 ## True only for the Needle Marshal's own authored Iron Discipline. Every other ability on
