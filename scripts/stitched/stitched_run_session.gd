@@ -229,6 +229,7 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 	var node := map.get_node(node_id)
 	var old_rng := rng.state
 	var old_route := map.get_route()
+	var departing_node_id := map.get_current_node_id()
 	var old_candle := candle
 	if not map.choose_node(node_id):
 		return false
@@ -255,6 +256,10 @@ func enter(node_id: String, expected: Dictionary) -> bool:
 			pending.clear()
 			phase = "map"
 			return false
+	# A successful route entry implicitly declines the unclaimed offer at the departed node.
+	# Do this after all entry failure paths; replay needs only the ordinary enter command.
+	if not door_offer.is_empty() and str(door_offer.get("node_id", "")) == departing_node_id:
+		_decline_door_offer()
 	# Walking on past a gift offer leaves it behind.
 	gift_offer.clear()
 	journal.append({"action": "enter", "node_id": node_id})
@@ -544,8 +549,7 @@ func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool
 	if door_id == "":
 		if hero_id != "":
 			return false
-		door_history.append({"id": "", "node_id": door_offer.node_id})
-		door_offer.clear()
+		_decline_door_offer()
 		journal.append({"action": "door", "id": "", "hero": ""})
 		_seal()
 		changed.emit()
@@ -637,6 +641,11 @@ func choose_door(door_id: String, hero_id: String, expected: Dictionary) -> bool
 	_seal()
 	changed.emit()
 	return true
+
+
+func _decline_door_offer() -> void:
+	door_history.append({"id": "", "node_id": door_offer.node_id})
+	door_offer.clear()
 
 
 func _door_record() -> Dictionary:
