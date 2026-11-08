@@ -6,6 +6,11 @@ const PATH := "res://data/stitched/s14_side_doors.json"
 const KINDS := ["underbed", "attic"]
 const COSTS := ["none", "max_hp", "limb", "fear"]
 const REWARDS := ["gold_patch", "silk_patch", "wren_gift", "candle", "mend", "head_guard"]
+const UNDERBED_WEIGHTS := {
+	"gold_patch": 1,
+	"silk_patch": 5,
+	"wren_gift": 4,
+}
 
 static func catalog(document: Variant = null) -> Dictionary:
 	if document == null:
@@ -42,9 +47,16 @@ static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool
 		return {}
 	var side := "underbed" if underbed_taken or rng.randi_range(0, 1) == 0 else "attic"
 	var choices: Array = []
-	for entry in entries.values():
-		if entry.kind == side:
-			choices.append(entry.id)
+	if side == "underbed":
+		for entry in entries.values():
+			if entry.kind == "underbed":
+				var weight: int = int(UNDERBED_WEIGHTS.get(entry.get("reward", ""), 0))
+				for _i in weight:
+					choices.append(entry.id)
+	else:
+		for entry in entries.values():
+			if entry.kind == "attic":
+				choices.append(entry.id)
 	choices.sort()
 	if choices.is_empty():
 		return {}
