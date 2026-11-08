@@ -67,6 +67,10 @@ func _initialize() -> void:
 	_test_wren_fear_ac3_shapes_and_invariants()
 	_test_require_candle_room_lantern_bobbin_ferry()
 	_test_require_fray_or_fear_keyhole_choir()
+	_test_needle_toll_front_rank_hp_gate_ac1()
+	_test_needle_toll_preview_claim_parity_ac2()
+	_test_needle_toll_refusals_and_safe_exit_ac3()
+	_test_needle_toll_regression_and_invariants_ac4()
 	_finish()
 
 
@@ -7690,6 +7694,385 @@ func _test_require_fray_or_fear_keyhole_choir() -> void:
 		{"id": "button_golem", "fray": 8},
 	])
 	_check(obs.is_empty(), "AC4: fray relief choice emits no post-settlement fray gain observations")
+
+
+func _load_real_needle_toll() -> Dictionary:
+	var doc: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json"))
+	if doc is Dictionary:
+		for ev in doc.get("events", []):
+			if ev is Dictionary and ev.get("id") == "needle_toll":
+				var toll: Dictionary = (ev as Dictionary).duplicate(true)
+				if toll.has("choice_requirements") and toll["choice_requirements"] is Dictionary:
+					if toll["choice_requirements"].has("pay_toll") and toll["choice_requirements"]["pay_toll"] is Dictionary:
+						toll["choice_requirements"]["pay_toll"]["minimum_hp"] = int(toll["choice_requirements"]["pay_toll"]["minimum_hp"])
+				for ch in toll.get("choices", []):
+					if ch is Dictionary and ch.has("stitched_effect") and ch["stitched_effect"] is Dictionary:
+						var eff: Dictionary = ch["stitched_effect"]
+						for k in ["candle", "fray", "hp", "scraps", "gold"]:
+							if eff.has(k) and typeof(eff[k]) == TYPE_FLOAT:
+								eff[k] = int(eff[k])
+						if eff.has("part") and eff["part"] is Dictionary:
+							if eff["part"].has("tier") and typeof(eff["part"]["tier"]) == TYPE_FLOAT:
+								eff["part"]["tier"] = int(eff["part"]["tier"])
+				return toll
+	return {}
+
+
+func _load_enemy_parts_catalog() -> Dictionary:
+	return StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+
+
+func _needle_toll_snapshot(candle: int, scraps: int, satchel_count: int, party_entries: Array) -> Dictionary:
+	var party: Array = []
+	for p in party_entries:
+		var hero: Dictionary = {"id": p["id"], "fray": p["fray"]}
+		if p.has("lost"):
+			hero["lost"] = p["lost"]
+		if p.has("rank"):
+			hero["rank"] = p["rank"]
+		if p.has("hp"):
+			hero["hp"] = p["hp"]
+		party.append(hero)
+	return {
+		"candle": candle,
+		"scraps": scraps,
+		"satchel_count": satchel_count,
+		"party": party,
+	}
+
+
+func _test_needle_toll_front_rank_hp_gate_ac1() -> void:
+	var needle_toll := _load_real_needle_toll()
+	_check(not needle_toll.is_empty(), "AC1: loaded real needle_toll event from stitched_route_effects.json")
+	_check(needle_toll.get("id") == "needle_toll", "AC1: event id is needle_toll")
+	_check(needle_toll.get("title") == "The Needle Toll", "AC1: event title is The Needle Toll")
+
+	var choice_reqs: Dictionary = needle_toll.get("choice_requirements", {})
+	_check(int(choice_reqs.get("pay_toll", {}).get("minimum_hp", 0)) == 7,
+		"AC1: authored minimum_hp requirement is 7")
+
+	var parts_catalog := StitchedParts.load_catalog("res://data/parts/enemy_parts.json")
+	_check(bool(parts_catalog.get("ok", false)), "AC1: enemy parts catalog loads successfully")
+	_check(parts_catalog.get("by_id", {}).has("scissor_crab_claw_arm"),
+		"AC1: catalog contains scissor_crab_claw_arm")
+
+	# Four-doll party with deliberate shuffle: front rank (Warden, rank 1) is at index 2, not first!
+	var party_shuffled_7hp: Array = [
+		{"id": "tinker", "fray": 20, "rank": 3, "hp": 12},
+		{"id": "button_golem", "fray": 10, "rank": 4, "hp": 15},
+		{"id": "warden", "fray": 0, "rank": 1, "hp": 7, "lost": false},
+		{"id": "seamstress", "fray": 30, "rank": 2, "hp": 9},
+	]
+	var snap_7hp := _needle_toll_snapshot(50, 4, 0, party_shuffled_7hp)
+	var svc_7hp := RunStitchedEventConsequence.new(needle_toll, parts_catalog)
+	var prev_7hp := svc_7hp.preview(snap_7hp)
+	_check(prev_7hp.get("ok") == true, "AC1: preflight succeeds for 7 HP living front pioneer")
+	_check(prev_7hp.get("event_id") == "needle_toll", "AC1: preview event_id is needle_toll")
+	_check(prev_7hp.get("candle") == 50, "AC1: preview base candle is 50")
+
+	var pay_7hp := _entry(prev_7hp, "pay_toll")
+	_check(pay_7hp.get("available") == true, "AC1: pay_toll is available when front rank has 7 HP")
+	_check(pay_7hp.get("target") == "hero", "AC1: pay_toll target is hero")
+	_check(pay_7hp.get("hero_id") == "warden", "AC1: $front resolves to warden at rank 1, ignoring array index 2")
+	_check(pay_7hp.get("hp_delta") == -6, "AC1: pay_toll hp_delta is -6")
+	_check(pay_7hp.get("hp") == {"warden": -6}, "AC1: pay_toll projects -6 HP intent onto only the front doll")
+	_check(pay_7hp.get("part") == {"id": "scissor_crab_claw_arm", "tier": 3},
+		"AC1: pay_toll awards tier-III claw")
+	_check(pay_7hp.get("satchel_count") == 1, "AC1: pay_toll projects satchel_count +1 (0 -> 1)")
+	_check(pay_7hp.get("candle") == 50 and pay_7hp.get("candle_delta") == 0,
+		"AC1: pay_toll leaves candle untouched")
+	_check(pay_7hp.get("fray") == {} and pay_7hp.get("fray_delta") == 0,
+		"AC1: pay_toll leaves fray untouched")
+
+	# Now test rank-1 doll at 6 HP (versus 7 HP)
+	var party_shuffled_6hp: Array = [
+		{"id": "tinker", "fray": 20, "rank": 3, "hp": 12},
+		{"id": "button_golem", "fray": 10, "rank": 4, "hp": 15},
+		{"id": "warden", "fray": 0, "rank": 1, "hp": 6, "lost": false},
+		{"id": "seamstress", "fray": 30, "rank": 2, "hp": 9},
+	]
+	var snap_6hp := _needle_toll_snapshot(50, 4, 0, party_shuffled_6hp)
+	var svc_6hp := RunStitchedEventConsequence.new(needle_toll, parts_catalog)
+	var prev_6hp := svc_6hp.preview(snap_6hp)
+	_check(prev_6hp.get("ok") == true, "AC1: preview preflight succeeds even when pay is gated")
+
+	var pay_6hp := _entry(prev_6hp, "pay_toll")
+	_check(pay_6hp.get("available") == false, "AC1: pay_toll is unavailable when front rank has only 6 HP")
+	_check(pay_6hp.get("hero_id") == "warden", "AC1: unavailable pay_toll still identifies front doll")
+	_check(pay_6hp.get("hp_delta") == -6, "AC1: unavailable pay_toll retains authored hp_delta -6")
+	_check(pay_6hp.get("hp") == {}, "AC1: unavailable pay_toll projects empty hp intent map")
+
+	var safe_6hp := _entry(prev_6hp, "safe_exit")
+	_check(safe_6hp.get("available") == true, "AC1: safe_exit remains available when front doll has 6 HP")
+
+	# choose("pay_toll") fails without latching on 6 HP
+	var refused_6hp := svc_6hp.choose("pay_toll", snap_6hp, parts_catalog)
+	_check(refused_6hp == _refusal(50), "AC1: choose pay_toll on 6 HP returns standard refusal")
+	_check(not svc_6hp.is_claimed(), "AC1: service not claimed after 6 HP refusal")
+
+	# choose("safe_exit") succeeds from valid scraps wallet
+	var safe_claim := svc_6hp.choose("safe_exit", snap_6hp, parts_catalog)
+	_check(safe_claim.get("ok") == true, "AC1: safe_exit claims successfully after pay_toll refusal")
+	_check(safe_claim.get("choice_id") == "safe_exit", "AC1: claimed safe_exit choice")
+	_check(safe_claim.get("scraps_delta") == 1 and safe_claim.get("scraps") == 5,
+		"AC1: safe_exit grants +1 scrap (4 -> 5)")
+	_check(svc_6hp.is_claimed(), "AC1: service claimed after safe_exit")
+
+
+func _test_needle_toll_preview_claim_parity_ac2() -> void:
+	var needle_toll := _load_real_needle_toll()
+	var parts_catalog := _load_enemy_parts_catalog()
+
+	var party: Array = [
+		{"id": "seamstress", "fray": 10, "rank": 2, "hp": 10},
+		{"id": "warden", "fray": 0, "rank": 1, "hp": 7, "lost": false},
+		{"id": "tinker", "fray": 25, "rank": 3, "hp": 11},
+		{"id": "button_golem", "fray": 5, "rank": 4, "hp": 14},
+	]
+	var snapshot := _needle_toll_snapshot(60, 2, 0, party)
+	var snap_before := snapshot.duplicate(true)
+	var catalog_before := parts_catalog.duplicate(true)
+
+	var svc := RunStitchedEventConsequence.new(needle_toll, parts_catalog)
+	var preview := svc.preview(snapshot, parts_catalog)
+	_check(preview.get("ok") == true, "AC2: preview ok")
+	var prev_pay := _entry(preview, "pay_toll")
+	_check(prev_pay.get("available") == true, "AC2: pay_toll available")
+
+	var receipt := svc.choose("pay_toll", snapshot, parts_catalog)
+	_check(receipt.get("ok") == true, "AC2: choose pay_toll succeeds")
+	_check(receipt.get("event_id") == "needle_toll", "AC2: receipt event_id needle_toll")
+	_check(receipt.get("choice_id") == "pay_toll", "AC2: receipt choice_id pay_toll")
+	_check(receipt.get("target") == "hero", "AC2: receipt target hero")
+	_check(receipt.get("hero_id") == prev_pay.get("hero_id"), "AC2: parity on hero_id (warden)")
+	_check(receipt.get("candle") == prev_pay.get("candle"), "AC2: parity on candle (60)")
+	_check(receipt.get("fray") == prev_pay.get("fray"), "AC2: parity on fray ({})")
+	_check(receipt.get("hp_delta") == prev_pay.get("hp_delta"), "AC2: parity on hp_delta (-6)")
+	_check(receipt.get("hp") == prev_pay.get("hp"), "AC2: parity on hp map ({\"warden\": -6})")
+	_check(receipt.get("part") == prev_pay.get("part"),
+		"AC2: parity on part award (tier-III scissor_crab_claw_arm)")
+	_check(receipt.get("satchel_count") == prev_pay.get("satchel_count"),
+		"AC2: parity on satchel_count (1)")
+
+	# Single claim only
+	_check(svc.is_claimed(), "AC2: service is claimed after single successful pay_toll claim")
+	var second_pay := svc.choose("pay_toll", snapshot, parts_catalog)
+	_check(second_pay == _refusal(60), "AC2: second pay_toll attempt is refused")
+	var second_safe := svc.choose("safe_exit", snapshot, parts_catalog)
+	_check(second_safe == _refusal(60), "AC2: second choice (safe_exit) attempt is refused")
+
+	# Caller inputs unchanged
+	_check(snapshot == snap_before, "AC2: caller snapshot completely unchanged after preview and claim")
+	_check(parts_catalog == catalog_before, "AC2: caller parts catalog completely unchanged after preview and claim")
+
+
+func _test_needle_toll_refusals_and_safe_exit_ac3() -> void:
+	var needle_toll := _load_real_needle_toll()
+	var parts_catalog := _load_enemy_parts_catalog()
+
+	# RNG invariance preparation
+	seed(20261109)
+	var expected_rng := randi()
+	seed(20261109)
+
+	var make_party := func(rank_1_hp: Variant, rank_1_lost: Variant, rank_1_rank: Variant = 1,
+			other_mod: Dictionary = {}) -> Array:
+		var p: Array = [
+			{"id": "tinker", "fray": 10, "rank": other_mod.get("tinker_rank", 3), "hp": other_mod.get("tinker_hp", 12)},
+			{"id": "button_golem", "fray": 5, "rank": other_mod.get("button_rank", 4), "hp": other_mod.get("button_hp", 15)},
+			{"id": "warden", "fray": 0, "rank": rank_1_rank, "hp": rank_1_hp, "lost": rank_1_lost},
+			{"id": "seamstress", "fray": 20, "rank": other_mod.get("seamstress_rank", 2), "hp": other_mod.get("seamstress_hp", 9)},
+		]
+		return p
+
+	var refusal_cases: Array = [
+		{"desc": "rank-1 doll with 6 HP", "party": make_party.call(6, false), "satchel": 0, "cat": parts_catalog},
+		{"desc": "LOST front doll", "party": make_party.call(10, true), "satchel": 0, "cat": parts_catalog},
+		{"desc": "no unambiguous living rank 1 (duplicate rank 2)", "party": make_party.call(10, false, 2), "satchel": 0, "cat": parts_catalog},
+		{"desc": "missing rank on front doll", "party": [
+			{"id": "tinker", "fray": 10, "rank": 3, "hp": 12},
+			{"id": "button_golem", "fray": 5, "rank": 4, "hp": 15},
+			{"id": "warden", "fray": 0, "hp": 10},
+			{"id": "seamstress", "fray": 20, "rank": 2, "hp": 9},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "missing rank on companion doll", "party": [
+			{"id": "tinker", "fray": 10, "hp": 12},
+			{"id": "button_golem", "fray": 5, "rank": 4, "hp": 15},
+			{"id": "warden", "fray": 0, "rank": 1, "hp": 10},
+			{"id": "seamstress", "fray": 20, "rank": 2, "hp": 9},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "missing HP on front doll", "party": [
+			{"id": "tinker", "fray": 10, "rank": 3, "hp": 12},
+			{"id": "button_golem", "fray": 5, "rank": 4, "hp": 15},
+			{"id": "warden", "fray": 0, "rank": 1},
+			{"id": "seamstress", "fray": 20, "rank": 2, "hp": 9},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "missing HP on companion doll", "party": [
+			{"id": "tinker", "fray": 10, "rank": 3},
+			{"id": "button_golem", "fray": 5, "rank": 4, "hp": 15},
+			{"id": "warden", "fray": 0, "rank": 1, "hp": 10},
+			{"id": "seamstress", "fray": 20, "rank": 2, "hp": 9},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "generic snapshot without rank or HP", "party": [
+			{"id": "tinker", "fray": 10},
+			{"id": "button_golem", "fray": 5},
+			{"id": "warden", "fray": 0},
+			{"id": "seamstress", "fray": 20},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed rank (string)", "party": make_party.call(10, false, "1"), "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed rank (float)", "party": make_party.call(10, false, 1.0), "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed rank (bool)", "party": make_party.call(10, false, true), "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed HP (string)", "party": make_party.call("7", false), "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed HP (float)", "party": make_party.call(7.0, false), "satchel": 0, "cat": parts_catalog},
+		{"desc": "wrong-typed HP (bool)", "party": make_party.call(true, false), "satchel": 0, "cat": parts_catalog},
+		{"desc": "duplicate rank (two rank 1s)", "party": make_party.call(10, false, 1, {"seamstress_rank": 1}), "satchel": 0, "cat": parts_catalog},
+		{"desc": "rank out of range (5)", "party": make_party.call(10, false, 1, {"button_rank": 5}), "satchel": 0, "cat": parts_catalog},
+		{"desc": "rank out of range (0)", "party": make_party.call(10, false, 0), "satchel": 0, "cat": parts_catalog},
+		{"desc": "malformed rank map (party size 3)", "party": [
+			{"id": "warden", "fray": 0, "rank": 1, "hp": 10},
+			{"id": "seamstress", "fray": 20, "rank": 2, "hp": 9},
+			{"id": "tinker", "fray": 10, "rank": 3, "hp": 12},
+		], "satchel": 0, "cat": parts_catalog},
+		{"desc": "missing part catalog (null)", "party": make_party.call(10, false), "satchel": 0, "cat": null},
+		{"desc": "empty part catalog ({})", "party": make_party.call(10, false), "satchel": 0, "cat": {}},
+		{"desc": "unvalidated part catalog (missing scissor_crab_claw_arm)", "party": make_party.call(10, false), "satchel": 0,
+			"cat": StitchedParts.load_catalog("res://data/parts/warden_parts.json")},
+		{"desc": "full satchel (satchel_count = 6)", "party": make_party.call(10, false), "satchel": 6, "cat": parts_catalog},
+	]
+
+	for tc in refusal_cases:
+		var desc: String = tc["desc"]
+		var snap := _needle_toll_snapshot(45, 3, tc["satchel"], tc["party"])
+		var snap_before := snap.duplicate(true)
+		var cat: Variant = tc["cat"]
+
+		var svc := RunStitchedEventConsequence.new(needle_toll, cat)
+		var prev := svc.preview(snap, cat)
+		_check(prev.get("ok") == true, "AC3 [%s]: preview ok" % desc)
+
+		var pay_entry := _entry(prev, "pay_toll")
+		_check(pay_entry.get("available") == false, "AC3 [%s]: pay_toll is unavailable" % desc)
+
+		var safe_entry := _entry(prev, "safe_exit")
+		_check(safe_entry.get("available") == true, "AC3 [%s]: safe_exit remains available" % desc)
+
+		# choose pay_toll fails without latching
+		var refused := svc.choose("pay_toll", snap, cat)
+		_check(refused == _refusal(45), "AC3 [%s]: choose pay_toll returns standard refusal" % desc)
+		_check(not svc.is_claimed(), "AC3 [%s]: pay_toll refusal does not latch claim" % desc)
+		_check(snap == snap_before, "AC3 [%s]: caller snapshot untouched after refusal" % desc)
+
+		# choose safe_exit succeeds and latches
+		var safe_claim := svc.choose("safe_exit", snap, cat)
+		_check(safe_claim.get("ok") == true, "AC3 [%s]: safe_exit claims successfully after pay refusal" % desc)
+		_check(safe_claim.get("choice_id") == "safe_exit", "AC3 [%s]: choice_id is safe_exit" % desc)
+		_check(safe_claim.get("scraps_delta") == 1 and safe_claim.get("scraps") == 4,
+			"AC3 [%s]: safe_exit awards +1 scrap (3 -> 4)" % desc)
+		_check(svc.is_claimed(), "AC3 [%s]: latched after safe_exit claim" % desc)
+
+	_check(randi() == expected_rng, "AC3: RNG never drawn during needle_toll preview or claim operations")
+
+
+func _test_needle_toll_regression_and_invariants_ac4() -> void:
+	var needle_toll := _load_real_needle_toll()
+	var parts_catalog := _load_enemy_parts_catalog()
+
+	# Deterministic payer switching: changing which hero is rank 1 changes payer deterministically,
+	# regardless of party list position.
+	var hero_names := ["warden", "seamstress", "tinker", "button_golem"]
+	for h_idx in range(hero_names.size()):
+		var target_hero: String = hero_names[h_idx]
+		# Put target_hero at rank 1, and others at ranks 2, 3, 4, with scrambled array order
+		var party: Array = []
+		var other_rank := 2
+		for hero_id in ["button_golem", "warden", "tinker", "seamstress"]: # arbitrary list order
+			if hero_id == target_hero:
+				party.append({"id": hero_id, "fray": 10, "rank": 1, "hp": 8, "lost": false})
+			else:
+				party.append({"id": hero_id, "fray": 10, "rank": other_rank, "hp": 10, "lost": false})
+				other_rank += 1
+		var snap := _needle_toll_snapshot(50, 2, 0, party)
+		var svc := RunStitchedEventConsequence.new(needle_toll, parts_catalog)
+		var prev := svc.preview(snap, parts_catalog)
+		var pay := _entry(prev, "pay_toll")
+		_check(pay.get("available") == true, "AC4: pay_toll available for rank-1 " + target_hero)
+		_check(pay.get("hero_id") == target_hero, "AC4: payer resolved to " + target_hero + " regardless of list pos")
+		_check(pay.get("hp") == {target_hero: -6}, "AC4: hp intent directed to " + target_hero)
+
+		var rec := svc.choose("pay_toll", snap, parts_catalog)
+		_check(rec.get("ok") == true and rec.get("hero_id") == target_hero,
+			"AC4: receipt resolves to " + target_hero)
+		_check(rec.get("hp") == {target_hero: -6}, "AC4: receipt hp intent matches " + target_hero)
+
+	# Verify non-Needle-Toll events reject snapshots with rank/hp
+	var standard_event := _bargain_event()
+	var standard_svc := RunStitchedEventConsequence.new(standard_event)
+	var bad_snap_rank := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 10, "rank": 1},
+			{"id": "seamstress", "fray": 20},
+		],
+	}
+	_check(standard_svc.preview(bad_snap_rank) == _denied_preview(),
+		"AC4: standard event rejects snapshot with rank key in party")
+	var bad_snap_hp := {
+		"candle": 50,
+		"party": [
+			{"id": "warden", "fray": 10, "hp": 15},
+			{"id": "seamstress", "fray": 20},
+		],
+	}
+	_check(standard_svc.preview(bad_snap_hp) == _denied_preview(),
+		"AC4: standard event rejects snapshot with hp key in party")
+
+	# Verify forgeable $front in non-needle-toll event is rejected
+	var fake_front_event := _event([
+		_choice("pay", "Pay toll.", {
+			"target": "hero",
+			"hero_id": "$front",
+			"candle": 0,
+			"fray": 0,
+			"hp": -6,
+		}),
+		_choice("leave", "Leave.", _effect(0, 0)),
+	], "fake_needle_toll")
+	var fake_svc := RunStitchedEventConsequence.new(fake_front_event)
+	var snap_normal := _snapshot(50, [["warden", 10], ["seamstress", 20]])
+	var fake_prev := fake_svc.preview(snap_normal)
+	_check(_entry(fake_prev, "pay").get("available") == false,
+		"AC4: non-needle_toll event using $front fails closed as malformed outcome")
+	_assert_rejected(fake_svc, "pay", snap_normal, 50, "AC4: fake $front choice refused")
+
+	# Verify authored needle_toll fields in data/events/stitched_route_effects.json directly
+	var doc: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/events/stitched_route_effects.json"))
+	_check(doc is Dictionary and doc.has("events"), "AC4: stitched_route_effects.json parses")
+	var found_toll := false
+	if doc is Dictionary:
+		for ev in doc.get("events", []):
+			if ev is Dictionary and ev.get("id") == "needle_toll":
+				found_toll = true
+				_check(ev.get("title") == "The Needle Toll", "AC4: authored title is The Needle Toll")
+				_check(int(ev.get("choice_requirements", {}).get("pay_toll", {}).get("minimum_hp", 0)) == 7,
+					"AC4: authored minimum_hp is 7")
+				var choices: Array = ev.get("choices", [])
+				_check(choices.size() == 2, "AC4: needle_toll has exactly 2 authored choices")
+				var ch0: Dictionary = choices[0]
+				_check(ch0.get("id") == "pay_toll", "AC4: choice 0 is pay_toll")
+				var eff0: Dictionary = ch0.get("stitched_effect", {})
+				_check(eff0.get("target") == "hero", "AC4: choice 0 target is hero")
+				_check(eff0.get("hero_id") == "$front", "AC4: choice 0 hero_id is $front")
+				_check(int(eff0.get("hp", 0)) == -6, "AC4: choice 0 hp is -6")
+				var part0: Dictionary = eff0.get("part", {})
+				_check(part0.get("id") == "scissor_crab_claw_arm" and int(part0.get("tier", 0)) == 3,
+					"AC4: choice 0 part is scissor_crab_claw_arm tier 3")
+				var ch1: Dictionary = choices[1]
+				_check(ch1.get("id") == "safe_exit", "AC4: choice 1 is safe_exit")
+				var eff1: Dictionary = ch1.get("stitched_effect", {})
+				_check(eff1.get("target") == "party", "AC4: choice 1 target is party")
+				_check(int(eff1.get("scraps", 0)) == 1, "AC4: choice 1 scraps is 1")
+				break
+	_check(found_toll, "AC4: needle_toll authored record exists in stitched_route_effects.json")
 
 
 
