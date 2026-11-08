@@ -63,34 +63,195 @@ func _dye_controls(app: Node) -> void:
 			_check(not _visit_button(app, "bandage", [hero.id]).disabled, "existing eligible bandage remains buyable")
 
 
+func _sealed_oracle(session: StitchedRunSession) -> Dictionary:
+	# The expected journal and every nested state value belong to the ORIGINAL
+	# owner, before Save. Never build expectations from a restored candidate.
+	var state := session.snapshot().duplicate(true)
+	var document := StitchedRunSave.capture(session).duplicate(true)
+	return {
+		"state": state,
+		"journal": session.journal.duplicate(true),
+		"actions": (session.visit_actions() if session.phase == "visit" else
+			session.choices() if session.phase == "map" else []).duplicate(true),
+		"phase": session.phase,
+		"node": session.map.get_current_node_id(),
+		"service": str(session.pending.get("service", "")),
+		"document": document,
+	}
+
+
+func _oracle_differences(session: StitchedRunSession, oracle: Dictionary) -> Array[String]:
+	var differences: Array[String] = []
+	if session == null:
+		differences.append("session is null")
+		return differences
+	var actual := session.snapshot()
+	for key in oracle.state:
+		if not actual.has(key) or actual[key] != oracle.state[key]:
+			differences.append("%s: before=%s after=%s" % [key,
+				str(oracle.state[key]).substr(0, 180), str(actual.get(key, "<missing>")).substr(0, 180)])
+	for key in actual:
+		if not oracle.state.has(key):
+			differences.append("unexpected state key " + str(key))
+	if session.journal != oracle.journal:
+		differences.append("journal: before=%s after=%s" % [
+			str(oracle.journal).substr(-280), str(session.journal).substr(-280)])
+	if session.phase != oracle.phase:
+		differences.append("phase: %s -> %s" % [oracle.phase, session.phase])
+	if session.map.get_current_node_id() != oracle.node:
+		differences.append("node: %s -> %s" % [oracle.node, session.map.get_current_node_id()])
+	if str(session.pending.get("service", "")) != oracle.service:
+		differences.append("service: %s -> %s" % [oracle.service, session.pending.get("service", "")])
+	var actions: Array = session.visit_actions() if session.phase == "visit" else (
+		session.choices() if session.phase == "map" else [])
+	if actions != oracle.actions:
+		differences.append("choices: before=%s after=%s" % [
+			str(oracle.actions).substr(0, 240), str(actions).substr(0, 240)])
+	if StitchedRunSave.capture(session) != oracle.document:
+		differences.append("sealed capture/digest differs from pre-save journal and state")
+	return differences
+
+
+func _owned_mount(app: Node, phase: String) -> Dictionary:
+	if app.stitched_run_session == null or app.stitched_run_session.phase != phase:
+		return {}
+	var page: Control = app.stitched_run_battle if phase == "battle" else app.stitched_run_panel
+	if page == null or not is_instance_valid(page) or not page.is_visible_in_tree():
+		return {}
+	if phase == "battle":
+		var save := page.get_node_or_null("SaveStitchedBattle") as Button
+		if save == null or save.disabled or not save.is_visible_in_tree() 				or app.stitched_run_battle.battle != app.stitched_run_session.battle:
+			return {}
+		return {"page": page, "save": save, "reload": null}
+	# The default title's Continue mounts the live corridor junction, not the
+	# non-walking test runner's paper map. Its navigation offers Save/Title,
+	# while every connected route choice must have its own active door.
+	if phase == "map" and page is StitchedCorridorJunction:
+		var junction := page as StitchedCorridorJunction
+		var legal: Array = app.stitched_run_session.choices()
+		if legal.is_empty() or junction.doors.size() != legal.size():
+			return {}
+		for id in legal:
+			var door: Button = junction.doors.get(id)
+			if door == null or door.disabled or not door.is_visible_in_tree() \
+					or not app.stitched_run_buttons.has(door):
+				return {}
+		for button in app.stitched_run_buttons:
+			if button is Button and button.text == "Save run" \
+					and button.is_visible_in_tree() and not button.disabled \
+					and button.get_parent() == junction:
+				return {"page": page, "save": button, "reload": null}
+		return {}
+	var navigation := page.find_child("RunNavigation", true, false)
+	if navigation == null or not navigation.is_visible_in_tree():
+		return {}
+	var save: Button = null
+	var reload: Button = null
+	for child in navigation.get_children():
+		if not child is Button or not app.stitched_run_buttons.has(child) 				or child.disabled or not child.is_visible_in_tree():
+			continue
+		if child.text == "Save run":
+			save = child
+		elif child.text == "Reload saved run":
+			reload = child
+	if save == null or reload == null:
+		return {}
+	return {"page": page, "save": save, "reload": reload}
+
+
 func _save_reload(app: Node, label: String, stale_button: Button = null) -> void:
-	var session: StitchedRunSession = app.stitched_run_session
-	var before := session.snapshot()
-	var count := session.visit_actions().size() if session.phase == "visit" else session.choices().size()
+	var original: StitchedRunSession = app.stitched_run_session
+	_check(original != null and original.is_consistent()
+		and original.phase in ["map", "visit", "battle"],
+		label + " starts with a consistent live map, visit or battle owner")
+	if original == null or not original.is_consistent() 			or not original.phase in ["map", "visit", "battle"]:
+		return
+	var oracle := _sealed_oracle(original)
+	_check(not oracle.document.is_empty() and oracle.document.journal == oracle.journal
+		and oracle.document.state == oracle.state,
+		label + " seals an independent deep pre-Save state and journal oracle")
+	if oracle.document.is_empty():
+		return
+	var mounted := _owned_mount(app, oracle.phase)
+	_check(not mounted.is_empty(), label + " has the active " + oracle.phase
+		+ " Save/Reload generation at " + str(oracle.node))
+	if mounted.is_empty():
+		return
+	var old_page: Control = mounted.page
+	var old_save: Button = mounted.save
+	var old_reload: Button = mounted.reload
 	app.stitched_save_path = SAVE_PATH
-	_check(app.stitched_run_buttons[count].text == "Save run"
-		and app.stitched_run_buttons[count + 1].text == "Reload saved run", label + " uses mounted Save/Reload controls")
-	app.stitched_run_buttons[count].pressed.emit()
-	_check(FileAccess.file_exists(SAVE_PATH), label + " creates its save")
-	app.stitched_run_buttons[count + 1].pressed.emit()
-	_check(app.stitched_run_session != session and app.stitched_run_session.snapshot() == before,
-		label + " reloads a detached exact state including pockets and seeded RNG")
+	# A prior phase's save must not masquerade as this generation's Save.
+	DirAccess.remove_absolute(SAVE_PATH)
+	old_save.pressed.emit()
+	var disk := StitchedRunSave.read_file(SAVE_PATH)
+	_check(disk != null and _oracle_differences(disk, oracle).is_empty(),
+		label + " mounted Save writes exactly its pre-save owner (phase=%s node=%s)" % [
+			oracle.phase, oracle.node])
+	if disk == null:
+		return
+	# Battles mount Save but not Reload: exercise the same live public load
+	# entry point directly after pressing the actual battle Save control.
+	if oracle.phase == "battle":
+		_check(app.load_stitched_run(SAVE_PATH), label + " live battle load accepts its saved fight")
+	else:
+		old_reload.pressed.emit()
+	var reloaded: StitchedRunSession = app.stitched_run_session
+	_check(reloaded != null and reloaded != original and reloaded != disk
+		and app.stitched_run_panel != old_page if oracle.phase != "battle"
+			else reloaded != null and reloaded != original and reloaded != disk
+				and app.stitched_run_battle != old_page,
+		label + " Reload publishes a NEW owner and replaces its old page")
+	if reloaded == null or reloaded == original:
+		return
 	if stale_button != null:
-		stale_button.pressed.emit()
-		_check(app.stitched_run_session.snapshot() == before,
-			"pre-reload callback cannot authorize the restored visit")
+		_check(is_instance_valid(stale_button),
+			label + " retains its actual pre-Reload stale action for rejection")
+		if is_instance_valid(stale_button):
+			stale_button.pressed.emit()
+			_check(_oracle_differences(reloaded, oracle).is_empty(),
+				label + " old visit callback cannot change the new owner")
+	# Retired Save callbacks must also be powerless after the ownership swap.
+	if is_instance_valid(old_save):
+		old_save.pressed.emit()
+	_check(_oracle_differences(reloaded, oracle).is_empty()
+		and _oracle_differences(StitchedRunSave.read_file(SAVE_PATH), oracle).is_empty(),
+		label + " Reload/stale Save preserve phase, node, gold, pockets, journal, choices and RNG: "
+			+ str(_oracle_differences(reloaded, oracle)))
+	var fresh_mount: Dictionary = {}
+	for attempt in range(8):
+		fresh_mount = _owned_mount(app, oracle.phase)
+		if app.stitched_run_session == reloaded and not fresh_mount.is_empty() 				and fresh_mount.page != old_page:
+			break
+		await process_frame
+	_check(not fresh_mount.is_empty() and fresh_mount.page != old_page
+		and app.stitched_run_session == reloaded,
+		label + " replaces the visible " + oracle.phase + " controls within eight frames")
+	_check(_oracle_differences(reloaded, oracle).is_empty(),
+		label + " new mounted Reload owner matches sealed oracle: "
+			+ str(_oracle_differences(reloaded, oracle)))
 	var continued: Node = load("res://scenes/app.tscn").instantiate()
 	continued.stitched_save_path = SAVE_PATH
 	root.add_child(continued)
-	await process_frame
-	_check(continued.stitched_run_session == null and continued.title_view.is_visible_in_tree()
-		and continued.stitched_continue_button.is_visible_in_tree()
-		and not continued.stitched_continue_button.disabled, label + " fresh title exposes Continue run")
-	continued.stitched_continue_button.pressed.emit()
-	_check(continued.stitched_run_session != null and continued.stitched_run_session != session
-		and continued.stitched_run_session.snapshot() == before
-		and continued.stitched_run_session.visit_actions() == app.stitched_run_session.visit_actions(),
-		label + " authentic title Continue restores all four pockets, wallet and choices")
+	for attempt in range(8):
+		if continued.stitched_run_session == null and continued.title_view != null 				and continued.title_view.is_visible_in_tree() 				and continued.stitched_continue_button != null 				and continued.stitched_continue_button.is_visible_in_tree() 				and not continued.stitched_continue_button.disabled:
+			break
+		await process_frame
+	var ready: bool = continued.stitched_run_session == null and continued.title_view != null 		and continued.title_view.is_visible_in_tree() and continued.stitched_continue_button != null 		and continued.stitched_continue_button.is_visible_in_tree() 		and not continued.stitched_continue_button.disabled
+	_check(ready, label + " fresh title exposes an enabled saved-run Continue within eight frames")
+	if ready:
+		continued.stitched_continue_button.pressed.emit()
+		var title_mount: Dictionary = {}
+		for attempt in range(8):
+			title_mount = _owned_mount(continued, oracle.phase)
+			if continued.stitched_run_session != null and not title_mount.is_empty():
+				break
+			await process_frame
+		var title_owner: StitchedRunSession = continued.stitched_run_session
+		_check(title_owner != null and title_owner != original and title_owner != reloaded
+			and not title_mount.is_empty() and _oracle_differences(title_owner, oracle).is_empty(),
+			label + " title Continue restores a third owner and genuine " + oracle.phase
+				+ " controls: " + str(_oracle_differences(title_owner, oracle)))
 	continued.free()
 	await process_frame
 
@@ -211,6 +372,8 @@ func _earned_cap_route() -> void:
 		return
 	var shops := 0
 	var fights := 0
+	var paid_buys := 0
+	var paid_shop_ids: Array[String] = []
 	for id in ["f01_n1", "f02_n1", "f03_n1", "f04_n1", "f05_n1", "f06_n1", "f07_n0", "f08_n0"]:
 		_check(session.choices().has(id) and _press_route(app, id), "seeded connected control enters " + id)
 		if session.phase == "battle":
@@ -232,8 +395,28 @@ func _earned_cap_route() -> void:
 				await _save_reload(app, "open Peddler", stale_button)
 				session = app.stitched_run_session
 				_dye_controls(app)
+				var before_paid := session.snapshot().duplicate(true)
+				var journal_before := session.journal.size()
+				var receipts_before := session.receipts.size()
+				var shop_id: String = session.map.get_current_node_id()
 				await _buy(app, "warden")
 				session = app.stitched_run_session
+				var expected_pockets: Dictionary = before_paid.pockets.duplicate(true)
+				expected_pockets["warden"].append("dye")
+				var paid_ok := false
+				if session != null:
+					paid_ok = (
+						session.phase == "map" and session.gold == before_paid.gold - 10
+						and session.pockets == expected_pockets
+						and session.journal.size() == journal_before + 1
+						and session.receipts.size() == receipts_before + 1
+						and session.journal.back() == {"action": "visit", "id": "buy_dye", "arguments": ["warden"]}
+						and session.receipts.back().decision == "buy_dye"
+					)
+				_check(paid_ok, "genuine Shop %s produces one paid 10-gold Warden Dye receipt" % shop_id)
+				if paid_ok:
+					paid_buys += 1
+					paid_shop_ids.append(shop_id)
 			else:
 				_check(session.pockets.warden == ["dye", "dye"] and session.gold >= 10,
 					"full-pocket refusal is witnessed with an otherwise affordable wallet")
@@ -244,6 +427,9 @@ func _earned_cap_route() -> void:
 					"free Leave closes the full-pocket Shop without any spend or RNG draw")
 		else:
 			_check(_finish_visit(app) and session.phase == "map", "ordinary mounted stop continues the connected route")
+	var dye_entries: Array = session.journal.filter(func(command: Dictionary): return command.get("action") == "visit" and command.get("id") == "buy_dye" and command.get("arguments") == ["warden"])
+	_check(paid_buys == 2 and paid_shop_ids.size() == 2 and paid_shop_ids[0] != paid_shop_ids[1]
+		and dye_entries.size() == 2, "exactly two distinct authenticated Shops record paid Warden Dye")
 	_check(shops == 3 and fights == 3 and session.pockets.warden == ["dye", "dye"],
 		"three Shops and two earned purchases exercised the two-item cap non-vacuously")
 	await _save_reload(app, "onward ownership")
