@@ -112,16 +112,26 @@ static func pending(state: Dictionary, curio: Dictionary, kind: String, effects:
 	state.pending.append({"kind": kind, "source": curio.instance, "target": target,
 		"consumed": false, "effects": effects.duplicate(true)})
 
-static func protected(state: Dictionary, curio: Dictionary, actor: String) -> bool:
+static func protected_by_pins(state: Dictionary, curio: Dictionary) -> bool:
 	for effect in state.pending:
 		if effect.kind == "pins" and effect.target == curio.instance and not effect.consumed:
 			effect.consumed = true
 			return true
+	return false
+
+static func protected_by_dye(state: Dictionary, actor: String) -> bool:
 	for effect in state.pending:
 		if effect.kind == "dye" and effect.target == actor and effect.effects.get("skip_one_curio_trap", false):
 			effect.effects.skip_one_curio_trap = false
 			return true # Retain its separate next-fight effect.
 	return false
+
+static func protected(state: Dictionary, curio: Dictionary, actor: String, pins_only: bool = false) -> bool:
+	if protected_by_pins(state, curio):
+		return true
+	if pins_only:
+		return false
+	return protected_by_dye(state, actor)
 
 static func loot(state: Dictionary, curio: Dictionary, table: Array, rng: RandomNumberGenerator) -> void:
 	pending(state, curio, "curio_loot", table[rng.randi_range(0, table.size() - 1)])
@@ -157,8 +167,10 @@ static func resolve(state: Dictionary, curio: Dictionary, record: Dictionary, ch
 				else:
 					pending(state, curio, "curio_part", {"id": r.parts[rng.randi_range(0, r.parts.size() - 1)], "tier": 1})
 			"ragbag":
-				if not protected(state, curio, actor) and rng.randi_range(1, 100) <= r.bleed_chance:
-					pending(state, curio, "curio_trap", {"status": "bleed", "amount": int(r.bleed)}, actor)
+				if not protected(state, curio, actor, true):
+					var bite: bool = rng.randi_range(1, 100) <= r.bleed_chance
+					if bite and not protected_by_dye(state, actor):
+						pending(state, curio, "curio_trap", {"status": "bleed", "amount": int(r.bleed)}, actor)
 				loot(state, curio, r.loot, rng)
 			"patterns": pending(state, curio, "secret_room", {"area": state.area, "marker": r.marker})
 			"door":
