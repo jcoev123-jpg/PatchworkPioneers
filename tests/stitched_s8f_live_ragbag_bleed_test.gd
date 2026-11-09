@@ -268,43 +268,119 @@ func invalid_traps() -> void:
 		check(not session.is_consistent(), "public session detects " + mode + " tampering")
 		check(not session.walk_act({"kind": "forward", "actor": "warden"}, before).ok,
 			"public route refuses tampered trap")
-		# Probe the settlement boundary too, with the real settled doll/context data.
+		# Settlement now authenticates a genuinely completed Walk (the S8c bridge plan),
+		# so complete this Walk at its own boundary before probing settlement with the
+		# real settled doll/context data; the public route above is rightly refused.
+		for guard in 30:
+			if session.walk.snapshot().phase != "walking":
+				break
+			var actor: String = session.walk.snapshot().viewpoint
+			var command := {"kind": "forward", "actor": actor}
+			if session.walk.tug_unresolved():
+				command = {"kind": "tug", "actor": actor, "target": session.walk.snapshot().tug.id, "choice": "yield"}
+			if not session.walk.act(command, session.walk.snapshot()).ok:
+				break
+		check(session.walk.snapshot().phase == "complete", mode + " probe Walk reaches genuine completion")
 		var ok := session._finish_walk()
 		check(ok == (mode in ["consumed", "wrong_kind"]), mode + " settlement fails closed or ignores unrelated/consumed effects")
 		check(bleeds(session.walk_carry).is_empty(), mode + " never publishes Bleed")
 
 
+## A seeded visit Walk whose shadow is still unresolved leaves the bridge's
+## genuinely validated arrival waiting for the next battle; null when this seed
+## has none, so callers search candidates for a witness.
+func deferred_arrival(seed_number: int) -> StitchedRunSession:
+	var session := StitchedRunSession.start(seed_number)
+	if session == null or not session.enable_walks():
+		return null
+	var pick := ""
+	for id in session.choices():
+		var node_type: String = session.map.get_node(id).type
+		if node_type != "Boss" and not (node_type in ["Fight", "Elite"]):
+			pick = id
+			break
+	if pick.is_empty() or not session.enter(pick, session.snapshot()):
+		return null
+	if session.phase != "walk" or session.walk == null:
+		return null
+	for guard in 30:
+		if session.phase != "walk":
+			break
+		var walker := session.walk
+		var actor: String = walker.snapshot().viewpoint
+		var command := {"kind": "forward", "actor": actor}
+		if walker.tug_unresolved():
+			command = {"kind": "tug", "actor": actor, "target": walker.snapshot().tug.id, "choice": "yield"}
+		if session.walk_act(command, session.snapshot()).get("ok") != true:
+			return null
+	if session.phase != "visit" or session.walk_arrival.is_empty():
+		return null
+	return session
+
+
 func battle_boundary() -> void:
-	var session := StitchedRunSession.start(7)
+	var session: StitchedRunSession = null
+	var seed_number := -1
+	for candidate in 32:
+		session = deferred_arrival(candidate)
+		if session != null:
+			seed_number = candidate
+			break
+	check(session != null, "a genuine deferred arrival witness exists")
+	if session == null:
+		return
+	var kept_arrival := session.walk_arrival.duplicate(true)
+	var control := deferred_arrival(seed_number)
+	check(control != null and control.snapshot() == session.snapshot(),
+		"deferred arrival witness replays deterministically")
+	if control == null:
+		return
+	check(session.choose_visit("leave", [], session.snapshot())
+		and control.choose_visit("leave", [], control.snapshot()),
+		"both witnesses leave their genuine visits")
+	check(session.walk_arrival == kept_arrival, "leaving the visit preserves the deferred arrival")
 	var target: String = session.heroes[1].id
 	session.heroes[1].statuses = {"bleed": 5}
 	session.walk_carry = [{"kind": "bleed", "target": target, "amount": 2},
-		{"kind": "mimic"}, {"kind": "fray", "target": target, "amount": 15}]
-	var control := StitchedRunSession.start(7)
+		{"kind": "fray", "target": target, "amount": 15}]
 	control.heroes[1].statuses = {"bleed": 5}
 	control.walk_carry = session.walk_carry.slice(1).duplicate(true)
 	check(session._open_battle("Fight") and control._open_battle("Fight"), "carry and RNG control battles construct")
 	check(session.battle_config.heroes[1].statuses.bleed == 5, "max merge preserves stronger existing Bleed")
 	check(session.battle.state_snapshot() == control.battle.state_snapshot() and session.rng.state == control.rng.state,
 		"Bleed merge adds no RNG draws and preserves mimic/fray carries")
-	check(session.walk_carry.is_empty(), "successful setup spends carry")
+	check(session.walk_carry.is_empty() and session.walk_arrival.is_empty(),
+		"successful setup spends carry and arrival")
 	session.heroes[1].statuses.clear()
-	check(session._open_battle("Elite") and session.battle_config.heroes[1].statuses.is_empty(),
-		"another battle cannot reuse the spent trap")
+	check(session._open_battle("Elite") and session.battle_config.heroes[1].statuses.is_empty()
+		and session.battle.get_unit(StitchedRules.WALK_MIMIC_ID).is_empty(),
+		"another battle cannot reuse the spent trap or arrival")
 	for carry in [{"kind": "bleed", "target": target, "amount": 2.0},
 			{"kind": "bleed", "target": target, "amount": 0},
 			{"kind": "bleed", "target": target, "amount": -2},
 			{"kind": "bleed", "target": "missing", "amount": 2}]:
-		var invalid := StitchedRunSession.start(7)
-		invalid.walk_carry = [carry.duplicate(true), {"kind": "mimic"}]
+		var invalid := deferred_arrival(seed_number)
+		if invalid == null:
+			check(false, "invalid carry witness constructs")
+			continue
+		check(invalid.choose_visit("leave", [], invalid.snapshot()), "invalid carry witness leaves its visit")
+		invalid.walk_carry = [carry.duplicate(true)]
 		var before := invalid.walk_carry.duplicate(true)
-		check(not invalid._open_battle("Fight") and invalid.battle == null and invalid.walk_carry == before,
-			"invalid carry refuses setup without spending any carry")
-	var failed := StitchedRunSession.start(7)
+		var arrival := invalid.walk_arrival.duplicate(true)
+		check(not invalid._open_battle("Fight") and invalid.battle == null and invalid.walk_carry == before
+			and invalid.walk_arrival == arrival,
+			"invalid carry refuses setup without spending any carry or arrival")
+	var failed := deferred_arrival(seed_number)
+	check(failed != null, "failed setup witness constructs")
+	if failed == null:
+		return
+	check(failed.choose_visit("leave", [], failed.snapshot()), "failed setup witness leaves its visit")
 	failed.walk_carry = [{"kind": "bleed", "target": "warden", "amount": 2}]
+	var pending_arrival := failed.walk_arrival.duplicate(true)
 	failed.heroes[2].parts.clear()
-	check(not failed._open_battle("Fight") and failed.battle == null and failed.walk_carry.size() == 1,
-		"battle construction failure retains the validated Bleed carry")
+	check(not failed._open_battle("Fight") and failed.battle == null and failed.walk_carry.size() == 1
+		and failed.walk_arrival == pending_arrival,
+		"battle construction failure retains the validated Bleed carry and arrival")
 
 
 func _init() -> void:

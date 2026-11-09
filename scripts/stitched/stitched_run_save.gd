@@ -66,6 +66,9 @@ static func restore(document: Variant) -> StitchedRunSession:
 			return null
 		if walk_state.enabled and not candidate.enable_walks():
 			return null
+	# The S8c bridge now authenticates Walk mimic/cut arrivals in walk.state.walk.arrival;
+	# pre-arrival saves kept them as bare walk.carry flags, so compare against that schema.
+	var legacy_arrival: bool = not legacy_walk and not document.state.walk.has("arrival")
 	# Pre-S12 saves carry no gifts: they keep the four basic hands and are never offered more.
 	var legacy_gifts: bool = not document.state.has("gifts")
 	if legacy_gifts:
@@ -95,6 +98,8 @@ static func restore(document: Variant) -> StitchedRunSession:
 	var replayed := candidate.snapshot()
 	if legacy_walk:
 		replayed.erase("walk")
+	elif legacy_arrival:
+		replayed.walk.erase("arrival")
 	if legacy_s14:
 		replayed.erase("s14")
 		# Pre-S14 saves contain neither death-hit counters nor head-ward fields;
@@ -120,7 +125,12 @@ static func restore(document: Variant) -> StitchedRunSession:
 		if replayed.get("battle") is Dictionary and replayed.battle.get("hand") is Dictionary:
 			for key in ["gifts", "spent", "covered", "nightlight"]:
 				replayed.battle.hand.erase(key)
-	if candidate.journal != document.journal or replayed != document.state:
+	var saved_state: Dictionary = document.state
+	if legacy_arrival:
+		saved_state = document.state.duplicate(true)
+		saved_state.walk["carry"] = (saved_state.walk.get("carry", []) as Array).filter(
+			func(entry): return not (entry is Dictionary and entry.get("kind") in ["mimic", "cut"]))
+	if candidate.journal != document.journal or replayed != saved_state:
 		return null
 	return candidate
 
