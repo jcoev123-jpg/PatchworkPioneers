@@ -36,6 +36,15 @@ const SNUFF_FLAME_COPY := "A cream lantern-shade flap folds over the Monk's othe
 ## pure appearance.
 const MOTH_CLOUD_COPY := "A cluster of plum felt moths swirls across a saffron head patch, with cream wing tips secured by dark cross-stitches."
 const VIGIL_RING_COPY := "A cream-stitched halo circles a tiny lantern on the Monk's plum quilted chest, with saffron cloth rays tucked beneath its seams."
+## S14 sewn-cloth copy: the two starter patches describe the literal stitched fabric the player
+## sees, never the retired nested S4 part-granted ability. The Monk's real signatures live in
+## data/stitched/s14_hero_abilities.json, so these top-level texts stay pure appearance.
+const MOTH_WINK_COPY := "A small cream button eye sits in a soot-dark saffron felt brow, with one plum moth tacked beside it in uneven cross-stitches."
+const LAMPLIGHT_WASH_COPY := "A frayed saffron felt strip crosses the Monk's plum quilted chest, held by cream running stitches beneath a small tarnished lantern clasp."
+## The obsolete vague sentences this lane replaced: positive witnesses that the new physical-cue
+## checks really reject prose that names no tangible sewn piece.
+const OLD_MOTH_WINK_COPY := "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink."
+const OLD_LAMPLIGHT_WASH_COPY := "Lamplight pools over the Monk's quilted robe and warms the stitches along its seams."
 ## Whole words that would turn this appearance copy back into an obsolete combat promise. `\b`
 ## word boundaries keep "stitched" or "hem" from tripping a shorter token such as "hit".
 const FORBIDDEN_COPY_PATTERN := "\\b(ability|skill|rank|ranks|target|foe|enemy|ally|cast|attack|hit|damage|blind|expose|exposed|weak|bleed|stun|heal|guard|dodge|tier|tiers|turn|turns|duration|move|effect|chance|bonus)\\b"
@@ -319,30 +328,158 @@ func _test_catalog() -> void:
 		"AC3: out-of-bounds target rank rejects")
 
 
-## S13/S14 patch identity copy: the two named starter patches now describe the sewn patch the
-## player sees instead of advertising a retired part-granted ability. Both texts are compared
-## by named ID (never list position), and neither field may keep a card-era or receipt phrase.
+## S13/S14 starter patch identity copy: the two named starter patches now describe the sewn
+## patch the player sees instead of advertising a retired part-granted ability. Both texts are
+## compared by named ID (never list position), each keeps its literal fabric motifs, and neither
+## field may keep a card-era or receipt phrase, a whole-word combat/tier promise or a digit. The
+## old vague sentences are kept only as positive witnesses that these cue checks reject them.
 func _test_patch_copy() -> void:
 	var cat := _catalog()
 	_check(bool(cat.get("ok", false)), "AC1: catalog available for the named patch copy checks")
 	if not bool(cat.get("ok", false)):
 		return
 	var expected := {
-		"lantern_monk_head_moth_wink":
-			"Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
-		"lantern_monk_torso_lamplight_wash":
-			"Lamplight pools over the Monk's quilted robe and warms the stitches along its seams.",
+		"lantern_monk_head_moth_wink": {
+			"name": "Mothlit Brow Patch", "slot": "head", "text": MOTH_WINK_COPY,
+			"motifs": ["cream button eye", "saffron felt", "plum moth", "cross-stitches"],
+			"old": OLD_MOTH_WINK_COPY,
+		},
+		"lantern_monk_torso_lamplight_wash": {
+			"name": "Lamplight Wash", "slot": "torso", "text": LAMPLIGHT_WASH_COPY,
+			"motifs": ["saffron felt", "plum quilted chest", "cream running stitches", "lantern clasp"],
+			"old": OLD_LAMPLIGHT_WASH_COPY,
+		},
 	}
+	var forbidden := RegEx.new()
+	_check(forbidden.compile(FORBIDDEN_COPY_PATTERN) == OK,
+		"AC2: the whole-word combat-promise pattern compiles for the starter patch copy")
+	_check(forbidden.search("heal one ally for two turns") != null,
+		"AC2: the matcher really rejects an obsolete heal/ally/turn sentence")
+	var digits := RegEx.new()
+	_check(digits.compile("\\d") == OK, "AC2: the numeric-digit pattern compiles for starter patch copy")
+	_check(digits.search("heal 4 for 2 turns") != null,
+		"AC2: the digit matcher really detects numeric combat values")
 	var obsolete := ["card draw", "heal receipt"]
+	var seen_texts: Dictionary = {}
 	for id in expected:
-		_check(cat["by_id"].has(id), "AC1: named patch copy record present: " + id)
+		var want: Dictionary = expected[id]
+		_check(cat["by_id"].has(id), "AC1: named starter patch record present: " + id)
 		if not cat["by_id"].has(id):
 			continue
-		var text := str(cat["by_id"][id]["text"])
-		_check(text == str(expected[id]), "AC1: named patch copy is exactly the authored sentence: " + id)
+		var part: Dictionary = cat["by_id"][id]
+		_check(str(part["id"]) == id and str(part["name"]) == str(want["name"])
+			and str(part["owner"]) == "lantern_monk" and str(part["slot"]) == str(want["slot"]),
+			"AC1: starter patch keeps its id, name, owner and %s slot: %s" % [str(want["slot"]), id])
+		var text := str(part["text"])
+		_check(text == str(want["text"]),
+			"AC1: starter patch base copy is exactly the authored cloth sentence: " + id)
+		seen_texts[text] = true
+		var low := text.to_lower()
+		for motif in want["motifs"]:
+			_check(low.contains(str(motif)),
+				"AC1: starter patch copy names the sewn motif '%s': %s" % [str(motif), id])
+		_check(forbidden.search(low) == null,
+			"AC2: starter patch copy promises no combat word: " + id)
+		_check(digits.search(text) == null,
+			"AC2: starter patch copy carries no numeric combat digits: " + id)
 		for phrase in obsolete:
-			_check(not text.to_lower().contains(str(phrase)),
-				"AC1: named patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
+			_check(not low.contains(str(phrase)),
+				"AC1: starter patch copy drops the obsolete phrase '%s': %s" % [str(phrase), id])
+		# Positive witness: the obsolete sentence must fail every new physical-cue check.
+		var old_low := str(want["old"]).to_lower()
+		var old_cues := 0
+		for motif in want["motifs"]:
+			if old_low.contains(str(motif)):
+				old_cues += 1
+		_check(old_cues == 0,
+			"AC2: the obsolete vague sentence fails every new physical-cue check: " + id)
+		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
+			"AC1: starter patch validates with its sewn-cloth description: " + id)
+		var blanked: Dictionary = part.duplicate(true)
+		blanked["text"] = ""
+		_check(not bool(StitchedParts.validate_part(blanked).get("ok", false)),
+			"AC3: a blank starter patch base text still fails closed: " + id)
+		var spaces: Dictionary = part.duplicate(true)
+		spaces["text"] = "   "
+		_check(not bool(StitchedParts.validate_part(spaces).get("ok", false)),
+			"AC3: a whitespace-only starter patch base text still fails closed: " + id)
+		_check(str(cat["by_id"][id]["text"]) == str(want["text"]),
+			"AC3: deep-copy validation never mutates the shipped starter patch: " + id)
+	_check(seen_texts.size() == 2,
+		"AC2: the two starter patches describe visually distinct sewn cloth")
+	# Lamplight Wash stays a felt strip on the chest, not the cream-stitched halo of Vigil Ring.
+	var torso_text := str(cat["by_id"][STARTERS["torso"]]["text"])
+	var vigil_text := str(cat["by_id"][ALTERNATES["torso"]]["text"])
+	_check(torso_text != vigil_text and not torso_text.to_lower().contains("halo")
+		and vigil_text.to_lower().contains("halo"),
+		"AC2: Lamplight Wash stays a felt strip, distinct from the halo-shaped Vigil Ring patch")
+	# The nested S4 stat/ability/tier data stays exact for validation and regressions, though it
+	# is retired as a live part-granted move; the fixed S14 signatures are separate records.
+	var frozen := {
+		STARTERS["head"]: {
+			"stat": {"acc": 3},
+			"ability": {
+				"id": "lantern_monk_head_moth_wink_move", "name": "Moth Wink", "kind": "debuff",
+				"launch": [1, 2, 3, 4], "target": [1, 2, 3], "side": "enemy", "multi": false,
+				"acc": 90, "dmg": [0, 0], "crit": 0, "effects": {"blind": 1}, "self_move": 0,
+				"move": "skill",
+			},
+			"tiers": {
+				1: {"acc": 90, "effects": {"blind": 1}},
+				2: {"acc": 94, "effects": {"blind": 1}},
+				3: {"acc": 100, "effects": {"blind": 1, "exposed": 1}},
+			},
+		},
+		STARTERS["torso"]: {
+			"stat": {"max_hp": 6, "prot": 4},
+			"ability": {
+				"id": "lantern_monk_torso_lamplight_wash_move", "name": "Lamplight Wash",
+				"kind": "heal", "launch": [2, 3, 4], "target": [1, 2, 3, 4], "side": "ally",
+				"multi": true, "acc": 100, "dmg": [0, 0], "crit": 0, "effects": {"heal": 2},
+				"self_move": 0, "move": "skill",
+			},
+			"tiers": {1: {"heal": 2}, 2: {"heal": 3}, 3: {"heal": 5}},
+		},
+	}
+	for id in frozen:
+		var want: Dictionary = frozen[id]
+		var part: Dictionary = cat["by_id"].get(id, {})
+		_check(not part.is_empty(),
+			"AC3: named starter record present for its frozen base data: " + id)
+		if part.is_empty():
+			continue
+		var ab: Dictionary = part["ability"]
+		var want_ab: Dictionary = want["ability"]
+		_check(part["stat"] == want["stat"]
+			and str(ab["id"]) == str(want_ab["id"]) and str(ab["name"]) == str(want_ab["name"])
+			and str(ab["kind"]) == str(want_ab["kind"])
+			and ab["launch"] == want_ab["launch"] and ab["target"] == want_ab["target"]
+			and str(ab["target_side"]) == str(want_ab["side"])
+			and bool(ab["multi"]) == bool(want_ab["multi"])
+			and int(ab["acc"]) == int(want_ab["acc"]) and ab["dmg"] == want_ab["dmg"]
+			and int(ab["crit"]) == int(want_ab["crit"]) and ab["effects"] == want_ab["effects"]
+			and int(ab["self_move"]) == int(want_ab["self_move"])
+			and str(ab["move"]) == str(want_ab["move"]),
+			"AC3: starter record keeps its exact base stat and nested S4 ability: " + id)
+		for tier in [1, 2, 3]:
+			var tiered := StitchedParts.ability_at_tier(part, tier)
+			var want_tier: Dictionary = want["tiers"][tier]
+			var acc_ok := not want_tier.has("acc") or int(tiered["acc"]) == int(want_tier["acc"])
+			var effects_ok := true
+			if want_tier.has("effects"):
+				effects_ok = tiered["effects"] == want_tier["effects"]
+			elif want_tier.has("heal"):
+				effects_ok = int(tiered["effects"].get("heal", 0)) == int(want_tier["heal"]) \
+					and tiered["effects"].size() == 1
+			_check(acc_ok and effects_ok,
+				"AC3: starter record keeps its exact tier %d override: %s" % [tier, id])
+	# The six other named Lantern Monk parts stay reachable and valid, matched by ID rather than
+	# by catalog total or list order (parallel lanes can extend shared catalogs).
+	for id in IDS:
+		if id == STARTERS["head"] or id == STARTERS["torso"]:
+			continue
+		_check(cat["by_id"].has(id) and bool(StitchedParts.validate_part(cat["by_id"][id]).get("ok", false)),
+			"AC3: the six other named Lantern Monk parts stay accessible and valid: " + id)
 
 
 ## S14: the starter head is a worn cloth patch, so its top-level inventory label names the
@@ -364,7 +501,7 @@ func _test_moth_wink_patch_label() -> void:
 		and str(part["id"]) == "lantern_monk_head_moth_wink"
 		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
 		and part["stat"] == {"acc": 3}
-		and str(part["text"]) == "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
+		and str(part["text"]) == MOTH_WINK_COPY,
 		"AC1: the head patch is labelled Mothlit Brow Patch with its old ID, slot, owner, stat and copy")
 	_check(str(part["ability"]["id"]) == "lantern_monk_head_moth_wink_move"
 		and str(part["ability"]["name"]) == "Moth Wink",
@@ -1475,7 +1612,7 @@ func _test_moth_wink_rank4(tier: int, seed_start: int, seed_count: int) -> void:
 		and str(part["name"]) == "Mothlit Brow Patch"
 		and str(part["slot"]) == "head" and str(part["owner"]) == "lantern_monk"
 		and part["stat"] == {"acc": 3}
-		and str(part["text"]) == "Moths gather beside the Monk's lantern-lit button eye, stirring with each blink.",
+		and str(part["text"]) == MOTH_WINK_COPY,
 		"AC1: Mothlit Brow Patch keeps its head slot, owner, +3 ACC stat and short patch copy")
 	var ability := StitchedParts.ability_at_tier(part, tier)
 	var valid := StitchedParts.validate_ability(ability)
