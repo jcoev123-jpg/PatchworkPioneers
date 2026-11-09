@@ -82,6 +82,9 @@ var _inspected_seat := ""
 var _portrait_font: Font
 var _pose_catalog := LiveMovePoseCatalog.new()
 var _pose_manifest: Dictionary = {}
+## Owner 11-09: every ability has its own pose, side -> actor id -> ability id -> art.
+const ABILITY_POSES_PATH := "res://data/art/ability_poses.json"
+static var _ability_poses: Variant = null
 var _displayed_actor := ""
 var _stage_backdrop
 var _stage_art_view: Control
@@ -1683,7 +1686,26 @@ func _exit_tree() -> void:
 	_cancel_stage_focus()
 
 
+## The art of one ability's own pose, or "" when it has none (then its move pose shows).
+static func ability_pose_path(side: String, actor_id: String, ability_id: String) -> String:
+	if _ability_poses == null:
+		_ability_poses = {}
+		var file := FileAccess.open(ABILITY_POSES_PATH, FileAccess.READ)
+		if file != null:
+			var data: Variant = JSON.parse_string(file.get_as_text())
+			if data is Dictionary:
+				_ability_poses = data
+	var actors: Variant = _ability_poses.get("heroes" if side == "hero" else "enemies", {})
+	var poses: Variant = actors.get(actor_id, {}) if actors is Dictionary else {}
+	var path := str(poses.get(ability_id, "")) if poses is Dictionary else ""
+	return path if path.begins_with("res://") and ResourceLoader.exists(path, "Texture2D") else ""
+
+
 func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: String) -> void:
+	var own := ability_pose_path(side, id, ability_id)
+	if not own.is_empty():
+		puppet.attack_texture = load(own)
+		return
 	var actor := battle.get_unit(id)
 	var move := "attack"
 	if side == "hero":

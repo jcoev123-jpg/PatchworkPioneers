@@ -57,6 +57,8 @@ var health_text: Label
 var fray_bar: TextureProgressBar
 var log_label: Label
 var outcome_label: Label
+## Owner 11-09: a move's name shows only while it is used; each unit's hover lists its moveset.
+var move_banner: Label
 var hovered := ""
 ## A local cursor only: engine.legal_targets() owns all legality and all commits.
 var _keyboard_targets: Array[String] = []
@@ -285,6 +287,10 @@ func _build_top() -> void:
 	log_label = _label("", Rect2(190, 540, 900, 44), 19, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	log_label.name = "FightLine"
 	add_child(log_label)
+	move_banner = _label("", Rect2(240, 124, 800, 56), 36, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+	move_banner.name = "MoveName"
+	move_banner.visible = false
+	add_child(move_banner)
 	outcome_label = _label("", Rect2(240, 250, 800, 90), 64, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
 	outcome_label.name = "Outcome"
 	outcome_label.visible = false
@@ -606,7 +612,9 @@ func refresh() -> void:
 				hp.value = float(heap.get("hp", 0))
 				numbers.text = str(int(heap.get("hp", 0)))
 			hits[key].visible = plate.visible
-			hits[key].tooltip_text = _simple_detail(engine.status_detail(side, rank)) if plate.visible else ""
+			var moves := _moveset(unit) if standing else ""
+			hits[key].tooltip_text = (_simple_detail(engine.status_detail(side, rank)) + "\n" + moves).strip_edges() \
+				if plate.visible else ""
 	_sync_keyboard_targets()
 	_refresh_bar()
 	_shade_figures()
@@ -650,17 +658,16 @@ func _refresh_bar() -> void:
 		patch.modulate = Color(0.5, 0.47, 0.47, 0.8) if torn else Color.WHITE
 		patch.material = round_material(ICON, TIER_OUTLINE.get(int(equipped.get("tier", 1)), TIER_OUTLINE[1]))
 		(button.get_node("Frayed") as TextureRect).texture = _texture(StitchedSewnPatches.ART + "frayed.png") if torn else null
-		# With a patch picture the slot word steps aside and the move name sits along the hem.
-		var pictured := patch.texture != null
-		(button.get_node("Slot") as Label).visible = not pictured
-		move_label.position = Vector2(0, ICON - 2.0) if pictured else Vector2(16, 59)
-		move_label.size = Vector2(114, 24) if pictured else Vector2(82, 36)
+		# With a patch picture the slot word steps aside. Owner 11-09: the move name only shows on hover.
+		(button.get_node("Slot") as Label).visible = patch.texture == null
+		move_label.visible = false
 		if not part.is_empty():
 			move_label.text = str(StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))).get("name", ""))
 			if torn:
 				move_label.text = "torn"
 		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
-		button.tooltip_text = str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
+		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
+		button.tooltip_text = (move_label.text + "\n" + cue).strip_edges()
 	_shade_parts()
 	var cut := hero_turn and battle.thread_cuts().has(str(shown.get("id", "")))
 	var hand_open := battle.hand_action_open() and not battle.is_over()
@@ -685,11 +692,15 @@ func _refresh_bar() -> void:
 	outcome_label.text = battle.outcome().to_upper()
 	for slot in part_buttons:
 		part_buttons[slot].visible = not battle.is_over()
-	var lines := engine._notice.split("\n", false)
+	# Who did what stays off the screen (the move name flashes up during the move);
+	# only Wren's own words remain.
 	var shown_lines := PackedStringArray()
-	for line in lines:
-		if not line.begins_with("Round "):
-			shown_lines.append(line.replace("→ ", ""))
+	var move_name_next := false
+	for line in engine._notice.split("\n", false):
+		var said := not (move_name_next or line.begins_with("Round ") or line.begins_with("→ ") or line.contains(" · "))
+		move_name_next = line.ends_with(" · Ability")
+		if said:
+			shown_lines.append(line)
 	if not engine._hand_pending.is_empty():
 		var at_foe := StitchedBattleScreen.hand_target_side(engine._hand_pending.get_slice(":", 0)) == "foe"
 		log_label.text = "Wren reaches out: pick one of the foes." if at_foe else "Wren reaches out: pick one of the dolls."
@@ -973,6 +984,7 @@ func _cancel_beats() -> void:
 	if _beats != null:
 		_beats.kill()
 		_beats = null
+	_show_move_name("")
 	stage.cancel_fight_focus()
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
@@ -997,6 +1009,11 @@ func _receipt_pose_texture(actor_id: String, ability_id: String) -> Texture2D:
 		return null
 	var move := "attack"
 	var side := str(actor.get("side", ""))
+	var own := StitchedBattleScreen.ability_pose_path(side, actor_id, ability_id)
+	if not own.is_empty():
+		var pictured := _texture(own)
+		if pictured != null:
+			return pictured
 	if side == "hero":
 		for worn in actor.get("parts", {}).values():
 			var definition: Dictionary = engine.parts.get(str(worn.get("id", "")), {})
@@ -1057,6 +1074,8 @@ func _play_new_receipts() -> void:
 		var home := figure.position
 		var toward := -1.0 if str(actor.side) == "hero" else 1.0
 		_beats.tween_callback(Callable(self, "_begin_receipt_focus").bind(receipt.duplicate(true)))
+		_beats.tween_callback(Callable(self, "_show_move_name").bind(
+			engine._ability_name(actor_id, str(receipt.get("ability", "")))))
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), true))
 		_beats.tween_property(figure, "position:z", home.z + toward * LUNGE, BEAT_TIME * 0.4) \
 			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
@@ -1068,7 +1087,26 @@ func _play_new_receipts() -> void:
 		_beats.tween_property(figure, "position:z", home.z, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
+	_beats.tween_callback(Callable(self, "_show_move_name").bind(""))
 	_beats.tween_callback(_shade_figures)
+
+
+func _show_move_name(move_name: String) -> void:
+	move_banner.text = move_name
+	move_banner.visible = not move_name.is_empty()
+
+
+## "Moves: Hook Drag, Peck" - the unit's moveset, for its hover.
+func _moveset(unit: Dictionary) -> String:
+	var names := PackedStringArray()
+	for ability in unit.get("abilities", []):
+		names.append(str(ability.get("name", "")))
+	for slot in StitchedBattleScreen.SLOTS:
+		var worn: Dictionary = unit.get("parts", {}).get(slot, {})
+		var part: Dictionary = engine.parts.get(str(worn.get("id", "")), {})
+		if not part.is_empty():
+			names.append(str(StitchedParts.ability_at_tier(part, int(worn.get("tier", 1))).get("name", "")))
+	return "Moves: " + ", ".join(names) if not names.is_empty() else ""
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
