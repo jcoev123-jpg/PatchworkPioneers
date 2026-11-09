@@ -8,7 +8,6 @@ extends Control
 ## the acting doll and its four body parts. Everything deeper stays inside the rules.
 
 const SLOT_NAMES := {"head": "HEAD", "arms": "ARM", "torso": "TORSO", "legs": "LEG"}
-const HOOP := preload("res://assets/paper/stitched/icons/portrait_frame.png")
 const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const NAME_PLATE := preload("res://assets/paper/ui/hud_name_plate.png")
 const BAR_FRAME := preload("res://assets/paper/ui/hud_bar_frame.png")
@@ -25,8 +24,11 @@ const HEAP_HEIGHT := 0.55
 const BAR_TOP := 588.0
 const LUNGE := 0.35
 const BEAT_TIME := 0.32
-## A sewn patch's tier shows as the colour of its hoop: plain, silver thread, gold thread.
-const TIER_HOOP := {1: Color.WHITE, 2: Color("cfd6ff"), 3: Color("ffcf6e")}
+## Owner 11-09: no hoop behind a round, only a thin outline; a sewn patch's tier shows as
+## the outline's colour: plain bone, silver thread, gold thread.
+const TIER_OUTLINE := {1: Color("c9b79a"), 2: Color("cfd6ff"), 3: Color("ffcf6e")}
+const ICON := 92.0
+const PORTRAIT := 100.0
 
 var engine: StitchedBattleScreen
 var battle: StitchedRules
@@ -121,20 +123,43 @@ func _ready() -> void:
 	refresh()
 
 
-static var _round: ShaderMaterial
+static var _round_shader: Shader
+static var _rounds := {}
 
-## One shared material that trims a square patch picture to the hoop's circle.
-static func round_material() -> ShaderMaterial:
-	if _round == null:
-		var shader := Shader.new()
-		shader.code = """shader_type canvas_item;
+## A material that cuts a picture to a circle side wide with a thin outline round its edge.
+## The circle is measured on the drawn rect, not the UVs, so cropped and atlas pictures stay
+## round. A clear outline only cuts. One material is shared per side and colour.
+static func round_material(side: float, outline: Color = TIER_OUTLINE[1]) -> ShaderMaterial:
+	var key := "%d|%s" % [roundi(side), outline.to_html()]
+	if _rounds.has(key):
+		return _rounds[key]
+	if _round_shader == null:
+		_round_shader = Shader.new()
+		_round_shader.code = """shader_type canvas_item;
+uniform float side = 92.0;
+uniform vec4 outline : source_color = vec4(0.79, 0.72, 0.6, 1.0);
+uniform float width = 2.5;
+varying vec2 spot;
+varying vec4 tint;
+void vertex() {
+	spot = VERTEX;
+	tint = COLOR;
+}
 void fragment() {
-	COLOR = texture(TEXTURE, UV) * COLOR;
-	COLOR.a *= 1.0 - smoothstep(0.46, 0.5, distance(UV, vec2(0.5)));
+	// COLOR already holds the picture times its tint here.
+	float radius = side * 0.5;
+	float away = distance(spot, vec2(radius));
+	float ring = smoothstep(radius - width - 1.0, radius - width, away) * outline.a;
+	vec4 shown = mix(COLOR, vec4(outline.rgb, 1.0) * tint, ring);
+	shown.a *= 1.0 - smoothstep(radius - 1.0, radius, away);
+	COLOR = shown;
 }"""
-		_round = ShaderMaterial.new()
-		_round.shader = shader
-	return _round
+	var material := ShaderMaterial.new()
+	material.shader = _round_shader
+	material.set_shader_parameter("side", side)
+	material.set_shader_parameter("outline", outline)
+	_rounds[key] = material
+	return material
 
 
 func _label(text: String, rect: Rect2, font_size: int, color: Color = BONE,
@@ -273,20 +298,13 @@ func _build_bar() -> void:
 	add_child(bar)
 	portrait = TextureRect.new()
 	portrait.name = "Portrait"
-	portrait.position = Vector2(44, BAR_TOP + 20)
+	portrait.position = Vector2(37, BAR_TOP + 13)
 	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	portrait.size = Vector2(86, 86)
+	portrait.size = Vector2(PORTRAIT, PORTRAIT)
 	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	portrait.material = round_material(PORTRAIT)
 	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(portrait)
-	var hoop := TextureRect.new()
-	hoop.name = "PortraitHoop"
-	hoop.texture = HOOP
-	hoop.position = Vector2(30, BAR_TOP + 6)
-	hoop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	hoop.size = Vector2(114, 114)
-	hoop.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(hoop)
 	actor_name = _label("", Rect2(158, BAR_TOP + 10, 300, 32), 28, AMBER)
 	actor_name.name = "ActorName"
 	add_child(actor_name)
@@ -314,7 +332,6 @@ func _build_bar() -> void:
 		var slot: String = StitchedBattleScreen.SLOTS[index]
 		var button := TextureButton.new()
 		button.name = "Part_" + slot
-		button.texture_normal = HOOP
 		button.ignore_texture_size = true
 		button.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
 		button.position = Vector2(500 + index * 122, BAR_TOP + 6)
@@ -325,20 +342,19 @@ func _build_bar() -> void:
 		button.mouse_exited.connect(func(): _shade_parts())
 		button.focus_entered.connect(func(): _shade_parts())
 		button.focus_exited.connect(func(): _shade_parts())
-		# S13: the part shows as the cloth patch sewn on that limb; its border tells the tier.
-		# Owner 11-09: the abilities are round, so each patch is cut to the hoop's circle.
-		for layer in ["Patch", "Border", "Frayed"]:
+		# S13: the part shows as the cloth patch sewn on that limb; its outline tells the tier.
+		# Owner 11-09: the abilities are round icons with a thin outline and nothing behind.
+		for layer in ["Patch", "Frayed"]:
 			var art := TextureRect.new()
 			art.name = layer
-			art.position = Vector2(14, 14)
+			art.position = Vector2((114.0 - ICON) / 2.0, 0)
 			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			art.size = Vector2(86, 86)
-			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			art.size = Vector2(ICON, ICON)
+			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			if layer != "Border":
-				art.material = round_material()
+			art.material = round_material(ICON, TIER_OUTLINE[1] if layer == "Patch" else Color(0, 0, 0, 0))
 			button.add_child(art)
-		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 26, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
+		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 31, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 		slot_label.name = "Slot"
 		button.add_child(slot_label)
 		var move_label := _label("", Rect2(16, 54, 82, 36), 13, BONE, HORIZONTAL_ALIGNMENT_CENTER)
@@ -632,14 +648,13 @@ func _refresh_bar() -> void:
 		var patch: TextureRect = button.get_node("Patch")
 		patch.texture = _texture(StitchedSewnPatches.icon_path(str(part.get("id", "")), slot)) if not part.is_empty() else null
 		patch.modulate = Color(0.5, 0.47, 0.47, 0.8) if torn else Color.WHITE
-		(button.get_node("Border") as TextureRect).texture = _texture(
-			StitchedSewnPatches.border_path(int(equipped.get("tier", 1)))) if not part.is_empty() and not torn else null
+		patch.material = round_material(ICON, TIER_OUTLINE.get(int(equipped.get("tier", 1)), TIER_OUTLINE[1]))
 		(button.get_node("Frayed") as TextureRect).texture = _texture(StitchedSewnPatches.ART + "frayed.png") if torn else null
 		# With a patch picture the slot word steps aside and the move name sits along the hem.
 		var pictured := patch.texture != null
 		(button.get_node("Slot") as Label).visible = not pictured
-		move_label.position = Vector2(8, 80) if pictured else Vector2(16, 54)
-		move_label.size = Vector2(98, 30) if pictured else Vector2(82, 36)
+		move_label.position = Vector2(0, ICON - 2.0) if pictured else Vector2(16, 59)
+		move_label.size = Vector2(114, 24) if pictured else Vector2(82, 36)
 		if not part.is_empty():
 			move_label.text = str(StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))).get("name", ""))
 			if torn:

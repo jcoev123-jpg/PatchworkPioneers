@@ -8,7 +8,6 @@ extends Control
 ## choice button, and this page places and dresses them where they are made.
 
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
-const HOOP := preload("res://assets/paper/stitched/icons/portrait_frame.png")
 const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const ICONS := "res://assets/paper/stitched/icons/"
 const BONE := Color("f0ddc0")
@@ -339,27 +338,18 @@ func _tray(number: int) -> Control:
 	return tray
 
 
-## A round picture: the hoop with the art cut to its circle inside.
+## A round picture: the art cut to a circle with a thin outline, nothing behind it.
 func _round_art(texture: Texture2D, where: Vector2, side: float) -> TextureRect:
-	var hoop := TextureRect.new()
-	hoop.texture = HOOP
-	# The size comes after the expand mode, or the hoop keeps its picture's own size.
-	hoop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	hoop.position = where
-	hoop.size = Vector2(side, side)
-	hoop.stretch_mode = TextureRect.STRETCH_SCALE
-	hoop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var art := TextureRect.new()
-	art.name = "Art"
 	art.texture = texture
+	# The size comes after the expand mode, or the art keeps its picture's own size.
 	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.position = Vector2(side, side) * 0.12
-	art.size = Vector2(side, side) * 0.76
+	art.position = where
+	art.size = Vector2(side, side)
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
-	art.material = StitchedCorridorFight.round_material()
+	art.material = StitchedCorridorFight.round_material(side)
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	hoop.add_child(art)
-	return hoop
+	return art
 
 
 ## The top of a doll's picture, its face; the thing itself when the choice is for no doll.
