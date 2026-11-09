@@ -51,6 +51,7 @@ func _initialize() -> void:
 	_ordered_gold_terminal()
 	_stop_on_dead()
 	_run_owned_sockets()
+	_live_run_matrix()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_effect_matrix_test: %d checks, %d failures" % [checks, failures.size()])
@@ -707,7 +708,7 @@ func _miss_and_refusals() -> void:
 		and int(battle.get_unit(str(foe.id)).hp) == int(foe.hp)
 		and int(battle.get_unit(str(foe.id)).statuses.get("mark", 0)) == 0,
 		"the miss never applies, moves or marks the foe through its sockets")
-	for illegal_rank in [0, 4]:
+	for illegal_rank in [0, 4, -1]:
 		if not _to_turn(battle, "warden"):
 			_check(false, "rank-refusal fixture reaches a fresh Warden turn")
 			return
@@ -1145,3 +1146,229 @@ func _run_owned_sockets() -> void:
 	var restored: StitchedRunSession = StitchedRunSave.restore(document)
 	_check(restored != null and restored.snapshot() == run.snapshot(),
 		"the genuine journal replays the owned socket and its battle commands exactly")
+
+## ------------------------------------- live seeded run-opened fights ----
+
+const LIVE_PLANS := [["enemy", "warden", "head"], ["ally", "tinker", "legs"], ["self", "tinker", "torso"]]
+const LIVE_SEED_CAP := 45
+
+
+## Real map travel: enter the first offered node of the wanted kinds, otherwise
+## walk one lawful non-combat stop at a time through its own enabled actions.
+func _travel_to(session: StitchedRunSession, kinds: Array) -> String:
+	for step in 16:
+		for choice_id in session.choices():
+			if str(session.map.get_node(choice_id).type) in kinds:
+				var target := str(choice_id)
+				if session.enter(target, session.snapshot()) and session.phase in ["visit", "battle"]:
+					return target
+				return ""
+		var next := ""
+		for choice_id in session.choices():
+			if not str(session.map.get_node(choice_id).type) in ["Fight", "Elite", "Boss"]:
+				next = str(choice_id)
+				break
+		if next.is_empty() or not session.enter(next, session.snapshot()) or session.phase != "visit":
+			return ""
+		var left := false
+		for action in session.visit_actions():
+			if bool(action.enabled) and str(action.id) == "leave" and action.arguments.is_empty():
+				left = session.choose_visit("leave", [], session.snapshot())
+				break
+		if not left:
+			for action in session.visit_actions():
+				if bool(action.enabled) and action.arguments.is_empty() and not str(action.id) in ["swap", "replace", "buy_patch"]:
+					left = session.choose_visit(str(action.id), action.arguments, session.snapshot())
+					if left:
+						break
+		if not left or session.phase != "map":
+			return ""
+	return ""
+
+
+## Every confirmed live hit carrying the patch records an honest S15 decision: a
+## resisted roll inside the foe's rarity-pierced group resist, or a landed patch
+## that beat that same roll. The flags drive the bounded seed search.
+func _live_decision_coverage(battle: StitchedRules, patch: Dictionary, results: Array, coverage: Dictionary, label: String) -> void:
+	var patch_id := str(patch.get("id", ""))
+	var effect := str(patch.get("effect", ""))
+	for hit in results:
+		if not bool(hit.get("hit", false)) or hit.get("patches", []) != [patch_id]:
+			continue
+		var recipient: Dictionary = battle.get_unit(str(hit.get("target", "")))
+		var net := _effective_resist(recipient, patch)
+		var resisted_entry := {}
+		for entry in hit.get("statuses", []):
+			if str(entry.get("status", "")) == effect and bool(entry.get("resisted", false)):
+				resisted_entry = entry
+		if not resisted_entry.is_empty():
+			var honest := net > 0 and int(resisted_entry.get("roll", 0)) >= 1 \
+				and int(resisted_entry.get("roll", 101)) <= net \
+				and int(resisted_entry.get("resist", -1)) == net
+			coverage["resisted"] = bool(coverage["resisted"]) or honest
+			_check(honest, label + ": the live resisted decision rolls inside the foe's rarity-pierced resist")
+		elif net > 0:
+			coverage["landed_resistant"] = true
+
+
+## The living foe rank whose rarity-pierced resist for this patch sits closest to
+## an even d100, so a short string of lawful casts meets both decision outcomes.
+func _balanced_resist_rank(battle: StitchedRules, ability: Dictionary, patch: Dictionary) -> int:
+	var best := -1
+	var best_gap := 1000
+	for rank in ability.get("target", []):
+		if not StitchedParts.ranks_allowed(int(ability.get("target_mask", 0)), int(rank)):
+			continue
+		var foe := battle._foe_at(int(rank))
+		if foe.is_empty() or bool(foe.dead) or int(foe.hp) <= 0:
+			continue
+		var net := _effective_resist(foe, patch)
+		if net <= 0:
+			continue
+		var gap := absi(net - 50)
+		if gap < best_gap:
+			best_gap = gap
+			best = int(rank)
+	return best
+
+
+## One live seeded run: two lawful victories pay the socket, the Sewing Circle sews
+## the run-owned patch onto the plan's signature, and the next real fight witnesses
+## it through public turns only. An aligned unsocketed twin (the same journal minus
+## the socket commands) proves the patched cast equals the identical schedule's
+## plain cast plus exactly the patch's own receipt, against live S15 foes.
+func _live_run_attempt(plan: String, hero_id: String, slot: String, seed_number: int, coverage: Dictionary) -> bool:
+	var session := StitchedRunSession.start(seed_number)
+	if session == null:
+		return false
+	for step in 2:
+		var fight := _travel_to(session, ["Fight"])
+		if fight.is_empty() or session.phase != "battle":
+			return false
+		if not _play_to_victory(session) or not session.settle_battle(session.battle):
+			return false
+	if session.ability_inventory.is_empty() or session.scraps < StitchedRunSession.SEWING_COST:
+		return false
+	var circle := _travel_to(session, ["SewingCircle"])
+	if circle.is_empty() or session.phase != "visit":
+		return false
+	var chosen: Dictionary = session.ability_inventory[0]
+	var patch: Dictionary = _patch_by_id.get(str(chosen.get("id", "")), {})
+	var signature: Dictionary = StitchedS14Abilities.kits().get(hero_id, {}).get(slot, {})
+	if patch.is_empty() or signature.is_empty():
+		return false
+	var signature_id := str(signature.get("id", ""))
+	var label := "live " + plan + " run seed " + str(seed_number)
+	if not session.socket_ability(int(chosen.get("uid", 0)), hero_id, signature_id, 0, session.snapshot()):
+		return false
+	if not session.choose_visit("leave", [], session.snapshot()) or session.phase != "map":
+		return false
+	var witness := _travel_to(session, ["Fight", "Elite"])
+	if witness.is_empty() or session.phase != "battle" or session.battle == null:
+		return false
+	var battle: StitchedRules = session.battle
+	if bool(battle._units[hero_id].get("lost", false)):
+		return false
+	var journal := session.journal.duplicate(true)
+	var twin := StitchedRunSession.start(seed_number)
+	if twin == null:
+		return false
+	for command in journal:
+		if command is Dictionary and command.get("action") == "socket":
+			continue
+		if not StitchedRunSave._replay(twin, command):
+			_check(false, label + ": the lawful journal replays on a fresh same-seed session")
+			return false
+	if twin.phase != "battle" or twin.battle == null:
+		_check(false, label + ": the twin opens the same witness battle")
+		return false
+	var twin_battle: StitchedRules = twin.battle
+	_check(battle.rng_state() == twin_battle.rng_state() and session.rng.state == twin.rng.state,
+		label + ": skipping only the socket keeps the unsocketed twin exactly RNG-aligned")
+	var state_a := battle.state_snapshot()
+	var state_b := twin_battle.state_snapshot()
+	var sockets_a: Dictionary = state_a.get("s14", {}).get("sockets", {})
+	var sockets_b: Dictionary = state_b.get("s14", {}).get("sockets", {})
+	state_a.get("s14", {}).erase("sockets")
+	state_b.get("s14", {}).erase("sockets")
+	_check(state_a == state_b,
+		label + ": the twin witness battle matches the live one except its sewn sockets")
+	var chosen_id := str(chosen.get("id", ""))
+	var only_live_socket: bool = sockets_a.get(hero_id, {}).get(signature_id, []) == [chosen_id]
+	for hero_key in sockets_a:
+		for socket_key in sockets_a[hero_key]:
+			if str(hero_key) == hero_id and str(socket_key) == signature_id:
+				continue
+			if not (sockets_a[hero_key][socket_key] as Array).is_empty():
+				only_live_socket = false
+	for hero_key in sockets_b:
+		for socket_key in sockets_b[hero_key]:
+			if not (sockets_b[hero_key][socket_key] as Array).is_empty():
+				only_live_socket = false
+	_check(only_live_socket,
+		label + ": only the live battle carries the run-owned socket")
+	var original_ranks := {}
+	for rank in range(1, 5):
+		var foe := battle._foe_at(rank)
+		if not foe.is_empty():
+			original_ranks[str(foe.id)] = rank
+	var run := _matrix_cast(battle, hero_id, signature, patch, label, false)
+	if run.is_empty():
+		return false
+	var twin_run := _matrix_cast(twin_battle, hero_id, signature, patch, label + " twin", false)
+	if twin_run.is_empty():
+		return false
+	var base := {"results": twin_run["results"].duplicate(true), "rng": twin_battle.rng_state(),
+		"round": twin_run["round"]}
+	if str(patch.get("effect", "")) == "chain":
+		_assert_chain(hero_id, signature, run, base, battle, label, original_ranks)
+	else:
+		_assert_effects(hero_id, signature, patch, run, base, battle, label)
+	coverage["sides"][plan] = true
+	coverage["families"][str(patch.get("effect", ""))] = true
+	coverage["twins"] = int(coverage["twins"]) + 1
+	_live_decision_coverage(battle, patch, run["results"], coverage, label)
+	var casts := 0
+	while plan == "enemy" and casts < 12 and not battle.is_over() \
+			and (not bool(coverage["resisted"]) or not bool(coverage["landed_resistant"])):
+		casts += 1
+		var rank := _balanced_resist_rank(battle, signature, patch)
+		if rank < 1 or not _to_turn(battle, hero_id):
+			break
+		var receipt: Dictionary = battle.use_ability(signature_id, rank)
+		if not receipt.get("ok", false):
+			break
+		_live_decision_coverage(battle, patch, receipt.get("results", []), coverage, label)
+	var document := StitchedRunSave.capture(session)
+	var restored: StitchedRunSession = null
+	if not document.is_empty():
+		restored = StitchedRunSave.restore(document)
+	_check(restored != null and restored.snapshot() == session.snapshot() and session.is_consistent(),
+		label + ": the genuine journal replays the whole socketed live run exactly")
+	return true
+
+
+## Live consequence matrix: seeded run-opened fights witness each target side's
+## sewn patch on its actual recipient, with rarity-adjusted S15 resist decisions
+## and replay determinism, all through public commands on real routes.
+func _live_run_matrix() -> void:
+	var coverage := {"sides": {}, "families": {}, "resisted": false, "landed_resistant": false, "twins": 0}
+	var plan_index := 0
+	var seed_number := -1
+	while seed_number < LIVE_SEED_CAP:
+		seed_number += 1
+		var plan: Array = LIVE_PLANS[plan_index] if plan_index < LIVE_PLANS.size() else LIVE_PLANS[0]
+		if _live_run_attempt(str(plan[0]), str(plan[1]), str(plan[2]), seed_number, coverage) \
+				and plan_index < LIVE_PLANS.size():
+			plan_index += 1
+		if plan_index >= LIVE_PLANS.size() and bool(coverage["resisted"]) \
+				and bool(coverage["landed_resistant"]):
+			break
+	_check(coverage["sides"].has("enemy") and coverage["sides"].has("ally") and coverage["sides"].has("self"),
+		"live seeded runs witness sewn patch consequences on enemy, ally and self recipients")
+	_check(bool(coverage["resisted"]) and bool(coverage["landed_resistant"]),
+		"live S15 foes make honest resisted and landed-on-resistant decisions under the patch rarity's pierce")
+	_check(int(coverage["twins"]) >= 3,
+		"every live side is proven against its aligned unsocketed twin cast")
+	_check(coverage["families"].size() >= 2,
+		"the live runs witness at least two distinct patch effect families")
