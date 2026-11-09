@@ -104,9 +104,38 @@ func _verify_bar_focus_and_errors() -> void:
 	await process_frame
 
 
+## The S14 bar hover names the ability the button performs, with no slot heading, tier or stats.
+func _verify_s14_hover() -> void:
+	var screen := _screen(true)
+	var monk := _monk_turn(screen)
+	root.add_child(screen)
+	await process_frame
+	var fight := StitchedCorridorFight.attach(screen, "walls")
+	await process_frame
+	fight.refresh()
+	var shown: Dictionary = screen.battle._current_unit()
+	_check(str(shown.get("id", "")) == str(monk.get("id", "")), "precondition: the Monk is still acting")
+	for slot in fight.part_buttons:
+		var tip: String = fight.part_buttons[slot].tooltip_text
+		var equipped: Dictionary = shown.parts.get(slot, {})
+		var expected := str(screen._dispatched_ability(shown, equipped).get("name", ""))
+		_check(not expected.is_empty() and tip.get_slice("\n", 0) == expected, slot + " hover names " + expected + ": " + tip)
+		for word in ["HEAD", "ARM", "TORSO", "LEG", "body part", "patch", "·", "LAUNCH", "DMG"]:
+			_check(not tip.contains(word), slot + " hover has no '" + word + "': " + tip)
+		_check(not RegEx.create_from_string(r"\d").search(tip), slot + " hover shows no number: " + tip)
+		if fight.part_buttons[slot].disabled:
+			_check(tip.contains("\n"), slot + " is locked and says why: " + tip)
+	_check(StitchedCorridorFight._plain_lock("Wrong launch rank (current R4)") == "Can't be used from this spot.",
+		"a rank lock reads plainly")
+	_check(StitchedCorridorFight._plain_lock("") == "", "an open ability adds no line")
+	screen.queue_free()
+	await process_frame
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_verify_dispatch_gates()
+	await _verify_s14_hover()
 	await _verify_bar_focus_and_errors()
 	if failures.is_empty():
 		print("PASS stitched_s14_part_button_dispatch_test (%d checks)" % checks)

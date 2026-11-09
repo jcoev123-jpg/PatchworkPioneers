@@ -488,6 +488,21 @@ func _act(receipt: Dictionary) -> Dictionary:
 	return receipt
 
 
+## S14 hover: a locked ability says why in plain words, with no ranks or numbers.
+static func _plain_lock(reason: String) -> String:
+	if reason.is_empty() or reason.begins_with("No active hero"):
+		return ""
+	if reason.begins_with("TORN"):
+		return "Torn: mend it at the Sewing Circle."
+	if reason.begins_with("Wrong launch rank"):
+		return "Can't be used from this spot."
+	if reason.begins_with("Movement/thread lock"):
+		return "The thread holds this doll still."
+	if reason.begins_with("No legal target"):
+		return "No one it can reach."
+	return "Can't be used now."
+
+
 ## A settled action leaves the bar buttons behind: a stray Enter must not re-arm
 ## the focused part or hand for the next doll. Only bar button focus is touched.
 func _drop_bar_focus() -> void:
@@ -724,12 +739,18 @@ func _refresh_bar() -> void:
 		# With a patch picture the slot word steps aside. Owner 11-09: the move name only shows on hover.
 		(button.get_node("Slot") as Label).visible = patch.texture == null
 		move_label.visible = false
+		var s14 := bool(engine.config.get("s14", false))
 		if not part.is_empty():
-			move_label.text = str(StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))).get("name", ""))
+			# S14: the button performs the fixed signature ability, so hover names that one.
+			move_label.text = str((engine._dispatched_ability(shown, equipped) if s14
+				else StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1)))).get("name", ""))
 			if torn:
 				move_label.text = "torn"
 		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
 		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
+		if s14:
+			# Owner 11-09: the hover is the move name, never a slot heading, tier or stat sheet.
+			cue = _plain_lock(engine._part_lock_reason(shown, equipped)) if hero_turn and button.disabled else ""
 		button.tooltip_text = (move_label.text + "\n" + cue).strip_edges()
 		for sewn_index in 2:
 			(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = null
