@@ -65,7 +65,11 @@ func _initialize() -> void:
 	_test_mend_torn_availability()
 	_test_mend_clears_death_hits()
 	_test_mend_death_hits_untouched_elsewhere()
+	_test_mend_rot_halves_heal()
+	_test_mend_rot_actionability()
+	_test_mend_rot_death_door()
 	_test_session_campfire_torn_mend()
+	_test_session_campfire_rot_mend()
 	_test_session_campfire_lingering_resolve()
 	_test_session_campfire_no_recovery_offers()
 	_finish()
@@ -3052,6 +3056,220 @@ func _test_session_campfire_torn_mend() -> void:
 		and not session.choose_visit("mend", mend["arguments"], done)
 		and not session.choose_visit("leave", [], done) and session.snapshot() == done,
 		"session A: a stale or replayed decision is refused without mutation")
+
+
+## --- S15 Rot: lingering mildew halves (rounded down) the Mend heal ---
+const ROT_NODE := "camp_rot"
+
+
+## Four dolls, no torn part on a living doll, no Hanging: only HP and Rot vary.
+## `statuses` per rank replaces the doll's status Dictionary.
+func _rot_party(hps: Array, maxes: Array, statuses: Array) -> Array:
+	var party := _torn_party(hps, NO_FRAY)
+	for i in range(4):
+		party[i]["max_hp"] = maxes[i]
+		party[i]["statuses"] = statuses[i].duplicate(true)
+		if i < 3:
+			for slot in party[i]["parts"]:
+				party[i]["parts"][slot]["torn"] = false
+	return party
+
+
+func _test_mend_rot_halves_heal() -> void:
+	seed(615304)
+	var expected_next := randi()
+	seed(615304)
+	# 40 max / Rot 2 -> base 12 -> 6; 30 max / Rot 1 -> base 9 -> 4; 26 max, Rot 0 -> 7.
+	var statuses: Array = [{"rot": 2}, {"rot": 1}, {"rot": 0}, {"rot": 2}]
+	var rotting := _rot_party([10, 20, 10, 0], [40, 30, 26, 40], statuses)
+	var original := rotting.duplicate(true)
+	_check(original[0]["max_hp"] == 40 and original[1]["max_hp"] == 30 and original[2]["max_hp"] == 26
+		and original[3]["lost"] == true and original[0]["statuses"]["rot"] == 2,
+		"rot: fixture is a real four-doll roster with Rot 2, Rot 1, Rot 0 and a LOST rotting doll")
+	var visit := RunCampfireVisit.new(ROT_NODE, rotting, "stitched", 40)
+	var open := visit.read_state()
+	_check(open.get("status") == "stitched_open" and open["quote"]["choices"][0] == "mend"
+		and open["quote"]["text"].find("(+17 HP now)") != -1,
+		"rot: the quote already advertises the actual post-Rot total (6 + 4 + 7)")
+	_assert_stitched_refused(visit, "mend", "camp_other", original, 40, "rot wrong node")
+	var stale := original.duplicate(true)
+	stale[0]["statuses"]["rot"] = 1
+	_assert_stitched_refused(visit, "mend", ROT_NODE, stale, 40, "rot stale status")
+	_assert_stitched_refused(visit, "mend", ROT_NODE, original, 41, "rot stale candle")
+	var receipt := visit.select("mend", ROT_NODE, original, 40)
+	var expected := original.duplicate(true)
+	expected[0]["hp"] = 16
+	expected[1]["hp"] = 24
+	expected[2]["hp"] = 17
+	_check(receipt.get("ok") == true and receipt.get("decision") == "mend"
+		and receipt.get("heroes") == expected and receipt.get("candle") == 40,
+		"rot: Mend heals 6 (40 max, Rot 2), 4 (30 max, Rot 1) and the unchanged 7 (26 max, Rot 0)")
+	_check(receipt["heroes"][0]["statuses"]["rot"] == 2 and receipt["heroes"][1]["statuses"]["rot"] == 1
+		and receipt["heroes"][2]["statuses"]["rot"] == 0 and receipt["heroes"][3] == original[3],
+		"rot: Rot durations are neither consumed nor decremented and the LOST doll is untouched")
+	_assert_stitched_refused(visit, "mend", ROT_NODE, expected, 40, "rot replay of Mend")
+	# The same roster without Rot gets the full floor(30%) heals.
+	var clean_statuses: Array = [{}, {}, {}, {}]
+	var clean := _rot_party([10, 20, 10, 0], [40, 30, 26, 40], clean_statuses)
+	var clean_receipt := RunCampfireVisit.new(ROT_NODE, clean, "stitched", 40).select(
+		"mend", ROT_NODE, clean.duplicate(true), 40)
+	_check(clean_receipt.get("ok") == true and clean_receipt["heroes"][0]["hp"] == 22
+		and clean_receipt["heroes"][1]["hp"] == 29 and clean_receipt["heroes"][2]["hp"] == 17,
+		"rot: with no Rot the same roster heals 12, 9 and 7")
+	# The heal is still capped by missing HP under Rot.
+	var capped := _rot_party([38, 29, 26, 0], [40, 30, 26, 40], statuses)
+	var capped_receipt := RunCampfireVisit.new(ROT_NODE, capped, "stitched", 40).select(
+		"mend", ROT_NODE, capped.duplicate(true), 40)
+	_check(capped_receipt.get("ok") == true and capped_receipt["heroes"][0]["hp"] == 40
+		and capped_receipt["heroes"][1]["hp"] == 30 and capped_receipt["heroes"][2]["hp"] == 26,
+		"rot: a halved heal never exceeds max HP")
+	_check(randi() == expected_next, "rot: quotes, refusals and Mend draw no global RNG")
+
+
+func _test_mend_rot_actionability() -> void:
+	# A single wounded 5-max rotting doll: floor(5 * 30 / 100) = 1, halved to 0.
+	var statuses: Array = [{}, {"rot": 2}, {}, {}]
+	var only_rot := _rot_party([40, 2, 26, 0], [40, 5, 26, 40], statuses)
+	var original := only_rot.duplicate(true)
+	_check(original[1]["hp"] < original[1]["max_hp"] and original[0]["hp"] == original[0]["max_hp"]
+		and original[2]["hp"] == original[2]["max_hp"] and original[1]["statuses"]["rot"] == 2,
+		"rot: precondition is one wounded rotting 5-max doll beside full-HP dolls")
+	var visit := RunCampfireVisit.new("camp_rot5", only_rot, "stitched", 100)
+	var quote: Dictionary = visit.read_state()["quote"]
+	_check(not quote["choices"].has("mend") and quote["text"].find("Mend") == -1,
+		"rot: a doll whose Mend would heal 0 alone does not offer Mend or quote it")
+	_assert_stitched_refused(visit, "mend", "camp_rot5", original, 100, "rot zero-heal Mend")
+	# Without Rot the same doll heals 1, so Mend is meaningful.
+	var plain := _rot_party([40, 2, 26, 0], [40, 5, 26, 40], [{}, {}, {}, {}])
+	var plain_visit := RunCampfireVisit.new("camp_rot5", plain, "stitched", 100)
+	var plain_receipt := plain_visit.select("mend", "camp_rot5", plain.duplicate(true), 100)
+	_check(plain_visit.read_state()["status"] == "stitched_decided" and plain_receipt.get("ok") == true
+		and plain_receipt["heroes"][1]["hp"] == 3,
+		"rot: the same 5-max doll without Rot is mended for 1")
+	# Max 26 with no Rot keeps its base 7.
+	var base26 := _rot_party([40, 30, 10, 0], [40, 30, 26, 40], [{}, {}, {}, {}])
+	var base26_receipt := RunCampfireVisit.new("camp_rot26", base26, "stitched", 100).select(
+		"mend", "camp_rot26", base26.duplicate(true), 100)
+	_check(base26_receipt.get("ok") == true and base26_receipt["heroes"][2]["hp"] == 17,
+		"rot: 26 max HP with no Rot still heals the base 7")
+	# A torn worn part keeps Mend meaningful even when Rot removes the HP benefit.
+	var torn := only_rot.duplicate(true)
+	torn[1]["parts"]["arms"]["torn"] = true
+	var torn_original := torn.duplicate(true)
+	var torn_visit := RunCampfireVisit.new("camp_rot5t", torn, "stitched", 100)
+	_check(torn_visit.read_state()["quote"]["choices"].has("mend")
+		and torn_visit.read_state()["quote"]["text"].find("(+0 HP now)") != -1,
+		"rot: a torn arm still offers Mend with an honest +0 HP forecast")
+	var torn_receipt := torn_visit.select("mend", "camp_rot5t", torn_original, 100)
+	var torn_expected := torn_original.duplicate(true)
+	torn_expected[1]["parts"]["arms"]["torn"] = false
+	_check(torn_receipt.get("ok") == true and torn_receipt["heroes"] == torn_expected
+		and torn_receipt["heroes"][1]["hp"] == 2 and torn_receipt["heroes"][1]["statuses"]["rot"] == 2,
+		"rot: the torn part is repaired, HP stays 2 and Rot stays 2")
+	# A LOST rotting doll's tear never unlocks Mend.
+	var lost_only := only_rot.duplicate(true)
+	lost_only[1]["hp"] = 5
+	lost_only[3]["parts"]["legs"]["torn"] = true
+	_check(not RunCampfireVisit.new("camp_rot_lost", lost_only, "stitched", 100).read_state()[
+		"quote"]["choices"].has("mend"),
+		"rot: a LOST doll's torn part still offers no Mend")
+
+
+func _test_mend_rot_death_door() -> void:
+	# Rank 1 Hanging at 0 HP healed by 6 (Rot); rank 2 Hanging at 0 HP healed by 0 (5 max, Rot);
+	# rank 3 healthy-ish carrying a death hit; rank 4 LOST carrying hits.
+	var statuses: Array = [{"rot": 2}, {"rot": 2}, {}, {"rot": 2}]
+	var party := _rot_party([0, 0, 10, 0], [40, 5, 26, 40], statuses)
+	party[0]["hanging"] = true
+	party[0]["death_hits"] = 2
+	party[1]["hanging"] = true
+	party[1]["death_hits"] = 2
+	party[2]["death_hits"] = 1
+	party[3]["hanging"] = true
+	party[3]["death_hits"] = 2
+	var original := party.duplicate(true)
+	var visit := RunCampfireVisit.new("camp_rot_door", party, "stitched", 40)
+	var text: String = visit.read_state()["quote"]["text"]
+	_check(text.find("(+13 HP now)") != -1,
+		"rot: the quote totals the actual post-Rot heal (6 + 0 + 7)")
+	_check(text.find("[Hanging ends: %s]" % _doll_name(original[0])) != -1,
+		"rot: the Hanging advisory names only the doll actually healed above 0")
+	var receipt := visit.select("mend", "camp_rot_door", original, 40)
+	var expected := original.duplicate(true)
+	expected[0]["hp"] = 6
+	expected[0]["hanging"] = false
+	expected[0]["death_hits"] = 0
+	expected[2]["hp"] = 17
+	_check(receipt.get("ok") == true and receipt["heroes"] == expected,
+		"rot: Hanging ends and death hits reset only for the doll truly healed; the zero-heal doll, a hit-carrying doll above 0 HP and the LOST doll keep their state")
+	_check(receipt["heroes"][1]["hp"] == 0 and receipt["heroes"][1]["hanging"] == true
+		and receipt["heroes"][1]["death_hits"] == 2 and receipt["heroes"][2]["death_hits"] == 1
+		and receipt["heroes"][3] == original[3],
+		"rot: zero healing never clears Hanging or death hits")
+
+
+## Rank 1 rots (Rot 2) and rank 2 does not; both are far below full HP.
+func _edit_rot_wounded(session: StitchedRunSession) -> void:
+	_session_recovered(session)
+	session.heroes[0]["hp"] = int(session.heroes[0]["max_hp"]) - 25
+	session.heroes[1]["hp"] = int(session.heroes[1]["max_hp"]) - 25
+	var statuses: Dictionary = session.heroes[0].get("statuses", {}).duplicate(true)
+	statuses["rot"] = 2
+	session.heroes[0]["statuses"] = statuses
+
+
+func _test_session_campfire_rot_mend() -> void:
+	var route := _session_rest_route()
+	if route.size() != 2:
+		_check(false, "session D: a seeded map offers a real Campfire route")
+		return
+	var setup := _session_campfire(route, _edit_rot_wounded)
+	_check(not setup.is_empty(), "session D: rotting fixture enters the Campfire")
+	if setup.is_empty():
+		return
+	var session: StitchedRunSession = setup["session"]
+	var rotting: Dictionary = session.heroes[0].duplicate(true)
+	var plain: Dictionary = session.heroes[1].duplicate(true)
+	var rot_base: int = int(rotting["max_hp"]) * 30 / 100
+	var plain_base: int = int(plain["max_hp"]) * 30 / 100
+	var rot_gain: int = rot_base / 2
+	_check(session.phase == "visit" and str(session.pending.get("service")) == "Campfire"
+		and rotting["statuses"]["rot"] == 2 and not plain.get("statuses", {}).has("rot")
+		and rot_gain > 0 and rot_gain < rot_base
+		and int(rotting["max_hp"]) - int(rotting["hp"]) >= rot_base
+		and int(plain["max_hp"]) - int(plain["hp"]) >= plain_base
+		and not bool(rotting["lost"]) and not bool(plain["lost"]),
+		"session D: precondition is a wounded rotting doll beside a wounded clean doll at the real Campfire")
+	var mend := _session_action(session, "mend")
+	_check(not mend.is_empty() and mend["enabled"] == true and session.heroes.slice(2).all(_hero_calm),
+		"session D: the real Campfire offers an enabled Mend")
+	var before := session.snapshot()
+	var heroes_before: Array = session.heroes.duplicate(true)
+	var stale := before.duplicate(true)
+	stale["candle"] = int(stale["candle"]) + 1
+	_check(not session.choose_visit("tell_tales", [], before)
+		and not session.choose_visit("mend", mend["arguments"], stale)
+		and session.snapshot() == before,
+		"session D: a wrong action and a stale snapshot are refused without mutation")
+	_check(session.choose_visit("mend", mend["arguments"], before),
+		"session D: one real Mend decision is accepted")
+	var after := session.snapshot()
+	var expected: Array = heroes_before.duplicate(true)
+	expected[0]["hp"] = int(rotting["hp"]) + rot_gain
+	expected[1]["hp"] = int(plain["hp"]) + plain_base
+	_check(session.heroes == expected and session.heroes[0]["statuses"]["rot"] == 2,
+		"session D: the rotting doll gains the halved heal, the clean doll the full heal, Rot stays 2")
+	_check(_session_ledgers_same(before, after) and session.rng.state == int(setup["rng"])
+		and session.candle == int(setup["candle"]) - StitchedRunSession.NODE_CANDLE_COST
+		and session.kid_fear() == 0,
+		"session D: wallet, satchel, patches, pockets, FEAR, map, RNG and candle are untouched")
+	_check(session.phase == "map" and session.receipts.size() == 1 and session.receipts[0]["decision"] == "mend"
+		and session.pending.is_empty() and session.is_consistent(),
+		"session D: receipt committed, map phase resumed")
+	var done := session.snapshot()
+	_check(not session.choose_visit("mend", mend["arguments"], before)
+		and not session.choose_visit("mend", mend["arguments"], done) and session.snapshot() == done,
+		"session D: a stale or replayed Mend is refused without mutation")
 
 
 func _test_session_campfire_lingering_resolve() -> void:

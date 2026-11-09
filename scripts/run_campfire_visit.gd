@@ -291,10 +291,10 @@ func select(decision: Variant, expected_node_id: Variant,
 				if _is_lost_hero(hero):
 					continue
 				var max_hp: int = int(hero["max_hp"])
-				# floor(30% of max HP), capped at max HP; a Hanging 0-HP hero
-				# receives exactly this heal, with no revive-first bonus.
-				@warning_ignore("integer_division")
-				var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+				# floor(30% of max HP), halved (rounded down) by lingering S15
+				# Rot, capped at max HP; a Hanging 0-HP hero receives exactly
+				# this heal, with no revive-first bonus.
+				var amount: int = _mend_amount(hero)
 				var hp_before: int = int(hero["hp"])
 				hero["hp"] = mini(max_hp, hp_before + amount)
 				# Any heal above 0 HP ends Hanging. Only an explicit true flag
@@ -369,13 +369,24 @@ func _mend_changes_party() -> bool:
 			continue
 		var max_hp: int = int(hero["max_hp"])
 		var hp: int = int(hero["hp"])
-		@warning_ignore("integer_division")
-		var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+		var amount: int = _mend_amount(hero)
 		if mini(max_hp, hp + amount) > hp:
 			return true
 		if _has_torn_worn_part(hero):
 			return true
 	return false
+
+
+## The Mend heal a doll would receive before the missing-HP cap: floor(30% of
+## max HP), then halved (rounded down) by S15 Rot via StitchedRules.rot_heal.
+## Rot is only read, never consumed or decremented.
+static func _mend_amount(hero: Dictionary) -> int:
+	var max_hp: int = int(hero["max_hp"])
+	@warning_ignore("integer_division")
+	var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
+	if typeof(hero.get("statuses")) != TYPE_DICTIONARY:
+		return amount
+	return StitchedRules.rot_heal(hero, amount)
 
 
 ## True when a worn slot record carries an explicit torn == true. Heroes that do
@@ -453,9 +464,7 @@ func _mend_gains_by_doll() -> Array:
 		var gain: int = 0
 		if not _is_lost_hero(hero):
 			var max_hp: int = int(hero["max_hp"])
-			@warning_ignore("integer_division")
-			var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
-			gain = mini(amount, max_hp - int(hero["hp"]))
+			gain = mini(_mend_amount(hero), max_hp - int(hero["hp"]))
 		gains.append(gain)
 	return gains
 
@@ -530,9 +539,7 @@ func _mend_gain_now() -> int:
 			continue
 		var max_hp: int = int(hero["max_hp"])
 		var hp: int = int(hero["hp"])
-		@warning_ignore("integer_division")
-		var amount: int = (max_hp * MEND_HEAL_PERCENT) / 100
-		total += mini(amount, max_hp - hp)
+		total += mini(_mend_amount(hero), max_hp - hp)
 	return total
 
 
