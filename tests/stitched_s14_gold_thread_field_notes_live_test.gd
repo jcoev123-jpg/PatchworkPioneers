@@ -167,6 +167,7 @@ func _assert_page(guide: StitchedFieldGuide, patches: Dictionary,
 	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[1])
 	var earlier := StitchedPatchLesson.examples(StitchedS14Abilities.kits(), patches)
 	var gold := StitchedGoldThreadNotes.examples(StitchedS14Abilities.patches())
+	var s15 := StitchedS15FieldNotes.examples()
 	_check(page.begins_with(baseline) and not baseline.is_empty(),
 		"all original static Seams & retreat lines remain first")
 	_check(earlier.size() == 4 and gold.size() == 3,
@@ -188,14 +189,22 @@ func _assert_page(guide: StitchedFieldGuide, patches: Dictionary,
 			"gold line occurs once after originals only when validated: " + line)
 		if expect_gold:
 			previous = at
+	_check(s15.size() == 3, "real S15 source validates all three independent guide notes")
+	for line in s15:
+		var count := page.count(line)
+		var at := page.find(line)
+		_check(count == 1 and at > previous,
+			"independent S15 line occurs once after the valid S14 portion: " + line)
+		previous = at
 	if not expected_four:
-		_check(page == baseline, "invalid legacy lesson yields exactly static baseline")
+		_check(page == baseline + "\n\n" + "\n\n".join(s15),
+			"invalid legacy lesson retains static baseline and independent validated S15")
 	elif not expect_gold:
-		_check(page == baseline + "\n\n" + "\n\n".join(earlier),
-			"invalid gold retains exactly the static baseline plus four original examples")
+		_check(page == baseline + "\n\n" + "\n\n".join(earlier + s15),
+			"invalid gold retains exactly the baseline, four originals and independent S15")
 	else:
-		_check(page == baseline + "\n\n" + "\n\n".join(earlier + gold),
-			"valid page contains exactly seven derived lines with no duplicate text")
+		_check(page == baseline + "\n\n" + "\n\n".join(earlier + gold + s15),
+			"valid page contains all ten derived lines without duplication")
 
 
 func _run() -> void:

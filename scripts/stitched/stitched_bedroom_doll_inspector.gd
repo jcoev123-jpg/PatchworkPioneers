@@ -121,14 +121,15 @@ static func status_for(record: Dictionary, id: String) -> String:
 		return "LOST" + ("\n" + injury if not injury.is_empty() else "")
 	if bool(last.get("hanging", false)):
 		return "HANGING BY A THREAD" + ("\n" + injury if not injury.is_empty() else "")
-	if not injury.is_empty():
-		return injury
 	var fray := int(last.get("fray", 0))
+	var posture := "UPRIGHT"
 	if fray >= 150:
-		return "FACING WALL"
-	if fray >= 100:
-		return "SLUMPED"
-	return "UPRIGHT"
+		posture = "FACING WALL"
+	elif fray >= 100:
+		posture = "SLUMPED"
+	if not injury.is_empty():
+		return injury + ("\n" + posture if fray >= 100 else "")
+	return posture
 
 
 func present(record: Dictionary) -> void:

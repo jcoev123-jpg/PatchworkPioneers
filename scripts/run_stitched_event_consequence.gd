@@ -10,7 +10,8 @@ extends RefCounted
 ##      "part": {"id": String, "tier": 1..3}, "require_full_candle": true,
 ##      "min_fray": 1..200, "required_candle_band": "bright"|...,
 ##      "required_candle_bands": ["dark", "snuffed"]|..., "fear": int,
-##      "min_active_heroes": 1..4, "require_fray_or_fear": true}
+##      "min_active_heroes": 1..4, "require_fray_or_fear": true,
+##      "require_candle_room_or_wound": true}
 ## `target: "party"` touches every active hero once; `target: "hero"` touches
 ## only the named active hero. `required_hero` is an optional canonical-hero
 ## admission gate on `stitched_effect` for both `target: "party"` and
@@ -44,7 +45,7 @@ extends RefCounted
 ## non-LOST recipient is present, and either at least one active non-LOST doll has
 ## fray >= 1 or wren_fear >= 1.
 ## `scraps`, `gold`, `part`, `hp`, `fear`,
-## `require_full_candle`, `require_candle_room` and `require_full_candle_gain` are optional on `stitched_effect`; when omitted, the
+## `require_full_candle`, `require_candle_room`, `require_full_candle_gain` and `require_candle_room_or_wound` are optional on `stitched_effect`; when omitted, the
 ## legacy 8-key preview entry and 7-key receipt shape are preserved. When
 ## present, `require_full_candle` must be native boolean `true` on a strictly
 ## negative native integer `candle` delta (`-N`), requiring `snapshot.candle >= N`
@@ -56,6 +57,11 @@ extends RefCounted
 ## positive native integer `candle` delta (`+N`), requiring `snapshot.candle + delta <= 100`
 ## (safely evaluated as `delta <= 100 - snapshot.candle`)
 ## for the choice to be available in `preview()` or claimable in `choose()`.
+## When present, `require_candle_room_or_wound` must be native boolean `true` on strictly
+## positive native integer `candle` and `hp` deltas with target `party` or `hero`,
+## requiring `snapshot.candle < 100` OR at least one eligible non-LOST recipient to
+## have HP strictly below their own max_hp for the choice to be available in `preview()`
+## or claimable in `choose()`.
 ## When present, `scraps` and `gold` are
 ## signed integral deltas applied to the shared party scraps and gold purses
 ## (never per-hero), exposing `scraps_delta`/`scraps` and `gold_delta`/`gold` on
@@ -276,6 +282,8 @@ func choose(choice_id: Variant, snapshot: Variant, catalog: Variant = null) -> D
 	if not _can_afford_candle(base_candle, parsed_effect):
 		return _rejection(base_candle)
 	if not _has_candle_room(base_candle, parsed_effect):
+		return _rejection(base_candle)
+	if not _has_candle_room_or_wound(base_candle, base_state, parsed_effect):
 		return _rejection(base_candle)
 	if not _has_full_candle_gain(base_candle, parsed_effect):
 		return _rejection(base_candle)
@@ -640,6 +648,58 @@ func _has_candle_room(base_candle: int, parsed_effect: Dictionary) -> bool:
 	return base_candle < CANDLE_MAX
 
 
+## Shared candle-room-or-wound admission gate for preview and commit when
+## `require_candle_room_or_wound: true` is present on `stitched_effect`.
+## Qualifies if opening candle is strictly below CANDLE_MAX (100) OR at least
+## one eligible non-LOST recipient has HP strictly below their own max_hp.
+## For target: "party", checks active non-LOST heroes.
+## For target: "hero", checks only the named active non-LOST recipient.
+func _has_candle_room_or_wound(base_candle: int, base_state: Dictionary, parsed_effect: Dictionary) -> bool:
+	if not parsed_effect.get("require_candle_room_or_wound", false):
+		return true
+	if base_candle < CANDLE_MAX:
+		return true
+	var party: Array = base_state.get("party", [])
+	var target: String = String(parsed_effect.get("target", ""))
+	if target == TARGET_PARTY:
+		for hero in party:
+			if not hero is Dictionary:
+				continue
+			if bool(hero.get("lost", false)):
+				continue
+			if not hero.has("hp") or not hero.has("max_hp"):
+				continue
+			var hp_val: int = int(hero.get("hp"))
+			var max_hp_val: int = int(hero.get("max_hp"))
+			if hp_val < max_hp_val:
+				return true
+		return false
+	elif target == TARGET_HERO:
+		var target_hero_id: String = String(parsed_effect.get("hero_id", ""))
+		for hero in party:
+			if not hero is Dictionary:
+				continue
+			if hero.get("id") == target_hero_id:
+				if bool(hero.get("lost", false)):
+					return false
+				if not hero.has("hp") or not hero.has("max_hp"):
+					return false
+				var hp_val: int = int(hero.get("hp"))
+				var max_hp_val: int = int(hero.get("max_hp"))
+				return hp_val < max_hp_val
+		return false
+	return false
+
+
+func _event_allows_wound_hp() -> bool:
+	for choice in _event.get("choices", []):
+		if choice is Dictionary:
+			var eff: Variant = (choice as Dictionary).get("stitched_effect")
+			if eff is Dictionary and (eff as Dictionary).has("require_candle_room_or_wound"):
+				return true
+	return false
+
+
 ## Shared full-candle-gain admission gate for preview and commit when
 ## `require_full_candle_gain: true` is present on `stitched_effect`.
 ## Admits a choice only when current candle plus the whole delta fits CANDLE_MAX (100),
@@ -857,6 +917,8 @@ func _preview_entry(choice: Variant, base_state: Dictionary, catalog_state: Dict
 	if not _can_afford_candle(int(base_state["candle"]), parsed_effect):
 		return entry
 	if not _has_candle_room(int(base_state["candle"]), parsed_effect):
+		return entry
+	if not _has_candle_room_or_wound(int(base_state["candle"]), base_state, parsed_effect):
 		return entry
 	if not _has_full_candle_gain(int(base_state["candle"]), parsed_effect):
 		return entry
@@ -1103,16 +1165,34 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 		var hero: Dictionary = entry
 		var has_lost: bool = hero.has("lost")
 		var is_needle_toll: bool = (_event.get("id", "") == "needle_toll")
-		if not is_needle_toll:
-			var expected_hero_size: int = 3 if has_lost else 2
-			if hero.size() != expected_hero_size or not hero.has("id") or not hero.has("fray"):
-				return {"ok": false}
-		else:
+		var allows_wound_hp: bool = _event_allows_wound_hp()
+		if is_needle_toll:
 			if not hero.has("id") or not hero.has("fray"):
 				return {"ok": false}
 			for key in hero.keys():
 				if not key in ["id", "fray", "lost", "rank", "hp"]:
 					return {"ok": false}
+		elif allows_wound_hp:
+			if not hero.has("id") or not hero.has("fray"):
+				return {"ok": false}
+			for key in hero.keys():
+				if not key in ["id", "fray", "lost", "hp", "max_hp"]:
+					return {"ok": false}
+			if hero.has("hp") != hero.has("max_hp"):
+				return {"ok": false}
+			if hero.has("hp"):
+				var hp_read := _read_signed_int(hero.get("hp"))
+				var max_hp_read := _read_signed_int(hero.get("max_hp"))
+				if not hp_read.get("ok", false) or not max_hp_read.get("ok", false):
+					return {"ok": false}
+				var hp_val: int = int(hp_read["value"])
+				var max_hp_val: int = int(max_hp_read["value"])
+				if hp_val < 0 or max_hp_val <= 0 or hp_val > max_hp_val:
+					return {"ok": false}
+		else:
+			var expected_hero_size: int = 3 if has_lost else 2
+			if hero.size() != expected_hero_size or not hero.has("id") or not hero.has("fray"):
+				return {"ok": false}
 		var raw_id: Variant = hero.get("id")
 		if not _is_nonblank_string(raw_id) or not CANONICAL_HERO_IDS.has(raw_id):
 			return {"ok": false}
@@ -1138,6 +1218,9 @@ func _parse_snapshot(snapshot: Variant) -> Dictionary:
 				parsed_hero["rank"] = hero.get("rank")
 			if hero.has("hp"):
 				parsed_hero["hp"] = hero.get("hp")
+		elif allows_wound_hp and hero.has("hp"):
+			parsed_hero["hp"] = int(hero.get("hp"))
+			parsed_hero["max_hp"] = int(hero.get("max_hp"))
 		party.append(parsed_hero)
 	var parsed_snapshot := {"candle": candle, "party": party}
 	if has_scraps:
@@ -1185,6 +1268,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 	var has_require_full_candle: bool = effect.has("require_full_candle")
 	var has_require_candle_room: bool = effect.has("require_candle_room")
 	var has_require_full_candle_gain: bool = effect.has("require_full_candle_gain")
+	var has_require_candle_room_or_wound: bool = effect.has("require_candle_room_or_wound")
 	var has_min_fray: bool = effect.has("min_fray")
 	var has_required_candle_band: bool = effect.has("required_candle_band")
 	var has_required_candle_bands: bool = effect.has("required_candle_bands")
@@ -1199,6 +1283,8 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		return {"ok": false}
 	if has_require_candle_room and has_require_full_candle_gain:
 		return {"ok": false}
+	if has_require_candle_room_or_wound and (has_require_candle_room or has_require_full_candle or has_require_full_candle_gain):
+		return {"ok": false}
 	if has_min_fray and has_require_fray_or_fear:
 		return {"ok": false}
 	var optional_keys: int = (
@@ -1210,6 +1296,7 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		+ (1 if has_require_full_candle else 0)
 		+ (1 if has_require_candle_room else 0)
 		+ (1 if has_require_full_candle_gain else 0)
+		+ (1 if has_require_candle_room_or_wound else 0)
 		+ (1 if has_min_fray else 0)
 		+ (1 if has_required_candle_band else 0)
 		+ (1 if has_required_candle_bands else 0)
@@ -1269,6 +1356,17 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 			return {"ok": false}
 		if candle_delta <= 0:
 			return {"ok": false}
+	if has_require_candle_room_or_wound:
+		var raw_require_candle_room_or_wound: Variant = effect.get("require_candle_room_or_wound")
+		if typeof(raw_require_candle_room_or_wound) != TYPE_BOOL or raw_require_candle_room_or_wound != true:
+			return {"ok": false}
+		if candle_delta <= 0:
+			return {"ok": false}
+		if not has_hp:
+			return {"ok": false}
+		var check_hp_read: Dictionary = _read_signed_int(effect.get("hp"))
+		if not check_hp_read.get("ok", false) or int(check_hp_read["value"]) <= 0:
+			return {"ok": false}
 	if has_require_fray_or_fear:
 		var raw_rfof: Variant = effect.get("require_fray_or_fear")
 		if typeof(raw_rfof) != TYPE_BOOL or raw_rfof != true:
@@ -1323,6 +1421,8 @@ func _parse_stitched_effect(choice: Variant, catalog_state: Dictionary) -> Dicti
 		"require_full_candle": has_require_full_candle,
 		"require_candle_room": has_require_candle_room,
 		"require_full_candle_gain": has_require_full_candle_gain,
+		"has_require_candle_room_or_wound": has_require_candle_room_or_wound,
+		"require_candle_room_or_wound": has_require_candle_room_or_wound,
 		"has_min_fray": has_min_fray,
 		"has_required_candle_band": has_required_candle_band,
 		"required_candle_band": required_candle_band,

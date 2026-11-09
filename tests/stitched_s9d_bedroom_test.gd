@@ -146,7 +146,9 @@ func _record_rules() -> void:
 		_check(int(hero.hp) > 0 and not hero.lost, "hanging fixture starts with living participants")
 		hero.hp = 0
 	hanging_session.heroes[0].parts.arms.torn = true
+	hanging_session.heroes[0].fray = 170
 	hanging_session.heroes[1].parts.legs.torn = true
+	hanging_session.heroes[1].fray = 110
 	hanging_session.heroes[2].parts.arms.torn = true
 	hanging_session.heroes[2].parts.legs.torn = true
 	hanging_session.phase = "defeat"
@@ -319,7 +321,7 @@ func _room_rules() -> void:
 		and ledger.status_labels.warden.text == "LOST"
 		and not ledger.status_labels.has("seamstress"),
 		"tin shows only dolls actually lost; hanging does not count")
-	# Recorded surviving tears outrank even deep Fray, on the same authored shelf art.
+	# Surviving tears and high Fray share the same authored shelf readout.
 	var torn_session := StitchedRunSession.start(42)
 	torn_session.phase = "defeat"
 	torn_session.heroes[0].parts.arms.torn = true
@@ -329,6 +331,17 @@ func _room_rules() -> void:
 	torn_session.heroes[2].parts.legs.torn = true
 	torn_session.heroes[3].fray = 110
 	var torn_record := StitchedBedroomRecord.after_run(StitchedBedroomRecord.fresh(), torn_session)
+	_check(StitchedBedroomRecord.valid(torn_record) and torn_record.dolls.warden.fray == 165
+		and torn_record.dolls.warden.torn_slots == ["arms"]
+		and not torn_record.dolls.warden.lost and not torn_record.dolls.warden.hanging
+		and torn_record.dolls.lantern_monk.fray == 110,
+		"completed actual torn/frayed survivor fixture has the intended living preconditions")
+	_check(StitchedBedroomDollInspector.status_for(torn_record, "warden") == "TORN ARM\nFACING WALL"
+		and StitchedBedroomDollInspector.status_for(torn_record, "seamstress") == "TORN LEG"
+		and StitchedBedroomDollInspector.status_for(torn_record, "tinker") == "TORN ARM, LEG"
+		and StitchedBedroomDollInspector.status_for(torn_record, "lantern_monk") == "SLUMPED"
+		and StitchedBedroomDollInspector.status_for(torn_record, "scarecrow") == "STAYED HOME",
+		"direct readout combines real Warden arm and deep Fray without mislabelling other dolls")
 	room.present(torn_record)
 	for id in ["warden", "seamstress", "tinker"]:
 		_check(room.doll_pose(id) == "side"
@@ -346,25 +359,62 @@ func _room_rules() -> void:
 	room.present(torn_record)
 	_check_marks(room, mark_instances, living_slots, "repeated living presentation")
 	room.spot("shelf").focus_entered.emit()
-	_check(ledger.visible and ledger.status_labels.warden.text == "TORN ARM"
+	_check(ledger.visible and ledger.status_labels.warden.text == "TORN ARM\nFACING WALL"
 		and ledger.status_labels.seamstress.text == "TORN LEG"
 		and ledger.status_labels.tinker.text == "TORN ARM, LEG"
 		and ledger.status_labels.lantern_monk.text == "SLUMPED"
 		and ledger.status_labels.scarecrow.text == "STAYED HOME",
-		"shelf keyboard readout names exact torn limbs, above Fray 150, without inventing injuries")
+		"shelf keyboard readout preserves both Warden tear and deep Fray, other true injuries and intact Fray")
 	room.spot("shelf").focus_exited.emit()
 	room.spot("shelf").mouse_entered.emit()
-	_check(ledger.visible and ledger.status_labels.warden.text.ends_with("TORN ARM")
-		and ledger.status_labels.tinker.text.ends_with("TORN ARM, LEG"),
+	_check(ledger.visible and ledger.status_labels.warden.text == "TORN ARM\nFACING WALL"
+		and ledger.status_labels.tinker.text == "TORN ARM, LEG"
+		and ledger.status_labels.lantern_monk.text == "SLUMPED",
 		"existing shelf hover presents the same qualitative injuries as focus")
 	room.spot("shelf").mouse_exited.emit()
 	room.spot("tin").focus_entered.emit()
 	_check(ledger.entry_order.is_empty() and ledger.empty_label.text == "No dolls lost on the last outing",
 		"a living torn survivor never appears in the tin")
 	room.spot("tin").focus_exited.emit()
+	# Vary only a real completed v1 aftermath, never the live run or scene rules.
+	for band in [99, 100, 149, 150]:
+		var boundary := torn_record.duplicate(true)
+		boundary.dolls.warden.fray = band
+		var cue := "TORN ARM" + ("\nFACING WALL" if band >= 150 else
+			"\nSLUMPED" if band >= 100 else "")
+		_check(StitchedBedroomRecord.valid(boundary)
+			and boundary.dolls.warden.torn_slots == ["arms"]
+			and StitchedBedroomDollInspector.status_for(boundary, "warden") == cue,
+			"living arm-torn Warden Fray %d direct boundary cue is exact" % band)
+		room.present(boundary)
+		room.spot("shelf").focus_entered.emit()
+		_check(ledger.status_labels.warden.text == cue
+			and ledger.status_labels.tinker.text == "TORN ARM, LEG"
+			and room.doll_pose("warden") == "side"
+			and not ledger.status_labels.warden.text.contains("FRAY"),
+			"living torn Warden Fray %d mounted focus keeps its exact tear and cue" % band)
+		room.spot("shelf").focus_exited.emit()
+		room.spot("shelf").mouse_entered.emit()
+		_check(ledger.visible and ledger.status_labels.warden.text == cue,
+			"living torn Warden Fray %d mounted hover agrees with focus" % band)
+		room.spot("shelf").mouse_exited.emit()
+	var untorn := torn_record.duplicate(true)
+	untorn.dolls.warden.erase("torn_slots")
+	_check(StitchedBedroomRecord.valid(untorn)
+		and StitchedBedroomDollInspector.status_for(untorn, "warden") == "FACING WALL",
+		"intact high-Fray Warden keeps its original unsupplemented posture label")
+	room.present(untorn)
+	room.spot("shelf").focus_entered.emit()
+	_check(ledger.status_labels.warden.text == "FACING WALL"
+		and room.doll_pose("warden") == "wall"
+		and ledger.status_labels.tinker.text == "TORN ARM, LEG",
+		"no-tear mounted comparison retains existing Fray and both real Tinker tears")
+	room.spot("shelf").focus_exited.emit()
+	room.present(torn_record)
 	var outranked := torn_record.duplicate(true)
 	outranked.dolls.warden.lost = true
 	outranked.dolls.seamstress.hanging = true
+	outranked.dolls.seamstress.fray = 170
 	room.present(outranked)
 	_check(room.doll_pose("warden") == "tin" and room.doll_pose("seamstress") == "side"
 		and room.dolls.warden.get_meta("pose") == "tin",
@@ -442,7 +492,9 @@ func _room_rules() -> void:
 		hero.hp = 0
 		hero.lost = false
 	hanging_session.heroes[0].parts.arms.torn = true
+	hanging_session.heroes[0].fray = 170
 	hanging_session.heroes[1].parts.legs.torn = true
+	hanging_session.heroes[1].fray = 110
 	hanging_session.heroes[2].parts.arms.torn = true
 	hanging_session.heroes[2].parts.legs.torn = true
 	hanging_session.phase = "defeat"
@@ -813,12 +865,15 @@ func _live_base(app: Node) -> void:
 		and session.heroes[0].id == "warden" and session.heroes[1].id == "seamstress",
 		"mounted run has the actual selected Wren dolls")
 	_check(int(session.heroes[0].hp) > 0 and int(session.heroes[1].hp) > 0
-		and session.heroes[0].parts.has("arms") and session.heroes[1].parts.has("legs"),
+		and session.heroes[0].parts.has("arms") and session.heroes[1].parts.has("legs")
+		and session.heroes[3].id == "lantern_monk",
 		"mounted torn participants are alive and wear the real selected limbs")
 	session.heroes[0].parts.arms.torn = true
 	session.heroes[1].parts.legs.torn = true
 	session.heroes[2].parts.arms.torn = true
 	session.heroes[2].parts.legs.torn = true
+	session.heroes[0].fray = 165
+	session.heroes[3].fray = 110
 	session.phase = "victory"
 	session._seal()
 	app._present_stitched_run()
@@ -826,7 +881,9 @@ func _live_base(app: Node) -> void:
 	_check(app.bedroom_record.nights == 1 and app.bedroom_record.outcome == "victory"
 		and app.bedroom_record.dolls.warden.get("torn_slots", []) == ["arms"]
 		and app.bedroom_record.dolls.seamstress.get("torn_slots", []) == ["legs"]
-		and app.bedroom_record.dolls.tinker.get("torn_slots", []) == ["arms", "legs"],
+		and app.bedroom_record.dolls.tinker.get("torn_slots", []) == ["arms", "legs"]
+		and app.bedroom_record.dolls.warden.fray == 165
+		and app.bedroom_record.dolls.lantern_monk.fray == 110,
 		"real run completion counts once and captures three living torn conditions")
 	app._present_stitched_run()
 	_check(app.bedroom_record.nights == 1, "redrawing the end page does not count again")
@@ -850,18 +907,26 @@ func _live_base(app: Node) -> void:
 	view.bedroom.spot("shelf").grab_focus()
 	await process_frame
 	_check(view.bedroom.spot("shelf").has_focus() and view.bedroom.inspector.visible
-		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM"
+		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM\nFACING WALL"
 		and view.bedroom.inspector.status_labels.seamstress.text == "TORN LEG"
 		and view.bedroom.inspector.status_labels.tinker.text == "TORN ARM, LEG"
-		and view.bedroom.inspector.status_labels.lantern_monk.text == "UPRIGHT",
+		and view.bedroom.inspector.status_labels.lantern_monk.text == "SLUMPED",
 		"real return shelf keyboard inspection reads the live torn and intact history")
+	var inspector := view.bedroom.inspector
+	var panel_rect := inspector.get_global_rect()
+	var warden_label: Label = inspector.status_labels.warden
+	_check(inspector.get_child_count() == 2 and inspector.entry_order.size() == 8
+		and warden_label.get_line_count() == 2
+		and panel_rect.encloses(warden_label.get_global_rect())
+		and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(panel_rect),
+		"real combined two-line readout fits the existing 1280x720 felt with no new controls")
 	_check(view.bedroom.record == app.bedroom_record
 		and view.bedroom.doll_pose("warden") == "side"
 		and view.bedroom.doll_pose("seamstress") == "side"
 		and view.bedroom.doll_pose("tinker") == "side"
 		and view.bedroom.dolls.warden.texture != null
 		and is_equal_approx(view.bedroom.dolls.warden.rotation, -PI * 0.5)
-		and view.bedroom.doll_pose("lantern_monk") == "upright",
+		and view.bedroom.doll_pose("lantern_monk") == "slumped",
 		"actual mounted record drives the original rotated shelf portraits")
 	_check_marks(view.bedroom, {}, {"warden": ["arms"], "seamstress": ["legs"],
 		"tinker": ["arms", "legs"]}, "mounted actual victory return")
@@ -869,9 +934,10 @@ func _live_base(app: Node) -> void:
 	await process_frame
 	await _mouse_move(view.bedroom.spot("shelf").get_global_rect().get_center())
 	_check(view.bedroom.inspector.visible
-		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM"
-		and view.bedroom.inspector.status_labels.tinker.text == "TORN ARM, LEG",
-		"real mouse motion over returned shelf shows identical live injury labels")
+		and view.bedroom.inspector.status_labels.warden.text == "TORN ARM\nFACING WALL"
+		and view.bedroom.inspector.status_labels.tinker.text == "TORN ARM, LEG"
+		and view.bedroom.inspector.status_labels.lantern_monk.text == "SLUMPED",
+		"real mouse motion over returned shelf shows identical combined conditions")
 	await _mouse_move(view.bedroom.spot("tin").get_global_rect().get_center())
 	_check(view.bedroom.inspector.visible and view.bedroom.inspector.entry_order.is_empty()
 		and view.bedroom.inspector.empty_label.text == "No dolls lost on the last outing",

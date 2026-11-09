@@ -32,7 +32,7 @@ const EXPECTED := {
 		"title": "The Keyhole Choir",
 		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
 		"choices": [
-			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room": true}},
+			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
 			{"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' fray", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
 			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
