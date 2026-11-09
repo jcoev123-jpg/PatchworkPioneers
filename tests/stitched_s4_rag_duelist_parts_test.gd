@@ -194,12 +194,15 @@ const TORSO_PATCH_FORBIDDEN_WORDS := [
 	"chance", "duration",
 ]
 
-## The authored acceptance contract, one row per part id. "dmg", "effects" and "self_move" are
+## The authored acceptance contract, one row per part id. "name" is the worn patch's display name;
+## where S14 gave the patch a sewn-patch name while its retired part-cast ability kept the old one,
+## "ability_name" records that separate nested ability name. "dmg", "effects" and "self_move" are
 ## indexed by tier - 1; "stat" is the tier-I slot stat (the two legs patches climb through
 ## TIER_STATS), and every other part's slot stat is constant across the three stitch tiers.
 const EXPECTED := {
 	"rag_duelist_head_feather_feint": {
-		"name": "Feather Feint", "slot": "head", "stat": {"acc": 4},
+		"name": "Feathered Eyepatch", "ability_name": "Feather Feint",
+		"slot": "head", "stat": {"acc": 4},
 		"ability_id": "rag_duelist_head_feather_feint_move", "kind": "debuff",
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 95,
@@ -208,7 +211,8 @@ const EXPECTED := {
 		"self_move": [0, 0, 0],
 	},
 	"rag_duelist_head_tattered_snare": {
-		"name": "Tattered Snare", "slot": "head", "stat": {"crit": 3},
+		"name": "Knotted Hatband", "ability_name": "Tattered Snare",
+		"slot": "head", "stat": {"crit": 3},
 		"ability_id": "rag_duelist_head_tattered_snare_move", "kind": "debuff",
 		"launch": [1, 2], "target": [1, 2, 3], "target_side": "enemy", "pose": "skill",
 		"acc": 92,
@@ -314,6 +318,7 @@ func _initialize() -> void:
 	_test_flourish_catalog()
 	_test_cape_legs_text()
 	_test_head_patch_text()
+	_test_head_patch_names()
 	_test_arm_patch_text()
 	_test_torso_patch_text()
 	_test_negatives()
@@ -476,7 +481,8 @@ func _test_tiers() -> void:
 				_check(str(key) in StitchedParts.SLOT_STATS[slot],
 					"AC1: " + tag + " stat " + str(key) + " belongs in the " + slot + " slot")
 			_check(str(ability["id"]) == str(spec["ability_id"]), "AC1: " + tag + " keeps its ability id")
-			_check(str(ability["name"]) == str(spec["name"]), "AC1: " + tag + " keeps its ability name")
+			_check(str(ability["name"]) == _expected_ability_name(spec),
+				"AC1: " + tag + " keeps its ability name")
 			_check(str(ability["kind"]) == str(spec["kind"]), "AC1: " + tag + " keeps its kind")
 			_check(str(ability["target_side"]) == str(spec["target_side"]), "AC1: " + tag + " keeps its target side")
 			_check(str(ability["move"]) == str(spec["pose"]) and str(ability["move"]) in MOVE_POSES,
@@ -644,6 +650,12 @@ func _expected_stat(part_id: String, tier: int) -> Dictionary:
 	var spec: Dictionary = EXPECTED[part_id]
 	var base_stat: Dictionary = spec["stat"]
 	return base_stat
+
+
+## The nested legacy ability keeps its pre-S14 part-cast name even where the worn patch itself now
+## carries a sewn-patch display name, so ability-name checks read that separate authored value.
+func _expected_ability_name(spec: Dictionary) -> String:
+	return str(spec.get("ability_name", spec["name"]))
 
 
 # ---------------------------------------------------------------- AC1: Rapier Lunge Mark payoff contract
@@ -940,6 +952,82 @@ func _test_head_patch_text() -> void:
 		for head_id in HEAD_PATCH_TEXT:
 			_check(other_text != str(HEAD_PATCH_TEXT[head_id]),
 				"AC3: the head description stays on " + str(head_id) + ", never on " + str(other_id))
+
+
+# ---------------------------------------------------------------- AC1/AC3: head patch names vs legacy moves
+
+## S14 gives the two worn head patches their sewn-patch display names while the retired part-cast
+## ability on each record keeps its own name, id, numbers and tiers. This proves that separation on
+## both exact records, that each new name is the one real catalog entry carrying it, and that the
+## fixed ids, slots, owners, stats, cloth text and legacy ability/tier values are unchanged.
+func _test_head_patch_names() -> void:
+	var catalog := _catalog()
+	_check(bool(catalog.get("ok", false)),
+		"AC1: the shipped catalog loads for the two head patch display names")
+	if not bool(catalog.get("ok", false)):
+		return
+	var by_id: Dictionary = catalog["by_id"]
+	var seen := {}
+	for part_id in [str(STARTER_PARTS["head"]), str(ALTERNATE_PARTS["head"])]:
+		_check(by_id.has(part_id), "AC1: the catalog authors the named head patch " + part_id)
+		if not by_id.has(part_id):
+			continue
+		var part: Dictionary = by_id[part_id]
+		var spec: Dictionary = EXPECTED[part_id]
+		var item_name := str(part.get("name", ""))
+		var move_name := str(part["ability"].get("name", ""))
+		_check(item_name == str(spec["name"]),
+			"AC1: %s shows the sewn-patch name %s" % [part_id, str(spec["name"])])
+		_check(move_name == _expected_ability_name(spec),
+			"AC3: %s keeps its nested legacy ability name %s" % [part_id, _expected_ability_name(spec)])
+		_check(item_name != move_name,
+			"AC1: " + part_id + " separates its worn patch name from the legacy move name")
+		_check(not seen.has(item_name),
+			"AC1: the sewn-patch name " + item_name + " is distinct within this kit")
+		seen[item_name] = part_id
+		var carriers := 0
+		for other_id in ALL_PART_IDS:
+			if by_id.has(other_id) and str(by_id[other_id].get("name", "")) == item_name:
+				carriers += 1
+		_check(carriers == 1,
+			"AC1: exactly one authored wearable is called " + item_name)
+		_check(str(part.get("id", "")) == part_id and str(part.get("slot", "")) == "head"
+			and str(part.get("owner", "")) == OWNER,
+			"AC1: " + part_id + " keeps its id, head slot and rag_duelist owner")
+		_check(str(part.get("text", "")) == str(HEAD_PATCH_TEXT[part_id]),
+			"AC1: " + part_id + " keeps its exact sewn-cloth sentence")
+		_check(_int_dict(part["stat"]) == _int_dict(spec["stat"]),
+			"AC3: " + part_id + " keeps its unchanged tier-I slot stat " + str(spec["stat"]))
+		var ability: Dictionary = part["ability"]
+		_check(str(ability["id"]) == str(spec["ability_id"]),
+			"AC3: " + part_id + " keeps its nested legacy ability id " + str(spec["ability_id"]))
+		_check(str(ability["kind"]) == str(spec["kind"]),
+			"AC3: " + part_id + " keeps its nested legacy ability kind " + str(spec["kind"]))
+		_check(_int_list(ability["launch"]) == _int_list(spec["launch"])
+			and _int_list(ability["target"]) == _int_list(spec["target"]),
+			"AC3: " + part_id + " keeps its nested legacy launch and target ranks")
+		_check(str(ability["target_side"]) == str(spec["target_side"]),
+			"AC3: " + part_id + " keeps its nested legacy target side")
+		_check(int(ability["acc"]) == int(spec["acc"]),
+			"AC3: " + part_id + " keeps its nested legacy ACC " + str(spec["acc"]))
+		_check(_int_list(ability["dmg"]) == _int_list(spec["dmg"][0]),
+			"AC3: " + part_id + " keeps its nested legacy zero-damage range")
+		_check(_int_dict(ability["effects"]) == _int_dict(spec["effects"][0]),
+			"AC3: " + part_id + " keeps its nested legacy tier-I effects")
+		_check(part["tiers"].size() == 2 and part["tiers"].has("2") and part["tiers"].has("3"),
+			"AC3: " + part_id + " keeps exactly its legacy tiers II and III overrides")
+		for tier in [2, 3]:
+			var tier_ability := StitchedParts.ability_at_tier(part, tier)
+			if tier_ability.is_empty():
+				_check(false, "AC3: %s legacy tier %d resolves" % [part_id, tier])
+				continue
+			_check(str(tier_ability["name"]) == move_name,
+				"AC3: %s legacy tier %d keeps the move name %s" % [part_id, tier, move_name])
+			_check(_int_dict(tier_ability["effects"]) == _int_dict(spec["effects"][tier - 1]),
+				"AC3: %s legacy tier %d keeps its effects %s"
+					% [part_id, tier, str(spec["effects"][tier - 1])])
+	_check(seen.size() == 2,
+		"AC1: both named head patches resolve under two distinct sewn-patch names")
 
 
 # ---------------------------------------------------------------- AC1/AC2: the two arm-patch texts
