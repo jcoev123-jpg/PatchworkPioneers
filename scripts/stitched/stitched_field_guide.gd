@@ -61,6 +61,37 @@ const PAGES := [
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
 ## Seams & retreat carries four catalog-derived examples, three gold notes and three S15 notes.
 const LESSON_PAGE := 1
+const SIDE_DOOR_PAGE := 3
+
+## Only the six named, validated witnesses can teach these possible bargains.
+## Additional legal catalog entries are welcome; no run offer/RNG is consulted.
+static func side_door_examples(document: Variant = null) -> Array[String]:
+	var entries := StitchedS14SideDoors.catalog(document)
+	var witnesses := [
+		{"id": "underbed_stuffing_trade", "kind": "underbed", "cost": "max_hp",
+			"amount": 6, "reward": "gold_patch"},
+		{"id": "underbed_leg_trade", "kind": "underbed", "cost": "limb",
+			"amount": 1, "reward": "silk_patch"},
+		{"id": "underbed_fear_trade", "kind": "underbed", "cost": "fear",
+			"amount": 15, "reward": "wren_gift"},
+		{"id": "attic_waxlight", "kind": "attic", "cost": "none",
+			"amount": 0, "reward": "candle"},
+		{"id": "attic_rethread", "kind": "attic", "cost": "none",
+			"amount": 0, "reward": "mend"},
+		{"id": "attic_headward", "kind": "attic", "cost": "none",
+			"amount": 0, "reward": "head_guard"},
+	]
+	for witness in witnesses:
+		var row: Dictionary = entries.get(witness.id, {})
+		for field in witness:
+			if row.get(field) != witness[field]:
+				return []
+	return [
+		"UNDER-BED STUFFING  |  Giving up stuffing may bring a rare gold-thread ability patch.",
+		"UNDER-BED LEG  |  Giving up a leg may bring a silk-thread ability patch.",
+		"UNDER-BED FEAR  |  Letting Wren carry more fear may bring one of his gifts.",
+		"ATTIC BLESSINGS  |  The free attic door may brighten the candle, mend dolls or guard a head. Doors and payable bargains depend on the journey; none is promised.",
+	]
 
 var tab_buttons: Array[Button] = []
 var page_labels: Array[Label] = []
@@ -78,6 +109,7 @@ var catalog_paths: Array[String] = [WARDEN_PARTS, SEAMSTRESS_PARTS, TINKER_PARTS
 var lesson_kits: Variant = null
 var lesson_patches: Variant = null
 var s15_source: Variant = null
+var side_door_source: Variant = null
 var page_index := 0
 var _active := false
 # Button-down edges only; retain across hide/reopen to reject held/stale input.
@@ -110,6 +142,7 @@ func open_guide() -> bool:
 		return false
 	_active = true
 	_refresh_lesson_page()
+	_refresh_side_door_page()
 	show()
 	select_page(0)
 	tab_buttons[0].grab_focus()
@@ -128,6 +161,16 @@ func _refresh_lesson_page() -> void:
 		lines.append_array(StitchedGoldThreadNotes.examples(lesson_patches))
 	lines.append_array(StitchedS15FieldNotes.examples(s15_source))
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
+
+
+## Recreate Candle & stops from the authored baseline at every successful open.
+## Invalid or contradictory source suppresses all four optional notes together.
+func _refresh_side_door_page() -> void:
+	if page_labels.size() <= SIDE_DOOR_PAGE:
+		return
+	var lines: Array = PAGES[SIDE_DOOR_PAGE].duplicate()
+	lines.append_array(side_door_examples(side_door_source))
+	page_labels[SIDE_DOOR_PAGE].text = "\n\n".join(lines)
 
 
 func dismiss() -> void:

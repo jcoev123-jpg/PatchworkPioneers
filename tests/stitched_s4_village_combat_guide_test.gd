@@ -107,6 +107,132 @@ func _all_present(haystack: String, needles: Array) -> bool:
 	return true
 
 
+## The shipped JSON is copied, never edited; named witnesses survive reordering
+## and append-only additions. Every negative must suppress ALL four lessons.
+func _door_invalid_cases(document: Dictionary) -> Array:
+	var cases: Array = [["invalid document type", []], ["malformed doors", {"doors": "no doors"}]]
+	var bad := document.duplicate(true)
+	bad.doors.remove_at(0)
+	cases.append(["missing named witness", bad])
+	bad = document.duplicate(true)
+	bad.doors.append(bad.doors[0].duplicate(true))
+	cases.append(["duplicate witness", bad])
+	for pair in [["reward", "silk_patch"], ["cost", "fear"], ["amount", 7],
+			["kind", "attic"]]:
+		bad = document.duplicate(true)
+		bad.doors[0][pair[0]] = pair[1]
+		cases.append(["wrong " + str(pair[0]), bad])
+	bad = document.duplicate(true)
+	bad["unknown"] = true
+	cases.append(["malformed root", bad])
+	return cases
+
+
+func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
+	var raw: Variant = JSON.parse_string(FileAccess.get_file_as_string(
+		StitchedS14SideDoors.PATH))
+	_check(raw is Dictionary and raw.get("doors") is Array,
+		"actual authored S14 door document loads as a detached dictionary")
+	if not raw is Dictionary or not raw.get("doors") is Array:
+		return
+	var source: Dictionary = raw
+	var original := source.duplicate(true)
+	var validated := StitchedS14SideDoors.catalog(source)
+	var lessons := StitchedFieldGuide.side_door_examples(source)
+	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[3])
+	_check(lessons.size() == 4 and lessons == StitchedFieldGuide.side_door_examples()
+		and validated.has("underbed_stuffing_trade") and validated.has("underbed_leg_trade")
+		and validated.has("underbed_fear_trade") and validated.has("attic_waxlight")
+		and validated.has("attic_rethread") and validated.has("attic_headward"),
+		"real S14 catalog validates six named witness IDs and yields four deterministic notes")
+	if lessons.size() != 4:
+		return
+	_check(lessons[0].contains("stuffing") and lessons[0].contains("gold-thread")
+		and lessons[0].contains("ability patch") and lessons[0].contains("may")
+		and lessons[1].contains("leg") and lessons[1].contains("silk-thread")
+		and lessons[1].contains("ability patch") and lessons[1].contains("may")
+		and lessons[2].contains("Wren") and lessons[2].contains("fear")
+		and lessons[2].contains("gifts") and lessons[2].contains("may")
+		and lessons[3].contains("free attic") and lessons[3].contains("candle")
+		and lessons[3].contains("mend") and lessons[3].contains("guard a head")
+		and lessons[3].contains("depend") and lessons[3].contains("none is promised"),
+		"all four notes teach possible stuffing/gold, limb/silk, fear/gift and free attic outcomes")
+	var no_quotes := true
+	for line in lessons:
+		for character in line:
+			no_quotes = no_quotes and not character.is_valid_int()
+		no_quotes = no_quotes and not line.contains("%") and not line.contains(" HP ")
+	_check(no_quotes, "new guide examples quote no prices, costs, odds or HP forecasts")
+	var expected := baseline + "\n\n" + "\n\n".join(lessons)
+	await _click(guide.tab_buttons[3])
+	_check(guide.page_text(3) == expected
+		and guide.page_labels[3].is_visible_in_tree()
+		and guide.page_text(3).contains("SIDE DOORS")
+		and guide.page_text(3).contains("ANY under-bed deal")
+		and guide.page_text(3).contains("optional door MAY"),
+		"real Drawings -> Candle tab retains SIDE DOORS and exactly four sourced notes")
+	for line in lessons:
+		_check(guide.page_text(3).count(line) == 1,
+			"mounted Candle page has one copy of " + line)
+	var bar := guide.page_scroll.get_v_scroll_bar()
+	var travel := maxf(0.0, bar.max_value - bar.page)
+	guide.page_scroll.scroll_vertical = int(travel)
+	await process_frame
+	_check(guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
+		and guide.page_labels[3].get_theme_font_size("font_size") >= 18
+		and travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
+		"four appended door examples remain reachable by vertical scroll at 18pt")
+	await _click(guide.tab_buttons[0])
+	_check(guide.page_scroll.scroll_vertical == 0
+		and guide.page_text(0) == "\n\n".join(StitchedFieldGuide.PAGES[0])
+		and guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2]),
+		"page switch resets scroll and leaves Ranks and Fray baselines untouched")
+
+	var reordered := source.duplicate(true)
+	reordered.doors.reverse()
+	reordered.doors.append({"id": "attic_future_note", "kind": "attic",
+		"cost": "none", "amount": 0, "reward": "mend"})
+	var reordered_before := reordered.duplicate(true)
+	_check(StitchedFieldGuide.side_door_examples(reordered) == lessons
+		and StitchedS14SideDoors.catalog(reordered).has("attic_future_note")
+		and reordered == reordered_before,
+		"detached reversed/extended legal catalog teaches identical notes without mutation")
+	for pair in _door_invalid_cases(source):
+		var invalid: Variant = pair[1]
+		var before: Variant = invalid.duplicate(true)
+		_check(StitchedFieldGuide.side_door_examples(invalid).is_empty()
+			and invalid == before, "pure formatter fails closed without mutation: " + str(pair[0]))
+		guide.side_door_source = invalid
+		await _click(guide.close_button)
+		_check(not guide.is_open(), "guide dismisses before invalid source: " + str(pair[0]))
+		await _click(drawings)
+		_check(guide.is_open() and guide.page_index == 0
+			and guide.page_text(3) == baseline
+			and guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4,
+			"invalid source restores entire page-3 baseline without stale lines: " + str(pair[0]))
+		await _click(guide.tab_buttons[3])
+		_check(guide.page_text(3) == baseline and guide.page_text(3).contains("SIDE DOORS"),
+			"invalid source shows only original SIDE DOORS after page turn: " + str(pair[0]))
+		await _click(guide.tab_buttons[0])
+	guide.side_door_source = reordered
+	await _click(guide.close_button)
+	await _click(drawings)
+	_check(guide.page_text(3) == expected and guide.page_index == 0,
+		"valid reordered source restores one full note set after invalid reopens")
+	guide.side_door_source = null
+	await _click(guide.close_button)
+	await _click(drawings)
+	_check(guide.page_text(3) == expected and source == original
+		and reordered == reordered_before
+		and StitchedS14SideDoors.catalog(source) == validated,
+		"reset live source restores notes once, without altering actual side-door catalog")
+	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
+		and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 4
+		and guide.get_child_count() == 2
+		and guide.page_text(1).begins_with("\n\n".join(StitchedFieldGuide.PAGES[1])),
+		"reopened guide retains four tabs, unchanged Seams teaching and no new controls")
+
+
 func _state() -> Array:
 	return [view.wallet_label.text, view.selected_path_id(),
 		view.selected_tinker_path_id(), view.selected_warden_path_id(),
@@ -687,6 +813,7 @@ func _bedroom_route() -> void:
 		and view.get_children().filter(func(node: Node) -> bool:
 			return node is StitchedFieldGuide).size() == 1,
 		"real Drawings click opens sole tab-zero StitchedFieldGuide")
+	await _bedroom_door_checks(guide, drawings)
 	await _direction_key(KEY_LEFT, true)
 	_check(_selected_page(guide, 3), "Wren Drawings left key wraps to tab 3")
 	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)

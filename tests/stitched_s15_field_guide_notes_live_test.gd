@@ -232,9 +232,13 @@ func _run() -> void:
 	_check(_focusable(guide) == 6 and guide.get_child_count() == 2
 		and guide.get_node("FeltPanel") is NinePatchRect and guide.theme == null,
 		"original six-focus ring and inherited gothic felt panel remain")
-	for index in [0, 2, 3]:
+	for index in [0, 2]:
 		_check(guide.page_text(index) == "\n\n".join(StitchedFieldGuide.PAGES[index]),
 			"non-Seams page remains precisely unchanged: " + str(index))
+	var door_examples := StitchedFieldGuide.side_door_examples()
+	_check(door_examples.size() == 4 and guide.page_text(3) == "\n\n".join(
+		StitchedFieldGuide.PAGES[3] + door_examples),
+		"Candle page retains its baseline and exactly four validated S14 door notes")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree(),
 		"existing second tab is opened by real pointer input")
