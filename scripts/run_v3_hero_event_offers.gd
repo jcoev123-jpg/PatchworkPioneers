@@ -78,6 +78,25 @@ func get_offers() -> Array[Dictionary]:
 	return offers
 
 
+## Opt-in four-hero Stitched list: detached canonical records, in this service's
+## existing eligible order, whose required_hero is on the roster and not LOST.
+## lost_ids must be a native Array of distinct Strings from this service's four-hero
+## roster ([] means nobody is LOST). Affordability is not considered here.
+## Returns [] on an invalid service, a three-hero service or invalid lost_ids;
+## draws no randomness and changes no state. get_offers() is unchanged.
+func get_stitched_survivor_offers(lost_ids: Variant = null) -> Array[Dictionary]:
+	var offers: Array[Dictionary] = []
+	var lost_set: Variant = _parse_lost_ids(lost_ids)
+	if lost_set == null:
+		return offers
+	for event_id in _eligible:
+		var record: Dictionary = _eligible[event_id]
+		if (lost_set as Dictionary).has(record.get("required_hero")):
+			continue
+		offers.append(record.duplicate(true))
+	return offers
+
+
 ## Records (including altered returned offers), unknown and stale IDs cannot
 ## authorize entry. Null means admission failed; no visit or claim was made.
 func enter(event_id: Variant) -> RunEventChoice:
