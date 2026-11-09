@@ -16,7 +16,10 @@ extends SceneTree
 ## patches land on their real recipients through public turns, public misses
 ## mutate nothing, a fully public death-door drive loses a hero with its
 ## authored satchel and party-fray receipts, and the whole route replays
-## exactly from the journal.
+## exactly from the journal. A closing five-family section sews one genuinely
+## run-owned patch per keyed resist group (stun, bleed, rot, move, debuff)
+## onto the warden's enemy-side head Command and witnesses each group both
+## resisted and landed on correctly identified S15-transformed run foes.
 
 const SEED := 55
 const ROSTER_B := ["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]
@@ -59,6 +62,8 @@ func _initialize() -> void:
 	_run_owned_sockets()
 	_live_run_matrix()
 	_routed_resistance_witnesses()
+	_routed_family_witnesses()
+	_family_negative_landing()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_effect_matrix_test: %d checks, %d failures" % [checks, failures.size()])
@@ -1384,12 +1389,12 @@ func _live_run_matrix() -> void:
 ## --------------------------------------- routed resistance witnesses ----
 
 const ROUTED_SEED_CAP := 90
-const ROUTED_HARMFUL := ["bleed", "mark", "blind", "stun", "rot"]
 
 
 ## The still-unwitnessed family this run's genuinely owned patches can pay
 ## for: guard work goes to the warden's ally-side arms, movement to the
-## warden's enemy-side head command, harmful effects to the tinker's legs.
+## warden's enemy-side head command, the harmful bleed witness to the tinker's
+## legs.
 func _routed_socket_choice(session: StitchedRunSession, coverage: Dictionary) -> Dictionary:
 	for item in session.ability_inventory:
 		var patch: Dictionary = _patch_by_id.get(str(item.get("id", "")), {})
@@ -1403,7 +1408,10 @@ func _routed_socket_choice(session: StitchedRunSession, coverage: Dictionary) ->
 		# from later run-earned patch inventories until both are observed.
 		if effect in ["pull", "push"] and (not bool(coverage["move"]) or not bool(coverage["miss"])):
 			return {"item": item, "patch": patch, "hero": "warden", "slot": "head"}
-		if effect in ROUTED_HARMFUL and not bool(coverage["harmful"]):
+		# The harmful witness is the bleed ticking on a real ally: only a
+		# bleed patch can pay for it, and the strict tick oracle rejects every
+		# other harmful effect instead of green-lighting it.
+		if effect == "bleed" and not bool(coverage["harmful"]):
 			return {"item": item, "patch": patch, "hero": "tinker", "slot": "legs"}
 	return {}
 
@@ -1478,7 +1486,8 @@ func _routed_miss_hunt(battle: StitchedRules, hero_id: String, signature: Dictio
 
 ## Cast the socketed signature through public turns until one confirmed hit
 ## carries the sewn patch; honest S15 decisions and pure misses are recorded on
-## the way. Returns the first carried receipt (empty when the search ran out).
+## the way. Returns the carried receipt with its own pre-cast recipient states
+## (empty when the search ran out).
 func _routed_cast(battle: StitchedRules, hero_id: String, signature: Dictionary, patch: Dictionary, decisions: Dictionary, coverage: Dictionary, label: String) -> Dictionary:
 	if not _position_actor(battle, hero_id, label):
 		return {}
@@ -1509,11 +1518,11 @@ func _routed_cast(battle: StitchedRules, hero_id: String, signature: Dictionary,
 		_live_decision_coverage(battle, patch, results, decisions, label)
 		for hit in results:
 			if bool(hit.get("hit", false)) and hit.get("patches", []).has(patch_id):
-				return receipt
+				return {"receipt": receipt, "before": before}
 	return {}
 
 
-## Enemy-side casts keep spending lawful turns until the resistant foe has
+## Enemy-side casts keep spending lawful turnsuntil the resistant foe has
 ## both shrugged the sewn patch off and worn it: honest decision coverage.
 func _routed_decisions(battle: StitchedRules, hero_id: String, signature: Dictionary, patch: Dictionary, decisions: Dictionary, coverage: Dictionary, label: String) -> void:
 	var signature_id := str(signature.get("id", ""))
@@ -1541,16 +1550,31 @@ func _routed_decisions(battle: StitchedRules, hero_id: String, signature: Dictio
 
 
 ## The harmful ally patch's bleed must actually tick on the sewn doll's own
-## turn: exactly its count in damage, then one count down.
+## turn: exactly its count in damage, then one count down. Only a genuinely
+## landed bleed entry on a freshly bled doll counts; any other harmful effect
+## is a miss for this witness, never a silent green.
 func _routed_harmful_tick(battle: StitchedRules, carried: Dictionary, patch: Dictionary, label: String) -> bool:
 	if str(patch.get("effect", "")) != "bleed":
-		return true
+		return false
+	var receipt: Dictionary = carried.get("receipt", {})
 	var target_id := ""
-	for hit in carried.get("results", []):
-		if bool(hit.get("hit", false)) and hit.get("patches", []).has(str(patch.get("id", ""))):
-			target_id = str(hit.get("target", ""))
-			break
-	if target_id.is_empty():
+	var landed := false
+	var amount := int(patch.get("amount", 0))
+	for hit in receipt.get("results", []):
+		if not bool(hit.get("hit", false)) or not hit.get("patches", []).has(str(patch.get("id", ""))):
+			continue
+		target_id = str(hit.get("target", ""))
+		for entry in hit.get("statuses", []):
+			landed = landed or (str(entry.get("status", "")) == "bleed"
+				and not entry.has("resisted") and not entry.has("refused")
+				and int(entry.get("duration", -1)) == amount)
+		break
+	if target_id.is_empty() or not landed:
+		return false
+	# The tick oracle only reads a doll this very cast bled: the carried
+	# receipt's own pre-cast state must show no earlier bleed on the target.
+	var fresh: Dictionary = carried.get("before", {}).get(target_id, {})
+	if fresh.is_empty() or int(fresh.get("statuses", {}).get("bleed", 0)) != 0:
 		return false
 	var doll: Dictionary = battle.get_unit(target_id)
 	if doll.is_empty() or bool(doll.get("lost", false)):
@@ -1641,6 +1665,7 @@ func _routed_lost_witness(battle: StitchedRules, coverage: Dictionary, label: St
 	var door_frays: Array = []
 	var dirty := false
 	var lost_hit := {}
+	var lost_limbs_open := -1
 	var blows := 0
 	var steps := 0
 	while blows < 60 and steps < 600 and not battle.is_over():
@@ -1688,6 +1713,14 @@ func _routed_lost_witness(battle: StitchedRules, coverage: Dictionary, label: St
 			covered[hero_id] = battle.eyes_covered(hero_id)
 		var shielded := battle.candle_shielded()
 		var candle_at_blow := battle.candle()
+		# The authored door fallback: a doll with no untorn limb left has nothing
+		# else to tear, so the head goes whatever its roll says. Capture that honest
+		# precondition from the live doll before the blow lands.
+		var limbs_open := 0
+		for limb_slot in ["arms", "legs"]:
+			var limb: Dictionary = battle._units[victim_id].get("parts", {}).get(limb_slot, {})
+			if not limb.is_empty() and not bool(limb.get("torn", false)):
+				limbs_open += 1
 		var receipt: Dictionary = battle.use_foe_ability(str(blow.get("id", "")), victim_rank)
 		if not receipt.get("ok", false):
 			if not battle.pass_turn().get("ok", false):
@@ -1706,6 +1739,7 @@ func _routed_lost_witness(battle: StitchedRules, coverage: Dictionary, label: St
 				})
 			if bool(hit.get("lost", false)):
 				lost_hit = hit
+				lost_limbs_open = limbs_open
 		if not lost_hit.is_empty():
 			break
 	if lost_hit.is_empty():
@@ -1715,8 +1749,14 @@ func _routed_lost_witness(battle: StitchedRules, coverage: Dictionary, label: St
 		and fallen.get("statuses", {}).is_empty() and fallen.get("parts", {}).is_empty()
 	_check(ok, label + ": the publicly lost doll leaves combat at zero HP, status-free and empty-handed")
 	var door: Dictionary = lost_hit.get("death_door", {})
+	# The head tear is honest when the authored odds rolled under it, on the third
+	# door hit, or when the captured pre-blow state shows the doll had no untorn
+	# limb left to tear instead (the rules' documented terminal fallback).
+	var odds := int(door.get("hits", 0)) >= 3 \
+		or int(door.get("roll", 101)) <= (10 if int(door.get("hits", 0)) == 1 else 45) \
+		or lost_limbs_open == 0
 	var head := bool(lost_hit.get("lost", false)) and str(door.get("tear", {}).get("slot", "")) == "head" \
-		and (int(door.get("hits", 0)) >= 3 or int(door.get("roll", 101)) <= (10 if int(door.get("hits", 0)) == 1 else 45))
+		and odds
 	_check(head, label + ": the terminal blow tears the head under the authored death-door odds")
 	ok = ok and head
 	var stored: Array = lost_hit.get("satchel", {}).get("stored", [])
@@ -1800,7 +1840,7 @@ func _routed_attempt(seed_number: int, coverage: Dictionary) -> void:
 	var carried := _routed_cast(battle, hero_id, signature, patch, decisions, coverage, label)
 	if carried.is_empty():
 		return
-	_assert_live_patch(battle, carried, patch, label)
+	_assert_live_patch(battle, carried["receipt"], patch, label)
 	var effect := str(patch.get("effect", ""))
 	# Probe the routed foe while its rank is still reachable; repeated
 	# push/pull casts and the public LOST drive can exhaust those targets.
@@ -1812,7 +1852,7 @@ func _routed_attempt(seed_number: int, coverage: Dictionary) -> void:
 		coverage["guard"] = true
 	elif effect in ["pull", "push"]:
 		coverage["move"] = bool(decisions["resisted"]) and bool(decisions["landed_resistant"])
-	elif effect in ROUTED_HARMFUL:
+	elif effect == "bleed":
 		coverage["harmful"] = _routed_harmful_tick(battle, carried, patch, label)
 	# Observe an honest miss while the routed fight still has living targets:
 	# the public LOST drive below can legitimately end the battle.
@@ -1856,3 +1896,559 @@ func _routed_resistance_witnesses() -> void:
 		"a fully public death-door drive loses a hero with authored satchel and party-fray receipts")
 	_check(bool(coverage["replay"]),
 		"a routed resistance run replays exactly from its genuine journal")
+
+
+## ---------------------------------------- five keyed resist families ----
+
+const FAMILY_SEED_CAP := 240
+const FAMILY_DECISION_CASTS := 24
+const FAMILY_HERO := "warden"
+const FAMILY_SLOT := "head"
+## The rarest ownership first: silk stun and rot usually need an Elite victory
+## or the under-bed silk door, wool movement and debuffs and cotton bleed come
+## from ordinary fights. Every family sockets the warden's enemy-side head
+## Command: its zero damage keeps every witness cast bounded and lawful.
+const FAMILY_GROUP_ORDER := ["stun", "rot", "debuff", "move", "bleed"]
+
+
+## The keyed S15 resist group a patch effect rolls against, or "" when the
+## effect sits outside the resist system entirely.
+func _family_group(patch: Dictionary) -> String:
+	var effect := str(patch.get("effect", ""))
+	if effect in ["push", "pull"]:
+		return "move"
+	if effect in StitchedRules.RESIST_DEBUFFS:
+		return "debuff"
+	if effect in StitchedRules.RESIST_KEYS:
+		return effect
+	return ""
+
+
+## The still-unwitnessed resist group this run's genuinely owned patches can
+## pay for, rarest ownership first.
+func _family_socket_choice(session: StitchedRunSession, coverage: Dictionary) -> Dictionary:
+	var by_group := {}
+	for item in session.ability_inventory:
+		var patch: Dictionary = _patch_by_id.get(str(item.get("id", "")), {})
+		if patch.is_empty():
+			continue
+		var group := _family_group(patch)
+		if group.is_empty() or by_group.has(group):
+			continue
+		if bool(coverage[group]["resisted"]) and bool(coverage[group]["landed"]):
+			continue
+		by_group[group] = {"item": item, "patch": patch}
+	for group in FAMILY_GROUP_ORDER:
+		if by_group.has(group):
+			return by_group[group]
+	for group in by_group:
+		return by_group[group]
+	return {}
+
+
+## The living legal rank whose rarity-pierced net resist sits closest to an
+## even d100 and can still yield the missing decision: a fresh target status
+## (and no stun-resist window) for a harmful witness, a legal one-rank step
+## for a landed movement.
+func _family_decision_rank(battle: StitchedRules, signature: Dictionary, patch: Dictionary, witness: Dictionary) -> int:
+	var effect := str(patch.get("effect", ""))
+	var want_landed := not bool(witness["landed"])
+	var best := -1
+	var best_gap := 1000
+	for rank in signature.get("target", []):
+		if not StitchedParts.ranks_allowed(int(signature.get("target_mask", 0)), int(rank)):
+			continue
+		var foe := battle._foe_at(int(rank))
+		if foe.is_empty() or bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+			continue
+		var net := _effective_resist(foe, patch)
+		if net <= 0:
+			continue
+		if effect in ["push", "pull"]:
+			if want_landed:
+				var dest := int(foe.get("rank", 0)) + (1 if effect == "push" else -1)
+				if dest < 1 or dest > 4:
+					continue
+		else:
+			if int(foe.get("statuses", {}).get(effect, 0)) > 0:
+				continue
+			if effect == "stun" and int(foe.get("statuses", {}).get("stun_resist", 0)) > 0:
+				continue
+		var gap := absi(net - 50)
+		if gap < best_gap:
+			best_gap = gap
+			best = int(rank)
+	return best
+
+
+## An unravelled mood can spend its own draws inside later units' turn
+## entries, so the exact post-cast RNG equality is only demanded when every
+## living doll is settled.
+func _family_moods_armed(battle: StitchedRules) -> bool:
+	for hero in battle.get_heroes():
+		if not bool(hero.get("lost", false)) and not str(hero.get("resolve", "")).is_empty():
+			return true
+	return false
+
+
+## One public Command cast with a mirrored RNG stream: the hit roll, the
+## authored mark's own debuff roll and the sewn patch's separate rarity-pierced
+## roll are all predicted from the pre-cast state, so every recorded entry is
+## provably the battle's actual next draw. A resisted witness rolls at or under
+## its net resist and leaves the fresh target untouched; a landed witness beats
+## that same draw and rests its authored amount on the fresh target (or shifts
+## it exactly one legal rank). Returns false once the fight cannot yield more.
+func _family_decision_cast(battle: StitchedRules, patch: Dictionary, witness: Dictionary, label: String) -> bool:
+	if battle.is_over() or not battle._units.has(FAMILY_HERO) or bool(battle._units[FAMILY_HERO].get("lost", false)):
+		return false
+	var signature: Dictionary = StitchedS14Abilities.kits()[FAMILY_HERO][FAMILY_SLOT]
+	var rank := _family_decision_rank(battle, signature, patch, witness)
+	if rank < 1:
+		# A just-landed status or stun-resist window may still tick open; spend
+		# one lawful turn and let the bounded caller retry for freshness.
+		return battle.pass_turn().get("ok", false)
+	if not _to_turn(battle, FAMILY_HERO):
+		return false
+	var aimed: Dictionary = battle._foe_at(rank)
+	if aimed.is_empty() or bool(aimed.get("dead", false)) or int(aimed.get("hp", 0)) <= 0:
+		return true
+	var effect := str(patch.get("effect", ""))
+	var patch_id := str(patch.get("id", ""))
+	var patch_net := _effective_resist(aimed, patch)
+	var authored_net := maxi(0, int(aimed.get("resist", {}).get("debuff", 0)))
+	var before := {}
+	for unit in _recipients(battle, signature, rank):
+		before[str(unit.get("id", ""))] = {"hp": int(unit.get("hp", 0)), "rank": int(unit.get("rank", 0)),
+			"statuses": (unit.get("statuses", {}) as Dictionary).duplicate()}
+	var old_round := battle._round
+	var old_index := battle._turn_index
+	var old_order: Array = battle._order.duplicate()
+	var pre_rng := battle.rng_state()
+	var receipt: Dictionary = battle.use_ability(COMMAND, rank)
+	if not receipt.get("ok", false) or str(receipt.get("action", "")) == "refused":
+		return true
+	var results: Array = receipt.get("results", [])
+	if results.size() != 1:
+		_check(false, label + ": the public Command cast resolves exactly one result")
+		return false
+	var hit: Dictionary = results[0]
+	if bool(hit.get("blinded", false)):
+		return false
+	var end_old := battle._turn_index + 1 if battle._round == old_round else old_order.size()
+	var ticked: Array = []
+	for index in range(old_index + 1, mini(end_old, old_order.size())):
+		ticked.append(str(old_order[index]))
+	if battle._round != old_round:
+		for index in range(mini(battle._turn_index + 1, battle._order.size())):
+			ticked.append(str(battle._order[index]))
+	var oracle := RandomNumberGenerator.new()
+	oracle.state = pre_rng
+	var hit_roll := oracle.randi_range(1, 100)
+	_check(int(hit.get("roll", -1)) == hit_roll and hit_roll >= 1 and hit_roll <= 100
+		and bool(hit.get("hit", false)) == (hit_roll <= int(hit.get("hit_chance", 0))),
+		label + ": the cast's hit roll is the battle's actual next draw")
+	if not bool(hit.get("hit", false)):
+		_check(not hit.has("patches") and not hit.has("shift") and hit.get("statuses", []) == [],
+			label + ": a public miss carries no patch ids, shift or status entries")
+		if battle._round == old_round and not battle.is_over() and not _family_moods_armed(battle):
+			_check(oracle.state == battle.rng_state(),
+				label + ": a miss spends exactly its one hit-roll draw, never an additional patch draw")
+		return true
+	var authored_roll := 0
+	if authored_net > 0:
+		authored_roll = oracle.randi_range(1, 100)
+	var patch_roll := 0
+	if patch_net > 0:
+		patch_roll = oracle.randi_range(1, 100)
+	if battle._round == old_round and not battle.is_over() and not _family_moods_armed(battle):
+		_check(oracle.state == battle.rng_state(),
+			label + ": the confirmed cast spends exactly its hit, authored and patch draws")
+	var recipient: Dictionary = battle.get_unit(str(hit.get("target", "")))
+	_check(str(hit.get("target", "")) == str(aimed.get("id", "")) and not recipient.is_empty(),
+		label + ": the confirmed hit strikes its actual aimed transformed foe")
+	var entries: Array = hit.get("statuses", [])
+	var authored_entry: Dictionary = entries[0] if entries.size() >= 1 else {}
+	var authored_landed := authored_net == 0 or authored_roll > authored_net
+	if authored_landed:
+		_check(str(authored_entry.get("status", "")) == "mark" and not authored_entry.has("resisted")
+			and int(authored_entry.get("duration", -1)) == int(signature.get("effects", {}).get("mark", 0)),
+			label + ": the landed authored mark keeps its authored entry")
+	else:
+		_check(str(authored_entry.get("status", "")) == "mark" and bool(authored_entry.get("resisted", false))
+			and int(authored_entry.get("roll", -1)) == authored_roll
+			and int(authored_entry.get("resist", -1)) == authored_net,
+			label + ": the resisted authored mark records its honest roll under the foe's debuff resist")
+	_check(hit.get("patches", []) == [patch_id],
+		label + ": the confirmed hit carries exactly its socketed patch id")
+	if recipient.is_empty() or bool(recipient.get("dead", false)) or int(recipient.get("hp", 0)) <= 0:
+		return true
+	var patch_entry: Dictionary = entries[1] if entries.size() >= 2 else {}
+	if entries.size() == 2 and str(patch_entry.get("status", "")) == effect and bool(patch_entry.get("refused", false)):
+		# A stunned-again foe refuses the stun patch without any roll; the
+		# chooser's freshness keeps this window closed, so it is a lawful skip.
+		return true
+	if patch_net <= 0:
+		_check(false, label + ": the decision rank kept a genuine rarity-pierced net resist")
+		return true
+	var before_state: Dictionary = before.get(str(recipient.get("id", "")), {})
+	var prior := int(before_state.get("statuses", {}).get(effect, 0))
+	var target_ticks: int = ticked.count(str(recipient.get("id", "")))
+	var resisted := entries.size() == 2 and str(patch_entry.get("status", "")) == effect \
+		and bool(patch_entry.get("resisted", false))
+	if resisted:
+		var honest := int(patch_entry.get("roll", -1)) == patch_roll and patch_roll >= 1 \
+			and int(patch_entry.get("resist", -1)) == patch_net and patch_roll <= patch_net
+		_check(honest,
+			label + ": the resisted " + effect + " patch records the actual draw under its net resist")
+		if effect in ["push", "pull"]:
+			var untouched := not hit.has("shift") \
+				and int(recipient.get("rank", -1)) == int(before_state.get("rank", -1))
+			_check(untouched,
+				label + ": the resisted movement never shifts its actual target")
+			if honest and untouched and not bool(witness["resisted"]):
+				witness["resisted"] = true
+		else:
+			var authored_value := 0
+			if authored_landed and effect == "mark":
+				authored_value = int(signature.get("effects", {}).get("mark", 0))
+			var expected := maxi(0, authored_value - (0 if effect == "blind" else target_ticks))
+			var untouched := int(recipient.get("statuses", {}).get(effect, 0)) == expected and prior == 0
+			_check(untouched,
+				label + ": the resisted " + effect + " patch leaves only the signature's authored status")
+			if honest and untouched and not bool(witness["resisted"]):
+				witness["resisted"] = true
+		return true
+	_check(patch_roll > patch_net,
+		label + ": the landed patch beat its rarity-pierced resist draw")
+	var landed := _family_lands(battle, hit, patch, before_state, target_ticks)
+	if effect in ["push", "pull"]:
+		var shift: Dictionary = hit.get("shift", {})
+		if bool(shift.get("ok", false)):
+			_check(landed,
+				label + ": the landed " + effect + " patch shifts its actual target exactly one legal rank")
+		else:
+			_check(not shift.is_empty(), label + ": a boundary " + effect + " is refused, never forced")
+	else:
+		_check(landed,
+			label + ": the landed " + effect + " patch rests its authored amount on the fresh recipient")
+	if landed and not bool(witness["landed"]):
+		witness["landed"] = true
+	return true
+
+
+## The family landed oracle, shared by the decision casts and the negative
+## probe: a confirmed patch receipt marks the family landed only through a
+## landed, unrefused patch entry resting its authored amount on a recipient
+## whose pre-cast state lacked that status (the fresh-state check), or a
+## valid shift of its actual target by exactly one legal rank. The mere
+## absence of a resisted entry proves nothing: a pre-existing status, a
+## refused stun window and a nonmoving or boundary shift never land.
+func _family_lands(battle: StitchedRules, hit: Dictionary, patch: Dictionary, before_state: Dictionary, target_ticks: int) -> bool:
+	var effect := str(patch.get("effect", ""))
+	var amount := int(patch.get("amount", 0))
+	var recipient: Dictionary = battle.get_unit(str(hit.get("target", "")))
+	if recipient.is_empty() or bool(recipient.get("dead", false)) or bool(recipient.get("lost", false)) \
+			or int(recipient.get("hp", 0)) <= 0:
+		return false
+	var entries: Array = hit.get("statuses", [])
+	var patch_entry: Dictionary = entries[1] if entries.size() >= 2 else {}
+	var prior := int(before_state.get("statuses", {}).get(effect, 0))
+	if effect in ["push", "pull"]:
+		var shift: Dictionary = hit.get("shift", {})
+		if not bool(shift.get("ok", false)):
+			return false
+		return int(shift.get("from", -1)) == int(before_state.get("rank", -1)) \
+			and int(shift.get("to", -2)) == int(shift.get("from", -1)) + (1 if effect == "push" else -1) \
+			and int(recipient.get("rank", -1)) == int(shift.get("to", -2))
+	var landed_ok := entries.size() == 2 and str(patch_entry.get("status", "")) == effect \
+		and not patch_entry.has("resisted") and not patch_entry.has("refused") \
+		and int(patch_entry.get("duration", -1)) == amount
+	var rested := int(recipient.get("statuses", {}).get(effect, 0)) \
+		== maxi(0, maxi(prior, amount) - (0 if effect == "blind" else target_ticks)) and prior == 0
+	return landed_ok and rested
+
+
+## Public Command casts until the resistant foe has both shrugged the sewn
+## patch off and worn it, each with its full draw-mirror and state oracle.
+func _family_decisions(battle: StitchedRules, patch: Dictionary, witness: Dictionary, label: String) -> void:
+	for attempt in FAMILY_DECISION_CASTS:
+		if battle.is_over() or (bool(witness["resisted"]) and bool(witness["landed"])):
+			return
+		if not _family_decision_cast(battle, patch, witness, label):
+			return
+
+
+## One five-family attempt: two real victories pay a genuine socket (an Elite
+## win also takes the offered under-bed silk door when a doll can pay its leg
+## price), the Sewing Circle sews the run-owned family patch onto the warden's
+## head Command, and the next real fight witnesses it against its actual
+## floor- and kind-transformed S15 foes through an aligned unsocketed twin,
+## the shared matrix oracle and public decision casts.
+func _family_attempt(seed_number: int, coverage: Dictionary) -> void:
+	var session := StitchedRunSession.start(seed_number)
+	if session == null:
+		return
+	for step in 2:
+		var paying := _travel_to(session, ["Fight", "Elite"])
+		if paying.is_empty() or session.phase != "battle":
+			return
+		if not _play_to_victory(session) or not session.settle_battle(session.battle):
+			return
+		# The under-bed leg trade is the door that mints the rare silk families;
+		# pay it with a doll the family witness never sews onto.
+		if str(session.door_offer.get("id", "")) == "underbed_leg_trade":
+			var payer := ""
+			for hero in session.heroes:
+				if not bool(hero.get("lost", false)) and hero.get("parts", {}).has("legs") \
+					and not bool(hero.parts.legs.torn):
+					payer = str(hero.get("id", ""))
+					if payer != FAMILY_HERO:
+						break
+			if not payer.is_empty():
+				_check(session.choose_door("underbed_leg_trade", payer, session.snapshot()),
+					"the offered under-bed silk trade accepts its valid leg payer seed " + str(seed_number))
+	var choice := _family_socket_choice(session, coverage)
+	if choice.is_empty() or session.scraps < StitchedRunSession.SEWING_COST:
+		return
+	var item: Dictionary = choice.get("item", {})
+	var patch: Dictionary = choice.get("patch", {})
+	var group := _family_group(patch)
+	var warden := {}
+	for hero in session.heroes:
+		if str(hero.get("id", "")) == FAMILY_HERO:
+			warden = hero
+	if warden.is_empty() or bool(warden.get("lost", false)) \
+		or not warden.get("parts", {}).has("head") or bool(warden.parts.head.torn):
+		return
+	var circle := _travel_to(session, ["SewingCircle"])
+	if circle.is_empty() or session.phase != "visit":
+		return
+	var label := "family " + group + " seed " + str(seed_number)
+	if not session.socket_ability(int(item.get("uid", 0)), FAMILY_HERO, COMMAND, 0, session.snapshot()):
+		return
+	var projected: Dictionary = session._battle_sockets()
+	_check(projected.get(FAMILY_HERO, {}).get(COMMAND, []) == [str(item.get("id", ""))],
+		label + ": the family socket projects its run-owned patch id into the live kit")
+	if not session.choose_visit("leave", [], session.snapshot()) or session.phase != "map":
+		return
+	var witness_node := _travel_to(session, ["Fight", "Elite"])
+	if witness_node.is_empty() or session.phase != "battle" or session.battle == null:
+		return
+	var battle: StitchedRules = session.battle
+	if not battle._units.has(FAMILY_HERO) or bool(battle._units[FAMILY_HERO].get("lost", false)):
+		return
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	if bool(catalog.get("ok", false)):
+		var canonical := true
+		for live_foe in battle.get_foes():
+			var authored: Dictionary = StitchedEnemyCatalog.foe_for(catalog, str(live_foe.get("id", "")))
+			if authored.is_empty():
+				canonical = false
+				continue
+			StitchedDeeperSeams.apply(authored, session.map.get_current_floor(),
+				str(session.map.get_node(witness_node).type))
+			canonical = canonical and live_foe.get("resist", {}) == authored.get("resist", {}) \
+				and not authored.get("resist", {}).is_empty()
+		_check(canonical and battle.get_foes().size() >= 2,
+			label + ": the family witness fight mounts its actual floor- and kind-transformed S15 foes")
+	var journal := session.journal.duplicate(true)
+	var twin := StitchedRunSession.start(seed_number)
+	if twin == null:
+		return
+	for command in journal:
+		if command is Dictionary and command.get("action") == "socket":
+			continue
+		if not StitchedRunSave._replay(twin, command):
+			_check(false, label + ": the lawful family journal replays on a fresh same-seed session")
+			return
+	if twin.phase != "battle" or twin.battle == null:
+		_check(false, label + ": the family twin opens the same witness battle")
+		return
+	var twin_battle: StitchedRules = twin.battle
+	_check(battle.rng_state() == twin_battle.rng_state() and session.rng.state == twin.rng.state,
+		label + ": skipping only the socket keeps the unsocketed family twin exactly RNG-aligned")
+	var signature: Dictionary = StitchedS14Abilities.kits()[FAMILY_HERO][FAMILY_SLOT]
+	var run := _matrix_cast(battle, FAMILY_HERO, signature, patch, label, false)
+	if run.is_empty():
+		return
+	var twin_run := _matrix_cast(twin_battle, FAMILY_HERO, signature, patch, label + " twin", false)
+	if twin_run.is_empty():
+		return
+	var base := {"results": twin_run["results"].duplicate(true), "rng": twin_battle.rng_state(),
+		"round": twin_run["round"]}
+	_assert_effects(FAMILY_HERO, signature, patch, run, base, battle, label)
+	# Only the strict decision-cast oracle may mark this family resisted or
+	# landed: the matrix cast's receipt, or the mere absence of a resisted
+	# entry inside it, never proves a fresh recipient mutation or a legal shift.
+	var witness: Dictionary = coverage[group]
+	_family_decisions(battle, patch, witness, label)
+	if not (bool(witness["resisted"]) and bool(witness["landed"])):
+		return
+	var journal_socket := false
+	var journal_battle := false
+	for command in session.journal:
+		if str(command.get("action", "")) == "socket":
+			journal_socket = true
+		if str(command.get("action", "")) == "battle" and str(command.get("method", "")) == "use_ability":
+			journal_battle = true
+	_check(journal_socket and journal_battle,
+		label + ": the owned family socket and its public casts entered the deterministic journal")
+	var document := StitchedRunSave.capture(session)
+	if document.is_empty():
+		return
+	var restored: StitchedRunSession = StitchedRunSave.restore(document)
+	_check(restored != null and restored.snapshot() == session.snapshot() and session.is_consistent(),
+		label + ": the genuine journal replays the five-family live run exactly")
+
+
+## Five keyed resist groups, exactly StitchedRules.RESIST_KEYS: each group needs
+## a genuinely owned, Sewing-Circle-socketed patch that a correctly identified
+## transformed run foe both resists (an honest d100 under its rarity-pierced
+## group resist) and wears (a landed entry with a real recipient mutation or
+## shift), all through public commands on bounded seeded routes.
+func _routed_family_witnesses() -> void:
+	var unique := {}
+	for group in StitchedRules.RESIST_KEYS:
+		unique[str(group)] = true
+	_check(unique.size() == 5, "the S15 resist system keys exactly five distinct groups")
+	var coverage := {}
+	for group in unique:
+		coverage[group] = {"resisted": false, "landed": false}
+	for seed_number in range(FAMILY_SEED_CAP):
+		var complete := true
+		for group in coverage:
+			complete = complete and bool(coverage[group]["resisted"]) and bool(coverage[group]["landed"])
+		if complete:
+			break
+		_family_attempt(seed_number, coverage)
+	for group in StitchedRules.RESIST_KEYS:
+		_check(bool(coverage[str(group)]["resisted"]),
+			"a genuinely owned socketed " + str(group) + " patch is honestly resisted by a real transformed run foe")
+		_check(bool(coverage[str(group)]["landed"]),
+			"a genuinely owned socketed " + str(group) + " patch lands on a real transformed run foe that could resist it")
+
+
+## Negative family gate: the absence of a resisted patch entry never proves
+## a landing. A confirmed enemy-targeted cast that restrikes a foe whose
+## pre-cast state already wears the same sewn status, and a boundary pull
+## whose actual target never moves, must both leave the family landed
+## witness untouched, even though neither receipt records a resisted entry.
+## Both probes drive the same shared _family_lands oracle that alone sets
+## the five family landed flags.
+func _family_negative_landing() -> void:
+	var lint: Dictionary = _patch_by_id.get(LINT, {})
+	var hook: Dictionary = _patch_by_id.get("wool_hook_stitch", {})
+	if not lint.is_empty():
+		_family_negative_status(lint)
+	if not hook.is_empty():
+		_family_negative_boundary(hook)
+
+
+## Bounded public Command casts sew a cotton bleed onto a fresh front foe,
+## then restrike that same foe while it still wears the bleed: the landed
+## restrike receipt shows no resisted entry, yet the fresh-state oracle must
+## refuse the landing because the recipient already wore the status.
+func _family_negative_status(patch: Dictionary) -> void:
+	var label := "family negative bleed"
+	var battle := _matrix_battle(_roster_for(FAMILY_HERO), {FAMILY_HERO: {COMMAND: [str(patch.get("id", ""))]}})
+	if battle == null:
+		return
+	var signature: Dictionary = StitchedS14Abilities.kits()[FAMILY_HERO][FAMILY_SLOT]
+	var established := false
+	for attempt in 14:
+		if battle.is_over() or not _to_turn(battle, FAMILY_HERO):
+			break
+		var cast_rank := -1
+		var aimed_id := ""
+		for rank in signature.get("target", []):
+			var foe: Dictionary = battle._foe_at(int(rank))
+			if not foe.is_empty() and not bool(foe.get("dead", false)) and int(foe.get("hp", 0)) > 0:
+				cast_rank = int(rank)
+				aimed_id = str(foe.get("id", ""))
+				break
+		if cast_rank < 1:
+			break
+		var before := {}
+		for unit in _recipients(battle, signature, cast_rank):
+			before[str(unit.get("id", ""))] = {"hp": int(unit.get("hp", 0)), "rank": int(unit.get("rank", 0)),
+				"statuses": (unit.get("statuses", {}) as Dictionary).duplicate()}
+		var old_round := battle._round
+		var old_index := battle._turn_index
+		var old_order: Array = battle._order.duplicate()
+		var receipt: Dictionary = battle.use_ability(COMMAND, cast_rank)
+		if not receipt.get("ok", false) or str(receipt.get("action", "")) == "refused":
+			break
+		var results: Array = receipt.get("results", [])
+		if results.size() != 1 or not bool(results[0].get("hit", false)) \
+				or results[0].get("patches", []) != [str(patch.get("id", ""))]:
+			continue
+		var hit: Dictionary = results[0]
+		if str(hit.get("target", "")) != aimed_id:
+			continue
+		var entries: Array = hit.get("statuses", [])
+		var patch_entry: Dictionary = entries[1] if entries.size() >= 2 else {}
+		if not (entries.size() == 2 and str(patch_entry.get("status", "")) == "bleed" \
+				and not patch_entry.has("resisted") and not patch_entry.has("refused")):
+			continue
+		var ticked: Array = []
+		var end_old := battle._turn_index + 1 if battle._round == old_round else old_order.size()
+		for index in range(old_index + 1, mini(end_old, old_order.size())):
+			ticked.append(str(old_order[index]))
+		if battle._round != old_round:
+			for index in range(mini(battle._turn_index + 1, battle._order.size())):
+				ticked.append(str(battle._order[index]))
+		var target_id := str(hit.get("target", ""))
+		var before_state: Dictionary = before.get(target_id, {})
+		var prior := int(before_state.get("statuses", {}).get("bleed", 0))
+		if not established:
+			if prior == 0:
+				_check(_family_lands(battle, hit, patch, before_state, ticked.count(target_id)),
+					label + ": the seeding landed bleed rests on a genuinely fresh recipient")
+				established = true
+			continue
+		if prior > 0:
+			_check(not _family_lands(battle, hit, patch, before_state, ticked.count(target_id)),
+				label + ": a confirmed restrike on a foe already wearing the sewn bleed never marks the family landed")
+			return
+	_check(false, label + ": the bounded seeded casts reach a landed bleed restrike on an already-bleeding foe")
+
+
+## Bounded public Command casts sew a wool pull onto the front foe: when the
+## pull beats its resist draw the boundary rank still refuses the shift, so
+## the receipt shows a landed patch with no resisted entry and an honest
+## refusal, yet the shift oracle must refuse the landing because the actual
+## target never moved.
+func _family_negative_boundary(patch: Dictionary) -> void:
+	var label := "family negative pull"
+	var battle := _matrix_battle(_roster_for(FAMILY_HERO), {FAMILY_HERO: {COMMAND: [str(patch.get("id", ""))]}})
+	if battle == null:
+		return
+	for attempt in 14:
+		if battle.is_over() or not _to_turn(battle, FAMILY_HERO):
+			break
+		var edge: Dictionary = battle._foe_at(1)
+		if edge.is_empty() or bool(edge.get("dead", false)) or int(edge.get("hp", 0)) <= 0:
+			break
+		var before := {str(edge.get("id", "")): {"hp": int(edge.get("hp", 0)), "rank": int(edge.get("rank", 0)),
+			"statuses": (edge.get("statuses", {}) as Dictionary).duplicate()}}
+		var receipt: Dictionary = battle.use_ability(COMMAND, 1)
+		if not receipt.get("ok", false) or str(receipt.get("action", "")) == "refused":
+			break
+		var results: Array = receipt.get("results", [])
+		if results.size() != 1 or not bool(results[0].get("hit", false)) \
+				or results[0].get("patches", []) != [str(patch.get("id", ""))]:
+			continue
+		var hit: Dictionary = results[0]
+		var target_id := str(hit.get("target", ""))
+		if target_id != str(edge.get("id", "")):
+			continue
+		var shift: Dictionary = hit.get("shift", {})
+		if shift.is_empty() or bool(shift.get("ok", false)):
+			continue
+		var recipient: Dictionary = battle.get_unit(target_id)
+		var moved_nowhere := int(before.get(target_id, {}).get("rank", -1)) == 1 \
+			and int(recipient.get("rank", -1)) == 1
+		_check(moved_nowhere and not _family_lands(battle, hit, patch, before.get(target_id, {}), 0),
+			label + ": a boundary pull that never moves its actual target never marks the family landed")
+		return
+	_check(false, label + ": the bounded seeded casts reach a confirmed boundary pull refusal")

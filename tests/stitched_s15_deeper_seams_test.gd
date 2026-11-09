@@ -26,6 +26,7 @@ func _initialize() -> void:
 	_routed_fight_witnesses()
 	_cues()
 	_mildew_patch()
+	_gold_contract()
 	_depth_scaling()
 	for message in failures:
 		printerr(message)
@@ -252,6 +253,110 @@ func _mildew_patch() -> void:
 	_check(int(StitchedRules.PATCH_PIERCE.cotton) == 0 and int(StitchedRules.PATCH_PIERCE.wool) == 15
 		and int(StitchedRules.PATCH_PIERCE.silk) == 30 and int(StitchedRules.PATCH_PIERCE.gold) >= 100,
 		"patch rarity sets pierce: cotton 0, wool 15, silk 30, gold always")
+
+
+## Gold's authored-effect contract, proven independently of the S14 harness:
+## the pierce value is exactly one hundred (never merely "at least"), every
+## gold patch authors an effect outside every keyed resist group, and a legal
+## confirmed gold steal through public turns spends no RNG beyond the identical
+## unsocketed twin cast while biting exactly its authored amount.
+func _gold_contract() -> void:
+	_check(int(StitchedRules.PATCH_PIERCE.gold) == 100,
+		"the independent gold pierce contract is exactly one hundred")
+	var patches := StitchedS14Abilities.patches()
+	var button: Dictionary = patches.get("by_id", {}).get("gold_hungry_button", {})
+	if button.is_empty():
+		_check(false, "the gold steal patch loads from the catalog")
+		return
+	var amount := int(button.get("amount", 0))
+	for patch_id in patches.by_id:
+		var patch: Dictionary = patches.by_id[patch_id]
+		if str(patch.get("rarity", "")) != "gold":
+			continue
+		var effect := str(patch.get("effect", ""))
+		_check(not effect in StitchedRules.RESIST_KEYS and not effect in StitchedRules.RESIST_DEBUFFS
+			and not effect in ["push", "pull"],
+			"the gold patch " + str(patch_id) + " authors an effect no resist group can roll")
+	var config := StitchedRunSession.starter_config(StitchedRunSession.DEFAULT_PICKS)
+	if config.is_empty():
+		return
+	config["seed"] = 61
+	config["s14"] = true
+	for foe in config["foes"]:
+		StitchedDeeperSeams.apply(foe, 1, "Fight")
+	var twin_config := config.duplicate(true)
+	config["s14_sockets"] = {"warden": {"warden_head_pot_helm_command": ["gold_hungry_button"]}}
+	var built := StitchedRules.create(config)
+	var twin_built := StitchedRules.create(twin_config)
+	_check(built.ok and built.battle != null and twin_built.ok and twin_built.battle != null,
+		"the legal gold steal socket and its unsocketed twin battle build")
+	if not built.ok or built.battle == null or not twin_built.ok or twin_built.battle == null:
+		return
+	var battle: StitchedRules = built.battle
+	var twin: StitchedRules = twin_built.battle
+	var foe: Dictionary = battle._foe_at(1)
+	var warden: Dictionary = battle.get_unit("warden")
+	_check(not foe.is_empty() and not warden.is_empty()
+		and not foe.get("resist", {}).is_empty() and int(foe.get("hp", 0)) > amount,
+		"the gold fixture faces the same transformed rank-one foe in both battles")
+	if foe.is_empty() or int(foe.get("hp", 0)) <= amount:
+		return
+	# Direct probes on the live transformed foe: gold's authored effect keys
+	# never roll a resist, whatever the foe's resist table says.
+	for effect in ["heal", "steal", "chain"]:
+		var state := battle.rng_state()
+		_check(not battle._resisted(warden, foe, effect, {"pierce": 100}, _receipt())
+			and battle.rng_state() == state,
+			"the gold " + effect + " effect never rolls a resist on a resistant transformed foe")
+	var witnessed := false
+	for attempt in 12:
+		if not _to_turn(battle, "warden") or not _to_turn(twin, "warden"):
+			_check(false, "the gold contract fixture reaches real Warden turns in both battles")
+			return
+		_check(battle.rng_state() == twin.rng_state(),
+			"the gold fixture twins stay RNG-aligned before every public cast")
+		var before_hp := int(foe.get("hp", 0))
+		var warden_hp := int(warden.get("hp", 0))
+		var receipt: Dictionary = battle.use_ability("warden_head_pot_helm_command", 1)
+		var twin_receipt: Dictionary = twin.use_ability("warden_head_pot_helm_command", 1)
+		var results: Array = receipt.get("results", [])
+		var twin_results: Array = twin_receipt.get("results", [])
+		if results.size() != 1 or twin_results.size() != 1:
+			_check(false, "the gold fixture casts resolve exactly one result in both battles")
+			return
+		var hit: Dictionary = results[0]
+		var twin_hit: Dictionary = twin_results[0]
+		_check(int(hit.get("roll", -1)) == int(twin_hit.get("roll", -1))
+			and str(hit.get("target", "")) == str(twin_hit.get("target", ""))
+			and bool(hit.get("hit", false)) == bool(twin_hit.get("hit", false)),
+			"the gold steal keeps the cast identical to the unsocketed twin")
+		if not bool(hit.get("hit", false)):
+			_check(battle.rng_state() == twin.rng_state(),
+				"a twin miss spends the identical single hit-roll draw")
+			continue
+		_check(hit.get("patches", []) == ["gold_hungry_button"],
+			"the confirmed gold hit carries exactly its socketed patch id")
+		_check(not twin_hit.has("patches"),
+			"the unsocketed twin hit never carries the steal")
+		_check(hit.get("statuses", []).size() == twin_hit.get("statuses", []).size() + 1,
+			"the gold steal appends exactly one entry beyond the authored receipt")
+		var stolen := {}
+		for entry in hit.get("statuses", []):
+			if str(entry.get("status", "")) == "steal" and str(entry.get("patch", "")) == "gold_hungry_button":
+				stolen = entry
+		var drained := mini(before_hp, amount)
+		_check(not stolen.is_empty() and int(stolen.get("amount", -1)) == drained,
+			"the gold steal entry reports the actual drained amount")
+		_check(int(foe.get("hp", -1)) == before_hp - drained
+			and int(hit.get("target_hp", -1)) == before_hp - drained,
+			"the gold steal bites its actual target's HP")
+		_check(int(warden.get("hp", -1)) == mini(int(warden.get("max_hp", 0)), warden_hp + drained),
+			"the gold steal restores the caster exactly what it drained, capped")
+		_check(battle.rng_state() == twin.rng_state(),
+			"the legal confirmed gold steal spends no additional RNG beyond the unsocketed cast")
+		witnessed = true
+		break
+	_check(witnessed, "a legal confirmed gold steal is witnessed through public turns")
 
 
 func _real_foe_pierce_and_wren() -> void:
