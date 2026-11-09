@@ -362,6 +362,15 @@ static func _staged_run_matches(staged: String, buffer: PackedByteArray, documen
 
 static func read_file(path: String) -> StitchedRunSession:
 	var file := _open_with_retry(path, FileAccess.READ)
-	if file == null or file.get_length() > MAX_BYTES:
+	if file == null:
 		return null
-	return restore(bytes_to_var(file.get_buffer(file.get_length())))
+	# Release the sealed-save handle before any costly validation or replay, so
+	# other Windows writers never meet a reader holding the target open. The
+	# close also precedes the early oversized rejection, and the bytes are fully
+	# extracted before restore runs.
+	if file.get_length() > MAX_BYTES:
+		file.close()
+		return null
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	return restore(bytes_to_var(bytes))

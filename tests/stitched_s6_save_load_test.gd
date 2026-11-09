@@ -213,7 +213,59 @@ func _check_negative_writes(path: String, session: StitchedRunSession, label: St
 		writer.close()
 	_check(StitchedRunSave.read_file(corrupt_path) == null, label + " a failed read remains fail-closed")
 	DirAccess.remove_absolute(corrupt_path)
-	_check(session.snapshot() == before, label + " negative writes leave the live session untouched")
+	# A genuine save whose bytes rotted on disk: the final digest character is
+	# flipped, so the document still decodes but never authenticates.
+	var genuine := StitchedRunSave.capture(session)
+	var raw := var_to_bytes(genuine)
+	raw[raw.size() - 1] = 48 if raw[raw.size() - 1] != 48 else 49
+	var tampered_path := "user://s6_save_load_tampered.save"
+	var tamperer := FileAccess.open(tampered_path, FileAccess.WRITE)
+	_check(tamperer != null, label + " corrupted-byte fixture opens")
+	if tamperer != null:
+		tamperer.store_buffer(raw)
+		tamperer.close()
+	_check(StitchedRunSave.read_file(tampered_path) == null,
+		label + " corrupted genuine save bytes reject without a valid restore")
+	DirAccess.remove_absolute(tampered_path)
+	# A file larger than MAX_BYTES must reject before any replay.
+	var oversize_path := "user://s6_save_load_oversize.save"
+	var blob := PackedByteArray()
+	blob.resize(StitchedRunSave.MAX_BYTES + 1)
+	var oversizer := FileAccess.open(oversize_path, FileAccess.WRITE)
+	_check(oversizer != null, label + " oversized fixture opens")
+	if oversizer != null:
+		oversizer.store_buffer(blob)
+		oversizer.close()
+	_check(StitchedRunSave.read_file(oversize_path) == null,
+		label + " oversized save rejects before any replay")
+	DirAccess.remove_absolute(oversize_path)
+	_check(session.snapshot() == before and session.journal == prior.journal,
+		label + " negative writes and invalid reads leave the live session and journal untouched")
+
+
+## AC2 witness: deterministic same-path successive generations — read the
+## sealed prior generation, replace it with the newest authenticated run,
+## then reopen: the file must hold exactly the newest snapshot, journal and
+## RNG, never the stale predecessor, while the live session stays untouched.
+func _check_successive_generation(path: String, session: StitchedRunSession,
+		sealed: Dictionary, label: String) -> void:
+	var before := session.snapshot()
+	var journal := session.journal.duplicate(true)
+	var older := StitchedRunSave.read_file(path)
+	_check(older != null and older.snapshot() == sealed.state and older.journal == sealed.journal,
+		label + " reads the sealed prior generation first")
+	_check(StitchedRunSave.write_file(path, session),
+		label + " replaces the same path with the newest authenticated generation")
+	_check(not FileAccess.file_exists(path + ".tmp"),
+		label + " replace consumes its staged file")
+	var newest := StitchedRunSave.read_file(path)
+	_check(newest != null and newest != session and newest.snapshot() == before
+			and newest.journal == journal and newest.rng.state == session.rng.state,
+		label + " reopen replays the exact newest snapshot, journal and RNG")
+	_check(older != null and newest.journal.size() > older.journal.size(),
+		label + " reopens a strictly newer authenticated generation than the sealed prior")
+	_check(session.snapshot() == before and session.journal == journal,
+		label + " read, replace and reopen leave the live session and journal unchanged")
 
 
 func _run() -> void:
@@ -232,10 +284,11 @@ func _run() -> void:
 	_check(_press_route(app, id), "authentic battle mounted before midbattle save")
 	var stage: StitchedBattleScreen = app.stitched_run_battle
 	_check(stage != null and stage.battle == session.battle, "save test owns a mounted real battle")
+	var path := "user://s6_save_load_test.save"
+	var second := {}
 	if stage != null:
 		_check(_act(stage), "mounted ability and target buttons spend a genuine turn before save")
 		restored = _roundtrip(session, "midbattle")
-		var path := "user://s6_save_load_test.save"
 		DirAccess.remove_absolute(path)
 		DirAccess.remove_absolute(path + ".tmp")
 		_check(StitchedRunSave.write_file(path, session), "versioned run file writes successfully")
@@ -252,12 +305,10 @@ func _run() -> void:
 		stage._action_buttons["exit"].pressed.emit()
 		restored = _roundtrip(session, "postbattle")
 		_check(StitchedRunSave.write_file(path, session), "second Save atomically replaces the existing run file")
-		var second := _check_published_generation(path, session, first, "postbattle generation")
+		second = _check_published_generation(path, session, first, "postbattle generation")
 		_check(not first.is_empty() and not second.is_empty() \
 			and second.journal.size() > first.journal.size(),
 			"postbattle generation carries strictly more authenticated journal actions")
-		DirAccess.remove_absolute(path)
-		DirAccess.remove_absolute(path + ".tmp")
 	var visit_id := ""
 	for candidate in session.choices():
 		if not session.map.get_node(candidate).type in ["Fight", "Elite", "Boss"]:
@@ -265,8 +316,11 @@ func _run() -> void:
 			break
 	_check(not visit_id.is_empty(), "seed has a genuine pending-visit witness")
 	if not visit_id.is_empty():
-		_check(_press_route(app, visit_id), "mounted control enters the pending visit")
+		var entered: bool = _press_route(app, visit_id)
+		_check(entered, "mounted control enters the pending visit")
 		restored = _roundtrip(session, "pending visit")
+		if entered and not second.is_empty():
+			_check_successive_generation(path, session, second, "pending visit generation")
 		var actions := session.visit_actions()
 		_check(restored != null and not actions.is_empty() and restored.visit_actions() == actions,
 			"restored pending visit publishes identical choices")
@@ -280,6 +334,8 @@ func _run() -> void:
 				_check(restored.snapshot() == session.snapshot(), "future visit receipts and RNG are deterministic")
 				_check(not session.choose_visit(action.id, action.arguments, original_before), "stale visit receipt cannot spend twice")
 				break
+	DirAccess.remove_absolute(path)
+	DirAccess.remove_absolute(path + ".tmp")
 	for invalid in [null, [], {}, {"version": 999}, {"version": 1, "journal": ["forged"]}]:
 		_check(StitchedRunSave.restore(invalid) == null, "malformed save fails closed")
 	app.free()
