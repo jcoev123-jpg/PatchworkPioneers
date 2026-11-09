@@ -1013,7 +1013,7 @@ func _exercise_number_shortcuts(app: Node, picker: StitchedRunPartyPicker) -> St
 	var actions: Array[Button] = app.stitched_run_buttons.duplicate()
 	var originals: Dictionary = picker.tiles.duplicate()
 	var heading := app.stitched_run_panel.find_child("StitchedPageHeading", true, false) as Label
-	_check(heading != null and heading.tooltip_text == "Keys 1–8: choose dolls · Esc/B: cancel"
+	_check(heading != null and heading.tooltip_text == "Keys 1–8: choose dolls · Shift+1–8: replace focused doll · Esc/B: cancel"
 		and actions.size() == 2 and actions[0].text == "Set out" and actions[1].text == "Cancel",
 		"original heading offers both shortcuts in its native tooltip without a new control")
 	var receipts: Array = []

@@ -182,11 +182,14 @@ func _unhandled_input(event: InputEvent) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	var key := event as InputEventKey
 	if (key == null or not key.pressed or key.echo
-			or key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed):
+			or key.ctrl_pressed or key.alt_pressed or key.meta_pressed):
 		return
 	var index := int(key.physical_keycode) - int(KEY_1)
 	if (index < 0 or index >= StitchedPartyAdmission.HERO_IDS.size()
 			or key.physical_keycode > KEY_8):
+		return
+	if key.shift_pressed:
+		_replace_focused_tile(index)
 		return
 	var focus_owner := _live_focus_owner()
 	if focus_owner == null:
@@ -204,6 +207,52 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	tile.button_pressed = not tile.button_pressed
 	get_viewport().set_input_as_handled()
 
+
+## A shifted physical digit exchanges the *focused* selected original tile,
+## never a fifth toggle. Refuse stale, reflowing or dishonest grid state rather
+## than guessing which shown rank belongs to a draft pick.
+func _replace_focused_tile(index: int) -> void:
+	if _reorder_pending or _selected.size() != MAX_PICKS or not _mounted_for_hints():
+		return
+	var focused := _live_focus_owner() as Button
+	if focused == null or focused.get_parent() != self or focused.disabled \
+			or not focused.is_visible_in_tree():
+		return
+	var outgoing_id: String = focused.get_meta("hero_id", "")
+	var outgoing_index := _selected.find(outgoing_id)
+	var incoming_id: String = StitchedPartyAdmission.HERO_IDS[index]
+	if outgoing_index < 0 or incoming_id in _selected or tiles.get(outgoing_id) != focused:
+		return
+	var incoming: Button = tiles.get(incoming_id)
+	if not is_instance_valid(incoming) or incoming.get_parent() != self \
+			or incoming.disabled or not incoming.is_visible_in_tree():
+		return
+	# Every displayed cell must still be its original tile; do not repair a
+	# forged order or silently replace a rank based on stale visuals.
+	if get_child_count() != StitchedPartyAdmission.HERO_IDS.size():
+		return
+	for child in get_children():
+		var tile := child as Button
+		if tile == null or tiles.get(tile.get_meta("hero_id", "")) != tile:
+			return
+	var before := StitchedPartyAdmission.admit(_selected)
+	if before.get("ok") != true or displayed_rank_ids() != before.get("hero_ids", []):
+		return
+	var candidate := _selected.duplicate()
+	candidate[outgoing_index] = incoming_id
+	if StitchedPartyAdmission.admit(candidate).get("ok") != true:
+		return
+	# No intermediate toggled signals are allowed: App gets one detached,
+	# validated four-doll draft and refreshes its existing launch-rank cues.
+	_selected = candidate
+	focused.set_pressed_no_signal(false)
+	incoming.set_pressed_no_signal(true)
+	_update_name(outgoing_id)
+	_update_name(incoming_id)
+	_queue_tile_order()
+	draft_changed.emit(candidate.duplicate())
+	incoming.grab_focus()
+	get_viewport().set_input_as_handled()
 
 func selected_ids() -> Array:
 	return _selected.duplicate()
