@@ -82,14 +82,14 @@ text = "Select a slot, then a part to examine"
 layout_mode = 0
 offset_left = 20.0
 offset_top = 100.0
-offset_right = 112.0
+offset_right = 189.0
 offset_bottom = 132.0
 theme_override_font_sizes/font_size = 18
-text = "OWNER"
+text = "MAKER / THREAD"
 
 [node name="OwnerFilter" type="OptionButton" parent="CatalogPanel"]
 layout_mode = 0
-offset_left = 116.0
+offset_left = 194.0
 offset_top = 94.0
 offset_right = 450.0
 offset_bottom = 139.0
