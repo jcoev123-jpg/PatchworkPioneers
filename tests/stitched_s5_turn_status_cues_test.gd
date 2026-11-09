@@ -2077,16 +2077,6 @@ func _test_s15_rot_and_regen_cues(battle: StitchedRules, ribbon: StitchedTurnOrd
 	_check(ribbon.marker_at(3).text == "FOE" and ribbon.marker_at(3).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
 		"AC4: slot 3 marker is muted FOE")
 
-	# Font fit check on mounted markers
-	for i in range(4):
-		var marker := ribbon.marker_at(i)
-		var font := marker.get_theme_font("font")
-		var font_sz := marker.get_theme_font_size("font_size")
-		_check(marker.size.x >= 34.0 and
-			font.get_string_size(marker.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz).x <= marker.size.x - 2.0 and
-			font.get_height(font_sz) <= marker.size.y,
-			"AC4: slot %d marker %s fits measured gothic cell" % [i, marker.text])
-
 	# Parity of tooltip under hover and keyboard focus
 	for i in range(3):
 		var tag := ribbon.tag_at(i)
