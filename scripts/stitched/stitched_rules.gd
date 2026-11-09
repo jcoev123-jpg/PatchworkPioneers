@@ -1928,7 +1928,13 @@ func _apply_effects(
 			continue
 		if key == "tear":
 			if str(actor["side"]) == "foe" and str(target["side"]) == "hero":
-				receipt["tear"] = _tear_random(target)
+				if not _s14:
+					receipt["tear"] = _tear_random(target)
+				elif int(target["hp"]) > 0:
+					# Owner 11-08: limbs come off only at 0 HP (_death_door_hit). Above it a tear
+					# opens a seam that leaks stuffing instead of ripping a head off a healthy doll.
+					target["statuses"]["bleed"] = maxi(int(target["statuses"].get("bleed", 0)), 2)
+					receipt["statuses"].append({"status": "bleed", "duration": 2})
 			continue
 		if key == "push" or key == "pull":
 			var direction := 1 if key == "push" else -1

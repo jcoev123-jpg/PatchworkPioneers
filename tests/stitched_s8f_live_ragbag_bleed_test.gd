@@ -19,10 +19,22 @@ func act(session: StitchedRunSession, kind: String, extra: Dictionary = {}) -> D
 	return result
 
 
+## S14: a yielded tug opens a seam that bleeds at the next fight; those dolls are not Ragbag Bleed.
+var seamed := {}
+
+
 func step(session: StitchedRunSession) -> Dictionary:
 	if session.walk.tug_unresolved():
-		return act(session, "tug", {"target": session.walk.snapshot().tug.id, "choice": "yield"})
+		var result := act(session, "tug", {"target": session.walk.snapshot().tug.id, "choice": "yield"})
+		for event in result.get("events", []):
+			if event.get("kind") == "tug_torn":
+				seamed[session.get_instance_id()] = seamed.get(session.get_instance_id(), []) + [str(event.target)]
+		return result
 	return act(session, "forward")
+
+
+func seam(session: StitchedRunSession, hero_id: String) -> bool:
+	return hero_id in seamed.get(session.get_instance_id(), [])
 
 
 func finish(session: StitchedRunSession) -> Dictionary:
@@ -123,7 +135,7 @@ func battle_ticks(session: StitchedRunSession, target: String) -> void:
 	check(unit.statuses.get("bleed", 0) == 2 - ticks and unit.hp == input.hp - 2 * ticks,
 		"visible unit reflects construction and any immediate opening tick")
 	for hero in battle.get_heroes():
-		if hero.id != target:
+		if hero.id != target and not seam(session, hero.id):
 			check(not hero.statuses.has("bleed"), "another hero never receives the Ragbag Bleed")
 	for guard in 40:
 		var hp: int = battle.get_unit(target).hp
@@ -210,7 +222,7 @@ func safe_choices() -> void:
 		finish(session)
 		check(session.battle != null, mode + " opens a real battle")
 		if session.battle != null:
-			check(session.battle.get_heroes().all(func(hero): return not hero.statuses.has("bleed")),
+			check(session.battle.get_heroes().all(func(hero): return seam(session, hero.id) or not hero.statuses.has("bleed")),
 				mode + " never grants Bleed to a battle unit")
 
 
@@ -240,7 +252,7 @@ func machine_and_direct() -> void:
 	check(direct.phase == "battle" and direct.battle != null, "Ragbag also routes directly into the current Fight")
 	if direct.battle != null:
 		for hero in direct.battle_config.heroes:
-			check(hero.statuses == ({"bleed": 2} if hero.id == "seamstress" else {}),
+			check(hero.statuses == ({"bleed": 2} if hero.id == "seamstress" or seam(direct, hero.id) else {}),
 				"direct fight applies Bleed only to the actual switched reacher")
 	roundtrip(direct, "direct Fight with another reacher")
 

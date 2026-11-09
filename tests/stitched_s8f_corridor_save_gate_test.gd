@@ -452,12 +452,15 @@ func _run() -> void:
 		for slot in hero.parts:
 			if bool(hero.parts[slot].get("torn", false)):
 				torn_battle.append([str(hero.id), str(slot)])
-	_check(not torn_carry.is_empty() and torn_battle.size() == torn_carry.size(),
-		"every torn limb in the live battle comes from the Walk's carried tears")
+	# S14 (owner 11-08): limbs come off only at 0 HP, so the Walk's tug opens a seam that bleeds instead.
+	_check(not torn_carry.is_empty() and torn_battle.is_empty(),
+		"the Walk's tugs tear no limb before the live battle")
 	for item in torn_carry:
-		_check(torn_battle.has([str(item.get("target", "")), str(item.get("effects", {}).get("slot", ""))]),
-			"torn carry " + str(item.get("target", "")) + ":" + str(item.get("effects", {}).get("slot", ""))
-			+ " reaches the battle as a genuinely torn limb")
+		var bleeding := false
+		for hero in session.battle.get_heroes():
+			if str(hero.id) == str(item.get("target", "")):
+				bleeding = int(hero.get("statuses", {}).get("bleed", 0)) >= 2
+		_check(bleeding, "tugged doll " + str(item.get("target", "")) + " opens the live battle bleeding")
 	var corridor: StitchedCorridorFight = _corridors(app)[0] as StitchedCorridorFight
 	_check(corridor.more_buttons.has("save"), "mounted corridor exposes More > Save run")
 	_press(corridor.more_button, "corridor More")
@@ -476,7 +479,7 @@ func _run() -> void:
 		"corridor Save replays complete party, Fight, sockets, fear, wallet, receipts and RNG")
 	var commit := _mounted_commit(corridor, session)
 	_check(not commit.is_empty() and commit.ok
-		and commit.entry.get("action") == "battle" and commit.entry.get("method") == "use_part"
+		and commit.entry.get("action") == "battle" and commit.entry.get("method") in ["use_part", "use_ability"]
 		and commit.results.size() > 0 and str(commit.signature) != "",
 		"the uninterrupted mounted part button commits the legal fixed S14 signature on the struck side")
 	if commit.is_empty() or not commit.ok:

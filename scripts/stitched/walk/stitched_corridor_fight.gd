@@ -28,6 +28,10 @@ const BEAT_TIME := 0.32
 ## the outline's colour: plain bone, silver thread, gold thread.
 const TIER_OUTLINE := {1: Color("c9b79a"), 2: Color("cfd6ff"), 3: Color("ffcf6e")}
 const ICON := 92.0
+## Owner 11-09: an S14 ability's own round picture, and the small cloth badge of each patch sewn onto it.
+const ABILITY_ART := "res://assets/paper/stitched/abilities/"
+const SEWN_ART := "res://assets/paper/stitched/ability_patches/"
+const SEWN := 34.0
 const PORTRAIT := 100.0
 
 var engine: StitchedBattleScreen
@@ -362,6 +366,16 @@ func _build_bar() -> void:
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			art.material = round_material(ICON, TIER_OUTLINE[1] if layer == "Patch" else Color(0, 0, 0, 0))
 			button.add_child(art)
+		# Owner 11-09: patches are add-ons sewn onto an ability, so they sit on its rim as small badges.
+		for sewn_index in 2:
+			var sewn := TextureRect.new()
+			sewn.name = "Sewn_%d" % sewn_index
+			sewn.position = Vector2((114.0 + ICON) / 2.0 - SEWN + 4 - sewn_index * (SEWN - 6), ICON - SEWN + 4)
+			sewn.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			sewn.size = Vector2(SEWN, SEWN)
+			sewn.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+			sewn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			button.add_child(sewn)
 		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 31, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 		slot_label.name = "Slot"
 		button.add_child(slot_label)
@@ -493,7 +507,7 @@ func choose_part(slot: String) -> Dictionary:
 
 func click_figure(side: String, rank: int) -> Dictionary:
 	if engine._selected_part.is_empty() and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
-		log_label.text = "Pick a body part first."
+		log_label.text = "Pick an ability first."
 		return {"ok": false, "error": "no part chosen"}
 	return _act(engine.submit_target(side, rank))
 
@@ -613,6 +627,7 @@ func refresh() -> void:
 				hp.max_value = maxf(1.0, float(heap.get("max_hp", heap.get("hp", 1))))
 				hp.value = float(heap.get("hp", 0))
 				numbers.text = str(int(heap.get("hp", 0)))
+			_fit_name(title)
 			hits[key].visible = plate.visible
 			var moves := _moveset(unit) if standing else ""
 			hits[key].tooltip_text = (_simple_detail(engine.status_detail(side, rank)) + "\n" + moves).strip_edges() \
@@ -621,6 +636,34 @@ func refresh() -> void:
 	_refresh_bar()
 	_shade_figures()
 	_place_overlays()
+
+
+## S14: the button is the hero's own signature ability for the slot, with its sewn patches as badges; the
+## old part patch picture, tier outline and part cue step aside.
+func _show_kit_ability(button: TextureButton, shown: Dictionary, slot: String, torn: bool, hero_turn: bool) -> void:
+	var ability := engine.slot_ability(shown, slot) if not shown.is_empty() else {}
+	var picture: TextureRect = button.get_node("Patch")
+	var id := str(ability.get("id", ""))
+	picture.texture = _texture(ABILITY_ART + id + ".png") if not id.is_empty() else null
+	picture.material = round_material(ICON, TIER_OUTLINE[1])
+	# Owner 11-09 "it went back to the limb system": no body-part word on an S14 button; until its
+	# picture exists the ability's own name stands in.
+	var stand_in: Label = button.get_node("Slot")
+	stand_in.text = str(ability.get("name", ""))
+	stand_in.add_theme_font_size_override("font_size", 15)
+	stand_in.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	stand_in.position = Vector2(12, 26)
+	stand_in.size = Vector2(90, 62)
+	stand_in.visible = picture.texture == null
+	var lines: Array[String] = [str(ability.get("name", "")) if not torn else str(ability.get("name", "")) + " (torn)"]
+	var catalog: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+	var sewn: Array = battle._s14_sockets.get(str(shown.get("id", "")), {}).get(id, [])
+	for sewn_index in mini(2, sewn.size()):
+		var patch_id := str(sewn[sewn_index])
+		(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = _texture(SEWN_ART + patch_id + ".png")
+		lines.append("Sewn on: " + str(catalog.get(patch_id, {}).get("name", patch_id.capitalize())))
+	button.disabled = not hero_turn or not engine.valid_slot(shown, slot)
+	button.tooltip_text = "\n".join(lines).strip_edges()
 
 
 func _refresh_bar() -> void:
@@ -642,7 +685,7 @@ func _refresh_bar() -> void:
 	health_text.text = "%d / %d" % [int(shown.get("hp", 0)), int(shown.get("max_hp", 0))] if not shown.is_empty() else ""
 	fray_bar.value = float(shown.get("fray", 0))
 	var worn_parts: Dictionary = shown.get("parts", {})
-	var knot := StitchedSewnPatches.set_thread(worn_parts) if hero_turn else ""
+	var knot := StitchedSewnPatches.set_thread(worn_parts) if hero_turn and not battle._s14 else ""
 	thread_knot.texture = _texture(StitchedSewnPatches.knot_path(knot)) if not knot.is_empty() else null
 	thread_knot.visible = not knot.is_empty()
 	thread_knot.tooltip_text = ("Whole cloth: every patch is sewn with one thread." if StitchedSewnPatches.whole_cloth(worn_parts)
@@ -670,6 +713,10 @@ func _refresh_bar() -> void:
 		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
 		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
 		button.tooltip_text = (move_label.text + "\n" + cue).strip_edges()
+		for sewn_index in 2:
+			(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = null
+		if battle._s14:
+			_show_kit_ability(button, shown, slot, torn, hero_turn)
 	_shade_parts()
 	var cut := hero_turn and battle.thread_cuts().has(str(shown.get("id", "")))
 	var hand_open := battle.hand_action_open() and not battle.is_over()
@@ -758,8 +805,18 @@ func _shade_figures() -> void:
 		title.add_theme_color_override("font_color", AMBER if key == actor_key or targets.has(key) else BONE)
 
 
+## A long name (the Sewing-Machine Colossus) shrinks until it fits its plate instead of being cut at both ends.
+func _fit_name(title: Label) -> void:
+	var font_size := 16
+	while font_size > 10 and FONT.get_string_size(title.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 4.0 > title.size.x:
+		font_size -= 1
+	title.add_theme_font_size_override("font_size", font_size)
+
+
 ## Plates sit under each figure's feet and hit boxes cover the figure; both follow lunges.
 func _place_overlays() -> void:
+	var boxes: Dictionary = {}
+	var spots: Dictionary = {}
 	for key in plates:
 		var plate: Control = plates[key]
 		var feet: Variant = stage.screen_point(key)
@@ -769,9 +826,36 @@ func _place_overlays() -> void:
 		var spot: Vector2 = feet
 		plate.position = Vector2(spot.x - plate.size.x / 2.0, minf(spot.y + 2.0, BAR_TOP - 92.0))
 		var rect := stage.screen_rect(key)
-		hits[key].position = rect.position
-		hits[key].size = rect.size
-		hits[key].visible = rect.size.x > 0.0
+		if rect.size.x > 0.0:
+			boxes[key] = rect
+			spots[key] = spot.x
+	# Wide art (the boss) overlaps its neighbour's box and the later box used to win the click:
+	# playtest 11-09 aimed at the Behemoth and struck the Scissor Crab. Neighbours (either side)
+	# split at the midpoint between their feet.
+	var keys := boxes.keys()
+	for i in keys.size():
+		for j in range(i + 1, keys.size()):
+			var a: String = keys[i]
+			var b: String = keys[j]
+			var left := a if spots[a] <= spots[b] else b
+			var right := b if left == a else a
+			var mid: float = (spots[a] + spots[b]) / 2.0
+			var lbox: Rect2 = boxes[left]
+			var rbox: Rect2 = boxes[right]
+			if lbox.end.x <= rbox.position.x:
+				continue
+			lbox.size.x = maxf(0.0, minf(lbox.end.x, mid) - lbox.position.x)
+			rbox = Rect2(Vector2(maxf(rbox.position.x, mid), rbox.position.y),
+				Vector2(maxf(0.0, rbox.end.x - maxf(rbox.position.x, mid)), rbox.size.y))
+			boxes[left] = lbox
+			boxes[right] = rbox
+	for key in plates:
+		if not boxes.has(key):
+			hits[key].visible = false
+			continue
+		hits[key].position = boxes[key].position
+		hits[key].size = boxes[key].size
+		hits[key].visible = boxes[key].size.x > 0.0
 	_refresh_wren()
 
 
@@ -1018,7 +1102,9 @@ func _receipt_pose_texture(actor_id: String, ability_id: String) -> Texture2D:
 		var pictured := _texture(own)
 		if pictured != null:
 			return pictured
-	if side == "hero":
+	if side == "hero" and not engine.ability_slot(actor, ability_id).is_empty():
+		move = str(engine.slot_ability(actor, engine.ability_slot(actor, ability_id)).get("move", "attack"))
+	elif side == "hero":
 		for worn in actor.get("parts", {}).values():
 			var definition: Dictionary = engine.parts.get(str(worn.get("id", "")), {})
 			if definition.is_empty():
@@ -1050,8 +1136,9 @@ func _set_receipt_pose(actor_id: String, ability_id: String, attack_pose: bool) 
 	var texture := _receipt_pose_texture(actor_id, ability_id) if attack_pose else _figure_art(actor_id)
 	if texture == null or figure.texture == null:
 		return
-	var height := figure.pixel_size * float(figure.texture.get_height())
+	var height := _figure_height(figure)
 	figure.texture = texture
+	figure.offset = Vector2.ZERO
 	figure.pixel_size = height / float(texture.get_height())
 
 
@@ -1139,7 +1226,7 @@ func _throw_and_strike(receipt: Dictionary) -> void:
 
 
 func _figure_height(figure: Sprite3D) -> float:
-	return figure.pixel_size * float(figure.texture.get_height())
+	return stage.placed_size(figure).y
 
 
 ## One picture in flight, drawn over the dolls; pictures are drawn facing right, so a foe's are flipped.
@@ -1182,6 +1269,8 @@ func _moveset(unit: Dictionary) -> String:
 	for ability in unit.get("abilities", []):
 		names.append(str(ability.get("name", "")))
 	for slot in StitchedBattleScreen.SLOTS:
+		if battle._s14:
+			break
 		var worn: Dictionary = unit.get("parts", {}).get(slot, {})
 		var part: Dictionary = engine.parts.get(str(worn.get("id", "")), {})
 		if not part.is_empty():

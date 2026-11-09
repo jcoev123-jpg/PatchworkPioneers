@@ -8,7 +8,9 @@ extends Control
 ## choice button, and this page places and dresses them where they are made.
 
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
-const FELT := preload("res://assets/paper/ui/panel_felt.png")
+## Half-size felt: its pillow border fits a 44/42/62/60 nine-slice, so the rounds sit inside its stitching.
+const FELT := preload("res://assets/paper/ui/panel_felt_slim.png")
+const FELT_MARGINS := [44, 42, 62, 60]
 const ICONS := "res://assets/paper/stitched/icons/"
 const BONE := Color("f0ddc0")
 const LIT := Color(1.45, 1.25, 1.0)
@@ -42,6 +44,7 @@ const ITEM_ART := {
 	"mend": ["item_needle"],
 	"upgrade": ["item_gold_thread"],
 	"unsew": ["item_ripper"],
+	"sew": ["item_needle"],
 	"calm": ["item_sachet"],
 	"unpick": ["item_ripper"],
 }
@@ -308,11 +311,11 @@ func _tray(number: int) -> Control:
 	felt.name = "Felt"
 	felt.texture = FELT
 	for side in [SIDE_LEFT, SIDE_TOP, SIDE_RIGHT, SIDE_BOTTOM]:
-		felt.set_patch_margin(side, 24)
+		felt.set_patch_margin(side, FELT_MARGINS[side])
 	felt.modulate.a = 0.86
 	felt.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tray.add_child(felt)
-	var x := 20.0
+	var x: float = FELT_MARGINS[SIDE_LEFT] + 4.0
 	var tallest := ROUND
 	for column_index in group.heroes.size():
 		var hero: String = group.heroes[column_index]
@@ -321,7 +324,7 @@ func _tray(number: int) -> Control:
 		column.name = "Column_%d" % column_index
 		column.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		var wide := maxf(ROUND, count * (OPTION + 6.0)) if count > 1 else ROUND
-		column.position = Vector2(x, 16)
+		column.position = Vector2(x, FELT_MARGINS[SIDE_TOP] + 4.0)
 		column.size = Vector2(wide, ROUND + (OPTION + 8.0 if count > 1 else 0.0))
 		tallest = maxf(tallest, column.size.y)
 		tray.add_child(column)
@@ -330,9 +333,10 @@ func _tray(number: int) -> Control:
 			face.name = "Face"
 			column.add_child(face)
 		x += wide + 18.0
-	var width := x + 2.0
+	# Playtest 11-09: at 24px margins the bottom row of rounds sat on the felt's border.
+	var width: float = x - 18.0 + FELT_MARGINS[SIDE_RIGHT] + 4.0
 	tray.position = Vector2(roundf((1280.0 - width) / 2.0), TRAY_TOP)
-	tray.size = Vector2(width, tallest + 56.0)
+	tray.size = Vector2(width, FELT_MARGINS[SIDE_TOP] + 4.0 + tallest + FELT_MARGINS[SIDE_BOTTOM] + 4.0)
 	felt.size = tray.size
 	_show_tray(tray, false)
 	return tray

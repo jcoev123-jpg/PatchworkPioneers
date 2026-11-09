@@ -61,12 +61,14 @@ func build(default_picks: Array) -> void:
 		portrait.name = "Portrait"
 		var art_path: String = PORTRAIT_ROOT + id + ".png"
 		portrait.set_meta("art_path", art_path)
+		# Expand mode before the texture: set after, the full-size picture's minimum size has already
+		# stretched the rect past its tile (playtest 11-09: portraits spilled over the names).
+		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		if ResourceLoader.exists(art_path, "Texture2D"):
 			portrait.texture = load(art_path) as Texture2D
 		portrait.position = Vector2(16, 5)
 		portrait.size = Vector2(90, 84)
-		portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		tile.add_child(portrait)
 

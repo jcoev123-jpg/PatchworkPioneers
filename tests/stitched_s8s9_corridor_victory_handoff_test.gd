@@ -172,7 +172,7 @@ func _fight_to_victory(fight: StitchedCorridorFight, session: StitchedRunSession
 				var signature := str(kits.get(str(actor.get("id", "")), {}).get(slot, {}).get("id", ""))
 				_check(result.get("ok") == true and signature != ""
 					and session.journal[before].get("action") == "battle"
-					and session.journal[before].get("method") == "use_part"
+					and session.journal[before].get("method") in ["use_part", "use_ability"]
 					and str(result.get("ability", "")) == signature
 					and not result.get("results", []).is_empty() and session.is_consistent(),
 					"mounted body-part attack commits the legal fixed S14 signature once with real results")

@@ -1025,7 +1025,7 @@ func _refresh() -> void:
 		var button: Button = _part_buttons[slot]
 		var help: Button = _part_help_buttons[slot]
 		var equipped: Dictionary = acting.get("parts", {}).get(slot, {}) if hero_turn else {}
-		var can_use := hero_turn and _valid_part(acting, equipped)
+		var can_use := hero_turn and valid_slot(acting, slot)
 		var reason := _part_lock_reason(acting, equipped) if hero_turn else "No active hero"
 		var cue := StitchedPartActionCues.format_action(acting if hero_turn else {},
 			slot, equipped, parts, can_use, reason)
@@ -1057,8 +1057,7 @@ func _refresh() -> void:
 			_selected_part = ""
 	_present_part_disclosure()
 	if hero_turn and not _selected_part.is_empty():
-		var selected: Dictionary = acting["parts"][_selected_part]
-		var ability: Dictionary = StitchedParts.ability_at_tier(parts[str(selected["id"])], int(selected["tier"]))
+		var ability := slot_ability(acting, _selected_part)
 		for rank in range(1, 5):
 			var targets: Array = battle._legal_targets(acting, ability, rank)
 			if not targets.is_empty():
@@ -1200,6 +1199,43 @@ func _part_lock_reason(actor: Dictionary, equipped: Dictionary) -> String:
 	return "No legal target (rank or thread restrictions)"
 
 
+## Owner 11-09 ("the patches are things you can add on to the abilities, not abilities themselves"): with S14 a
+## slot's button fires that hero's own signature ability for the slot (its found patches only add effects to it);
+## before S14 it is the worn part's tier ability.
+func slot_ability(actor: Dictionary, slot: String) -> Dictionary:
+	if battle != null and battle._s14:
+		for ability in actor.get("abilities", []):
+			if str(ability.get("slot", "")) == slot:
+				return ability
+		return {}
+	var equipped: Dictionary = actor.get("parts", {}).get(slot, {})
+	var id := str(equipped.get("id", ""))
+	return StitchedParts.ability_at_tier(parts[id], int(equipped.get("tier", 1))) if parts.has(id) else {}
+
+
+## The slot an ability id belongs to on this hero ("" when none): kit abilities first, then worn parts.
+func ability_slot(actor: Dictionary, ability_id: String) -> String:
+	for slot in SLOTS:
+		if str(slot_ability(actor, slot).get("id", "")) == ability_id:
+			return slot
+	return ""
+
+
+func valid_slot(actor: Dictionary, slot: String) -> bool:
+	var equipped: Dictionary = actor.get("parts", {}).get(slot, {})
+	if battle == null or not battle._s14:
+		return _valid_part(actor, equipped)
+	var ability := slot_ability(actor, slot)
+	if ability.is_empty() or bool(equipped.get("torn", false)):
+		return false
+	if not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) or not battle._self_move_gate(actor, ability).is_empty():
+		return false
+	for rank in range(1, 5):
+		if not battle._legal_targets(actor, ability, rank).is_empty():
+			return true
+	return false
+
+
 func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
 	var id := str(equipped.get("id", ""))
 	if id.is_empty() or bool(equipped.get("torn", false)) or not parts.has(id):
@@ -1317,9 +1353,8 @@ func _present_forecast() -> void:
 	var acting := battle.get_unit(battle.current_actor_id())
 	var ability: Dictionary = {}
 	if battle.current_side() == "hero" and not battle.is_over() and not _selected_part.is_empty():
-		var equipped: Dictionary = acting.get("parts", {}).get(_selected_part, {})
-		if _valid_part(acting, equipped):
-			ability = StitchedParts.ability_at_tier(parts[str(equipped["id"])], int(equipped["tier"]))
+		if valid_slot(acting, _selected_part):
+			ability = slot_ability(acting, _selected_part)
 	if not ability.is_empty():
 		generic = _preview_text(acting, ability)
 	var forecast: Dictionary = {}
@@ -1350,7 +1385,7 @@ func _present_forecast() -> void:
 
 func select_part(slot: String) -> bool:
 	var actor := battle.get_unit(battle.current_actor_id()) if battle != null else {}
-	if battle == null or battle.current_side() != "hero" or not slot in SLOTS or not _valid_part(actor, actor.get("parts", {}).get(slot, {})):
+	if battle == null or battle.current_side() != "hero" or not slot in SLOTS or not valid_slot(actor, slot):
 		return false
 	_selected_part = slot
 	_refresh()
@@ -1371,6 +1406,11 @@ func submit_target(side: String, rank: int) -> Dictionary:
 	var actor := battle.get_unit(battle.current_actor_id())
 	if actor.is_empty() or not actor["parts"].has(_selected_part):
 		return {"ok": false, "error": "no acting part"}
+	if battle._s14:
+		var ability := slot_ability(actor, _selected_part)
+		if not valid_slot(actor, _selected_part) or battle._legal_targets(actor, ability, rank).is_empty():
+			return {"ok": false, "error": "illegal target"}
+		return _commit(battle.use_ability(str(ability["id"]), rank))
 	return submit_part(str(actor["parts"][_selected_part]["id"]), rank)
 
 
@@ -1467,6 +1507,8 @@ func _unit_name(unit_id: String) -> String:
 
 func _ability_name(unit_id: String, ability_id: String) -> String:
 	var actor: Dictionary = battle.get_unit(unit_id) if battle != null else {}
+	if str(actor.get("side", "")) == "hero" and not ability_slot(actor, ability_id).is_empty():
+		return str(slot_ability(actor, ability_slot(actor, ability_id)).get("name", ability_id))
 	if str(actor.get("side", "")) == "hero":
 		for worn in actor.get("parts", {}).values():
 			var part: Dictionary = parts.get(str(worn.get("id", "")), {})
@@ -1582,7 +1624,9 @@ func _damage_capable_receipt(receipt: Dictionary) -> bool:
 		return false
 	var ability_id := str(receipt.get("ability", ""))
 	var ability: Dictionary = {}
-	if str(actor.get("side", "")) == "hero":
+	if str(actor.get("side", "")) == "hero" and not ability_slot(actor, ability_id).is_empty():
+		ability = slot_ability(actor, ability_slot(actor, ability_id))
+	elif str(actor.get("side", "")) == "hero":
 		for worn in actor.get("parts", {}).values():
 			var definition: Dictionary = parts.get(str(worn.get("id", "")), {})
 			if definition.is_empty():
@@ -1731,7 +1775,9 @@ func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: St
 		return
 	var actor := battle.get_unit(id)
 	var move := "attack"
-	if side == "hero":
+	if side == "hero" and not ability_slot(actor, ability_id).is_empty():
+		move = str(slot_ability(actor, ability_slot(actor, ability_id)).get("move", "attack"))
+	elif side == "hero":
 		for part in actor.get("parts", {}).values():
 			var item: Dictionary = parts.get(str(part["id"]), {})
 			var ability: Dictionary = StitchedParts.ability_at_tier(item, int(part["tier"]))

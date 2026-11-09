@@ -512,7 +512,7 @@ func _run() -> void:
 			refused_turns += 1
 		else:
 			_check(commit.ok and commit.entry.get("action") == "battle"
-				and commit.entry.get("method") == "use_part"
+				and commit.entry.get("method") in ["use_part", "use_ability"]
 				and str(commit.signature) != "" and not commit.results.is_empty(),
 				"mounted body-part attack commits the legal fixed S14 signature once with real results")
 			if not commit.ok:

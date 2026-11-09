@@ -173,6 +173,7 @@ func _ready() -> void:
 	texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR
 	reduced_motion = bool(ProjectSettings.get_setting("patchwork/reduced_motion", false))
 	stage = StitchedCorridorStage.new()
+	stage.reduced_motion = reduced_motion
 	add_child(stage)
 	eye_overlay = TextureRect.new()
 	eye_overlay.name = "EyeTreatment"
@@ -623,6 +624,8 @@ static func curio_result(request: Dictionary, receipt: Dictionary, before: Dicti
 
 func set_reduced_motion(value: bool) -> void:
 	reduced_motion = value
+	if stage != null:
+		stage.reduced_motion = value
 	if value:
 		_stop_travel()
 	_update_flicker()
@@ -879,7 +882,7 @@ func _show_event() -> void:
 	var choices: Array = []
 	if walk.tug_unresolved():
 		event_title.text = "SOMETHING HAS THE THREAD"
-		event_text.text = "A thread pulls tight from the dark behind the last doll. Walk on and it takes a part, or give it something sharp."
+		event_text.text = "A thread pulls tight from the dark behind the last doll. Walk on and it pulls a seam open, or give it something sharp."
 		var pocket: Array = expected.pockets[expected.viewpoint]
 		for item in ["pins", "spare_spool"]:
 			var slot := pocket.find(item)

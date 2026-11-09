@@ -4156,6 +4156,10 @@ func _stitched_run_texture(path: String) -> Texture2D:
 
 
 ## A single image-backed page bed; the root Theme still owns fonts and focus.
+## Half-size felt: its pillow border fits a 44/42/62/60 nine-slice (the full-size one needs 80/80/116/110).
+const FELT_SLIM := "res://assets/paper/ui/panel_felt_slim.png"
+
+
 func _stitched_run_page(heading: String, page_kind: String = "picker") -> VBoxContainer:
 	_clear_stitched_run_panel()
 	var page := Control.new()
@@ -4193,22 +4197,25 @@ func _stitched_run_page(heading: String, page_kind: String = "picker") -> VBoxCo
 	page.add_child(backdrop)
 	var frame := NinePatchRect.new()
 	frame.name = "StitchedFeltFrame"
-	frame.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
-	frame.patch_margin_left = 24
-	frame.patch_margin_right = 24
-	frame.patch_margin_top = 24
-	frame.patch_margin_bottom = 24
-	frame.position = Vector2(36, 24)
-	frame.size = Vector2(1208, 672)
+	# The half-size felt keeps its whole pillow border and inner stitching at these margins; the words sit
+	# inside the stitching (playtest 11-09: at 24px the heading and tiles ran over the border).
+	frame.texture = _stitched_run_texture(FELT_SLIM)
+	frame.patch_margin_left = 44
+	frame.patch_margin_top = 42
+	frame.patch_margin_right = 62
+	frame.patch_margin_bottom = 60
+	frame.position = Vector2(46, 4)
+	frame.size = Vector2(1208, 712)
 	frame.modulate.a = 0.96 if page_kind == "picker" else 0.82 if page_kind in ["victory", "defeat"] else 0.74
 	page.add_child(frame)
 	var content := VBoxContainer.new()
 	content.name = "StitchedPageContent"
-	content.position = Vector2(28, 20)
-	content.size = Vector2(1152, 628)
+	content.position = Vector2(54, 44)
+	content.size = Vector2(1082, 600)
 	if page_kind.begins_with("visit:"):
 		# A road stop stands in the corridor: the party fills the left, the stop's own page the right.
 		# Wide nine-slice margins keep the felt's inner stitching whole; the words sit inside it.
+		frame.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
 		frame.patch_margin_left = 80
 		frame.patch_margin_top = 80
 		frame.patch_margin_right = 116
@@ -4479,20 +4486,20 @@ func _show_stitched_intro() -> void:
 	veil.add_child(picture)
 	var strip := NinePatchRect.new()
 	strip.name = "WrenIntroStrip"
-	strip.texture = _stitched_run_texture("res://assets/paper/ui/panel_felt.png")
-	strip.patch_margin_left = 24
-	strip.patch_margin_right = 24
-	strip.patch_margin_top = 24
-	strip.patch_margin_bottom = 24
+	strip.texture = _stitched_run_texture(FELT_SLIM)
+	strip.patch_margin_left = 44
+	strip.patch_margin_top = 42
+	strip.patch_margin_right = 62
+	strip.patch_margin_bottom = 60
 	# Wren, the candle and the dolls fill the left of the picture; his story sits beside them.
-	strip.position = Vector2(820, 40)
-	strip.size = Vector2(424, 640)
+	strip.position = Vector2(800, 40)
+	strip.size = Vector2(460, 640)
 	strip.modulate.a = 0.92
 	veil.add_child(strip)
 	var content := VBoxContainer.new()
 	content.name = "WrenIntroText"
-	content.position = Vector2(44, 40)
-	content.size = Vector2(336, 560)
+	content.position = Vector2(54, 52)
+	content.size = Vector2(336, 520)
 	content.add_theme_constant_override("separation", 14)
 	strip.add_child(content)
 	var heading := _stitched_run_caption(content, str(intro.get("heading", "ONE NIGHT IN THE OLD HOUSE")), 26)

@@ -95,6 +95,12 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 
 ## Repeat the same genuinely mounted offensive action with and without motion.
 ## Every identity, target and receipt comes from the live engine/UI.
+## A click box spans its figure's projected height and stays inside its width.
+func _follows(box: Button, rect: Rect2) -> bool:
+	var got := box.get_rect()
+	return absf(got.position.y - rect.position.y) < 2.0 and absf(got.size.y - rect.size.y) < 2.0 		and got.position.x > rect.position.x - 2.0 and got.end.x < rect.end.x + 2.0 and got.size.x > 20.0
+
+
 func _camera_sample(reduced: bool) -> Dictionary:
 	var screen := StitchedBattleScreen.new()
 	_check(screen.begin(StitchedBattleScreen.read_preview()), "camera precondition: actual seeded preview starts")
@@ -185,10 +191,8 @@ func _camera_sample(reduced: bool) -> Dictionary:
 			if rect_a.size.x > 0.0 and rect_b.size.x > 0.0:
 				var a: Button = fight.hits[attacker_key]
 				var b: Button = fight.hits[target_key]
-				projected = a.visible and b.visible and a.position.distance_to(rect_a.position) < 2.0
-				projected = projected and b.position.distance_to(rect_b.position) < 2.0
-				projected = projected and a.size.distance_to(rect_a.size) < 2.0
-				projected = projected and b.size.distance_to(rect_b.size) < 2.0
+				# Boxes follow the projection; where two figures overlap they split the overlap.
+				projected = a.visible and b.visible and _follows(a, rect_a) and _follows(b, rect_b)
 				projected = projected and rect_a.position.x > 0.0 and rect_b.end.x < 1280.0
 				projected = projected and rect_a.position.y > 105.0 and rect_b.end.y < StitchedCorridorFight.BAR_TOP
 				if projected:
@@ -210,7 +214,7 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		and not stage.fight_focus_active(),
 		"queued receipts restore the exact original camera transform and FOV")
 	if stage.figure_nodes.has(attacker_key) and stage.figure_nodes[attacker_key].visible:
-		_check(stage.figure_nodes[attacker_key].texture == fight._figure_art(str(actor.get("id", ""))),
+		_check(stage.placed_texture(stage.figure_nodes[attacker_key]) == fight._figure_art(str(actor.get("id", ""))),
 			"after the authored pose beat, the real 3D attacker returns to its original picture")
 	var first_result := {
 		"snapshot": screen.battle.state_snapshot(),
@@ -297,6 +301,13 @@ func _run() -> void:
 			_check(plate.position.y + plate.size.y <= StitchedCorridorFight.BAR_TOP and plate.position.x > -60.0
 				and plate.position.x < 1280.0, key + " plate stays on screen above the bar")
 			_check(fight.hits[key].size.x > 20.0 and fight.hits[key].size.y > 40.0, key + " can be clicked")
+	# Playtest 11-09: a click on the boss struck the crab whose wider box lay on top of it.
+	var shown := fight.hits.keys().filter(func(k): return fight.hits[k].visible)
+	for i in shown.size():
+		for j in range(i + 1, shown.size()):
+			var a: Rect2 = fight.hits[shown[i]].get_rect()
+			var b: Rect2 = fight.hits[shown[j]].get_rect()
+			_check(a.intersection(b).size.x < 1.0, "%s and %s click boxes never overlap" % [shown[i], shown[j]])
 	_check(fight.stage.figure_nodes["foe_1"].flip_h and not fight.stage.figure_nodes["hero_1"].flip_h,
 		"foes turn round to face the party")
 	for key in fight.hits:

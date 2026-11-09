@@ -411,12 +411,17 @@ func _finish_walk() -> bool:
 				if satchel.size() < 6 and catalog.has(effect.effects.id):
 					satchel.append({"id": effect.effects.id, "slot": catalog[effect.effects.id].slot,
 						"tier": int(effect.effects.tier), "torn": false})
+			"torn_part":
+				# S14 (owner 11-08): limbs come off only at 0 HP, so the tug opens a seam that bleeds
+				# at the next fight instead of keeping the part it pulled.
+				if s14_enabled and not walk_carry.any(func(carried: Dictionary): return carried.kind == "seam" 						and carried.target == effect.target):
+					walk_carry.append({"kind": "seam", "target": effect.target, "amount": 2})
 	for doll in state.dolls:
 		for hero in heroes:
 			if hero.id != doll.id:
 				continue
 			for slot in hero.parts:
-				if doll.parts.get(slot) is Dictionary and doll.parts[slot].torn:
+				if doll.parts.get(slot) is Dictionary and doll.parts[slot].torn and not s14_enabled:
 					hero.parts[slot].torn = true
 			# Walk tears can remove an equipped max-HP bonus. Recompute the actual
 			# worn-part cap before passing this survivor to the next battle.
@@ -753,7 +758,8 @@ func _open_battle(kind: String) -> bool:
 	var fray_gains: Array = []
 	for carried in walk_carry:
 		match carried.kind:
-			"bleed":
+			# The Ragbag's Bleed and the tug's open seam both start the fight bleeding.
+			"bleed", "seam":
 				if carried.size() != 3 or not carried.get("target") is String \
 						or typeof(carried.get("amount")) != TYPE_INT or carried.amount != 2:
 					return false
@@ -1052,6 +1058,35 @@ func _add_unsews(roster: Array, node_id: String) -> void:
 						str(signature.get("name", ability_id))], true, [str(hero.id), str(ability_id), int(uid)])
 
 
+## Owner 11-09: patches are add-ons sewn onto a doll's abilities. One floor patch per loose ability
+## patch; picking it up shows the dolls, and each doll's column holds its abilities with room left.
+func _add_sews(roster: Array) -> void:
+	if not s14_enabled or ability_inventory.is_empty():
+		return
+	var patch_records: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+	for item in ability_inventory:
+		var loose := true
+		for hero_key in ability_sockets:
+			for key in ability_sockets[hero_key]:
+				if item.uid in ability_sockets[hero_key][key]:
+					loose = false
+		if not loose or not patch_records.has(item.id):
+			continue
+		for hero in roster:
+			if hero.lost:
+				continue
+			for signature in StitchedS14Abilities.kits().get(str(hero.id), {}).values():
+				var ids: Array = [item.id]
+				for uid in ability_sockets.get(hero.id, {}).get(signature.id, []):
+					for other in ability_inventory:
+						if other.uid == uid:
+							ids.append(other.id)
+				if ids.size() > StitchedS14Abilities.socket_limit(ids):
+					continue
+				_offer("sew", "%s / Sew %s onto %s / %d scraps" % [hero.name, str(patch_records[item.id].name),
+					str(signature.name), SEWING_COST], scraps >= SEWING_COST, [int(item.uid), str(hero.id), str(signature.id)])
+
+
 func visit_actions() -> Array:
 	return _actions.duplicate(true) if phase == "visit" and is_consistent() else []
 
@@ -1150,6 +1185,7 @@ func _open_visit(kind: String) -> bool:
 					for candidate in quote.candidates:
 						_offer("replace", "Stitch %s into rank %d" % [candidate.name, lost.rank], true,
 							[candidate.candidate_id, lost.hero_id])
+			_add_sews(roster)
 			_add_unsews(roster, id)
 			_offer("leave", "Leave Sewing Circle")
 		"Peddler":
@@ -1181,7 +1217,7 @@ func _open_visit(kind: String) -> bool:
 					return false
 				for hero in roster:
 					for slot in range(2):
-						_offer("buy_patch", "%s / %s / patch slot %d / %d gold" % [
+						_offer("buy_patch", "%s / %s / button %d / %d gold" % [
 							str(patch.id).capitalize(), hero.name, slot + 1, int(patch.price)],
 							not hero.lost and gold >= int(patch.price), [patch.id, hero.id, slot])
 			var pins := RunStitchedPeddlerPins.open_stitched(id, roster, pockets, gold, PEDDLER_PRICE)
@@ -1223,7 +1259,7 @@ func _open_visit(kind: String) -> bool:
 				for row in supplies_quote.offers:
 					var is_starch: bool = row.id == RunStitchedPeddlerWalkSupplies.STARCH
 					var label := "Starch" if is_starch else "Spare spool"
-					var effect := "Guard next fight" if is_starch else "Fix snipped THREAD or save part from TUG"
+					var effect := "Guard next fight" if is_starch else "Feed it to the thread that tugs"
 					for hero in roster:
 						_offer("buy_" + str(row.id), "%s / %s / %d gold / %s" % [label, hero.name, row.price, effect],
 							row.can_buy and hero.id in supplies_quote.eligible, [hero.id])
@@ -1330,6 +1366,8 @@ func choose_visit(action_id: String, arguments: Array, expected: Dictionary) -> 
 			found = true
 	if not found:
 		return false
+	if action_id == "sew":
+		return socket_ability(int(arguments[0]), str(arguments[1]), str(arguments[2]), 0, expected)
 	var id: String = pending.node_id
 	var result: Dictionary = {}
 	var kind: String = pending.service

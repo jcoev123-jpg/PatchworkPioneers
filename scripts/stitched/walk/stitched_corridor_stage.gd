@@ -4,6 +4,7 @@ extends SubViewportContainer
 ## Presentation only: the screen tells it where the dolls stand; it never reads or writes rules.
 ## Every surface and figure is an authored picture; light and fog are the engine's.
 
+const ROSTER := preload("res://scripts/live_enemy_roster.gd")
 const ART_DIR := "res://assets/paper/walk3d/"
 const HERO_DIR := "res://assets/paper/heroes/"
 const SEGMENT := 3.0
@@ -42,6 +43,9 @@ const JUNCTION_RUN := 12.0
 const JUNCTION_BACK := 3.4
 const JUNCTION_SIDE_IN := 1.1
 const JUNCTION_AHEAD_IN := 2.6
+## Owner 11-09 "idle animations for characters": standing figures play their Flow idle strip at the
+## 2D puppets' pace, each from its own point in the loop so a rank never breathes in step.
+const IDLE_FPS := 12.0
 
 var viewport: SubViewport
 var world: Node3D
@@ -52,6 +56,13 @@ var corridor: Node3D
 var figures: Node3D
 ## id -> Sprite3D for everything standing in the corridor (dolls, the extra doll, props, horrors).
 var figure_nodes: Dictionary = {}
+## Holds every figure on its still (the walk's and fight's motion toggle).
+var reduced_motion := false
+var _idle_clock := 0.0
+## Still path -> its idle loop frames; empty when the still has no strip.
+static var _idle_cache: Dictionary = {}
+## Still path -> how its loop cells line up with it (see _idle_fit).
+static var _idle_fits: Dictionary = {}
 var area := ""
 var steps := 0
 var step := 0
@@ -377,18 +388,137 @@ func place(id: String, texture: Texture2D, where: Vector3, height: float) -> Spr
 		figures.add_child(figure)
 		figure_nodes[id] = figure
 	figure.texture = texture
+	figure.offset = Vector2.ZERO
 	var tall := float(texture.get_height()) if texture != null else 512.0
 	figure.pixel_size = height / tall
 	figure.position = where + Vector3(0, height / 2.0, 0)
 	figure.modulate = Color.WHITE
 	figure.visible = texture != null
+	figure.set_meta("still", texture)
+	figure.set_meta("still_pixel_size", figure.pixel_size)
+	figure.set_meta("idle_frames", idle_frames(texture))
+	figure.set_meta("idle_fit", _idle_fits.get(texture.resource_path if texture != null else "", Vector3.ONE))
+	figure.set_meta("idle_phase", float(absi(hash(id)) % 997) / 997.0)
 	return figure
+
+
+## A still's idle loop: the Flow strip beside it ("<still>_idle.png") cut into frames, or empty.
+func idle_frames(still: Texture2D) -> Array:
+	if still == null or still.resource_path.is_empty():
+		return []
+	var path := still.resource_path
+	if not _idle_cache.has(path):
+		var strip_path := path.get_basename() + "_idle.png"
+		var strip: Texture2D = load(strip_path) if ResourceLoader.exists(strip_path) else null
+		var frames: Array = ROSTER.Puppet.loop_frames(strip, still)
+		_idle_cache[path] = frames
+		if not frames.is_empty():
+			_idle_fits[path] = _idle_fit(strip, still)
+	return _idle_cache[path]
+
+
+## How a loop cell lines up with its still: x = the cell's scale, y/z = its offset in cell pixels
+## (unflipped). Most strips are drawn at the still's pixel scale with the figure standing on the
+## cell's bottom edge; a few were drawn smaller (cell shorter than the still), so their figure is
+## measured and scaled up to the still's, feet on the same spot.
+static func _idle_fit(strip: Texture2D, still: Texture2D) -> Vector3:
+	var cell := float(strip.get_height())
+	var tall := float(still.get_height())
+	var plain := Vector3(1.0, 0.0, (cell - tall) / 2.0)
+	if cell >= tall * 0.95:
+		return plain
+	var art := _art_rect(_plain(still.get_image()), Rect2i(0, 0, still.get_width(), still.get_height()))
+	var image := _plain(strip.get_image())
+	var count := floori(float(strip.get_width()) / cell)
+	var cells: Array[Rect2] = []
+	for index in range(0, count, maxi(1, floori(count / 5.0))):
+		var seen := _art_rect(image, Rect2i(index * int(cell), 0, int(cell), int(cell)))
+		if seen.size.y > 0.0:
+			cells.append(seen)
+	if art.size.y <= 0.0 or cells.is_empty():
+		return plain
+	cells.sort_custom(func(a: Rect2, b: Rect2) -> bool: return a.size.y < b.size.y)
+	var middle := cells[cells.size() >> 1]
+	var grow := art.size.y / middle.size.y
+	var across := (art.get_center().x - still.get_width() / 2.0) / grow + cell / 2.0 - middle.get_center().x
+	var lift := ((tall - art.end.y) - tall / 2.0) / grow + cell / 2.0 - (cell - middle.end.y)
+	return Vector3(grow, across, lift)
+
+
+static func _plain(image: Image) -> Image:
+	if image != null and image.is_compressed():
+		image.decompress()
+	return image
+
+
+## The painted part of `region` (alpha over half), sampled every third pixel.
+static func _art_rect(image: Image, region: Rect2i) -> Rect2:
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for y in range(region.position.y, region.end.y, 3):
+		for x in range(region.position.x, region.end.x, 3):
+			if image.get_pixel(x, y).a > 0.5:
+				low = low.min(Vector2(x, y))
+				high = high.max(Vector2(x + 3, y + 3))
+	if high.x <= low.x:
+		return Rect2()
+	return Rect2(low - Vector2(region.position), high - low)
+
+
+## The picture a figure is placed and aimed by: its still while it idles, else the pose it shows.
+func placed_texture(figure: Sprite3D) -> Texture2D:
+	var frames: Array = figure.get_meta("idle_frames", [])
+	return figure.get_meta("still") if not frames.is_empty() and figure.texture in frames else figure.texture
+
+
+## That picture's world size (a loop cell drawn at its fitted scale still counts as the still).
+func placed_size(figure: Sprite3D) -> Vector2:
+	var placed := placed_texture(figure)
+	if placed == null:
+		return Vector2.ZERO
+	var scale := float(figure.get_meta("still_pixel_size", figure.pixel_size)) if placed != figure.texture else figure.pixel_size
+	return Vector2(placed.get_width(), placed.get_height()) * scale
+
+
+func _motion_held() -> bool:
+	return reduced_motion or bool(ProjectSettings.get_setting("accessibility/reduced_motion", false))
+
+
+func _process(delta: float) -> void:
+	_idle_clock += delta
+	var held := _motion_held()
+	for figure: Sprite3D in figure_nodes.values():
+		_idle_step(figure, held)
+
+
+## Shows the figure's current loop frame; a fight pose on it is left alone (the fight hands the
+## figure back to its still), and reduced motion holds the still.
+func _idle_step(figure: Sprite3D, held: bool) -> void:
+	var frames: Array = figure.get_meta("idle_frames", [])
+	if frames.is_empty() or not figure.visible:
+		return
+	var still: Texture2D = figure.get_meta("still")
+	if figure.texture != still and not figure.texture in frames:
+		return
+	var still_size := float(figure.get_meta("still_pixel_size", figure.pixel_size))
+	if held:
+		figure.texture = still
+		figure.offset = Vector2.ZERO
+		figure.pixel_size = still_size
+		return
+	var count := frames.size()
+	var fit: Vector3 = figure.get_meta("idle_fit", Vector3.ONE)
+	figure.texture = frames[int(_idle_clock * IDLE_FPS + float(figure.get_meta("idle_phase", 0.0)) * count) % count]
+	figure.pixel_size = still_size * fit.x
+	# Sprite3D mirrors only the picture inside its rect, so a flipped figure mirrors the offset too.
+	figure.offset = Vector2(-fit.y if figure.flip_h else fit.y, fit.z)
 
 
 ## Lays a picture on the floor, tipped up a little toward the eye so it still reads. Roll turns it on
 ## the floor: an up-pointing picture points down the hall at 0, left at PI/2 and right at -PI/2.
 func place_flat(id: String, texture: Texture2D, where: Vector3, length: float, roll: float = 0.0, tilt: float = 0.55) -> Sprite3D:
 	var figure := place(id, texture, where, length)
+	figure.set_meta("idle_frames", [])
 	figure.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 	figure.rotation = Vector3(-(PI / 2.0 - tilt), 0, roll)
 	var wide := float(texture.get_width()) * figure.pixel_size if texture != null else length
@@ -413,7 +543,7 @@ func screen_point(id: String) -> Variant:
 		return null
 	var feet := figure.global_position
 	if figure.billboard != BaseMaterial3D.BILLBOARD_DISABLED:
-		feet -= Vector3(0, figure.pixel_size * figure.texture.get_height() / 2.0, 0)
+		feet -= Vector3(0, placed_size(figure).y / 2.0, 0)
 	if camera.is_position_behind(feet):
 		return null
 	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 and size.x > 0 else Vector2.ONE
@@ -459,7 +589,7 @@ func screen_rect(id: String) -> Rect2:
 	var figure: Sprite3D = figure_nodes.get(id)
 	if figure == null or not figure.visible or figure.texture == null or not is_inside_tree():
 		return Rect2()
-	var half := Vector2(figure.texture.get_width(), figure.texture.get_height()) * figure.pixel_size / 2.0
+	var half := placed_size(figure) / 2.0
 	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 and size.x > 0 else Vector2.ONE
 	if figure.billboard == BaseMaterial3D.BILLBOARD_DISABLED:
 		# Lying on the floor: the bounds of its four corners as the eye sees them.
