@@ -219,6 +219,7 @@ func _run() -> void:
 	view.back_requested.connect(func() -> void: host_commands += 1)
 	view.set_out_requested.connect(func() -> void: host_commands += 1)
 	view.path_choice_requested.connect(func(_id: String) -> void: host_commands += 1)
+	guide.wren_gift_profile_source = {"best_floor": 0, "boss_wins": 0}
 	seed(819215)
 	var expected_rng := randi()
 	seed(819215)
@@ -232,9 +233,13 @@ func _run() -> void:
 	_check(_focusable(guide) == 6 and guide.get_child_count() == 2
 		and guide.get_node("FeltPanel") is NinePatchRect and guide.theme == null,
 		"original six-focus ring and inherited gothic felt panel remain")
-	for index in [0, 2]:
+	for index in [0]:
 		_check(guide.page_text(index) == "\n\n".join(StitchedFieldGuide.PAGES[index]),
 			"non-Seams page remains precisely unchanged: " + str(index))
+	var gift_notes := StitchedWrenGiftFieldNotes.examples({"best_floor": 0, "boss_wins": 0})
+	_check(gift_notes.size() == 3 and guide.page_text(2) == "\n\n".join(
+		StitchedFieldGuide.PAGES[2] + gift_notes),
+		"Fray page keeps its baseline and validated Wren gift notes")
 	var door_examples := StitchedFieldGuide.side_door_examples()
 	_check(door_examples.size() == 4 and guide.page_text(3) == "\n\n".join(
 		StitchedFieldGuide.PAGES[3] + door_examples),

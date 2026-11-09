@@ -61,6 +61,7 @@ const PAGES := [
 const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
 ## Seams & retreat carries four catalog-derived examples, three gold notes and three S15 notes.
 const LESSON_PAGE := 1
+const WREN_GIFT_PAGE := 2
 const SIDE_DOOR_PAGE := 3
 
 ## Only the six named, validated witnesses can teach these possible bargains.
@@ -110,6 +111,9 @@ var lesson_kits: Variant = null
 var lesson_patches: Variant = null
 var s15_source: Variant = null
 var side_door_source: Variant = null
+# Optional detached, read-only snapshots for mounted tests; null is live profile/catalog.
+var wren_gift_profile_source: Variant = null
+var wren_gift_catalog_source: Variant = null
 var page_index := 0
 var _active := false
 # Button-down edges only; retain across hide/reopen to reject held/stale input.
@@ -142,6 +146,7 @@ func open_guide() -> bool:
 		return false
 	_active = true
 	_refresh_lesson_page()
+	_refresh_wren_gift_page()
 	_refresh_side_door_page()
 	show()
 	select_page(0)
@@ -161,6 +166,17 @@ func _refresh_lesson_page() -> void:
 		lines.append_array(StitchedGoldThreadNotes.examples(lesson_patches))
 	lines.append_array(StitchedS15FieldNotes.examples(s15_source))
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
+
+
+## Rebuild the existing Fray page from its original, unchanged static notes.
+## Profile reads are passive; no offers, saves or global RNG are touched.
+func _refresh_wren_gift_page() -> void:
+	if page_labels.size() <= WREN_GIFT_PAGE:
+		return
+	var lines: Array = PAGES[WREN_GIFT_PAGE].duplicate()
+	var profile: Variant = StitchedWrenGifts.load_profile() if wren_gift_profile_source == null else wren_gift_profile_source
+	lines.append_array(StitchedWrenGiftFieldNotes.examples(profile, wren_gift_catalog_source))
+	page_labels[WREN_GIFT_PAGE].text = "\n\n".join(lines)
 
 
 ## Recreate Candle & stops from the authored baseline at every successful open.
