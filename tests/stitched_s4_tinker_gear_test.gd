@@ -2,6 +2,13 @@ extends SceneTree
 ## S4 Tinker contract: real seeded Stitched 4v3 combat, all eight parts at all tiers.
 const CATALOG_PATH := "res://data/parts/tinker_parts.json"
 const PREVIEW_PATH := "res://data/stitched/s2_preview.json"
+## S14: fixed signature abilities live in their own catalog, so the part labels below are the
+## sewn cloth a doll wears and never the names of the moves its doll kit casts.
+const S14_ABILITIES_PATH := "res://data/stitched/s14_hero_abilities.json"
+const COG_HEAD_LABEL := "Cog-Girded Goggles"
+const BOMB_ARMS_LABEL := "Washer-Pinned Sleeve"
+const COG_MOVE_NAME := "Cog Shot"
+const BOMB_MOVE_NAME := "Scrap Bomb"
 const STARTERS := {
 	"head": "tinker_head_cog_shot",
 	"arms": "tinker_arms_scrap_bomb",
@@ -110,6 +117,7 @@ var checks := 0
 func _initialize() -> void:
 	_test_catalog()
 	_test_starter_patch_appearance_text()
+	_test_wearable_patch_labels()
 	_test_leg_patch_appearance_text()
 	_test_alternate_patch_appearance_text()
 	_test_spring_clamp_catalog()
@@ -375,10 +383,10 @@ func _test_catalog() -> void:
 	# AC1/AC4: Cog Shot is Tinker's starter head, and its one authored change is enemy target
 	# rank 4. Every other field stays exactly as shipped and every tier inherits the new range.
 	var cog_part: Dictionary = accepted["by_id"]["tinker_head_cog_shot"]
-	_check(str(cog_part["name"]) == "Cog Shot" and str(cog_part["slot"]) == "head"
+	_check(str(cog_part["name"]) == COG_HEAD_LABEL and str(cog_part["slot"]) == "head"
 		and str(cog_part["owner"]) == "tinker" and cog_part["stat"] == {"acc": 4}
 		and str(cog_part["text"]) == COG_SHOT_TEXT,
-		"AC1: Cog Shot stays Tinker's starter head with its authored ACC +4 stat and sewn-patch text")
+		"AC1: Tinker's starter head is the Cog-Girded Goggles patch with its authored ACC +4 stat and sewn-patch text")
 	var all_foe_ranks: Array = [1, 2, 3, 4]
 	var cog_launch: Array = [2, 3, 4]
 	_check(cog_part["ability"]["id"] == "tinker_cog_shot_move" and str(cog_part["ability"]["name"]) == "Cog Shot"
@@ -437,10 +445,10 @@ func _test_catalog() -> void:
 	# absence of Mark stays exactly as shipped at all three stitch tiers.
 	var bomb_part: Dictionary = accepted["by_id"][STARTERS["arms"]]
 	var bomb_text := "Brass washers and bent pins bulge from the Tinker's stitched sleeve; its rust-red seams hold the scrap in place."
-	_check(str(bomb_part["name"]) == "Scrap Bomb" and str(bomb_part["slot"]) == "arms"
+	_check(str(bomb_part["name"]) == BOMB_ARMS_LABEL and str(bomb_part["slot"]) == "arms"
 		and str(bomb_part["owner"]) == "tinker" and bomb_part["stat"] == {"dmg": 1}
 		and str(bomb_part["text"]) == bomb_text,
-		"AC1: Scrap Bomb keeps its named Tinker arms identity and damage +1 stat with the authored sewn-patch text")
+		"AC1: Tinker's starter arms are the Washer-Pinned Sleeve patch with damage +1 and the authored sewn-patch text")
 	var bomb_lowered := bomb_text.to_lower()
 	_check(not bomb_lowered.contains("rank") and not bomb_lowered.contains("hit")
 		and not bomb_lowered.contains("exposed") and not bomb_lowered.contains("mark")
@@ -512,7 +520,7 @@ func _test_starter_patch_appearance_text() -> void:
 		return
 	var expected := {
 		STARTERS["head"]: {
-			"name": "Cog Shot", "slot": "head", "stat": {"acc": 4}, "text": COG_SHOT_TEXT,
+			"name": COG_HEAD_LABEL, "slot": "head", "stat": {"acc": 4}, "text": COG_SHOT_TEXT,
 			"visual": ["cogs", "goggle", "mustard thread"],
 		},
 		STARTERS["torso"]: {
@@ -639,6 +647,19 @@ func _raw_part(part_id: String) -> Dictionary:
 		if str(entry.get("id", "")) == part_id:
 			return entry
 	return {}
+
+
+## The shared S14 fixed-ability catalog indexed by authored record ID. A missing or malformed
+## file yields {}, so the caller's presence checks fail closed instead of passing vacuously.
+func _s14_records() -> Dictionary:
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(S14_ABILITIES_PATH))
+	if not parsed is Dictionary:
+		return {}
+	var records: Dictionary = {}
+	for entry in parsed.get("abilities", []):
+		if entry is Dictionary and not str(entry.get("id", "")).is_empty():
+			records[str(entry["id"])] = entry
+	return records
 
 
 ## Lowercased alphabet-only words of a description, so punctuation and hyphens separate tokens.
@@ -780,6 +801,100 @@ func _test_alternate_patch_appearance_text() -> void:
 		for raw_part in accepted["parts"]:
 			lingering = lingering or str(raw_part.get("text", "")) == str(retired)
 		_check(not lingering, "AC2: no Tinker part still carries the retired alternate-patch sentence: " + str(retired))
+
+
+## AC1/AC2/AC3: the two named Tinker starter patches are cloth a doll wears, so their top-level
+## display names describe the sewn piece ("Cog-Girded Goggles", "Washer-Pinned Sleeve") while the
+## nested historical ability records and the independent S14 fixed signatures keep the move names
+## "Cog Shot" and "Scrap Bomb". Both namespaces are asserted separately; no phrase is rewritten
+## globally, and the six other Tinker part labels stay exactly as authored.
+func _test_wearable_patch_labels() -> void:
+	var accepted := _catalog()
+	_check(bool(accepted.get("ok", false)),
+		"AC1: StitchedParts.load_catalog accepts Tinker for the wearable patch labels")
+	if not bool(accepted.get("ok", false)):
+		return
+	var expected := {
+		"tinker_head_cog_shot": {
+			"label": COG_HEAD_LABEL, "slot": "head", "stat": {"acc": 4}, "text": COG_SHOT_TEXT,
+			"move_id": "tinker_cog_shot_move", "move_name": COG_MOVE_NAME,
+		},
+		"tinker_arms_scrap_bomb": {
+			"label": BOMB_ARMS_LABEL, "slot": "arms", "stat": {"dmg": 1},
+			"text": "Brass washers and bent pins bulge from the Tinker's stitched sleeve; its rust-red seams hold the scrap in place.",
+			"move_id": "tinker_scrap_bomb_move", "move_name": BOMB_MOVE_NAME,
+		},
+	}
+	for id in expected:
+		var spec: Dictionary = expected[id]
+		var part: Dictionary = accepted["by_id"].get(id, {})
+		_check(not part.is_empty() and str(part.get("id", "")) == id,
+			"AC1: wearable patch keeps its named ID in the loaded catalog: " + id)
+		if part.is_empty():
+			continue
+		_check(str(part.get("name", "")) == str(spec["label"]),
+			"AC1: wearable patch is labelled as the sewn cloth piece '%s': %s" % [str(spec["label"]), id])
+		_check(str(part.get("name", "")) != str(spec["move_name"]),
+			"AC1: the worn label is not the fixed move name S14 keeps separately: " + id)
+		_check(str(part.get("owner", "")) == "tinker" and str(part.get("slot", "")) == str(spec["slot"]),
+			"AC1: wearable patch keeps its Tinker owner and %s slot: %s" % [str(spec["slot"]), id])
+		_check(part.get("stat", {}) == spec["stat"] and str(part.get("text", "")) == str(spec["text"]),
+			"AC1: wearable patch keeps its authored stat and exact sewn-cloth description: " + id)
+		_check(str(part["ability"].get("id", "")) == str(spec["move_id"])
+			and str(part["ability"].get("name", "")) == str(spec["move_name"]),
+			"AC2: the nested historical ability still carries move ID and name %s: %s" % [str(spec["move_name"]), id])
+	# The retired action labels survive only as nested ability names, never as a part label.
+	for raw_part in accepted["parts"]:
+		_check(str(raw_part.get("name", "")) != COG_MOVE_NAME
+			and str(raw_part.get("name", "")) != BOMB_MOVE_NAME,
+			"AC1: no Tinker part is labelled with a fixed move name: " + str(raw_part.get("id", "")))
+	# AC3: the six records outside this two-label change keep their own authored part labels.
+	var unchanged_names := {
+		"tinker_torso_casing_ward": "Casing Ward",
+		"tinker_legs_tune_up": "Tune Up",
+		"tinker_head_spring_clamp": "Spring Clamp",
+		"tinker_arms_overload": "Overload",
+		"tinker_torso_gear_brace": "Gear Brace",
+		"tinker_legs_spare_screws": "Spare Screws",
+	}
+	for id in unchanged_names:
+		var raw := _raw_part(id)
+		var loaded: Dictionary = accepted["by_id"].get(id, {})
+		_check(not raw.is_empty() and not loaded.is_empty()
+			and str(raw.get("name", "")) == str(unchanged_names[id])
+			and str(loaded.get("name", "")) == str(unchanged_names[id]),
+			"AC3: the untouched Tinker record keeps its authored part label: " + id)
+	# AC2: the S14 fixed catalog is a separate namespace; its Tinker signatures are unchanged.
+	var signatures := _s14_records()
+	_check(not signatures.is_empty(), "AC2: the S14 fixed-ability catalog parses")
+	var fixed := {
+		"tinker_head_cog_shot": {
+			"name": COG_MOVE_NAME, "slot": "head", "side": "enemy",
+			"launch": [2, 3, 4], "target": [1, 2, 3, 4], "mark": 2, "exposed": 0, "multi": false,
+		},
+		"tinker_arms_scrap_bomb": {
+			"name": BOMB_MOVE_NAME, "slot": "arms", "side": "enemy",
+			"launch": [2, 3, 4], "target": [1, 2, 3, 4], "mark": 0, "exposed": 1, "multi": true,
+		},
+	}
+	for id in fixed:
+		var spec: Dictionary = fixed[id]
+		_check(signatures.has(id), "AC2: S14 fixed catalog keeps Tinker signature ID: " + id)
+		if not signatures.has(id):
+			continue
+		var record: Dictionary = signatures[id]
+		_check(str(record.get("hero", "")) == "tinker" and str(record.get("slot", "")) == str(spec["slot"])
+			and str(record.get("name", "")) == str(spec["name"]),
+			"AC2: S14 fixed signature keeps its Tinker slot and move name: " + id)
+		_check(str(record.get("target_side", "")) == str(spec["side"])
+			and _non_text_snapshot(record.get("launch", [])) == spec["launch"]
+			and _non_text_snapshot(record.get("target", [])) == spec["target"]
+			and int(record.get("effects", {}).get("mark", 0)) == int(spec["mark"])
+			and int(record.get("effects", {}).get("exposed", 0)) == int(spec["exposed"])
+			and bool(record.get("multi", false)) == bool(spec["multi"]),
+			"AC2: S14 fixed signature keeps its launch/target reach and status: " + id)
+		_check(str(record.get("name", "")) != str(accepted["by_id"][id]["name"]),
+			"AC2: the worn part label and the S14 fixed move name are independent strings: " + id)
 
 
 ## Fail-closed through the real catalog reader: a temporary user:// copy of the shipped Tinker
