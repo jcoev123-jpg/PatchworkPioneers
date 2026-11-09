@@ -2,6 +2,10 @@ extends SceneTree
 ## S15 Deeper Seams: foe resistances that sewn patch rarity pierces (gold always
 ## lands), the mildew Rot status, floor-depth foe scaling with a softer boss,
 ## and the text-only cues (tooltip RESIST line, history "resisted" suffix).
+## Bounded routed runs then prove the layer live: run-entered fights mount the
+## actual S15-transformed foes, a real rot attack mildews a doll through a
+## public foe turn, and Wren's legal hand action rides the same battle without
+## ever rolling a resist.
 
 var failures: Array[String] = []
 var checks := 0
@@ -19,6 +23,7 @@ func _initialize() -> void:
 	_rot_ticks_and_heals()
 	_catalog_resists()
 	_real_foe_pierce_and_wren()
+	_routed_fight_witnesses()
 	_cues()
 	_mildew_patch()
 	_depth_scaling()
@@ -386,3 +391,342 @@ func _depth_scaling() -> void:
 	var escort_boss := escort.duplicate(true)
 	StitchedDeeperSeams.depth_scale(escort_boss, RunMap.FLOOR_COUNT, "Boss")
 	_check(escort_boss == escort, "a boss's escort is not deepened")
+
+
+## ---------------------------------------------- routed run-entered fights ----
+
+const ROUTED_SEED_CAP := 90
+
+
+## Real map travel: enter the first offered node of the wanted kinds, otherwise
+## walk one lawful non-combat stop at a time through its own enabled actions.
+func _travel_to(session: StitchedRunSession, kinds: Array) -> String:
+	for step in 16:
+		for choice_id in session.choices():
+			if str(session.map.get_node(choice_id).type) in kinds:
+				var target := str(choice_id)
+				if session.enter(target, session.snapshot()) and session.phase in ["visit", "battle"]:
+					return target
+				return ""
+		var next := ""
+		for choice_id in session.choices():
+			if not str(session.map.get_node(choice_id).type) in ["Fight", "Elite", "Boss"]:
+				next = str(choice_id)
+				break
+		if next.is_empty() or not session.enter(next, session.snapshot()) or session.phase != "visit":
+			return ""
+		var left := false
+		for action in session.visit_actions():
+			if bool(action.enabled) and str(action.id) == "leave" and action.arguments.is_empty():
+				left = session.choose_visit("leave", [], session.snapshot())
+				break
+		if not left:
+			for action in session.visit_actions():
+				if bool(action.enabled) and action.arguments.is_empty() and not str(action.id) in ["swap", "replace", "buy_patch"]:
+					left = session.choose_visit(str(action.id), action.arguments, session.snapshot())
+					if left:
+						break
+		if not left or session.phase != "map":
+			return ""
+	return ""
+
+
+func _to_turn(battle: StitchedRules, actor_id: String, limit: int = 96) -> bool:
+	for step in range(limit):
+		if battle.current_actor_id() == actor_id:
+				return true
+		if battle.is_over() or not battle.pass_turn().get("ok", false):
+			return false
+	return false
+
+
+func _play_to_victory(session: StitchedRunSession) -> bool:
+	var battle: StitchedRules = session.battle
+	for turn in 240:
+		if battle.is_over():
+			return battle.outcome() == "victory"
+		var actor := battle.get_unit(battle.current_actor_id())
+		if actor.is_empty():
+			return false
+		var best: Dictionary = {}
+		var best_score := -10000
+		for ability in actor.abilities:
+			if not StitchedParts.ranks_allowed(int(ability.launch_mask), int(actor.rank)):
+				continue
+			if not battle._self_move_gate(actor, ability).is_empty():
+				continue
+			if actor.side == "hero" and actor.parts.has(ability.slot) and actor.parts[ability.slot].torn:
+				continue
+			for rank in range(1, 5):
+				if battle._legal_targets(actor, ability, rank).is_empty():
+					continue
+				var score := 1
+				if ability.target_side == "enemy":
+					score = 20 + int(ability.dmg[1]) * 5
+				elif ability.effects.has("heal"):
+					for ally in battle.get_heroes():
+						if int(ally.rank) == rank and not ally.lost:
+							score = 5 + int(ally.max_hp) - int(ally.hp)
+				if score > best_score:
+					best_score = score
+					best = {"ability": ability.id, "rank": rank}
+		var result: Dictionary = {}
+		if best.is_empty():
+			result = battle.pass_turn()
+		elif actor.side == "hero":
+			result = battle.use_ability(best.ability, best.rank)
+		else:
+			result = battle.use_foe_ability(best.ability, best.rank)
+		if not result.get("ok", false):
+			return false
+	return battle.outcome() == "victory"
+
+
+## The run-entered battle mounts the actual S15 foe records (resist tables
+## included, never a plain fixture), and a live rot attack mildews a doll
+## through a public foe turn before ticking on the doll's own turn.
+func _routed_foe_witness(session: StitchedRunSession, node_id: String, coverage: Dictionary) -> void:
+	var battle: StitchedRules = session.battle
+	if battle == null:
+		return
+	var label := "routed battle seed " + str(session.seed_value)
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	if bool(catalog.get("ok", false)):
+		var canonical := true
+		var resistant := 0
+		for live_foe in battle.get_foes():
+			var authored := StitchedEnemyCatalog.foe_for(catalog, str(live_foe.get("id", "")))
+			if authored.is_empty():
+				canonical = false
+				continue
+			StitchedDeeperSeams.apply(authored, session.map.get_current_floor(),
+				str(session.map.get_node(node_id).type))
+			var live_resist: Dictionary = live_foe.get("resist", {})
+			var auth_resist: Dictionary = authored.get("resist", {})
+			canonical = canonical and live_resist == auth_resist and not auth_resist.is_empty()
+			resistant += 1
+		_check(canonical and resistant >= 2,
+			label + ": the run-entered battle carries its actual floor- and kind-transformed S15 foes")
+		if canonical and resistant >= 2:
+			coverage["foes"] = true
+	if bool(coverage["rot"]):
+		return
+	for foe in battle.get_foes():
+		if bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+			continue
+		for ability in foe.get("abilities", []):
+			var mildew := int(ability.get("effects", {}).get("rot", 0))
+			if mildew <= 0 or str(ability.get("target_side", "")) != "enemy":
+				continue
+			# Bleed or heal in the same blow shifts the tick arithmetic; witness
+			# only the pure mildew attacks.
+			var ability_effects: Dictionary = ability.get("effects", {})
+			if ability_effects.has("bleed") or ability_effects.has("heal"):
+				continue
+			if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(foe.get("rank", 0))):
+				continue
+			var victim := {}
+			var blow_max := int(ability.get("dmg", [0, 0])[1])
+			for hero in battle.get_heroes():
+				if not bool(hero.get("lost", false)) and int(hero.get("hp", 0)) > blow_max \
+					and (victim.is_empty() or int(hero.get("hp", 0)) > int(victim.get("hp", 0))):
+					victim = hero
+			if victim.is_empty() or battle._legal_targets(foe, ability, int(victim.rank)).is_empty():
+				continue
+			if not _to_turn(battle, str(foe.get("id", ""))):
+				return
+			var victim_id := str(victim.get("id", ""))
+			# Witness only a fresh, clean mildew: a doll already rotting, bleeding
+			# or mending hides the authored count behind its own turn clocks.
+			var clean_state := battle.get_unit(victim_id)
+			var clean_status: Dictionary = clean_state.get("statuses", {})
+			if bool(clean_state.get("lost", false)) or int(clean_state.get("hp", 0)) <= 0 \
+				or int(clean_status.get("rot", 0)) > 0 or int(clean_status.get("bleed", 0)) > 0 \
+				or int(clean_status.get("regen", 0)) > 0 \
+				or not str(clean_state.get("resolve", "")).is_empty():
+				continue
+			var receipt := battle.use_foe_ability(str(ability.get("id", "")), int(victim.rank))
+			var struck := battle.get_unit(victim_id)
+			var landed := false
+			var applied := 0
+			var blow_result := {}
+			for hit in receipt.get("results", []):
+				if str(hit.get("target", "")) == victim_id and bool(hit.get("hit", false)):
+					landed = true
+					blow_result = hit
+					for entry in hit.get("statuses", []):
+						if str(entry.get("status", "")) == "rot":
+							applied = maxi(applied, int(entry.get("duration", 0)))
+			if not receipt.get("ok", false) or not landed:
+				continue
+			if bool(struck.get("lost", false)) or int(struck.get("hp", 0)) <= 0:
+				continue
+			var rot_now := int(struck.get("statuses", {}).get("rot", 0))
+			# The struck doll's own turn, when it starts immediately after the
+			# blow, ticks the fresh mildew once before this read; both the fresh
+			# count and the honestly once-ticked count carry the receipt.
+			var rested := applied == mildew and (rot_now == mildew or rot_now == maxi(0, mildew - 1))
+			_check(rested,
+				label + ": the live " + str(foe.get("id", "")) + " rot attack rests its authored mildew on the struck doll")
+			if not rested:
+				return
+			# A doll unravelled by the blow's own fray (or an earlier mood)
+			# acts on its own beyond the tick; only a settled doll is an exact
+			# witness of the mildew clock.
+			if not str(struck.get("resolve", "")).is_empty():
+				continue
+			var hp_at_blow := int(struck.get("hp", 0))
+			if rot_now == maxi(0, mildew - 1):
+				# The doll's own turn started immediately after the blow and
+				# already ticked the fresh mildew down exactly once. The receipt's
+				# target_hp is already the post-blow hp, never re-subtract the damage.
+				var post_blow := int(blow_result.get("target_hp", 0))
+				_check(post_blow > 0 and int(struck.get("hp", 0)) == post_blow - StitchedRules.ROT_TICK,
+					label + ": the mildewed doll's own turn ticks the rot and counts it down")
+				if post_blow > 0 and int(struck.get("hp", 0)) == post_blow - StitchedRules.ROT_TICK:
+					coverage["rot"] = true
+				return
+			# The doll's own turn ticks the rot even when that turn is consumed
+			# by a status or an unravelled mood, so watch the mildew count
+			# itself rather than the turn pointer.
+			var ticked := false
+			for step in 128:
+				if battle.is_over():
+					break
+				if int(battle.get_unit(victim_id).get("statuses", {}).get("rot", 0)) < mildew:
+					ticked = true
+					break
+				if not battle.pass_turn().get("ok", false):
+					break
+			if not ticked:
+				return
+			struck = battle.get_unit(victim_id)
+			if not str(struck.get("resolve", "")).is_empty():
+				return
+			_check(int(struck.get("hp", 0)) == maxi(0, hp_at_blow - StitchedRules.ROT_TICK) \
+				and int(struck.get("statuses", {}).get("rot", 0)) == maxi(0, mildew - 1),
+				label + ": the mildewed doll's own turn ticks the rot and counts it down")
+			if int(struck.get("statuses", {}).get("rot", 0)) == maxi(0, mildew - 1) \
+				and int(struck.get("hp", 0)) == maxi(0, hp_at_blow - StitchedRules.ROT_TICK):
+				coverage["rot"] = true
+			return
+
+
+## Wren's legal foe-targeting gift rides the same run-entered battle: the
+## effect lands through the public hand action and, with steady hands, never
+## spends a draw on the resistant foe's resist table.
+func _routed_wren_witness(session: StitchedRunSession, coverage: Dictionary, seed_number: int) -> void:
+	var battle: StitchedRules = session.battle
+	if battle == null or battle.is_over():
+		return
+	var label := "routed Wren hand seed " + str(seed_number)
+	var gift_id := ""
+	for slot_gift in session.gift_slots:
+		var entry := StitchedWrenGifts.gift(str(slot_gift))
+		if not entry.is_empty() and not bool(entry.get("basic", true)) and str(entry.get("target", "")) == "foe":
+			gift_id = str(slot_gift)
+			break
+	if gift_id.is_empty():
+		return
+	var steady_hands := session.kid_fear() < StitchedKidFear.SHAKE_THRESHOLD
+	if not steady_hands:
+		return
+	var group: String = str({"snip_string": "stun", "tug": "move", "shove": "move", "pinch": "debuff"}.get(gift_id, ""))
+	var open := false
+	for step in 96:
+		if battle.is_over():
+			return
+		if battle.current_side() == "hero" and battle.hand_action_open():
+			open = true
+			break
+		if not battle.pass_turn().get("ok", false):
+			return
+	if not open:
+		return
+	var target := ""
+	for foe in battle.get_foes():
+		if bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+			continue
+		if battle.hand_action_check(gift_id, str(foe.get("id", "")), 0) != "":
+			continue
+		if not str(group).is_empty() and int(foe.get("resist", {}).get(str(group), 0)) <= 0:
+			continue
+		target = str(foe.get("id", ""))
+		break
+	if target.is_empty():
+		return
+	var before_rng := battle.rng_state()
+	var before_unit := battle.get_unit(target)
+	var receipt := battle.use_hand_action(gift_id, target, 0)
+	var after := battle.get_unit(target)
+	var applied := false
+	match gift_id:
+		"snip_string":
+			applied = int(after.get("statuses", {}).get("stun", 0)) == 1
+		"tug", "shove":
+			applied = bool(receipt.get("effect", {}).get("ok", false)) \
+				and int(after.get("rank", -1)) == int(receipt.get("effect", {}).get("to", -2))
+		"flick_button":
+			applied = int(after.get("hp", -1)) == maxi(0, int(before_unit.get("hp", 0)) \
+				- int(StitchedWrenGifts.gift(gift_id).get("damage", 4)))
+		"pinch":
+			applied = int(after.get("statuses", {}).get("weak", 0)) == int(StitchedWrenGifts.gift(gift_id).get("turns", 3))
+	if not (receipt.get("ok", false) and applied):
+		_check(false, label + ": the legal hand action lands its authored effect")
+		return
+	if steady_hands:
+		_check(int(receipt.get("roll", -1)) == 0 and battle.rng_state() == before_rng,
+			label + ": the hand action bypasses the resistant foe without any resist roll")
+	var journaled := false
+	for command in session.journal:
+		if command is Dictionary and str(command.get("action", "")) == "battle" \
+				and str(command.get("method", "")) == "use_hand_action":
+			journaled = true
+	_check(journaled, label + ": the routed hand action entered the deterministic journal")
+	coverage["wren"] = journaled
+
+
+## Bounded routed coverage across seeds: each attempt walks a real run to a
+## real fight, wins it through public turns, takes a foe-targeting gift from
+## the genuine post-victory offer and rides the next run-entered battle.
+func _routed_fight_witnesses() -> void:
+	var coverage := {"foes": false, "purity": false, "wren": false, "rot": false}
+	for seed_number in range(ROUTED_SEED_CAP):
+		if bool(coverage["foes"]) and bool(coverage["purity"]) and bool(coverage["wren"]) and bool(coverage["rot"]):
+			break
+		var session := StitchedRunSession.start(seed_number)
+		if session == null:
+			continue
+		var first := _travel_to(session, ["Fight"])
+		if first.is_empty() or session.phase != "battle":
+			continue
+		_routed_foe_witness(session, first, coverage)
+		if not _play_to_victory(session) or not session.settle_battle(session.battle):
+			continue
+		if not bool(coverage["purity"]) and not session.gift_offer.is_empty():
+			var before := session.snapshot()
+			var stale := before.duplicate(true)
+			stale["candle"] = int(stale.get("candle", 0)) + 1
+			if not session.choose_gift("forged_gift", "", before) and not session.choose_gift("", "steady", stale) \
+					and session.snapshot() == before:
+				coverage["purity"] = true
+		var taken := ""
+		if not session.gift_offer.is_empty():
+			for offered in session.gift_offer:
+				if str(StitchedWrenGifts.gift(str(offered)).get("target", "")) == "foe":
+					taken = str(offered)
+					break
+			if not taken.is_empty():
+				var swap := "steady" if session.gift_slots.has("steady") else str(session.gift_slots[0])
+				if not session.choose_gift(taken, swap, session.snapshot()):
+					taken = ""
+		var second := _travel_to(session, ["Fight", "Elite"])
+		if second.is_empty() or session.phase != "battle":
+			continue
+		_routed_foe_witness(session, second, coverage)
+		if not taken.is_empty() and not bool(coverage["wren"]):
+			_routed_wren_witness(session, coverage, seed_number)
+	_check(bool(coverage["foes"]), "a real run-entered fight mounts its actual S15-transformed foes")
+	_check(bool(coverage["purity"]), "forged and stale gift requests refuse without mutating the run")
+	_check(bool(coverage["wren"]), "Wren's legal hand action rides a real run-entered battle without a resist roll")
+	_check(bool(coverage["rot"]), "a real S15 foe rot attack mildews a doll through a public foe turn")

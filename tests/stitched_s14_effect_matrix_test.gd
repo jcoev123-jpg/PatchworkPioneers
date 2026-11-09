@@ -10,7 +10,13 @@ extends SceneTree
 ## successor contract (a dead successor never falls through to another foe),
 ## ordered gold sockets through the death door, the stop-on-dead socket rule,
 ## misses, mask/unavailable-target refusals, socket validation refusals and a
-## run-owned socket replayed from its genuine journal.
+## run-owned socket replayed from its genuine journal. A final routed section
+## rides real seeded runs through two genuine victories, a real Sewing Circle
+## socket and a live S15 witness fight: guard, movement and harmful ally
+## patches land on their real recipients through public turns, public misses
+## mutate nothing, a fully public death-door drive loses a hero with its
+## authored satchel and party-fray receipts, and the whole route replays
+## exactly from the journal.
 
 const SEED := 55
 const ROSTER_B := ["rag_duelist", "scarecrow", "yarn_ranger", "button_golem"]
@@ -52,6 +58,7 @@ func _initialize() -> void:
 	_stop_on_dead()
 	_run_owned_sockets()
 	_live_run_matrix()
+	_routed_resistance_witnesses()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_effect_matrix_test: %d checks, %d failures" % [checks, failures.size()])
@@ -1372,3 +1379,480 @@ func _live_run_matrix() -> void:
 		"every live side is proven against its aligned unsocketed twin cast")
 	_check(coverage["families"].size() >= 2,
 		"the live runs witness at least two distinct patch effect families")
+
+
+## --------------------------------------- routed resistance witnesses ----
+
+const ROUTED_SEED_CAP := 90
+const ROUTED_HARMFUL := ["bleed", "mark", "blind", "stun", "rot"]
+
+
+## The still-unwitnessed family this run's genuinely owned patches can pay
+## for: guard work goes to the warden's ally-side arms, movement to the
+## warden's enemy-side head command, harmful effects to the tinker's legs.
+func _routed_socket_choice(session: StitchedRunSession, coverage: Dictionary) -> Dictionary:
+	for item in session.ability_inventory:
+		var patch: Dictionary = _patch_by_id.get(str(item.get("id", "")), {})
+		if patch.is_empty():
+			continue
+		var effect := str(patch.get("effect", ""))
+		if effect == "guard" and not bool(coverage["guard"]):
+			return {"item": item, "patch": patch, "hero": "warden", "slot": "arms"}
+		# A successful movement witness is not enough when its one fight
+		# supplied no genuine miss: keep sourcing socketed enemy-side casts
+		# from later run-earned patch inventories until both are observed.
+		if effect in ["pull", "push"] and (not bool(coverage["move"]) or not bool(coverage["miss"])):
+			return {"item": item, "patch": patch, "hero": "warden", "slot": "head"}
+		if effect in ROUTED_HARMFUL and not bool(coverage["harmful"]):
+			return {"item": item, "patch": patch, "hero": "tinker", "slot": "legs"}
+	return {}
+
+
+## A public miss must change nothing: no patch ids, no shift, no status entries,
+## and the missed target keeps its exact HP, rank and statuses.
+func _routed_miss_purity(battle: StitchedRules, results: Array, before: Dictionary, coverage: Dictionary, label: String) -> void:
+	for hit in results:
+		if bool(hit.get("hit", true)):
+			continue
+		var missed_id := str(hit.get("target", ""))
+		if not before.has(missed_id):
+			continue
+		var struck: Dictionary = battle.get_unit(missed_id)
+		var snap: Dictionary = before[missed_id]
+		var pure: bool = hit.get("patches", []) == [] and not hit.has("shift") and not hit.has("death_door") \
+			and hit.get("statuses", []) == [] \
+			and int(struck.get("hp", -1)) == int(snap.get("hp", -1)) \
+			and int(struck.get("rank", -1)) == int(snap.get("rank", -1)) \
+			and struck.get("statuses", {}) == snap.get("statuses", {})
+		_check(pure, label + ": a routed public miss mutates nothing on the missed " + missed_id)
+		coverage["miss"] = bool(coverage["miss"]) or pure
+
+
+## A dedicated public miss witness: the same socketed signature keeps casting
+## lawfully at the dodgiest living foe until one honest miss shows its pure,
+## spend-free receipt. Every cast is the same public command the run uses.
+func _routed_miss_hunt(battle: StitchedRules, hero_id: String, signature: Dictionary, coverage: Dictionary, label: String) -> void:
+	if bool(coverage["miss"]) or battle.is_over():
+		return
+	if str(signature.get("target_side", "")) != "enemy":
+		return
+	if not battle._units.has(hero_id) or bool(battle._units[hero_id].get("lost", false)):
+		return
+	if not _position_actor(battle, hero_id, label):
+		return
+	var signature_id := str(signature.get("id", ""))
+	var actor: Dictionary = battle._units[hero_id]
+	for attempt in 24:
+		if battle.is_over() or bool(coverage["miss"]):
+			return
+		if not _to_turn(battle, hero_id):
+			return
+		var best_rank := 0
+		var best_dodge := -1
+		for foe in battle.get_foes():
+			if bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+				continue
+			var foe_rank := int(foe.get("rank", 0))
+			if not StitchedParts.ranks_allowed(int(signature.get("target_mask", 0)), foe_rank):
+				continue
+			if battle._legal_targets(actor, signature, foe_rank).is_empty():
+				continue
+			var dodge := int(foe.get("dodge", 0)) + int(foe.get("dodge_buff", {}).get("amount", 0))
+			if dodge > best_dodge:
+				best_dodge = dodge
+				best_rank = foe_rank
+		if best_rank < 1:
+			return
+		var before := {}
+		for unit in _recipients(battle, signature, best_rank):
+			before[str(unit.get("id", ""))] = {
+				"hp": int(unit.get("hp", 0)),
+				"rank": int(unit.get("rank", 0)),
+				"statuses": (unit.get("statuses", {}) as Dictionary).duplicate(true),
+			}
+		var receipt: Dictionary = battle.use_ability(signature_id, best_rank)
+		if not receipt.get("ok", false):
+			continue
+		_routed_miss_purity(battle, receipt.get("results", []), before, coverage, label)
+
+
+## Cast the socketed signature through public turns until one confirmed hit
+## carries the sewn patch; honest S15 decisions and pure misses are recorded on
+## the way. Returns the first carried receipt (empty when the search ran out).
+func _routed_cast(battle: StitchedRules, hero_id: String, signature: Dictionary, patch: Dictionary, decisions: Dictionary, coverage: Dictionary, label: String) -> Dictionary:
+	if not _position_actor(battle, hero_id, label):
+		return {}
+	var signature_id := str(signature.get("id", ""))
+	var patch_id := str(patch.get("id", ""))
+	var enemy_side := str(signature.get("target_side", "")) == "enemy"
+	for attempt in 24:
+		if battle.is_over():
+			return {}
+		if not _to_turn(battle, hero_id):
+			return {}
+		var actor: Dictionary = battle._units[hero_id]
+		var rank := _balanced_resist_rank(battle, signature, patch) if enemy_side else _discover_rank(battle, signature, actor)
+		if rank < 1:
+			return {}
+		var before := {}
+		for unit in _recipients(battle, signature, rank):
+			before[str(unit.get("id", ""))] = {
+				"hp": int(unit.get("hp", 0)),
+				"rank": int(unit.get("rank", 0)),
+				"statuses": (unit.get("statuses", {}) as Dictionary).duplicate(true),
+			}
+		var receipt: Dictionary = battle.use_ability(signature_id, rank)
+		if not receipt.get("ok", false):
+			continue
+		var results: Array = receipt.get("results", [])
+		_routed_miss_purity(battle, results, before, coverage, label)
+		_live_decision_coverage(battle, patch, results, decisions, label)
+		for hit in results:
+			if bool(hit.get("hit", false)) and hit.get("patches", []).has(patch_id):
+				return receipt
+	return {}
+
+
+## Enemy-side casts keep spending lawful turns until the resistant foe has
+## both shrugged the sewn patch off and worn it: honest decision coverage.
+func _routed_decisions(battle: StitchedRules, hero_id: String, signature: Dictionary, patch: Dictionary, decisions: Dictionary, coverage: Dictionary, label: String) -> void:
+	var signature_id := str(signature.get("id", ""))
+	for attempt in 24:
+		if battle.is_over() or (bool(decisions["resisted"]) and bool(decisions["landed_resistant"])):
+			return
+		if not _to_turn(battle, hero_id):
+			return
+		var rank := _balanced_resist_rank(battle, signature, patch)
+		if rank < 1:
+			return
+		var before := {}
+		for unit in _recipients(battle, signature, rank):
+			before[str(unit.get("id", ""))] = {
+				"hp": int(unit.get("hp", 0)),
+				"rank": int(unit.get("rank", 0)),
+				"statuses": (unit.get("statuses", {}) as Dictionary).duplicate(true),
+			}
+		var receipt: Dictionary = battle.use_ability(signature_id, rank)
+		if not receipt.get("ok", false):
+			continue
+		var results: Array = receipt.get("results", [])
+		_routed_miss_purity(battle, results, before, coverage, label)
+		_live_decision_coverage(battle, patch, results, decisions, label)
+
+
+## The harmful ally patch's bleed must actually tick on the sewn doll's own
+## turn: exactly its count in damage, then one count down.
+func _routed_harmful_tick(battle: StitchedRules, carried: Dictionary, patch: Dictionary, label: String) -> bool:
+	if str(patch.get("effect", "")) != "bleed":
+		return true
+	var target_id := ""
+	for hit in carried.get("results", []):
+		if bool(hit.get("hit", false)) and hit.get("patches", []).has(str(patch.get("id", ""))):
+			target_id = str(hit.get("target", ""))
+			break
+	if target_id.is_empty():
+		return false
+	var doll: Dictionary = battle.get_unit(target_id)
+	if doll.is_empty() or bool(doll.get("lost", false)):
+		return false
+	var count := int(doll.get("statuses", {}).get("bleed", 0))
+	var hp_before := int(doll.get("hp", 0))
+	if count <= 0 or hp_before <= 0:
+		return false
+	# The doll's own turn ticks the bleed even when that turn is consumed by
+	# a status or an unravelled mood, so watch the bleed count itself.
+	var ticked := false
+	for step in 128:
+		if battle.is_over():
+			break
+		if int(battle.get_unit(target_id).get("statuses", {}).get("bleed", 0)) < count:
+			ticked = true
+			break
+		if not battle.pass_turn().get("ok", false):
+			break
+	if not ticked:
+		return false
+	doll = battle.get_unit(target_id)
+	var settled := int(doll.get("hp", -1)) == maxi(0, hp_before - count) \
+		and int(doll.get("statuses", {}).get("bleed", 0)) == count - 1
+	_check(settled, label + ": the harmful ally patch's bleed ticks on its doll's own turn")
+	return settled
+
+
+## A blow whose effects could muddy the fray accounting or tick outside a
+## receipt: bleed and rot can zero the victim at its own turn, and fray can
+## tip any doll over the resolve threshold mid-drive.
+func _routed_blow_dirties(ability: Dictionary) -> bool:
+	var effects: Dictionary = ability.get("effects", {})
+	return int(effects.get("bleed", 0)) > 0 or int(effects.get("rot", 0)) > 0 \
+		or int(effects.get("fray", 0)) > 0
+
+
+## How many single-target damaging blows the living foes can lawfully land at
+## one rank right now.
+func _routed_blow_count(battle: StitchedRules, foe: Dictionary, hero_rank: int) -> int:
+	if bool(foe.get("dead", false)) or int(foe.get("hp", 0)) <= 0:
+		return 0
+	var blows := 0
+	for ability in foe.get("abilities", []):
+		if int(ability.get("dmg", [0, 0])[1]) <= 0 or bool(ability.get("multi", false)):
+			continue
+		if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(foe.get("rank", 0))):
+			continue
+		if battle._legal_targets(foe, ability, hero_rank).is_empty():
+			continue
+		blows += 1
+	return blows
+
+
+## A fully public death-door drive: every foe turn spends one lawful damaging
+## blow on one victim until the third door hit tears the head. No surgery, so
+## the session stays consistent and the journal stays genuine. The fallen
+## doll's satchel and every survivor's candle-scaled party fray are checked
+## against the death door's authored rules.
+func _routed_lost_witness(battle: StitchedRules, coverage: Dictionary, label: String) -> void:
+	if battle.is_over():
+		return
+	var victim_id := ""
+	var best_blows := -1
+	for hero in battle.get_heroes():
+		if bool(hero.get("lost", false)) or int(hero.get("hp", 0)) <= 0:
+			continue
+		var blows := 0
+		for foe in battle.get_foes():
+			blows += _routed_blow_count(battle, foe, int(hero.get("rank", 0)))
+		if blows > best_blows:
+			best_blows = blows
+			victim_id = str(hero.get("id", ""))
+	if victim_id.is_empty() or best_blows <= 0:
+		return
+	var worn: Array = []
+	var victim: Dictionary = battle._units[victim_id]
+	for slot in StitchedParts.SLOTS:
+		if victim.get("parts", {}).has(slot):
+			worn.append(str(victim["parts"][slot].get("id", "")))
+	var fray_before := {}
+	var resolve_empty := true
+	for hero in battle.get_heroes():
+		if bool(hero.get("lost", false)):
+			continue
+		fray_before[str(hero.get("id", ""))] = {"fray": int(hero.get("fray", 0)), "resolve": str(hero.get("resolve", ""))}
+		resolve_empty = resolve_empty and str(hero.get("resolve", "")).is_empty()
+	var door_frays: Array = []
+	var dirty := false
+	var lost_hit := {}
+	var blows := 0
+	var steps := 0
+	while blows < 60 and steps < 600 and not battle.is_over():
+		steps += 1
+		var actor: Dictionary = battle.get_unit(battle.current_actor_id())
+		if actor.is_empty():
+			return
+		if str(actor.get("side", "")) != "foe":
+			if not battle.pass_turn().get("ok", false):
+				return
+			continue
+		if bool(battle.get_unit(victim_id).get("lost", false)):
+			return
+		var victim_rank := int(battle._units[victim_id]["rank"])
+		var blow := {}
+		for ability in actor.get("abilities", []):
+			if int(ability.get("dmg", [0, 0])[1]) <= 0 or bool(ability.get("multi", false)):
+				continue
+			if _routed_blow_dirties(ability):
+				continue
+			if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(actor.get("rank", 0))):
+				continue
+			if battle._legal_targets(actor, ability, victim_rank).is_empty():
+				continue
+			blow = ability
+			break
+		if blow.is_empty():
+			for ability in actor.get("abilities", []):
+				if int(ability.get("dmg", [0, 0])[1]) <= 0 or bool(ability.get("multi", false)):
+					continue
+				if _routed_blow_dirties(ability):
+					dirty = true
+				if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(actor.get("rank", 0))):
+					continue
+				if battle._legal_targets(actor, ability, victim_rank).is_empty():
+					continue
+				blow = ability
+				break
+		if blow.is_empty():
+			if not battle.pass_turn().get("ok", false):
+				return
+			continue
+		var covered := {}
+		for hero_id in fray_before:
+			covered[hero_id] = battle.eyes_covered(hero_id)
+		var shielded := battle.candle_shielded()
+		var candle_at_blow := battle.candle()
+		var receipt: Dictionary = battle.use_foe_ability(str(blow.get("id", "")), victim_rank)
+		if not receipt.get("ok", false):
+			if not battle.pass_turn().get("ok", false):
+				return
+			continue
+		blows += 1
+		for hit in receipt.get("results", []):
+			if not hit.has("death_door") or str(hit.get("target", "")) != victim_id:
+				continue
+			var door: Dictionary = hit.get("death_door", {})
+			door_frays.append({
+				"amount": 25 if bool(door.get("lost", false)) else 8,
+				"candle": candle_at_blow,
+				"covered": covered.duplicate(),
+				"shielded": shielded,
+				})
+			if bool(hit.get("lost", false)):
+				lost_hit = hit
+		if not lost_hit.is_empty():
+			break
+	if lost_hit.is_empty():
+		return
+	var fallen: Dictionary = battle.get_unit(victim_id)
+	var ok: bool = bool(fallen.get("lost", false)) and int(fallen.get("hp", -1)) == 0 \
+		and fallen.get("statuses", {}).is_empty() and fallen.get("parts", {}).is_empty()
+	_check(ok, label + ": the publicly lost doll leaves combat at zero HP, status-free and empty-handed")
+	var door: Dictionary = lost_hit.get("death_door", {})
+	var head := bool(lost_hit.get("lost", false)) and str(door.get("tear", {}).get("slot", "")) == "head" \
+		and (int(door.get("hits", 0)) >= 3 or int(door.get("roll", 101)) <= (10 if int(door.get("hits", 0)) == 1 else 45))
+	_check(head, label + ": the terminal blow tears the head under the authored death-door odds")
+	ok = ok and head
+	var stored: Array = lost_hit.get("satchel", {}).get("stored", [])
+	_check(stored == worn, label + ": the lost doll's worn parts fill the satchel in stable slot order")
+	ok = ok and stored == worn
+	for hero_id in fray_before:
+		if hero_id == victim_id:
+			continue
+		var survivor: Dictionary = battle.get_unit(hero_id)
+		var expected := 0
+		for event in door_frays:
+			if bool(event.get("covered", {}).get(hero_id, false)):
+				continue
+			expected += int(event.get("amount", 0)) if bool(event.get("shielded", false)) \
+				else StitchedS1BEffects.fray_gain(int(event.get("amount", 0)), int(event.get("candle", 0)))
+		var before_fray := int(fray_before[hero_id].get("fray", 0))
+		var after_fray := int(survivor.get("fray", 0))
+		if resolve_empty and not dirty and before_fray + expected < StitchedRules.FRAY_RESOLVE:
+			_check(after_fray == before_fray + expected,
+				label + ": survivor " + hero_id + " gains exactly the candle-scaled party fray of every door hit")
+			ok = ok and after_fray == before_fray + expected
+		else:
+			var moved := after_fray > before_fray or not str(survivor.get("resolve", "")).is_empty() \
+				or after_fray >= 150 or expected == 0
+			_check(moved, label + ": survivor " + hero_id + " answers the fallen doll with real party fray")
+			ok = ok and moved
+	coverage["lost"] = ok
+
+
+## One routed resistance attempt: two real victories pay a genuine socket,
+## the witness fight mounts the actual S15-transformed foes, the socketed
+## signature casts through public turns, and the whole route replays exactly.
+func _routed_attempt(seed_number: int, coverage: Dictionary) -> void:
+	var session := StitchedRunSession.start(seed_number)
+	if session == null:
+		return
+	for step in 2:
+		var fight := _travel_to(session, ["Fight"])
+		if fight.is_empty() or session.phase != "battle":
+			return
+		if not _play_to_victory(session) or not session.settle_battle(session.battle):
+			return
+	var choice := _routed_socket_choice(session, coverage)
+	if choice.is_empty() or session.scraps < StitchedRunSession.SEWING_COST:
+		return
+	var item: Dictionary = choice.get("item", {})
+	var patch: Dictionary = choice.get("patch", {})
+	var hero_id := str(choice.get("hero", ""))
+	var signature: Dictionary = StitchedS14Abilities.kits().get(hero_id, {}).get(str(choice.get("slot", "")), {})
+	if item.is_empty() or patch.is_empty() or signature.is_empty():
+		return
+	var circle := _travel_to(session, ["SewingCircle"])
+	if circle.is_empty() or session.phase != "visit":
+		return
+	var label := "routed " + str(patch.get("effect", "")) + " seed " + str(seed_number)
+	if not session.socket_ability(int(item.get("uid", 0)), hero_id, str(signature.get("id", "")), 0, session.snapshot()):
+		return
+	if not session.choose_visit("leave", [], session.snapshot()) or session.phase != "map":
+		return
+	var witness := _travel_to(session, ["Fight", "Elite"])
+	if witness.is_empty() or session.phase != "battle" or session.battle == null:
+		return
+	var battle: StitchedRules = session.battle
+	if not battle._units.has(hero_id) or bool(battle._units[hero_id].get("lost", false)):
+		return
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	if bool(catalog.get("ok", false)):
+		var canonical := true
+		for live_foe in battle.get_foes():
+			var authored: Dictionary = StitchedEnemyCatalog.foe_for(catalog, str(live_foe.get("id", "")))
+			if authored.is_empty():
+				canonical = false
+				continue
+			StitchedDeeperSeams.apply(authored, session.map.get_current_floor(), str(session.map.get_node(witness).type))
+			var live_resist: Dictionary = live_foe.get("resist", {})
+			var auth_resist: Dictionary = authored.get("resist", {})
+			canonical = canonical and live_resist == auth_resist and not auth_resist.is_empty()
+		_check(canonical and battle.get_foes().size() >= 2,
+			label + ": the witness fight mounts its actual floor- and kind-transformed S15 foes")
+	var decisions := {"resisted": false, "landed_resistant": false}
+	var carried := _routed_cast(battle, hero_id, signature, patch, decisions, coverage, label)
+	if carried.is_empty():
+		return
+	_assert_live_patch(battle, carried, patch, label)
+	var effect := str(patch.get("effect", ""))
+	# Probe the routed foe while its rank is still reachable; repeated
+	# push/pull casts and the public LOST drive can exhaust those targets.
+	if not bool(coverage["miss"]):
+		_routed_miss_hunt(battle, hero_id, signature, coverage, label)
+	if str(signature.get("target_side", "")) == "enemy":
+		_routed_decisions(battle, hero_id, signature, patch, decisions, coverage, label)
+	if effect == "guard" and hero_id == "warden":
+		coverage["guard"] = true
+	elif effect in ["pull", "push"]:
+		coverage["move"] = bool(decisions["resisted"]) and bool(decisions["landed_resistant"])
+	elif effect in ROUTED_HARMFUL:
+		coverage["harmful"] = _routed_harmful_tick(battle, carried, patch, label)
+	# Observe an honest miss while the routed fight still has living targets:
+	# the public LOST drive below can legitimately end the battle.
+	if not bool(coverage["miss"]):
+		_routed_miss_hunt(battle, hero_id, signature, coverage, label)
+	if effect in ["guard", "pull", "push"] and not bool(coverage["lost"]):
+		_routed_lost_witness(battle, coverage, label)
+	var document := StitchedRunSave.capture(session)
+	if document.is_empty():
+		return
+	var restored: StitchedRunSession = StitchedRunSave.restore(document)
+	var replayed := restored != null and restored.snapshot() == session.snapshot() and session.is_consistent()
+	_check(replayed, label + ": the genuine journal replays the routed resistance run exactly")
+	if replayed:
+		coverage["replay"] = true
+
+
+## Routed resistance coverage: seeded real runs prove the socketed families
+## through public fights only - guard on the casting warden, movement with
+## honest S15 resist decisions, harmful patches ticking on real allies, pure
+## misses, a fully public LOST with its fray and satchel receipts, and exact
+## journal replay.
+func _routed_resistance_witnesses() -> void:
+	var coverage := {"guard": false, "move": false, "harmful": false, "miss": false, "lost": false, "replay": false}
+	for seed_number in range(ROUTED_SEED_CAP):
+		var complete := true
+		for key in coverage:
+			complete = complete and bool(coverage[key])
+		if complete:
+			break
+		_routed_attempt(seed_number, coverage)
+	_check(bool(coverage["guard"]),
+		"a routed run witnesses its sewn guard patch land on the casting warden")
+	_check(bool(coverage["move"]),
+		"a routed run witnesses its sewn movement patch with honest resisted and landed S15 decisions")
+	_check(bool(coverage["harmful"]),
+		"a routed run witnesses its sewn harmful patch bleed a real ally and tick on its turn")
+	_check(bool(coverage["miss"]),
+		"a routed public miss spends nothing and mutates nothing")
+	_check(bool(coverage["lost"]),
+		"a fully public death-door drive loses a hero with authored satchel and party-fray receipts")
+	_check(bool(coverage["replay"]),
+		"a routed resistance run replays exactly from its genuine journal")
