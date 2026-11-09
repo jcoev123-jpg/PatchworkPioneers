@@ -1837,6 +1837,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_moonblack_medicine_dropper",
+      "title": "The Moonblack Medicine Dropper",
+      "description": "A medicine dropper as long as a fallen tree hangs over a dark nursery sink; its cracked glass bulb is held in red stitches by a round moss-felt apothecary.",
+      "choices": [
+        {
+          "id": "buy_dropper_lacing",
+          "text": "Buy fresh glass-binding thread with gold",
+          "outcome": { "gold": -17, "scraps": 3 }
+        },
+        {
+          "id": "bind_glass_neck",
+          "text": "Resew the cracked neck for a purse of gold",
+          "outcome": { "gold": 30, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Step around the black drops beneath the sink",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_silver_dinnerfork_bridge",
+      "title": "The Silver Dinner-Fork Bridge",
+      "description": "An enormous silver dinner fork spans a gap in the floorboards, its four tines roped to opposite shelves; tiny plum-cloth porters strain to hold it steady in candlelight.",
+      "choices": [
+        {
+          "id": "gather_fork_wraps",
+          "text": "Gather the loose wool wrapping the fork tines",
+          "outcome": { "gold": 0, "scraps": 2 }
+        },
+        {
+          "id": "repair_fork_tines",
+          "text": "Stitch the bending bridge for the porters' wages",
+          "outcome": { "gold": 27, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the silver bridge swaying in the dark",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_tin_toy_submarine",
+      "title": "The Tin Toy Submarine",
+      "description": "A tiny tin toy submarine looms like a ship to the dolls, half sunk in a black puddle beneath the stairs; a button-eyed mariner guards its leaking porthole with waxed red thread.",
+      "choices": [
+        {
+          "id": "buy_hull_thread",
+          "text": "Buy the mariner's waxed hull-thread bundles",
+          "outcome": { "gold": -20, "scraps": 3 }
+        },
+        {
+          "id": "patch_submarine_seam",
+          "text": "Patch the tin hull for salvage wages",
+          "outcome": { "gold": 38, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the toy submarine sink back into shadow",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
