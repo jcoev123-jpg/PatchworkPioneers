@@ -115,7 +115,7 @@ func _test_status_receipts() -> void:
 		and lines[1].contains(" · MENDED · BLEED") and not lines[1].contains("RESISTED"),
 		"applied authored healing and sewn bleed label the actual ally, in receipt order")
 	_check(lines[2].begins_with("→ Crab: HIT · 4 damage")
-		and lines[2].contains(" · RESISTED ROT · RESISTED BLEED · BLOCKED STUN")
+		and lines[2].contains(" · resisted rot · resisted bleed · BLOCKED STUN")
 		and not lines[2].contains(" · ROT") and not lines[2].contains(" · BLEED")
 		and not lines[2].contains(" · STUN"),
 		"resisted S15 effects and refused temporary stun remain unsuccessful on chained target")

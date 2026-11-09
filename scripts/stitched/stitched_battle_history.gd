@@ -33,7 +33,7 @@ static func entry(receipt: Dictionary, actor_name: String, ability_name: String,
 						if bool(status.get("refused", false)):
 							detail += " · BLOCKED " + effect
 						elif bool(status.get("resisted", false)):
-							detail += " · RESISTED " + effect
+							detail += " · resisted " + effect.to_lower()
 						elif effect == "HEAL":
 							if int(status.get("amount", 0)) > 0:
 								detail += " · MENDED"
