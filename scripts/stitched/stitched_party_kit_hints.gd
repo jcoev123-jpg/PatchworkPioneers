@@ -36,8 +36,32 @@ static func tooltip(hero_id: String, kits_source: Variant = null) -> String:
 			return ""
 		seen_ids[id] = true
 		seen_names[name] = true
-		lines.append("%s — %s · %s · %s" % [slot.capitalize(), name, SIDE_LABELS[side], _effect_summary(record)])
+		lines.append("%s — %s · %s · %s%s" % [slot.capitalize(), name,
+			SIDE_LABELS[side], _effect_summary(record), _target_reach(record)])
 	return "\n".join(lines)
+
+
+## Stable positional possibilities from the *validated* fixed signature.
+## These ranks say nothing about occupancy, hit chance or live target legality.
+static func _target_reach(ability: Dictionary) -> String:
+	if ability["target_side"] == "self":
+		return " · This doll only"
+	var ranks: Array = ability["target"]
+	var positions := ""
+	if ranks == [1, 2]:
+		positions = "front pair"
+	elif ranks == [2, 3, 4]:
+		positions = "back three"
+	elif ranks == [1, 2, 3, 4]:
+		positions = "any rank"
+	else:
+		var labels := {1: "frontmost", 2: "second", 3: "third", 4: "rearmost"}
+		var words: Array[String] = []
+		for rank in ranks:
+			words.append(labels[rank])
+		positions = ", ".join(words)
+	return " · May reach %s: %s" % [
+		"foes" if ability["target_side"] == "enemy" else "allies", positions]
 
 
 ## Only describe the validated bare signature, never a socketed patch or a

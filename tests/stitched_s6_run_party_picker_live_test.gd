@@ -195,6 +195,28 @@ func _source_effect_phrase(entry: Dictionary) -> String:
 			_: description += " across eligible targets"
 	return "Can " + description
 
+
+## Independent target-position oracle: use each source array, not the hint helper.
+func _source_target_reach(entry: Dictionary) -> String:
+	if entry["target_side"] == "self":
+		return " · This doll only"
+	var ranks: Array = entry["target"].duplicate()
+	ranks.sort()
+	var words: Array[String] = []
+	var names := {1: "frontmost", 2: "second", 3: "third", 4: "rearmost"}
+	for rank in ranks:
+		words.append(names[rank])
+	var description := ", ".join(words)
+	if ranks == [1, 2]:
+		description = "front pair"
+	elif ranks == [2, 3, 4]:
+		description = "back three"
+	elif ranks == [1, 2, 3, 4]:
+		description = "any rank"
+	var subject := "foes" if entry["target_side"] == "enemy" else "allies"
+	return " · May reach %s: %s" % [subject, description]
+
+
 func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context: String, marked_id: String = "") -> void:
 	if picker == null:
 		_check(false, context + ": picker is present for hints")
@@ -230,8 +252,9 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			if not entry is Dictionary or not sides.has(entry.get("target_side", null)):
 				_check(false, context + ": complete authored " + slot + " entry for " + id)
 				continue
-			var line := "%s — %s · %s · %s" % [
-				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]], _source_effect_phrase(entry)]
+			var line := "%s — %s · %s · %s%s" % [
+				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]],
+				_source_effect_phrase(entry), _source_target_reach(entry)]
 			if four_admitted and id in admitted_ids:
 				var rank: int = admitted_ids.find(id) + 1
 				var can_launch: bool = rank in entry["launch"]
@@ -316,6 +339,75 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			context + ": rank-four Warden has four blocked signatures and one warning")
 
 
+## Every fixed kit is validated and projected from its own source ranks.
+## An injected valid override must never change the authoritative cache.
+func _target_reach_fixtures() -> void:
+	var catalog := StitchedS14Abilities.kits()
+	var snapshot := catalog.duplicate(true)
+	var sides := {"enemy": "Foe", "ally": "Ally", "self": "Self"}
+	var checked_slots := 0
+	_check(not catalog.is_empty() and catalog.size() == StitchedPartyAdmission.HERO_IDS.size(),
+		"target reach begins with the full validated eight-doll S14 catalog")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		var kit: Variant = catalog.get(id)
+		if not kit is Dictionary:
+			_check(false, "target reach has a complete source kit for " + id)
+			continue
+		var shown := StitchedPartyKitHints.tooltip(id, catalog)
+		var lines := shown.split("\n")
+		_check(lines.size() == StitchedParts.SLOTS.size(),
+			"pure target reach shows four original signature lines for " + id)
+		for index in StitchedParts.SLOTS.size():
+			var slot: String = StitchedParts.SLOTS[index]
+			var entry: Variant = kit.get(slot)
+			if not entry is Dictionary:
+				_check(false, "target reach source slot exists for " + id + "/" + slot)
+				continue
+			var raw: Dictionary = entry.duplicate(true)
+			raw.erase("slot")
+			var verified := StitchedParts.validate_ability(raw)
+			_check(verified.get("ok") == true and sides.has(entry.get("target_side")),
+				"target reach source is independently validated for " + id + "/" + slot)
+			if verified.get("ok") != true or not sides.has(entry.get("target_side")):
+				continue
+			var normalized: Dictionary = verified["ability"]
+			var expected := "%s — %s · %s · %s%s" % [
+				slot.capitalize(), normalized["name"], sides[normalized["target_side"]],
+				_source_effect_phrase(normalized), _source_target_reach(normalized)]
+			_check(index < lines.size() and lines[index] == expected
+				and (lines[index].contains(" · This doll only") if normalized["target_side"] == "self"
+					else lines[index].contains(" · May reach "))
+				and not lines[index].contains("From this rank"),
+				"pure " + id + "/" + slot + " preserves identity, effect, side and validated possible target positions")
+			checked_slots += 1
+	_check(checked_slots == StitchedPartyAdmission.HERO_IDS.size() * StitchedParts.SLOTS.size(),
+		"all eight shipped kits and their four fixed slots were independently checked")
+	var witnesses := [
+		["warden", "torso", "warden_torso_iron_challenge", "enemy", [1, 2], " · May reach foes: front pair"],
+		["seamstress", "head", "seamstress_head_mending_knot", "ally", [1, 2, 3, 4], " · May reach allies: any rank"],
+		["scarecrow", "legs", "scarecrow_legs_startle_step", "enemy", [2, 3, 4], " · May reach foes: back three"],
+		["tinker", "torso", "tinker_torso_casing_ward", "self", [1, 2, 3, 4], " · This doll only"],
+	]
+	for witness in witnesses:
+		var entry: Dictionary = catalog[witness[0]][witness[1]]
+		var shown := StitchedPartyKitHints.tooltip(witness[0], catalog)
+		var line: String = shown.split("\n")[StitchedParts.SLOTS.find(witness[1])]
+		_check(entry["id"] == witness[2] and entry["target_side"] == witness[3]
+			and entry["target"] == witness[4] and line.ends_with(witness[5]),
+			"authored witness " + str(witness[2]) + " describes its exact possible target ranks")
+	var altered := catalog.duplicate(true)
+	altered["warden"]["head"]["target"] = [3, 1]
+	var altered_line: String = StitchedPartyKitHints.tooltip("warden", altered).split("\n")[0]
+	var original_line: String = StitchedPartyKitHints.tooltip("warden", catalog).split("\n")[0]
+	_check(altered_line.ends_with(" · May reach foes: frontmost, third")
+		and original_line.ends_with(" · May reach foes: frontmost, second, third")
+		and altered_line != original_line and altered["warden"]["head"]["id"] == catalog["warden"]["head"]["id"],
+		"valid nonconsecutive [1,3] override enumerates actual positions without changing move identity")
+	_check(StitchedS14Abilities.kits() == snapshot and catalog == snapshot
+		and StitchedPartyKitHints.tooltip("warden") == StitchedPartyKitHints.tooltip("warden", snapshot),
+		"altered detached target source never edits the authentic S14 kit")
+
+
 func _invalid_hints() -> void:
 	var source := StitchedS14Abilities.kits()
 	_check(not source.is_empty() and source.has("warden") and source.has("tinker"),
@@ -337,6 +429,11 @@ func _invalid_hints() -> void:
 	bad["warden"]["arms"] = bad["warden"]["head"].duplicate(true)
 	bad["warden"]["arms"]["slot"] = "arms"
 	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "duplicate move IDs fail closed")
+	for malformed in [[], [1, 1], [0], [4.25], ["2"]]:
+		bad = source.duplicate(true)
+		bad["warden"]["head"]["target"] = malformed
+		_check(StitchedPartyKitHints.tooltip("warden", bad) == "",
+			"malformed injected target mask " + str(malformed) + " cannot emit partial reach or move lines")
 	bad = source.duplicate(true)
 	bad["warden"]["head"]["target_side"] = "friend"
 	_check(StitchedPartyKitHints.tooltip("warden", bad) == "", "unknown side fails closed")
@@ -1211,6 +1308,7 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	_advisory_fixtures()
 	_fit_projection_fixtures()
+	_target_reach_fixtures()
 	_invalid_hints()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE))
 	var app: Node = (load("res://scenes/app.tscn") as PackedScene).instantiate()
