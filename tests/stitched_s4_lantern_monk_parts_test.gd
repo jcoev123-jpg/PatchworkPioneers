@@ -62,7 +62,7 @@ const FROZEN_PARTS := {
 		"stat": {"acc": 3},
 	},
 	"lantern_monk_arms_wick_spark": {
-		"name": "Wick Spark", "launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy",
+		"name": "Ember-Wick Cuff", "launch": [2, 3, 4], "target": [1, 2, 3], "side": "enemy",
 		"multi": false, "acc": 91, "dmg": [4, 6], "effects": {"blind": 1}, "move": "attack2",
 		"stat": {"dmg": 1},
 	},
@@ -72,7 +72,7 @@ const FROZEN_PARTS := {
 		"stat": {"speed": 1, "dodge": 3},
 	},
 	"lantern_monk_arms_snuff_flame": {
-		"name": "Snuff Flame", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
+		"name": "Snuff-Shade Sleeve", "launch": [2, 3], "target": [1, 2, 3], "side": "enemy",
 		"multi": false, "acc": 90, "dmg": [3, 5], "effects": {"blind": 1, "exposed": 1},
 		"move": "attack", "stat": {"dmg": 2},
 	},
@@ -552,13 +552,15 @@ func _test_arm_patch_copy() -> void:
 		return
 	var expected := {
 		STARTERS["arms"]: {
-			"name": "Wick Spark",
+			"name": "Ember-Wick Cuff",
+			"ability_name": "Wick Spark",
 			"text": WICK_SPARK_COPY,
 			"motif": "wick",
 			"other_motif": "lantern-shade",
 		},
 		ALTERNATES["arms"]: {
-			"name": "Snuff Flame",
+			"name": "Snuff-Shade Sleeve",
+			"ability_name": "Snuff Flame",
 			"text": SNUFF_FLAME_COPY,
 			"motif": "lantern-shade",
 			"other_motif": "wick",
@@ -585,6 +587,9 @@ func _test_arm_patch_copy() -> void:
 		_check(str(part["id"]) == id and str(part["name"]) == str(want["name"])
 			and str(part["owner"]) == "lantern_monk" and str(part["slot"]) == "arms",
 			"AC1: arm patch keeps its id, name, owner and arms slot: " + id)
+		_check(str(part["ability"]["name"]) == str(want["ability_name"])
+			and str(part["name"]) != str(part["ability"]["name"]),
+			"AC2: worn arm label differs from its unchanged nested S4 ability name: " + id)
 		_check(bool(StitchedParts.validate_part(part).get("ok", false)),
 			"AC1: shipped arm patch validates with its sewn-cloth description: " + id)
 		var text := str(part["text"])
@@ -614,6 +619,20 @@ func _test_arm_patch_copy() -> void:
 			"AC3: deep-copy validation never mutates the shipped arm patch: " + id)
 	_check(seen_texts.size() == 2,
 		"AC2: the two arm patches describe visually distinct sewn cloth")
+	# The fixed S14 signature keeps its own combat name; only the worn label changed.
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(S14_ABILITIES_PATH))
+	_check(parsed is Dictionary and parsed.get("abilities") is Array,
+		"AC2: the real S14 hero-ability catalog parses for the arms signature")
+	if parsed is Dictionary and parsed.get("abilities") is Array:
+		var signature: Dictionary = {}
+		for entry in parsed["abilities"]:
+			if entry is Dictionary and str(entry.get("hero", "")) == "lantern_monk" \
+					and str(entry.get("slot", "")) == "arms" \
+					and str(entry.get("id", "")) == STARTERS["arms"]:
+				signature = entry
+				break
+		_check(not signature.is_empty() and str(signature.get("name", "")) == "Wick Spark",
+			"AC2: the fixed S14 arms signature stays named Wick Spark")
 
 
 ## S14 head/torso patch identity copy: the alternate head and torso patches describe the sewn
@@ -879,9 +898,9 @@ func _test_wick_spark_launch() -> void:
 		and launch_mask != target_mask,
 		"AC1: Wick Spark ranks 2-4 derive a launch mask that still excludes rank 1")
 	_check(str(part["id"]) == "lantern_monk_arms_wick_spark"
-		and str(part["name"]) == "Wick Spark" and str(part["slot"]) == "arms"
+		and str(part["name"]) == "Ember-Wick Cuff" and str(part["slot"]) == "arms"
 		and str(part["owner"]) == "lantern_monk" and part["stat"] == {"dmg": 1},
-		"AC1: Wick Spark keeps its name, arms slot, owner and +1 damage stat")
+		"AC1: the worn cuff keeps its id, arms slot, owner and +1 damage stat")
 	_check(str(ability["id"]) == "lantern_monk_arms_wick_spark_move"
 		and str(ability["name"]) == "Wick Spark" and str(ability["kind"]) == "ranged"
 		and ability["launch"] == rear_launch and int(ability["launch_mask"]) == launch_mask
