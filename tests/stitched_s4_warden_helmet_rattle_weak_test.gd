@@ -29,7 +29,7 @@ const PART_ID := "warden_head_helmet_rattle"
 const POT_HELM_ID := "warden_head_pot_helm_bonk"
 const HEAD_NAMES := {
 	"warden_head_helmet_rattle": "Helmet Rattle",
-	"warden_head_pot_helm_bonk": "Pot Helm Bonk",
+	"warden_head_pot_helm_bonk": "Pot-Helm Brow",
 }
 const ABILITY_ID := "head_helmet_rattle_move"
 const WARDEN := "warden"
@@ -263,10 +263,13 @@ func _test_real_catalog() -> void:
 		_check(bool(StitchedParts.validate_part(pot_helm).get("ok", false)),
 			"AC2: Pot Helm Bonk validates as shipped")
 		_check(str(pot_helm.get("id", "")) == POT_HELM_ID
-			and str(pot_helm.get("name", "")) == "Pot Helm Bonk"
+			and str(pot_helm.get("name", "")) == "Pot-Helm Brow"
 			and str(pot_helm.get("slot", "")) == "head"
 			and str(pot_helm.get("owner", "")) == WARDEN,
-			"AC2: Pot Helm Bonk keeps its id, name, head slot and Warden owner")
+			"AC2: Pot-Helm Brow keeps its id, sewn-cloth name, head slot and Warden owner")
+		_check(str(pot_helm.get("ability", {}).get("id", "")) == "head_pot_helm_bonk_move"
+			and str(pot_helm.get("ability", {}).get("name", "")) == "Pot Helm Bonk",
+			"AC2: Pot-Helm Brow keeps its legacy ability id and move name")
 		_check(str(pot_helm.get("text", "")) == POT_HELM_TEXT,
 			"AC1: Pot Helm Bonk carries its authored sewn-cloth description: "
 				+ str(pot_helm.get("text", "")))

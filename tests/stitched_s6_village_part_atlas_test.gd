@@ -701,7 +701,7 @@ func _run() -> void:
         and StitchedSewnPatches.favoured_slot("seamstress") == "arms"
         and StitchedSewnPatches.is_foe_patch("scissor_crab_claw_arm"),
         "mounted guidance uses authored S13 maker favours and foe identity")
-    _witness(inspector, "warden_head_pot_helm_bonk", "Pot Helm Bonk", "head", "warden")
+    _witness(inspector, "warden_head_pot_helm_bonk", "Pot-Helm Brow", "head", "warden")
     _check(_line(inspector, "PartText") == "Cloth for HEAD; Warden favours TORSO. Moves stay with the doll.",
         "mounted Warden head clearly favours TORSO, not a granted move")
     _check(inspector.select_owner("seamstress") and inspector.select_part("seamstress_mending_knot_hat")
