@@ -21,7 +21,7 @@ const PER_ROW := 5
 const FIRST_ROW := 1.9
 const ROW_GAP := 0.8
 const ROW_HALF := 1.1
-const ARROW_LENGTH := 0.9
+const ARROW_LENGTH := 1.2
 const ARROW_TILT := 0.45
 const ARROW_X := [0.95, -0.95, 0.0]
 const ROUND := 84.0
@@ -333,7 +333,7 @@ func _tray(number: int) -> Control:
 		x += wide + 18.0
 	var width := x + 2.0
 	tray.position = Vector2(roundf((1280.0 - width) / 2.0), TRAY_TOP)
-	tray.size = Vector2(width, tallest + 32.0)
+	tray.size = Vector2(width, tallest + 56.0)
 	felt.size = tray.size
 	_show_tray(tray, false)
 	return tray
@@ -343,17 +343,18 @@ func _tray(number: int) -> Control:
 func _round_art(texture: Texture2D, where: Vector2, side: float) -> TextureRect:
 	var hoop := TextureRect.new()
 	hoop.texture = HOOP
+	# The size comes after the expand mode, or the hoop keeps its picture's own size.
+	hoop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hoop.position = where
 	hoop.size = Vector2(side, side)
-	hoop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	hoop.stretch_mode = TextureRect.STRETCH_SCALE
 	hoop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var art := TextureRect.new()
 	art.name = "Art"
 	art.texture = texture
+	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	art.position = Vector2(side, side) * 0.12
 	art.size = Vector2(side, side) * 0.76
-	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	art.material = StitchedCorridorFight.round_material()
 	art.mouse_filter = Control.MOUSE_FILTER_IGNORE

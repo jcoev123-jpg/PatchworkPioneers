@@ -247,8 +247,8 @@ func _build_top() -> void:
 	candle_icon = TextureRect.new()
 	candle_icon.name = "Candle"
 	candle_icon.position = Vector2(608, 2)
-	candle_icon.size = Vector2(64, 64)
 	candle_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	candle_icon.size = Vector2(64, 64)
 	candle_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	candle_icon.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(candle_icon)
@@ -274,8 +274,8 @@ func _build_bar() -> void:
 	portrait = TextureRect.new()
 	portrait.name = "Portrait"
 	portrait.position = Vector2(44, BAR_TOP + 20)
-	portrait.size = Vector2(86, 86)
 	portrait.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	portrait.size = Vector2(86, 86)
 	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
 	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(portrait)
@@ -283,8 +283,8 @@ func _build_bar() -> void:
 	hoop.name = "PortraitHoop"
 	hoop.texture = HOOP
 	hoop.position = Vector2(30, BAR_TOP + 6)
-	hoop.size = Vector2(114, 114)
 	hoop.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	hoop.size = Vector2(114, 114)
 	hoop.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(hoop)
 	actor_name = _label("", Rect2(158, BAR_TOP + 10, 300, 32), 28, AMBER)
@@ -294,8 +294,8 @@ func _build_bar() -> void:
 	thread_knot = TextureRect.new()
 	thread_knot.name = "ThreadKnot"
 	thread_knot.position = Vector2(426, BAR_TOP + 6)
-	thread_knot.size = Vector2(40, 40)
 	thread_knot.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	thread_knot.size = Vector2(40, 40)
 	thread_knot.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	thread_knot.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(thread_knot)
@@ -331,8 +331,8 @@ func _build_bar() -> void:
 			var art := TextureRect.new()
 			art.name = layer
 			art.position = Vector2(14, 14)
-			art.size = Vector2(86, 86)
 			art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			art.size = Vector2(86, 86)
 			art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			if layer != "Border":
