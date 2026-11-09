@@ -215,7 +215,7 @@
    "colossus_treadle": "res://assets/paper/enemies/sewing_machine_colossus_attack4.png",
    "colossus_bobbin": "res://assets/paper/enemies/sewing_machine_colossus_attack3.png",
    "colossus_barrage": "res://assets/paper/enemies/sewing_machine_colossus_attack2.png",
-   "colossus_guard": "res://assets/paper/enemies/sewing_machine_colossus_skill.png"
+   "colossus_guard": "res://assets/paper/enemies/sewing_machine_colossus_irontread.png"
   },
   "moth_queen": {
    "queen_dust": "res://assets/paper/enemies/moth_queen_attack2.png",
