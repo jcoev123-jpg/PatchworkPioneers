@@ -371,7 +371,13 @@ func act(command: Dictionary, expected: Dictionary) -> Dictionary:
 				var doll: Dictionary = _state.dolls[_doll(effect.target)]
 				var percent := 35 if effect.item == "fresh_stuffing" else 15
 				# Whole HP rounds down, matching percentage healing in run visits.
-				var healed := mini(doll.max_hp - doll.hp, floori(doll.max_hp * percent / 100.0))
+				var base_heal := floori(doll.max_hp * percent / 100.0)
+				# S15 Rot on the recipient halves the base heal (rounded down) before the
+				# missing-HP cap. Rot is only read: it is never consumed or changed here.
+				var statuses: Variant = doll.get("statuses")
+				if statuses is Dictionary and int(statuses.get("rot", 0)) > 0:
+					base_heal = floori(base_heal / 2.0)
+				var healed := mini(doll.max_hp - doll.hp, base_heal)
 				doll.hp += healed
 				events.append({"kind": "heal", "target": effect.target, "amount": healed})
 			else:

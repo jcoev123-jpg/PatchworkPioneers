@@ -12,6 +12,8 @@ func _initialize() -> void:
 	_pockets_and_viewpoint()
 	_thresholds()
 	_invalid_actions()
+	_rot_item_healing()
+	_rot_item_fail_closed()
 	for failure in failures:
 		printerr(failure)
 	print("stitched_s8a_walk_core_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
@@ -293,3 +295,135 @@ func _invalid_actions() -> void:
 	_check(random.state == externally_advanced, "external RNG drift fails closed without rewinding caller RNG")
 	var bare = Walk.new()
 	_check(not bare.act({"kind": "forward", "actor": "a"}, {}).ok, "unstarted service fails closed")
+
+
+
+## Four valid ranked dolls, all 40 max HP at 10 HP; rots[i] is the doll's statuses.rot, or null for no statuses field.
+func _rot_dolls(rots: Array, hps: Array = [10, 10, 10, 10]) -> Array:
+	var dolls: Array = []
+	for index in 4:
+		var doll := {"id": ["a", "b", "c", "d"][index], "rank": index + 1, "hp": hps[index], "max_hp": 40, "lost": false, "fray": 0}
+		if rots[index] != null:
+			doll["statuses"] = {"rot": rots[index], "weak": 3}
+		dolls.append(doll)
+	return dolls
+
+
+func _rot_pockets() -> Dictionary:
+	return {"a": ["thimble_tonic", "fresh_stuffing"], "b": ["fresh_stuffing", "thimble_tonic"],
+		"c": ["starch"], "d": ["dye"]}
+
+
+func _rot_use(walk: RefCounted, actor: String, slot: int, target: String) -> Dictionary:
+	return walk.act({"kind": "use_item", "actor": actor, "slot": slot, "target": target}, walk.snapshot())
+
+
+## One legal item use: exact HP, heal receipt, pocket, WHIRR, statuses, other dolls/pockets and RNG.
+func _expect_rot_heal(rots: Array, hps: Array, actor: String, slot: int, target: String, gain: int, message: String) -> void:
+	var random := _rng(91)
+	var walk = Walk.start(random, "walls", _rot_dolls(rots, hps), _rot_pockets())
+	_check(walk != null, message + ": walk starts")
+	if walk == null:
+		return
+	if actor != "a":
+		_check(_act(walk, "switch", {"target": actor}).ok, message + ": viewpoint switches to the owner")
+	var before: Dictionary = walk.snapshot()
+	var rng_state := random.state
+	var item: String = before.pockets[actor][slot]
+	var receipt: Dictionary = _rot_use(walk, actor, slot, target)
+	var after: Dictionary = walk.snapshot()
+	_check(item in ["thimble_tonic", "fresh_stuffing"] and receipt.ok and receipt.snapshot == after, message + ": legal healing item succeeds")
+	_check(receipt.events == [{"kind": "heal", "target": target, "amount": gain}], message + ": heal receipt equals the actual gain")
+	var target_index := ["a", "b", "c", "d"].find(target)
+	for index in 4:
+		var expected: Dictionary = before.dolls[index].duplicate(true)
+		if index == target_index:
+			expected.hp += gain
+		_check(after.dolls[index] == expected, message + ": only the recipient changes (doll %d, statuses untouched)" % index)
+	var pockets: Dictionary = before.pockets.duplicate(true)
+	pockets[actor].remove_at(slot)
+	_check(after.pockets == pockets, message + ": the item leaves only its owner's pocket")
+	_check(after.whirr == before.whirr + (15 if item == "fresh_stuffing" else 5), message + ": WHIRR stays +5 tonic / +15 stuffing")
+	_check(after.revision == before.revision + 1 and after.pending == before.pending and after.rng == before.rng and random.state == rng_state, message + ": revision advances once; pending and RNG untouched")
+	var detached: Dictionary = walk.snapshot()
+	if target_index >= 0 and detached.dolls[target_index].has("statuses"):
+		detached.dolls[target_index].statuses.rot = 99
+	detached.dolls[target_index].hp = -5
+	_check(walk.snapshot() == after, message + ": snapshots are detached from the service")
+
+
+func _rot_item_healing() -> void:
+	var rot := [2, 0, 2, null]
+	# Target b/c at 40 max HP and 10 HP: tonic base 6, stuffing base 14.
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "a", 0, "a", 3, "Rot 2 tonic halves 6 to 3")
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "a", 1, "a", 7, "Rot 2 stuffing halves 14 to 7")
+	_expect_rot_heal([0, 2, 0, 0], [10, 10, 10, 10], "a", 0, "a", 6, "Rot 0 tonic keeps 6")
+	_expect_rot_heal([0, 0, 0, 0], [10, 10, 10, 10], "a", 1, "a", 14, "Rot 0 stuffing keeps 14")
+	_expect_rot_heal([null, null, null, null], [10, 10, 10, 10], "a", 0, "a", 6, "absent statuses tonic keeps 6")
+	_expect_rot_heal([null, null, null, null], [10, 10, 10, 10], "a", 1, "d", 14, "absent statuses stuffing keeps 14")
+	_expect_rot_heal([5, 1, 0, 0], [10, 10, 10, 10], "a", 0, "b", 3, "Rot 1 tonic halves 6 to 3")
+	# Cross-doll: the recipient's Rot decides, never the pocket owner's.
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "a", 0, "b", 6, "Rot-positive owner heals Rot-free recipient fully with tonic")
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "a", 1, "b", 14, "Rot-positive owner heals Rot-free recipient fully with stuffing")
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "b", 0, "a", 7, "Rot-free owner's stuffing on Rot recipient halves 14 to 7")
+	_expect_rot_heal([2, 0, 0, 0], [10, 10, 10, 10], "b", 1, "a", 3, "Rot-free owner's tonic on Rot recipient halves 6 to 3")
+	_expect_rot_heal([0, 0, 3, 0], [10, 10, 10, 10], "b", 1, "c", 3, "owner and recipient differ: tonic on Rot doll c")
+	# Cap to missing HP applies after halving; a full-HP doll gains nothing.
+	_expect_rot_heal([2, 0, 0, 0], [38, 10, 10, 10], "a", 0, "a", 2, "Rot recipient missing only 2 HP receives 2 from tonic (base 3)")
+	_expect_rot_heal([2, 0, 0, 0], [38, 10, 10, 10], "a", 1, "a", 2, "Rot recipient missing only 2 HP receives 2 from stuffing (base 7)")
+	_expect_rot_heal([2, 0, 0, 0], [40, 10, 10, 10], "a", 0, "a", 0, "full-HP Rot recipient gains 0 from tonic")
+	_expect_rot_heal([2, 0, 0, 0], [40, 10, 10, 10], "a", 1, "a", 0, "full-HP Rot recipient gains 0 from stuffing")
+	_expect_rot_heal([0, 0, 0, 0], [40, 10, 10, 10], "a", 1, "a", 0, "full-HP Rot-free recipient gains 0")
+	_expect_rot_heal([0, 0, 0, 0], [38, 10, 10, 10], "a", 1, "a", 2, "Rot-free recipient missing 2 HP receives 2")
+	# Zero-HP (not lost) dolls heal the same way; Rot never reduces current HP or max HP.
+	_expect_rot_heal([0, 0, 2, 0], [10, 10, 0, 10], "a", 1, "c", 7, "Rot recipient at 0 HP receives halved stuffing")
+	# Replay: independent walks with one seed and one command list agree receipt for receipt.
+	var first_rng := _rng(205)
+	var second_rng := _rng(205)
+	var first = Walk.start(first_rng, "floorboards", _rot_dolls(rot), _rot_pockets())
+	var second = Walk.start(second_rng, "floorboards", _rot_dolls(rot), _rot_pockets())
+	_check(first != null and second != null, "Rot replay walks start")
+	if first == null or second == null:
+		return
+	var script: Array = [
+		{"kind": "use_item", "actor": "a", "slot": 0, "target": "b"},
+		{"kind": "use_item", "actor": "a", "slot": 0, "target": "c"},
+		{"kind": "switch", "actor": "a", "target": "b"},
+		{"kind": "use_item", "actor": "b", "slot": 0, "target": "a"},
+		{"kind": "use_item", "actor": "b", "slot": 0, "target": "d"}]
+	for command in script:
+		var receipt: Dictionary = first.act(command, first.snapshot())
+		_check(receipt.ok and receipt == second.act(command, second.snapshot()), "Rot item receipts replay identically")
+		_check(first_rng.state == second_rng.state, "Rot item replay keeps RNG identical")
+	var snapshot: Dictionary = first.snapshot()
+	_check(snapshot == second.snapshot() and snapshot.pockets.a.is_empty() and snapshot.pockets.b.is_empty(), "Rot replay ends in identical snapshots with spent items")
+	_check(snapshot.dolls.map(func(doll: Dictionary) -> int: return doll.hp) == [17, 16, 17, 16], "replayed Rot, Rot-free and absent-status heals produce exact HP")
+	_check(snapshot.dolls[0].statuses == {"rot": 2, "weak": 3} and snapshot.dolls[1].statuses == {"rot": 0, "weak": 3} and not snapshot.dolls[3].has("statuses"), "Rot and other status durations are unchanged by Walk healing")
+
+func _rot_item_fail_closed() -> void:
+	var random := _rng(91)
+	var walk = Walk.start(random, "walls", _rot_dolls([2, 0, 2, 0]), _rot_pockets())
+	_check(walk != null, "fail-closed Rot walk starts")
+	if walk == null:
+		return
+	var initial: Dictionary = walk.snapshot()
+	var rng_state := random.state
+	for command in [{"kind": "use_item", "actor": "a", "slot": 2, "target": "a"},
+		{"kind": "use_item", "actor": "a", "slot": -1, "target": "a"},
+		{"kind": "use_item", "actor": "a", "slot": 0, "target": "forged"},
+		{"kind": "use_item", "actor": "a", "slot": 0, "target": null},
+		{"kind": "use_item", "actor": "forged", "slot": 0, "target": "a"}]:
+		var before_rng := random.state
+		var receipt: Dictionary = walk.act(command, walk.snapshot())
+		_check(not receipt.ok and receipt.events.is_empty() and walk.snapshot() == initial and random.state == before_rng, "invalid Rot item command fails closed " + str(command))
+		_check(walk.snapshot().revision == 0 and walk.snapshot().whirr == 0 and walk.snapshot().dolls == initial.dolls, "invalid command keeps revision, WHIRR and HP")
+	# Stale snapshot: a real action advances the walk, then the old snapshot is refused.
+	var stale: Dictionary = walk.snapshot()
+	_check(_rot_use(walk, "a", 0, "c").ok, "fresh tonic use succeeds before stale probe")
+	var advanced: Dictionary = walk.snapshot()
+	var stale_receipt: Dictionary = walk.act({"kind": "use_item", "actor": "a", "slot": 0, "target": "c"}, stale)
+	_check(not stale_receipt.ok and stale_receipt.events.is_empty() and walk.snapshot() == advanced and random.state == rng_state, "stale snapshot neither spends the stuffing nor heals")
+	_check(advanced.dolls[2].hp == 13 and advanced.pockets.a == ["fresh_stuffing"] and advanced.whirr == 5 and advanced.revision == 1, "preconditions: Rot tonic gave 3 and spent exactly one item")
+	# Once-only: the spent slot cannot be used again.
+	_check(_rot_use(walk, "a", 0, "c").ok and not _rot_use(walk, "a", 0, "c").ok, "each pocket slot works once")
+	_check(walk.snapshot().dolls[2].hp == 20 and walk.snapshot().pockets.a.is_empty() and walk.snapshot().whirr == 20, "repeat use after the pocket empties changes nothing")
