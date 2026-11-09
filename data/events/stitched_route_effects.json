@@ -49,7 +49,7 @@
       "description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
       "choices": [
         {"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "stitched_effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
-        {"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "stitched_effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_candle_room": true}},
+        {"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "stitched_effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
         {"id": "leave", "text": "Let the cabinet's velvet drawers close", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
