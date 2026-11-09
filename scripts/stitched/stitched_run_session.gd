@@ -115,11 +115,18 @@ const VISIT_GREETINGS := {
 var _replacement_visit: RunStitchedSewingReplacement
 var _kid_fear: StitchedKidFear
 ## S8f: with walks on, every non-boss node is reached through a seeded Walk on the run RNG.
-## Its consequences wait in walk_carry until the next battle opens.
+## Its bleed, Machine and fray consequences wait in walk_carry until the next battle opens;
+## its mimic and cut threads wait in the S8c bridge's validated walk_arrival plan instead.
 var walks_enabled := false
 var walk: StitchedWalkRules
 var walk_carry: Array = []
 var walk_receipts: Array = []
+## S8c: the one-shot arrival plan genuinely completed Walks authenticated for the
+## next battle. Bare mimic/cut flags never enter walk_carry; only the bridge writes
+## this, and _arrival_walks keeps every plan bound to its still-unspent Walk so the
+## next battle revalidates the whole plan before admitting anything.
+var walk_arrival: Dictionary = {}
+var _arrival_walks: Array = []
 ## Debug-build playtest cheats only (scripts/debug/playtest_cheats.gd); empty in real play.
 var cheat_event_id := ""
 ## S12 Wren's gifts: what sits in his (at most four) hand slots this run, the gifts this run
@@ -202,7 +209,8 @@ func snapshot() -> Dictionary:
 		"rng": rng.state if rng != null else 0,
 		"battle": battle.state_snapshot() if battle != null else {},
 		"walk": {"enabled": walks_enabled, "state": walk.snapshot() if walk != null else {},
-			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true)},
+			"carry": walk_carry.duplicate(true), "receipts": walk_receipts.duplicate(true),
+			"arrival": walk_arrival.duplicate(true)},
 		"gifts": {"slots": gift_slots.duplicate(), "pool": gift_pool.duplicate(),
 			"offer": gift_offer.duplicate(), "made": gift_offers_made},
 		"s14": {"enabled": s14_enabled, "inventory": ability_inventory.duplicate(true),
@@ -358,9 +366,15 @@ func walk_act(command: Dictionary, expected: Dictionary) -> Dictionary:
 
 
 ## Settle the finished Walk into the run: HP, pockets, torn parts and found parts now;
-## fray, the mimic, cut threads and the Machine's toll at the next battle.
+## fray and the Machine's toll wait in walk_carry, and the S8c bridge's validated plan
+## (walk_arrival) carries the mimic and cut threads, all landing at the next battle.
 func _finish_walk() -> bool:
 	var state := walk.snapshot()
+	# The S8c bridge validates the genuinely completed Walk before any of its mimic or cut
+	# consequences are published; a refusal settles nothing and consumes nothing.
+	var arrival := StitchedWalkMimicBattle.plan(walk, state)
+	if not arrival.ok:
+		return false
 	# Validate the whole trap claim before publishing any carry or settling dolls.
 	# Only the placed instance can authenticate a Ragbag; loot shares its source.
 	var bleeds: Array = []
@@ -391,10 +405,7 @@ func _finish_walk() -> bool:
 		if effect.consumed:
 			continue
 		match effect.kind:
-			"mimic":
-				walk_carry.append({"kind": "mimic"})
 			"cut_thread":
-				walk_carry.append({"kind": "cut", "target": effect.target})
 				cut.append(effect.target)
 			"curio_part":
 				if satchel.size() < 6 and catalog.has(effect.effects.id):
@@ -422,16 +433,28 @@ func _finish_walk() -> bool:
 			if gained > 0:
 				walk_carry.append({"kind": "fray", "target": doll.id, "amount": gained})
 		pockets[doll.id] = state.pockets[doll.id].duplicate()
+	# The bridge's plan waits for the next battle: each Walk's own plan stays bound
+	# to its still-unspent Walk, and the published merged plan keeps one 20-fray
+	# amount per genuine wrong SNIP so repeated cuts on one doll all pay at the next
+	# battle, while the cut itself is presented once for RE-TIE.
+	if arrival.mimic or not arrival.cuts.is_empty():
+		_arrival_walks.append({"walk": walk, "plan": arrival.duplicate(true)})
+		walk_arrival = StitchedWalkMimicBattle.merged(_arrival_walks.map(
+			func(entry): return entry.plan))
 	walk_receipts.append({"node_id": pending.node_id, "corridor": state.corridor.id, "whirr": state.whirr,
 		"pending": state.pending.duplicate(true)})
-	walk = null
 	var node_type: String = pending.kind
 	if node_type in ["Fight", "Elite"]:
 		if not _open_battle(node_type):
 			return false
+		# The run-owned RankedBattle opened cleanly and the bridge's one-shot commit
+		# consumed the Walk's own mimic/cut descriptors inside it; a failed setup
+		# leaves the whole Walk and its plan untouched, like any other failure.
+		walk = null
 		phase = "battle"
 		_lose_strings_if_due()
 		return true
+	walk = null
 	phase = "visit"
 	return _open_visit({"Rest": "Campfire", "Shop": "Peddler", "Treasure": "Event"}.get(node_type, node_type))
 
@@ -680,6 +703,13 @@ func _hero_inputs() -> Array:
 
 
 func _open_battle(kind: String) -> bool:
+	# The S8c bridge's plan is the only authority for a Walk's mimic and cut threads,
+	# and only a plan that still matches its genuine unspent Walks is admitted. A
+	# forged, partial or stale plan refuses the setup before any run RNG is drawn,
+	# leaving every Walk, ledger, receipt and battle untouched.
+	var arrival := StitchedWalkMimicBattle.admit(walk_arrival, _arrival_walks)
+	if arrival.is_empty():
+		return false
 	var foes: Array = []
 	var tier: String = {"Fight": "normal", "Elite": "elite", "Boss": "boss"}[kind]
 	var candidates: Array = []
@@ -711,7 +741,14 @@ func _open_battle(kind: String) -> bool:
 		foes[2] = StitchedEnemyCatalog.foe_for(enemies,
 			escort_pool[rng.randi_range(0, escort_pool.size() - 1)])
 	var hero_inputs := _hero_inputs()
+	# Each genuine wrong SNIP paid its own fray during its Walk, so the merged plan's
+	# per-doll amount lands here once per SNIP; the cut itself stays one-shot.
 	var cuts := {}
+	for doll_id in arrival.cuts:
+		for index in hero_inputs.size():
+			if hero_inputs[index].id == doll_id and not hero_inputs[index].lost:
+				cuts[doll_id] = index + 1
+				hero_inputs[index].fray = int(hero_inputs[index].fray) + int(arrival.amounts.get(doll_id, 20))
 	var party_fray := 0
 	var fray_gains: Array = []
 	for carried in walk_carry:
@@ -735,11 +772,6 @@ func _open_battle(kind: String) -> bool:
 					if enemies.enemies[id].tier == "normal" and not foes.any(func(foe: Dictionary): return foe.id == id):
 						foes.append(StitchedEnemyCatalog.foe_for(enemies, id))
 				party_fray += int(carried.party_fray)
-			"cut":
-				for index in hero_inputs.size():
-					if hero_inputs[index].id == carried.target and not hero_inputs[index].lost:
-						cuts[carried.target] = index + 1
-						hero_inputs[index].fray = int(hero_inputs[index].fray) + 20
 			"fray":
 				fray_gains.append(carried)
 	# S15: live foes carry resists and rot attacks, and deepen with the floor.
@@ -749,7 +781,7 @@ func _open_battle(kind: String) -> bool:
 		"s14": s14_enabled, "s14_sockets": _battle_sockets() if s14_enabled else {},
 		"heroes": hero_inputs, "foes": foes, "parts": catalog.values(), "candle": candle, "gifts": gift_slots.duplicate(),
 		"title": "Floor %02d / %s" % [map.get_current_floor(), kind],
-		"walk_mimic": walk_carry.any(func(carried: Dictionary): return carried.kind == "mimic"), "walk_cuts": cuts}
+		"walk_mimic": arrival.mimic, "walk_cuts": cuts}
 	var candidate := RankedBattle.new()
 	if not candidate._setup(battle_config).is_empty():
 		return false
@@ -766,7 +798,15 @@ func _open_battle(kind: String) -> bool:
 		var ill := StitchedSewnPatches.ill_fitting_fray(hero.id, hero.get("parts", {}))
 		if ill > 0 and candidate._units.has(hero.id) and not candidate._units[hero.id].lost:
 			candidate._change_fray(candidate._units[hero.id], ill, false)
+	# The battle opened cleanly, so the bridge's one-shot commit now consumes each
+	# still-unspent Walk's own mimic/cut descriptors; every failed setup above leaves
+	# the Walks and the whole plan untouched, exactly like any other failure.
+	for entry in _arrival_walks:
+		if not StitchedWalkMimicBattle.commit(entry.walk, entry.plan, rng.state):
+			return false
 	walk_carry.clear()
+	walk_arrival = {}
+	_arrival_walks.clear()
 	var opening_spares := candidate.satchel()
 	candidate._satchel = satchel.duplicate(true)
 	for spare in opening_spares:

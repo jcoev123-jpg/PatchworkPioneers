@@ -190,6 +190,8 @@ func _reset_to_map(session: StitchedRunSession) -> void:
 	session.battle_config.clear()
 	session.walk = null
 	session.walk_carry.clear()
+	session.walk_arrival = {}
+	session._arrival_walks.clear()
 	session.pending.clear()
 	session._service = null
 	session._actions.clear()
