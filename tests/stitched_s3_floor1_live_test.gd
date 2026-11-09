@@ -1,5 +1,7 @@
 extends SceneTree
 ## S3 regression: normal title button -> mounted battle -> legal GUI actions -> title.
+## S14 renamed the Warden's pot-helm cloth label, while its legacy move keeps the old name.
+const LEGACY_MOVE_NAMES := {"warden_head_pot_helm_bonk": "Pot Helm Bonk"}
 var failures: Array[String] = []
 var checks := 0
 
@@ -120,7 +122,10 @@ func _run() -> void:
 		for tier in range(1, 4):
 			var ability := StitchedParts.ability_at_tier(part, tier)
 			var stat := StitchedParts.stat_at_tier(part, tier)
-			_check(not ability.is_empty() and not stat.is_empty() and str(ability.get("name", "")) == str(part.get("name", "")) and
+			# S14 sewn-cloth labels may differ from the retired move name; this one HEAD patch keeps
+			# its authored legacy move name while displaying the cloth label.
+			var expected_move_name := str(LEGACY_MOVE_NAMES.get(id, str(part.get("name", ""))))
+			_check(not ability.is_empty() and not stat.is_empty() and str(ability.get("name", "")) == expected_move_name and
 				str(ability.get("move", "")) in StitchedParts.MOVE_POSES and
 				int(ability.get("launch_mask", 0)) != 0 and int(ability.get("target_mask", 0)) != 0 and
 				StitchedParts.validate_ability(ability).get("ok", false),
