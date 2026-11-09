@@ -1,0 +1,436 @@
+{
+ "_doc": "Owner 11-09: thrown things fly as their own picture, and a hit effect (stuffing, felt, blood...) shows on the target. Made by C:/rtg/g/anim/abilities.py --manifest.",
+ "objects": {
+  "shield": "res://assets/paper/fx/obj_shield.png",
+  "needle": "res://assets/paper/fx/obj_needle.png",
+  "spool": "res://assets/paper/fx/obj_spool.png",
+  "cog": "res://assets/paper/fx/obj_cog.png",
+  "bomb": "res://assets/paper/fx/obj_bomb.png",
+  "spark": "res://assets/paper/fx/obj_spark.png",
+  "crow": "res://assets/paper/fx/obj_crow.png",
+  "arrow": "res://assets/paper/fx/obj_arrow.png",
+  "lint": "res://assets/paper/fx/obj_lint.png",
+  "ink": "res://assets/paper/fx/obj_ink.png",
+  "yarnball": "res://assets/paper/fx/obj_yarnball.png",
+  "clothespin": "res://assets/paper/fx/obj_clothespin.png",
+  "bobbin": "res://assets/paper/fx/obj_bobbin.png",
+  "stuffing": "res://assets/paper/fx/obj_stuffing.png",
+  "hexbolt": "res://assets/paper/fx/obj_hexbolt.png"
+ },
+ "fx": {
+  "stuffing": "res://assets/paper/fx/hit_stuffing.png",
+  "felt": "res://assets/paper/fx/hit_felt.png",
+  "blood": "res://assets/paper/fx/hit_blood.png",
+  "sparks": "res://assets/paper/fx/hit_sparks.png",
+  "blast": "res://assets/paper/fx/hit_blast.png",
+  "dust": "res://assets/paper/fx/hit_dust.png",
+  "ink": "res://assets/paper/fx/hit_ink.png",
+  "heal": "res://assets/paper/fx/hit_heal.png",
+  "guard": "res://assets/paper/fx/hit_guard.png",
+  "hex": "res://assets/paper/fx/hit_hex.png"
+ },
+ "abilities": {
+  "back_shove": {
+   "fx": "hex"
+  },
+  "bailiff_snip": {
+   "fx": "blood"
+  },
+  "bailiff_unpick": {
+   "fx": "stuffing"
+  },
+  "behemoth_maul": {
+   "fx": "stuffing"
+  },
+  "behemoth_phase2_crushing_lash": {
+   "fx": "stuffing"
+  },
+  "behemoth_phase2_gut_rope": {
+   "fx": "stuffing"
+  },
+  "behemoth_phase2_rage_howl": {
+   "fx": "hex"
+  },
+  "behemoth_phase2_stuffing_storm": {
+   "fx": "stuffing"
+  },
+  "blinding_ink": {
+   "fx": "ink"
+  },
+  "bobbin_dive": {
+   "fx": "blood"
+  },
+  "bobbin_drop": {
+   "object": "bobbin",
+   "fx": "stuffing"
+  },
+  "briar_thrust": {
+   "fx": "blood"
+  },
+  "briar_wall": {
+   "fx": "guard"
+  },
+  "bristle": {
+   "fx": "guard"
+  },
+  "bulwark_pad": {
+   "fx": "guard"
+  },
+  "button_bulwark": {
+   "fx": "guard"
+  },
+  "button_golem_arms_brass_knuckle": {
+   "fx": "stuffing"
+  },
+  "button_golem_head_button_brow": {
+   "fx": "hex"
+  },
+  "button_golem_legs_stamping_heel": {
+   "fx": "felt"
+  },
+  "button_golem_torso_button_plating": {
+   "fx": "guard"
+  },
+  "button_shelter": {
+   "fx": "guard"
+  },
+  "button_wall": {
+   "fx": "guard"
+  },
+  "chain_drag": {
+   "fx": "hex"
+  },
+  "clamp_crush": {
+   "fx": "stuffing"
+  },
+  "colossus_barrage": {
+   "object": "needle",
+   "fx": "blood"
+  },
+  "colossus_bobbin": {
+   "object": "bobbin",
+   "fx": "sparks"
+  },
+  "colossus_guard": {
+   "fx": "guard"
+  },
+  "colossus_treadle": {
+   "fx": "stuffing"
+  },
+  "drain_thread": {
+   "fx": "hex"
+  },
+  "dust_scrawl": {
+   "fx": "hex"
+  },
+  "felt_slam": {
+   "fx": "stuffing"
+  },
+  "hauler_slam": {
+   "fx": "stuffing"
+  },
+  "hex_bolt": {
+   "object": "hexbolt",
+   "fx": "stuffing"
+  },
+  "hook_drag": {
+   "fx": "felt"
+  },
+  "horn_charge": {
+   "fx": "stuffing"
+  },
+  "ink_flick": {
+   "object": "ink",
+   "fx": "ink"
+  },
+  "ink_lash": {
+   "object": "ink",
+   "fx": "ink"
+  },
+  "iron_discipline": {
+   "fx": "guard"
+  },
+  "knot_stab": {
+   "fx": "felt"
+  },
+  "lantern_monk_arms_wick_spark": {
+   "object": "spark",
+   "fx": "sparks"
+  },
+  "lantern_monk_head_moth_wink": {
+   "fx": "dust"
+  },
+  "lantern_monk_legs_pole_shelter": {
+   "fx": "guard"
+  },
+  "lantern_monk_torso_lamplight_wash": {
+   "fx": "heal"
+  },
+  "leech_bite": {
+   "fx": "blood"
+  },
+  "lint_spit": {
+   "object": "lint",
+   "fx": "dust"
+  },
+  "loose_thread": {
+   "fx": "hex"
+  },
+  "marshal_prick": {
+   "fx": "blood"
+  },
+  "marshal_volley": {
+   "object": "needle",
+   "fx": "stuffing"
+  },
+  "matriarch_burst": {
+   "fx": "stuffing"
+  },
+  "moth_veil": {
+   "fx": "guard"
+  },
+  "needle_picket": {
+   "fx": "felt"
+  },
+  "needle_spit": {
+   "object": "needle",
+   "fx": "blood"
+  },
+  "needle_sting": {
+   "fx": "blood"
+  },
+  "padding_bash": {
+   "fx": "stuffing"
+  },
+  "patch_prick": {
+   "fx": "hex"
+  },
+  "pin_crown": {
+   "fx": "guard"
+  },
+  "pin_pitch": {
+   "object": "clothespin",
+   "fx": "felt"
+  },
+  "pin_prick": {
+   "fx": "blood"
+  },
+  "pinch": {
+   "fx": "blood"
+  },
+  "queen_devour": {
+   "fx": "blood"
+  },
+  "queen_dive": {
+   "fx": "stuffing"
+  },
+  "queen_dust": {
+   "fx": "dust"
+  },
+  "quill_burst": {
+   "fx": "felt"
+  },
+  "quilt_chew": {
+   "fx": "blood"
+  },
+  "rag_cloak": {
+   "fx": "guard"
+  },
+  "rag_duelist_arms_seam_thrust": {
+   "fx": "felt"
+  },
+  "rag_duelist_head_rapier_wink": {
+   "fx": "hex"
+  },
+  "rag_duelist_legs_heel_spin": {
+   "fx": "felt"
+  },
+  "rag_duelist_torso_feint_stitch": {
+   "fx": "guard"
+  },
+  "rag_rake": {
+   "fx": "felt"
+  },
+  "redline_reel": {
+   "fx": "stuffing"
+  },
+  "ribbon_bind": {
+   "fx": "hex"
+  },
+  "ribbon_cut": {
+   "fx": "blood"
+  },
+  "ripper_feint": {
+   "fx": "hex"
+  },
+  "rope_lash": {
+   "fx": "stuffing"
+  },
+  "sack_swing": {
+   "fx": "stuffing"
+  },
+  "scarecrow_arms_crow_peck": {
+   "object": "crow",
+   "fx": "blood"
+  },
+  "scarecrow_head_straw_gaze": {
+   "fx": "dust"
+  },
+  "scarecrow_legs_startle_step": {
+   "fx": "hex"
+  },
+  "scarecrow_torso_sack_of_thorns": {
+   "fx": "guard"
+  },
+  "seam_punch": {
+   "fx": "stuffing"
+  },
+  "seam_split": {
+   "fx": "blood"
+  },
+  "seamstress_arms_needle_prick": {
+   "object": "needle",
+   "fx": "blood"
+  },
+  "seamstress_head_mending_knot": {
+   "fx": "heal"
+  },
+  "seamstress_legs_tether_spools": {
+   "object": "spool",
+   "fx": "hex"
+  },
+  "seamstress_torso_shielding_hem": {
+   "fx": "guard"
+  },
+  "seize_thread": {
+   "fx": "hex"
+  },
+  "shear_slash": {
+   "fx": "felt"
+  },
+  "shell_shove": {
+   "fx": "stuffing"
+  },
+  "shell_up": {
+   "fx": "guard"
+  },
+  "shield_shunt": {
+   "fx": "stuffing"
+  },
+  "snare_lash": {
+   "fx": "stuffing"
+  },
+  "sonar_shriek": {
+   "fx": "hex"
+  },
+  "spool_bite": {
+   "fx": "felt"
+  },
+  "spool_curse": {
+   "fx": "hex"
+  },
+  "spool_lash": {
+   "fx": "stuffing"
+  },
+  "spool_snare": {
+   "fx": "hex"
+  },
+  "spool_stalk": {
+   "fx": "guard"
+  },
+  "stitch_ward": {
+   "fx": "guard"
+  },
+  "stuffing_hurl": {
+   "object": "stuffing",
+   "fx": "stuffing"
+  },
+  "swarm_blur": {
+   "fx": "guard"
+  },
+  "tattercloud_knot": {
+   "fx": "hex"
+  },
+  "termite_lint_spit": {
+   "object": "lint",
+   "fx": "dust"
+  },
+  "termite_swarm": {
+   "fx": "guard"
+  },
+  "thimble_ram": {
+   "fx": "stuffing"
+  },
+  "thistle_burst": {
+   "fx": "felt"
+  },
+  "thread_bite": {
+   "fx": "blood"
+  },
+  "thread_snip": {
+   "fx": "hex"
+  },
+  "thread_tag": {
+   "fx": "hex"
+  },
+  "tinker_arms_scrap_bomb": {
+   "object": "bomb",
+   "fx": "blast"
+  },
+  "tinker_head_cog_shot": {
+   "object": "cog",
+   "fx": "sparks"
+  },
+  "tinker_legs_tune_up": {
+   "fx": "heal"
+  },
+  "tinker_torso_casing_ward": {
+   "fx": "guard"
+  },
+  "tooth_shove": {
+   "fx": "hex"
+  },
+  "warden_arms_shield_catch": {
+   "fx": "guard"
+  },
+  "warden_head_pot_helm_command": {
+   "fx": "hex"
+  },
+  "warden_legs_rim_toss": {
+   "object": "shield",
+   "fx": "stuffing"
+  },
+  "warden_torso_iron_challenge": {
+   "fx": "stuffing"
+  },
+  "wing_dust": {
+   "fx": "dust"
+  },
+  "wing_shear": {
+   "fx": "hex"
+  },
+  "wraith_wail": {
+   "fx": "hex"
+  },
+  "yarn_hurl": {
+   "object": "yarnball",
+   "fx": "stuffing"
+  },
+  "yarn_ranger_arms_spool_arrow": {
+   "object": "arrow",
+   "fx": "stuffing"
+  },
+  "yarn_ranger_head_thread_sight": {
+   "fx": "hex"
+  },
+  "yarn_ranger_legs_backstep_ward": {
+   "fx": "guard"
+  },
+  "yarn_ranger_torso_knot_snare": {
+   "fx": "hex"
+  },
+  "zip_lunge": {
+   "fx": "stuffing"
+  }
+ }
+}

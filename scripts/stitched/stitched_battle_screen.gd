@@ -85,6 +85,9 @@ var _pose_manifest: Dictionary = {}
 ## Owner 11-09: every ability has its own pose, side -> actor id -> ability id -> art.
 const ABILITY_POSES_PATH := "res://data/art/ability_poses.json"
 static var _ability_poses: Variant = null
+## Owner 11-09: thrown things fly as their own picture; a hit effect shows on the target.
+const ABILITY_FX_PATH := "res://data/art/ability_fx.json"
+static var _ability_fx: Variant = null
 var _displayed_actor := ""
 var _stage_backdrop
 var _stage_art_view: Control
@@ -1699,6 +1702,26 @@ static func ability_pose_path(side: String, actor_id: String, ability_id: String
 	var poses: Variant = actors.get(actor_id, {}) if actors is Dictionary else {}
 	var path := str(poses.get(ability_id, "")) if poses is Dictionary else ""
 	return path if path.begins_with("res://") and ResourceLoader.exists(path, "Texture2D") else ""
+
+
+## {"object": art, "fx": art} for one ability: the thing it throws and the effect on whoever it reaches.
+## Either may be missing; only pictures that exist are returned.
+static func ability_fx(ability_id: String) -> Dictionary:
+	if _ability_fx == null:
+		_ability_fx = {}
+		var file := FileAccess.open(ABILITY_FX_PATH, FileAccess.READ)
+		if file != null:
+			var data: Variant = JSON.parse_string(file.get_as_text())
+			if data is Dictionary:
+				_ability_fx = data
+	var row: Variant = _ability_fx.get("abilities", {}).get(ability_id, {})
+	var out := {}
+	if row is Dictionary:
+		for kind in [["object", "objects"], ["fx", "fx"]]:
+			var path := str(_ability_fx.get(kind[1], {}).get(str(row.get(kind[0], "")), ""))
+			if path.begins_with("res://") and ResourceLoader.exists(path, "Texture2D"):
+				out[kind[0]] = path
+	return out
 
 
 func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: String) -> void:

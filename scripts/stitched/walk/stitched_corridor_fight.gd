@@ -68,6 +68,8 @@ var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
 var _beats: Tween
+## Thrown things and hit effects in flight (picture sprites); gone when their beat ends or is cut short.
+var _flying: Array[Sprite3D] = []
 var _focus_actor_id := ""
 var _focus_target_ids: Array[String] = []
 ## Left alone on a turn, a doll speaks over its head (S10 barks, fight lines).
@@ -985,6 +987,7 @@ func _cancel_beats() -> void:
 		_beats.kill()
 		_beats = null
 	_show_move_name("")
+	_clear_flying()
 	stage.cancel_fight_focus()
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
@@ -996,6 +999,7 @@ func _exit_tree() -> void:
 	if _beats != null:
 		_beats.kill()
 		_beats = null
+	_clear_flying()
 	if stage != null:
 		stage.cancel_fight_focus()
 
@@ -1077,6 +1081,7 @@ func _play_new_receipts() -> void:
 		_beats.tween_callback(Callable(self, "_show_move_name").bind(
 			engine._ability_name(actor_id, str(receipt.get("ability", "")))))
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), true))
+		_beats.tween_callback(Callable(self, "_throw_and_strike").bind(receipt.duplicate(true)))
 		_beats.tween_property(figure, "position:z", home.z + toward * LUNGE, BEAT_TIME * 0.4) \
 			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		for result in receipt.get("results", []):
@@ -1089,6 +1094,81 @@ func _play_new_receipts() -> void:
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
 	_beats.tween_callback(Callable(self, "_show_move_name").bind(""))
 	_beats.tween_callback(_shade_figures)
+
+
+## Owner 11-09: a thrown thing (scrap bomb, lint, needle...) leaves the hand and flies to each target as
+## its own picture, then the hit effect (stuffing, felt, blood...) bursts there. With nothing thrown the
+## effect bursts as the lunge lands; a guard or heal shows on whoever it reaches, the user included.
+func _throw_and_strike(receipt: Dictionary) -> void:
+	var actor_id := str(receipt.get("actor", ""))
+	var key := _live_receipt_key(actor_id)
+	if key.is_empty():
+		return
+	var art := StitchedBattleScreen.ability_fx(str(receipt.get("ability", "")))
+	var thrown := _texture(str(art.get("object", ""))) if art.has("object") else null
+	var burst := _texture(str(art.get("fx", ""))) if art.has("fx") else null
+	if thrown == null and burst == null:
+		return
+	var figure: Sprite3D = stage.figure_nodes[key]
+	var foe := str(battle.get_unit(actor_id).get("side", "")) != "hero"
+	var flight := BEAT_TIME * 0.4
+	for result in receipt.get("results", []):
+		var struck: Sprite3D = stage.figure_nodes.get(_live_receipt_key(str(result.get("target", ""))))
+		if struck == null:
+			continue
+		var delay := 0.0
+		if struck != figure:
+			delay = BEAT_TIME * 0.3
+			if thrown != null:
+				var piece := _fly_sprite(thrown, figure.position, _figure_height(figure) * 0.3, foe)
+				var path := piece.create_tween()
+				path.tween_property(piece, "position", struck.position, flight).set_trans(Tween.TRANS_SINE)
+				path.tween_callback(_drop_flying.bind(piece))
+				delay = flight
+		if burst == null or not bool(result.get("hit", true)):
+			continue
+		var puff := _fly_sprite(burst, struck.position, _figure_height(struck) * 0.7, foe)
+		puff.visible = false
+		puff.scale = Vector3.ONE * 0.6
+		var bloom := puff.create_tween()
+		bloom.tween_interval(delay)
+		bloom.tween_callback(puff.show)
+		bloom.tween_property(puff, "scale", Vector3.ONE * 1.15, BEAT_TIME * 0.6).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		bloom.parallel().tween_property(puff, "modulate:a", 0.0, BEAT_TIME * 0.45).set_delay(BEAT_TIME * 0.15)
+		bloom.tween_callback(_drop_flying.bind(puff))
+
+
+func _figure_height(figure: Sprite3D) -> float:
+	return figure.pixel_size * float(figure.texture.get_height())
+
+
+## One picture in flight, drawn over the dolls; pictures are drawn facing right, so a foe's are flipped.
+func _fly_sprite(texture: Texture2D, where: Vector3, size: float, flip: bool) -> Sprite3D:
+	var sprite := Sprite3D.new()
+	sprite.name = "Flying"
+	sprite.texture = texture
+	sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	sprite.no_depth_test = true
+	sprite.render_priority = 2
+	sprite.flip_h = flip
+	sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
+	sprite.pixel_size = size / float(maxi(texture.get_width(), texture.get_height()))
+	sprite.position = where
+	stage.figures.get_parent().add_child(sprite)
+	_flying.append(sprite)
+	return sprite
+
+
+func _drop_flying(sprite: Sprite3D) -> void:
+	_flying.erase(sprite)
+	sprite.queue_free()
+
+
+func _clear_flying() -> void:
+	for sprite in _flying:
+		if is_instance_valid(sprite):
+			sprite.queue_free()
+	_flying.clear()
 
 
 func _show_move_name(move_name: String) -> void:
