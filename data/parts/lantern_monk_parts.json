@@ -58,7 +58,7 @@
     },
     {
       "id": "lantern_monk_arms_wick_spark",
-      "name": "Wick Spark",
+      "name": "Ember-Wick Cuff",
       "slot": "arms",
       "owner": "lantern_monk",
       "stat": {
@@ -298,7 +298,7 @@
     },
     {
       "id": "lantern_monk_arms_snuff_flame",
-      "name": "Snuff Flame",
+      "name": "Snuff-Shade Sleeve",
       "slot": "arms",
       "owner": "lantern_monk",
       "stat": {
