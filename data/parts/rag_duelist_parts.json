@@ -4,7 +4,7 @@
   "parts": [
     {
       "id": "rag_duelist_head_feather_feint",
-      "name": "Feather Feint",
+      "name": "Feathered Eyepatch",
       "slot": "head",
       "owner": "rag_duelist",
       "stat": {"acc": 4},
@@ -31,7 +31,7 @@
     },
     {
       "id": "rag_duelist_head_tattered_snare",
-      "name": "Tattered Snare",
+      "name": "Knotted Hatband",
       "slot": "head",
       "owner": "rag_duelist",
       "stat": {"crit": 3},

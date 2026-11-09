@@ -31,8 +31,8 @@ const SCARECROW_PATCHES := {
 }
 const RAG_PATCHES := {
     "head": [
-        {"id": "rag_duelist_head_feather_feint", "name": "Feather Feint", "thread": "crimson"},
-        {"id": "rag_duelist_head_tattered_snare", "name": "Tattered Snare", "thread": "bone"},
+        {"id": "rag_duelist_head_feather_feint", "name": "Feathered Eyepatch", "thread": "crimson"},
+        {"id": "rag_duelist_head_tattered_snare", "name": "Knotted Hatband", "thread": "bone"},
     ],
     "arms": [
         {"id": "rag_duelist_arms_rapier_lunge", "name": "Rapier Lunge", "thread": "indigo"},
