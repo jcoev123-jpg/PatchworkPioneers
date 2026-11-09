@@ -1632,6 +1632,39 @@
           "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}
         }
       ]
+    },
+    {
+      "id": "v3_tinker_copper_mangle",
+      "title": "The Copper Mangle",
+      "description": "An eyeless tailor automaton turns a dented copper mangle beneath hanging scissors; the Tinker's own brass buckles tremble at every turn.",
+      "required_hero": "tinker",
+      "choices": [
+        { "id": "tighten_mangle", "text": "Feed spare thread into the mangle for a stronger seam", "outcome": { "gold": 0, "scraps": -2, "hp": -3, "max_hp": 4 } },
+        { "id": "sell_backplate", "text": "Surrender an old backplate for a purse of coins", "outcome": { "gold": 26, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the copper teeth turning", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_yarn_ranger_nightloom_span",
+      "title": "The Nightloom Span",
+      "description": "A vast woolen bridge stretches between two pin-legged spindle towers, and a ragged weaver winds moonlight through the Ranger's tangled yarn.",
+      "required_hero": "yarn_ranger",
+      "choices": [
+        { "id": "buy_moonloom_hem", "text": "Pay the weaver for a lasting moonloom hem", "outcome": { "gold": -18, "scraps": 0, "hp": 0, "max_hp": 3 } },
+        { "id": "cut_bridge_lashing", "text": "Cut a lashing for salvage, letting its needles scrape your stuffing", "outcome": { "gold": 0, "scraps": 3, "hp": -7, "max_hp": 0 } },
+        { "id": "leave", "text": "Cross beneath the bridge untouched", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_button_golem_hollow_bell_press",
+      "title": "The Hollow Bell Press",
+      "description": "A hollow iron bell hangs over a black-velvet bench; a tiny button-eyed smith offers to rivet its warm lining into the Golem's coat.",
+      "required_hero": "button_golem",
+      "choices": [
+        { "id": "fit_bell_lining", "text": "Trade loose rivets for a permanent, warm bell lining", "outcome": { "gold": 0, "scraps": -2, "hp": 5, "max_hp": 2 } },
+        { "id": "pawn_bell_heart", "text": "Pawn a deep brass heart seam for an urgent purse", "outcome": { "gold": 30, "scraps": 0, "hp": 0, "max_hp": -3 } },
+        { "id": "leave", "text": "Let the hollow bell fall silent", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
