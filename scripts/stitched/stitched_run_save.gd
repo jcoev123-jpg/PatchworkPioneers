@@ -6,6 +6,17 @@ extends RefCounted
 const MAX_COMMANDS := 20000
 const MAX_BYTES := 16000000
 const STAGED_SUFFIX := ".tmp"
+## External scanners (antivirus, search indexing) can hold a freshly written
+## or renamed user:// file for a few milliseconds even though the game has
+## already closed every handle. Under parallel load that transient lock made
+## a save's staging, replace or readback fail once in a while, leaving the
+## previously accepted generation sealed on disk so the current Peddler Save
+## looked like a stale-file mismatch. Bounded retries re-attempt only the
+## failed input/output step itself: every verification, rollback and failure
+## semantic stays exactly as strict, and persistent obstacles still fail
+## closed at once.
+const IO_ATTEMPTS := 4
+const IO_RETRY_MSEC := 25
 
 
 static func capture(session: StitchedRunSession) -> Dictionary:
@@ -189,7 +200,7 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	if buffer.size() > MAX_BYTES:
 		return false
 	var staged := path + STAGED_SUFFIX
-	var file := FileAccess.open(staged, FileAccess.WRITE)
+	var file := _open_with_retry(staged, FileAccess.WRITE)
 	if file == null:
 		return false
 	file.store_buffer(buffer)
@@ -202,7 +213,7 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	var had_prior := FileAccess.file_exists(path)
 	var prior := PackedByteArray()
 	if had_prior:
-		var previous := FileAccess.open(path, FileAccess.READ)
+		var previous := _open_with_retry(path, FileAccess.READ)
 		if previous != null and previous.get_length() <= MAX_BYTES:
 			prior = previous.get_buffer(previous.get_length())
 		if previous != null:
@@ -210,24 +221,61 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	# The staged bytes hold the complete latest run. The rename itself replaces
 	# the old target, which is never removed first, so a failed replace leaves
 	# the previously accepted save intact.
-	if DirAccess.rename_absolute(staged, path) != OK:
+	if not _rename_with_retry(staged, path):
 		DirAccess.remove_absolute(staged)
 		return false
 	# Fresh readback of the published file proves the player's next Continue
-	# sees exactly the just-captured run, never stale or partial bytes.
-	var published := FileAccess.open(path, FileAccess.READ)
-	if published == null:
-		_undo_replaced_publish(path, had_prior, prior)
-		return false
-	var final_bytes := published.get_buffer(published.get_length())
-	published.close()
-	if final_bytes == buffer:
-		return true
+	# sees exactly the just-captured run, never stale or partial bytes. Every
+	# attempt reopens and rereads the whole published file, so a transient
+	# external handle is outlasted instead of misread as a torn publish.
+	for _attempt in IO_ATTEMPTS:
+		if read_bytes(path) == buffer:
+			return true
+		OS.delay_msec(IO_RETRY_MSEC)
 	# A readback that fails its proof after the replace is still a failed
 	# publish: the previously accepted save goes back byte for byte, so a
 	# false result always leaves the file holding the last accepted run.
 	_undo_replaced_publish(path, had_prior, prior)
 	return false
+
+
+## One input/output step with bounded retries. Only a path that exists but
+## cannot be opened yet is retried, so absent files, unwritable directories
+## and deliberate staging obstacles still fail at once.
+static func _open_with_retry(path: String, mode: int) -> FileAccess:
+	var file := FileAccess.open(path, mode)
+	var attempt := 1
+	while file == null and FileAccess.file_exists(path) and attempt < IO_ATTEMPTS:
+		OS.delay_msec(IO_RETRY_MSEC)
+		file = FileAccess.open(path, mode)
+		attempt += 1
+	return file
+
+
+## The staged publish's replace step with the same bounded retry: a rename
+## refused by a transient external handle is re-attempted, never skipped.
+static func _rename_with_retry(from: String, to: String) -> bool:
+	var result := DirAccess.rename_absolute(from, to)
+	var attempt := 1
+	while result != OK and attempt < IO_ATTEMPTS:
+		OS.delay_msec(IO_RETRY_MSEC)
+		result = DirAccess.rename_absolute(from, to)
+		attempt += 1
+	return result == OK
+
+
+## Sealed bytes through the same retrying open, for byte-identity witnesses:
+## a transient external lock must not read as a change to the sealed save.
+## Empty when the file is absent or stays unreadable.
+static func read_bytes(path: String) -> PackedByteArray:
+	if path.is_empty() or not FileAccess.file_exists(path):
+		return PackedByteArray()
+	var file := _open_with_retry(path, FileAccess.READ)
+	if file == null:
+		return PackedByteArray()
+	var bytes := file.get_buffer(file.get_length())
+	file.close()
+	return bytes
 
 
 ## Best-effort rollback of a publish whose final verification failed after the
@@ -241,7 +289,7 @@ static func _undo_replaced_publish(path: String, had_prior: bool, prior: PackedB
 		# The prior file existed but could not be read back within the size cap;
 		# its unknown bytes cannot be restored.
 		return
-	var restored := FileAccess.open(path, FileAccess.WRITE)
+	var restored := _open_with_retry(path, FileAccess.WRITE)
 	if restored == null:
 		return
 	restored.store_buffer(prior)
@@ -251,7 +299,7 @@ static func _undo_replaced_publish(path: String, had_prior: bool, prior: PackedB
 ## A staged file only counts when its fresh readback holds the complete bytes
 ## and replays through the validator into the exact just-captured run.
 static func _staged_run_matches(staged: String, buffer: PackedByteArray, document: Dictionary) -> bool:
-	var file := FileAccess.open(staged, FileAccess.READ)
+	var file := _open_with_retry(staged, FileAccess.READ)
 	if file == null:
 		return false
 	var readback := file.get_buffer(file.get_length())
@@ -264,7 +312,7 @@ static func _staged_run_matches(staged: String, buffer: PackedByteArray, documen
 
 
 static func read_file(path: String) -> StitchedRunSession:
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file := _open_with_retry(path, FileAccess.READ)
 	if file == null or file.get_length() > MAX_BYTES:
 		return null
 	return restore(bytes_to_var(file.get_buffer(file.get_length())))

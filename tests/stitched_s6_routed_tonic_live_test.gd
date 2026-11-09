@@ -203,7 +203,7 @@ func _reject_stale_nav(app: Node, old_nav: Array, label: String) -> void:
 	_check(not path.is_empty(), label + " uses the public sealed save path")
 	var before := session.snapshot()
 	var journal := session.journal.duplicate(true)
-	var bytes := FileAccess.get_file_as_bytes(path) if FileAccess.file_exists(path) else PackedByteArray()
+	var bytes := StitchedRunSave.read_bytes(path)
 	var sealed := StitchedRunSave.read_file(path)
 	for button in old_nav:
 		_check(is_instance_valid(button), label + " retained a real pre-remount navigation control")
@@ -211,7 +211,7 @@ func _reject_stale_nav(app: Node, old_nav: Array, label: String) -> void:
 			button.pressed.emit()
 		_check(session.snapshot() == before and session.journal == journal,
 			label + " stale Save/Reload leaves the live snapshot and complete ledger untouched")
-		var now_bytes: PackedByteArray = FileAccess.get_file_as_bytes(path) if FileAccess.file_exists(path) else PackedByteArray()
+		var now_bytes: PackedByteArray = StitchedRunSave.read_bytes(path)
 		_check(now_bytes == bytes, label + " stale Save leaves the sealed save file byte-identical")
 		var resealed := StitchedRunSave.read_file(path)
 		_check((sealed == null) == (resealed == null) and (resealed == null
