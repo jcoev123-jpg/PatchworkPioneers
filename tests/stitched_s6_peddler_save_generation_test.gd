@@ -346,6 +346,50 @@ func _tonic_shop(app: Node) -> bool:
 			"the staging obstacle is removed before the genuine publish")
 	else:
 		_check(false, "staged-path directory obstacle was created")
+	# The recorded refused-replace transient, made deterministic: a handle
+	# held on the staged file makes the publish's replace refuse, and Windows'
+	# replace unlinks the sealed target before the move, so the refusal must
+	# restore the previously sealed generation instead of destroying it.
+	# Where the platform still allows the held-handle replace, the genuine
+	# publish itself is the required truthful outcome.
+	var hold_writer := FileAccess.open(staged, FileAccess.WRITE)
+	_check(hold_writer != null, "refused-replace witness stages a real file")
+	if hold_writer != null:
+		hold_writer.store_buffer(PackedByteArray([1]))
+		hold_writer.close()
+	var hold := FileAccess.open(staged, FileAccess.READ)
+	_check(hold != null, "refused-replace witness holds the staged file open")
+	var sealed_generation := StitchedRunSave.read_file(SAVE_PATH)
+	_check(sealed_generation != null and sealed_generation.snapshot() != visit,
+		"refused-replace witness starts from the sealed earlier generation")
+	if hold != null:
+		save.pressed.emit()
+		if app._stitched_run_save_failed:
+			_check(FileAccess.get_file_as_bytes(SAVE_PATH) == sealed_bytes,
+				"refused replace preserves the previously sealed save bytes")
+			var resealed := StitchedRunSave.read_file(SAVE_PATH)
+			_check(resealed != null and resealed.snapshot() == sealed_generation.snapshot()
+				and resealed.journal == sealed_generation.journal,
+				"refused replace keeps the earlier sealed generation authenticated in the file")
+			_check(session.snapshot() == visit and session.journal == journal
+				and session.rng.state == visit.rng and session.gold == visit.gold,
+				"refused replace leaves the live visit, ledger, wallet and RNG untouched")
+			reload.pressed.emit()
+			_check(app.stitched_run_session == session and session.snapshot() == visit
+				and session.journal == journal and session.rng.state == visit.rng
+				and session.pockets == visit.pockets and session.gold == visit.gold,
+				"the Reload beside the refused replace cannot substitute the restored older generation")
+			_check(FileAccess.get_file_as_bytes(SAVE_PATH) == sealed_bytes,
+				"the refused Reload never rewrites the sealed save file")
+		else:
+			var held_publish := StitchedRunSave.read_file(SAVE_PATH)
+			_check(held_publish != null and held_publish.snapshot() == visit
+				and held_publish.journal == journal,
+				"a held-handle replace the platform allows still publishes the exact live generation")
+		hold.close()
+		DirAccess.remove_absolute(staged)
+		_check(not FileAccess.file_exists(staged),
+			"the staged file is released before the genuine publish")
 	# The genuine publish and the immediately following mounted Reload restore
 	# the exact live open Peddler visit.
 	save.pressed.emit()
