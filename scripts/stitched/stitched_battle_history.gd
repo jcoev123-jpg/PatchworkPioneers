@@ -23,9 +23,25 @@ static func entry(receipt: Dictionary, actor_name: String, ability_name: String,
 				var verdict := "MISS" if not hit else (
 					"HIT · %d damage" % damage if damage > 0 else "HIT · effect only (no damage)")
 				detail += "\n→ %s: %s" % [target_name, verdict]
-				for status in result.get("statuses", []):
-					if bool(status.get("resisted", false)):
-						detail += " · resisted " + str(status.get("status", ""))
+				# A status receipt belongs to this hit target, not the acting side.
+				# Do not imply that a missed or refused/resisted effect landed.
+				if hit:
+					for status in result.get("statuses", []):
+						var effect := str(status.get("status", "")).replace("_", " ").to_upper()
+						if effect.is_empty():
+							continue
+						if bool(status.get("refused", false)):
+							detail += " · BLOCKED " + effect
+						elif bool(status.get("resisted", false)):
+							detail += " · resisted " + effect.to_lower()
+						elif effect == "HEAL":
+							if int(status.get("amount", 0)) > 0:
+								detail += " · MENDED"
+						elif effect == "STEAL":
+							if int(status.get("amount", 0)) > 0:
+								detail += " · STUFFING STOLEN"
+						else:
+							detail += " · " + effect
 				targets.append({"id": target_id, "name": target_name,
 					"hit": hit, "damage": damage})
 		"move":
