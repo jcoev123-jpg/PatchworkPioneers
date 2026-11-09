@@ -30,6 +30,10 @@ const CHOICE_CAPTIONS := {
 	"reach": "REACH INSIDE", "read": "READ THEM", "unpick": "UNPICK IT",
 }
 const HEAL_ITEMS := ["thimble_tonic", "fresh_stuffing"]
+const HINT := "Click the hallway or press Up to walk on. Down looks back."
+## The open hallway, and the strip of floor nearest the eye.
+const AHEAD_RECT := Rect2(290, 96, 700, 454)
+const BEHIND_RECT := Rect2(290, 612, 700, 108)
 var walk: StitchedWalkRules
 var expected: Dictionary = {}
 var receipts: Array = []
@@ -183,15 +187,17 @@ func _ready() -> void:
 	eye_readout = _label(Rect2(28, 18, 800, 30), "", 19)
 	clue = _label(Rect2(240, 96, 800, 40), "", 22)
 	clue.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	feedback = _label(Rect2(286, 554, 708, 54), "Borrow a doll's eyes, then walk on.", 20)
+	feedback = _label(Rect2(286, 554, 708, 54), HINT, 20)
 	feedback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	feedback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	feedback.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	feedback.max_lines_visible = 2
 	feedback.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	feedback.tooltip_text = feedback.text
-	forward_button = _button("WALK ON", Rect2(500, 610, 280, 66), 30, func(): _use_primary("forward"))
-	back_button = _button("LOOK BACK", Rect2(796, 620, 190, 48), 21, func(): _use_primary("look_back"))
+	# Owner 11-09: no WALK ON button. The hallway ahead is the way on and the floor at your
+	# feet turns you round; Up and Down do the same.
+	forward_button = _hotspot("WalkAhead", AHEAD_RECT, "Walk on", func(): _use_primary("forward"))
+	back_button = _hotspot("LookBehind", BEHIND_RECT, "Look back", func(): _use_primary("look_back"))
 	drawer_toggle = _button("DOLLS & POCKETS", Rect2(24, 414, 250, 48), 19, _toggle_drawer)
 	drawer_toggle.name = "DollsAndPocketsToggle"
 	drawer_toggle.tooltip_text = "Show or hide doll switches and carried pocket items"
@@ -223,7 +229,8 @@ func _build_event_panel() -> void:
 	event_panel.name = "CorridorEvent"
 	event_panel.position = Vector2(330, 360)
 	event_panel.size = Vector2(620, 190)
-	event_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	# It sits over the hallway, so a click on the panel must not walk on.
+	event_panel.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(event_panel)
 	CHROME.action_tray(event_panel, Rect2(Vector2.ZERO, event_panel.size))
 	event_title = Label.new()
@@ -268,6 +275,22 @@ func _button(caption: String, rectangle: Rect2, font_size: int, action: Callable
 	return button
 
 
+## A clickable patch of the corridor itself: no frame, no words, just the hand cursor.
+func _hotspot(id: String, rectangle: Rect2, hint: String, action: Callable) -> Button:
+	var button := Button.new()
+	button.name = id
+	button.position = rectangle.position
+	button.size = rectangle.size
+	button.flat = true
+	button.tooltip_text = hint
+	button.mouse_default_cursor_shape = Control.CURSOR_POINTING_HAND
+	for state in ["normal", "hover", "pressed", "focus", "disabled", "hover_pressed"]:
+		button.add_theme_stylebox_override(state, StyleBoxEmpty.new())
+	button.pressed.connect(action)
+	add_child(button)
+	return button
+
+
 static func texture_or_fallback(path: String, fallback: String) -> Texture2D:
 	if ResourceLoader.exists(path):
 		var resource := load(path)
@@ -307,6 +330,9 @@ func _use_primary(kind: String) -> void:
 		return
 	var button: Button = forward_button if kind == "forward" else back_button
 	if not button.is_visible_in_tree() or button.disabled:
+		return
+	# Already facing the dolls: a second look would only stir the mannequins.
+	if kind == "look_back" and expected.get("looking_back", false):
 		return
 	command(kind)
 
@@ -372,6 +398,23 @@ func _unhandled_key_input(event: InputEvent) -> void:
 		and event.pressed and not event.echo and event.keycode == KEY_ESCAPE:
 		_set_drawer(false)
 		get_viewport().set_input_as_handled()
+
+
+## Up / W walks on and Down / S looks back, before focused buttons can take the arrows.
+## The open drawer keeps the arrows for moving between its buttons.
+func _walk_key(event: InputEvent) -> bool:
+	if drawer_open or not is_visible_in_tree() or not event is InputEventKey or not event.pressed or event.echo:
+		return false
+	var key := event as InputEventKey
+	if key.ctrl_pressed or key.alt_pressed or key.shift_pressed or key.meta_pressed:
+		return false
+	if key.keycode in [KEY_UP, KEY_W]:
+		_use_primary("forward")
+	elif key.keycode in [KEY_DOWN, KEY_S]:
+		_use_primary("look_back")
+	else:
+		return false
+	return true
 
 
 func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> Dictionary:
@@ -657,7 +700,7 @@ func refresh(animate: bool = false) -> void:
 		pocket_buttons[index].text = str(pocket[index]).replace("_", " ").capitalize() if index < pocket.size() else "Empty pocket"
 		pocket_buttons[index].disabled = index >= pocket.size() or expected.phase != "walking"
 	forward_button.disabled = expected.phase != "walking"
-	forward_button.text = "LET IT TAKE ONE" if walk.tug_unresolved() else "WALK ON"
+	forward_button.tooltip_text = "Let it take one" if walk.tug_unresolved() else "Walk on"
 	exit_button.visible = host == null
 	back_button.disabled = expected.phase != "walking"
 	_show_event()
@@ -671,6 +714,10 @@ func refresh(animate: bool = false) -> void:
 
 
 func _input(event: InputEvent) -> void:
+	if walk != null and _walk_key(event):
+		get_viewport().set_input_as_handled()
+		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
+		return
 	if drawer_toggle != null and drawer_toggle.has_focus() and event is InputEventKey \
 		and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 		_toggle_drawer()
@@ -832,7 +879,7 @@ func _show_event() -> void:
 	var choices: Array = []
 	if walk.tug_unresolved():
 		event_title.text = "SOMETHING HAS THE THREAD"
-		event_text.text = "A thread pulls tight from the dark behind the last doll. It wants a part, or something sharp."
+		event_text.text = "A thread pulls tight from the dark behind the last doll. Walk on and it takes a part, or give it something sharp."
 		var pocket: Array = expected.pockets[expected.viewpoint]
 		for item in ["pins", "spare_spool"]:
 			var slot := pocket.find(item)

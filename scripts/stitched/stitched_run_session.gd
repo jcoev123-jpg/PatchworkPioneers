@@ -1082,6 +1082,16 @@ func visit_action_part(action: Dictionary) -> Dictionary:
 			var id := str(pending.get("peddler_stock", {}).get("part", {}).get("id", ""))
 			if catalog.has(id):
 				return {"id": id, "slot": str(catalog[id].slot)}
+	# Owner 11-09: an event choice about a spare (unpick it, feed it to the moth) or about a
+	# doll's worn part shows that part too, so the corridor shop can lay it on the floor.
+	if str(action.get("id", "")) == "unpick" or str(pending.get("service", "")) == "Event":
+		if arguments.size() == 1 and (arguments[0] is int or arguments[0] is float) 				and int(arguments[0]) >= 0 and int(arguments[0]) < satchel.size():
+			var spare: Dictionary = satchel[int(arguments[0])]
+			return {"id": str(spare.id), "slot": str(spare.slot)}
+		if arguments.size() == 2 and StitchedParts.SLOTS.has(str(arguments[1])):
+			for hero in heroes:
+				if hero.id == str(arguments[0]):
+					return {"id": str(hero.parts[str(arguments[1])].id), "slot": str(arguments[1])}
 	return {}
 
 

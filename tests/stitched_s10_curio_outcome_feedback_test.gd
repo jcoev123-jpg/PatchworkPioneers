@@ -169,9 +169,9 @@ func _choose(screen: StitchedWalkScreen, choice: String) -> Dictionary:
         and screen.feedback.tooltip_text == line and screen.feedback.size.y >= 50,
         "two-line bone-ink result keeps full hover disclosure at readable size")
     check(screen.feedback.position.y >= screen.event_panel.position.y + screen.event_panel.size.y
-        and screen.feedback.position.y + screen.feedback.size.y < screen.forward_button.position.y
+        and screen.feedback.position.y + screen.feedback.size.y < screen.back_button.position.y
         and screen.feedback.position.x + screen.feedback.size.x < screen.pocket_buttons[0].position.x,
-        "1280x720 consequence stays between event and WALK ON, clear of pockets")
+        "1280x720 consequence stays between event and the floor strip, clear of pockets")
     for index in range(previous.pending.size(), current.pending.size()):
         var effect: Dictionary = current.pending[index]
         if effect.get("source") != acted:

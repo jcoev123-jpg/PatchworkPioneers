@@ -4978,7 +4978,8 @@ func _stitched_visit_page(session: StitchedRunSession, content: VBoxContainer) -
 	_stitched_run_keyboard_chain()
 
 
-func _stitched_visit_choices(session: StitchedRunSession, choices_box: VBoxContainer, expected: Dictionary) -> Array[Button]:
+## Each choice is made in `choices_box`, or in its own home when the page lays them out itself.
+func _stitched_visit_choices(session: StitchedRunSession, choices_box: Control, expected: Dictionary, homes: Array = []) -> Array[Button]:
 	var made: Array[Button] = []
 	# Ownership guard: each choice captures its page, epoch, service and session at
 	# creation. A detached or remounted page's buttons never dispatch, even when the
@@ -4986,8 +4987,10 @@ func _stitched_visit_choices(session: StitchedRunSession, choices_box: VBoxConta
 	var page := stitched_run_panel
 	var epoch := _stitched_run_epoch
 	var service := str(session.pending.get("service", "Event"))
-	for action in session.visit_actions():
-		var button := _stitched_run_action(choices_box, str(action.text), func():
+	var actions := session.visit_actions()
+	for index in actions.size():
+		var action: Dictionary = actions[index]
+		var button := _stitched_run_action(homes[index] if index < homes.size() else choices_box, str(action.text), func():
 			if stitched_run_session == session and stitched_run_panel == page \
 					and epoch == _stitched_run_epoch and is_instance_valid(page) \
 					and page.get_parent() == self and page.is_visible_in_tree() \
@@ -5012,8 +5015,8 @@ func _stitched_visit_choices(session: StitchedRunSession, choices_box: VBoxConta
 	return made
 
 
-## Owner 11-08: a road stop happens in the corridor. The party stands at their ranks, the stop
-## stands across from them, and its words and choices hang beside it; no pop-up page.
+## Owner 11-09: a road stop is a little shop on the corridor floor, seen with the doll's eyes:
+## its keeper ahead, what it offers lying on the floor, words only on what is looked at.
 func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	_clear_stitched_run_panel()
 	var service := str(session.pending.get("service", "Event"))
@@ -5022,17 +5025,27 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	visit.set_meta("page_kind", "visit:" + service)
 	add_child(visit)
 	stitched_run_panel = visit
+	var keepers: Array = ["stop_" + service.to_snake_case()]
+	if service == "Event":
+		keepers = ["prop_" + str(session.pending.get("event_id", "")), "stop_event"]
 	visit.present(session.walk_area(), str(StitchedS1BEffects.candle_band(clampi(session.candle, 0, 100)).name),
-		service, str(session.pending.get("title", service.capitalize())), session.visit_story())
-	_stitched_place_party(visit.stage, session)
-	for button in _stitched_visit_choices(session, visit.choices, session.snapshot()):
-		visit.dress_choice(button)
-		if button.icon != null:
-			button.custom_minimum_size = Vector2(0, 60)
+		str(session.pending.get("title", service.capitalize())), session.visit_story(), keepers)
+	var party: Array = []
+	for hero in session.heroes:
+		if not hero.get("lost", false):
+			party.append({"id": str(hero.id), "name": str(hero.name), "rank": int(hero.get("rank", 0))})
+	party.sort_custom(func(a, b): return a.rank < b.rank)
+	var actions := session.visit_actions()
+	var pictures: Array = []
+	for action in actions:
+		var part := session.visit_action_part(action)
+		pictures.append("" if part.is_empty() else StitchedSewnPatches.icon_path(part.id, part.slot))
+	var homes := visit.lay_out(actions, party, pictures)
+	visit.dress(_stitched_visit_choices(session, visit, session.snapshot(), homes))
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
-	navigation.position = Vector2(32, 656)
-	navigation.add_theme_constant_override("separation", 12)
+	navigation.position = Vector2(1280 - 2 * 136 - 8 - 16, 12)
+	navigation.add_theme_constant_override("separation", 8)
 	visit.add_child(navigation)
 	# A retired stop's Save/Reload must never overwrite or rewind a later
 	# authenticated run: each callback re-checks the captured session, page,
@@ -5041,23 +5054,17 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	# holds the previous generation, which must never be substituted for the
 	# live visit the player just tried to save.
 	var epoch := _stitched_run_epoch
-	for button in [_stitched_run_action(navigation, "Save run", func():
-			if stitched_run_session == session and stitched_run_panel == visit \
-					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
-					and visit.is_visible_in_tree() and session.phase == "visit" \
-					and str(session.pending.get("service", "Event")) == service:
+	var saves: Array[Button] = [_stitched_run_action(navigation, "Save run", func():
+			if stitched_run_session == session and stitched_run_panel == visit 					and epoch == _stitched_run_epoch and is_instance_valid(visit) 					and visit.is_visible_in_tree() and session.phase == "visit" 					and str(session.pending.get("service", "Event")) == service:
 				_stitched_run_save_file(session)),
 		_stitched_run_action(navigation, "Reload saved run", func():
-			if stitched_run_session == session and stitched_run_panel == visit \
-					and epoch == _stitched_run_epoch and is_instance_valid(visit) \
-					and visit.is_visible_in_tree() and session.phase == "visit" \
-					and str(session.pending.get("service", "Event")) == service \
-					and not _stitched_run_save_failed:
-				load_stitched_run(stitched_save_path))]:
+			if stitched_run_session == session and stitched_run_panel == visit 					and epoch == _stitched_run_epoch and is_instance_valid(visit) 					and visit.is_visible_in_tree() and session.phase == "visit" 					and str(session.pending.get("service", "Event")) == service 					and not _stitched_run_save_failed:
+				load_stitched_run(stitched_save_path))]
+	for button in saves:
 		StitchedBattleScreen.CHROME.style_button(button)
-		button.add_theme_font_size_override("font_size", 17)
-		button.custom_minimum_size = Vector2(170, 40)
-	_stitched_run_keyboard_chain()
+		button.add_theme_font_size_override("font_size", 14)
+		button.custom_minimum_size = Vector2(136, 32)
+	visit.wire_focus(saves)
 
 
 func _sync_stitched_run_exit() -> void:
