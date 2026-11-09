@@ -60,6 +60,7 @@ const ACTOR_ART := {
 	"zipper_snake": "enemies/zipper_snake",
 	"pincushion_hedgehog": "enemies/pincushion_hedgehog",
 	"moth_swarm": "enemies/moth_swarm",
+	"moth_queen": "enemies/moth_queen",
 	"needle_wasp": "enemies/needle_wasp",
 	"shearwing_mantis": "enemies/shearwing_mantis",
 	"spoolback_hound": "enemies/spoolback_hound",
