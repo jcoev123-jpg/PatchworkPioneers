@@ -6,6 +6,8 @@ extends RefCounted
 
 const PART_SOURCE := "res://data/parts/enemy_parts.json"
 const PATCH_SOURCE := "res://data/shop/stitched_patch_offers.json"
+## Existing ordinary budget COAT buttons (20 and 35 gold) guaranteed in open stock.
+const BUDGET_PATCH_IDS := ["scrap_lined_vest", "padded_vest"]
 
 var _node_id := ""
 var _offer: Dictionary = {}
@@ -78,8 +80,44 @@ static func sample_stitched_patch_stall_offers(rng: Variant, owned_patch_ids: Va
 		if candidates.size() < 3:
 			return {"ok": false}
 		return {"ok": true, "offers": candidates.slice(0, 3)}
-	return RunShopPurchases.sample_patch_stall_offers(rng, candidates,
+	var sampled: Dictionary = RunShopPurchases.sample_patch_stall_offers(rng, candidates,
 		owned_patch_ids.duplicate(true), [], false)
+	return _guarantee_budget_offer(sampled, owned, prices)
+
+
+## Deterministic post-sample rule (no RNG): when the draw holds neither budget
+## button but one of them is still unowned, the last sampled unowned row is
+## replaced in place by the cheapest unowned budget row. Rows stay three,
+## distinct and authentic; the sampler's other rows and the RNG are untouched.
+static func _guarantee_budget_offer(sampled: Dictionary, owned: Dictionary,
+		prices: Dictionary) -> Dictionary:
+	if sampled.get("ok") != true or not sampled.get("offers") is Array:
+		return sampled
+	var offers: Array = sampled.offers
+	var budget: Array = []
+	for id in BUDGET_PATCH_IDS:
+		if prices.has(id):
+			budget.append(id)
+	budget.sort_custom(func(a: String, b: String) -> bool: return prices[a] < prices[b])
+	var target := ""
+	for id in budget:
+		if not owned.has(id):
+			target = id
+			break
+	if target.is_empty():
+		return sampled
+	var replace_index := -1
+	for index in range(offers.size()):
+		var row: Dictionary = offers[index]
+		if budget.has(row.id):
+			return sampled
+		if not owned.has(row.id):
+			replace_index = index
+	if replace_index < 0:
+		return sampled
+	var replaced: Array = offers.duplicate(true)
+	replaced[replace_index] = {"id": target, "price": int(prices[target])}
+	return {"ok": true, "offers": replaced}
 
 
 ## Preflight both catalogs BEFORE drawing from the caller's canonical RNG.
