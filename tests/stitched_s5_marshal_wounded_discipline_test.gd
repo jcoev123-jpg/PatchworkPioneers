@@ -26,13 +26,13 @@ const INTENT_KEYS := [
 const PRICK := {
 	"id": "marshal_prick", "name": "Marshal Prick", "kind": "melee",
 	"launch": [1, 2], "target": [1], "target_side": "enemy", "multi": false,
-	"acc": 87, "dmg": [4, 6], "crit": 0, "effects": {"bleed": 1},
+	"acc": 87, "dmg": [4, 6], "crit": 0, "effects": {"bleed": 1, "mark": 3},
 	"self_move": 0, "move": "attack2",
 }
 const VOLLEY := {
 	"id": "marshal_volley", "name": "Marshal Volley", "kind": "ranged",
 	"launch": [1, 4], "target": [1, 3], "target_side": "enemy", "multi": false,
-	"acc": 85, "dmg": [3, 5], "crit": 0, "effects": {},
+	"acc": 85, "dmg": [3, 5], "crit": 0, "mark_damage": 3, "effects": {},
 	"self_move": 0, "move": "attack3",
 }
 const IRON := {
