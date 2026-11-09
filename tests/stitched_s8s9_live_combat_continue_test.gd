@@ -779,6 +779,24 @@ func _run() -> void:
 	if confirmed.is_empty():
 		_finish(app)
 		return
+	# Honest S15 receipts: every resisted entry on the confirmed receipt names its real
+	# recipient's group resist (the landed patch entry is never resisted, and the signature's
+	# own effects pierce nothing) and a roll inside that resist.
+	for hit_entry in confirmed.results:
+		var resist_foe: Dictionary = session.battle.get_unit(str(hit_entry.get("target", "")))
+		for status_entry in hit_entry.get("statuses", []):
+			if not bool(status_entry.get("resisted", false)):
+				continue
+			var group := str(status_entry.get("status", ""))
+			if group in ["push", "pull"]:
+				group = "move"
+			elif group in StitchedRules.RESIST_DEBUFFS:
+				group = "debuff"
+			_check(int(status_entry.get("roll", 0)) >= 1
+				and int(status_entry.get("roll", 101)) <= int(status_entry.get("resist", 0))
+				and int(status_entry.get("resist", -1)) \
+					== int(resist_foe.get("resist", {}).get(group, 0)),
+				"the confirmed receipt's resisted entries are honest S15 decisions by their real foe")
 
 	# The next doll cannot replay the warden's already-spent head part.
 	var warden_head_part := str(battle2.get_unit("warden").get("parts", {}).get("head", {}).get("id", ""))
@@ -788,6 +806,59 @@ func _run() -> void:
 	_check(next_actor != "warden" and duplicate.get("ok") == false
 		and _state(session, screen2) == before_duplicate and session.is_consistent(),
 		"another doll cannot spend the warden's head part: the replay is refused without drift")
+	# The corridor trace must extend past the foe response AND the patch's affected unit
+	# opening its own turn (its start-of-turn clocks tick; a bleed or rot tick may even kill
+	# it, a stunned tick consumes the turn) before the Save: Continue then proves real
+	# consequences of the landed patch, never just its cast. Only mounted Pass presses
+	# advance turns; the mounted screen journals each foe's own ability receipt.
+	var cast_journal := session.journal.size()
+	var cast_receipts := screen2.receipts.size()
+	var patch_effect := str(patch_record.get("effect", ""))
+	var affected_id := str(confirmed.struck)
+	if patch_effect == "guard":
+		affected_id = "warden"
+	var affected_after: Dictionary = session.battle.get_unit(affected_id)
+	var affected_clocked := bool((affected_after.get("statuses", {}) as Dictionary).has(patch_effect))
+	var affected_statuses: Dictionary = (affected_after.get("statuses", {}) as Dictionary).duplicate(true)
+	var affected_hp := int(affected_after.get("hp", -1))
+	var affected_tick := false
+	var foe_answer := 0
+	var extension := 0
+	while (not affected_tick or foe_answer == 0) and extension < 60 and not battle2.is_over():
+		if affected_id != "warden" or str(battle2.current_actor_id()) != affected_id:
+			extension += 1
+			if not _press(corridor2.more_button, "corridor More for Pass (trace extension)") \
+					or not _press(corridor2.more_buttons["pass"], "mounted Pass (trace extension)"):
+				break
+			await process_frame
+			foe_answer = _foe_receipts_since(session, cast_journal)
+		else:
+			# The affected actor's own post-cast turn is open: its clocks already ticked.
+			affected_tick = true
+		var affected_now: Dictionary = session.battle.get_unit(affected_id)
+		if affected_now.is_empty() or bool(affected_now.get("dead", false)) or bool(affected_now.get("lost", false)):
+			affected_tick = true
+		elif affected_clocked and not (affected_now.get("statuses", {}) as Dictionary).has(patch_effect):
+			affected_tick = true
+		elif affected_clocked and int((affected_now.get("statuses", {}) as Dictionary).get(patch_effect, 0)) \
+				< int(affected_statuses.get(patch_effect, 0)):
+			affected_tick = true
+		for later_receipt in screen2.receipts.slice(cast_receipts):
+			if str(later_receipt.get("actor", "")) == affected_id \
+					and str(later_receipt.get("actor_side", "")) == "foe":
+				affected_tick = true
+	_check(foe_answer > 0 and affected_tick and not battle2.is_over() and session.is_consistent(),
+		"the Save trace extends past a real foe response and the affected unit's own start-of-turn tick")
+	var affected_final: Dictionary = session.battle.get_unit(affected_id)
+	if not affected_final.is_empty() and not bool(affected_final.get("dead", false)) \
+			and not bool(affected_final.get("lost", false)) and affected_clocked:
+		_check(not (affected_final.get("statuses", {}) as Dictionary).has(patch_effect)
+			or int((affected_final.get("statuses", {}) as Dictionary).get(patch_effect, 0)) \
+				< int(affected_statuses.get(patch_effect, 0)),
+			"the patch's own clock visibly ticked on its affected unit before the Save")
+		if patch_effect in ["bleed", "rot"]:
+			_check(int(affected_final.get("hp", affected_hp + 1)) < affected_hp,
+				"the harmful " + patch_effect + " tick damaged its affected unit before the Save")
 	# Save only through the live corridor control, after the real hand and patch evidence,
 	# then compare the next mounted command.
 	_press(corridor2.more_button, "corridor More for Save")

@@ -7,7 +7,8 @@ const PROFILE_VERSION := 1
 ## S9d: what Wren's room remembers between nights. Only the running game's root writes it.
 @export var bedroom_save_path := "user://wren_room.json"
 var bedroom_record: Dictionary = {}
-var _bedroom_noted_run := 0
+## S9: journal identity of the last noted night; a reloaded ended save replays it.
+var _bedroom_noted_run := ""
 ## S12: where the between-runs gift profile lives; tests point this elsewhere. Empty means the
 ## real profile, read and written only while the app is the running scene.
 @export var wren_gifts_profile_path := ""
@@ -3946,14 +3947,22 @@ func _bedroom_state() -> Dictionary:
 	return bedroom_record
 
 
-## Each finished run is one night in the room's record, counted once.
+## Each finished run is one night in the room's record, counted once. Identity is
+## the run's own journal, not the session object: a title Continue replays the
+## identical ended journal and must not count that finished night twice.
 func _note_bedroom_run(session: StitchedRunSession) -> void:
-	if session == null or _bedroom_noted_run == session.get_instance_id():
+	if session == null or _bedroom_noted_run == _stitched_run_night_key(session):
 		return
-	_bedroom_noted_run = session.get_instance_id()
+	_bedroom_noted_run = _stitched_run_night_key(session)
 	bedroom_record = StitchedBedroomRecord.after_run(_bedroom_state(), session)
 	if get_tree().current_scene == self:
 		StitchedBedroomRecord.save_file(bedroom_save_path, bedroom_record)
+
+
+## The identity of a concluded night: its seed and sealed journal, so any replay
+## of the same ended journal is the same night.
+func _stitched_run_night_key(session: StitchedRunSession) -> String:
+	return "%d:%d" % [session.seed_value, session.journal.hash()]
 
 
 func _return_stitched_run_room() -> void:

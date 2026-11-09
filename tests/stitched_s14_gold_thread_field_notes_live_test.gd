@@ -247,9 +247,13 @@ func _run() -> void:
 	_check(guide.get_child_count() == 2 and guide.get_node("FeltPanel") is NinePatchRect
 		and guide.theme == null and _focusable(guide) == 6,
 		"same felt artwork, inherited theme and six-control focus ring, no added controls")
-	for i in [0, 2, 3]:
+	for i in [0, 2]:
 		_check(guide.page_text(i) == "\n\n".join(StitchedFieldGuide.PAGES[i]),
 			"other guide page stays exactly unchanged: " + str(i))
+	var door_examples := StitchedFieldGuide.side_door_examples()
+	_check(door_examples.size() == 4 and guide.page_text(3) == "\n\n".join(
+		StitchedFieldGuide.PAGES[3] + door_examples),
+		"Candle page keeps its original baseline and exactly four validated S14 door notes")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree(),
 		"existing Seams tab is reachable by pointer")

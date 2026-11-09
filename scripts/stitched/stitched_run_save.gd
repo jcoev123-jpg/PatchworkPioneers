@@ -14,7 +14,11 @@ const STAGED_SUFFIX := ".tmp"
 ## looked like a stale-file mismatch. Bounded retries re-attempt only the
 ## failed input/output step itself: every verification, rollback and failure
 ## semantic stays exactly as strict, and persistent obstacles still fail
-## closed at once.
+## closed at once. A refused replace is more than a retry case: Windows'
+## rename unlinks the old target before the move, so the previously accepted
+## bytes are always read first and restored byte for byte whenever the
+## replace or its proof fails, keeping the sealed file truthful in every
+## failure branch.
 const IO_ATTEMPTS := 4
 const IO_RETRY_MSEC := 25
 
@@ -200,7 +204,7 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	if buffer.size() > MAX_BYTES:
 		return false
 	var staged := path + STAGED_SUFFIX
-	var file := _open_with_retry(staged, FileAccess.WRITE)
+	var file := _write_open_with_retry(staged)
 	if file == null:
 		return false
 	file.store_buffer(buffer)
@@ -209,19 +213,28 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 		DirAccess.remove_absolute(staged)
 		return false
 	# The previously accepted save is the exact state a failed publish must
-	# leave in the file, so its bytes are read before any replace happens.
+	# leave in the file, so its bytes are read before any replace happens. A
+	# prior that stays unreadable, or one too large to restore, is never
+	# destroyed: the replace is refused while the sealed file is still intact.
 	var had_prior := FileAccess.file_exists(path)
 	var prior := PackedByteArray()
 	if had_prior:
 		var previous := _open_with_retry(path, FileAccess.READ)
-		if previous != null and previous.get_length() <= MAX_BYTES:
+		var restorable: bool = previous != null and previous.get_length() <= MAX_BYTES
+		if restorable:
 			prior = previous.get_buffer(previous.get_length())
 		if previous != null:
 			previous.close()
-	# The staged bytes hold the complete latest run. The rename itself replaces
-	# the old target, which is never removed first, so a failed replace leaves
-	# the previously accepted save intact.
+		if not restorable:
+			DirAccess.remove_absolute(staged)
+			return false
+	# The staged bytes hold the complete latest run. A replace can still be
+	# refused by a transient external handle, and Windows' rename unlinks an
+	# existing target before the move, so the refused replace may have already
+	# destroyed the sealed file: the bytes read above go back before the
+	# failure is reported, keeping every false result truthful.
 	if not _rename_with_retry(staged, path):
+		_undo_replaced_publish(path, had_prior, prior)
 		DirAccess.remove_absolute(staged)
 		return false
 	# Fresh readback of the published file proves the player's next Continue
@@ -237,6 +250,25 @@ static func write_file(path: String, session: StitchedRunSession) -> bool:
 	# false result always leaves the file holding the last accepted run.
 	_undo_replaced_publish(path, had_prior, prior)
 	return false
+
+
+## Creating or rewriting a save file can also be refused for a few
+## milliseconds by an external scanner holding the save directory, even
+## when no target file exists yet (the fresh staged file, or a published
+## target a refused replace already unlinked). The bounded retry only
+## engages while the file's own directory stays openable and no directory
+## squats on the path, so absent directories and deliberate staging
+## obstacles still fail at once.
+static func _write_open_with_retry(path: String) -> FileAccess:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	var attempt := 1
+	while file == null and attempt < IO_ATTEMPTS \
+			and DirAccess.open(path.get_base_dir()) != null \
+			and not DirAccess.dir_exists_absolute(path):
+		OS.delay_msec(IO_RETRY_MSEC)
+		file = FileAccess.open(path, FileAccess.WRITE)
+		attempt += 1
+	return file
 
 
 ## One input/output step with bounded retries. Only a path that exists but
@@ -278,22 +310,29 @@ static func read_bytes(path: String) -> PackedByteArray:
 	return bytes
 
 
-## Best-effort rollback of a publish whose final verification failed after the
-## replace: put the previously accepted save's exact bytes back, or remove the
-## published file again when no prior save existed.
+## Best-effort rollback of a publish whose replace or final verification
+## failed: put the previously accepted save's exact bytes back, or remove
+## the published file again when no prior save existed. Windows' rename
+## unlinks an existing target before the move, so even a refused replace can
+## already have destroyed the sealed file; only the bytes read before the
+## replace can put the last accepted run back, and each restore is itself
+## byte-proven before it counts.
 static func _undo_replaced_publish(path: String, had_prior: bool, prior: PackedByteArray) -> void:
 	if not had_prior:
-		DirAccess.remove_absolute(path)
+		if FileAccess.file_exists(path):
+			DirAccess.remove_absolute(path)
 		return
-	if prior.is_empty():
-		# The prior file existed but could not be read back within the size cap;
-		# its unknown bytes cannot be restored.
+	if read_bytes(path) == prior:
+		# The refused replace never destroyed the previously accepted bytes.
 		return
-	var restored := _open_with_retry(path, FileAccess.WRITE)
-	if restored == null:
-		return
-	restored.store_buffer(prior)
-	restored.close()
+	for _attempt in IO_ATTEMPTS:
+		var restored := _write_open_with_retry(path)
+		if restored != null:
+			restored.store_buffer(prior)
+			restored.close()
+			if read_bytes(path) == prior:
+				return
+		OS.delay_msec(IO_RETRY_MSEC)
 
 
 ## A staged file only counts when its fresh readback holds the complete bytes

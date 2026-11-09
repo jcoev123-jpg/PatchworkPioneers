@@ -1563,6 +1563,75 @@
         {"id": "pawn_brass_buttons", "text": "Part with lasting brass plating for found gold.", "outcome": {"gold": 27, "scraps": 0, "hp": 0, "max_hp": -2}},
         {"id": "leave", "text": "Ease the axle down and leave the carpet pinned.", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
       ]
+    },
+    {
+      "id": "v3_warden_split_door_chain",
+      "title": "The Split Door Chain",
+      "description": "A broken brass chain lashes the latch of a doll-sized corridor door. The Warden plants his giant stitched shield beneath the links while something heavy tests the latch from the far side.",
+      "required_hero": "warden",
+      "choices": [
+        {
+          "id": "bind_split_chain",
+          "text": "Sew the chain into a stronger shield seam.",
+          "outcome": {"gold": 0, "scraps": -3, "hp": 0, "max_hp": 3}
+        },
+        {
+          "id": "pawn_anchor_links",
+          "text": "Unpick a lasting shield seam for brass coins.",
+          "outcome": {"gold": 30, "scraps": 0, "hp": 0, "max_hp": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Let the heavy latch settle behind you.",
+          "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_scarecrow_crow_bedpost_perch",
+      "title": "The Crow's Bedpost Perch",
+      "description": "A black crow balances on a towering carved bedpost above a cushion full of loose orange straw. The Scarecrow hooks the cushion with his pitchfork as a forgotten child's footsteps creak overhead.",
+      "required_hero": "scarecrow",
+      "choices": [
+        {
+          "id": "pad_crow_perch",
+          "text": "Buy soft lining to strengthen the straw heart.",
+          "outcome": {"gold": -16, "scraps": 0, "hp": 5, "max_hp": 2}
+        },
+        {
+          "id": "pluck_straw_braid",
+          "text": "Trade away lasting straw seams for spare yarn.",
+          "outcome": {"gold": 0, "scraps": 4, "hp": 0, "max_hp": -3}
+        },
+        {
+          "id": "leave",
+          "text": "Lower the pitchfork and leave the crow watching.",
+          "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_lantern_monk_mothglass_cloche",
+      "title": "The Mothglass Cloche",
+      "description": "A cracked glass cloche covers a moth-lit wick beneath an old bedside table. The Lantern Monk lowers his glowing pole, and the tiny moths settle along the seams of his saffron robe.",
+      "required_hero": "lantern_monk",
+      "choices": [
+        {
+          "id": "sew_lantern_shroud",
+          "text": "Spend spare thread on a warmer lantern shroud.",
+          "outcome": {"gold": 0, "scraps": -2, "hp": 4, "max_hp": 2}
+        },
+        {
+          "id": "trade_lantern_glass",
+          "text": "Give up lasting robe lining for the cloche's brass.",
+          "outcome": {"gold": 25, "scraps": 0, "hp": 0, "max_hp": -2}
+        },
+        {
+          "id": "leave",
+          "text": "Cover the wick and leave the moths sleeping.",
+          "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}
+        }
+      ]
     }
   ]
 }

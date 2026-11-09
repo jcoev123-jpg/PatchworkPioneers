@@ -849,7 +849,218 @@ func _run() -> void:
 			"the seeded run converges on one authentic floor-12 Boss ending")
 		print("S8S9_ROUTE_END seed=21 outcome=%s floor=%d route_nodes=%d receipt_nodes=%d" % [
 			restored.phase, restored.map.get_current_floor(), restored.map.get_route().size(), restored.receipts.size()])
+		# S8/S9 VIS-B: the genuine floor-12 ending hands itself to Wren's room through
+		# the mounted terminal's own live controls: no phase writes, no _seal, no
+		# fabricated rewards and no installed record.
+		var ended_phase := str(restored.phase)
+		var expected_record := StitchedBedroomRecord.after_run(
+			StitchedBedroomRecord.fresh(), restored)
+		_check(expected_record.nights == 1 and expected_record.deepest == 12
+			and str(expected_record.outcome) == ended_phase
+			and expected_record.dolls.size() == restored.heroes.size(),
+			"the ended run's own record counts one night at depth 12 with its true outcome and every doll that went out")
+		for hero in restored.heroes:
+			var doll: Dictionary = expected_record.dolls[str(hero.id)]
+			var actual_torn: Array[String] = []
+			for limb in ["arms", "legs"]:
+				if bool(hero.parts.get(limb, {}).get("torn", false)):
+					actual_torn.append(limb)
+			_check(int(doll.fray) == int(hero.fray) and bool(doll.lost) == bool(hero.lost)
+				and bool(doll.hanging) == (not hero.lost and int(hero.hp) == 0)
+				and doll.get("torn_slots", []) == actual_torn,
+				str(hero.id) + "'s record carries its actual LOST, hanging, fray and arm/leg tears")
+		_check(fresh.bedroom_record.is_empty(),
+			"no bedroom record exists before the ended run reaches its terminal")
+		fresh._present_stitched_run()
+		_check(fresh.stitched_run_panel != null
+			and str(fresh.stitched_run_panel.get_meta("page_kind", "")) == ended_phase
+			and fresh.stitched_run_panel.is_visible_in_tree()
+			and fresh.stitched_run_session == restored,
+			"the genuinely concluded run mounts its own terminal page")
+		var recap: Node = fresh.stitched_run_panel.find_child("TerminalRecap", true, false)
+		var recap_text := _panel_text(recap)
+		_check(recap != null and recap_text.contains("12 FLOORS REACHED")
+			and recap_text.contains("ALL TWELVE FLOORS CLEARED" if ended_phase == "victory" else "THE ROAD ENDS HERE"),
+			"the mounted terminal recap reports the true floor-12 ending")
+		for hero in restored.heroes:
+			var recap_label: Label = fresh.stitched_run_panel.find_child(
+				"Recap_" + str(hero.id), true, false) as Label
+			var ended_state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
+			_check(recap_label != null and recap_label.text.contains(ended_state)
+				and recap_label.text.contains("FRAY %d / 200" % int(hero.fray)),
+				str(hero.id) + "'s terminal recap shows its actual ended state and fray")
+		_check(StitchedBedroomRecord.valid(fresh.bedroom_record)
+			and fresh.bedroom_record == expected_record,
+			"mounting the terminal creates exactly the ended run's bedroom record")
+		# Re-presenting the sealed terminal is idempotent: the ended night is one night.
+		fresh._present_stitched_run()
+		_check(fresh.stitched_run_panel != null and fresh.bedroom_record == expected_record
+			and int(fresh.bedroom_record.nights) == 1,
+			"re-presenting the terminal counts the ended night exactly once")
+		var back_room: Button
+		var return_title: Button
+		var save_run: Button
+		for button: Button in fresh.stitched_run_buttons:
+			if button.text == "Back to Wren's room":
+				back_room = button
+			elif button.text == "Return to title":
+				return_title = button
+			elif button.text == "Save run":
+				save_run = button
+		_check(back_room != null and back_room.is_visible_in_tree() and not back_room.disabled
+			and return_title != null and return_title.is_visible_in_tree()
+			and save_run != null and save_run.is_visible_in_tree(),
+			"the mounted terminal offers its live Return-to-title, Save and room actions")
+		if back_room == null or return_title == null or save_run == null:
+			_finish(fresh)
+			return
+		if not _press(save_run, "terminal Save run of the ended night"):
+			_finish(fresh)
+			return
+		var sealed := StitchedRunSave.read_file(SAVE_PATH)
+		_check(sealed != null and sealed.phase == ended_phase
+			and sealed.snapshot() == restored.snapshot()
+			and sealed.journal == restored.journal and sealed.rng.state == restored.rng.state,
+			"the terminal Save seals exactly the completed floor-12 run")
+		if sealed == null:
+			_finish(fresh)
+			return
+		if not _press(back_room, "live Back to Wren's room"):
+			_finish(fresh)
+			return
+		# The same signal may fire again in this same frame; the return is once-only.
+		back_room.pressed.emit()
+		await process_frame
+		_check(fresh.stitched_run_session == null and fresh.stitched_run_panel == null
+			and not fresh.title_view.is_visible_in_tree(),
+			"the room action ends the run exactly once and hides the title behind the base")
+		var room_view: BaseScreen = fresh.base_screen
+		_check(is_instance_valid(room_view) and room_view.has_open_village()
+			and room_view.bedroom != null and fresh.bedroom_record == expected_record,
+			"the terminal's physical room action returns to the mounted Wren bedroom base")
+		if not is_instance_valid(room_view) or room_view.bedroom == null:
+			_finish(fresh)
+			return
+		await _check_returned_room(room_view, expected_record, ended_phase)
+		# Retired controls: the old terminal left with its buttons, and the hidden
+		# title Continue can no longer open, spend or rewrite anything behind the base.
+		_check(not is_instance_valid(back_room) and not is_instance_valid(return_title)
+			and not is_instance_valid(save_run),
+			"the retired terminal and its actions left with the ended run")
+		var sealed_bytes := StitchedRunSave.read_bytes(SAVE_PATH)
+		fresh.stitched_continue_button.pressed.emit()
+		await process_frame
+		_check(fresh.base_screen == room_view and room_view.has_open_village()
+			and fresh.stitched_run_session == null
+			and fresh.bedroom_record == expected_record
+			and StitchedRunSave.read_bytes(SAVE_PATH) == sealed_bytes,
+			"the hidden title Continue and the retired terminal are once-only and mutation-free")
+		# Return-Continue: the sealed ended run replays through the public title
+		# Continue, remounts its terminal and returns the same aftermath without
+		# counting the finished night twice.
+		if not _press(room_view.back_button, "base back to the title"):
+			_finish(fresh)
+			return
+		await process_frame
+		_check(fresh.base_screen == null and fresh.title_view.is_visible_in_tree(),
+			"leaving the returned room goes back to the idle title")
+		if not _press(fresh.stitched_continue_button, "title Continue of the sealed ended run"):
+			_finish(fresh)
+			return
+		await process_frame
+		var reloaded: StitchedRunSession = fresh.stitched_run_session
+		_check(reloaded != null and reloaded != restored and reloaded.phase == ended_phase
+			and reloaded.snapshot() == restored.snapshot()
+			and reloaded.journal == restored.journal and reloaded.rng.state == restored.rng.state,
+			"Continue replays the sealed ended run to its identical floor-12 terminal")
+		_check(reloaded != null and fresh.bedroom_record == expected_record
+			and int(fresh.bedroom_record.nights) == 1
+			and fresh.stitched_run_panel != null
+			and str(fresh.stitched_run_panel.get_meta("page_kind", "")) == ended_phase,
+			"the replayed ending mounts its terminal without counting the night again")
+		# A duplicate Continue behind the replayed terminal has no entry point.
+		fresh.stitched_continue_button.pressed.emit()
+		await process_frame
+		_check(fresh.stitched_run_session == reloaded and fresh.bedroom_record == expected_record,
+			"a duplicate Continue behind the replayed terminal changes nothing")
+		var back_again: Button
+		for button: Button in fresh.stitched_run_buttons:
+			if button.text == "Back to Wren's room":
+				back_again = button
+		if not _press(back_again, "replayed terminal Back to Wren's room"):
+			_finish(fresh)
+			return
+		await process_frame
+		var room_again: BaseScreen = fresh.base_screen
+		_check(is_instance_valid(room_again) and not is_instance_valid(room_view)
+			and room_again.has_open_village()
+			and room_again.bedroom != null and fresh.bedroom_record == expected_record,
+			"the replayed room action returns to the same completed aftermath")
+		if is_instance_valid(room_again) and room_again.bedroom != null:
+			await _check_returned_room(room_again, expected_record, ended_phase)
 	_finish(fresh)
+
+
+## Every Label under a mounted panel, gathered without relying on scene owners
+## for dynamically authored pages.
+func _panel_text(node: Node) -> String:
+	var text := ""
+	if node == null:
+		return text
+	for label in node.find_children("*", "Label", true, false):
+		text += str(label.text) + " "
+	return text
+
+
+## The pose the ended record demands for one doll, derived from the record itself.
+func _expected_pose(doll: Dictionary) -> String:
+	if bool(doll.get("lost", false)):
+		return "tin"
+	if bool(doll.get("hanging", false)):
+		return "side"
+	if not doll.get("torn_slots", []).is_empty():
+		return "side"
+	var fray := int(doll.get("fray", 0))
+	return "wall" if fray >= 150 else "slumped" if fray >= 100 else "upright"
+
+
+## The returned base's room must show exactly the completed run's aftermath: its
+## record, its true light, the night counter and every doll's actual pose, shelf
+## readout and tin entry, through the mounted controls alone.
+func _check_returned_room(view: BaseScreen, record: Dictionary, ended_phase: String) -> void:
+	var room: StitchedBedroom = view.bedroom
+	_check(room.record == record
+		and room.is_morning() == (ended_phase == "victory")
+		and room.night_number() == int(record.nights) + 1
+		and room.labels.window.text == "Night %d" % (int(record.nights) + 1),
+		"the returned room holds the ended night's record in its true light")
+	for id in record.dolls:
+		var doll: Dictionary = record.dolls[id]
+		var torn: Array = doll.get("torn_slots", [])
+		_check(room.doll_pose(str(id)) == _expected_pose(doll)
+			and room.torn_marks[id].visible == ("arms" in torn)
+			and room.leg_torn_marks[id].visible == ("legs" in torn),
+			str(id) + " lies in its actual recorded pose with exactly its arm and leg tears")
+	room.spot("shelf").grab_focus()
+	await process_frame
+	_check(room.inspector.visible, "the returned room's shelf readout opens by keyboard")
+	for id in record.dolls:
+		_check(room.inspector.status_labels[id].text == StitchedBedroomDollInspector.status_for(record, str(id)),
+			str(id) + "'s shelf readout reports its actual ended condition")
+	for id in StitchedPartyAdmission.HERO_IDS:
+		if record.dolls.has(id):
+			continue
+		_check(room.inspector.status_labels[id].text == "STAYED HOME",
+			str(id) + " stayed home on the ended outing")
+	room.spot("tin").grab_focus()
+	await process_frame
+	var lost_ids: Array = []
+	for id in StitchedPartyAdmission.HERO_IDS:
+		if bool(record.dolls.get(id, {}).get("lost", false)):
+			lost_ids.append(id)
+	_check(room.inspector.entry_order == lost_ids
+		and (not lost_ids.is_empty() or room.inspector.empty_label.text == "No dolls lost on the last outing"),
+		"the returned room's tin lists exactly the dolls actually lost")
 
 
 func _finish(app: Node) -> void:
