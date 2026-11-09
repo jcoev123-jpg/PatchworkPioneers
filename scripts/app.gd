@@ -4386,7 +4386,7 @@ func _open_stitched_run_picker(from_base: bool = false) -> void:
 	else:
 		title_view.hide()
 	var content := _stitched_run_page("Choose four pioneers")
-	content.get_node("StitchedPageHeading").tooltip_text = "Keys 1–8: choose dolls · Esc/B: cancel"
+	content.get_node("StitchedPageHeading").tooltip_text = "Keys 1–8: choose dolls · Shift+1–8: replace focused doll · Esc/B: cancel"
 	var picker := StitchedRunPartyPicker.new()
 	picker.set_meta("stitched_run_epoch", _stitched_run_epoch)
 	picker.name = "StitchedRunPartyPicker"
