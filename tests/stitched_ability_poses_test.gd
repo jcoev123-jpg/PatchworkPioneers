@@ -79,6 +79,23 @@ func _fight_checks() -> void:
 		_check(tip.contains("Moves: "), key + " hover lists its moveset: " + tip)
 		for ability in unit.get("abilities", []):
 			_check(tip.contains(str(ability.name)), "%s hover names %s" % [key, ability.name])
+	# Owner 11-09: a thrown thing leaves the hand as its own picture and the hit effect bursts on the target.
+	var bomb := StitchedBattleScreen.ability_fx("tinker_arms_scrap_bomb")
+	_check(bomb.has("object") and bomb.has("fx"), "the scrap bomb has its own thrown picture and hit effect: " + str(bomb))
+	var hero: Dictionary = screen.battle.get_heroes()[0]
+	var target: Dictionary = screen.battle.get_foes()[0]
+	fight._throw_and_strike({"actor": hero.id, "ability": "tinker_arms_scrap_bomb", "results": [{"target": target.id, "hit": true}]})
+	_check(fight._flying.size() == 2, "the bomb flies and its blast waits at the target: %d pictures" % fight._flying.size())
+	var shown := fight._flying.map(func(sprite): return sprite.texture.resource_path)
+	_check(bomb.get("object") in shown and bomb.get("fx") in shown, "the flying pictures are the bomb and its blast: " + str(shown))
+	_check(fight._flying.all(func(sprite): return sprite.is_inside_tree() and not sprite.flip_h), "a hero's throw flies right, unflipped")
+	fight._throw_and_strike({"actor": target.id, "ability": "lint_spit", "results": [{"target": hero.id, "hit": true}]})
+	_check(fight._flying.size() == 4 and fight._flying[2].flip_h, "a foe's spit flies the other way")
+	fight._cancel_beats()
+	_check(fight._flying.is_empty(), "cutting a beat short clears everything in flight")
+	fight._throw_and_strike({"actor": hero.id, "ability": "tinker_arms_scrap_bomb", "results": [{"target": target.id, "hit": false}]})
+	_check(fight._flying.size() == 1, "a miss throws the bomb but shows no blast")
+	fight._cancel_beats()
 	screen.queue_free()
 	await process_frame
 
@@ -104,6 +121,13 @@ func _run() -> void:
 			for ability in StitchedEnemyCatalog.foe_for(catalog, foe_id, StitchedEnemyCatalog.PHASE_TWO).abilities:
 				ids.append(ability.id)
 		_kit_poses("foe", foe_id, ids)
+
+	# Every thrown picture and hit effect the manifest names loads.
+	var fx_doc: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(StitchedBattleScreen.ABILITY_FX_PATH))
+	_check(fx_doc.get("abilities", {}).size() >= 100, "most abilities show a hit effect")
+	for ability_id in fx_doc.get("abilities", {}):
+		var art := StitchedBattleScreen.ability_fx(str(ability_id))
+		_check(art.size() == fx_doc.abilities[ability_id].size(), "%s's thrown picture and hit effect load: %s" % [ability_id, art])
 
 	await _fight_checks()
 

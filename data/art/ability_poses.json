@@ -2,19 +2,19 @@
  "_doc": "Owner 11-09: every ability's own pose. side -> actor id -> ability id -> art. Made by C:/rtg/g/anim/abilities.py; an ability missing here falls back to its move pose in move_poses.json.",
  "heroes": {
   "warden": {
-   "warden_head_pot_helm_command": "res://assets/paper/heroes/warden_skill.png",
-   "warden_arms_shield_catch": "res://assets/paper/heroes/warden_guard.png",
+   "warden_head_pot_helm_command": "res://assets/paper/heroes/warden_pothelm.png",
+   "warden_arms_shield_catch": "res://assets/paper/heroes/warden_shieldcatch.png",
    "warden_torso_iron_challenge": "res://assets/paper/heroes/warden_attack.png",
    "warden_legs_rim_toss": "res://assets/paper/heroes/warden_rimtoss.png"
   },
   "seamstress": {
-   "seamstress_head_mending_knot": "res://assets/paper/heroes/seamstress_skill.png",
+   "seamstress_head_mending_knot": "res://assets/paper/heroes/seamstress_mendingknot.png",
    "seamstress_arms_needle_prick": "res://assets/paper/heroes/seamstress_attack.png",
-   "seamstress_torso_shielding_hem": "res://assets/paper/heroes/seamstress_guard.png",
+   "seamstress_torso_shielding_hem": "res://assets/paper/heroes/seamstress_shieldinghem.png",
    "seamstress_legs_tether_spools": "res://assets/paper/heroes/seamstress_tetherspools.png"
   },
   "tinker": {
-   "tinker_head_cog_shot": "res://assets/paper/heroes/tinker_attack.png",
+   "tinker_head_cog_shot": "res://assets/paper/heroes/tinker_cogshot.png",
    "tinker_arms_scrap_bomb": "res://assets/paper/heroes/tinker_skill.png",
    "tinker_torso_casing_ward": "res://assets/paper/heroes/tinker_guard.png",
    "tinker_legs_tune_up": "res://assets/paper/heroes/tinker_tuneup.png"
@@ -26,20 +26,20 @@
    "lantern_monk_legs_pole_shelter": "res://assets/paper/heroes/lantern_monk_guard.png"
   },
   "rag_duelist": {
-   "rag_duelist_head_rapier_wink": "res://assets/paper/heroes/rag_duelist_guard.png",
+   "rag_duelist_head_rapier_wink": "res://assets/paper/heroes/rag_duelist_rapierwink.png",
    "rag_duelist_arms_seam_thrust": "res://assets/paper/heroes/rag_duelist_attack.png",
    "rag_duelist_torso_feint_stitch": "res://assets/paper/heroes/rag_duelist_skill.png",
    "rag_duelist_legs_heel_spin": "res://assets/paper/heroes/rag_duelist_heelspin.png"
   },
   "scarecrow": {
-   "scarecrow_head_straw_gaze": "res://assets/paper/heroes/scarecrow_guard.png",
-   "scarecrow_arms_crow_peck": "res://assets/paper/heroes/scarecrow_skill.png",
+   "scarecrow_head_straw_gaze": "res://assets/paper/heroes/scarecrow_strawgaze.png",
+   "scarecrow_arms_crow_peck": "res://assets/paper/heroes/scarecrow_crowpeck.png",
    "scarecrow_torso_sack_of_thorns": "res://assets/paper/heroes/scarecrow_sackofthorns.png",
    "scarecrow_legs_startle_step": "res://assets/paper/heroes/scarecrow_attack.png"
   },
   "yarn_ranger": {
-   "yarn_ranger_head_thread_sight": "res://assets/paper/heroes/yarn_ranger_attack.png",
-   "yarn_ranger_arms_spool_arrow": "res://assets/paper/heroes/yarn_ranger_skill.png",
+   "yarn_ranger_head_thread_sight": "res://assets/paper/heroes/yarn_ranger_threadsight.png",
+   "yarn_ranger_arms_spool_arrow": "res://assets/paper/heroes/yarn_ranger_spoolarrow.png",
    "yarn_ranger_torso_knot_snare": "res://assets/paper/heroes/yarn_ranger_knotsnare.png",
    "yarn_ranger_legs_backstep_ward": "res://assets/paper/heroes/yarn_ranger_guard.png"
   },
@@ -47,7 +47,7 @@
    "button_golem_head_button_brow": "res://assets/paper/heroes/button_golem_buttonbrow.png",
    "button_golem_arms_brass_knuckle": "res://assets/paper/heroes/button_golem_attack.png",
    "button_golem_torso_button_plating": "res://assets/paper/heroes/button_golem_guard.png",
-   "button_golem_legs_stamping_heel": "res://assets/paper/heroes/button_golem_skill.png"
+   "button_golem_legs_stamping_heel": "res://assets/paper/heroes/button_golem_stampingheel.png"
   }
  },
  "enemies": {
@@ -58,25 +58,25 @@
   "ragling_guard": {
    "padding_bash": "res://assets/paper/enemies/ragling_guard_attack2.png",
    "button_bulwark": "res://assets/paper/enemies/ragling_guard_buttonbulwark.png",
-   "shield_shunt": "res://assets/paper/enemies/ragling_guard_skill.png"
+   "shield_shunt": "res://assets/paper/enemies/ragling_guard_shieldshunt.png"
   },
   "fray_scavenger": {
-   "sack_swing": "res://assets/paper/enemies/fray_scavenger_attack2.png",
+   "sack_swing": "res://assets/paper/enemies/fray_scavenger_sackswing.png",
    "rag_cloak": "res://assets/paper/enemies/fray_scavenger_skill.png"
   },
   "button_guard": {
    "seam_punch": "res://assets/paper/enemies/button_guard_attack.png",
    "button_wall": "res://assets/paper/enemies/button_guard_skill.png",
-   "needle_picket": "res://assets/paper/enemies/button_guard_attack2.png"
+   "needle_picket": "res://assets/paper/enemies/button_guard_needlepicket.png"
   },
   "spool_stalker": {
-   "spool_lash": "res://assets/paper/enemies/spool_stalker_attack2.png",
+   "spool_lash": "res://assets/paper/enemies/spool_stalker_spoollash.png",
    "knot_stab": "res://assets/paper/enemies/spool_stalker_attack3.png",
    "spool_stalk": "res://assets/paper/enemies/spool_stalker_skill.png"
   },
   "seam_ripper": {
-   "seam_split": "res://assets/paper/enemies/seam_ripper_attack2.png",
-   "ripper_feint": "res://assets/paper/enemies/seam_ripper_skill.png"
+   "seam_split": "res://assets/paper/enemies/seam_ripper_seamsplit.png",
+   "ripper_feint": "res://assets/paper/enemies/seam_ripper_ripperfeint.png"
   },
   "felt_bulwark": {
    "felt_slam": "res://assets/paper/enemies/felt_bulwark_attack3.png",
@@ -93,19 +93,19 @@
   },
   "thread_biter": {
    "thread_bite": "res://assets/paper/enemies/thread_biter_attack2.png",
-   "lint_spit": "res://assets/paper/enemies/thread_biter_skill.png"
+   "lint_spit": "res://assets/paper/enemies/thread_biter_lintspit.png"
   },
   "scissor_crab": {
    "pinch": "res://assets/paper/enemies/scissor_crab_attack2.png",
    "thread_snip": "res://assets/paper/enemies/scissor_crab_skill.png"
   },
   "thimble_beetle": {
-   "thimble_ram": "res://assets/paper/enemies/thimble_beetle_attack2.png",
+   "thimble_ram": "res://assets/paper/enemies/thimble_beetle_thimbleram.png",
    "shell_up": "res://assets/paper/enemies/thimble_beetle_skill.png",
    "shell_shove": "res://assets/paper/enemies/thimble_beetle_attack.png"
   },
   "zipper_snake": {
-   "zip_lunge": "res://assets/paper/enemies/zipper_snake_attack2.png",
+   "zip_lunge": "res://assets/paper/enemies/zipper_snake_ziplunge.png",
    "tooth_shove": "res://assets/paper/enemies/zipper_snake_skill.png"
   },
   "pincushion_hedgehog": {
@@ -120,11 +120,11 @@
   "needle_wasp": {
    "needle_sting": "res://assets/paper/enemies/needle_wasp_attack2.png",
    "wasp_dart": "res://assets/paper/enemies/needle_wasp_skill.png",
-   "needle_spit": "res://assets/paper/enemies/needle_wasp_attack3.png"
+   "needle_spit": "res://assets/paper/enemies/needle_wasp_needlespit.png"
   },
   "shearwing_mantis": {
-   "shear_slash": "res://assets/paper/enemies/shearwing_mantis_attack2.png",
-   "wing_shear": "res://assets/paper/enemies/shearwing_mantis_skill.png"
+   "shear_slash": "res://assets/paper/enemies/shearwing_mantis_shearslash.png",
+   "wing_shear": "res://assets/paper/enemies/shearwing_mantis_wingshear.png"
   },
   "spoolback_hound": {
    "spool_bite": "res://assets/paper/enemies/spoolback_hound_attack2.png",
@@ -137,7 +137,7 @@
   },
   "spindle_ram": {
    "horn_charge": "res://assets/paper/enemies/spindle_ram_attack2.png",
-   "yarn_hurl": "res://assets/paper/enemies/spindle_ram_attack3.png"
+   "yarn_hurl": "res://assets/paper/enemies/spindle_ram_yarnhurl.png"
   },
   "razor_ribbon_wraith": {
    "ribbon_cut": "res://assets/paper/enemies/razor_ribbon_wraith_attack2.png",
@@ -146,7 +146,7 @@
   },
   "clothespin_crusher": {
    "clamp_crush": "res://assets/paper/enemies/clothespin_crusher_attack.png",
-   "pin_pitch": "res://assets/paper/enemies/clothespin_crusher_attack2.png"
+   "pin_pitch": "res://assets/paper/enemies/clothespin_crusher_pinpitch.png"
   },
   "crochet_hook_harrier": {
    "hook_drag": "res://assets/paper/enemies/crochet_hook_harrier_attack2.png",
@@ -158,7 +158,7 @@
   },
   "bobbin_bat": {
    "bobbin_dive": "res://assets/paper/enemies/bobbin_bat_attack2.png",
-   "sonar_shriek": "res://assets/paper/enemies/bobbin_bat_skill.png",
+   "sonar_shriek": "res://assets/paper/enemies/bobbin_bat_sonarshriek.png",
    "bobbin_drop": "res://assets/paper/enemies/bobbin_bat_attack3.png"
   },
   "quilt_termite": {
@@ -172,12 +172,12 @@
    "iron_discipline": "res://assets/paper/enemies/needle_marshal_skill.png"
   },
   "spool_hexer": {
-   "hex_bolt": "res://assets/paper/enemies/spool_hexer_attack2.png",
-   "spool_curse": "res://assets/paper/enemies/spool_hexer_skill.png",
-   "thread_tag": "res://assets/paper/enemies/spool_hexer_attack.png"
+   "hex_bolt": "res://assets/paper/enemies/spool_hexer_hexbolt.png",
+   "spool_curse": "res://assets/paper/enemies/spool_hexer_spoolcurse.png",
+   "thread_tag": "res://assets/paper/enemies/spool_hexer_threadtag.png"
   },
   "scissor_bailiff": {
-   "bailiff_snip": "res://assets/paper/enemies/scissor_bailiff_attack2.png",
+   "bailiff_snip": "res://assets/paper/enemies/scissor_bailiff_bailiffsnip.png",
    "seize_thread": "res://assets/paper/enemies/scissor_bailiff_skill.png",
    "bailiff_unpick": "res://assets/paper/enemies/scissor_bailiff_attack3.png"
   },
@@ -194,7 +194,7 @@
    "spool_snare": "res://assets/paper/enemies/spool_snarekeeper_skill.png"
   },
   "pincushion_matriarch": {
-   "matriarch_burst": "res://assets/paper/enemies/pincushion_matriarch_attack2.png",
+   "matriarch_burst": "res://assets/paper/enemies/pincushion_matriarch_matriarchburst.png",
    "pin_crown": "res://assets/paper/enemies/pincushion_matriarch_skill.png"
   },
   "spool_leech": {
@@ -202,18 +202,18 @@
    "drain_thread": "res://assets/paper/enemies/spool_leech_skill.png"
   },
   "patchwork_behemoth": {
-   "behemoth_maul": "res://assets/paper/boss/patchwork_behemoth_attack2.png",
+   "behemoth_maul": "res://assets/paper/boss/patchwork_behemoth_maul.png",
    "stuffing_hurl": "res://assets/paper/boss/patchwork_behemoth_attack3.png",
-   "rope_lash": "res://assets/paper/boss/patchwork_behemoth_attack4.png",
+   "rope_lash": "res://assets/paper/boss/patchwork_behemoth_ropelash.png",
    "stitch_ward": "res://assets/paper/boss/patchwork_behemoth_skill.png",
-   "behemoth_phase2_gut_rope": "res://assets/paper/boss/patchwork_behemoth_attack.png",
+   "behemoth_phase2_gut_rope": "res://assets/paper/boss/patchwork_behemoth_gutrope.png",
    "behemoth_phase2_rage_howl": "res://assets/paper/boss/patchwork_behemoth_ragehowl.png",
    "behemoth_phase2_stuffing_storm": "res://assets/paper/boss/patchwork_behemoth_stuffingstorm.png",
    "behemoth_phase2_crushing_lash": "res://assets/paper/boss/patchwork_behemoth_crushinglash.png"
   },
   "sewing_machine_colossus": {
-   "colossus_treadle": "res://assets/paper/enemies/sewing_machine_colossus_attack4.png",
-   "colossus_bobbin": "res://assets/paper/enemies/sewing_machine_colossus_attack3.png",
+   "colossus_treadle": "res://assets/paper/enemies/sewing_machine_colossus_treadlestomp.png",
+   "colossus_bobbin": "res://assets/paper/enemies/sewing_machine_colossus_bobbinshot.png",
    "colossus_barrage": "res://assets/paper/enemies/sewing_machine_colossus_attack2.png",
    "colossus_guard": "res://assets/paper/enemies/sewing_machine_colossus_irontread.png"
   },
