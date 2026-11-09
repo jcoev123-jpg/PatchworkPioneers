@@ -1,25 +1,20 @@
 class_name StitchedCorridorJunction
 extends Control
 ## Owner 11-08: the road map is a maze junction in the corridor. The way splits left,
-## forward and/or right (never a dead end); each opening holds the next stop, seen in the fog.
+## forward and/or right (never a dead end). Owner 11-09: no stop pictures or icons, only a
+## stitched arrow on the floor for each way, so what lies down it stays a surprise.
 ## Presentation only: the host says which stops are legal and does the entering.
 
 signal chosen(node_id: String)
 
 const CHROME := preload("res://scripts/stitched/stitched_battle_chrome.gd")
 const STOP_DIR := "res://assets/paper/walk3d/"
-const ICON_DIR := "res://assets/paper/ui/"
-const STOP_HEIGHT := 1.5
-const STOP_WORDS := {
-	"Fight": "Something waits", "Elite": "Something large waits", "Boss": "Something vast waits",
-	"Event": "Something strange", "Treasure": "Something glints", "Campfire": "A campfire",
-	"SewingCircle": "The Sewing Circle", "Peddler": "The Peddler", "Unpicker": "The Unpicker",
-	"PatchStall": "A patch stall",
-}
-const SIDE_WORDS := {"left": "to the left", "forward": "ahead", "right": "to the right"}
-## Where each opening's door sits on the 1280x720 screen until the stage can say exactly.
+const ARROW_LENGTH := 0.75
+const ARROW_TILT := 0.4
+const SIDE_WORDS := {"left": "Left", "forward": "Straight on", "right": "Right"}
+## Each opening on the 1280x720 screen: clicking anywhere in it takes that way.
 const DOOR_RECTS := {
-	"left": Rect2(40, 150, 330, 430), "forward": Rect2(470, 170, 340, 380), "right": Rect2(910, 150, 330, 430),
+	"left": Rect2(40, 150, 420, 460), "forward": Rect2(480, 150, 320, 440), "right": Rect2(820, 150, 420, 460),
 }
 
 var stage: StitchedCorridorStage
@@ -95,15 +90,15 @@ func present(area_name: String, band_name: String, stops: Array) -> void:
 		var side: String = sides[id]
 		var kind := str(stop.kind)
 		var slot := ahead.find(id)
-		var where := stage.junction_point(side, slot, ahead.size()) if side == "forward" else stage.junction_point(side)
-		stage.place(id, stop_art(kind), where, STOP_HEIGHT)
-		# A faint glow in each opening, so the stop shows through the fog at any candle.
+		var where := arrow_point(side, slot, ahead.size())
+		stage.place_flat(id, stage.art("floor_arrow"), where, ARROW_LENGTH, arrow_roll(side, slot, ahead.size()), ARROW_TILT)
+		# A faint glow over each arrow, so it shows through the fog at any candle.
 		var glow := OmniLight3D.new()
 		glow.name = "Glow_" + id.validate_node_name()
 		glow.light_color = Color(1.0, 0.72, 0.45)
-		glow.light_energy = 0.9
-		glow.omni_range = 3.2
-		glow.position = where + Vector3(0, 1.3, 0.9)
+		glow.light_energy = 0.7
+		glow.omni_range = 1.8
+		glow.position = where + Vector3(0, 0.8, 0.3)
 		stage.figures.add_child(glow)
 		var door := Button.new()
 		door.name = "Door_" + id.validate_node_name()
@@ -131,39 +126,69 @@ func present(area_name: String, band_name: String, stops: Array) -> void:
 	_place_doors.call_deferred()
 
 
-static func describe(kind: String, side: String) -> String:
-	return "%s %s" % [STOP_WORDS.get(kind, "Something"), SIDE_WORDS.get(side, "ahead")]
+## Only the way, never what waits down it.
+static func describe(side: String) -> String:
+	return SIDE_WORDS.get(side, "Straight on")
 
 
-## The stop's own Flow picture when there is one; otherwise its road-map stop icon.
+## Where a way's arrow lies on the crossing floor; `slot`/`of` share the way ahead.
+func arrow_point(side: String, slot: int = 0, of: int = 1) -> Vector3:
+	var cross := stage.junction_z()
+	match side:
+		"left":
+			return Vector3(-1.15, 0, cross + 0.8)
+		"right":
+			return Vector3(1.15, 0, cross + 0.8)
+	var spread := 0.0 if of <= 1 else lerpf(-0.7, 0.7, float(slot) / float(of - 1))
+	return Vector3(spread, 0, cross - 0.6)
+
+
+## Left and right arrows turn on the floor; several ways ahead fan out a little.
+static func arrow_roll(side: String, slot: int = 0, of: int = 1) -> float:
+	match side:
+		"left":
+			return PI / 2.0
+		"right":
+			return -PI / 2.0
+	return 0.0 if of <= 1 else lerpf(0.3, -0.3, float(slot) / float(of - 1))
+
+
+## A stop's own Flow picture (for the stop itself, never the junction), or null.
 static func stop_art(kind: String) -> Texture2D:
 	var path := STOP_DIR + "stop_" + kind.to_snake_case() + ".png"
-	if ResourceLoader.exists(path):
-		return load(path) as Texture2D
-	var icon := "event" if kind == "Treasure" else kind.to_snake_case()
-	path = ICON_DIR + "map_node_" + icon + ".png"
 	return load(path) as Texture2D if ResourceLoader.exists(path) else null
 
 
-## Snugs the doors onto the stops once the stage can project them.
+## Each door is its whole opening, grown to take in its arrow once the stage can project it.
 func _place_doors() -> void:
 	if stage == null or not is_inside_tree():
 		return
+	var ahead := 0
 	for id in doors:
-		var rect := stage.screen_rect(id)
-		if rect.size.x <= 4 or rect.size.y <= 4:
-			continue
+		if sides.get(id, "") == "forward":
+			ahead += 1
+	var slot := 0
+	for id in doors:
+		var side := str(sides.get(id, "forward"))
+		var rect: Rect2 = DOOR_RECTS[side]
+		if side == "forward" and ahead > 1:
+			var share := rect.size.x / ahead
+			rect = Rect2(rect.position + Vector2(share * slot, 0), Vector2(share, rect.size.y))
+			slot += 1
+		var arrow := stage.screen_rect(id)
+		if arrow.size.x > 4 and arrow.size.y > 4:
+			rect = rect.merge(arrow.grow(16))
 		var door: Button = doors[id]
-		door.position = rect.position - Vector2(30, 30)
-		door.size = rect.size + Vector2(60, 60)
+		door.position = rect.position
+		door.size = rect.size
 
 
 func _light(id: String, on: bool) -> void:
 	var figure: Sprite3D = stage.figure_nodes.get(id) if stage != null else null
 	if figure != null:
-		figure.modulate = Color(1.35, 1.2, 1.0) if on else Color.WHITE
+		figure.modulate = Color(1.45, 1.25, 1.0) if on else Color.WHITE
 	if on and doors.has(id):
-		caption.text = describe(str(doors[id].get_meta("node_kind", "")), str(sides.get(id, "forward")))
+		caption.text = describe(str(sides.get(id, "forward")))
 
 
 func _row() -> Array:

@@ -88,7 +88,14 @@ func _run() -> void:
 		_check(stage.drawer_toggle.position == Vector2(24, 414) and stage.drawer_toggle.size.y <= 52.0, "quiet drawer toggle is left of central horror panel")
 		for button in [stage.forward_button, stage.back_button, stage.exit_button, stage.drawer_toggle]:
 			_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "primary mouse and keyboard controls remain in viewport")
+		for button in [stage.exit_button, stage.drawer_toggle]:
 			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "image-backed gothic primary control")
+		# Owner 11-09: no WALK ON button; the hallway and the floor are the controls.
+		for button in [stage.forward_button, stage.back_button]:
+			_check(button.text.is_empty() and button.get_theme_stylebox("normal") is StyleBoxEmpty
+				and button.mouse_default_cursor_shape == Control.CURSOR_POINTING_HAND, "walking is the hallway itself, not a framed button")
+		_check(stage.forward_button.get_global_rect().size.x >= 600 and stage.forward_button.get_global_rect().encloses(Rect2(560, 200, 160, 120)),
+			"the open hallway ahead is the walk-on target")
 		for button in stage.switch_buttons + stage.pocket_buttons:
 			_check(not button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_NONE and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(button.get_global_rect()), "quiet mount hides secondary controls at their original side positions")
 			_check(button.get_theme_stylebox("normal") is StyleBoxTexture, "six secondary controls retain image-backed states")
@@ -299,7 +306,7 @@ func _host_tug_mount() -> void:
 	var tug_step: int = int(stage.expected.tug.step)
 	while stage.expected.step < tug_step and stage.expected.phase == "walking":
 		stage.forward_button.pressed.emit()
-	_check(stage.walk.tug_unresolved() and stage.event_panel.visible and stage.forward_button.text == "LET IT TAKE ONE",
+	_check(stage.walk.tug_unresolved() and stage.event_panel.visible and stage.forward_button.tooltip_text == "Let it take one",
 		"real hosted tug shows its required yield action at scheduled step")
 	var held: Array = stage.expected.pockets[stage.expected.viewpoint]
 	var item_choices := int("pins" in held) + int("spare_spool" in held)

@@ -244,6 +244,10 @@ func _tonic_controls(app: Node) -> void:
 			and button.get_meta("action_id") == "buy_thimble_tonic"
 			and button.get_meta("action_arguments") == [hero.id],
 			"one session projection is mounted for the actual doll " + hero.id)
+		# Owner 11-09: a doll's choice lies in the thing's tray; picking the thing up opens it.
+		var shop := app.stitched_run_panel as StitchedCorridorVisit
+		if shop != null:
+			shop.reveal(button)
 		_check(button.is_visible_in_tree() and button.focus_mode == Control.FOCUS_ALL
 			and button.mouse_filter == Control.MOUSE_FILTER_STOP
 			and button.disabled == not enabled and "10 gold" in button.text and "Thimble tonic" in button.text,

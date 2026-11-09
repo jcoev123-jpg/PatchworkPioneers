@@ -385,6 +385,18 @@ func place(id: String, texture: Texture2D, where: Vector3, height: float) -> Spr
 	return figure
 
 
+## Lays a picture on the floor, tipped up a little toward the eye so it still reads. Roll turns it on
+## the floor: an up-pointing picture points down the hall at 0, left at PI/2 and right at -PI/2.
+func place_flat(id: String, texture: Texture2D, where: Vector3, length: float, roll: float = 0.0, tilt: float = 0.55) -> Sprite3D:
+	var figure := place(id, texture, where, length)
+	figure.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+	figure.rotation = Vector3(-(PI / 2.0 - tilt), 0, roll)
+	var wide := float(texture.get_width()) * figure.pixel_size if texture != null else length
+	var lift := (absf(length * cos(roll)) + absf(wide * sin(roll))) / 2.0 * sin(tilt)
+	figure.position = where + Vector3(0, lift + 0.01, 0)
+	return figure
+
+
 ## Where the party trails behind the doll whose eyes we borrow: rank order, nearest first.
 func trail_point(slot: int) -> Vector3:
 	return Vector3(TRAIL_X[slot % TRAIL_X.size()], 0, eye_z(step) + 1.5 + slot * 0.85)
@@ -399,10 +411,12 @@ func screen_point(id: String) -> Variant:
 	var figure: Sprite3D = figure_nodes.get(id)
 	if figure == null or not figure.visible or not is_inside_tree():
 		return null
-	var feet := figure.global_position - Vector3(0, figure.pixel_size * figure.texture.get_height() / 2.0, 0)
+	var feet := figure.global_position
+	if figure.billboard != BaseMaterial3D.BILLBOARD_DISABLED:
+		feet -= Vector3(0, figure.pixel_size * figure.texture.get_height() / 2.0, 0)
 	if camera.is_position_behind(feet):
 		return null
-	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 else Vector2.ONE
+	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 and size.x > 0 else Vector2.ONE
 	return camera.unproject_position(feet) * scale_factor
 
 
@@ -446,13 +460,25 @@ func screen_rect(id: String) -> Rect2:
 	if figure == null or not figure.visible or figure.texture == null or not is_inside_tree():
 		return Rect2()
 	var half := Vector2(figure.texture.get_width(), figure.texture.get_height()) * figure.pixel_size / 2.0
+	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 and size.x > 0 else Vector2.ONE
+	if figure.billboard == BaseMaterial3D.BILLBOARD_DISABLED:
+		# Lying on the floor: the bounds of its four corners as the eye sees them.
+		var corners: Array[Vector2] = []
+		for corner in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+			var point: Vector3 = figure.global_transform * Vector3(corner.x * half.x, corner.y * half.y, 0)
+			if camera.is_position_behind(point):
+				return Rect2()
+			corners.append(camera.unproject_position(point) * scale_factor)
+		var bounds := Rect2(corners[0], Vector2.ZERO)
+		for seen in corners:
+			bounds = bounds.expand(seen)
+		return bounds
 	var across := camera.global_transform.basis.x
 	var top := figure.global_position + Vector3.UP * half.y - across * half.x
 	var bottom := figure.global_position - Vector3.UP * half.y + across * half.x
 	if camera.is_position_behind(top) or camera.is_position_behind(bottom):
 		return Rect2()
-	var scale_factor := size / Vector2(viewport.size) if viewport.size.x > 0 else Vector2.ONE
-	return Rect2(camera.unproject_position(top) * scale_factor, Vector2.ZERO) 		.expand(camera.unproject_position(bottom) * scale_factor)
+	return Rect2(camera.unproject_position(top) * scale_factor, Vector2.ZERO).expand(camera.unproject_position(bottom) * scale_factor)
 
 
 ## A single authored-figure camera beat. Keys are live occupied seats supplied by the
