@@ -3,7 +3,7 @@
   "parts": [
     {
       "id": "tinker_head_cog_shot",
-      "name": "Cog Shot",
+      "name": "Cog-Girded Goggles",
       "slot": "head",
       "owner": "tinker",
       "stat": {
@@ -68,7 +68,7 @@
     },
     {
       "id": "tinker_arms_scrap_bomb",
-      "name": "Scrap Bomb",
+      "name": "Washer-Pinned Sleeve",
       "slot": "arms",
       "owner": "tinker",
       "stat": {
