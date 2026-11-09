@@ -480,10 +480,28 @@ func _act(receipt: Dictionary) -> Dictionary:
 		set_more_open(false)
 	elif bool(receipt.get("ok", false)):
 		set_more_open(false)
-	elif receipt.has("error"):
-		log_label.text = str(receipt.error).capitalize()
+		_drop_bar_focus()
 	refresh()
+	# After refresh: its "Pick a target." line used to hide why a click was refused (Mistral playtest 11-09).
+	if not bool(receipt.get("ok", false)) and receipt.has("error"):
+		log_label.text = str(receipt.error).capitalize()
 	return receipt
+
+
+## A settled action leaves the bar buttons behind: a stray Enter must not re-arm
+## the focused part or hand for the next doll. Only bar button focus is touched.
+func _drop_bar_focus() -> void:
+	var focused := get_viewport().gui_get_focus_owner()
+	if focused == null:
+		return
+	for slot in part_buttons:
+		if part_buttons[slot] == focused:
+			focused.release_focus()
+			return
+	for action_id in hand_buttons:
+		if hand_buttons[action_id] == focused:
+			focused.release_focus()
+			return
 
 
 ## Picks a body part; a part with a single possible target acts at once.

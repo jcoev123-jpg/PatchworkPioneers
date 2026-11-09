@@ -1175,6 +1175,17 @@ func _open_part_help(slot: String) -> void:
 	_part_help_dialog.popup_centered()
 
 
+## S14: a part button dispatches the fixed signature ability at its limb slot, never the
+## part's retired authored skill (StitchedRunSession.RankedBattle.use_part bridges it).
+## Every part-button gate must judge the ability the button really performs.
+func _dispatched_ability(actor: Dictionary, equipped: Dictionary) -> Dictionary:
+	var part: Dictionary = parts.get(str(equipped.get("id", "")), {})
+	var slot := str(part.get("slot", ""))
+	if battle != null and battle._s14 and not slot.is_empty():
+		return slot_ability(actor, slot)
+	return StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1))) if not part.is_empty() else {}
+
+
 func _part_lock_reason(actor: Dictionary, equipped: Dictionary) -> String:
 	if battle == null or actor.is_empty() or battle.is_over() or battle.current_side() != "hero":
 		return "No active hero"
@@ -1185,7 +1196,7 @@ func _part_lock_reason(actor: Dictionary, equipped: Dictionary) -> String:
 		return "Unknown worn part"
 	if bool(equipped.get("torn", false)):
 		return "TORN — mend at Sewing Circle"
-	var ability := StitchedParts.ability_at_tier(parts[id], int(equipped.get("tier", 1)))
+	var ability := _dispatched_ability(actor, equipped)
 	if ability.is_empty():
 		return "No ability on worn part"
 	if not StitchedParts.ranks_allowed(int(ability.get("launch_mask", 0)), int(actor.get("rank", 0))):
@@ -1240,7 +1251,7 @@ func _valid_part(actor: Dictionary, equipped: Dictionary) -> bool:
 	var id := str(equipped.get("id", ""))
 	if id.is_empty() or bool(equipped.get("torn", false)) or not parts.has(id):
 		return false
-	var ability: Dictionary = StitchedParts.ability_at_tier(parts[id], int(equipped["tier"]))
+	var ability: Dictionary = _dispatched_ability(actor, equipped)
 	if ability.is_empty() or not StitchedParts.ranks_allowed(int(ability["launch_mask"]), int(actor["rank"])) or not battle._self_move_gate(actor, ability).is_empty():
 		return false
 	for rank in range(1, 5):
@@ -1421,7 +1432,7 @@ func submit_part(part_id: String, rank: int) -> Dictionary:
 	var equipped: Dictionary = battle._equipment(actor, part_id)
 	if not _valid_part(actor, equipped):
 		return {"ok": false, "error": "part unavailable or torn"}
-	var ability: Dictionary = StitchedParts.ability_at_tier(parts[part_id], int(equipped["tier"]))
+	var ability: Dictionary = _dispatched_ability(actor, equipped)
 	if battle._legal_targets(actor, ability, rank).is_empty():
 		return {"ok": false, "error": "illegal target"}
 	return _commit(battle.use_part(part_id, rank))
