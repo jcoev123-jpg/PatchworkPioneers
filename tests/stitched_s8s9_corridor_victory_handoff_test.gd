@@ -193,7 +193,8 @@ func _fight_to_victory(fight: StitchedCorridorFight, session: StitchedRunSession
 			waits += 1
 		await process_frame
 	var won := session.battle != null and session.battle.is_over() and session.battle.outcome() == "victory"
-	_check(won and turns < 250 and attacks >= 3 and torn_turns > 0,
+	# S14 (owner 11-08): no limb is torn before 0 HP, so only pre-S14 fights must show a torn part.
+	_check(won and turns < 250 and attacks >= 3 and (torn_turns > 0 or session.s14_enabled),
 		"four dolls genuinely win the seeded corridor Fight with %d signature actions and %d passes in %d turns" % [attacks, waits, turns])
 	return won
 
@@ -549,8 +550,14 @@ func _run() -> void:
 		var slot := str(item.get("effects", {}).get("slot", ""))
 		var torn_hero := session.heroes.filter(func(hero: Dictionary):
 			return hero.id == item.get("target") and bool(hero.parts.get(slot, {}).get("torn", false)))
-		_check(torn_hero.size() == 1,
-			"the thread-tug tear is genuinely applied to the carried doll's limb")
+		if session.s14_enabled:
+			# S14: the tug opens a seam that bleeds in the next fight instead of tearing the limb.
+			_check(torn_hero.is_empty() and session.walk_carry.any(func(carried: Dictionary):
+					return carried.get("kind") == "seam" and carried.get("target") == item.get("target")),
+				"the thread-tug opens a bleeding seam on the carried doll instead of a torn limb")
+		else:
+			_check(torn_hero.size() == 1,
+				"the thread-tug tear is genuinely applied to the carried doll's limb")
 	_check(session.walk_receipts[0].get("pending", []).any(func(item: Dictionary):
 			return item.get("kind") in ["torn_part", "mimic", "cut_thread"]),
 		"first public Walk resolves its horror with a real pending carry")
@@ -631,12 +638,20 @@ func _run() -> void:
 		for hero_slot in hero.parts:
 			if bool(hero.parts[hero_slot].get("torn", false)):
 				torn_battle.append([str(hero.id), str(hero_slot)])
-	_check(torn_carry.size() >= 1 and torn_battle.size() == torn_carry.size(),
-		"the battle's torn limbs are exactly the Walks' carried tears")
-	for item in torn_carry:
-		_check(torn_battle.has([str(item.get("target", "")), str(item.get("effects", {}).get("slot", ""))]),
-			"carried tear " + str(item.get("target", "")) + ":"
-			+ str(item.get("effects", {}).get("slot", "")) + " reaches the live battle")
+	if session.s14_enabled:
+		_check(torn_carry.size() >= 1 and torn_battle.is_empty(),
+			"the Walks' tugs tear no limb before the live battle")
+		for item in torn_carry:
+			var bleeding := session.battle.get_heroes().any(func(hero: Dictionary):
+				return str(hero.id) == str(item.get("target", "")) 					and int(hero.get("statuses", {}).get("bleed", 0)) >= 1)
+			_check(bleeding, "tugged doll " + str(item.get("target", "")) + " opens the live battle bleeding")
+	else:
+		_check(torn_carry.size() >= 1 and torn_battle.size() == torn_carry.size(),
+			"the battle's torn limbs are exactly the Walks' carried tears")
+		for item in torn_carry:
+			_check(torn_battle.has([str(item.get("target", "")), str(item.get("effects", {}).get("slot", ""))]),
+				"carried tear " + str(item.get("target", "")) + ":"
+				+ str(item.get("effects", {}).get("slot", "")) + " reaches the live battle")
 	_check(session.receipts.filter(func(receipt: Dictionary): return receipt.get("kind") == "Fight").is_empty() \
 		and session.walk_receipts.size() == 2 and not corridor.continue_button.visible \
 		and not session.battle.is_over(),
