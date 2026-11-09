@@ -18,7 +18,7 @@ const CLEARABLE := ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stu
 const REQUIRED_PATCHES := [
 	"cotton_red_lint", "cotton_guard_stitch", "cotton_mending_fuzz",
 	"wool_mark_thread", "wool_hook_stitch", "wool_heel_knot", "wool_steady_hem",
-	"silk_moth_veil", "silk_pin_prick", "silk_life_loop", "silk_clean_seam",
+	"silk_moth_veil", "silk_pin_prick", "silk_life_loop", "silk_clean_seam", "silk_mildew_spore",
 	"gold_hungry_button", "gold_chain_thread", "gold_heart_knot",
 ]
 const HUNGRY := "gold_hungry_button"
@@ -105,6 +105,10 @@ func _base_config(picks: Array) -> Dictionary:
 	var config: Dictionary = _config_cache[key].duplicate(true)
 	config["seed"] = SEED
 	config["s14"] = true
+	# The matrix's public casts must face the same transformed foes a floor-one
+	# live Fight mounts; plain authored foe records have no S15 resistance.
+	for foe in config["foes"]:
+		StitchedDeeperSeams.apply(foe, 1, "Fight")
 	return config
 
 
@@ -354,6 +358,32 @@ func _entries_with_patch(hit: Dictionary, status_key: String, patch_id: String) 
 	return found
 
 
+func _effective_resist(unit: Dictionary, patch: Dictionary) -> int:
+	if str(unit.get("side", "")) != "foe":
+		return 0
+	var effect := str(patch.get("effect", ""))
+	var group := effect
+	if effect in ["push", "pull"]:
+		group = "move"
+	elif effect in StitchedRules.RESIST_DEBUFFS:
+		group = "debuff"
+	elif not effect in StitchedRules.RESIST_KEYS:
+		return 0
+	return maxi(0, int(unit.get("resist", {}).get(group, 0))
+		- int(StitchedRules.PATCH_PIERCE.get(str(patch.get("rarity", "")), 0)))
+
+
+func _resisted_patch_entry(hit: Dictionary, patch: Dictionary, authored_count: int) -> Dictionary:
+	var entries: Array = hit.get("statuses", [])
+	# The signature itself can be resisted (including its own push/pull).
+	# Never mistake that authored entry for the patch's separate d100 roll.
+	if entries.size() <= authored_count:
+		return {}
+	var tail: Dictionary = entries.back()
+	return tail if str(tail.get("status", "")) == str(patch.get("effect", "")) \
+		and bool(tail.get("resisted", false)) else {}
+
+
 func _assert_primary_identity(rp: Dictionary, rb: Dictionary, label: String) -> bool:
 	var same: bool = (rp.get("hit", false) == rb.get("hit", false)
 		and str(rp.get("target", "")) == str(rb.get("target", ""))
@@ -410,6 +440,7 @@ func _assert_effects(hero_id: String, ability: Dictionary, patch: Dictionary, ru
 	var effect := str(patch.effect)
 	var amount := int(patch.amount)
 	var witnessed := false
+	var prior_patch_resist_draw := false
 	var movement := {}
 	if effect == "pull" or effect == "push":
 		var order: Array = []
@@ -420,8 +451,18 @@ func _assert_effects(hero_id: String, ability: Dictionary, patch: Dictionary, ru
 	for index in results_p.size():
 		var rp: Dictionary = results_p[index]
 		var rb: Dictionary = results_b[index]
-		if not _assert_primary_identity(rp, rb, label):
-			return
+		var original_rng_aligned := not prior_patch_resist_draw
+		if original_rng_aligned:
+			if not _assert_primary_identity(rp, rb, label):
+				return
+		else:
+			# Earlier resistant multi-target hits spent their own S15 d100,
+			# legitimately shifting subsequent attack rolls. Keep checking
+			# public target order, hit arithmetic and real receipts instead.
+			_check(str(rp.get("target", "")) == str(rb.get("target", ""))
+				and int(rp.get("roll", 0)) >= 1 and int(rp.get("roll", 0)) <= 100
+				and bool(rp.get("hit", false)) == (int(rp.get("roll", 101)) <= int(rp.get("hit_chance", 0))),
+				label + ": later multi-target attack uses its real shifted RNG roll and legal recipient")
 		if not bool(rp.get("hit", false)):
 			continue
 		if rp.get("patches", []) != [patch_id]:
@@ -441,6 +482,48 @@ func _assert_effects(hero_id: String, ability: Dictionary, patch: Dictionary, ru
 		var target_ticks: int = run["ticked"].count(target_id)
 		var actor_ticks: int = run["ticked"].count(hero_id)
 		var expected: Array = rb.get("statuses", []).duplicate(true)
+		if not original_rng_aligned:
+			# The only enemy multi signature is Scrap Bomb: its authored
+			# Exposed independently rolls S15 debuff resistance before the patch.
+			# Validate that real entry instead of transplanting the baseline's
+			# different post-resistance random roll.
+			expected.clear()
+			var actual: Array = rp.get("statuses", [])
+			var authored_entry: Dictionary = actual[0] if not actual.is_empty() else {}
+			var real_resist := int(recipient.get("resist", {}).get("debuff", 0))
+			_check(bool(ability.multi) and int(ability.effects.get("exposed", 0)) > 0
+				and str(authored_entry.get("status", "")) == "exposed"
+				and (bool(authored_entry.get("resisted", false))
+					and real_resist > 0 and int(authored_entry.get("resist", -1)) == real_resist
+					and int(authored_entry.get("roll", 0)) >= 1
+					and int(authored_entry.get("roll", 101)) <= real_resist
+					or not bool(authored_entry.get("resisted", false))
+					and int(authored_entry.get("duration", 0)) == int(ability.effects.exposed)),
+				label + ": later multi-target authored Exposed reflects the S15 foe's real debuff resist")
+			if not authored_entry.is_empty():
+				expected.append(authored_entry)
+		var net_resist := _effective_resist(recipient, patch)
+		var resisted := _resisted_patch_entry(rp, patch, expected.size())
+		if not resisted.is_empty():
+			_check(net_resist > 0 and int(resisted.get("resist", -1)) == net_resist
+				and int(resisted.get("roll", 0)) >= 1 and int(resisted.get("roll", 101)) <= net_resist,
+				label + ": the recorded resist roll is within the real foe's resist minus rarity pierce " + str([effect, net_resist, resisted, recipient.get("resist", {})]))
+			_check(rp.get("statuses", []) == expected + [resisted],
+				label + ": resisted patch appends its honest roll after the authored receipt " + str([rp.get("statuses", []), expected]))
+			if effect in ["push", "pull"]:
+				_check(rp.get("shift", {}) == rb.get("shift", {})
+					and int(recipient.rank) == int(before.rank),
+					label + ": the resisted movement does not shift its actual target " + str([rp.get("shift", {}), rb.get("shift", {}), recipient.rank, before.rank]))
+			elif effect in ["bleed", "mark", "blind", "stun", "rot"]:
+				var authored := maxi(int(before.statuses.get(effect, 0)), _authored_value(rb, effect))
+				var target_tick := 0 if effect == "blind" else target_ticks
+				_check(int(recipient.statuses.get(effect, 0)) == maxi(0, authored - target_tick),
+					label + ": resisted patch leaves only the signature's authored status")
+			prior_patch_resist_draw = true
+			continue
+		# The signature itself may have a resisted entry of the same name
+		# (for example Heel Spin's own Push), even when the sewn patch lands.
+		# The separate patch roll was distinguished by the authored entry count.
 		match effect:
 			"bleed", "mark", "blind", "stun":
 				expected.append({"status": effect, "duration": amount})
@@ -520,14 +603,20 @@ func _assert_effects(hero_id: String, ability: Dictionary, patch: Dictionary, ru
 					label + ": the " + effect + " patch moves the struck recipient exactly one rank")
 		_check(rp.get("statuses", []) == expected,
 			label + ": the patched receipt keeps every authored entry, then appends exactly the patch's own")
+		prior_patch_resist_draw = prior_patch_resist_draw or net_resist > 0
 	if not witnessed:
 		_check(false, label + ": at least one confirmed hit receives the patch")
-	# Stun can skip the next target turn and trigger a new initiative round
-	# earlier than the unsocketed twin; its primary hit/crit/damage rolls above
-	# remain identical, but the post-cast round RNG need not match.
-	if effect != "stun" or int(run["round"]) == int(base["round"]):
+	# A patch against a genuinely resistant S15 foe rolls one extra d100
+	# even when it lands. That draw is not an RNG leak: only effects with
+	# zero effective resistance must preserve the unsocketed stream.
+	var extra_resist_draw := false
+	for hit in results_p:
+		if bool(hit.get("hit", false)) and (hit.get("patches", []) as Array).has(patch_id):
+			extra_resist_draw = extra_resist_draw or _effective_resist(
+				battle.get_unit(str(hit.get("target", ""))), patch) > 0
+	if not extra_resist_draw and (effect != "stun" or int(run["round"]) == int(base["round"])):
 		_check(battle.rng_state() == int(base["rng"]),
-			label + ": the socketed cast draws exactly the baseline's RNG")
+			label + ": a patch without a resistance draw preserves the baseline RNG")
 
 
 func _assert_chain(hero_id: String, ability: Dictionary, run: Dictionary, base: Dictionary, battle: StitchedRules, label: String, original_ranks: Dictionary) -> void:
@@ -578,8 +667,18 @@ func _assert_chain(hero_id: String, ability: Dictionary, run: Dictionary, base: 
 		for status_key in ["bleed", "weak", "exposed", "mark", "blind", "stun", "tangled"]:
 			var authored := _authored_value(primary_b, status_key)
 			if authored > 0:
-				_check(int(successor.statuses.get(status_key, 0)) >= authored,
-					label + ": the chained hit delivers the authored " + status_key + " to its foe")
+				var resisted_entry := {}
+				for entry in chained.get("statuses", []):
+					if str(entry.get("status", "")) == status_key and bool(entry.get("resisted", false)):
+						resisted_entry = entry
+				var resist_key: String = "debuff" if status_key in StitchedRules.RESIST_DEBUFFS else str(status_key)
+				var real_resist := int(successor.get("resist", {}).get(resist_key, 0))
+				_check((not resisted_entry.is_empty() and real_resist > 0
+					and int(resisted_entry.get("resist", -1)) == real_resist
+					and int(resisted_entry.get("roll", 0)) >= 1
+					and int(resisted_entry.get("roll", 101)) <= real_resist)
+					or (resisted_entry.is_empty() and int(successor.statuses.get(status_key, 0)) >= authored),
+					label + ": the chained authored " + status_key + " lands or has an honest S15 resisted roll")
 		var authored_move: Dictionary = primary_b.get("shift", {})
 		if bool(authored_move.get("ok", false)):
 			_check(chained.has("shift"), label + ": the chained hit carries the signature's authored movement too")

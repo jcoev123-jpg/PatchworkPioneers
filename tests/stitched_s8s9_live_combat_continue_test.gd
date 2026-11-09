@@ -638,6 +638,23 @@ func _run() -> void:
 		return
 	var screen2: StitchedBattleScreen = corridor2.engine
 	var battle2: StitchedRunSession.RankedBattle = session.battle
+	# The public corridor must actually mount S15 foe transformations, not
+	# a plain fixture with a separately invented resistance percentage.
+	var foe_catalog := StitchedEnemyCatalog.load_catalog()
+	var canonical_foes := bool(foe_catalog.get("ok", false))
+	var foe_resist_count := 0
+	for live_foe in battle2.get_foes():
+		var foe_id := str(live_foe.get("id", ""))
+		var canonical: Dictionary = StitchedEnemyCatalog.foe_for(foe_catalog, foe_id)
+		if canonical.is_empty():
+			canonical_foes = false
+			continue
+		StitchedDeeperSeams.apply(canonical, session.map.get_current_floor(),
+			str(session.map.get_node(second_id).type))
+		canonical_foes = canonical_foes and live_foe.get("resist", {}) == canonical.get("resist", {})
+		foe_resist_count += int(not live_foe.get("resist", {}).is_empty())
+	_check(canonical_foes and foe_resist_count >= 2,
+		"the mounted second Fight carries its actual floor- and kind-transformed S15 foe resists")
 	_check(battle2.get_foes().size() >= 2
 		and battle2.state_snapshot().get("s14", {}).get("sockets", {}) \
 		.get("warden", {}).get(signature, []) == [patch_id],

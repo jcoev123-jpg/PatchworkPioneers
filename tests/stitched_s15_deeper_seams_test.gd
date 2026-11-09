@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_resisted_status_never_attaches()
 	_rot_ticks_and_heals()
 	_catalog_resists()
+	_real_foe_pierce_and_wren()
 	_cues()
 	_mildew_patch()
 	_depth_scaling()
@@ -246,6 +247,97 @@ func _mildew_patch() -> void:
 	_check(int(StitchedRules.PATCH_PIERCE.cotton) == 0 and int(StitchedRules.PATCH_PIERCE.wool) == 15
 		and int(StitchedRules.PATCH_PIERCE.silk) == 30 and int(StitchedRules.PATCH_PIERCE.gold) >= 100,
 		"patch rarity sets pierce: cotton 0, wool 15, silk 30, gold always")
+
+
+func _real_foe_pierce_and_wren() -> void:
+	var catalog := StitchedEnemyCatalog.load_catalog()
+	var patches := StitchedS14Abilities.patches()
+	_check(bool(catalog.get("ok", false)) and not patches.is_empty(), "real catalog and patch family load")
+	var seen := 0
+	var resisted_seen := 0
+	var landed_seen := 0
+	var bypass_seen := false
+	if not bool(catalog.get("ok", false)) or patches.is_empty():
+		return
+	for foe_id in catalog.order:
+		var config := StitchedRunSession.starter_config(StitchedRunSession.DEFAULT_PICKS)
+		var foe: Dictionary = StitchedEnemyCatalog.foe_for(catalog, str(foe_id))
+		StitchedDeeperSeams.apply(foe, 1, "Fight")
+		# The public battle requires two or three foes. Keep authentic distinct
+		# escorts, transformed by S15 too, instead of building a one-foe fixture.
+		var roster_foes: Array = [foe]
+		for escort_id in ["fray_scavenger", "scissor_crab", "moth_scribe"]:
+			if str(escort_id) != str(foe_id) and roster_foes.size() < 3:
+				var escort := StitchedEnemyCatalog.foe_for(catalog, str(escort_id))
+				StitchedDeeperSeams.apply(escort, 1, "Fight")
+				roster_foes.append(escort)
+		config["foes"] = roster_foes
+		config["seed"] = 55
+		config["s14"] = true
+		config["gifts"] = ["snip_string"]
+		var built := StitchedRules.create(config)
+		_check(built.ok and built.battle != null, "the canonical S15 foe mounts: " + str(foe_id))
+		if not built.ok or built.battle == null:
+			continue
+		var battle: StitchedRules = built.battle
+		var target: Dictionary = battle.get_unit(str(foe_id))
+		var actor: Dictionary = battle.get_unit("warden")
+		_check(not target.is_empty() and not actor.is_empty()
+			and target.get("resist", {}) == foe.get("resist", {}),
+			"the mounted foe retains its real S15 resist table: " + str(foe_id))
+		for patch_id in patches.by_id:
+			var patch: Dictionary = patches.by_id[patch_id]
+			var effect := str(patch.effect)
+			var group := effect
+			if effect in ["push", "pull"]:
+				group = "move"
+			elif effect in StitchedRules.RESIST_DEBUFFS:
+				group = "debuff"
+			elif not effect in StitchedRules.RESIST_KEYS:
+				continue
+			var pierce := int(StitchedRules.PATCH_PIERCE.get(str(patch.rarity), 0))
+			var net := maxi(0, int(target.resist.get(group, 0)) - pierce)
+			var prior_rng := battle.rng_state()
+			# Mirror the real next RNG draw before the command. Successful rolls
+			# have no receipt entry, so this also proves their landing threshold.
+			var oracle_rng := RandomNumberGenerator.new()
+			oracle_rng.state = prior_rng
+			var actual_roll := oracle_rng.randi_range(1, 100) if net > 0 else 0
+			var before_status: Dictionary = target.statuses.duplicate(true)
+			var receipt := {"statuses": []}
+			var resisted := battle._resisted(actor, target, effect, {"pierce": pierce}, receipt)
+			_check(resisted == (net > 0 and actual_roll <= net)
+				and battle.rng_state() == oracle_rng.state,
+				"the actual next roll and effective rarity-pierced resist determine this outcome")
+			var entry: Dictionary = receipt.statuses[0] if not receipt.statuses.is_empty() else {}
+			if net == 0:
+				_check(not resisted and receipt.statuses.is_empty()
+					and battle.rng_state() == prior_rng, "pierced effect costs no draw: " + str(patch_id))
+			else:
+				seen += 1
+				_check(battle.rng_state() != prior_rng, "real positive resist spends one roll")
+				if resisted:
+					resisted_seen += 1
+					_check(entry.get("status") == effect and bool(entry.get("resisted", false))
+						and int(entry.get("resist", -1)) == net
+						and int(entry.get("roll", 0)) >= 1 and int(entry.get("roll", 101)) == actual_roll and actual_roll <= net,
+						"receipt roll respects real resist minus rarity pierce: " + str(patch_id))
+				else:
+					landed_seen += 1
+					_check(receipt.statuses.is_empty() and actual_roll > net,
+						"an actual roll above net resist lands without a refused entry")
+			_check(target.statuses == before_status, "resistance probing never mutates target statuses")
+		if not bypass_seen and int(target.resist.get("stun", 0)) > 0:
+			var hand_rng := battle.rng_state()
+			var hand := battle.use_hand_action("snip_string", str(foe_id), 0)
+			_check(hand.get("ok", false)
+				and int(battle.get_unit(str(foe_id)).get("statuses", {}).get("stun", 0)) == 1
+				and hand.get("effect", {}).get("status") == "stun"
+				and battle.rng_state() == hand_rng,
+				"Wren Snip String bypasses a canonical resistant foe without rolling")
+			bypass_seen = true
+	_check(seen > 0 and resisted_seen > 0 and landed_seen > 0 and bypass_seen,
+		"non-vacuous real-foe resistance, rarity and Wren witnesses")
 
 
 func _depth_scaling() -> void:
