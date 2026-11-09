@@ -244,6 +244,113 @@
           "stitched_effect": {"target": "party", "candle": 0, "fray": 0}
         }
       ]
+    },
+    {
+      "id": "v3_ashglass_metronome",
+      "title": "The Ashglass Metronome",
+      "description": "A towering metronome sways in a torn velvet wall niche. Its black glass weight holds a trapped candle-glow while the Tinker's crooked gears tick in sympathy.",
+      "choices": [
+        {
+          "id": "tinker_retime_weight",
+          "text": "Let the Tinker retime the hot weight and steady Wren.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 20,
+            "fray": 6,
+            "fear": -10,
+            "gold": -12,
+            "required_hero": "tinker",
+            "require_candle_room": true
+          }
+        },
+        {
+          "id": "crack_glass_weight",
+          "text": "Crack the glass for loose brass while the light stumbles.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": -12,
+            "fray": 9,
+            "scraps": 3,
+            "require_full_candle": true
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Let the metronome count the quiet again.",
+          "stitched_effect": {"target": "party", "candle": 0, "fray": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_black_velvet_millwheel",
+      "title": "The Black-Velvet Millwheel",
+      "description": "A dinner-table-sized toy mill grinds old stitches beside the skirting. A velvet doll keeper holds its cracked spokes as the Seamstress studies the loose binding.",
+      "choices": [
+        {
+          "id": "seamstress_reline_wheel",
+          "text": "Let the Seamstress bind the wheel and mend tired dolls.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 0,
+            "fray": -9,
+            "hp": 6,
+            "scraps": -2,
+            "required_hero": "seamstress"
+          }
+        },
+        {
+          "id": "lift_silver_pinion",
+          "text": "Steal the silver pinion, darkening the road ahead.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": -15,
+            "fray": 11,
+            "gold": 28,
+            "require_full_candle": true
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the mill to grind its own ragged thread.",
+          "stitched_effect": {"target": "party", "candle": 0, "fray": 0}
+        }
+      ]
+    },
+    {
+      "id": "v3_cinder_iron_bootscraper",
+      "title": "The Cinder-Iron Bootscraper",
+      "description": "A vast iron bootscraper juts from a soot-stained threshold, its blunt teeth crowded with torn doll-straw. Beyond it a weak amber glow slips under the door.",
+      "choices": [
+        {
+          "id": "scarecrow_wedge_straw",
+          "text": "Let the Scarecrow pack its teeth and shield the flame.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": 24,
+            "fray": -5,
+            "scraps": -2,
+            "required_hero": "scarecrow",
+            "require_candle_room": true
+          }
+        },
+        {
+          "id": "harvest_rust_teeth",
+          "text": "Pull free the rusted teeth; the dolls pay in stuffing.",
+          "stitched_effect": {
+            "target": "party",
+            "candle": -11,
+            "fray": 10,
+            "scraps": 3,
+            "hp": -4,
+            "require_full_candle": true
+          }
+        },
+        {
+          "id": "leave",
+          "text": "Step around the iron teeth and keep walking.",
+          "stitched_effect": {"target": "party", "candle": 0, "fray": 0}
+        }
+      ]
     }
   ]
 }
