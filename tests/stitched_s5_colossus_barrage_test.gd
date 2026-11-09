@@ -39,6 +39,10 @@ var checks := 0
 
 
 func _initialize() -> void:
+	_run.call_deferred()
+
+
+func _run() -> void:
 	var catalog := StitchedEnemyCatalog.load_catalog()
 	_check(catalog.get("ok", false), "canonical catalog validates")
 	_source(catalog)
@@ -55,6 +59,10 @@ func _initialize() -> void:
 		_hanging(catalog)
 		_dead(catalog)
 		_treadle(catalog)
+		_overheat_schedule(catalog)
+		_overheat_projection(catalog)
+		_overheat_ordinals()
+		await _overheat_driver(catalog)
 	if failures.is_empty():
 		print("stitched_s5_colossus_barrage_test: PASS (", checks, " checks)")
 	else:
@@ -164,6 +172,14 @@ func _intent(b: StitchedRules, receipts: Array, ranks: Array) -> Dictionary:
 	var intent := StitchedFoeIntent.choose(b, b.get_unit(BOSS))
 	_check(before == b.state_snapshot() and rng == b.rng_state() and prior_receipts == receipts,
 		"displayed intent is a pure read including turn and receipts")
+	# Round three's first boss turn is its fifth scheduled activation, never an overheat.
+	var order := b.turn_order()
+	var slot := 0
+	for position in range(int(before["turn_index"]) + 1):
+		if str(order[position]) == BOSS:
+			slot += 1
+	_check(2 * (b.round_number() - 1) + slot == 5 and 5 % 3 != 0,
+		"round three's first boss turn is activation five, not an overheat")
 	_check(b.round_number() == 3 and intent.get("ability_id") == BARRAGE
 		and intent.get("ability_name") == "Needle Barrage" and intent.get("multi") == true
 		and intent.get("affected_ranks") == ranks and intent.get("base_damage") == [2, 3]
@@ -571,3 +587,269 @@ func _treadle_refusals(catalog: Dictionary) -> void:
 		var error := "it is not a foe turn" if wrong_id == "warden" else "the foe has no ability colossus_treadle"
 		_check(wrong.current_actor_id() == wrong_id, "off-turn actor truly owns initiative: " + wrong_id)
 		_refuse(wrong, 1, error, "colossus_treadle")
+
+
+# --------------------------------------------------------------- every third activation
+
+## 1-based index of the Colossus's next pending appearance in the live initiative order, or 0
+## once both of its current-round slots sit behind the turn pointer. Test-side oracle that
+## counts only the boss's own real order entries, never another actor's position.
+func _boss_slot(b: StitchedRules) -> int:
+	var order := b.turn_order()
+	var index := int(b.state_snapshot()["turn_index"])
+	var slot := 0
+	for position in range(order.size()):
+		if str(order[position]) != BOSS:
+			continue
+		slot += 1
+		if position >= index:
+			return slot
+	return 0
+
+
+func _kit_ids(b: StitchedRules) -> Array:
+	var ids: Array = []
+	for ability in b.get_unit(BOSS).get("abilities", []):
+		ids.append(str(ability["id"]))
+	return ids
+
+
+## True when every announced rank is inside the authored target list of the projected
+## ability, and a single-target action really announced exactly one rank.
+func _announces_legal_ranks(b: StitchedRules, intent: Dictionary) -> bool:
+	var ability: Dictionary = {}
+	for candidate in b.get_unit(BOSS).get("abilities", []):
+		if str(candidate.get("id", "")) == str(intent.get("ability_id", "")):
+			ability = candidate
+	if ability.is_empty():
+		return false
+	var authored: Array = ability.get("target", [])
+	var ranks: Array = intent.get("affected_ranks", [])
+	if ranks.is_empty():
+		return false
+	for rank in ranks:
+		if not int(rank) in authored:
+			return false
+	return bool(intent.get("multi", false)) or ranks.size() == 1
+
+
+## Five real rounds of the catalog-loaded fight: activations 1..10. The 3rd, 6th and 9th
+## slots must project a bare Pass and be spent through exactly one StitchedRules.pass_turn,
+## while every other activation still chooses the Colossus's authored legal kit.
+func _overheat_schedule(catalog: Dictionary) -> void:
+	var b := _battle(catalog, 23)
+	if b == null:
+		_check(false, "overheat schedule needs a real seeded battle")
+		return
+	var observed: Dictionary = {}
+	var spent: Dictionary = {}
+	for step in range(160):
+		if b.is_over() or b.round_number() > 5:
+			break
+		if b.current_actor_id() != BOSS:
+			_check(bool(b.pass_turn().get("ok", false)), "schedule: intervening actor spends a real turn")
+			continue
+		var slot := _boss_slot(b)
+		var ordinal := 2 * (b.round_number() - 1) + slot
+		_check(int(slot) in [1, 2] and not observed.has(ordinal),
+			"schedule: the live boss slot is a distinct 1-based activation")
+		var before := b.state_snapshot()
+		var rng := b.rng_state()
+		var intent := StitchedFoeIntent.choose(b, b.get_unit(BOSS))
+		_check(before == b.state_snapshot() and rng == b.rng_state(),
+			"schedule: the activation probe never mutates battle state or RNG")
+		observed[ordinal] = intent
+		if ordinal % 3 == 0:
+			_check(bool(intent.get("pass", false)) and not bool(intent.get("stun", true))
+				and str(intent.get("ability_id", "x")).is_empty()
+				and int(intent.get("target_rank", -1)) == 0
+				and intent.get("affected_ranks", [1]).is_empty(),
+				"activation %d overheats into a bare Pass with no action or target" % ordinal)
+			var receipt := b.pass_turn()
+			spent[ordinal] = bool(receipt.get("ok", false)) \
+				and str(receipt.get("action", "")) == "pass" \
+				and str(receipt.get("actor", "")) == BOSS \
+				and not receipt.has("results")
+			_check(bool(spent[ordinal]), "activation %d is spent by exactly one real Pass" % ordinal)
+		else:
+			_check(not bool(intent.get("pass", true)) and not bool(intent.get("stun", true))
+				and str(intent.get("ability_id", "")) in _kit_ids(b)
+				and not intent.get("affected_ranks", []).is_empty(),
+				"activation %d still chooses its authored legal kit" % ordinal)
+			_check(_announces_legal_ranks(b, intent),
+				"activation %d announces only authored legal target ranks" % ordinal)
+			_check(bool(b.pass_turn().get("ok", false)),
+				"schedule: a non-overheat activation spends a real turn")
+	for ordinal in range(1, 11):
+		_check(observed.has(ordinal), "five real rounds schedule boss activation %d" % ordinal)
+	for ordinal in [3, 6, 9]:
+		_check(bool(spent.get(ordinal, false)),
+			"third-activation overheat really spent: %d" % ordinal)
+	for ordinal in [1, 2, 4, 5, 7, 8, 10]:
+		_check(not bool(observed.get(ordinal, {}).get("pass", true)),
+			"non-overheat activation keeps its kit: %d" % ordinal)
+
+
+## Pure ordinal arithmetic, including an activation nine the real five-round trace reaches.
+func _overheat_ordinals() -> void:
+	var order: Array = ["warden", BOSS, "seamstress", BOSS, "tinker"]
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 0, BOSS, 1) == 1,
+		"ordinal: round one slot one before the boss acts")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 1, BOSS, 1) == 1,
+		"ordinal: round one's acting first slot")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 2, BOSS, 1) == 2,
+		"ordinal: round one's pending second slot")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 3, BOSS, 1) == 2,
+		"ordinal: round one's acting second slot")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 4, BOSS, 1) == 3,
+		"ordinal: after both slots predicts the next round's first")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, order.size(), BOSS, 1) == 3,
+		"ordinal: a pointer past the round predicts the next round's first")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 0, BOSS, 2) == 3,
+		"ordinal: round two opens at activation three")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 2, BOSS, 2) == 4,
+		"ordinal: round two's second slot is activation four")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 4, BOSS, 2) == 5,
+		"ordinal: after round two predicts activation five")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 0, BOSS, 5) == 9,
+		"ordinal: round five opens at activation nine")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 0, BOSS, 5) % 3 == 0
+		and StitchedFoeIntent.boss_activation_ordinal(order, 2, BOSS, 5) == 10
+		and StitchedFoeIntent.boss_activation_ordinal(order, 4, BOSS, 4) == 9,
+		"ordinal: nine overheats, ten does not, and a next-round prediction reaches nine")
+	_check(StitchedFoeIntent.boss_activation_ordinal(order, 0, "moth_queen", 3) == 0,
+		"ordinal: an unscheduled boss has no activation")
+	_check(StitchedFoeIntent.boss_activation_ordinal(["warden"], 0, BOSS, 1) == 0,
+		"ordinal: a round that schedules no boss slot has no activation")
+
+
+## Real initiative probes before the boss's first action, between its two actions and after
+## its second: the prediction follows the next Colossus slot's global ordinal, never a
+## party-round shortcut, and repeated reads leave state, RNG, order and receipts untouched.
+func _overheat_projection(catalog: Dictionary) -> void:
+	var expected := {
+		1: {1: false, 2: false, 0: true},
+		2: {1: true, 2: false, 0: false},
+		3: {1: false, 2: true, 0: false},
+		4: {1: false, 2: false, 0: true},
+	}
+	var phases := {"before_first": false, "between": false, "after_second": false}
+	var found := false
+	for seed_value in range(1, 41):
+		if found:
+			break
+		var b := _battle(catalog, seed_value)
+		if b == null:
+			continue
+		var local: Dictionary = {}
+		for step in range(120):
+			if b.is_over() or b.round_number() > 4:
+				break
+			var round_value := b.round_number()
+			var slot := _boss_slot(b)
+			var ordinal := 2 * (round_value - 1) + slot if slot > 0 else 2 * round_value + 1
+			var order := b.turn_order()
+			var before := b.state_snapshot()
+			var rng := b.rng_state()
+			var intent := StitchedFoeIntent.choose(b, b.get_unit(BOSS))
+			var repeated := StitchedFoeIntent.choose(b, b.get_unit(BOSS))
+			_check(before == b.state_snapshot() and rng == b.rng_state()
+				and order == b.turn_order() and intent == repeated,
+				"projection: repeated intent reads are pure and identical")
+			_check(not intent.is_empty()
+				and bool(intent.get("pass", false)) == (ordinal % 3 == 0),
+				"projection: prediction follows the real activation ordinal, not the party round")
+			if bool(intent.get("pass", false)):
+				_check(str(intent.get("ability_id", "x")).is_empty()
+					and int(intent.get("target_rank", -1)) == 0
+					and intent.get("affected_ranks", [1]).is_empty(),
+					"projection: an overheated slot advertises no action or target")
+			else:
+				_check(str(intent.get("ability_id", "")) in _kit_ids(b)
+					and _announces_legal_ranks(b, intent),
+					"projection: a live slot still advertises its real legal kit")
+			if expected.has(round_value):
+				local[round_value * 10 + slot] = bool(intent.get("pass", true))
+			if slot == 1:
+				phases["before_first"] = true
+			elif slot == 2:
+				phases["between"] = true
+			else:
+				phases["after_second"] = true
+			_check(bool(b.pass_turn().get("ok", false)),
+				"projection: the live actor spends one real turn")
+		var complete := true
+		for round_value in expected:
+			for slot in expected[round_value]:
+				if not local.has(round_value * 10 + slot):
+					complete = false
+		if not complete:
+			continue
+		for round_value in expected:
+			for slot in expected[round_value]:
+				var want := "overheat" if bool(expected[round_value][slot]) else "kit"
+				_check(int(local[round_value * 10 + slot]) == (1 if want == "overheat" else 0),
+					"projection: round %d slot %d predicts %s" % [round_value, slot, want])
+		found = true
+	_check(found, "projection: a bounded seed witnesses before, between and after the two slots")
+	for key in phases:
+		_check(bool(phases[key]), "projection phase witnessed: " + key)
+
+
+## The already-loaded Stitched battle screen drives foes itself: its third scheduled
+## Colossus activation must be one real Pass receipt with no damage or status, and the
+## actors after it keep their turns.
+func _overheat_driver(catalog: Dictionary) -> void:
+	var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(PREVIEW))
+	config["parts"].append_array(catalog["parts"])
+	config["seed"] = 23
+	config["foes"] = []
+	for enemy_id in [BOSS, "ragling", "ragling_guard"]:
+		config["foes"].append(StitchedEnemyCatalog.foe_for(catalog, enemy_id))
+	var screen := StitchedBattleScreen.new()
+	var started := screen.begin(config)
+	_check(started, "driver: the loaded Stitched battle begins with the canonical Colossus")
+	if not started or screen.battle == null:
+		screen.free()
+		return
+	root.size = Vector2i(1280, 720)
+	root.add_child(screen)
+	await process_frame
+	var events: Array = []
+	var cursor := 0
+	for step in range(40):
+		if screen.battle.is_over() or events.size() >= 4:
+			break
+		for index in range(cursor, screen.receipts.size()):
+			var receipt: Dictionary = screen.receipts[index]
+			if str(receipt.get("actor", "")) == BOSS:
+				events.append(receipt.duplicate(true))
+		cursor = screen.receipts.size()
+		if events.size() >= 4 or screen.battle.is_over():
+			break
+		if screen.battle.current_side() != "hero":
+			_check(false, "driver: the automatic foe driver hands the next decision to a doll")
+			break
+		_check(bool(screen.submit_pass().get("ok", false)),
+			"driver: a real doll Pass drives the automatic Colossus")
+	_check(events.size() >= 4, "driver: the live fight reaches four scheduled Colossus activations")
+	if events.size() >= 4:
+		_check(str(events[0].get("action", "")) == "ability" and not events[0].get("results", []).is_empty(),
+			"driver: activation one still commits a real authored attack")
+		_check(str(events[1].get("action", "")) == "ability" and not events[1].get("results", []).is_empty(),
+			"driver: activation two still commits a real authored attack")
+		var overheated: Dictionary = events[2]
+		_check(str(overheated.get("action", "")) == "pass"
+			and str(overheated.get("actor_side", "")) == "foe"
+			and not overheated.has("results") and not overheated.has("ability")
+			and not overheated.has("damage") and not overheated.has("statuses"),
+			"driver: activation three is one real Pass with no damage or status receipt")
+		_check(str(events[3].get("action", "")) == "ability" and not events[3].get("results", []).is_empty(),
+			"driver: activation four keeps a real authored attack")
+		_check(screen.battle.current_side() == "hero" or screen.battle.is_over(),
+			"driver: actors after the overheat retain their turns")
+		if screen.battle.current_side() == "hero":
+			_check(bool(screen.submit_pass().get("ok", false)),
+				"driver: play continues after the overheated pass")
+	screen.free()
+	await process_frame

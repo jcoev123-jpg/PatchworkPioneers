@@ -30,6 +30,15 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 	if int(actor.get("statuses", {}).get("stun", 0)) > 0:
 		result["stun"] = true
 		return result
+	# Sewing-Machine Colossus: its machinery seizes every third scheduled activation
+	# (3, 6, 9, ...), a genuine PASS that opens the seams for the dolls. The ordinal is
+	# counted only from the real rolled initiative: its two authored appearances per round
+	# behind the live turn pointer, and once both have passed the next slot is the following
+	# round's first. A turn skipped by Stun still leaves its order slot behind the pointer,
+	# so it consumes its ordinal without being refunded or double-counted. Read-only: no RNG
+	# draw, no mutation and no guess about other actors' positions.
+	if _is_sewing_machine_colossus(actor) and _third_activation_due(battle, actor):
+		return result
 	var authored: Array = actor.get("abilities", [])
 	# Emergency: the Moth Queen's already-authored Moth Veil is a defensive answer to a
 	# critically wounded escort, and it outranks her ordinary round rotation. Only the
@@ -253,6 +262,53 @@ static func _record_choice(
 	result["base_mark_damage"] = int(ability.get("mark_damage", 0))
 	result["base_effects"] = authored_effects.duplicate(true)
 	result["pass"] = false
+
+
+## 1-based global ordinal of a boss's next scheduled activation, counted from the real
+## rolled initiative only. The boss owns `slots_per_round` appearances in the live order
+## (two for an authored turns_per_round 2); the next pending one this round is
+## `slots_per_round * (round - 1) + slot_this_round`, and once every slot of the round has
+## passed it is the following round's first slot, `slots_per_round * round + 1`. Slots the
+## order still holds behind the turn pointer (including ones Stun consumed) count as passed;
+## nothing is refunded. Returns 0 when the boss has no scheduled slot at all. Pure: it reads
+## only the passed order, pointer and round.
+static func boss_activation_ordinal(
+	order: Array, turn_index: int, boss_id: String, round_value: int, slots_per_round: int = 2
+) -> int:
+	var per_round := maxi(1, slots_per_round)
+	var index := clampi(turn_index, 0, order.size())
+	var scheduled := 0
+	var passed := 0
+	for slot in range(order.size()):
+		if str(order[slot]) != boss_id:
+			continue
+		scheduled += 1
+		if slot < index:
+			passed += 1
+	if scheduled <= 0:
+		return 0
+	if passed < scheduled:
+		return per_round * (maxi(1, round_value) - 1) + passed + 1
+	return per_round * maxi(1, round_value) + 1
+
+
+## True only for the canonical Sewing-Machine Colossus. Every other foe keeps its existing
+## priorities and rotation.
+static func _is_sewing_machine_colossus(actor: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "sewing_machine_colossus"
+
+
+## True when the Colossus's next scheduled activation is one of its every-third overheat
+## slots. It asks the battle's own public order and turn pointer, never the round alone,
+## another actor's position or guessed initiative. Read-only: no RNG draw, no mutation.
+static func _third_activation_due(battle: StitchedRules, actor: Dictionary) -> bool:
+	var ordinal := boss_activation_ordinal(
+		battle.turn_order(),
+		int(battle.state_snapshot().get("turn_index", 0)),
+		str(actor.get("id", "")),
+		battle.round_number(),
+		int(actor.get("turns_per_round", 2)))
+	return ordinal > 0 and ordinal % 3 == 0
 
 
 ## True only for the canonical Moth Queen. Every other foe keeps its existing priorities.

@@ -196,17 +196,26 @@ func _reach(battle: StitchedRules, actor: String, minimum_round: int) -> bool:
 
 
 ## A real battle parked on the Colossus's own round-two turn, whose untouched rotation and
-## legal target mask advertise Bobbin Shot at the occupied rank 4.
+## legal target mask advertise Bobbin Shot at the occupied rank 4. The Colossus's first
+## round-two slot (its third overall activation) now overheats into a Pass, so the fixture
+## advances to the second slot, and skips seeds where that slot ends the round so the
+## round-two timing assertions below stay exact.
 func _bobbin_ready(seed_value: int) -> StitchedRules:
 	var battle := _battle(seed_value)
 	if battle == null:
 		return null
-	if not _reach(battle, BOSS, 2):
-		return null
-	var choice := StitchedFoeIntent.choose(battle, battle.get_unit(BOSS))
-	if str(choice.get("ability_id", "")) != BOBBIN or int(choice.get("target_rank", 0)) != 4:
-		return null
-	return battle
+	for step in range(120):
+		if battle.is_over():
+			return null
+		if battle.current_actor_id() == BOSS and battle.round_number() >= 2:
+			var choice := StitchedFoeIntent.choose(battle, battle.get_unit(BOSS))
+			if str(choice.get("ability_id", "")) == BOBBIN and int(choice.get("target_rank", 0)) == 4:
+				if int(battle.state_snapshot()["turn_index"]) >= battle.turn_order().size() - 1:
+					return null
+				return battle
+		if not bool(battle.pass_turn().get("ok", false)):
+			return null
+	return null
 
 
 func _ranks(battle: StitchedRules) -> Dictionary:
@@ -615,12 +624,24 @@ func _trace(seed_value: int) -> Dictionary:
 			"AC4: projecting the boss intent never mutates state or consumes RNG")
 		var receipt: Dictionary
 		if actor == BOSS:
-			intents[round_value] = choice
-			if round_value == 2 and not bobbin_done:
+			# The boss's global activation ordinal: two real scheduled slots per round,
+			# counted through the live initiative order, never the party round alone.
+			var slot := 0
+			for position in range(int(before["turn_index"]) + 1):
+				if str(battle.turn_order()[position]) == BOSS:
+					slot += 1
+			var ordinal := 2 * (round_value - 1) + slot
+			intents[ordinal] = choice
+			if ordinal % 3 == 0:
+				_check(choice.get("pass", false),
+					"AC4: every third activation advertises the Colossus's overheat pass")
+				receipt = battle.pass_turn()
+			elif str(choice.get("ability_id", "")) == BOBBIN \
+					and int(choice.get("target_rank", 0)) == 4 and not bobbin_done:
 				bobbin_done = true
 				_check(str(choice.get("ability_id", "")) == BOBBIN
 					and int(choice.get("target_rank", 0)) == 4,
-					"AC4: round two advertises Bobbin Shot at rank 4 before it is committed")
+					"AC4: the hook turn advertises Bobbin Shot at rank 4 before it is committed")
 				receipt = battle.use_foe_ability(BOBBIN, 4)
 			else:
 				receipt = battle.pass_turn()
@@ -648,18 +669,30 @@ func _test_replay() -> void:
 		return
 	var intents: Dictionary = first["intents"]
 	var treadle: Dictionary = intents.get(1, {})
-	var barrage: Dictionary = intents.get(3, {})
-	var guard: Dictionary = intents.get(4, {})
+	var overheat_two: Dictionary = intents.get(3, {})
+	var bobbin: Dictionary = intents.get(4, {})
+	var barrage: Dictionary = intents.get(5, {})
+	var overheat_three: Dictionary = intents.get(6, {})
+	var guard: Dictionary = intents.get(7, {})
 	_check(treadle.get("ability_id") == "colossus_treadle"
 		and treadle.get("base_effects") == {"stun": 1},
-		"AC4: round one still advertises Treadle Stomp with Stun 1")
+		"AC4: activation one still advertises Treadle Stomp with Stun 1")
+	_check(bobbin.get("ability_id") == BOBBIN
+		and int(bobbin.get("target_rank", 0)) == 4,
+		"AC4: activation four still advertises Bobbin Shot at rank 4")
 	_check(barrage.get("ability_id") == "colossus_barrage"
 		and barrage.get("base_effects") == {"bleed": 1}
 		and int(barrage.get("target_rank", 0)) == 1,
-		"AC4: round three still advertises Needle Barrage with Bleed 1")
+		"AC4: activation five still advertises Needle Barrage with Bleed 1")
 	_check(guard.get("ability_id") == "colossus_guard"
 		and guard.get("base_effects") == {"thorns": 4},
-		"AC4: round four still advertises Iron Tread with Thorns 4")
+		"AC4: activation seven still advertises Iron Tread with Thorns 4")
+	_check(overheat_two.get("pass", false) and not overheat_two.get("stun", true)
+		and str(overheat_two.get("ability_id", "x")).is_empty(),
+		"AC4: activation three overheats into a bare Pass")
+	_check(overheat_three.get("pass", false) and not overheat_three.get("stun", true)
+		and str(overheat_three.get("ability_id", "x")).is_empty(),
+		"AC4: activation six overheats into a bare Pass")
 	var committed := 0
 	var hook_frayed := 0
 	for receipt in first["receipts"]:
