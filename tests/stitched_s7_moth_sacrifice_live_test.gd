@@ -1,7 +1,9 @@
 extends "res://tests/stitched_s6_full_run_test.gd"
 ## Genuine seeded map -> ranked victory -> spare purchase -> Moth.
 
-const SAVE_PATH := "user://stitched_s7_moth_sacrifice_live.save"
+## Lane suites can execute this same test in different Godot processes at once;
+## unique public save paths prevent cross-process seals from racing via user://.
+var SAVE_PATH := "user://stitched_s7_moth_sacrifice_live_%d.save" % OS.get_process_id()
 # This seed's mounted run wins f01_n1 with a real drop and one scrap, buys a distinct
 # second spare at the f02_n0 Peddler, and enters the f03_n0 Event (pinned to the Moth).
 # Re-derived for the S14 fixed kits: the old 588735 fight no longer rolls a part drop.
@@ -520,6 +522,12 @@ func _rich_branch(id: String, index: int = -1, keyboard: bool = false) -> void:
 		app.free()
 		return
 	var before_purchase := session.snapshot()
+	# The asserted Peddler prerequisites are enforced before any pending field is
+	# read, so a failed route entry fails this branch explicitly (the mounted
+	# Peddler check above) instead of reaching into a visit holding no stock.
+	if not (session.phase == "visit" and session.pending.get("service") == "Peddler"):
+		app.free()
+		return
 	var stock: Dictionary = session.pending.peddler_stock.part.duplicate(true)
 	purchase.pressed.emit()
 	var expected_spares: Array = before_purchase.satchel.duplicate(true)
