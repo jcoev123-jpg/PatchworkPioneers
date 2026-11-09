@@ -1771,6 +1771,72 @@
           "outcome": { "gold": 0, "scraps": 0 }
         }
       ]
+    },
+    {
+      "id": "v3_cinderlace_samovar",
+      "title": "The Cinderlace Samovar",
+      "description": "A stove-sized samovar crouches beneath an attic arch, breathing steam through lace-wrapped vents as a button-eyed tea doll turns the needle-shaped tap.",
+      "choices": [
+        {
+          "id": "buy_steaming_spools",
+          "text": "Buy warm winding thread with gold",
+          "outcome": { "gold": -18, "scraps": 3 }
+        },
+        {
+          "id": "stitch_samovar_seam",
+          "text": "Patch the leaking spout for a purse of gold",
+          "outcome": { "gold": 29, "scraps": -2 }
+        },
+        {
+          "id": "leave",
+          "text": "Let the samovar whisper into the dark",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_ashbone_whistle",
+      "title": "The Ashbone Whistle",
+      "description": "An old brass corridor whistle hangs by a loop of bone-grey thread above a closed nursery door; a tiny velvet gatekeeper watches its silent mouth.",
+      "choices": [
+        {
+          "id": "buy_silent_wick",
+          "text": "Buy a quiet wick bundle",
+          "outcome": { "gold": -12, "scraps": 2 }
+        },
+        {
+          "id": "retie_whistle_cord",
+          "text": "Resew the hanging cord for wages",
+          "outcome": { "gold": 17, "scraps": -1 }
+        },
+        {
+          "id": "leave",
+          "text": "Leave the whistle untouched",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
+    },
+    {
+      "id": "v3_oxblood_threadstorm_barometer",
+      "title": "The Oxblood Threadstorm Barometer",
+      "description": "A giant glass barometer leans against a warped floorboard, holding a storm of red thread inside; a patched weather doll cups the brass needle to keep it still.",
+      "choices": [
+        {
+          "id": "buy_storm_thread",
+          "text": "Buy storm-caught thread",
+          "outcome": { "gold": -23, "scraps": 4 }
+        },
+        {
+          "id": "repair_pressure_needle",
+          "text": "Brace the needle with spare scraps for gold",
+          "outcome": { "gold": 41, "scraps": -3 }
+        },
+        {
+          "id": "leave",
+          "text": "Wait for the threadstorm to quiet",
+          "outcome": { "gold": 0, "scraps": 0 }
+        }
+      ]
     }
   ]
 }
