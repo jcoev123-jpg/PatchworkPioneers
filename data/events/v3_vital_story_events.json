@@ -1693,6 +1693,36 @@
         { "id": "drain_hot_coils", "text": "Drain the coils for scrap, burning the doll's stuffing", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
         { "id": "leave", "text": "Let the radiator click and cool in the dark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_nightthread_finger_trap",
+      "title": "The Nightthread Finger Trap",
+      "description": "An enormous woven finger trap holds a little ragdoll by its quilted mitts across the dark corridor. Each tug tightens its wine-black stitches, while a brass safety pin gleams beneath the snare.",
+      "choices": [
+        {"id": "slacken_braid", "text": "Ease the braid with spare thread and reinforce a lasting seam", "outcome": {"gold": 0, "scraps": -2, "hp": 0, "max_hp": 2}},
+        {"id": "pull_gold_filament", "text": "Pull the gilt filament free, risking a cut for coin", "outcome": {"gold": 21, "scraps": 0, "hp": -5, "max_hp": 0}},
+        {"id": "leave", "text": "Leave the woven snare clenched", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_bonecream_footstool",
+      "title": "The Bonecream Footstool",
+      "description": "A huge folded velvet footstool leans beside an attic door, with button-spool legs and a split quilted seat. A plump pin-eyed caretaker presses a warm square of stuffing against the rip.",
+      "choices": [
+        {"id": "repad_stool", "text": "Pay the keeper to rest on the freshly padded seat", "outcome": {"gold": -12, "scraps": 0, "hp": 7, "max_hp": 0}},
+        {"id": "harvest_velvet_tabs", "text": "Strip velvet tabs for scraps, leaving a seam thinner", "outcome": {"gold": 0, "scraps": 2, "hp": 0, "max_hp": -1}},
+        {"id": "leave", "text": "Leave the little stool folded", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_whispering_pocket_fan",
+      "title": "The Whispering Pocket Fan",
+      "description": "A giant folding pocket fan opens in the draft between two corridor walls. Its broad mothcloth leaves are joined with bone-coloured seams, and a tiny button-eyed keeper grips the humming brass hinge.",
+      "choices": [
+        {"id": "sew_windward_lining", "text": "Buy a warm lining for the fan and mend a stronger seam", "outcome": {"gold": -14, "scraps": -1, "hp": 4, "max_hp": 1}},
+        {"id": "pry_brass_fan_ribs", "text": "Pry out sharp brass ribs to sell, despite the cuts", "outcome": {"gold": 23, "scraps": 0, "hp": -4, "max_hp": 0}},
+        {"id": "leave", "text": "Leave the fan whispering to the dark", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
     }
   ]
 }
