@@ -183,10 +183,14 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 		and travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
 		"four appended door examples remain reachable by vertical scroll at 18pt")
 	await _click(guide.tab_buttons[0])
+	var expected_fray := "\n\n".join(StitchedFieldGuide.PAGES[2])
+	var wren_notes := StitchedWrenGiftFieldNotes.examples(StitchedWrenGifts.load_profile())
+	if not wren_notes.is_empty():
+		expected_fray += "\n\n" + "\n\n".join(wren_notes)
 	_check(guide.page_scroll.scroll_vertical == 0
 		and guide.page_text(0) == "\n\n".join(StitchedFieldGuide.PAGES[0])
-		and guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2]),
-		"page switch resets scroll and leaves Ranks and Fray baselines untouched")
+		and guide.page_text(2) == expected_fray,
+		"page switch resets scroll, preserves Ranks and adds only validated Wren notes to Fray")
 
 	var reordered := source.duplicate(true)
 	reordered.doors.reverse()
