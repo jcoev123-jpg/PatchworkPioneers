@@ -104,6 +104,7 @@ func _initialize() -> void:
 	_test_v3_hero_vital_event_gate()
 	_test_four_hero_vital_gate_admission()
 	_test_stitched_survivor_offers()
+	_test_stitched_survivor_offer_list()
 	_test_stitched_survivor_visit_with_preview()
 	_check(_replay(257) == _replay(257), "whole offer/entry/receipt sequence replays exactly")
 	_check(_replay_actionable(257) == _replay_actionable(257), "seeded actionable selection and settlement sequence replays exactly")
@@ -2006,6 +2007,161 @@ func _test_four_hero_vital_gate_admission() -> void:
 	_check(not visit.choose_with_vitals("leave", expected_state)["ok"],
 		"alternate choice is blocked once the four-hero visit is claimed")
 
+
+
+func _offer_ids(offers: Array) -> Array[String]:
+	var ids: Array[String] = []
+	for offer in offers:
+		ids.append(offer["id"])
+	ids.sort()
+	return ids
+
+
+## Authored IDs whose required_hero is on the roster and not LOST, derived per
+## record from the real catalog (never a catalog total or full ordered list).
+func _expected_survivor_offer_ids(party: Array, lost_ids: Array) -> Array[String]:
+	var ids: Array[String] = []
+	for record in catalog["events"]:
+		if party.has(record["required_hero"]) and not lost_ids.has(record["required_hero"]):
+			ids.append(record["id"])
+	ids.sort()
+	return ids
+
+
+## AC1/AC2/AC3: get_stitched_survivor_offers is the opt-in four-hero list that
+## hides LOST heroes' authored Events, stays detached, fails closed on invalid
+## input and a three-hero service, and draws no randomness.
+func _test_stitched_survivor_offer_list() -> void:
+	# The accessor takes no RNG; the global RNG is guarded by _initialize's
+	# seed(257)/randi() comparison, which runs after this test.
+	var service := RunV3HeroEventOffers.new(STITCHED_PARTY)
+	var reordered := RunV3HeroEventOffers.new(STITCHED_PARTY, _reversed_catalog())
+	_check(service.is_valid() and reordered.is_valid(), "survivor list: four-hero services are valid")
+	if not service.is_valid() or not reordered.is_valid():
+		return
+	var baseline_offers := service.get_offers()
+	var baseline_ids := _offer_ids(baseline_offers)
+	_check(not baseline_ids.is_empty(), "survivor list: roster has authored Events (non-vacuous)")
+	var warden_id := "v3_warden_shield_menders"
+	var seamstress_id := "v3_seamstress_thread_cart"
+	var tinker_id := "v3_tinker_clockwork_wagon"
+	var monk_id := "v3_lantern_monk_moth_vigil"
+	var named := [warden_id, seamstress_id, tinker_id, monk_id]
+	for event_id in named:
+		_check(not _by_id(catalog["events"], event_id).is_empty(), "survivor list: authored record exists: " + event_id)
+
+	# AC1: [] keeps every roster Event; [warden] drops only the Warden record.
+	var none_lost := service.get_stitched_survivor_offers([])
+	_check(_offer_ids(none_lost) == baseline_ids and none_lost == baseline_offers,
+		"survivor list: [] returns every roster Event, equal to get_offers()")
+	for event_id in named:
+		_check(not _by_id(none_lost, event_id).is_empty() and _by_id(none_lost, event_id) == _by_id(catalog["events"], event_id),
+			"survivor list: [] keeps the exact canonical record: " + event_id)
+	var warden_lost := service.get_stitched_survivor_offers(["warden"])
+	_check(_by_id(warden_lost, warden_id).is_empty(), "survivor list: [warden] omits the Warden Event")
+	for event_id in [seamstress_id, tinker_id, monk_id]:
+		var kept := _by_id(warden_lost, event_id)
+		_check(not kept.is_empty() and kept == _by_id(catalog["events"], event_id),
+			"survivor list: [warden] keeps the exact canonical survivor record: " + event_id)
+	_check(_offer_ids(warden_lost) == _expected_survivor_offer_ids(STITCHED_PARTY, ["warden"]),
+		"survivor list: [warden] equals roster Events not requiring Warden")
+	_check(warden_lost.size() < baseline_offers.size(), "survivor list: [warden] removed at least one Event")
+
+	# AC2: several LOST IDs; every returned Event requires an actual survivor.
+	var lost_cases := [["warden", "tinker"], ["tinker", "warden"], ["seamstress", "lantern_monk"],
+		["warden", "seamstress", "tinker"]]
+	for lost_case in lost_cases:
+		for offers in [service.get_stitched_survivor_offers(lost_case), reordered.get_stitched_survivor_offers(lost_case)]:
+			_check(_offer_ids(offers) == _expected_survivor_offer_ids(STITCHED_PARTY, lost_case),
+				"survivor list: LOST " + str(lost_case) + " leaves exactly the survivors' Events")
+			for offer in offers:
+				_check(STITCHED_PARTY.has(offer["required_hero"]) and not lost_case.has(offer["required_hero"])
+					and offer == _by_id(catalog["events"], offer["id"]),
+					"survivor list: " + str(offer["id"]) + " requires a survivor and is canonical")
+	var warden_tinker_lost := service.get_stitched_survivor_offers(["warden", "tinker"])
+	_check(_by_id(warden_tinker_lost, warden_id).is_empty() and _by_id(warden_tinker_lost, tinker_id).is_empty()
+		and _by_id(warden_tinker_lost, seamstress_id) == _by_id(catalog["events"], seamstress_id)
+		and _by_id(warden_tinker_lost, monk_id) == _by_id(catalog["events"], monk_id),
+		"survivor list: [warden, tinker] drops the Warden and clockwork wagon, keeps seamstress and monk")
+	_check(service.get_stitched_survivor_offers(STITCHED_PARTY).is_empty(),
+		"survivor list: all four LOST means no survivor offers")
+	var typed_lost: Array[String] = ["warden"]
+	_check(_offer_ids(service.get_stitched_survivor_offers(typed_lost)) == _offer_ids(warden_lost),
+		"survivor list: a typed String array is a native Array")
+
+	# AC2: invalid, missing, duplicate and out-of-roster lost lists return [].
+	var bad_lists: Array = [null, "warden", {"warden": true}, 7, ["warden", "warden"],
+		["scarecrow"], ["warden", "scarecrow"], ["Warden"], [""], [1], [null], ["warden", 1],
+		[["warden"]], [{"id": "warden"}], PackedStringArray(["warden"]), ["rag_duelist"]]
+	for bad in bad_lists:
+		_check(service.get_stitched_survivor_offers(bad).is_empty(),
+			"survivor list: invalid lost_ids returns []: " + str(bad))
+	_check(service.get_stitched_survivor_offers().is_empty(), "survivor list: missing lost_ids returns []")
+	_check(_offer_ids(service.get_offers()) == baseline_ids and service.get_offers() == baseline_offers,
+		"survivor list: invalid input changes no service state")
+
+	# Three-hero and invalid services return [] and keep legacy get_offers().
+	var legacy := RunV3HeroEventOffers.new(PARTY_A)
+	var legacy_before := legacy.get_offers()
+	_check(legacy.is_valid() and not legacy_before.is_empty(), "survivor list: legacy three-hero service is valid")
+	for lost_case in [[], ["warden"], ["warden", "seamstress"], null, ["lantern_monk"]]:
+		_check(legacy.get_stitched_survivor_offers(lost_case).is_empty(),
+			"survivor list: three-hero service returns []: " + str(lost_case))
+	_check(legacy.get_offers() == legacy_before and legacy.enter(warden_id) != null,
+		"survivor list: three-hero get_offers/enter are unchanged")
+	var broken := RunV3HeroEventOffers.new(["warden", "warden", "tinker", "lantern_monk"])
+	_check(not broken.is_valid() and broken.get_stitched_survivor_offers([]).is_empty(),
+		"survivor list: invalid service returns []")
+	var forged := _by_id(catalog["events"], warden_id).duplicate(true)
+	forged["choices"][0]["outcome"]["gold"] = 999
+	var forged_service := RunV3HeroEventOffers.new(STITCHED_PARTY, {"events": [forged]})
+	_check(not forged_service.is_valid() and forged_service.get_stitched_survivor_offers([]).is_empty(),
+		"survivor list: tampered-catalog service returns []")
+
+	# AC3: caller edits to returned records/choices never alter later offers or entry.
+	var edited := service.get_stitched_survivor_offers(["warden"])
+	for record in edited:
+		record["title"] = "forged"
+		record["required_hero"] = "scarecrow"
+		for choice in record["choices"]:
+			choice["outcome"]["gold"] = 999
+			choice["id"] = "forged_choice"
+		record["choices"].clear()
+		record["hero_choice_ids"].append("forged_choice")
+	edited.clear()
+	_check(service.get_stitched_survivor_offers(["warden"]) == warden_lost,
+		"survivor list: edited returned records do not alter the next list")
+	_check(service.get_offers() == baseline_offers, "survivor list: edited records do not alter get_offers()")
+	var visit := service.enter_stitched_survivor(seamstress_id, ["warden"])
+	_check(visit != null and visit.is_valid() and visit.get_event() == _by_id(catalog["events"], seamstress_id),
+		"survivor list: authenticated survivor entry still uses the canonical record")
+	_check(service.enter_stitched_survivor(warden_id, ["warden"]) == null,
+		"survivor list: LOST Warden entry stays refused")
+	var wallet := {"gold": 30, "scraps": 3}
+	var rng_pick := RandomNumberGenerator.new()
+	rng_pick.seed = 911
+	var picked := service.select_stitched_survivor_event_with_preview(rng_pick, ["warden"], [], wallet)
+	_check(picked.get("ok") == true and picked["event"]["required_hero"] != "warden",
+		"survivor list: seeded survivor selection still avoids the LOST hero")
+
+	# No-RNG: a same-seed run RNG selects identically before and after list calls.
+	var rng_a := RandomNumberGenerator.new()
+	rng_a.seed = 911
+	var rng_b := RandomNumberGenerator.new()
+	rng_b.seed = 911
+	var state_b := rng_b.state
+	service.get_stitched_survivor_offers(["warden"])
+	service.get_stitched_survivor_offers(["bad"])
+	_check(rng_b.state == state_b and rng_a.state == rng_b.state
+		and service.select_stitched_survivor_event_with_preview(rng_a, ["warden"], [], wallet)
+		== service.select_stitched_survivor_event_with_preview(rng_b, ["warden"], [], wallet),
+		"survivor list: list calls leave same-seed survivor selection unchanged")
+
+
+func _reversed_catalog() -> Dictionary:
+	var reversed := catalog.duplicate(true)
+	reversed["events"].reverse()
+	return reversed
 
 
 func _expected_survivor_actionable_ids(party: Array, lost_ids: Array, wallet: Dictionary, excluded: Array = [], source_events: Array = []) -> Array[String]:
