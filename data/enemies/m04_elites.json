@@ -62,7 +62,8 @@
           "dmg": [4, 6],
           "crit": 0,
           "effects": {
-            "bleed": 1
+            "bleed": 1,
+            "mark": 3
           },
           "self_move": 0,
           "move": "attack2"
@@ -78,6 +79,7 @@
           "acc": 85,
           "dmg": [3, 5],
           "crit": 0,
+          "mark_damage": 3,
           "effects": {},
           "self_move": 0,
           "move": "attack3"

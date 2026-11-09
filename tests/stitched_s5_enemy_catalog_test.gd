@@ -690,7 +690,13 @@ func _test_spool_kit(catalog: Dictionary) -> void:
 		var ids: Array = []
 		for ability in adjacent.get("abilities", []):
 			ids.append(ability["id"])
-			_check(ability["mark_damage"] == 0, "Hexer AC1: no mark bonus leaks to " + str(neighbor[0]))
+			# Only the Needle Marshal's authored Marshal Volley carries a Mark bonus; every
+			# other neighbour action keeps its zero default.
+			var expected_mark := 3 if str(neighbor[0]) == "needle_marshal" \
+				and str(ability["id"]) == "marshal_volley" else 0
+			_check(int(ability.get("mark_damage", 0)) == expected_mark,
+				"Hexer AC1: exact Mark bonus on neighbour %s action %s"
+					% [str(neighbor[0]), str(ability["id"])])
 		_check(adjacent.get("max_hp") == neighbor[1] and adjacent.get("speed") == neighbor[2]
 			and adjacent.get("dodge") == neighbor[3] and adjacent.get("prot") == neighbor[4]
 			and StitchedEnemyCatalog.trophy_for(catalog, neighbor[0]) == neighbor[5] and ids == neighbor[6],
