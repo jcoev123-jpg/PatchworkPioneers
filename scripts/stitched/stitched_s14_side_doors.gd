@@ -52,10 +52,17 @@ static func catalog(document: Variant = null) -> Dictionary:
 ## stuffing_payer_available: whether any surviving doll could pay the max-hp stuffing price.
 ## fear_payer_available: whether Wren fear, living hero and an unequipped gift permit the fear trade.
 ## When false, unpayable Underbed deals leave the weighted pool; everything else is unchanged.
+## attic_candle_available: caller-owned fact, true iff the candle is below 100.
+## attic_mend_available: caller-owned fact, true iff a non-LOST doll has a wound or torn worn slot to mend.
+## attic_head_guard_available: caller-owned fact, true iff a non-LOST doll could newly receive a head guard.
+## When false, the matching Attic blessing leaves the pool; omitted flags keep the historical draws.
 static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool,
 		leg_payer_available: bool = true,
 		stuffing_payer_available: bool = true,
-		fear_payer_available: bool = true) -> Dictionary:
+		fear_payer_available: bool = true,
+		attic_candle_available: bool = true,
+		attic_mend_available: bool = true,
+		attic_head_guard_available: bool = true) -> Dictionary:
 	var entries := catalog()
 	if rng == null or entries.is_empty() or not kind in ["Elite", "Boss"]:
 		return {}
@@ -81,6 +88,12 @@ static func offer(rng: RandomNumberGenerator, kind: String, underbed_taken: bool
 	if not underbed_taken:
 		for entry in entries.values():
 			if entry.kind == "attic":
+				if entry.reward == "candle" and not attic_candle_available:
+					continue
+				if entry.reward == "mend" and not attic_mend_available:
+					continue
+				if entry.reward == "head_guard" and not attic_head_guard_available:
+					continue
 				attic_choices.append(entry.id)
 		attic_choices.sort()
 
