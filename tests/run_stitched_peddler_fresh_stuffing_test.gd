@@ -28,6 +28,7 @@ func _initialize() -> void:
 	_test_purchase_and_leave()
 	_test_refusals()
 	_test_lost_and_full()
+	_test_cross_visit_identity()
 	_check(randi() == next_draw,
 		"open, quote, buys, Leaves and every refusal draw no global RNG")
 	_check(rng.state == rng_state, "the seeded RandomNumberGenerator never advanced")
@@ -496,3 +497,93 @@ func _test_lost_and_full() -> void:
 		and blocked_left.get("gold") == 300 and blocked.is_consumed()
 		and blocked_left.get("pockets") == _pockets(),
 		"a visit with no legal buyer still permits the free Leave")
+
+
+## Two separately opened, economically identical visits at the SAME node must
+## never honour each other's snapshots (stale cross-visit intent).
+func _test_cross_visit_identity() -> void:
+	var first := _open(100)
+	var first_snap := first.read_state()
+	var second := _open(100)
+	var second_snap := second.read_state()
+	var first_id: Variant = first_snap.get("visit_id")
+	var second_id: Variant = second_snap.get("visit_id")
+	_check(typeof(first_id) == TYPE_STRING and typeof(second_id) == TYPE_STRING
+		and not str(first_id).is_empty() and not str(second_id).is_empty()
+		and first_id != second_id,
+		"two openings with identical inputs get nonempty, distinct visit IDs")
+	var stripped_first := first_snap.duplicate(true)
+	var stripped_second := second_snap.duplicate(true)
+	stripped_first.erase("visit_id")
+	stripped_second.erase("visit_id")
+	_check(stripped_first == stripped_second and first.quote() == second.quote()
+		and first_snap["eligible"] == ["rag_duelist", "warden"]
+		and second_snap["eligible"] == ["rag_duelist", "warden"]
+		and second_snap["heroes"] == _party() and second_snap["pockets"] == _pockets()
+		and second_snap["gold"] == 100 and second_snap["price"] == SAMPLE_QUOTE,
+		"the visits differ only by visit_id; eligibility, quote and data are unchanged")
+	_check(first.read_state() == first_snap and second.read_state() == second_snap,
+		"the ID is stable across repeated reads of one visit")
+	# Old snapshot on the new visit: Buy refused, no drift.
+	_reject(second, "rag_duelist", NODE, first_snap, "stale cross-visit snapshot buy")
+	_reject(second, "warden", NODE, first_snap, "stale cross-visit snapshot buy (warden)")
+	var stale_leave := second.leave(NODE, first_snap)
+	_check(stale_leave.get("ok", true) == false and stale_leave.get("charged_gold", 1) == 0
+		and second.is_open() and not second.is_consumed()
+		and second.read_state() == second_snap and second.quote().get("can_buy") == true,
+		"a stale cross-visit snapshot cannot Leave; the new visit stays open and unchanged")
+	_check(first.is_open() and first.read_state() == first_snap,
+		"refusals on the new visit never touch the older visit")
+	# The same-visit snapshot still authorizes a legal purchase.
+	var paid := second.buy_fresh_stuffing("rag_duelist", NODE, second_snap)
+	_check(paid.get("ok") == true and paid.get("doll_id") == "rag_duelist"
+		and paid.get("charged_gold") == SAMPLE_QUOTE and paid.get("gold") == 100 - SAMPLE_QUOTE
+		and paid.get("gold") == 87 and paid.get("pocket_before") == []
+		and paid.get("pocket_after") == [ITEM]
+		and paid["pockets_after"]["warden"] == ["starch"]
+		and paid["heroes"] == _party(),
+		"the new visit's own snapshot buys exactly one fresh_stuffing for 13 gold")
+	_check(second.is_consumed() and second.read_state()["gold"] == 87
+		and second.buy_fresh_stuffing("warden", NODE, second.read_state()).get("ok", true) == false
+		and second.read_state()["gold"] == 87,
+		"the new visit is consumed and a repeat buy is refused with no second charge")
+	_check(first.is_open() and not first.is_consumed() and first.read_state() == first_snap
+		and first.read_state()["gold"] == 100,
+		"buying on the second visit does not consume or alter the first")
+	# Old snapshots stay inert on a used visit and on a Leave-closed visit.
+	var used_state := second.read_state()
+	_check(second.leave(NODE, first_snap).get("ok", true) == false
+		and second.read_state() == used_state,
+		"the consumed visit refuses the old snapshot's Leave as well")
+	# The first visit still works with its own snapshot, including Leave.
+	var first_left := first.leave(NODE, first_snap)
+	_check(first_left.get("ok") == true and first_left.get("charged_gold") == 0
+		and first_left.get("gold") == 100 and first.is_consumed(),
+		"the first visit still leaves legally with its own snapshot")
+	# A third opening gets yet another ID.
+	var third := _open(100)
+	var third_id: Variant = third.read_state().get("visit_id")
+	_check(not str(third_id).is_empty() and third_id != first_id and third_id != second_id,
+		"reopening again issues a third distinct visit ID")
+	_reject(third, "rag_duelist", NODE, first_snap, "first snapshot on third visit")
+	_reject(third, "rag_duelist", NODE, second_snap, "second snapshot on third visit")
+	var third_left := third.leave(NODE, second_snap)
+	_check(third_left.get("ok", true) == false and third.is_open(),
+		"an older snapshot cannot Leave the third visit")
+	# Forged or blank IDs fail on a visit of the same economic state.
+	var forged := third.read_state().duplicate(true)
+	forged["visit_id"] = ""
+	_reject(third, "rag_duelist", NODE, forged, "blank visit_id")
+	forged["visit_id"] = 7
+	_reject(third, "rag_duelist", NODE, forged, "non-string visit_id")
+	var no_id := third.read_state().duplicate(true)
+	no_id.erase("visit_id")
+	_reject(third, "rag_duelist", NODE, no_id, "snapshot missing visit_id")
+	# Invalid admissions expose an empty ID and never authorize anything.
+	var invalid := _open(100, SAMPLE_QUOTE, "")
+	_check(invalid.read_state().get("visit_id", "x") == ""
+		and invalid.read_state().get("ok") == false,
+		"an invalid visit exposes an empty visit_id")
+	var legal := third.buy_fresh_stuffing("rag_duelist", NODE, third.read_state())
+	_check(legal.get("ok") == true and legal.get("gold") == 87,
+		"after every refusal the third visit's own snapshot still buys legally")

@@ -28,6 +28,11 @@ const POCKET_CAP := 2
 const ITEM_IDS: Array = ["thimble_tonic", "fresh_stuffing", "starch", "dye", "pins",
 		"spare_spool"]
 
+## Process-local monotonic counter: no clock, no RNG. Each admitted visit takes
+## the next serial, so separately opened visits never share an identity.
+static var _next_serial := 1
+
+var _visit_id: String = ""
 var _node_id: String = ""
 var _status: String = INVALID
 var _heroes: Array = []
@@ -68,6 +73,9 @@ func _admit(node_id: Variant, dolls: Variant, pockets: Variant, gold: Variant,
 	_pockets = ledger
 	_gold = gold
 	_quoted_price = quoted_price
+	_visit_id = "peddler-fresh-stuffing-visit-%d" \
+		% RunStitchedPeddlerFreshStuffing._next_serial
+	RunStitchedPeddlerFreshStuffing._next_serial += 1
 	_status = OPEN
 
 
@@ -149,15 +157,18 @@ func _eligible_ids() -> Array:
 	return eligible
 
 
-## Fully detached visit state: node, lifecycle status, mode, wallet, caller
+## Fully detached visit state: an opaque instance-local visit_id (so a snapshot
+## from one opening can never authorize a decision on another, even with identical
+## economic state), node, lifecycle status, mode, wallet, caller
 ## quote, deep-copied roster and pocket ledger, eligible IDs and consumed flag.
 func read_state() -> Dictionary:
 	if _status == INVALID:
-		return {"ok": false, "node_id": "", "status": INVALID, "mode": MODE,
-			"gold": 0, "price": 0, "heroes": [], "pockets": {}, "eligible": [],
-			"consumed": false}
+		return {"ok": false, "visit_id": "", "node_id": "", "status": INVALID,
+			"mode": MODE, "gold": 0, "price": 0, "heroes": [], "pockets": {},
+			"eligible": [], "consumed": false}
 	return {
 		"ok": true,
+		"visit_id": _visit_id,
 		"node_id": _node_id,
 		"status": _status,
 		"mode": MODE,
