@@ -19,9 +19,9 @@ const DRAIN := "drain_thread"
 const MARK := 3
 const MARK_BONUS := 4
 const FRAY := 6
-const SEED_LIMIT := 40
+const SEED_LIMIT := 200
 const PROT_OVERRIDE := 40
-const MOUNTED_SEED := 1
+const MOUNTED_SEED_LIMIT := 24
 const PASS_LIMIT := 24
 
 var checks := 0
@@ -106,7 +106,7 @@ func _drain_source() -> Dictionary:
 		"launch": [1, 3],
 		"target": [1, 2],
 		"target_side": "enemy",
-		"multi": false,
+		"multi": true,
 		"acc": 90,
 		"dmg": [0, 0],
 		"crit": 0,
@@ -126,6 +126,7 @@ func _original_bite() -> Dictionary:
 
 func _original_drain() -> Dictionary:
 	var drain := _drain_source()
+	drain["multi"] = false
 	drain["effects"] = {"weak": 2}
 	return drain
 
@@ -198,10 +199,14 @@ func _test_source_contract(raw: Array) -> void:
 		"AC1: Drain Thread keeps its authored fields and its effects become Weak 2 + Mark 3 + Fray 6")
 	_check(_norm(_without(bite, ["target", "mark_damage"]))
 		== _norm(_without(_original_bite(), ["target", "mark_damage"]))
-		and _norm(_without(drain, ["effects"])) == _norm(_without(_original_drain(), ["effects"])),
-		"AC1: no field other than Bite target/Mark bonus and Drain effects changed from the original action")
+		and _norm(_without(drain, ["effects", "multi"]))
+			== _norm(_without(_original_drain(), ["effects", "multi"])),
+		"AC1: no field other than Bite target/Mark bonus and Drain effects/multi changed from the original action")
 	_check(_norm(bite) != _norm(_original_bite()) and _norm(drain) != _norm(_original_drain()),
-		"AC1: the two stated deltas are real, not an echo of unchanged data")
+		"AC1: the stated deltas are real, not an echo of unchanged data")
+	_check(bool(drain.get("multi", false)) and not bool(_original_drain().get("multi", true))
+		and _norm(drain.get("target")) == [1, 2] and _norm(drain.get("launch")) == [1, 3],
+		"AC1: Drain Thread now sews both authored front ranks in one action, not one doll")
 	# Independent validator agreement, not an echo of the catalog loader.
 	var bite_valid := StitchedParts.validate_ability(bite, "test leech bite")
 	var drain_valid := StitchedParts.validate_ability(drain, "test drain thread")
@@ -217,8 +222,11 @@ func _test_source_contract(raw: Array) -> void:
 		and drain_valid.ability.get("effects") == {"weak": 2, "mark": MARK, "fray": FRAY}
 		and int(drain_valid.ability.get("acc", 0)) == 90
 		and drain_valid.ability.get("dmg") == [0, 0]
-		and drain_valid.ability.get("launch") == [1, 3],
-		"AC1: StitchedParts.validate_ability normalizes Drain Thread's Weak/Mark/Fray effects")
+		and drain_valid.ability.get("launch") == [1, 3]
+		and bool(drain_valid.ability.get("multi", false))
+		and drain_valid.ability.get("target") == [1, 2]
+		and int(drain_valid.ability.get("target_mask", 0)) == StitchedParts.rank_mask([1, 2]),
+		"AC1: StitchedParts.validate_ability normalizes Drain Thread's both-rank seam and Weak/Mark/Fray effects")
 
 
 func _test_catalog_contract(raw: Array) -> void:
@@ -420,11 +428,17 @@ func _run_cycle(seed_value: int, prot_override: int = -1, record_trace: bool = f
 	var units_before := _snapshot_units(battle)
 	var drain := battle.use_foe_ability(DRAIN, drain_rank)
 	_record_step(battle, trace, drain)
-	if not bool(drain.get("ok", false)) or (drain.get("results", []) as Array).size() != 1:
-		return {"ok": false, "fail": "the round-two Drain Thread resolves"}
+	var drain_results: Array = drain.get("results", [])
+	if not bool(drain.get("ok", false)) or drain_results.size() != 2:
+		return {"ok": false, "fail": "the round-two Drain Thread reaches both front-rank dolls"}
+	var reached_ranks: Array = []
+	for result in drain_results:
+		reached_ranks.append(int(result.get("target_rank", 0)))
+	if reached_ranks != [1, 2]:
+		return {"ok": false, "fail": "the round-two Drain Thread reaches exactly hero ranks 1 and 2"}
 	var units_after := _snapshot_units(battle)
 	var actor_after_drain := battle.current_actor_id()
-	var drain_result: Dictionary = (drain["results"] as Array)[0]
+	var drain_result: Dictionary = drain_results[0]
 	var drain_target_id := str(drain_result["target"])
 	var ticks: Array = []
 	if not _advance_to_leech(battle, trace, drain_target_id, ticks):
@@ -456,6 +470,7 @@ func _run_cycle(seed_value: int, prot_override: int = -1, record_trace: bool = f
 		"drain_rank": drain_rank,
 		"drain": drain,
 		"drain_result": drain_result,
+		"drain_results": drain_results,
 		"drain_target_id": drain_target_id,
 		"units_before": units_before,
 		"units_after": units_after,
@@ -473,6 +488,13 @@ func _run_cycle(seed_value: int, prot_override: int = -1, record_trace: bool = f
 	}
 
 
+func _drain_hits(dossier: Dictionary) -> Array:
+	var hits: Array = []
+	for result in dossier.get("drain_results", []):
+		hits.append(bool(result.get("hit", false)))
+	return hits
+
+
 func _search_witnesses() -> Dictionary:
 	var found := {"hit": {}, "two_ticks": {}, "miss": {}, "crit": {}}
 	for seed_value in range(1, SEED_LIMIT + 1):
@@ -482,10 +504,13 @@ func _search_witnesses() -> Dictionary:
 		var dossier := _run_cycle(seed_value)
 		if not bool(dossier.get("ok", false)):
 			continue
-		var drain_result: Dictionary = dossier["drain_result"]
+		var hits := _drain_hits(dossier)
 		var hit1: Dictionary = dossier["hit1"]
 		var hit3: Dictionary = dossier["hit3"]
-		var drained := bool(drain_result.get("hit", false))
+		# Both front-rank dolls really land; either received status is the authored reply.
+		var both_hit := hits.size() == 2 and not hits.has(false)
+		var both_missed := hits.size() == 2 and not hits.has(true)
+		var drained := both_hit
 		var marked_bite := bool(hit3.get("hit", false)) and int(dossier["mark_before3"]) > 0
 		if found["hit"].is_empty() and drained and marked_bite \
 				and not bool(hit3.get("crit", false)) and (dossier["ticks"] as Array).size() >= 1:
@@ -493,7 +518,7 @@ func _search_witnesses() -> Dictionary:
 		if found["two_ticks"].is_empty() and drained and marked_bite \
 				and (dossier["ticks"] as Array).size() >= 2:
 			found["two_ticks"] = dossier
-		if found["miss"].is_empty() and not drained and bool(hit1.get("hit", false)) \
+		if found["miss"].is_empty() and both_missed and bool(hit1.get("hit", false)) \
 				and bool(hit3.get("hit", false)) and int(dossier["mark_before3"]) == 0:
 			found["miss"] = dossier
 		if found["crit"].is_empty() and drained and marked_bite \
@@ -513,66 +538,79 @@ func _test_drain_receipt(witnesses: Dictionary) -> void:
 		return
 	var battle: StitchedRules = dossier["battle"]
 	var intent2: Dictionary = dossier["intent2"]
-	var drain_result: Dictionary = dossier["drain_result"]
-	var target_id := str(dossier["drain_target_id"])
-	var target_before: Dictionary = (dossier["units_before"] as Dictionary).get(target_id, {})
-	var target_after: Dictionary = (dossier["units_after"] as Dictionary).get(target_id, {})
+	var drain_results: Array = dossier["drain_results"]
+	var units_before: Dictionary = dossier["units_before"]
+	var units_after: Dictionary = dossier["units_after"]
+	var actor_after := str(dossier["actor_after_drain"])
 	_check(str(dossier["intent2"].get("ability_id", "")) == DRAIN
 		and str(intent2.get("ability_kind", "")) == "debuff"
-		and not bool(intent2.get("multi", true))
+		and bool(intent2.get("multi", false))
+		and intent2.get("affected_ranks") == [1, 2]
 		and int(intent2.get("base_acc", -1)) == 90
 		and intent2.get("base_damage") == [0, 0]
 		and intent2.get("base_effects") == {"weak": 2, "mark": MARK, "fray": FRAY}
 		and int(intent2.get("base_mark_damage", -1)) == 0
 		and int(intent2.get("target_rank", 0)) == int(dossier["drain_rank"]),
-		"AC2: the live round-two intent announces the exact authored zero-damage Drain Thread")
-	_check(bool(drain_result.get("hit", false)) and int(drain_result.get("damage", -1)) == 0
-		and int(drain_result.get("target_hp", -1)) == int(target_before.get("hp", -2))
-		and drain_result.get("statuses") == [
-			{"status": "weak", "duration": 2}, {"status": "mark", "duration": MARK}]
-		and str((drain_result.get("fray_event") as Dictionary).get("actor", "")) == target_id
-		and int((drain_result.get("fray_event") as Dictionary).get("change", 0)) == FRAY,
-		"AC2: a confirmed Drain Thread hit deals zero damage, applies Weak 2 + Mark 3 and adds 6 fray to its one target")
-	_check(int(target_before.get("fray", -1)) + FRAY == int(target_after.get("fray", -2))
-		and int(target_after.get("hp", -1)) == int(target_before.get("hp", -2)),
-		"AC2: the reached doll really gains exactly 6 fray and loses no HP")
-	# Exactly the reached hero: every other unit keeps its full state during the action.
-	var actor_after := str(dossier["actor_after_drain"])
-	var off_target_changed: Array = []
-	for unit_id in dossier["units_before"]:
-		if unit_id == target_id or unit_id == LEECH:
+		"AC2: the live round-two intent announces the exact authored zero-damage two-rank Drain Thread")
+	var victims: Array = []
+	for result in drain_results:
+		var target_id := str(result["target"])
+		victims.append(target_id)
+		var target_before: Dictionary = units_before.get(target_id, {})
+		var target_after: Dictionary = units_after.get(target_id, {})
+		var rank := int(result.get("target_rank", 0))
+		_check(bool(result.get("hit", false)) and int(result.get("damage", -1)) == 0
+			and int(result.get("target_hp", -1)) == int(target_before.get("hp", -2))
+			and result.get("statuses") == [
+				{"status": "weak", "duration": 2}, {"status": "mark", "duration": MARK}]
+			and str((result.get("fray_event") as Dictionary).get("actor", "")) == target_id
+			and int((result.get("fray_event") as Dictionary).get("change", 0)) == FRAY,
+			"AC2: the confirmed Drain Thread hit in rank %d deals zero damage, applies Weak 2 + Mark 3 and adds 6 fray" % rank)
+		_check(int(target_before.get("fray", -1)) + FRAY == int(target_after.get("fray", -2))
+			and int(target_after.get("hp", -1)) == int(target_before.get("hp", -2)),
+			"AC2: the reached rank-%d doll really gains exactly 6 fray and loses no HP" % rank)
+		var tick := 1 if actor_after == target_id else 0
+		var before_statuses: Dictionary = target_before.get("statuses", {})
+		_check(int(target_after.get("statuses", {}).get("mark", 0)) == maxi(0, MARK - tick)
+			and int(target_after.get("statuses", {}).get("weak", 0)) == maxi(0, 2 - tick)
+			and int(target_after.get("statuses", {}).get("bleed", 0))
+				== maxi(0, int(before_statuses.get("bleed", 0)) - tick),
+			"AC2: the reached rank-%d doll carries Weak and Mark, minus only its own immediate start-turn tick" % rank)
+	_check(victims.size() == 2 and _hero_id_at(battle, 1) in victims
+		and _hero_id_at(battle, 2) in victims,
+		"AC2: the real action reaches exactly the two legal front-rank dolls in one turn")
+	# Ranks 3 and 4 are outside the authored mask: neither may gain a status or fray.
+	for hero in battle.get_heroes():
+		if str(hero["id"]) in victims:
 			continue
-		if _norm(dossier["units_before"][unit_id]) != _norm(dossier["units_after"][unit_id]):
+		_check(int(hero.get("statuses", {}).get("mark", 0)) == 0
+			and int(hero.get("statuses", {}).get("weak", 0)) == 0
+			and int(hero.get("fray", -1)) == int(
+				(units_before.get(str(hero["id"]), {}) as Dictionary).get("fray", -2)),
+			"AC2: no illegal rank is Marked, Weakened or frayed by Drain Thread: " + str(hero["id"]))
+	# Every unit outside the two reached dolls keeps its full state during the action.
+	var off_target_changed: Array = []
+	for unit_id in units_before:
+		if unit_id in victims or unit_id == LEECH:
+			continue
+		if _norm(units_before[unit_id]) != _norm(units_after[unit_id]):
 			off_target_changed.append(unit_id)
 	_check(off_target_changed.is_empty(),
 		"AC2: Drain Thread changes no other hero or foe at all")
-	var tick := 1 if actor_after == target_id else 0
-	var before_statuses: Dictionary = target_before.get("statuses", {})
-	_check(int(target_after.get("statuses", {}).get("mark", 0)) == maxi(0, MARK - tick)
-		and int(target_after.get("statuses", {}).get("weak", 0)) == maxi(0, 2 - tick)
-		and int(target_after.get("statuses", {}).get("bleed", 0))
-			== maxi(0, int(before_statuses.get("bleed", 0)) - tick),
-		"AC2: exactly the reached doll carries Weak and Mark, minus only its own immediate start-turn tick")
-	for hero in battle.get_heroes():
-		if str(hero["id"]) == target_id:
-			continue
-		_check(int(hero.get("statuses", {}).get("mark", 0)) == 0
-			and int(hero.get("statuses", {}).get("weak", 0)) == 0,
-			"AC2: no off-target doll is Marked or Weakened by Drain Thread")
 	# The natural miss applies none of it.
 	var miss: Dictionary = witnesses.get("miss", {})
 	if miss.is_empty():
 		return
-	var miss_result: Dictionary = miss["drain_result"]
-	var miss_target := str(miss["drain_target_id"])
-	var miss_after: Dictionary = (miss["units_after"] as Dictionary).get(miss_target, {})
-	_check(not bool(miss_result.get("hit", true)) and int(miss_result.get("damage", -1)) == 0
-		and (miss_result.get("statuses", [-1]) as Array).is_empty()
-		and not miss_result.has("fray_event"),
-		"AC2: a natural Drain Thread miss applies no Weak, Mark or fray")
-	_check(int(miss_after.get("statuses", {}).get("mark", 0)) == 0
-		and int(miss_after.get("statuses", {}).get("weak", 0)) == 0,
-		"AC2: the missed doll really carries no status afterwards")
+	for miss_result in miss["drain_results"]:
+		var miss_target := str(miss_result["target"])
+		var miss_after: Dictionary = (miss["units_after"] as Dictionary).get(miss_target, {})
+		_check(not bool(miss_result.get("hit", true)) and int(miss_result.get("damage", -1)) == 0
+			and (miss_result.get("statuses", [-1]) as Array).is_empty()
+			and not miss_result.has("fray_event"),
+			"AC2: a natural Drain Thread miss applies no Weak, Mark or fray")
+		_check(int(miss_after.get("statuses", {}).get("mark", 0)) == 0
+			and int(miss_after.get("statuses", {}).get("weak", 0)) == 0,
+			"AC2: the missed rank-%d doll really carries no status afterwards" % int(miss_result.get("target_rank", 0)))
 	for hero in miss["battle"].get_heroes():
 		_check(int(hero.get("fray", -1)) == int(
 			(miss["units_before"] as Dictionary).get(str(hero["id"]), {}).get("fray", -2)),
@@ -929,9 +967,9 @@ func _test_rejections() -> void:
 
 # ---------------------------------------------------------------- AC4 real stage driver
 
-func _stage_config() -> Dictionary:
+func _stage_config(seed_value: int) -> Dictionary:
 	var config: Dictionary = StitchedBattleScreen.read_preview().duplicate(true)
-	config["seed"] = MOUNTED_SEED
+	config["seed"] = seed_value
 	config["candle"] = 100
 	config["parts"].append_array(_catalog["parts"].duplicate(true))
 	config["foes"] = [
@@ -941,20 +979,20 @@ func _stage_config() -> Dictionary:
 	return config
 
 
-func _mount_stage() -> Dictionary:
+func _mount_stage(seed_value: int) -> Dictionary:
 	var host := Control.new()
 	host.name = "SpoolLeechDriverHost"
 	host.size = Vector2(1280, 720)
 	host.theme = load("res://themes/gothic_theme.tres")
 	root.add_child(host)
 	var stage := StitchedBattleScreen.new()
-	var started := stage.begin(_stage_config())
+	var started := stage.begin(_stage_config(seed_value))
 	_check(started, "AC4: the seeded Spool Leech battle starts through actual StitchedBattleScreen.begin")
 	if not started:
 		host.free()
 		return {}
 	host.add_child(stage)
-	return {"host": host, "stage": stage}
+	return {"host": host, "stage": stage, "seed": seed_value}
 
 
 ## Hero Passes only: the screen's own _drive_foes resolves every foe turn. Each receipt is
@@ -964,7 +1002,7 @@ func _drive_stage(stage: StitchedBattleScreen) -> Dictionary:
 	var battle := stage.battle
 	var captured: Array = []
 	var status_trace: Array = []
-	for _step in range(PASS_LIMIT):
+	for pass_index in range(PASS_LIMIT):
 		if battle.is_over():
 			break
 		if battle.current_side() != "hero":
@@ -978,33 +1016,30 @@ func _drive_stage(stage: StitchedBattleScreen) -> Dictionary:
 				"hp": int(live.get("hp", 0)),
 				"fray": int(live.get("fray", 0)),
 			}
-		status_trace.append({"round": int(snap["round"]), "heroes": heroes})
-		var order: Array = snap["order"]
-		var next_index := int(snap["turn_index"]) + 1
-		var next_id := str(order[next_index]) if next_index < order.size() else ""
-		var expected := {}
-		if next_id == LEECH:
-			for rank in range(1, 5):
-				var projected: Dictionary = stage._foe_intents.get(rank, {})
-				if str(projected.get("foe_id", "")) == LEECH:
-					expected = projected.duplicate(true)
+		status_trace.append({"round": int(snap["round"]), "pass": pass_index, "heroes": heroes})
+		# The screen's own displayed forecast for every foe rank, before this Pass resolves.
+		var projected: Dictionary = _norm(stage._foe_intents)
 		var before := stage.receipts.size()
 		var result := stage.submit_pass()
 		_check(bool(result.get("ok", false)), "AC4: a public hero Pass spends exactly one hero turn")
 		if not bool(result.get("ok", false)):
 			break
-		var expected_used := false
 		for index in range(before, stage.receipts.size()):
 			var receipt: Dictionary = stage.receipts[index]
-			var is_first_ability := str(receipt.get("action", "")) == "ability" and not expected_used
+			var expected := {}
+			if str(receipt.get("actor", "")) == LEECH:
+				for rank in range(1, 5):
+					var forecast: Dictionary = projected.get(rank, {})
+					if str(forecast.get("foe_id", "")) == LEECH:
+						expected = forecast.duplicate(true)
 			captured.append({
 				"receipt": receipt.duplicate(true),
 				"round": int(snap["round"]),
-				"expected": expected.duplicate(true) if is_first_ability else {},
+				"pass": pass_index,
+				"seq": captured.size(),
+				"expected": expected,
 				"leech": str(receipt.get("actor", "")) == LEECH,
 			})
-			if is_first_ability:
-				expected_used = true
 		var leech_receipts := captured.filter(func(entry: Dictionary) -> bool:
 			return bool(entry["leech"]) and str(entry["receipt"].get("ability", "")) != "")
 		if leech_receipts.size() >= 3:
@@ -1028,13 +1063,74 @@ func _observed_unit(status_trace: Array, hero_id: String, round_value: int) -> D
 	return found
 
 
+## The bitten doll's real HP immediately before one captured receipt: the latest HP an earlier
+## receipt in the same Pass reported for it, else that Pass's own live pre-action snapshot.
+## Silent start-of-turn clocks cannot fall between the two because a doll ticks at its own turn
+## start, which is the moment the snapshot is taken.
+func _hp_before(driven: Dictionary, hero_id: String, bite_entry: Dictionary) -> int:
+	var pass_index := int(bite_entry["pass"])
+	var seq := int(bite_entry["seq"])
+	var hp := -1
+	for entry in driven["captured"]:
+		if int(entry["pass"]) < pass_index:
+			continue
+		if int(entry["pass"]) > pass_index or int(entry["seq"]) >= seq:
+			break
+		for result in entry["receipt"].get("results", []):
+			if str(result.get("target", "")) == hero_id:
+				hp = int(result.get("target_hp", hp))
+	if hp >= 0:
+		return hp
+	for entry in driven["status_trace"]:
+		if int(entry["pass"]) == pass_index:
+			var observed: Dictionary = (entry["heroes"] as Dictionary).get(hero_id, {})
+			return int(observed.get("hp", -1))
+	return -1
+
+
+## True when one driven capture already contains the required witness: a two-rank Drain
+## Thread that lands on both legal front dolls and a follow-up Bite that lands on the rank-1
+## doll it Marked.
+func _driver_witness(driven: Dictionary) -> bool:
+	var actions: Array = driven["captured"].filter(func(entry: Dictionary) -> bool:
+		return bool(entry["leech"]) and str(entry["receipt"].get("ability", "")) != "")
+	if actions.size() < 3 \
+			or str(actions[0]["receipt"].get("ability", "")) != BITE \
+			or str(actions[1]["receipt"].get("ability", "")) != DRAIN \
+			or str(actions[2]["receipt"].get("ability", "")) != BITE:
+		return false
+	var drain_results: Array = actions[1]["receipt"].get("results", [])
+	var bite_results: Array = actions[2]["receipt"].get("results", [])
+	return drain_results.size() == 2 and bite_results.size() == 1 \
+		and int(drain_results[0].get("target_rank", 0)) == 1 \
+		and int(drain_results[1].get("target_rank", 0)) == 2 \
+		and bool(drain_results[0].get("hit", false)) and bool(drain_results[1].get("hit", false)) \
+		and bool(bite_results[0].get("hit", false)) \
+		and str(bite_results[0].get("target", "")) == str(drain_results[0].get("target", ""))
+
+
 func _test_stage_driver() -> void:
-	var first_mount := _mount_stage()
-	if first_mount.is_empty():
+	# Bounded real-driver seed search: the screen's own automatic foe driver must produce a
+	# landed two-rank Drain Thread and its landed Mark-following Bite in the same live run.
+	var first: Dictionary = {}
+	var first_mount: Dictionary = {}
+	var mounted_seed := 0
+	for seed_value in range(1, MOUNTED_SEED_LIMIT + 1):
+		var mount := _mount_stage(seed_value)
+		if mount.is_empty():
+			continue
+		await process_frame
+		var driven := _drive_stage(mount["stage"])
+		if _driver_witness(driven):
+			first = driven
+			first_mount = mount
+			mounted_seed = seed_value
+			break
+		(mount["host"] as Control).free()
+	_check(mounted_seed > 0,
+		"AC4: bounded real driver seeds resolve a landed two-rank Drain Thread and its landed Bite")
+	if first.is_empty():
 		return
-	await process_frame
-	var first_stage: StitchedBattleScreen = first_mount["stage"]
-	var first := _drive_stage(first_stage)
 	var first_host: Control = first_mount["host"]
 	var leech_actions: Array = first["captured"].filter(func(entry: Dictionary) -> bool:
 		return bool(entry["leech"]) and str(entry["receipt"].get("ability", "")) != "")
@@ -1060,8 +1156,15 @@ func _test_stage_driver() -> void:
 			"AC4: every driven Leech action matches its displayed StitchedFoeIntent ability and target rank")
 		var drain_entry: Dictionary = leech_actions[1]
 		var drain_receipt: Dictionary = drain_entry["receipt"]
-		var drain_result: Dictionary = (drain_receipt["results"] as Array)[0]
+		var drain_results: Array = drain_receipt["results"]
+		var drain_result: Dictionary = drain_results[0]
 		var drained_id := str(drain_result.get("target", ""))
+		_check(drain_results.size() == 2
+			and int(drain_results[0].get("target_rank", 0)) == 1
+			and int(drain_results[1].get("target_rank", 0)) == 2
+			and int(drain_results[0].get("damage", -1)) == 0
+			and int(drain_results[1].get("damage", -1)) == 0,
+			"AC4: the driven Drain Thread really reaches both front-rank dolls through the real enemy path")
 		var bitten_entry: Dictionary = leech_actions[2]
 		var bitten_receipt: Dictionary = bitten_entry["receipt"]
 		var bitten_result: Dictionary = (bitten_receipt["results"] as Array)[0]
@@ -1097,13 +1200,13 @@ func _test_stage_driver() -> void:
 				observed_statuses, false, MARK_BONUS, prot))
 			_check(marked_final == int(bitten_result["damage"]) and unmarked_final < marked_final,
 				"AC4: the driven Bite's extra damage is exactly the authored Mark bonus")
-		_check(int(observed.get("hp", -1)) - int(bitten_result.get("damage", 0))
-			== int(bitten_result.get("target_hp", -2)),
+		_check(int(_hp_before(first, drained_id, bitten_entry))
+			- int(bitten_result.get("damage", 0)) == int(bitten_result.get("target_hp", -2)),
 			"AC4: the driven Bite's real HP loss equals its reported direct damage")
 	first_host.free()
 
 	# Same seed, same public inputs, same driver: identical intents, receipts, state and RNG.
-	var second_mount := _mount_stage()
+	var second_mount := _mount_stage(mounted_seed)
 	if second_mount.is_empty():
 		return
 	await process_frame
