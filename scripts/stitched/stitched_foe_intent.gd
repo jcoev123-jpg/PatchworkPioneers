@@ -98,6 +98,35 @@ static func choose(battle: StitchedRules, foe: Dictionary) -> Dictionary:
 					continue
 				_record_choice(result, wall, allies, rank)
 				return result
+	# Thimble Beetle: a living beetle at half HP or less shelters behind its heavy shell,
+	# then hurls that protected bulk into the nearest legal doll and shoves it one rank.
+	# Only the authoritative living beetle reaches this branch, and the same authored
+	# launch/move gates and read-only legality authority as the ordinary rotation decide
+	# what can be cast. Anything else falls through unchanged to that rotation. Read-only:
+	# no RNG draw and no mutation.
+	if _is_thimble_beetle(actor) and _is_wounded_beetle(actor):
+		if _beetle_thorns(actor) <= 0:
+			var shell_up := _authored_ability(actor, "shell_up")
+			if not shell_up.is_empty() \
+					and StitchedParts.ranks_allowed(int(shell_up["launch_mask"]), int(actor["rank"])) \
+					and battle._self_move_gate(actor, shell_up).is_empty():
+				var shelter: Array = battle._legal_targets(actor, shell_up, int(actor["rank"]))
+				if not shelter.is_empty():
+					_record_choice(result, shell_up, shelter, int(actor["rank"]))
+					return result
+		else:
+			var shell_shove := _authored_ability(actor, "shell_shove")
+			if not shell_shove.is_empty() \
+					and StitchedParts.ranks_allowed(int(shell_shove["launch_mask"]), int(actor["rank"])) \
+					and battle._self_move_gate(actor, shell_shove).is_empty():
+				# Scan the authored reach 1 then 2 and take the first doll the battle
+				# really reports as live and legal; a lost, hanging or empty rank never
+				# becomes a target.
+				for rank in [1, 2]:
+					for target in battle._legal_targets(actor, shell_shove, rank):
+						if _is_live_doll(target):
+							_record_choice(result, shell_shove, [target], rank)
+							return result
 	var offset := (battle.round_number() - 1) % maxi(1, authored.size())
 	for step in range(authored.size()):
 		var ability: Dictionary = authored[(offset + step) % authored.size()]
@@ -239,6 +268,34 @@ static func _is_spool_hexer(actor: Dictionary) -> bool:
 ## True only for the canonical Needle Briar Guard. Every other foe keeps its existing priorities.
 static func _is_briar_guard(actor: Dictionary) -> bool:
 	return str(actor.get("id", "")) == "needle_briar_guard"
+
+
+## True only for the canonical Thimble Beetle. Every other foe keeps its existing priorities.
+static func _is_thimble_beetle(actor: Dictionary) -> bool:
+	return str(actor.get("id", "")) == "thimble_beetle"
+
+
+## A living foe at positive HP no more than half its current maximum. Dead, LOST, empty and
+## non-foe records are excluded before any HP comparison.
+static func _is_wounded_beetle(actor: Dictionary) -> bool:
+	if str(actor.get("side", "")) != "foe":
+		return false
+	if bool(actor.get("dead", false)) or bool(actor.get("lost", false)):
+		return false
+	var hp := int(actor.get("hp", 0))
+	var maximum := int(actor.get("max_hp", 0))
+	if hp <= 0 or maximum <= 0:
+		return false
+	return 2 * hp <= maximum
+
+
+## The unit's active temporary Thorns status (0 when absent or malformed). The permanent
+## authored thorns trait is never read here: only the applied status shelters the beetle.
+static func _beetle_thorns(actor: Dictionary) -> int:
+	var statuses: Variant = actor.get("statuses", {})
+	if not statuses is Dictionary:
+		return 0
+	return int(statuses.get("thorns", 0))
 
 
 ## The Queen's own authored ability with this id, unchanged from the live kit ({} when the
