@@ -104,6 +104,7 @@ func _run() -> void:
 	_check(not prices.is_empty(), "Stitched patch source is non-empty")
 
 	_check_membership_and_determinism(prices)
+	_check_budget_guarantee()
 	_check_every_coat_eligible()
 	_check_padded_vest_price()
 	_check_scrap_vest_price()
@@ -549,6 +550,185 @@ func _check_patchcoat_price() -> void:
 		_check(owned_visit.buy_patch("reinforced_patchcoat", o_state.visit_id, o_state.node_id,
 			o_state.snapshot).get("ok") != true and owned_visit.read_state() == o_state,
 			"owned patchcoat cannot be bought again")
+
+
+## The raw shared-sampler draw for the same inputs: what the stock would be without the budget rule.
+func _raw_draw(seed_value: int, owned: Array) -> Dictionary:
+	var prices := _source_prices()
+	var ids: Array = prices.keys()
+	ids.sort()
+	var candidates: Array = []
+	for id in ids:
+		candidates.append({"id": id, "price": int(prices[id])})
+	var rng := _rng(seed_value)
+	var result := RunShopPurchases.sample_patch_stall_offers(rng, candidates, owned.duplicate(true), [], false)
+	return {"result": result, "state": rng.state}
+
+
+## Budget guarantee: an unowned 20/35-gold button is always stocked while three ordinary patches are unowned.
+func _check_budget_guarantee() -> void:
+	var prices := _source_prices()
+	var budget := {"scrap_lined_vest": 20, "padded_vest": 35}
+	var cases := [
+		{"label": "both budget unowned", "owned": [], "open": ["scrap_lined_vest", "padded_vest"]},
+		{"label": "only scrap vest unowned", "owned": ["padded_vest"], "open": ["scrap_lined_vest"]},
+		{"label": "only padded vest unowned", "owned": ["scrap_lined_vest"], "open": ["padded_vest"]},
+		{"label": "padded vest owned beside another coat", "owned": ["padded_vest", "quilted_coat"],
+			"open": ["scrap_lined_vest"]},
+	]
+	var replaced_witness := {}
+	for entry in cases:
+		var label: String = entry.label
+		var owned: Array = entry.owned
+		var open: Array = entry.open
+		var snapshot := owned.duplicate(true)
+		var unowned_ordinary := 0
+		for id in prices:
+			if not owned.has(id) and not budget.has(id):
+				unowned_ordinary += 1
+		_check(unowned_ordinary >= 3, "%s: at least three ordinary patches are unowned" % label)
+		var replaced := 0
+		for seed_value in range(1, 61):
+			var rng := _rng(seed_value)
+			var before := rng.state
+			var result := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng, owned)
+			_check(result.get("ok") == true and result.get("offers") is Array and result.offers.size() == 3,
+				"%s seed %d: three rows" % [label, seed_value])
+			if result.get("ok") != true:
+				continue
+			var offers: Array = result.offers
+			var seen := {}
+			var budget_rows := 0
+			for offer in offers:
+				_check(offer.size() == 2 and prices.get(offer.id, -1) == offer.price,
+					"%s seed %d: row %s is authentic id/price" % [label, seed_value, offer.id])
+				_check(not owned.has(offer.id), "%s seed %d: row %s is unowned" % [label, seed_value, offer.id])
+				_check(not seen.has(offer.id), "%s seed %d: rows are distinct" % [label, seed_value])
+				seen[offer.id] = true
+				if open.has(offer.id):
+					budget_rows += 1
+					_check(offer.price == budget[offer.id], "%s seed %d: budget row is exactly %d gold"
+						% [label, seed_value, budget[offer.id]])
+			_check(budget_rows >= 1, "%s seed %d: a buyable budget row is stocked" % [label, seed_value])
+			_check(rng.state != before, "%s seed %d: sampling consumes the RNG" % [label, seed_value])
+			_check(owned == snapshot, "%s seed %d: caller's owned IDs unchanged" % [label, seed_value])
+			var rng_b := _rng(seed_value)
+			var again := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng_b, snapshot.duplicate(true))
+			_check(again == result and rng_b.state == rng.state,
+				"%s seed %d: replay gives equal offers and RNG state" % [label, seed_value])
+			# Relation to the raw draw: identical RNG use; either untouched or exactly one row swapped.
+			var raw := _raw_draw(seed_value, owned)
+			_check(raw.state == rng.state, "%s seed %d: the rule draws no extra RNG" % [label, seed_value])
+			var raw_offers: Array = raw.result.offers
+			var raw_has_budget := false
+			for row in raw_offers:
+				raw_has_budget = raw_has_budget or open.has(row.id)
+			if raw_has_budget:
+				_check(offers == raw_offers, "%s seed %d: a drawn budget row leaves the stock unchanged"
+					% [label, seed_value])
+			else:
+				replaced += 1
+				var differing := 0
+				for index in range(3):
+					if offers[index] != raw_offers[index]:
+						differing += 1
+						_check(open.has(offers[index].id) and offers[index].id == open[0],
+							"%s seed %d: the cheapest unowned budget row replaces the draw" % [label, seed_value])
+				_check(differing == 1, "%s seed %d: exactly one sampled row is replaced" % [label, seed_value])
+				if not replaced_witness.has(label):
+					replaced_witness[label] = {"seed": seed_value, "offers": offers, "owned": snapshot}
+		_check(replaced > 0, "%s: some seed exercises the replacement (non-vacuous)" % label)
+	# Both budget buttons unowned prefer the cheaper 20-gold row when neither was drawn.
+	var both: Dictionary = replaced_witness.get("both budget unowned", {})
+	_check(both.has("offers") and _ids(both.offers).has("scrap_lined_vest"),
+		"the 20-gold scrap vest is preferred when neither budget row was drawn")
+
+	_check_budget_owned()
+	if replaced_witness.has("only scrap vest unowned"):
+		_check_budget_visit(replaced_witness["only scrap vest unowned"], "scrap_lined_vest", 20)
+	if replaced_witness.has("only padded vest unowned"):
+		_check_budget_visit(replaced_witness["only padded vest unowned"], "padded_vest", 35)
+	_check(replaced_witness.has("only scrap vest unowned") and replaced_witness.has("only padded vest unowned"),
+		"replacement witnesses exist for both budget buttons")
+
+
+## Both budget buttons owned with at least three other unowned patches: no SOLD budget row is forced in.
+func _check_budget_owned() -> void:
+	var prices := _source_prices()
+	for owned_set in [["scrap_lined_vest", "padded_vest"],
+			["scrap_lined_vest", "padded_vest", "quilted_coat"]]:
+		var owned: Array = owned_set
+		var snapshot := owned.duplicate(true)
+		var reversed := owned.duplicate(true)
+		reversed.reverse()
+		for seed_value in range(1, 41):
+			var rng := _rng(seed_value)
+			var result := RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng, owned)
+			_check(result.get("ok") == true and result.offers.size() == 3,
+				"budget owned seed %d: three rows" % seed_value)
+			if result.get("ok") != true:
+				continue
+			for offer in result.offers:
+				_check(not owned.has(offer.id) and prices.get(offer.id, -1) == offer.price,
+					"budget owned seed %d: row %s is an unowned authentic ordinary row" % [seed_value, offer.id])
+			var raw := _raw_draw(seed_value, owned)
+			_check(result == raw.result and rng.state == raw.state,
+				"budget owned seed %d: stock equals the plain sampler" % seed_value)
+			var rng_r := _rng(seed_value)
+			_check(RunStitchedPeddlerStock.sample_stitched_patch_stall_offers(rng_r, reversed) == result
+				and rng_r.state == rng.state,
+				"budget owned seed %d: ownership order does not change offers or RNG" % seed_value)
+		_check(owned == snapshot, "budget-owned input is not mutated")
+
+
+## Real visit service on a replaced budget row: exact-gold buy once, one-short refusal, free Leave, replays.
+func _check_budget_visit(witness: Dictionary, id: String, price: int) -> void:
+	var offers: Array = witness.offers
+	var owned: Array = witness.owned
+	_check(_ids(offers).has(id) and offers.has({"id": id, "price": price}),
+		"%s witness stock holds the %d-gold row" % [id, price])
+	var rich := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, price, offers)
+	var poor := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned, price - 1, offers)
+	_check(rich.is_valid() and poor.is_valid(), "%s: %d- and %d-gold visits open" % [id, price, price - 1])
+	if not rich.is_valid() or not poor.is_valid():
+		return
+	var poor_state := poor.read_state()
+	var poor_quote := poor.quote()
+	var poor_row_seen := false
+	for row in poor_quote.offers:
+		if row.id == id:
+			poor_row_seen = true
+			_check(row.can_buy == false and row.sold == false, "%s is not buyable at %d gold" % [id, price - 1])
+	_check(poor_row_seen, "%s row is shown at %d gold" % [id, price - 1])
+	_check(poor.buy_patch(id, poor_state.visit_id, poor_state.node_id, poor_state.snapshot).get("ok") != true
+		and poor.read_state() == poor_state and poor.quote() == poor_quote and not poor.is_consumed(),
+		"%s refused at %d gold with no ledger change" % [id, price - 1])
+	_check(poor_quote.decisions.has("leave"), "%s: Leave stays legal after the refusal" % id)
+	var left := poor.leave(poor_state.visit_id, poor_state.node_id, poor_state.snapshot)
+	_check(left.get("ok") == true and left.ledger.gold == price - 1 and left.ledger.owned_patch_ids == owned,
+		"%s: free Leave after refusal keeps wallet and ownership" % id)
+	var state := rich.read_state()
+	var rich_row_seen := false
+	for row in rich.quote().offers:
+		if row.id == id:
+			rich_row_seen = true
+			_check(row.can_buy == true and row.sold == false and row.price == price,
+				"%s is buyable at %d gold" % [id, price])
+	_check(rich_row_seen, "%s row is shown at %d gold" % [id, price])
+	var bought := rich.buy_patch(id, state.visit_id, state.node_id, state.snapshot)
+	_check(bought.get("ok") == true and bought.receipt == {"kind": "trinket", "id": id, "price": price}
+		and bought.ledger.gold == 0 and bought.ledger.owned_patch_ids.count(id) == 1,
+		"%s: %d gold buys it once for exactly %d" % [id, price, price])
+	var closed := rich.read_state()
+	_check(rich.is_consumed() and rich.buy_patch(id, state.visit_id, state.node_id, state.snapshot).get("ok") != true
+		and rich.leave(state.visit_id, state.node_id, state.snapshot).get("ok") != true
+		and rich.read_state() == closed, "%s: replayed buy and stale Leave refused after purchase" % id)
+	var sold_visit := RunPatchStallVisit.open_stitched(NODE, PARTY.duplicate(), owned + [id], 200, offers)
+	_check(sold_visit.is_valid(), "%s: owned-row visit opens" % id)
+	if sold_visit.is_valid():
+		var sold_state := sold_visit.read_state()
+		_check(sold_visit.buy_patch(id, sold_state.visit_id, sold_state.node_id, sold_state.snapshot).get("ok") != true
+			and sold_visit.read_state() == sold_state, "%s: SOLD row cannot be bought" % id)
 
 
 func _check_membership_and_determinism(prices: Dictionary) -> void:
