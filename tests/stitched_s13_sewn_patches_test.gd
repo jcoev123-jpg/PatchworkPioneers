@@ -256,7 +256,7 @@ func _corridor_hoops() -> void:
 	_check(fight.thread_knot != null and fight.thread_knot.name == "ThreadKnot", "the name plate has a thread knot")
 	for slot in StitchedSewnPatches.SLOTS:
 		var button: Node = fight.part_buttons.get(slot)
-		_check(button != null and button.has_node("Patch") and button.has_node("Border") and button.has_node("Frayed"),
-			"the %s hoop has patch, border and frayed layers" % slot)
+		_check(button != null and button.has_node("Patch") and button.has_node("Frayed") and button.texture_normal == null,
+			"the %s round has patch and frayed layers and no hoop behind them" % slot)
 	screen.queue_free()
 	await process_frame
