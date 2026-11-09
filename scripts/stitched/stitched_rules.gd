@@ -95,6 +95,10 @@ var _nightlight := false
 ## S14 signature actions are opt-in at battle creation (legacy S1 fixtures remain independent).
 var _s14 := false
 var _s14_sockets: Dictionary = {}
+## Owner 11-10: the fray mechanic and Wren's four hand actions are removed from the game. Both stay off
+## everywhere; only legacy tests that still cover the old code switch them back on until it is purged.
+static var fray_enabled := false
+static var wren_hands := false
 
 
 ## Builds a stitched battle from authored data:
@@ -349,7 +353,7 @@ func state_snapshot() -> Dictionary:
 ## S9a: true while Wren's one free hand action for this round is unspent and a doll has
 ## the turn (the action happens before that doll acts and never spends its turn).
 func hand_action_open() -> bool:
-	return _require_side_turn("hand", "hero").is_empty() and _hand_round != _round
+	return wren_hands and _require_side_turn("hand", "hero").is_empty() and _hand_round != _round
 
 
 func hand_receipts() -> Array:
@@ -380,6 +384,8 @@ func eyes_covered(hero_id: String) -> bool:
 ## gift takes a hero id, a foe gift a living foe id, and the rest no target; only Lift takes
 ## a direction.
 func hand_action_check(action_id: String, target_id: String, direction: int) -> String:
+	if not wren_hands:
+		return "Wren's hands stay out of the fight"
 	var gate := _require_side_turn("hand", "hero")
 	if not gate.is_empty():
 		return str(gate["error"])
@@ -936,10 +942,11 @@ func _setup(config: Dictionary) -> String:
 		if entry is Dictionary and cuts.has(entry.get("id")):
 			# The Walk already paid exactly +20, but defers combat resolve/seam
 			# transitions. Validate its pre-SNIP state, then settle that same gain.
-			if not entry.get("fray") is int or entry.fray < 20:
+			if fray_enabled and (not entry.get("fray") is int or entry.fray < 20):
 				return "Walk cut requires its paid SNIP fray"
 			carried = entry.duplicate(true)
-			carried.fray -= 20
+			if fray_enabled:
+				carried.fray -= 20
 		var built := _build_hero(carried, rank)
 		if not built["ok"]:
 			return str(built["error"])
@@ -1080,6 +1087,9 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 	# Carry a settled FRAY state verbatim; never perform a setup-time resolve roll.
 	var starting_fray: Variant = entry.get("fray", 0)
 	var starting_resolve: Variant = entry.get("resolve", "")
+	if not fray_enabled:
+		starting_fray = 0
+		starting_resolve = ""
 	if typeof(starting_fray) != TYPE_INT or int(starting_fray) < 0 \
 			or int(starting_fray) >= FRAY_MAX:
 		return {"ok": false, "error": "hero " + unit_id + " has invalid starting fray", "unit": {}}
@@ -1357,6 +1367,10 @@ func _spend_dodge_turn(unit: Dictionary) -> void:
 func _begin_round() -> void:
 	_round += 1
 	_turn_index = 0
+	if _s14 and _round > 1:
+		# Playtest 11-10 (cohort seed 1715): a foe that backed away to the rear after its friends
+		# fell stood out of everyone's reach for good. Each new round the foe line closes up.
+		_compact_foe_ranks()
 	if _round > 8:
 		_party_fray("", 3)
 	_order = _roll_order()
@@ -1490,6 +1504,13 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			if int(unit["hp"]) == 0:
 				_begin_hanging_or_death(unit)
 				return true
+		elif _s14 and str(unit["side"]) == "hero" and not bool(unit["lost"]):
+			# Playtest 11-10: a doll already at 0 HP is on its last threads, so a leaking seam
+			# pulls at it like any other blow. Without this a doll no foe could reach with a
+			# real hit stood at 0 HP forever and the fight never ended.
+			_death_door_hit(unit)
+			if bool(unit["lost"]):
+				return true
 	# S15 Rot: a steady mildew tick after Bleed, ignoring PROT, one turn used per tick.
 	var rot := int(statuses.get("rot", 0))
 	if rot > 0:
@@ -1500,6 +1521,13 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			unit["hp"] = maxi(0, int(unit["hp"]) - ROT_TICK)
 			if int(unit["hp"]) == 0:
 				_begin_hanging_or_death(unit)
+				return true
+		elif _s14 and str(unit["side"]) == "hero" and not bool(unit["lost"]):
+			# Playtest 11-10: a doll already at 0 HP is on its last threads, so a leaking seam
+			# pulls at it like any other blow. Without this a doll no foe could reach with a
+			# real hit stood at 0 HP forever and the fight never ended.
+			_death_door_hit(unit)
+			if bool(unit["lost"]):
 				return true
 	for key in COUNTDOWN_KEYS:
 		if not statuses.has(key):
@@ -1711,9 +1739,31 @@ func _resolve_ability(
 	return receipt
 
 
+const PATCH_HELPFUL := ["guard", "heal", "regen", "cleanse"]
+
+
+## Owner 11-10 ("the felt patches mechanic that goes onto abilities isnt working"): a sewn patch always
+## works for the doll that carries it. A helping patch on an attack lands on the attacker (a guard
+## patch shelters its frailest friend); a harming patch on a friendly ability lands on the front foe.
+func _s14_patch_aim(actor: Dictionary, struck: Dictionary, effect: String) -> Dictionary:
+	var friendly := str(struck.side) == str(actor.side)
+	if effect in PATCH_HELPFUL:
+		var aim: Dictionary = struck if friendly else actor
+		if effect == "guard" and str(aim.id) == str(actor.id):
+			aim = {}
+			for ally in _units_of_side(str(actor.side)):
+				if str(ally.id) != str(actor.id) and _can_act(ally) and (aim.is_empty() or int(ally.hp) < int(aim.hp)):
+					aim = ally
+		return aim
+	if not friendly:
+		return struck
+	var foes := _living_foes() if str(actor.side) == "hero" else []
+	return foes[0] if not foes.is_empty() else {}
+
+
 func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Dictionary) -> void:
-	var target: Dictionary = _units.get(str(receipt.target), {})
-	if target.is_empty() or target.get("dead", false) or target.get("lost", false):
+	var struck: Dictionary = _units.get(str(receipt.target), {})
+	if struck.is_empty():
 		return
 	var attached: Array = _s14_sockets.get(str(actor.id), {}).get(str(ability.id), [])
 	var catalog := StitchedS14Abilities.patches()
@@ -1723,13 +1773,23 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 		var amount: int = int(patch.amount)
 		if effect == "chain":
 			continue
+		var target := _s14_patch_aim(actor, struck, effect)
+		if target.is_empty() or target.get("dead", false) or target.get("lost", false):
+			continue
+		# A patch that lands on someone other than the struck unit keeps its own note, so the
+		# signature's receipt stays truthful about its target; the note's statuses name who got them.
+		var redirected := str(target.id) != str(struck.id)
+		var note: Dictionary = receipt if not redirected else {
+			"target": str(target.id), "target_side": str(target.side), "target_rank": int(target.rank),
+			"hit": true, "crit": false, "damage": 0, "target_hp": int(target.hp), "seam": "",
+			"hanging": false, "lost": false, "statuses": []}
 		if effect == "regen":
 			target.statuses["regen"] = maxi(int(target.statuses.get("regen", 0)), amount)
-			receipt.statuses.append({"status": "regen", "duration": amount, "patch": patch_id})
+			note.statuses.append({"status": "regen", "duration": amount, "patch": patch_id})
 		elif effect == "cleanse":
 			for key in ["bleed", "weak", "exposed", "tangled", "blind", "mark", "stun", "rot"]:
 				target.statuses.erase(key)
-			receipt.statuses.append({"status": "cleanse", "patch": patch_id})
+			note.statuses.append({"status": "cleanse", "patch": patch_id})
 		elif effect == "steal":
 			# A gold steal on an ally heal harms that ally too: the patch always
 			# affects the actual target, not just the opposing side. The drained
@@ -1738,13 +1798,13 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 			# cascade of a dying target): the bite lands, the drain does not.
 			if target.side in ["hero", "foe"]:
 				var actual := mini(int(target.hp), amount)
-				_damage_target(target, actual, receipt)
+				_damage_target(target, actual, note)
 				if not actor.get("dead", false) and not actor.get("lost", false):
 					actor.hp = mini(int(actor.max_hp), int(actor.hp) + actual)
 					if actor.hp > 0:
 						actor.hanging = false
 						actor.death_hits = 0
-					receipt.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
+					note.statuses.append({"status": "steal", "amount": actual, "patch": patch_id})
 		elif effect == "heal":
 			# The sewn-on Cotton/Gold healing mends the signature's actual surviving
 			# target, hero or foe alike (cycle 626's target-side principle): a foe
@@ -1758,17 +1818,16 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 				if target.side == "hero" and int(target.hp) > 0:
 					target.hanging = false
 					target.death_hits = 0
-				receipt.statuses.append({"status": "heal", "amount": healed, "patch": patch_id})
-				receipt.target_hp = int(target.hp)
+				note.statuses.append({"status": "heal", "amount": healed, "patch": patch_id})
+				note.target_hp = int(target.hp)
 		else:
 			_apply_effects(actor, target, {"effects": {effect: amount},
-				"pierce": int(PATCH_PIERCE.get(str(patch.rarity), 0))}, receipt)
+				"pierce": int(PATCH_PIERCE.get(str(patch.rarity), 0))}, note)
+		if redirected:
+			for status in note.statuses:
+				status["on"] = str(target.id)
+				receipt.statuses.append(status)
 		receipt["patches"] = receipt.get("patches", []) + [patch_id]
-		# Ordered sockets stop the moment a patch made the actual target dead or
-		# LOST: no later patch in this same signature may heal, mark or follow up
-		# on the doll that just left the fight, so the receipt stays truthful.
-		if target.get("dead", false) or target.get("lost", false):
-			break
 
 
 func _resolve_single(actor: Dictionary, ability: Dictionary, target: Dictionary) -> Dictionary:
@@ -2373,6 +2432,8 @@ func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -
 	if str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
+	if not fray_enabled:
+		return {"ok": true, "action": "fray", "actor": str(hero["id"]), "before": before, "change": 0, "after": before, "transition": ""}
 	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle and not candle_shielded() else amount
 	if applied > 0 and eyes_covered(str(hero["id"])):
 		applied = 0
@@ -2485,6 +2546,13 @@ func _lose_hero(hero: Dictionary) -> Dictionary:
 	hero["statuses"] = {}
 	hero["dodge_buff"] = {}
 	_thread_cuts.erase(str(hero["id"]))
+	if _s14:
+		# Playtest 11-10 (cohort seeds 1719/1720): with the front dolls lost, the survivors stood
+		# at the back where no foe could land a real blow, pinned by a cut thread, and the fight
+		# never ended. A lost doll drops out of the line: every cut falls away and the dolls
+		# behind it close up, so somebody always stands at the front.
+		_thread_cuts.clear()
+		_close_hero_ranks()
 	var stored: Array = []
 	var overflow: Array = []
 	for slot in StitchedParts.SLOTS:
@@ -2501,6 +2569,21 @@ func _lose_hero(hero: Dictionary) -> Dictionary:
 	hero["parts"] = {}
 	_party_fray(str(hero["id"]), 25)
 	return {"ok": true, "stored": stored, "overflow": overflow}
+
+
+## Living dolls take the front ranks in their standing order; lost dolls fall in behind them.
+func _close_hero_ranks() -> void:
+	var living: Array = []
+	var gone: Array = []
+	for unit in _units_of_side("hero"):
+		if bool(unit["lost"]):
+			gone.append(unit)
+		else:
+			living.append(unit)
+	var rank := MIN_RANK
+	for unit in living + gone:
+		unit["rank"] = mini(rank, MAX_RANK)
+		rank += 1
 
 
 func _cut_behind(hero: Dictionary) -> Dictionary:

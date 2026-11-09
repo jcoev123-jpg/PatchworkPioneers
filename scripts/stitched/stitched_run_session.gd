@@ -753,7 +753,8 @@ func _open_battle(kind: String) -> bool:
 		for index in hero_inputs.size():
 			if hero_inputs[index].id == doll_id and not hero_inputs[index].lost:
 				cuts[doll_id] = index + 1
-				hero_inputs[index].fray = int(hero_inputs[index].fray) + int(arrival.amounts.get(doll_id, 20))
+				if StitchedRules.fray_enabled:
+					hero_inputs[index].fray = int(hero_inputs[index].fray) + int(arrival.amounts.get(doll_id, 20))
 	var party_fray := 0
 	var fray_gains: Array = []
 	for carried in walk_carry:

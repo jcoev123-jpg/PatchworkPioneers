@@ -32,7 +32,7 @@ func _supply_controls(app: Node) -> void:
 			if action_id == "buy_starch":
 				effect_ok = "Guard next fight" in text and "THREAD" not in text and "TUG" not in text
 			else:
-				effect_ok = "snipped THREAD" in text and "TUG" in text and "Guard" not in text
+				effect_ok = "thread that tugs" in text and "Guard" not in text
 			_check(effect_ok and hero.name in text and label in text,
 				"%s label for %s names its own later-use effect and doll" % [label, hero.id])
 			var other := "Spare spool" if action_id == "buy_starch" else "Starch"

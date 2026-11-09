@@ -367,8 +367,10 @@ func _init() -> void:
 	# measures 50 legal completed runs under the S14 fixed kits; S15 (11-09) deepens later
 	# floors and softens the Boss, 17 wins, inside the remeasured 10-24 band. Preserve
 	# replay, route, legality and roster checks.
-	_check(victories >= 10 and victories <= 24,
-		"authentic survival baseline expected 10-24 wins, observed %d" % victories)
+	# Owner 11-10: fray is removed, a lost doll closes the line and no fight can stall, which
+	# lifts the bot to 28 wins; the band is remeasured to 16-34 around it.
+	_check(victories >= 16 and victories <= 34,
+		"authentic survival baseline expected 16-34 wins, observed %d" % victories)
 	print("COHORT_SUMMARY ", JSON.stringify({"runs": 50, "wins": victories,
 		"loss_floors": losses, "heroes": sampled.keys(), "replays": two_replays.keys(),
 		"checks": checks, "failures": failures.size()}))
