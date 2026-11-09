@@ -1555,7 +1555,7 @@ func _run() -> void:
 
 	# Every existing cue must remain complete at the narrowest nine-tag capacity.
 	var all_cues: Array = resolve_snapshots.duplicate(true)
-	for status in ["stun", "bleed", "riposte", "thorns", "blind", "tangled", "mark", "weak", "exposed", "regen"]:
+	for status in ["stun", "bleed", "rot", "riposte", "thorns", "blind", "tangled", "mark", "weak", "exposed", "regen"]:
 		var sample: Dictionary = battle.get_heroes()[0].duplicate(true)
 		sample.statuses = {status: 2}
 		all_cues.append(sample)
@@ -1677,8 +1677,8 @@ func _run() -> void:
 	var hero_reg_snapshot := live_hero.duplicate(true)
 	var foe_reg_snapshot := live_foe.duplicate(true)
 
-	_check(StitchedTurnStatusCues.cue(live_hero) == "HERO", "AC2: hero with regen 2 yields HERO cue (no new marker)")
-	_check(StitchedTurnStatusCues.cue(live_foe) == "FOE", "AC2: foe with regen 2 yields FOE cue (no new marker)")
+	_check(StitchedTurnStatusCues.cue(live_hero) == "REGN", "AC2: hero with regen 2 yields REGN cue")
+	_check(StitchedTurnStatusCues.cue(live_foe) == "REGN", "AC2: foe with regen 2 yields REGN cue")
 
 	var live_h_tip := StitchedTurnStatusCues.tooltip(live_hero)
 	var live_f_tip := StitchedTurnStatusCues.tooltip(live_foe)
@@ -1709,7 +1709,7 @@ func _run() -> void:
 		var reg_unit: Dictionary = live_hero if reg_idx == 0 else live_foe
 		var reg_exp_tip: String = live_h_tip if reg_idx == 0 else live_f_tip
 		var reg_tag := ribbon.tag_at(reg_idx)
-		var exp_marker := "HERO" if reg_idx == 0 else "FOE"
+		var exp_marker := "REGN"
 		_check(ribbon.marker_at(reg_idx).text == exp_marker, "AC2: slot %d displays %s marker" % [reg_idx, exp_marker])
 		_check(reg_tag.tooltip_text == reg_exp_tip, "AC2: slot %d tooltip_text matches pure tooltip" % reg_idx)
 
@@ -1815,40 +1815,43 @@ func _run() -> void:
 	over_unit["statuses"] = {"regen": 2, "bleed": 1}
 	_check(StitchedTurnStatusCues.cue(over_unit) == "BLD", "AC3: BLD overrides regen")
 
-	# Guard overrides regen -> GRD
+	# Regen overrides Guard -> REGN
 	var ally_guardian_id: String = str(battle.get_heroes()[1]["id"])
 	over_unit["statuses"] = {"regen": 2, "guard": 2}
 	over_unit["guard_target"] = ally_guardian_id
-	_check(StitchedTurnStatusCues.cue(over_unit) == "GRD", "AC3: GRD overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides GRD")
 
-	# Riposte overrides regen -> RIP
+	# Regen overrides Riposte -> REGN
 	over_unit["guard_target"] = ""
 	over_unit["statuses"] = {"regen": 2, "riposte": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "RIP", "AC3: RIP overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides RIP")
 
-	# Thorns overrides regen -> THRN
+	# Regen overrides Thorns -> REGN
 	over_unit["statuses"] = {"regen": 2, "thorns": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "THRN", "AC3: THRN overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides THRN")
 
-	# Blind overrides regen -> BLND
+	# Regen overrides Blind -> REGN
 	over_unit["statuses"] = {"regen": 2, "blind": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "BLND", "AC3: BLND overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides BLND")
 
-	# Tangled overrides regen -> TNGL
+	# Regen overrides Tangled -> REGN
 	over_unit["statuses"] = {"regen": 2, "tangled": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "TNGL", "AC3: TNGL overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides TNGL")
 
-	# Mark overrides regen -> MARK
+	# Regen overrides Mark -> REGN
 	over_unit["statuses"] = {"regen": 2, "mark": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "MARK", "AC3: MARK overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides MARK")
 
-	# Weak overrides regen -> WEAK
+	# Regen overrides Weak -> REGN
 	over_unit["statuses"] = {"regen": 2, "weak": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "WEAK", "AC3: WEAK overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides WEAK")
 
-	# Exposed overrides regen -> EXPD
+	# Regen overrides Exposed -> REGN
 	over_unit["statuses"] = {"regen": 2, "exposed": 1}
-	_check(StitchedTurnStatusCues.cue(over_unit) == "EXPD", "AC3: EXPD overrides regen")
+	_check(StitchedTurnStatusCues.cue(over_unit) == "REGN", "AC3: REGN overrides EXPD")
+
+	# S15 (lane4): Distinct Rot and Regeneration turn-order status cues (AC1, AC2, AC3, AC4)
+	await _test_s15_rot_and_regen_cues(battle, ribbon)
 
 	for repetition in range(4):
 		ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
@@ -1863,3 +1866,283 @@ func _run() -> void:
 		"repeated projection, focus and hover mutate no battle snapshot, parts, receipts, or RNG")
 	host.free()
 	_finish()
+
+
+func _test_s15_rot_and_regen_cues(battle: StitchedRules, ribbon: StitchedTurnOrderRibbon) -> void:
+	# Public hero and foe unit snapshots
+	var base_hero: Dictionary = battle.get_heroes()[0].duplicate(true)
+	var base_foe: Dictionary = battle.get_foes()[0].duplicate(true)
+	var neutral_hero: Dictionary = battle.get_heroes()[1].duplicate(true)
+	neutral_hero["statuses"] = {}
+
+	# AC1 & AC2: Direct deterministic unit-copy assertions
+	# Test {"rot":1}, {"rot":2}, {"regen":1}, {"regen":3}, {"rot":2,"regen":2}, {"bleed":2,"regen":1}, {"bleed":2,"rot":1}
+	var test_cases := [
+		{"statuses": {"rot": 1}, "exp": "ROT", "desc": "rot 1"},
+		{"statuses": {"rot": 2}, "exp": "ROT", "desc": "rot 2"},
+		{"statuses": {"regen": 1}, "exp": "REGN", "desc": "regen 1"},
+		{"statuses": {"regen": 3}, "exp": "REGN", "desc": "regen 3"},
+		{"statuses": {"rot": 2, "regen": 2}, "exp": "ROT", "desc": "rot 2 with regen 2 (ROT wins)"},
+		{"statuses": {"bleed": 2, "regen": 1}, "exp": "BLD", "desc": "bleed 2 with regen 1 (BLD wins over REGN)"},
+		{"statuses": {"bleed": 2, "rot": 1}, "exp": "ROT", "desc": "bleed 2 with rot 1 (ROT wins over BLD)"},
+		{"statuses": {"rot": 1, "bleed": 2, "regen": 2}, "exp": "ROT", "desc": "rot 1, bleed 2, regen 2 (ROT wins)"},
+	]
+
+	for tc: Dictionary in test_cases:
+		var st: Dictionary = tc["statuses"]
+		var exp_cue: String = str(tc["exp"])
+		var desc: String = str(tc["desc"])
+
+		var h := base_hero.duplicate(true)
+		var f := base_foe.duplicate(true)
+		h["statuses"] = st.duplicate(true)
+		f["statuses"] = st.duplicate(true)
+
+		var h_cue := StitchedTurnStatusCues.cue(h)
+		var f_cue := StitchedTurnStatusCues.cue(f)
+		_check(h_cue == exp_cue and h_cue.length() <= 4, "AC1/AC2: hero %s yields cue %s" % [desc, exp_cue])
+		_check(f_cue == exp_cue and f_cue.length() <= 4, "AC1/AC2: foe %s yields cue %s" % [desc, exp_cue])
+
+	# AC3: Priority order checks above ROT:
+	# Hanging "SEAM" > Stun "STUN" > torn "TORN" > resolve > FRAY >= 100 > ROT > BLD > REGN
+	for combo in [{"rot": 2}, {"regen": 2}, {"rot": 2, "regen": 2}]:
+		var h_pri := base_hero.duplicate(true)
+		var f_pri := base_foe.duplicate(true)
+		h_pri["statuses"] = combo.duplicate(true)
+		f_pri["statuses"] = combo.duplicate(true)
+
+		# Hanging -> SEAM
+		h_pri["hanging"] = true
+		h_pri["hp"] = 0
+		_check(StitchedTurnStatusCues.cue(h_pri) == "SEAM", "AC3: SEAM overrides %s" % str(combo))
+		h_pri["hanging"] = false
+		h_pri["hp"] = 10
+
+		f_pri["hanging"] = true
+		f_pri["hp"] = 0
+		_check(StitchedTurnStatusCues.cue(f_pri) == "SEAM", "AC3: foe SEAM overrides %s" % str(combo))
+		f_pri["hanging"] = false
+		f_pri["hp"] = 10
+
+		# Stun -> STUN
+		h_pri["statuses"]["stun"] = 1
+		_check(StitchedTurnStatusCues.cue(h_pri) == "STUN", "AC3: STUN overrides %s" % str(combo))
+		h_pri["statuses"].erase("stun")
+
+		f_pri["statuses"]["stun"] = 1
+		_check(StitchedTurnStatusCues.cue(f_pri) == "STUN", "AC3: foe STUN overrides %s" % str(combo))
+		f_pri["statuses"].erase("stun")
+
+		# Torn -> TORN
+		h_pri["parts"]["head"]["torn"] = true
+		_check(StitchedTurnStatusCues.cue(h_pri) == "TORN", "AC3: TORN overrides %s" % str(combo))
+		h_pri["parts"]["head"]["torn"] = false
+
+		f_pri["parts"] = {"head": {"torn": true}}
+		_check(StitchedTurnStatusCues.cue(f_pri) == "TORN", "AC3: foe TORN overrides %s" % str(combo))
+		f_pri["parts"] = {}
+
+		# Hero Resolve -> resolve cue
+		h_pri["resolve"] = "steadfast"
+		_check(StitchedTurnStatusCues.cue(h_pri) == "STFD", "AC3: resolve overrides %s" % str(combo))
+		h_pri["resolve"] = ""
+
+		# Hero FRAY >= 100 -> FRAY
+		h_pri["fray"] = 100
+		_check(StitchedTurnStatusCues.cue(h_pri) == "FRAY", "AC3: hero FRAY 100 overrides %s" % str(combo))
+		h_pri["fray"] = 99
+		var expected_under_fray := "ROT" if combo.has("rot") else "REGN"
+		_check(StitchedTurnStatusCues.cue(h_pri) == expected_under_fray, "AC3: hero fray 99 reveals %s" % expected_under_fray)
+		h_pri["fray"] = 20
+
+	# Foe spoofing resolve or fray: returns ROT or REGN, never hero cues
+	var f_spoof_rot := base_foe.duplicate(true)
+	f_spoof_rot["statuses"] = {"rot": 2}
+	f_spoof_rot["resolve"] = "bitter"
+	f_spoof_rot["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoof_rot) == "ROT", "AC3: foe spoofing resolve/fray gets ROT")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_rot).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_rot).contains("FRAY:"),
+		"AC3: foe with rot does not disclose spoofed resolve or fray")
+
+	var f_spoof_reg := base_foe.duplicate(true)
+	f_spoof_reg["statuses"] = {"regen": 2}
+	f_spoof_reg["resolve"] = "bitter"
+	f_spoof_reg["fray"] = 150
+	_check(StitchedTurnStatusCues.cue(f_spoof_reg) == "REGN", "AC3: foe spoofing resolve/fray gets REGN")
+	_check(not StitchedTurnStatusCues.tooltip(f_spoof_reg).contains("Resolve:") and
+		not StitchedTurnStatusCues.tooltip(f_spoof_reg).contains("FRAY:"),
+		"AC3: foe with regen does not disclose spoofed resolve or fray")
+
+	# AC3: Rot overrides ordinary status cues: guard, riposte, thorns, blind, tangled, mark, weak, exposed
+	var rot_all := base_hero.duplicate(true)
+	rot_all["statuses"] = {
+		"rot": 1,
+		"guard": 2,
+		"riposte": 1,
+		"thorns": 1,
+		"blind": 1,
+		"tangled": 1,
+		"mark": 1,
+		"weak": 1,
+		"exposed": 1,
+		"regen": 1,
+	}
+	rot_all["guard_target"] = str(neutral_hero["id"])
+	_check(StitchedTurnStatusCues.cue(rot_all) == "ROT", "AC3: ROT overrides guard, riposte, thorns, blind, tangled, mark, weak, exposed")
+
+	# AC3: Non-positive and malformed values fail closed
+	for st_key in ["rot", "regen"]:
+		for non_pos in [0, -1, -3, 1.5, 2.0, "2", st_key, null, [], {}]:
+			var h_np := base_hero.duplicate(true)
+			var f_np := base_foe.duplicate(true)
+			h_np["statuses"] = {st_key: non_pos}
+			f_np["statuses"] = {st_key: non_pos}
+			_check(StitchedTurnStatusCues.cue(h_np) == "HERO", "AC3: hero %s=%s yields HERO" % [st_key, str(non_pos)])
+			_check(StitchedTurnStatusCues.cue(f_np) == "FOE", "AC3: foe %s=%s yields FOE" % [st_key, str(non_pos)])
+			var h_tip := StitchedTurnStatusCues.tooltip(h_np)
+			var f_tip := StitchedTurnStatusCues.tooltip(f_np)
+			_check(not h_tip.contains(st_key) and not f_tip.contains(st_key),
+				"AC3: invalid %s=%s produces no tooltip counter or explanation" % [st_key, str(non_pos)])
+
+		# Non-Dictionary statuses fail closed
+		for bad_statuses in [null, "%s 2" % st_key, 2, [2]]:
+			var h_bad := base_hero.duplicate(true)
+			var f_bad := base_foe.duplicate(true)
+			h_bad["statuses"] = bad_statuses
+			f_bad["statuses"] = bad_statuses
+			_check(StitchedTurnStatusCues.cue(h_bad) == "HERO", "AC3: hero non-Dictionary statuses %s yields HERO" % str(bad_statuses))
+			_check(StitchedTurnStatusCues.cue(f_bad) == "FOE", "AC3: foe non-Dictionary statuses %s yields FOE" % str(bad_statuses))
+
+	# AC3: Preservation of ROT_EXPLANATION, REGEN_EXPLANATION, and tooltip content
+	_check(StitchedTurnStatusCues.ROT_EXPLANATION == "Rot (mildew): loses 2 HP at each of its turn starts, ignoring PROT; heals on it mend half.",
+		"AC3: ROT_EXPLANATION constant preserved exactly")
+	_check(StitchedTurnStatusCues.REGEN_EXPLANATION == "Regeneration: restores exactly 2 HP at the affected unit's turn start, capped at max HP, before Bleed, consumes one turn, and can bring a Hanging doll above 0.",
+		"AC3: REGEN_EXPLANATION constant preserved exactly")
+
+	var rot_hero := base_hero.duplicate(true)
+	rot_hero["statuses"] = {"rot": 2}
+	var rot_tip := StitchedTurnStatusCues.tooltip(rot_hero)
+	_check(rot_tip.contains("Statuses: rot 2") and rot_tip.contains(StitchedTurnStatusCues.ROT_EXPLANATION) and
+		not rot_tip.contains("Regeneration:"),
+		"AC3: rot hero tooltip discloses sorted rot 2 counter and ROT_EXPLANATION without Regeneration")
+
+	var regen_hero := base_hero.duplicate(true)
+	regen_hero["statuses"] = {"regen": 2}
+	var regen_tip := StitchedTurnStatusCues.tooltip(regen_hero)
+	_check(regen_tip.contains("Statuses: regen 2") and regen_tip.contains(StitchedTurnStatusCues.REGEN_EXPLANATION) and
+		not regen_tip.contains("Rot (mildew):"),
+		"AC3: regen hero tooltip discloses sorted regen 2 counter and REGEN_EXPLANATION without Rot")
+
+	var combo_hero := base_hero.duplicate(true)
+	combo_hero["statuses"] = {"rot": 1, "regen": 2}
+	var combo_tip := StitchedTurnStatusCues.tooltip(combo_hero)
+	var combo_lines := StitchedTurnStatusCues.tooltip_lines(combo_hero)
+	var status_line_idx := combo_lines.find("Statuses: regen 2, rot 1")
+	var regen_idx := combo_lines.find(StitchedTurnStatusCues.REGEN_EXPLANATION)
+	var rot_idx := combo_lines.find(StitchedTurnStatusCues.ROT_EXPLANATION)
+	_check(status_line_idx >= 0 and regen_idx > status_line_idx and rot_idx > regen_idx,
+		"AC3: combined rot and regen discloses alphabetical status list and both explanations")
+
+	# AC4: Mounted ribbon exercise
+	var rot_unit := base_hero.duplicate(true)
+	rot_unit["statuses"] = {"rot": 2}
+	var reg_unit := base_foe.duplicate(true)
+	reg_unit["statuses"] = {"regen": 3}
+	var combo_unit := base_hero.duplicate(true)
+	combo_unit["id"] = "combo_unit_test"
+	combo_unit["name"] = "Combo Hero"
+	combo_unit["statuses"] = {"rot": 1, "regen": 2}
+	var neutral_unit := base_foe.duplicate(true)
+	neutral_unit["id"] = "neutral_foe_test"
+	neutral_unit["name"] = "Neutral Foe"
+	neutral_unit["statuses"] = {}
+
+	var rot_id := str(rot_unit["id"])
+	var reg_id := str(reg_unit["id"])
+	var combo_id := str(combo_unit["id"])
+	var neutral_id := str(neutral_unit["id"])
+
+	var entries := [rot_unit, reg_unit, combo_unit, neutral_unit]
+
+	# Inactive show_order: inactive slots show ROT, REGN, ROT, FOE
+	ribbon.show_order(entries, "", false)
+	_check(ribbon.displayed_entries.size() == 4, "AC4: ribbon displays 4 entries")
+	_check(ribbon.marker_at(0).text == "ROT" and ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: slot 0 marker is muted ROT")
+	_check(ribbon.marker_at(1).text == "REGN" and ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: slot 1 marker is muted REGN")
+	_check(ribbon.marker_at(2).text == "ROT" and ribbon.marker_at(2).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: slot 2 marker is muted ROT for combo rot+regen")
+	_check(ribbon.marker_at(3).text == "FOE" and ribbon.marker_at(3).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: slot 3 marker is muted FOE")
+
+	# Font fit check on mounted markers
+	for i in range(4):
+		var marker := ribbon.marker_at(i)
+		var font := marker.get_theme_font("font")
+		var font_sz := marker.get_theme_font_size("font_size")
+		_check(marker.size.x >= 34.0 and
+			font.get_string_size(marker.text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_sz).x <= marker.size.x - 2.0 and
+			font.get_height(font_sz) <= marker.size.y,
+			"AC4: slot %d marker %s fits measured gothic cell" % [i, marker.text])
+
+	# Parity of tooltip under hover and keyboard focus
+	for i in range(3):
+		var tag := ribbon.tag_at(i)
+		var exp_tooltip := StitchedTurnStatusCues.tooltip(entries[i])
+		_check(tag.tooltip_text == exp_tooltip, "AC4: slot %d tag tooltip_text matches pure tooltip" % i)
+
+		tag.grab_focus()
+		await process_frame
+		_check(tag.has_focus() and tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tooltip,
+			"AC4: slot %d keyboard focus exposes exact tooltip" % i)
+		tag.release_focus()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d blur hides tooltip" % i)
+
+		tag.mouse_entered.emit()
+		_check(tag.get_node("FocusTooltip").visible and
+			tag.get_node("FocusTooltip/TooltipText").text == exp_tooltip,
+			"AC4: slot %d mouse hover exposes identical tooltip" % i)
+		tag.mouse_exited.emit()
+		_check(not tag.get_node("FocusTooltip").visible, "AC4: slot %d hover exit hides tooltip" % i)
+
+	# Active actor: rot_unit acts -> NOW
+	ribbon.show_order(entries, rot_id, false)
+	_check(ribbon.marker_at(0).text == "NOW" and ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC4: acting rot unit marker displays amber NOW")
+	_check(ribbon.marker_at(1).text == "REGN" and ribbon.marker_at(2).text == "ROT",
+		"AC4: inactive markers remain REGN and ROT when rot unit acts")
+
+	# Active actor: reg_unit acts -> rot returns to ROT, reg is NOW
+	ribbon.show_order(entries, reg_id, false)
+	_check(ribbon.marker_at(0).text == "ROT" and ribbon.marker_at(0).get_theme_color("font_color") == StitchedTurnOrderRibbon.MUTED,
+		"AC4: rot unit returns to muted ROT when turn passes")
+	_check(ribbon.marker_at(1).text == "NOW" and ribbon.marker_at(1).get_theme_color("font_color") == StitchedTurnOrderRibbon.AMBER,
+		"AC4: acting regen unit displays amber NOW")
+
+	# Active actor: neutral_unit acts -> both show their status cues
+	ribbon.show_order(entries, neutral_id, false)
+	_check(ribbon.marker_at(0).text == "ROT" and ribbon.marker_at(1).text == "REGN" and ribbon.marker_at(2).text == "ROT",
+		"AC4: rot and regen markers displayed while neutral acts")
+	_check(ribbon.marker_at(3).text == "NOW", "AC4: acting neutral unit shows NOW")
+
+	# is_over = true: clears NOW and shows accurate markers
+	ribbon.show_order(entries, reg_id, true)
+	_check(ribbon.marker_at(0).text == "ROT" and ribbon.marker_at(1).text == "REGN" and
+		ribbon.marker_at(2).text == "ROT" and ribbon.marker_at(3).text == "FOE",
+		"AC4: is_over=true clears NOW and returns truthful ROT, REGN, FOE markers")
+
+	# Clearing statuses returns generic HERO/FOE
+	var cleared_rot := rot_unit.duplicate(true)
+	var cleared_reg := reg_unit.duplicate(true)
+	cleared_rot["statuses"] = {}
+	cleared_reg["statuses"] = {}
+	ribbon.show_order([cleared_rot, cleared_reg], "", false)
+	_check(ribbon.marker_at(0).text == "HERO" and ribbon.marker_at(1).text == "FOE",
+		"AC4: cleared units return to generic HERO and FOE cues")
+	_check(not ribbon.tag_at(0).tooltip_text.contains("rot") and not ribbon.tag_at(0).tooltip_text.contains("Rot"),
+		"AC4: cleared rot unit tag tooltip has no stale rot text")
+	_check(not ribbon.tag_at(1).tooltip_text.contains("regen") and not ribbon.tag_at(1).tooltip_text.contains("Regeneration"),
+		"AC4: cleared regen unit tag tooltip has no stale regen text")
