@@ -1723,6 +1723,36 @@
         {"id": "pry_brass_fan_ribs", "text": "Pry out sharp brass ribs to sell, despite the cuts", "outcome": {"gold": 23, "scraps": 0, "hp": -4, "max_hp": 0}},
         {"id": "leave", "text": "Leave the fan whispering to the dark", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
       ]
+    },
+    {
+      "id": "v3_amber_rainboot_rack",
+      "title": "The Amber Rainboot Rack",
+      "description": "Four enormous rainboots drip along a crooked attic rack. A button-eyed cobbler holds a warm wool cuff beneath one leaking heel.",
+      "choices": [
+        {"id": "sew_warm_cuff", "text": "Sew the warm cuff inside a doll's boot", "outcome": {"gold": -15, "scraps": -1, "hp": 6, "max_hp": 1}},
+        {"id": "trade_padded_heel", "text": "Trade the padded heel for coins", "outcome": {"gold": 21, "scraps": 0, "hp": -4, "max_hp": 0}},
+        {"id": "leave", "text": "Leave the rainboots dripping", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_inkvelvet_needle_latch",
+      "title": "The Inkvelvet Needle Latch",
+      "description": "A long brass needle holds an inkvelvet door shut. The little pin-eyed latchkeeper offers to stitch the split frame before the dark seeps in.",
+      "choices": [
+        {"id": "reinforce_door_seam", "text": "Reinforce the door seam with spare thread", "outcome": {"gold": 0, "scraps": -2, "hp": 0, "max_hp": 2}},
+        {"id": "pry_brass_latch", "text": "Pry out the brass latch and sell it", "outcome": {"gold": 25, "scraps": 0, "hp": 0, "max_hp": -2}},
+        {"id": "leave", "text": "Let the needle hold the door", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
+    },
+    {
+      "id": "v3_saffron_toy_kettle",
+      "title": "The Saffron Toy Kettle",
+      "description": "A doll-sized kettle the height of a wardrobe whistles beside the hallway. Warm saffron steam escapes through a stitched cloth lid.",
+      "choices": [
+        {"id": "take_steam_stitch", "text": "Buy a steam-warmed stitch for a weary doll", "outcome": {"gold": -18, "scraps": 0, "hp": 9, "max_hp": 1}},
+        {"id": "strip_kettle_spout", "text": "Wrench off the hot brass spout for salvage", "outcome": {"gold": 12, "scraps": 2, "hp": -6, "max_hp": 0}},
+        {"id": "leave", "text": "Let the kettle whistle in peace", "outcome": {"gold": 0, "scraps": 0, "hp": 0, "max_hp": 0}}
+      ]
     }
   ]
 }
