@@ -35,6 +35,8 @@ var _by_slot: Dictionary = {}
 var _slot_buttons: Dictionary = {}
 var _tier_buttons: Array[Button] = []
 var _part_buttons: Dictionary = {}
+var _filter_keys: Array[String] = []
+var _filter_labels: Array[String] = []
 
 
 func _ready() -> void:
@@ -46,7 +48,13 @@ func _ready() -> void:
     }
     _tier_buttons = [$DetailsPanel/TierI, $DetailsPanel/TierII, $DetailsPanel/TierIII]
     for index in range(OWNERS.size()):
-        _owner_filter.add_item(OWNER_LABELS[index], index)
+        _filter_keys.append(OWNERS[index])
+        _filter_labels.append(OWNER_LABELS[index])
+    for thread in StitchedSewnPatches.THREADS:
+        _filter_keys.append("thread:" + thread)
+        _filter_labels.append(thread.capitalize() + " thread")
+    for index in range(_filter_keys.size()):
+        _owner_filter.add_item(_filter_labels[index], index)
     _owner_filter.focus_mode = Control.FOCUS_ALL
     _owner_filter.item_selected.connect(_on_owner_chosen)
     for slot in SLOTS:
@@ -90,10 +98,10 @@ func present_parts(entries: Variant) -> bool:
 ## Change only which validated rows are visible. Reuse the selected part when
 ## possible; otherwise select the first sorted row in the active slot.
 func select_owner(owner: String) -> bool:
-    if not owner in OWNERS or _by_id.is_empty():
+    if not owner in _filter_keys or _by_id.is_empty():
         return false
     selected_owner = owner
-    _owner_filter.select(OWNERS.find(owner))
+    _owner_filter.select(_filter_keys.find(owner))
     return select_slot(active_slot)
 
 
@@ -110,7 +118,7 @@ func select_slot(slot: String) -> bool:
         _refresh_details()
         return true
     if _by_id.has(selected_part_id) and str(_by_id[selected_part_id]["slot"]) == slot and (
-            selected_owner == "all" or str(_by_id[selected_part_id]["owner"]) == selected_owner):
+            _matches_filter(_by_id[selected_part_id])):
         _refresh_rows()
         _refresh_details()
         return true
@@ -122,7 +130,7 @@ func select_part(part_id: String) -> bool:
     if not _by_id.has(part_id):
         return false
     var part: Dictionary = _by_id[part_id]
-    if selected_owner != "all" and str(part["owner"]) != selected_owner:
+    if not _matches_filter(part):
         return false
     if selected_part_id != part_id:
         selected_tier = 1
@@ -164,9 +172,17 @@ func _visible_parts(slot: String) -> Array:
     if not slot in SLOTS or not _by_slot.has(slot):
         return parts
     for part in _by_slot[slot]:
-        if selected_owner == "all" or str(part["owner"]) == selected_owner:
+        if _matches_filter(part):
             parts.append(part)
     return parts
+
+
+func _matches_filter(part: Dictionary) -> bool:
+    if selected_owner == "all":
+        return true
+    if selected_owner.begins_with("thread:"):
+        return StitchedSewnPatches.thread_of(str(part["id"])) == selected_owner.trim_prefix("thread:")
+    return str(part["owner"]) == selected_owner
 
 
 func _part_before(a: Dictionary, b: Dictionary) -> bool:
@@ -219,12 +235,12 @@ func _refresh_rows() -> void:
         _rows.add_child(button)
         _part_buttons[id] = button
     _status.text = "%d parts / %s / %s" % [visible.size(), active_slot.to_upper(),
-        OWNER_LABELS[OWNERS.find(selected_owner)]]
+        _filter_labels[_filter_keys.find(selected_owner)]]
 
 
 func _on_owner_chosen(index: int) -> void:
-    if index >= 0 and index < OWNERS.size():
-        select_owner(OWNERS[index])
+    if index >= 0 and index < _filter_keys.size():
+        select_owner(_filter_keys[index])
 
 
 func _on_slot_pressed(slot: String) -> void:
