@@ -28,7 +28,7 @@ const EXPECTED := {
 		"description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
 		"choices": [
 			{"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
-			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_candle_room": true}},
+			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
 			{"id": "leave", "text": "Let the cabinet's velvet drawers close", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -139,6 +139,7 @@ func _initialize() -> void:
 	_test_stale_effect_fails()
 	_test_full_candle_bedwarmer()
 	_test_full_candle_pin_cabinet()
+	_test_pin_cabinet_partial_gain_refusals()
 	_test_negative_candle_boundaries()
 	_check(source_document == source_snapshot, "the catalog document is unchanged by every flow")
 	_report()
@@ -622,8 +623,10 @@ func _test_full_candle_bedwarmer() -> void:
 ## Authentic full-candle witness for the Pin Cabinet (AC3): at candle 100 with scraps >= 2,
 ## "brace_wick_with_pins" is unavailable (preserving opening candle/scraps and empty fray intent),
 ## choose() refuses without consuming the visit or mutating state, and alternate choices
-## ("salvage_loose_pinheads" and "leave") remain claimable. At near-full candle 99,
-## bracing with pins remains available and claims clamped candle 100 with scraps -2 and fray -4.
+## ("salvage_loose_pinheads" and "leave") remain claimable. "brace_wick_with_pins" carries
+## require_full_candle_gain, so it only admits when the whole +15 fits (candle <= 85): at the
+## exactly funded candle 85 with scraps 2 it claims candle 100, scraps 0 and fray -4 each; the
+## near-full candles 86 and 99 are refused too (see _test_pin_cabinet_partial_gain_refusals).
 func _test_full_candle_pin_cabinet() -> void:
 	var event_id := "v3_glassfront_pin_cabinet"
 	var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
@@ -698,31 +701,120 @@ func _test_full_candle_pin_cabinet() -> void:
 	_check(leave_receipt == expected_leave,
 		"leave succeeds after brace_wick_with_pins refusal at candle 100")
 
-	# 2. Near-full candle 99 with exact scraps (2)
-	var snapshot_99 := _funded_snapshot(BASE_GOLD, 2)
-	snapshot_99["candle"] = 99
-	var before_99: Dictionary = snapshot_99.duplicate(true)
-	var service_99 := RunStitchedEventConsequence.new(record)
-	var preview_99: Dictionary = service_99.preview(snapshot_99)
-	var brace_99 := _entry(preview_99, "brace_wick_with_pins")
-	_check(brace_99.get("available") == true
-		and int(brace_99.get("candle")) == 100
-		and int(brace_99.get("scraps")) == 0
-		and brace_99.get("fray") == _fray_map(-4),
-		"candle 99 with scraps 2 quotes brace_wick_with_pins available, clamped candle 100, scraps 0, fray -4")
-	var receipt_99: Dictionary = service_99.choose("brace_wick_with_pins", snapshot_99)
-	_check(receipt_99.get("ok") == true
-		and int(receipt_99.get("candle")) == 100
-		and int(receipt_99.get("scraps")) == 0
-		and int(receipt_99.get("scraps_delta")) == -2
-		and receipt_99.get("fray") == _fray_map(-4),
-		"candle 99 with scraps 2 claims brace_wick_with_pins settling clamped candle 100, scraps 0, fray -4")
-	_check(service_99.is_claimed() and not service_99.is_valid(),
-		"visit latches after funded near-full claim for pin cabinet")
-	_check(service_99.choose("brace_wick_with_pins", snapshot_99) == _refusal(99),
-		"replay refusal on near-full claim for pin cabinet")
-	_check(snapshot_99 == before_99,
+	# 2. Exactly funded candle 85 with exact scraps (2): the full +15 fits
+	var snapshot_85 := _funded_snapshot(BASE_GOLD, 2)
+	snapshot_85["candle"] = 85
+	var before_85: Dictionary = snapshot_85.duplicate(true)
+	var service_85 := RunStitchedEventConsequence.new(record)
+	var preview_85: Dictionary = service_85.preview(snapshot_85)
+	var brace_85 := _entry(preview_85, "brace_wick_with_pins")
+	_check(brace_85.get("available") == true
+		and int(brace_85.get("candle")) == 100
+		and int(brace_85.get("candle_delta")) == 15
+		and int(brace_85.get("scraps")) == 0
+		and int(brace_85.get("scraps_delta")) == -2
+		and int(brace_85.get("fray_delta")) == -4
+		and brace_85.get("fray") == _fray_map(-4),
+		"candle 85 with scraps 2 quotes brace_wick_with_pins available, candle 100, scraps 0, fray -4")
+	var receipt_85: Dictionary = service_85.choose("brace_wick_with_pins", snapshot_85)
+	_check(receipt_85 == {
+		"ok": true,
+		"event_id": event_id,
+		"choice_id": "brace_wick_with_pins",
+		"target": "party",
+		"hero_id": "",
+		"candle": 100,
+		"fray": _fray_map(-4),
+		"scraps": 0,
+		"scraps_delta": -2,
+	}, "candle 85 with scraps 2 claims brace_wick_with_pins settling candle 100, scraps 0, fray -4 each")
+	_check(service_85.is_claimed() and not service_85.is_valid(),
+		"visit latches after the exactly funded candle-85 claim for pin cabinet")
+	_check(service_85.choose("brace_wick_with_pins", snapshot_85) == _refusal(85),
+		"replay refusal after the candle-85 claim for pin cabinet")
+	_check(snapshot_85 == before_85,
 		"claim mutates no caller snapshot for pin cabinet")
+	_check(record == record_snapshot,
+		"the candle-85 claim mutates no source record")
+	_check(rng_guard.state == guard_state,
+		"the candle-85 claim draws no RNG")
+
+	# 3. Scraps 1 at candle 85: a funded candle gate still needs the price
+	var snapshot_poor := _funded_snapshot(BASE_GOLD, 1)
+	snapshot_poor["candle"] = 85
+	var before_poor: Dictionary = snapshot_poor.duplicate(true)
+	var service_poor := RunStitchedEventConsequence.new(record)
+	_check(_entry(service_poor.preview(snapshot_poor), "brace_wick_with_pins").get("available") == false,
+		"candle 85 with scraps 1 quotes brace_wick_with_pins unavailable")
+	_check(service_poor.choose("brace_wick_with_pins", snapshot_poor) == _refusal(85),
+		"candle 85 with scraps 1 refuses brace_wick_with_pins")
+	_check(service_poor.is_valid() and not service_poor.is_claimed() and snapshot_poor == before_poor,
+		"the scraps-1 refusal at candle 85 keeps the visit open and the snapshot unchanged")
+
+
+## Authentic partial-gain refusals: at candle 86 (only +14 fits), 99 and 100 the funded
+## (scraps 2) brace_wick_with_pins is unavailable with its original deltas and an empty fray
+## intent, choose() refuses with the uniform shape and no debit, snapshot, record, claim or
+## RNG change, and then both Leave and the legal salvage still claim on the same visit.
+func _test_pin_cabinet_partial_gain_refusals() -> void:
+	var event_id := "v3_glassfront_pin_cabinet"
+	var rng_guard := RandomNumberGenerator.new()
+	rng_guard.seed = 778899
+	var guard_state: int = rng_guard.state
+	for candle in [86, 99, 100]:
+		var record: Dictionary = (source_by_id[event_id] as Dictionary).duplicate(true)
+		var record_snapshot: Dictionary = record.duplicate(true)
+		var snapshot := _funded_snapshot(BASE_GOLD, 2)
+		snapshot["candle"] = candle
+		var before: Dictionary = snapshot.duplicate(true)
+		var service := RunStitchedEventConsequence.new(record)
+		var preview: Dictionary = service.preview(snapshot)
+		var brace := _entry(preview, "brace_wick_with_pins")
+		_check(brace.get("available") == false
+			and int(brace.get("candle")) == candle
+			and int(brace.get("candle_delta")) == 15
+			and int(brace.get("scraps")) == 2
+			and int(brace.get("scraps_delta")) == -2
+			and int(brace.get("fray_delta")) == -4
+			and brace.get("fray") == {},
+			"funded candle " + str(candle) + " quotes brace_wick_with_pins unavailable with base scraps and empty fray")
+		_check(_entry(preview, "salvage_loose_pinheads").get("available") == true
+			and _entry(preview, "leave").get("available") == true,
+			"salvage and leave stay available at candle " + str(candle))
+		_check(service.choose("brace_wick_with_pins", snapshot) == _refusal(candle),
+			"funded candle " + str(candle) + " refuses brace_wick_with_pins with the uniform shape")
+		_check(service.is_valid() and not service.is_claimed(),
+			"the candle-" + str(candle) + " refusal leaves the visit open and unclaimed")
+		_check(snapshot == before and int(snapshot["scraps"]) == 2,
+			"the candle-" + str(candle) + " refusal debits no scraps and mutates no snapshot")
+		_check(record == record_snapshot,
+			"the candle-" + str(candle) + " refusal mutates no source record")
+		_check(rng_guard.state == guard_state,
+			"the candle-" + str(candle) + " refusal draws no RNG")
+		var salvage: Dictionary = service.choose("salvage_loose_pinheads", snapshot)
+		_check(salvage.get("ok") == true
+			and int(salvage.get("candle")) == candle - 8
+			and int(salvage.get("scraps")) == 5
+			and salvage.get("fray") == _fray_map(4),
+			"salvage claims on the same visit after the candle-" + str(candle) + " brace refusal")
+		_check(service.is_claimed() and not service.is_valid(),
+			"the post-refusal salvage latches the candle-" + str(candle) + " visit")
+
+		var leave_service := RunStitchedEventConsequence.new(record)
+		_check(leave_service.choose("brace_wick_with_pins", snapshot) == _refusal(candle),
+			"brace_wick_with_pins is refused on a second candle-" + str(candle) + " visit")
+		var leave: Dictionary = leave_service.choose("leave", snapshot)
+		_check(leave == {
+			"ok": true,
+			"event_id": event_id,
+			"choice_id": "leave",
+			"target": "party",
+			"hero_id": "",
+			"candle": candle,
+			"fray": {},
+		}, "Leave stays free and claimable after the candle-" + str(candle) + " brace refusal")
+		_check(leave_service.is_claimed() and snapshot == before,
+			"the Leave claim at candle " + str(candle) + " latches and mutates no snapshot")
 
 
 ## Authentic negative-candle boundaries (AC2):

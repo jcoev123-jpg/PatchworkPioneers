@@ -8351,8 +8351,8 @@ func _test_require_candle_room_or_wound_keyhole_choir() -> void:
 			pin_choice = ch
 			break
 	_check(not pin_choice.is_empty(), "AC4: brace_wick_with_pins found in pin cabinet")
-	_check(pin_choice.get("stitched_effect", {}).get("require_candle_room") == true,
-		"AC4: brace_wick_with_pins has require_candle_room: true")
+	_check(pin_choice.get("stitched_effect", {}).get("require_full_candle_gain") == true and not pin_choice.get("stitched_effect", {}).has("require_candle_room"),
+		"AC4: brace_wick_with_pins has require_full_candle_gain: true and no require_candle_room")
 	var snap_pin := {
 		"candle": 100,
 		"scraps": 10,
