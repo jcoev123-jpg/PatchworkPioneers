@@ -1663,6 +1663,36 @@
         { "id": "buy_soft_axle_pad", "text": "Pay for the mechanic's warm quilt padding", "outcome": { "gold": -15, "scraps": 0, "hp": 8, "max_hp": 0 } },
         { "id": "leave", "text": "Slip past while the wheel turns in place", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
       ]
+    },
+    {
+      "id": "v3_ironstar_cookie_cutter",
+      "title": "The Iron-Star Cutter",
+      "description": "A star-shaped tin cutter taller than the dolls hangs in a candlelit kitchen doorway; a round pin-eyed baker has stitched its sharp rim with old apron hems.",
+      "choices": [
+        { "id": "line_the_star", "text": "Line the cutter's points with spare stuffing to strengthen a doll's seam", "outcome": { "gold": 0, "scraps": -2, "hp": 0, "max_hp": 3 } },
+        { "id": "stamp_own_heart", "text": "Press away a permanent heart-seam to claim the baker's coin", "outcome": { "gold": 27, "scraps": 0, "hp": 0, "max_hp": -2 } },
+        { "id": "leave", "text": "Leave the tin star swaying in the doorway", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_oxblood_shadow_toy_theatre",
+      "title": "The Shadow Toy Theatre",
+      "description": "A folded oxblood toy theatre fills a corridor nook; stitched silhouettes of missing dolls sway behind a single amber footlight.",
+      "choices": [
+        { "id": "reinforce_curtain", "text": "Buy velvet lining to mend a doll and give it a lasting seam", "outcome": { "gold": -18, "scraps": 0, "hp": 6, "max_hp": 1 } },
+        { "id": "tear_backdrop", "text": "Tear down the backdrop for spare cloth, taking a sharp cut", "outcome": { "gold": 0, "scraps": 3, "hp": -6, "max_hp": 0 } },
+        { "id": "leave", "text": "Leave the shadow players to their silent show", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
+    },
+    {
+      "id": "v3_mosslit_radiator_cage",
+      "title": "The Mosslit Radiator Cage",
+      "description": "A squat brass radiator rattles behind a cage of cross-stitched bars; a round moth-eyed keeper feeds it the loose sleeves of forgotten coats.",
+      "choices": [
+        { "id": "tuck_warm_padding", "text": "Buy warmth and sew the padded lining beneath a doll's coat", "outcome": { "gold": -14, "scraps": -1, "hp": 4, "max_hp": 2 } },
+        { "id": "drain_hot_coils", "text": "Drain the coils for scrap, burning the doll's stuffing", "outcome": { "gold": 0, "scraps": 2, "hp": -5, "max_hp": 0 } },
+        { "id": "leave", "text": "Let the radiator click and cool in the dark", "outcome": { "gold": 0, "scraps": 0, "hp": 0, "max_hp": 0 } }
+      ]
     }
   ]
 }
