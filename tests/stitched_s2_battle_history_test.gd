@@ -79,6 +79,144 @@ func _test_fixture() -> void:
 		and not status["text"].contains("0 damage"),
 		"multi-target formatting distinguishes miss, actual damage and zero-damage effect")
 
+func _test_status_receipts() -> void:
+	# Producer-shaped status arrays: a blocked/resisted outcome is not an application,
+	# and chained results remain separate targets in their actual receipt order.
+	var receipt := {"ok": true, "action": "ability", "actor": "seamstress",
+		"ability": "seamstress_head_mending_knot", "results": [
+			{"target": "ally", "hit": true, "damage": 0, "statuses": [
+				{"status": "heal", "amount": 3},
+				{"status": "bleed", "duration": 2}]},
+			{"target": "resistant", "hit": true, "damage": 4, "chained": true, "statuses": [
+				{"status": "rot", "resisted": true, "roll": 17, "resist": 80},
+				{"status": "bleed", "resisted": true, "roll": 13, "resist": 80},
+				{"status": "stun", "refused": true}]},
+			{"target": "marked", "hit": true, "damage": 0, "statuses": [
+				{"status": "rot", "duration": 3},
+				{"status": "regen", "duration": 2, "patch": "silk_life_loop"}]},
+			{"target": "miss", "hit": false, "damage": 0, "statuses": []},
+			{"target": "full", "hit": true, "damage": 0, "statuses": [
+				{"status": "heal", "amount": 0, "patch": "gold_heart_knot"},
+				{"status": "steal", "amount": 0, "patch": "gold_hungry_button"}]},
+			{"target": "drained", "hit": true, "damage": 0, "statuses": [
+				{"status": "steal", "amount": 2, "patch": "gold_hungry_button"}]}]}
+	var names := {"ally": "Warden", "resistant": "Crab", "marked": "Moth",
+		"miss": "Shade", "full": "Full Doll", "drained": "Threadling"}
+	var unchanged := receipt.duplicate(true)
+	var entry: Dictionary = HISTORY.entry(receipt, "Seamstress", "Mending Knot", names)
+	var lines := str(entry.get("text", "")).split("\n", false)
+	_check(receipt == unchanged and entry.get("targets", []).size() == 6,
+		"presenting producer-shaped statuses leaves the receipt untouched and preserves six target rows")
+	_check(lines.size() == 7, "each result, including chained follow-up, has its own ordered line")
+	if lines.size() != 7:
+		return
+	_check(lines[0] == "Seamstress · Mending Knot"
+		and lines[1].begins_with("→ Warden: HIT · effect only (no damage)")
+		and lines[1].contains(" · MENDED · BLEED") and not lines[1].contains("RESISTED"),
+		"applied authored healing and sewn bleed label the actual ally, in receipt order")
+	_check(lines[2].begins_with("→ Crab: HIT · 4 damage")
+		and lines[2].contains(" · RESISTED ROT · RESISTED BLEED · BLOCKED STUN")
+		and not lines[2].contains(" · ROT") and not lines[2].contains(" · BLEED")
+		and not lines[2].contains(" · STUN"),
+		"resisted S15 effects and refused temporary stun remain unsuccessful on chained target")
+	_check(lines[3].begins_with("→ Moth: HIT · effect only (no damage)")
+		and lines[3].contains(" · ROT · REGEN")
+		and not lines[3].contains("RESISTED") and not lines[3].contains("BLOCKED"),
+		"applied rot/regen only appear on their own successful recipient")
+	_check(lines[4] == "→ Shade: MISS",
+		"missed target has no invented landed status")
+	_check(lines[5] == "→ Full Doll: HIT · effect only (no damage)",
+		"zero actual heal and zero actual steal never imply recovered stuffing")
+	_check(lines[6].begins_with("→ Threadling: HIT · effect only (no damage)")
+		and lines[6].contains(" · STUFFING STOLEN") and not lines[5].contains("STOLEN"),
+		"positive stuffing steal is named only on the drained recipient")
+	_check(not str(entry["text"]).contains("roll") and not str(entry["text"]).contains("80")
+		and not str(entry["text"]).contains("17") and not str(entry["text"]).contains("13")
+		and not str(entry["text"]).contains("%"),
+		"history conceals resist odds and rolls while retaining existing damage text")
+
+
+func _test_real_s14_ally_patch() -> void:
+	const SEED := 55
+	const MENDING := "seamstress_head_mending_knot"
+	const LINT := "cotton_red_lint"
+	var config := StitchedRunSession.starter_config(StitchedRunSession.DEFAULT_PICKS)
+	_check(not config.is_empty() and config.get("heroes", []).size() == 4,
+		"precondition: a real four-doll run starter config loads")
+	if config.is_empty():
+		return
+	config["seed"] = SEED
+	config["s14"] = true
+	config["s14_sockets"] = {"seamstress": {MENDING: [LINT]}}
+	var built: Dictionary = StitchedRules.create(config)
+	_check(bool(built.get("ok", false)) and built.get("battle") != null,
+		"precondition: seeded S14 battle accepts the legal cotton Mending Knot socket")
+	if not bool(built.get("ok", false)) or built.get("battle") == null:
+		return
+	var battle: StitchedRules = built["battle"]
+	var hero: Dictionary = battle.get_unit("seamstress")
+	var ally: Dictionary = battle.get_unit("warden")
+	_check(not hero.is_empty() and not ally.is_empty()
+		and str(hero.get("side", "")) == "hero" and str(ally.get("side", "")) == "hero"
+		and str(hero.get("id", "")) != str(ally.get("id", ""))
+		and int(hero.get("rank", 0)) in [2, 3, 4] and int(ally.get("rank", 0)) in [1, 2, 3, 4],
+		"precondition: real Seamstress launch rank and separate living allied Warden rank are legal")
+	if hero.is_empty() or ally.is_empty():
+		return
+	var pass_ok := true
+	for step in range(96):
+		if battle.current_actor_id() == "seamstress" or battle.is_over():
+			break
+		if not bool(battle.pass_turn().get("ok", false)):
+			pass_ok = false
+			break
+	_check(pass_ok and not battle.is_over() and battle.current_actor_id() == "seamstress",
+		"public seeded pass-turn schedule reaches Seamstress's actual action")
+	if not pass_ok or battle.is_over() or battle.current_actor_id() != "seamstress":
+		return
+	var receipt: Dictionary = battle.use_ability(MENDING, int(ally["rank"]))
+	var results: Array = receipt.get("results", [])
+	_check(bool(receipt.get("ok", false)) and str(receipt.get("action", "")) == "ability"
+		and str(receipt.get("actor", "")) == "seamstress"
+		and str(receipt.get("ability", "")) == MENDING and results.size() == 1,
+		"precondition: genuine public Mending Knot cast yields one accepted ability result")
+	if results.size() != 1 or not bool(receipt.get("ok", false)):
+		return
+	var hit: Dictionary = results[0]
+	var saw_lint := false
+	for status in hit.get("statuses", []):
+		if status.get("status") == "bleed" and int(status.get("duration", 0)) == 2 \
+				and not status.get("resisted", false) and not status.get("refused", false):
+			saw_lint = true
+	_check(bool(hit.get("hit", false)) and str(hit.get("target", "")) == str(ally["id"])
+		and str(hit.get("target_side", "")) == "hero" and saw_lint
+		and LINT in hit.get("patches", []),
+		"seeded accepted allied cast actually lands the socketed cotton bleed")
+	if not bool(hit.get("hit", false)) or not saw_lint:
+		return
+	var state_before := battle.state_snapshot()
+	var rng_before := battle.rng_state()
+	var turn_before := battle.turn_order()
+	var actor_before := battle.current_actor_id()
+	var receipt_before := receipt.duplicate(true)
+	var ally_name := str(ally.get("name", ally["id"]))
+	var shown: Dictionary = HISTORY.entry(receipt, "Seamstress", "Mending Knot",
+		{str(ally["id"]): ally_name})
+	_check(str(shown.get("text", "")).contains("Seamstress · Mending Knot")
+		and str(shown.get("text", "")).contains("→ %s: HIT · effect only (no damage)" % ally_name)
+		and str(shown.get("text", "")).contains(" · BLEED")
+		and not str(shown.get("text", "")).contains("RESISTED BLEED"),
+		"actual landed bleeding patch is named on the ally hit by Mending Knot")
+	_check(shown.get("targets", []).size() == 1
+		and str(shown["targets"][0]["id"]) == str(ally["id"])
+		and str(shown["targets"][0]["name"]) == ally_name,
+		"real receipt names actual allied target and preserves structured result identity")
+	_check(receipt == receipt_before and battle.state_snapshot() == state_before
+		and battle.rng_state() == rng_before and battle.turn_order() == turn_before
+		and battle.current_actor_id() == actor_before,
+		"pure receipt formatting leaves raw receipt, battle snapshot, RNG, order, actor unchanged")
+
+
 func _test_ui(screen: StitchedBattleScreen) -> void:
 	var opener: Button = screen._history_button
 	var close: Button = screen._history_close_button
@@ -254,6 +392,8 @@ func _drive(screen: StitchedBattleScreen) -> void:
 
 func _run() -> void:
 	_test_fixture()
+	_test_status_receipts()
+	_test_real_s14_ally_patch()
 	var first := _mount()
 	await process_frame
 	var screen: StitchedBattleScreen = first["screen"]
