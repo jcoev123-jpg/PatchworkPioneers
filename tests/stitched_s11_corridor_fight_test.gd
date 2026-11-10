@@ -40,7 +40,8 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 	fight.refresh()
 	fight.refresh()
 	_verify_live_intents(fight, 3)
-	# A held foe pose still owns NOW, but the hero-only health bar has no empty heading.
+	# Owner 11-10: a held foe pose owns NOW and fills the bar with its own plate
+	# (no empty felt strip), while the engine's live doll keeps its real kit.
 	var held_foe := str(screen._unit_at("foe", 1).get("id", ""))
 	fight._held_actor_id = held_foe
 	fight.refresh()
@@ -48,8 +49,16 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 	for index in range(fight.ribbon.displayed_entries.size()):
 		if str(fight.ribbon.displayed_entries[index].get("id", "")) == held_foe:
 			foe_now = fight.ribbon.marker_at(index).text == "NOW"
-	_check(foe_now and not fight.health_word.visible and not fight.health_bar.visible
-		and fight.actor_name.text.is_empty(), "held foe shows NOW without an orphaned hero health label")
+	var foe_unit: Dictionary = screen._unit_at("foe", 1)
+	var kit_live := true
+	for slot in fight.part_buttons:
+		var kit_button: TextureButton = fight.part_buttons[slot]
+		if not kit_button.visible or (kit_button.get_node("Patch") as TextureRect).texture == null:
+			kit_live = false
+	_check(foe_now and fight.health_word.visible and fight.health_bar.visible
+		and fight.portrait.visible and fight.actor_name.text == str(foe_unit.get("name", ""))
+		and fight.health_text.text == "%d / %d" % [int(foe_unit.get("hp", 0)), int(foe_unit.get("max_hp", 0))]
+		and kit_live, "held foe owns NOW with its own name, portrait and health on the bar; the live doll's kit keeps its real part pictures")
 	fight._held_actor_id = ""
 	fight.refresh()
 	# Separate queued batches must advance a two-turn boss to its second ribbon seat.

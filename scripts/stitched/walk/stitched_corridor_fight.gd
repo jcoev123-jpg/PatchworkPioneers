@@ -31,6 +31,9 @@ const HOLD_TIME := 1.35
 ## eye and each other and grow a touch, so the pair reads as the foreground of the held beat.
 const SPOT_STEP := 0.28
 const SPOT_GROW := 1.1
+## Owner 11-10: a striking pair never closes to less than this along the ranks, or the
+## grown front-rank strike pose covers the very target it strikes (Mistral 11-10).
+const SPOT_MIN_GAP := 0.62
 ## Owner 11-09: no hoop behind a round, only a thin outline; a sewn patch's tier shows as
 ## the outline's colour: plain bone, silver thread, gold thread.
 const TIER_OUTLINE := {1: Color("c9b79a"), 2: Color("cfd6ff"), 3: Color("ffcf6e")}
@@ -596,12 +599,14 @@ func click_figure(side: String, rank: int) -> Dictionary:
 	# A refused click says plainly who the chosen ability can be picked on.
 	if not bool(receipt.get("ok", false)) and str(receipt.get("error", "")) == "illegal target" \
 			and not engine._selected_part.is_empty():
-		log_label.text = _pickable_line()
+		log_label.text = _pickable_line(side)
 	return receipt
 
 
-## Plain words for who the chosen ability can target right now (the lit figures).
-func _pickable_line() -> String:
+## Plain words for who the chosen ability can target right now (the lit figures). The
+## clicked side is known, so a refused doll or foe of the right kind is told it simply
+## cannot take this ability, not that it is the wrong kind of figure (Mistral 11-10).
+func _pickable_line(clicked_side: String = "") -> String:
 	var actor := battle.get_unit(battle.current_actor_id())
 	var ability := engine.slot_ability(actor, engine._selected_part)
 	var ability_name := str(ability.get("name", ""))
@@ -614,6 +619,10 @@ func _pickable_line() -> String:
 			foes += 1
 		else:
 			dolls += 1
+	if clicked_side == "hero" and dolls > 0:
+		return "%s cannot be used on that doll; pick a lit doll." % ability_name
+	if clicked_side == "foe" and foes > 0:
+		return "%s cannot be used on that foe; pick a lit foe." % ability_name
 	if foes > 0 and dolls == 0:
 		return "%s can only be used on the foes; pick a lit foe." % ability_name
 	if dolls > 0 and foes == 0:
@@ -818,7 +827,13 @@ func _refresh_bar() -> void:
 	# controls are valid. This keeps scripted and accessibility actions authoritative.
 	var live_actor := battle.get_unit(battle.current_actor_id())
 	var live_hero_turn := battle.current_side() == "hero" and not battle.is_over()
-	var shown: Dictionary = acting if hero_turn else {}
+	# The kit the player can use belongs to the engine's live turn, so during a held
+	# pose it shows the next acting doll's real abilities, never empty circles.
+	var kit_actor: Dictionary = live_actor if live_hero_turn else {}
+	var kit_turn := live_hero_turn
+	# Owner 11-10: a foe turn shows the acting foe's own plate on the bar instead of
+	# an empty felt strip; the doll kit keeps to the engine's live doll.
+	var shown: Dictionary = acting if not acting.is_empty() and not battle.is_over() else {}
 	actor_name.text = str(shown.get("name", ""))
 	var art := _figure_art(str(shown.get("id", ""))) if not shown.is_empty() else null
 	if art != null:
@@ -842,7 +857,7 @@ func _refresh_bar() -> void:
 	fray_bar.tint_progress = BLOOD if int(shown.get("fray", 0)) >= 100 else FRAY
 	for slot in part_buttons:
 		var button: TextureButton = part_buttons[slot]
-		var equipped: Dictionary = shown.get("parts", {}).get(slot, {})
+		var equipped: Dictionary = kit_actor.get("parts", {}).get(slot, {})
 		var part: Dictionary = engine.parts.get(str(equipped.get("id", "")), {})
 		var move_label: Label = button.get_node("Move")
 		move_label.text = ""
@@ -864,15 +879,15 @@ func _refresh_bar() -> void:
 				move_label.text = "torn"
 		var live_equipped: Dictionary = live_actor.get("parts", {}).get(slot, {})
 		button.disabled = not live_hero_turn or not engine._valid_part(live_actor, live_equipped)
-		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
+		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if kit_turn else ""
 		if s14:
 			# Owner 11-09: the hover is the move name, never a slot heading, tier or stat sheet.
-			cue = _plain_lock(engine._part_lock_reason(shown, equipped)) if hero_turn and button.disabled else ""
+			cue = _plain_lock(engine._part_lock_reason(kit_actor, equipped)) if kit_turn and button.disabled else ""
 		button.tooltip_text = (move_label.text + "\n" + cue).strip_edges()
 		for sewn_index in 2:
 			(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = null
 		if battle._s14:
-			_show_kit_ability(button, shown, slot, torn, hero_turn)
+			_show_kit_ability(button, kit_actor, slot, torn, kit_turn)
 			button.disabled = not live_hero_turn or not engine.valid_slot(live_actor, slot)
 	_shade_parts()
 	var cut := hero_turn and battle.thread_cuts().has(str(shown.get("id", "")))
@@ -898,7 +913,9 @@ func _refresh_bar() -> void:
 	outcome_label.visible = battle.is_over()
 	outcome_label.text = battle.outcome().to_upper()
 	for slot in part_buttons:
-		part_buttons[slot].visible = not battle.is_over()
+		# The engine's live turn owns the kit: a foe's turn hides it, and a foe's held
+		# pose leaves the next doll's real kit ready beside the foe's own plate.
+		part_buttons[slot].visible = not battle.is_over() and live_hero_turn
 	# At the end of the fight the bar keeps only the outcome line and Continue:
 	# no empty health plate, no actor name, no More button.
 	var over := battle.is_over()
@@ -1474,13 +1491,29 @@ func _start_beats(batch: Array) -> void:
 		var spot := _receipt_spot_keys(receipt)
 		var homes := {}
 		var steps := {}
+		# Owner 11-10: the pair steps toward each other, but the strike never closes the last
+		# SPOT_MIN_GAP of the ranks: a doll lunging at the front foe covers it otherwise.
+		var near_gap := INF
+		for lit_key in spot.lit:
+			if lit_key == key:
+				continue
+			var other: Sprite3D = stage.figure_nodes.get(lit_key)
+			if other == null or not other.visible:
+				continue
+			near_gap = minf(near_gap, absf(other.position.z - home.z))
+		var lunge := LUNGE if near_gap == INF else minf(LUNGE, maxf(0.0, near_gap - SPOT_MIN_GAP))
 		for lit_key in spot.lit:
 			var lit_figure: Sprite3D = stage.figure_nodes.get(lit_key)
 			if lit_figure == null or not lit_figure.visible:
 				continue
 			var lit_home: Vector3 = lit_figure.position
 			homes[lit_key] = lit_home
-			var dz := toward * LUNGE if lit_key == key else signf(home.z - lit_home.z) * LUNGE * 0.5
+			var dz := 0.0
+			if lit_key == key:
+				dz = toward * lunge
+			else:
+				var spare := absf(lit_home.z - (home.z + toward * lunge)) - SPOT_MIN_GAP
+				dz = signf(home.z - lit_home.z) * clampf(spare, 0.0, LUNGE * 0.5)
 			steps[lit_key] = lit_home + Vector3(SPOT_STEP, 0.0, dz)
 		var first_step := true
 		for lit_key in homes:
