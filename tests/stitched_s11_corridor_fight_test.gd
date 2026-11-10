@@ -40,6 +40,18 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 	fight.refresh()
 	fight.refresh()
 	_verify_live_intents(fight, 3)
+	# A held foe pose still owns NOW, but the hero-only health bar has no empty heading.
+	var held_foe := str(screen._unit_at("foe", 1).get("id", ""))
+	fight._held_actor_id = held_foe
+	fight.refresh()
+	var foe_now := false
+	for index in range(fight.ribbon.displayed_entries.size()):
+		if str(fight.ribbon.displayed_entries[index].get("id", "")) == held_foe:
+			foe_now = fight.ribbon.marker_at(index).text == "NOW"
+	_check(foe_now and not fight.health_word.visible and not fight.health_bar.visible
+		and fight.actor_name.text.is_empty(), "held foe shows NOW without an orphaned hero health label")
+	fight._held_actor_id = ""
+	fight.refresh()
 	_check(fight.battle.state_snapshot() == pristine and fight.battle.rng_state() == rng
 		and screen.receipts == receipts and screen._selected_part == part
 		and screen._hand_pending == hand_pending and fight.battle.hand_action_open() == hand_budget,
@@ -219,6 +231,14 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	# Headless process frames can be extremely short; sample at the real beat peak.
 	await create_timer(0.17).timeout
 	if not reduced:
+		var now_id := ""
+		for index in range(fight.ribbon.displayed_entries.size()):
+			if fight.ribbon.marker_at(index).text == "NOW":
+				now_id = str(fight.ribbon.displayed_entries[index].get("id", ""))
+		_check(fight._held_actor_id == str(actor.id) and fight.actor_name.text == str(actor.name)
+			and now_id == str(actor.id),
+			"during held attack the bar and NOW ribbon remain on its actual attacker")
+
 		var attacker_held: Sprite3D = stage.figure_nodes[attacker_key]
 		var target_held: Sprite3D = stage.figure_nodes[target_key]
 		_check(attacker_held.position.x > attacker_start.x + 0.1

@@ -386,6 +386,13 @@ func _mimic_mounts() -> void:
 				if index == 3:
 					_check(stage.clue.text.contains("breathing"), "stitched ears hear breathing")
 			_check(stage.snip_buttons.size() == 4 and stage.snip_buttons.has(shadow_id), "three real targets and extra doll")
+			for first in stage.snip_buttons:
+				for second in stage.snip_buttons:
+					if str(first) == str(second):
+						continue
+					_check(not stage.snip_buttons[first].get_global_rect().intersects(stage.snip_buttons[second].get_global_rect())
+						and not stage.figure_labels[first].get_global_rect().intersects(stage.figure_labels[second].get_global_rect()),
+						"each shadow SNIP and name has a distinct, clickable area")
 			for control in stage.snip_buttons.values():
 				_check(control.is_visible_in_tree() and control.focus_mode == Control.FOCUS_ALL
 					and Rect2(Vector2.ZERO, Vector2(1280, 720)).encloses(control.get_global_rect()), "SNIP reachable by mouse and keyboard")

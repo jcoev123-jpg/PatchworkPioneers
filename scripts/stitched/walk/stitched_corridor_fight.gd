@@ -90,6 +90,9 @@ var _queued_receipts: Array = []
 var _flying: Array[Sprite3D] = []
 var _focus_actor_id := ""
 var _focus_target_ids: Array[String] = []
+## The rules may advance before the held pose ends; keep the bar and NOW cue on its actor.
+var _held_actor_id := ""
+var _held_actor_index := -1
 ## Left alone on a turn, a doll speaks over its head (S10 barks, fight lines).
 var barks := StitchedWalkBarks.new()
 var bark_label: Label
@@ -697,8 +700,11 @@ func refresh() -> void:
 	var entries: Array[Dictionary] = []
 	for id in battle.turn_order():
 		entries.append(battle.get_unit(str(id)))
-	ribbon.show_order(entries, battle.current_actor_id(), battle.is_over(),
-		int(battle.state_snapshot().get("turn_index", -1)))
+	var visible_actor := _held_actor_id if not _held_actor_id.is_empty() else battle.current_actor_id()
+	var visible_index := int(battle.state_snapshot().get("turn_index", -1))
+	if not _held_actor_id.is_empty():
+		visible_index = _held_actor_index if _held_actor_index >= 0 else battle.turn_order().find(_held_actor_id)
+	ribbon.show_order(entries, visible_actor, battle.is_over(), visible_index)
 	ribbon.visible = not battle.is_over()
 	var boss := battle.is_boss_encounter()
 	for side in ["hero", "foe"]:
@@ -787,8 +793,13 @@ func _show_kit_ability(button: TextureButton, shown: Dictionary, slot: String, t
 
 
 func _refresh_bar() -> void:
-	var acting := battle.get_unit(battle.current_actor_id())
-	var hero_turn := battle.current_side() == "hero" and not battle.is_over()
+	var acting_id := _held_actor_id if not _held_actor_id.is_empty() else battle.current_actor_id()
+	var acting := battle.get_unit(acting_id)
+	var hero_turn := str(acting.get("side", "")) == "hero" and not battle.is_over()
+	# Visuals belong to the held actor, but the engine's next turn owns which
+	# controls are valid. This keeps scripted and accessibility actions authoritative.
+	var live_actor := battle.get_unit(battle.current_actor_id())
+	var live_hero_turn := battle.current_side() == "hero" and not battle.is_over()
 	var shown: Dictionary = acting if hero_turn else {}
 	actor_name.text = str(shown.get("name", ""))
 	var art := _figure_art(str(shown.get("id", ""))) if not shown.is_empty() else null
@@ -833,7 +844,8 @@ func _refresh_bar() -> void:
 				else StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1)))).get("name", ""))
 			if torn:
 				move_label.text = "torn"
-		button.disabled = not hero_turn or not engine._valid_part(shown, equipped)
+		var live_equipped: Dictionary = live_actor.get("parts", {}).get(slot, {})
+		button.disabled = not live_hero_turn or not engine._valid_part(live_actor, live_equipped)
 		var cue := str(engine._part_cues.get(slot, {}).get("full", "")) if hero_turn else ""
 		if s14:
 			# Owner 11-09: the hover is the move name, never a slot heading, tier or stat sheet.
@@ -843,6 +855,7 @@ func _refresh_bar() -> void:
 			(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = null
 		if battle._s14:
 			_show_kit_ability(button, shown, slot, torn, hero_turn)
+			button.disabled = not live_hero_turn or not engine.valid_slot(live_actor, slot)
 	_shade_parts()
 	var cut := hero_turn and battle.thread_cuts().has(str(shown.get("id", "")))
 	var hand_open := battle.hand_action_open() and not battle.is_over()
@@ -850,13 +863,13 @@ func _refresh_bar() -> void:
 	var lift_id := str(engine._unit_at("hero", int(engine._hand_pending.get_slice(":", 1))).get("id", "")) if lifting else ""
 	# Even in Lift's More tray, only the rules-authorized direction is live.
 	more_buttons.move_front.disabled = not (battle.hand_action_check("lift", lift_id, -1).is_empty() if lifting
-		else hero_turn and engine._can_move(-1))
+		else live_hero_turn and engine._can_move(-1))
 	more_buttons.move_back.disabled = not (battle.hand_action_check("lift", lift_id, 1).is_empty() if lifting
-		else hero_turn and engine._can_move(1))
-	more_buttons.pass.disabled = not hero_turn
+		else live_hero_turn and engine._can_move(1))
+	more_buttons.pass.disabled = not live_hero_turn
 	if more_buttons.has("re_tie"):
 		more_buttons.re_tie.disabled = not cut
-	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
+	more_buttons.retreat.disabled = not live_hero_turn or battle.is_boss_encounter()
 	for action_id in hand_buttons:
 		hand_buttons[action_id].disabled = not hand_open or battle.gift_spent(action_id)
 		hand_buttons[action_id].visible = not battle.is_over()
@@ -872,13 +885,14 @@ func _refresh_bar() -> void:
 	# no empty health plate, no actor name, no More button.
 	var over := battle.is_over()
 	var fray_shown := StitchedRules.fray_enabled
-	portrait.visible = not over
-	actor_name.visible = not over
-	health_word.visible = not over
-	health_bar.visible = not over
-	health_text.visible = not over
-	fray_word.visible = fray_shown and not over
-	fray_bar.visible = fray_shown and not over
+	var hero_shown := not shown.is_empty()
+	portrait.visible = not over and hero_shown
+	actor_name.visible = not over and hero_shown
+	health_word.visible = not over and hero_shown
+	health_bar.visible = not over and hero_shown
+	health_text.visible = not over and hero_shown
+	fray_word.visible = fray_shown and not over and hero_shown
+	fray_bar.visible = fray_shown and not over and hero_shown
 	more_button.visible = not over
 	# Who did what stays off the screen (the move name flashes up during the move);
 	# only Wren's own words remain.
@@ -1228,7 +1242,7 @@ func _receipt_spot_keys(receipt: Dictionary) -> Dictionary:
 
 ## Called by the genuine receipt tween, never by selection, hover or refresh.
 ## Owner 11-10: healing and guarding also focus their pair, without a red injury flash.
-func _begin_receipt_focus(receipt: Dictionary) -> void:
+func _begin_receipt_focus(receipt: Dictionary, order_index: int = -1) -> void:
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
 	if engine._motion_is_reduced() or battle.is_over() or str(receipt.get("action", "")) != "ability":
@@ -1239,6 +1253,10 @@ func _begin_receipt_focus(receipt: Dictionary) -> void:
 	if spot.lit.is_empty():
 		return
 	_focus_target_ids = spot.targets
+	_held_actor_id = spot.actor
+	_held_actor_index = order_index
+	# Show the attacker until this pose returns;rules have already advanced to the next doll.
+	refresh()
 	var focused := stage.start_fight_focus(spot.lit, _beat_span())
 	stage.begin_spotlight(spot.lit, spot.flash)
 	if focused:
@@ -1266,6 +1284,8 @@ func _cancel_beats() -> void:
 			fig.scale = Vector3.ONE
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
+	_held_actor_id = ""
+	_held_actor_index = -1
 	if is_inside_tree():
 		refresh()
 
@@ -1364,6 +1384,8 @@ func _play_new_receipts() -> void:
 
 func _start_beats(batch: Array) -> void:
 	_beats = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	var appearances: Dictionary = {}
+	var rolled_order := battle.turn_order()
 	for receipt in batch:
 		if str(receipt.get("action", "")) != "ability" or not bool(receipt.get("ok", false)):
 			continue
@@ -1375,7 +1397,15 @@ func _start_beats(batch: Array) -> void:
 		var figure: Sprite3D = stage.figure_nodes[key]
 		var home := figure.position
 		var toward := -1.0 if str(actor.side) == "hero" else 1.0
-		_beats.tween_callback(Callable(self, "_begin_receipt_focus").bind(receipt.duplicate(true)))
+		# A boss may occupy two rolled slots: each held receipt lights its own NOW.
+		var seats: Array[int] = []
+		for order_index in rolled_order.size():
+			if str(rolled_order[order_index]) == actor_id:
+				seats.append(order_index)
+		var ordinal := mini(int(appearances.get(actor_id, 0)), maxi(0, seats.size() - 1))
+		appearances[actor_id] = int(appearances.get(actor_id, 0)) + 1
+		var held_index := seats[ordinal] if not seats.is_empty() else -1
+		_beats.tween_callback(Callable(self, "_begin_receipt_focus").bind(receipt.duplicate(true), held_index))
 		_beats.tween_callback(Callable(self, "_show_move_name").bind(
 			engine._ability_name(actor_id, str(receipt.get("ability", "")))))
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), true))
@@ -1433,6 +1463,8 @@ func _start_beats(batch: Array) -> void:
 ## The whole batch eased back to idle; any receipts that queued behind its holds play now.
 func _drain_queued_beats() -> void:
 	_beats = null
+	_held_actor_id = ""
+	_held_actor_index = -1
 	if not is_inside_tree() or battle == null or engine == null:
 		return
 	# Catch up any rank, death or idle art changes deferred during the held beat.

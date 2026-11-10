@@ -861,15 +861,30 @@ func _figure_controls(id: String, caption: String, snips: Array) -> void:
 		snip_buttons[id] = _button("SNIP", Rect2(0, 0, 110, 40), 19, func(): command("snip", {"target": target}))
 
 
-## Name plates and SNIP buttons follow the figures on screen as the eye moves.
+## Keep every doll's label and SNIP reachable when a near doll projects over one farther back.
+## Order by projected feet and spread only the controls; the 3D dolls stay in their own ranks.
 func _place_figure_controls() -> void:
+	var placed: Array[Dictionary] = []
+	var centre := 0.0
 	for id in figure_labels:
 		var point: Variant = stage.screen_point(id)
 		var at: Vector2 = point if point is Vector2 else Vector2(640, 420)
 		at = at.clamp(Vector2(100, 120), Vector2(1180, 520))
-		figure_labels[id].position = at + Vector2(-90, 4)
+		placed.append({"id": id, "at": at})
+		centre += at.x
+	if placed.is_empty():
+		return
+	placed.sort_custom(func(a: Dictionary, b: Dictionary): return a.at.x < b.at.x)
+	var gap := 192.0 # 180px name plates, with breathing room between neighbours.
+	var half_span := gap * (placed.size() - 1) * 0.5
+	centre = clampf(centre / float(placed.size()), 90.0 + half_span, 1190.0 - half_span)
+	for index in placed.size():
+		var id: String = placed[index].id
+		var at: Vector2 = placed[index].at
+		var x := centre + (float(index) - (placed.size() - 1) * 0.5) * gap
+		figure_labels[id].position = Vector2(x - 90.0, at.y + 4.0)
 		if snip_buttons.has(id):
-			snip_buttons[id].position = at + Vector2(-55, 56)
+			snip_buttons[id].position = Vector2(x - 55.0, at.y + 56.0)
 
 
 ## Old event controls can outlive their event for the rest of the frame.
