@@ -2828,7 +2828,8 @@ func _mount_stitched_unpicker(quote: Dictionary, candle: int, generation: int) -
 	for hero_id in quote.get("hero_ids", []):
 		var calm := Button.new()
 		calm.name = "CalmHero_" + str(hero_id)
-		calm.text = "Calm %s · -50 Fray · %d gold" % [str(hero_id).replace("_", " ").capitalize(), quote["price"]]
+		calm.text = ("Calm %s · -50 Fray · %d gold" if _stitched_fray_words_shown() else "Calm %s · %d gold") % [
+			str(hero_id).replace("_", " ").capitalize(), quote["price"]]
 		calm.custom_minimum_size = Vector2(820, 46)
 		calm.pressed.connect(_stitched_unpicker_choose.bind(hero_id, weakref(panel), generation))
 		actions.add_child(calm)
@@ -4666,20 +4667,25 @@ func _present_stitched_run() -> void:
 	if terminal:
 		_note_bedroom_run(session)
 		var opened := _note_wren_gifts(session)
-		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 245))
-		terminal_panel.get_parent().size_flags_vertical = Control.SIZE_EXPAND_FILL
+		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150))
 		var final_art := TextureRect.new()
 		final_art.name = "TerminalBanner"
 		final_art.texture = _stitched_run_texture("res://assets/paper/ui/reward_banner.png")
-		final_art.custom_minimum_size = Vector2(500, 85)
+		final_art.custom_minimum_size = Vector2(860, 96)
 		final_art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		final_art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		final_art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		terminal_panel.add_child(final_art)
+		# The outcome reads centred inside the ribbon instead of under an empty banner.
+		var headline := _stitched_run_caption(final_art,
+			"ALL TWELVE FLOORS CLEARED" if session.phase == "victory" else "THE ROAD ENDS HERE", 22)
+		headline.set_anchors_preset(Control.PRESET_FULL_RECT)
+		headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		headline.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_stitched_run_caption(terminal_panel,
-			"%s  /  %d FLOORS REACHED  /  %d SEALED RECEIPTS" % [
-				"ALL TWELVE FLOORS CLEARED" if session.phase == "victory" else "THE ROAD ENDS HERE",
-				session.map.get_current_floor(), session.receipts.size()], 22)
+			"%d FLOORS REACHED  /  %d SEALED RECEIPTS" % [
+				session.map.get_current_floor(), session.receipts.size()], 18)
 		_stitched_run_caption(terminal_panel,
 			("All four doll records remain above with their exact HP, fray and losses. The ledger is sealed." if _stitched_fray_words_shown() else "All four doll records remain above with their exact HP and losses. The ledger is sealed."), 18)
 		if not opened.is_empty():

@@ -447,7 +447,8 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 		hush()
 		var animate: bool = receipt.ok and not reduced_motion
 		refresh(animate)
-		feedback.text = describe(kind, request, receipt, expected.dolls, before, expected)
+		feedback.text = describe(kind, request, receipt, expected.dolls, before, expected,
+			StitchedRules.fray_enabled or (host != null and not host.s14_enabled))
 		if receipt.ok and expected.phase == "complete":
 			feedback.text = "The corridor ends here."
 		feedback.tooltip_text = feedback.text
@@ -456,7 +457,8 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 
 ## Player-facing line for one receipt; never shows ids or raw event data.
 static func describe(kind: String, request: Dictionary, receipt: Dictionary, dolls: Array,
-		before: Dictionary = {}, after: Dictionary = {}) -> String:
+		before: Dictionary = {}, after: Dictionary = {},
+		fray_shown: bool = StitchedRules.fray_enabled) -> String:
 	if not receipt.get("ok", false):
 		return "That cannot be done: %s." % str(receipt.get("error", "blocked")).replace("_", " ")
 	var names := {}
@@ -495,7 +497,7 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 					lines.append("You study the tailor's dummy.")
 			"curio_choice":
 				if kind == "curio" and not before.is_empty() and not after.is_empty():
-					lines.append(curio_result(request, receipt, before, after, names))
+					lines.append(curio_result(request, receipt, before, after, names, fray_shown))
 				else:
 					lines.append("No curio consequence was confirmed.")
 	if lines.is_empty():
@@ -517,7 +519,7 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 ## protective pins/dye may change in place rather than create a new reward.
 ## Neither this nor describe() reads hidden odds or advances the Walk RNG.
 static func curio_result(request: Dictionary, receipt: Dictionary, before: Dictionary,
-		after: Dictionary, names: Dictionary) -> String:
+		after: Dictionary, names: Dictionary, fray_shown: bool = StitchedRules.fray_enabled) -> String:
 	if not receipt.get("ok", false):
 		return "That choice was refused."
 	var source: String = str(request.get("target", ""))
@@ -585,7 +587,10 @@ static func curio_result(request: Dictionary, receipt: Dictionary, before: Dicti
 					if doll.get("id") == victim:
 						later_fray = int(doll.get("fray", 0))
 				if detail.get("already_applied", false) and amount > 0 and later_fray - prior_fray == amount:
-					outcomes.append("The needles lash %s: +%d Fray now." % [names.get(victim, "a doll"), amount])
+					if fray_shown:
+						outcomes.append("The needles lash %s: +%d Fray now." % [names.get(victim, "a doll"), amount])
+					else:
+						outcomes.append("The needles lash %s." % names.get(victim, "a doll"))
 			"curio_trap":
 				if detail.get("status") == "bleed":
 					outcomes.append("Bleed %d is queued on %s." % [int(detail.get("amount", 0)),

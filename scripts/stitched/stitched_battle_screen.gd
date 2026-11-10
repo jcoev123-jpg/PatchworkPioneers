@@ -1413,7 +1413,7 @@ func submit_target(side: String, rank: int) -> Dictionary:
 		return submit_hand_action(_hand_pending, rank, 0, side)
 	var key := side + "_" + str(rank)
 	if not _target_ranks.has(key) or _selected_part.is_empty():
-		return {"ok": false, "error": "target is not legal"}
+		return {"ok": false, "error": "illegal target"}
 	var actor := battle.get_unit(battle.current_actor_id())
 	if actor.is_empty() or not actor["parts"].has(_selected_part):
 		return {"ok": false, "error": "no acting part"}

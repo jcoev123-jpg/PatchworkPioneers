@@ -7,6 +7,8 @@ const AREA := {"pin_nest": "walls", "borrowed_shape": "walls",
     "biting_bundle": "floorboards", "pattern_scraps": "walls", "sewn_threshold": "walls"}
 
 func _initialize() -> void:
+    # Legacy rule kept under test; it is switched off in the live game (owner 11-10).
+    StitchedRules.fray_enabled = true
     _run.call_deferred()
 
 func check(ok: bool, note: String) -> void:
