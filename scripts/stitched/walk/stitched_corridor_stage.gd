@@ -411,6 +411,7 @@ func place(id: String, texture: Texture2D, where: Vector3, height: float) -> Spr
 		figure_nodes[id] = figure
 	figure.texture = texture
 	figure.offset = Vector2.ZERO
+	figure.scale = Vector3.ONE
 	var tall := float(texture.get_height()) if texture != null else 512.0
 	figure.pixel_size = height / tall
 	figure.position = where + Vector3(0, height / 2.0, 0)
@@ -765,6 +766,7 @@ func end_spotlight(time: float = SPOT_EASE) -> void:
 		if figure_nodes != null:
 			for key in figure_nodes:
 				figure_nodes[key].modulate = Color.WHITE
+				figure_nodes[key].scale = Vector3.ONE
 		return
 	_spot_tween = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 	for surface_node in corridor.get_children():

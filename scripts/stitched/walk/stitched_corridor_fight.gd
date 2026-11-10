@@ -27,6 +27,10 @@ const BEAT_TIME := 0.32
 ## Owner 11-10: slow, heavy fights. The strike lands quickly, then the attacker holds its
 ## pose and the struck hold their reaction for a readable beat before easing back to idle.
 const HOLD_TIME := 1.35
+## Owner 11-10 spotlight step: on a strike the acting figure and its targets step toward the
+## eye and each other and grow a touch, so the pair reads as the foreground of the held beat.
+const SPOT_STEP := 0.28
+const SPOT_GROW := 1.1
 ## Owner 11-09: no hoop behind a round, only a thin outline; a sewn patch's tier shows as
 ## the outline's colour: plain bone, silver thread, gold thread.
 const TIER_OUTLINE := {1: Color("c9b79a"), 2: Color("cfd6ff"), 3: Color("ffcf6e")}
@@ -1207,6 +1211,10 @@ func _cancel_beats() -> void:
 	_show_move_name("")
 	_clear_flying()
 	stage.cancel_fight_focus()
+	# A killed beat must not leave a spotlight-grown figure behind.
+	if stage != null:
+		for fig in stage.figure_nodes.values():
+			fig.scale = Vector3.ONE
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
 	if is_inside_tree():
@@ -1317,8 +1325,25 @@ func _start_beats(batch: Array) -> void:
 			engine._ability_name(actor_id, str(receipt.get("ability", "")))))
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), true))
 		_beats.tween_callback(Callable(self, "_throw_and_strike").bind(receipt.duplicate(true)))
-		_beats.tween_property(figure, "position:z", home.z + toward * LUNGE, BEAT_TIME * 0.4) \
-			.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		# Owner 11-10 spotlight step: the acting figure and its targets come into the foreground,
+		# stepping toward the eye and each other and growing a touch, held with the strike pose.
+		var spot := _receipt_spot_keys(receipt)
+		var homes := {}
+		var steps := {}
+		for lit_key in spot.lit:
+			var lit_figure: Sprite3D = stage.figure_nodes.get(lit_key)
+			if lit_figure == null or not lit_figure.visible:
+				continue
+			var lit_home: Vector3 = lit_figure.position
+			homes[lit_key] = lit_home
+			var dz := toward * LUNGE if lit_key == key else signf(home.z - lit_home.z) * LUNGE * 0.5
+			steps[lit_key] = lit_home + Vector3(SPOT_STEP, 0.0, dz)
+		for lit_key in homes:
+			var lit_figure: Sprite3D = stage.figure_nodes[lit_key]
+			_beats.tween_property(lit_figure, "position", steps[lit_key], BEAT_TIME * 0.4) \
+				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE * SPOT_GROW, BEAT_TIME * 0.4) \
+				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		for result in receipt.get("results", []):
 			var target_key := _live_receipt_key(str(result.get("target", "")))
 			var struck: Sprite3D = stage.figure_nodes.get(target_key)
@@ -1328,7 +1353,10 @@ func _start_beats(batch: Array) -> void:
 		_beats.tween_interval(HOLD_TIME)
 		# Owner 11-10: the spotlight eases back together with the figures' return to rank.
 		_beats.tween_callback(Callable(stage, "end_spotlight"))
-		_beats.tween_property(figure, "position:z", home.z, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
+		for lit_key in homes:
+			var lit_figure: Sprite3D = stage.figure_nodes[lit_key]
+			_beats.tween_property(lit_figure, "position", homes[lit_key], BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
+			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
 	_beats.tween_callback(Callable(self, "_show_move_name").bind(""))
