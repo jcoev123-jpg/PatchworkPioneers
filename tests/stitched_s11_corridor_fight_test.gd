@@ -206,6 +206,8 @@ func _camera_sample(reduced: bool) -> Dictionary:
 			"live corridor attacker holds its shipped authored attack silhouette during focus")
 	var projected := false
 	var focused := false
+	var full_line_sampled := false
+	var full_line_clipped: Array[String] = []
 	# Owner 11-10: the strike pose now holds under focus; headless process frames can
 	# be extremely short, so sample by wall clock instead of a fixed frame count.
 	var deadline := Time.get_ticks_msec() + 1200
@@ -214,6 +216,16 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		lowest_fov = minf(lowest_fov, stage.camera.fov)
 		if stage.fight_focus_active():
 			focused = true
+		if stage.camera.fov < baseline_fov - 0.6:
+			full_line_sampled = true
+			for seated_key in stage.figure_nodes:
+				var seated: Sprite3D = stage.figure_nodes[seated_key]
+				if not seated.visible or seated.texture == null:
+					continue
+				var bounds := stage.screen_rect(seated_key)
+				if bounds.size.x <= 0.0 or bounds.position.x < 0.0 or bounds.end.x > 1280.0:
+					if not full_line_clipped.has(seated_key):
+						full_line_clipped.append(seated_key)
 		if stage.camera.fov < baseline_fov - 0.15:
 			var rect_a := stage.screen_rect(attacker_key)
 			var rect_b := stage.screen_rect(target_key)
@@ -230,8 +242,10 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		_check(not focused and is_equal_approx(lowest_fov, baseline_fov) and not stage.fight_focus_active(),
 			"reduced motion leaves the live corridor camera unzoomed")
 	else:
-		_check(focused and lowest_fov < baseline_fov - 2.0 and projected,
+		_check(focused and lowest_fov < baseline_fov - 0.6 and projected,
 			"committed offensive receipt eases toward both visible figures with exact projected hit regions (active=%s, min_fov=%.2f, projected=%s, actor=%s, target=%s)" % [str(focused), lowest_fov, str(projected), attacker_key, target_key])
+		_check(full_line_sampled and full_line_clipped.is_empty(),
+			"a focused attack keeps every seated doll and foe on screen, not only the acting pair: %s" % [full_line_clipped])
 	# The rest of the synchronous receipts (including automatic foe attacks)
 	# may queue multiple beats. All must restore the original side-on pose.
 	# Owner 11-10: every queued beat now carries the 1.35s strike hold; wait past the last.

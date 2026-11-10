@@ -661,8 +661,6 @@ func start_fight_focus(keys: Array[String], duration: float = 0.4) -> bool:
 		return false
 	cancel_fight_focus()
 	var anchors: Array[Sprite3D] = []
-	var left := INF
-	var right := -INF
 	for key in keys:
 		var figure: Sprite3D = figure_nodes.get(key)
 		if figure == null or not figure.visible or figure.texture == null:
@@ -670,21 +668,29 @@ func start_fight_focus(keys: Array[String], duration: float = 0.4) -> bool:
 		if camera.is_position_behind(figure.global_position):
 			continue
 		anchors.append(figure)
-		left = minf(left, figure.global_position.z)
-		right = maxf(right, figure.global_position.z)
 	if anchors.size() < 2:
 		return false
+	# Keep the camera at its full-line centre: panning toward the acting pair
+	# can send the distant rear rank outside the screen. The lit pair still
+	# steps forward and grows during the strike.
 	var aim := _fight_home.origin
-	aim.z = clampf((left + right) * 0.5, _fight_home.origin.z - 1.0, _fight_home.origin.z + 1.0)
-	# Prefer 1.3x apparent scale; widen only when the actual pictured group
-	# would leave the play area. Controls remain outside the camera viewport.
+	# Zoom toward the acting pair only while the OTHER seated figures still fit.
+	# A rear foe or doll can be pushed off-screen when only the two lit seats are
+	# measured, even though they are correctly framed themselves.
+	var framed: Array[String] = []
+	for key in figure_nodes:
+		var seated: Sprite3D = figure_nodes[key]
+		if seated.visible and seated.texture != null and not camera.is_position_behind(seated.global_position):
+			framed.append(key)
 	var chosen := FIGHT_FOV
-	var safe := Rect2(size.x * 0.02, size.y * 0.15, size.x * 0.96, size.y * 0.62)
+	# Leave room for a wider follow-through silhouette and the 10% foreground
+	# growth after the framing check (the still is narrower than some poses).
+	var safe := Rect2(size.x * 0.04, size.y * 0.15, size.x * 0.92, size.y * 0.62)
 	camera.position = aim
-	for candidate in [31.5, 33.0, 35.0, 37.0, 39.0]:
+	for candidate in [31.5, 33.0, 35.0, 37.0, 38.0, 39.0]:
 		camera.fov = candidate
 		var within := true
-		for key in keys:
+		for key in framed:
 			var rect := screen_rect(key)
 			if rect.size.x <= 0.0 or not safe.encloses(rect):
 				within = false
