@@ -469,7 +469,9 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 		var who: String = names.get(event.get("target", event.get("actor", "")), "a doll")
 		match str(event.get("kind", "")):
 			"tug_torn":
-				lines.append("Something tugs from the dark: %s's %s tears." % [who, str(event.get("slot", "seam"))])
+				var torn_slot: String = str(event.get("slot", "seam"))
+				lines.append("Something tugs from the dark: %s's %s %s." % [who, torn_slot,
+					"tear" if torn_slot in ["arms", "legs"] else "tears"])
 			"tug_saved":
 				lines.append("%s gives up the %s and the tug lets go." % [who, str(event.get("item", "item")).replace("_", " ")])
 			"tug_no_part":

@@ -154,6 +154,10 @@ func present_intent(intent: Dictionary, rank: int) -> void:
 			keys.sort()
 			var effect_labels: Array[String] = []
 			for key in keys:
+				# Owner 11-10: the fray meter is retired; its authored number stays out
+				# of the visible base line unless the legacy meter is switched back on.
+				if str(key) == "fray" and not StitchedRules.fray_enabled:
+					continue
 				effect_labels.append("%s %+d" % [str(key), int(effects[key])])
 			base_detail += " · BASE EFFECTS " + (", ".join(effect_labels) if not effect_labels.is_empty() else "none")
 			var mark_damage := int(intent.get("base_mark_damage", 0))

@@ -6,6 +6,9 @@ var _pull_catalog: Dictionary = {}
 
 
 func _initialize() -> void:
+	# Owner 11-10: the fray meter is retired in live play; this legacy projection
+	# suite still pins the authored fray labels, so it opts the meter back on.
+	StitchedRules.fray_enabled = true
 	_run.call_deferred()
 
 
