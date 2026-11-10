@@ -258,6 +258,12 @@ func _run() -> void:
 	await _key(KEY_HOME)
 	_check(guide.page_scroll.scroll_vertical == 0,
 		"Home brings the first Field Notes paragraph back into view")
+	await _key(KEY_PAGEDOWN)
+	_check(guide.page_scroll.scroll_vertical > 0,
+		"Page Down scrolls Field Notes without first focusing the scroll container")
+	await _key(KEY_PAGEUP)
+	_check(guide.page_scroll.scroll_vertical == 0,
+		"Page Up reverses the first page of Field Notes scrolling")
 	await _click(guide.atlas_button)
 	_check(guide._atlas_is_open() and not guide.get_node("FeltPanel").visible,
 		"opening Parts & spoils replaces, rather than stacks over, the guide panel")

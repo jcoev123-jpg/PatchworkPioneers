@@ -378,8 +378,7 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	return result
 
 
-## A corridor rebuild or direct figure clear must cancel the pending fade before
-## freeing the materials and Sprite3Ds that its tween is still targeting.
+## Boss status affects the flagged unit, not every foe sharing its encounter.
 func _verify_boss_minion_scale(fight: StitchedCorridorFight) -> void:
 	var battle := fight.battle
 	var front := fight.engine._unit_at("foe", 1)
@@ -401,6 +400,8 @@ func _verify_boss_minion_scale(fight: StitchedCorridorFight) -> void:
 		StitchedCorridorFight.FOE_HEIGHT), "the normal fight restores the front foe's ordinary size")
 
 
+## A corridor rebuild or direct figure clear must cancel the pending fade before
+## freeing the materials and Sprite3Ds that its tween is still targeting.
 func _verify_spotlight_teardown() -> void:
 	var stage := StitchedCorridorStage.new()
 	root.add_child(stage)
@@ -410,8 +411,8 @@ func _verify_spotlight_teardown() -> void:
 		stage.place("hero_1", StitchedCorridorStage.hero_art("warden"), Vector3.ZERO, 1.15)
 		stage.begin_spotlight(lit, [], 0.01)
 		stage.end_spotlight(1.0)
-		_check(stage._spot_tween != null and stage.figure_nodes["hero_1"].render_priority >= 1,
-			"%s precondition: active return fade keeps the doll foregrounded" % reset)
+		_check(stage._spot_tween != null and stage.figure_nodes["hero_1"].render_priority == 2,
+			"%s precondition: active return fade keeps the acting doll foremost" % reset)
 		match reset:
 			"build":
 				stage.build("walls", 2)
