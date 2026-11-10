@@ -312,6 +312,16 @@ func _host_tug_mount() -> void:
 	var held: Array = stage.expected.pockets[stage.expected.viewpoint]
 	var item_choices := int("pins" in held) + int("spare_spool" in held)
 	_check(stage.event_buttons.size() == item_choices, "genuine tug offers only the carried pin or spool alternatives")
+	var original_view := stage.expected.duplicate(true)
+	stage.expected = original_view.duplicate(true)
+	stage.expected.pockets[stage.expected.viewpoint] = []
+	stage._show_event()
+	_check(stage.event_buttons.is_empty() and stage.event_text.text.contains("nothing sharp")
+		and stage.event_text.text.contains("Walk on"), "tug without a sharp item describes only the available walk-on consequence")
+	stage.expected = original_view
+	stage._show_event()
+	_check(stage.event_buttons.size() == item_choices and (item_choices == 0 or stage.event_text.text.contains("give it something sharp")),
+		"restoring carried items restores the offered sharp-item choice wording")
 	var before := stage.host.snapshot()
 	var journal_count := stage.host.journal.size()
 	_open_drawer(stage)
@@ -347,6 +357,8 @@ func _host_tug_mount() -> void:
 	stage.forward_button.pressed.emit()
 	_check(stage.receipts.size() == before_tug_count + 1 and stage.receipts.back().ok and not stage.walk.tug_unresolved()
 		and int(stage.expected.step) == before_tug_step and stage.drawer_open, "actual tug resolution does not collapse drawer before a step transition")
+	_check(stage.host.s14_enabled and stage.feedback.text.contains("open seam") and stage.feedback.text.contains("next fight")
+		and not stage.feedback.text.contains("tears"), "live S14 tug reports future bleed instead of a part tearing off")
 	app.free()
 
 

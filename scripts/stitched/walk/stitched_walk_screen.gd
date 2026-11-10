@@ -448,7 +448,7 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 		var animate: bool = receipt.ok and not reduced_motion
 		refresh(animate)
 		feedback.text = describe(kind, request, receipt, expected.dolls, before, expected,
-			StitchedRules.fray_enabled or (host != null and not host.s14_enabled))
+			StitchedRules.fray_enabled or (host != null and not host.s14_enabled), host != null and host.s14_enabled)
 		if receipt.ok and expected.phase == "complete":
 			feedback.text = "The corridor ends here."
 		feedback.tooltip_text = feedback.text
@@ -458,7 +458,7 @@ func command(kind: String, extra: Dictionary = {}, snapshot: Variant = null) -> 
 ## Player-facing line for one receipt; never shows ids or raw event data.
 static func describe(kind: String, request: Dictionary, receipt: Dictionary, dolls: Array,
 		before: Dictionary = {}, after: Dictionary = {},
-		fray_shown: bool = StitchedRules.fray_enabled) -> String:
+		fray_shown: bool = StitchedRules.fray_enabled, seam_only: bool = false) -> String:
 	if not receipt.get("ok", false):
 		return "That cannot be done: %s." % str(receipt.get("error", "blocked")).replace("_", " ")
 	var names := {}
@@ -469,9 +469,12 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 		var who: String = names.get(event.get("target", event.get("actor", "")), "a doll")
 		match str(event.get("kind", "")):
 			"tug_torn":
-				var torn_slot: String = str(event.get("slot", "seam"))
-				lines.append("Something tugs from the dark: %s's %s %s." % [who, torn_slot,
-					"tear" if torn_slot in ["arms", "legs"] else "tears"])
+				if seam_only:
+					lines.append("Something tugs from the dark: %s's stitches split. The open seam will bleed in the next fight." % who)
+				else:
+					var torn_slot: String = str(event.get("slot", "seam"))
+					lines.append("Something tugs from the dark: %s's %s %s." % [who, torn_slot,
+						"tear" if torn_slot in ["arms", "legs"] else "tears"])
 			"tug_saved":
 				lines.append("%s gives up the %s and the tug lets go." % [who, str(event.get("item", "item")).replace("_", " ")])
 			"tug_no_part":
@@ -922,6 +925,8 @@ func _show_event() -> void:
 			var slot := pocket.find(item)
 			if slot >= 0:
 				choices.append(["GIVE IT " + item.replace("_", " ").to_upper(), {"kind": "tug", "target": expected.tug.id, "choice": item, "slot": slot}])
+		if choices.is_empty():
+			event_text.text = "A thread pulls tight from the dark behind the last doll. There is nothing sharp to offer. Walk on and it will pull a seam open."
 	else:
 		var curio := current_curio()
 		if curio.is_empty():
