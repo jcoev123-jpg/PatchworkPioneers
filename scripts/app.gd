@@ -4681,7 +4681,9 @@ func _present_stitched_run() -> void:
 	if terminal:
 		_note_bedroom_run(session)
 		var opened := _note_wren_gifts(session)
-		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150), 64.0)
+		# Playtest 11-11: the recap lines sat on the felt's rolled edges and under its stitched frame;
+		# a taller panel with a deeper left pad keeps every line inside the frame.
+		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 250), 104.0)
 		var final_art := TextureRect.new()
 		final_art.name = "TerminalBanner"
 		final_art.texture = _stitched_run_texture("res://assets/paper/ui/reward_banner.png")
@@ -4699,8 +4701,8 @@ func _present_stitched_run() -> void:
 		headline.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_stitched_run_caption(terminal_panel,
-			"%d FLOORS REACHED  /  %d SEALED RECEIPTS" % [
-				session.map.get_current_floor(), session.receipts.size()], 18)
+			"%d FLOORS REACHED  /  %d SEALED RECEIPT%s" % [
+				session.map.get_current_floor(), session.receipts.size(), "" if session.receipts.size() == 1 else "S"], 18)
 		_stitched_run_caption(terminal_panel,
 			("All four doll records remain above with their exact HP, fray and losses. The ledger is sealed." if _stitched_fray_words_shown() else "All four doll records remain above with their exact HP and losses. The ledger is sealed."), 18)
 		if not opened.is_empty():
