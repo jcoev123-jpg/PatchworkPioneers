@@ -71,6 +71,9 @@ var failures: Array[String] = []
 
 
 func _initialize() -> void:
+	# This test pins the summary's complete wording, including the Fray note
+	# that only the retired fray meter (StitchedRules.fray_enabled) ever shows.
+	StitchedRules.fray_enabled = true
 	_run.call_deferred()
 
 

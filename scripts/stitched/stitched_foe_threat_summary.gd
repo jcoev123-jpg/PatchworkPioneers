@@ -85,6 +85,9 @@ static func _status_note(key: String, effects: Dictionary) -> String:
 		"tear":
 			return "Tear: strips one seeded random non-torso part"
 		"fray":
+			# Owner 11-10: the fray meter is retired; no Fray word or number shows unless it is on.
+			if not StitchedRules.fray_enabled:
+				return ""
 			if amount > 0:
 				return "Fray +%d: rises toward %d" % [amount, FRAY_MAX]
 			return "Fray %d: eases the doll" % amount

@@ -17,6 +17,9 @@ const CASES := {
 
 
 func _initialize() -> void:
+	# This test pins the meter's complete wording, including the Fray clause
+	# that only the retired fray meter (StitchedRules.fray_enabled) ever shows.
+	StitchedRules.fray_enabled = true
 	_run.call_deferred()
 
 

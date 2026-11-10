@@ -169,21 +169,25 @@ func _opening_text() -> String:
 
 
 func _explanation() -> String:
-	return ("%s  ·  Candle %d–%d\n" % [
+	var text := "%s  ·  Candle %d–%d\n" % [
 		band_name.to_upper(), int(band_effects.get("minimum", 0)),
-		int(band_effects.get("maximum", 0))] +
-		"Fray gained: +%d%% (rounded up)\n" % int(band_effects.get("fray_percent", 0)) +
-		"Foe accuracy: +%d ACC\n" % int(band_effects.get("enemy_acc", 0)) +
+		int(band_effects.get("maximum", 0))]
+	# Owner 11-10: the fray meter is retired; no Fray word or number shows unless it is on.
+	if StitchedRules.fray_enabled:
+		text += "Fray gained: +%d%% (rounded up)\n" % int(band_effects.get("fray_percent", 0))
+	return text + ("Foe accuracy: +%d ACC\n" % int(band_effects.get("enemy_acc", 0)) +
 		"Foe damage: +%d%% (rounded up)\n" % int(band_effects.get("enemy_damage_percent", 0)) +
 		"Loot: +%d%%\n" % int(band_effects.get("loot_percent", 0)) +
 		"Opening: " + _opening_text())
 
 
 func _short_explanation() -> String:
-	return ("%s (%d–%d) · Fray +%d%% · Loot +%d%%\n" %
-		[band_name.to_upper(), int(band_effects.get("minimum", 0)),
-		int(band_effects.get("maximum", 0)), int(band_effects.get("fray_percent", 0)),
-		int(band_effects.get("loot_percent", 0))] +
+	var head := "%s (%d–%d)" % [band_name.to_upper(), int(band_effects.get("minimum", 0)),
+		int(band_effects.get("maximum", 0))]
+	# Owner 11-10: the fray meter is retired; no Fray word or number shows unless it is on.
+	if StitchedRules.fray_enabled:
+		head += " · Fray +%d%%" % int(band_effects.get("fray_percent", 0))
+	return head + (" · Loot +%d%%\n" % int(band_effects.get("loot_percent", 0)) +
 		"Foes +%d ACC, +%d%% damage · %s" %
 		[int(band_effects.get("enemy_acc", 0)),
 		int(band_effects.get("enemy_damage_percent", 0)), _opening_text()])

@@ -477,7 +477,11 @@ static func describe(kind: String, request: Dictionary, receipt: Dictionary, dol
 			"mimic_removed":
 				lines.append("The snip finds the false thread. The extra doll falls away.")
 			"wrong_snip":
-				lines.append("Wrong thread! %s frays (+%d)." % [who, int(event.get("fray", 0))])
+				# Owner 11-10: no visible FRAY word or number unless the retired meter is on.
+				if fray_shown:
+					lines.append("Wrong thread! %s frays (+%d)." % [who, int(event.get("fray", 0))])
+				else:
+					lines.append("Wrong thread! The stitches around %s draw tight." % who)
 			"mimic_pending":
 				lines.append("A fifth doll follows you into the next room.")
 			"mannequins_stage":
