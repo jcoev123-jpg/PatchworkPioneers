@@ -306,6 +306,32 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	return result
 
 
+## A corridor rebuild or direct figure clear must cancel the pending fade before
+## freeing the materials and Sprite3Ds that its tween is still targeting.
+func _verify_spotlight_teardown() -> void:
+	var stage := StitchedCorridorStage.new()
+	root.add_child(stage)
+	stage.build("walls", 2)
+	var lit: Array[String] = ["hero_1"]
+	for reset in ["build", "junction", "clear"]:
+		stage.place("hero_1", StitchedCorridorStage.hero_art("warden"), Vector3.ZERO, 1.15)
+		stage.begin_spotlight(lit, [], 0.01)
+		stage.end_spotlight(1.0)
+		_check(stage._spot_tween != null and stage.figure_nodes["hero_1"].render_priority == 1,
+			"%s precondition: active return fade keeps the doll foregrounded" % reset)
+		match reset:
+			"build":
+				stage.build("walls", 2)
+			"junction":
+				stage.build_junction("walls", ["forward"])
+			"clear":
+				stage.clear_figures()
+		_check(stage._spot_tween == null and stage.figure_nodes.is_empty()
+			and is_equal_approx(stage.environment.ambient_light_energy, StitchedCorridorStage.AMBIENT_BASE),
+			"%s resets spotlight before freeing tween targets" % reset)
+	stage.queue_free()
+
+
 func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var screen := StitchedBattleScreen.new()
@@ -506,6 +532,7 @@ STATUS: none"))
 			and normal.rng == reduced.rng and normal.receipts == reduced.receipts
 			and normal.targets == reduced.targets,
 			"normal/reduced seeded corridor actions produce identical rules, receipts, targets and RNG")
+	_verify_spotlight_teardown()
 	StitchedRules.wren_hands = false
 	for failure in failures:
 		printerr(failure)

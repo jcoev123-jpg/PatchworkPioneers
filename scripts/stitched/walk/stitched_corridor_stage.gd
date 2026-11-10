@@ -173,6 +173,8 @@ static func hero_art(id: String) -> Texture2D:
 
 ## Lays out a fresh corridor of `step_count` steps in an area. Figures are cleared.
 func build(area_name: String, step_count: int) -> void:
+	# Stop spotlight tweens before freeing their corridor materials or figures.
+	end_spotlight(0.0)
 	area = area_name
 	steps = maxi(1, step_count)
 	for child in corridor.get_children():
@@ -201,6 +203,8 @@ func build(area_name: String, step_count: int) -> void:
 ## Owner 11-08: a maze junction with no dead ends. The corridor runs up to a crossing that
 ## opens left, forward and/or right (`open`); every closed side is a wall. Figures are cleared.
 func build_junction(area_name: String, open: Array) -> void:
+	# A pending fade must not keep tweening surfaces freed by this rebuild.
+	end_spotlight(0.0)
 	area = area_name
 	steps = JUNCTION_STEPS
 	for child in corridor.get_children():
@@ -391,6 +395,8 @@ func lit_ranks() -> int:
 
 
 func clear_figures() -> void:
+	# A standalone clear can also occur while the held spotlight is easing out.
+	end_spotlight(0.0)
 	for child in figures.get_children():
 		figures.remove_child(child)
 		child.free()
