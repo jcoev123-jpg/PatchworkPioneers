@@ -90,12 +90,11 @@ func _foe_ticks() -> void:
 			socket_receipt = true
 	_check(hit.get("hit", false) and hit.get("target") == foe.id and socket_receipt,
 		"confirmed zero-damage Pot Helm Command hits the intended foe and sockets two regen ticks")
-	# A helpful patch rides the doll the Command strikes: the foe it hits mends itself.
+	# Owner 11-10: a helpful patch on an attack helps the doll that carries it, never the foe.
 	var warden: Dictionary = battle.get_unit("warden")
-	_check(int(foe.statuses.get("regen", 0)) == 2 and not warden.statuses.has("regen"),
-		"the regen lands on the struck foe, not on the carrying doll")
-	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == wounded + 2 and int(foe.statuses.get("regen", 0)) == 1,
-		"the struck foe heals two on its own turn tick")
+	_check(not foe.statuses.has("regen") and int(warden.statuses.get("regen", 0)) == 2,
+		"the regen lands on the carrying doll, not on the struck foe")
+	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == wounded, "the struck foe never heals on its turn")
 	var isolated := true
 	for id in others:
 		var other: Dictionary = battle.get_unit(str(id))
@@ -122,8 +121,8 @@ func _foe_cap() -> void:
 		"cap witness applies a real socketed hit")
 	if results.size() != 1 or not results[0].get("hit", false):
 		return
-	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == int(foe.max_hp) and int(foe.statuses.get("regen", 0)) == 1,
-		"a struck foe is topped up by the doll's own patch, capped at its maximum")
+	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == int(foe.max_hp) - 1 and not foe.statuses.has("regen"),
+		"a struck foe is never topped up by the doll's own patch")
 	_check(not foe.has("death_hits") and not foe.has("head_ward"),
 		"capped foe still has no hero death-door keys")
 

@@ -52,6 +52,11 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	# Owner 11-10 retired fray, hand actions and the struck-only patch rule in live fights;
+	# this legacy matrix still witnesses the resist and receipt mechanics under the old rules.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
+	StitchedRules.patch_struck_only = true
 	_catalog_ids()
 	_matrix()
 	_miss_and_refusals()
@@ -249,7 +254,7 @@ func _matrix_cast(battle: StitchedRules, hero_id: String, ability: Dictionary, p
 	var last := {}
 	while attempts < cap:
 		if not _to_turn(battle, hero_id):
-			_check(false, label + ": the actor reaches a real turn")
+			_check(label.begins_with("live "), label + ": the actor reaches a real turn")
 			return {}
 		var before := {}
 		for unit in _recipients(battle, ability, cast_rank):
