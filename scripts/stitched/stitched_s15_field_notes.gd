@@ -11,7 +11,7 @@ static func examples(source: Variant = null) -> Array[String]:
 		return []
 	return [
 		"SEAM RESISTS  |  A landed ability can still have its stun, bleed, rot, pull/push or debuff resisted by a foe. Its damage is separate.",
-		"PATCH THREAD  |  Cotton cannot pierce resistance; wool helps, silk helps more and gold's sewn effect gets through resistance. Wren's hand cannot be resisted.",
+		"PATCH THREAD  |  Cotton cannot pierce resistance; wool helps, silk helps more and gold's sewn effect gets through resistance. Piercing does not guarantee an attack hits.",
 		"ROT  |  Mildew gnaws through stuffing protection and makes healing less helpful until it clears. Foes grow tougher farther down the corridor.",
 	]
 

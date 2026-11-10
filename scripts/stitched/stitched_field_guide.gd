@@ -139,6 +139,7 @@ func open_guide() -> bool:
 	if _active or not is_inside_tree() or not get_parent().is_visible_in_tree():
 		return false
 	_active = true
+	get_node("FeltPanel").show()
 	_refresh_lesson_page()
 	_refresh_side_door_page()
 	show()
@@ -225,6 +226,21 @@ func _input(event: InputEvent) -> void:
 		if key_event.keycode == KEY_TAB and _atlas_is_open():
 			get_viewport().set_input_as_handled()
 			_cycle_atlas_focus(key_event.shift_pressed)
+			return
+		if not _atlas_is_open() and key_event.keycode in [KEY_PAGEUP, KEY_PAGEDOWN, KEY_HOME, KEY_END]:
+			get_viewport().set_input_as_handled()
+			var scroll_bar := page_scroll.get_v_scroll_bar()
+			var bottom := maxi(0, int(scroll_bar.max_value - scroll_bar.page))
+			var step := maxi(1, int(page_scroll.size.y * 0.85))
+			match key_event.keycode:
+				KEY_PAGEUP:
+					page_scroll.scroll_vertical = maxi(0, page_scroll.scroll_vertical - step)
+				KEY_PAGEDOWN:
+					page_scroll.scroll_vertical = mini(bottom, page_scroll.scroll_vertical + step)
+				KEY_HOME:
+					page_scroll.scroll_vertical = 0
+				KEY_END:
+					page_scroll.scroll_vertical = bottom
 			return
 		if key_event.keycode == KEY_ESCAPE:
 			get_viewport().set_input_as_handled()
@@ -316,6 +332,8 @@ func open_part_atlas() -> bool:
 	(part_atlas.get_node("Subtitle") as Label).text = (
 		"REFERENCE ONLY  •  Doll makers & spoils; cloth reference, no equips.")
 	part_atlas.show()
+	# The full-screen atlas replaces the notes visually rather than stacking two panels.
+	get_node("FeltPanel").hide()
 	atlas_status.text = "REFERENCE ONLY  •  Inspect sewn limbs and cloth patches; no changes to your party."
 	_wire_atlas_focus()
 	(part_atlas.get_node("CloseButton") as Button).grab_focus()
@@ -336,6 +354,7 @@ func _on_part_atlas_close_requested() -> void:
 
 
 func _close_part_atlas(restore_focus: bool) -> void:
+	get_node("FeltPanel").show()
 	if is_instance_valid(part_atlas):
 		part_atlas.hide()
 		# A previous successful readout must never survive hide or a bad reload.
@@ -439,8 +458,9 @@ func _build_view() -> void:
 	content.anchor_bottom = 1.0
 	content.offset_left = 104
 	content.offset_top = 82
-	content.offset_right = -104
-	content.offset_bottom = -80
+	# Leave the inner stitched edge clear even at the longest wrapped lesson.
+	content.offset_right = -190
+	content.offset_bottom = -140
 	content.add_theme_constant_override("separation", 12)
 	felt.add_child(content)
 

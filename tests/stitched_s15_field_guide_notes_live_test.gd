@@ -146,8 +146,9 @@ func _pure_checks() -> void:
 		_check(lines[1].begins_with("PATCH THREAD  |")
 			and lines[1].contains("Cotton cannot") and lines[1].contains("wool helps")
 			and lines[1].contains("silk helps more") and lines[1].contains("gold")
-			and lines[1].contains("sewn effect") and lines[1].contains("Wren's hand"),
-			"second note describes piercing and Wren's unresisted hand, not attack certainty")
+			and lines[1].contains("sewn effect") and lines[1].contains("does not guarantee")
+			and not lines[1].contains("Wren's hand"),
+			"thread piercing is not attack certainty and no retired hand is advertised")
 		_check(lines[2].begins_with("ROT  |")
 			and lines[2].contains("Mildew") and lines[2].contains("stuffing protection")
 			and lines[2].contains("healing") and lines[2].contains("farther down"),
@@ -247,9 +248,27 @@ func _run() -> void:
 	_assert_page(guide, true)
 	var scrollbar := guide.page_scroll.get_v_scroll_bar()
 	var travel := maxf(0.0, scrollbar.max_value - scrollbar.page)
+	var felt_rect := (guide.get_node("FeltPanel") as Control).get_global_rect()
+	_check(guide.page_scroll.get_global_rect().end.x <= felt_rect.end.x - 170.0
+		and guide.page_scroll.get_global_rect().end.y <= felt_rect.end.y - 125.0,
+		"guide notes stay inside the right and bottom stitched edges")
+	await _key(KEY_END)
+	_check(travel > 0.0 and guide.page_scroll.scroll_vertical >= int(travel) - 2,
+		"End reveals the final Field Notes paragraphs without requiring scroll focus")
+	await _key(KEY_HOME)
+	_check(guide.page_scroll.scroll_vertical == 0,
+		"Home brings the first Field Notes paragraph back into view")
+	await _click(guide.atlas_button)
+	_check(guide._atlas_is_open() and not guide.get_node("FeltPanel").visible,
+		"opening Parts & spoils replaces, rather than stacks over, the guide panel")
+	if guide._atlas_is_open():
+		await _click(guide.part_atlas.get_node("CloseButton") as Button)
+		_check(not guide._atlas_is_open() and guide.get_node("FeltPanel").visible
+			and root.gui_get_focus_owner() == guide.atlas_button,
+			"closing Parts & spoils restores the guide and the triggering button")
 	guide.page_scroll.scroll_vertical = int(travel)
 	await process_frame
-	_check(travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
+	_check(guide.page_scroll.scroll_vertical > 0,
 		"original scrolling page can reach the appended S15 notes")
 	guide.page_scroll.scroll_vertical = 0
 	await _key(KEY_ESCAPE)
