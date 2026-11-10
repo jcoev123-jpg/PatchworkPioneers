@@ -371,6 +371,8 @@ static func _present_badges(root: Control, unit: Dictionary, side: String) -> vo
 
 
 static func make_rank_meters(parent: Control, side: String, foot_x: float, show_fray: bool = true) -> Dictionary:
+	# Even legacy fight views cannot expose the retired meter unless its test opts in.
+	show_fray = show_fray and StitchedRules.fray_enabled
 	# y530..554 is the existing HP row, below the full-size rank/name button.
 	var root := Control.new()
 	root.name = "RankMeters" + side.capitalize() + str(int(foot_x))

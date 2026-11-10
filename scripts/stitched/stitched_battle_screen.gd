@@ -887,7 +887,7 @@ func status_detail(side: String, rank: int) -> String:
 	var unit := _unit_at(side, rank)
 	if not unit.is_empty():
 		var header := "R%d %s · HP %d/%d" % [rank, str(unit.get("name", "")), int(unit.get("hp", 0)), int(unit.get("max_hp", 0))]
-		if (side == "hero" or int(unit.get("fray", 0)) > 0) and (StitchedRules.fray_enabled or battle == null or not battle._s14):
+		if StitchedRules.fray_enabled and (side == "hero" or int(unit.get("fray", 0)) > 0):
 			header += " · FRAY %d/200" % int(unit.get("fray", 0))
 		var tokens := _status_tokens(unit)
 		return header + "\nSTATUS: " + (", ".join(tokens) if not tokens.is_empty() else "none")

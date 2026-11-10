@@ -456,6 +456,12 @@ func _run() -> void:
 		fight.refresh()
 		_check(not fight.fray_word.visible and not fight.fray_bar.visible,
 			"pre-S14 live corridor shows neither the retired FRAY word nor its meter")
+		_check(not screen.status_detail("hero", 1).contains("FRAY"),
+			"legacy inspection cannot disclose the retired FRAY count")
+		var old_meter: Dictionary = screen._rank_meters.get("hero_1", {})
+		_check(not old_meter.is_empty() and not old_meter["fray"].visible
+			and not old_meter["fray_text"].visible,
+			"legacy rank meter cannot show retired FRAY when globally disabled")
 		screen.battle._s14 = original_s14
 		fight.refresh()
 	_verify_live_intents(fight, 3)

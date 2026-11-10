@@ -9,6 +9,9 @@ var checks := 0
 
 
 func _initialize() -> void:
+	# Exercise the retired meter only in this legacy S2 contract fixture.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
 	_run.call_deferred()
 
 
