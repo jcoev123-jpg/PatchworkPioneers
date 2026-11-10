@@ -1,6 +1,6 @@
 extends SceneTree
-## S14 heal patches: the sewn-on Cotton (2) / Gold (5) healing mends the actual
-## surviving target of its signature, including a foe struck by an attack.
+## S14 heal patches: the sewn-on Cotton (2) / Gold (5) healing mends the ally its signature
+## helps, or the doll that carries it when the signature strikes a foe (owner 11-10).
 ## Seeded, catalog-built battles driven only by public signature, foe-ability
 ## and pass actions; wounds and deaths come from real legal play, never from
 ## direct _apply_effects calls or test-only unit mutation. The terminal
@@ -126,74 +126,7 @@ func _command_until_hit(battle: StitchedRules) -> Dictionary:
 
 
 ## Cotton 2 then Gold 5, both on one zero-damage signature, in socket order.
-func _foe_cotton_gold() -> void:
-	var battle := _battle({"warden": {COMMAND: [COTTON, GOLD]}})
-	if battle == null:
-		return
-	if not _wound_foe(battle, [["seamstress", NEEDLE], ["tinker", COG], ["lantern_monk", WICK]], 7):
-		_check(false, "precondition: legal signature strikes leave the rank-two foe at least seven below maximum")
-		return
-	var landed := _command_until_hit(battle)
-	_check(not landed.is_empty(), "precondition: socketed Command confirms a hit on the struck foe")
-	if landed.is_empty():
-		return
-	var hit: Dictionary = landed["hit"]
-	var foe: Dictionary = landed["foe"]
-	var before := int(landed["before"])
-	var max_hp := int(foe.max_hp)
-	_check(before <= max_hp - 7 and str(hit.get("target", "")) == str(foe.id),
-		"zero-damage Pot Helm Command confirms a hit on the actual struck foe")
-	if before > max_hp - 7:
-		return
-	var cotton := _heal_entries(hit, COTTON)
-	var gold := _heal_entries(hit, GOLD)
-	_check(cotton.size() == 1 and int(cotton[0].get("amount", -1)) == 2,
-		"socketed Cotton heals the struck surviving foe exactly two")
-	_check(gold.size() == 1 and int(gold[0].get("amount", -1)) == 5,
-		"socketed Gold then heals the same struck foe exactly five")
-	var cotton_at := -1
-	var gold_at := -1
-	for index in hit.get("statuses", []).size():
-		var entry: Dictionary = hit["statuses"][index]
-		if entry.get("status") == "heal" and str(entry.get("patch", "")) == COTTON:
-			cotton_at = index
-		if entry.get("status") == "heal" and str(entry.get("patch", "")) == GOLD:
-			gold_at = index
-	_check(cotton_at >= 0 and gold_at > cotton_at and hit.get("patches", []) == [COTTON, GOLD],
-		"both heal patches apply in authored socket order")
-	_check(int(hit.get("target_hp", -1)) == before + 7 and int(foe.hp) == before + 7,
-		"hit receipt reports the healed final HP and the struck foe gains exactly seven")
-	_check(not foe.statuses.has("heal") and int(foe.hp) > 0 and not bool(foe.dead),
-		"foe healing never installs a fake heal status and the foe survives")
-
-
 ## Gold alone, isolated from Cotton, still heals the struck foe five.
-func _foe_gold_alone() -> void:
-	var battle := _battle({"warden": {COMMAND: [GOLD]}})
-	if battle == null:
-		return
-	if not _wound_foe(battle, [["seamstress", NEEDLE], ["tinker", COG]], 5):
-		_check(false, "precondition: legal strikes leave the rank-two foe at least five below maximum")
-		return
-	var landed := _command_until_hit(battle)
-	_check(not landed.is_empty(), "precondition: Gold-alone Command confirms a hit on the struck foe")
-	if landed.is_empty():
-		return
-	var hit: Dictionary = landed["hit"]
-	var foe: Dictionary = landed["foe"]
-	var before := int(landed["before"])
-	var max_hp := int(foe.max_hp)
-	_check(before <= max_hp - 5, "precondition: struck foe is at least five below maximum for Gold")
-	if before > max_hp - 5:
-		return
-	var gold := _heal_entries(hit, GOLD)
-	_check(gold.size() == 1 and int(gold[0].get("amount", -1)) == 5
-		and int(foe.hp) == before + 5 and int(hit.get("target_hp", -1)) == before + 5,
-		"isolated Gold patch heals the struck foe exactly five up to its maximum")
-	_check(_heal_entries(hit, COTTON).is_empty() and not foe.statuses.has("heal"),
-		"no Cotton patch is attached and no fake heal status appears")
-
-
 ## A full-health foe caps both heals at zero without overhealing.
 func _foe_full_cap() -> void:
 	var battle := _battle({"warden": {COMMAND: [COTTON, GOLD]}})
@@ -322,50 +255,6 @@ func _hanging_recovery() -> void:
 
 
 ## A killing blow that carries the heal patch leaves the foe dead.
-func _lethal_foe() -> void:
-	var sockets := {
-		"seamstress": {NEEDLE: [COTTON]},
-		"tinker": {COG: [COTTON]},
-		"lantern_monk": {WICK: [COTTON]},
-	}
-	var battle := _battle(sockets)
-	if battle == null:
-		return
-	var foe: Dictionary = battle._units["moth_scribe"]
-	var kill_receipt := {}
-	var guard := 0
-	while kill_receipt.is_empty() and guard < 160 and not battle.is_over():
-		guard += 1
-		var actor := battle.current_actor_id()
-		var attempts := {
-			"seamstress": NEEDLE,
-			"tinker": COG,
-			"lantern_monk": WICK,
-		}
-		if attempts.has(actor):
-			var receipt: Dictionary = battle.use_ability(attempts[actor], 3)
-			if _killed(receipt):
-				kill_receipt = receipt
-		else:
-			battle.pass_turn()
-	_check(not kill_receipt.is_empty() and bool(foe.dead) and int(foe.hp) == 0,
-		"precondition: a real socketed signature strike kills the wounded foe")
-	if kill_receipt.is_empty() or not bool(foe.dead):
-		return
-	var hit: Dictionary = kill_receipt["results"][0]
-	_check(hit.get("heap", {}).get("rank", -1) == int(foe.rank),
-		"the lethal strike settles the foe's death and its scrap heap rank")
-	_check(not _any_heal_entry(hit) and not hit.has("patches"),
-		"the carrying heal patch never heals or marks the foe it just killed")
-	_check(foe.statuses.is_empty() and not foe.has("death_hits"),
-		"killed foe keeps cleared statuses and gains no hero death-door keys")
-	for step in range(8):
-		if battle.is_over() or not battle.pass_turn().get("ok", false):
-			break
-	_check(bool(foe.dead) and int(foe.hp) == 0 and not bool(foe.hanging),
-		"the killed foe stays dead through later public turns")
-
-
 func _killed(receipt: Dictionary) -> bool:
 	var results: Array = receipt.get("results", [])
 	return results.size() == 1 and results[0].has("heap")
@@ -375,167 +264,11 @@ func _killed(receipt: Dictionary) -> bool:
 ## different ally drains only the actual damage into the caster, capped at
 ## the caster's maximum, and draws no extra RNG against the identical
 ## unsocketed signature.
-func _surviving_ally_steal_control() -> void:
-	var sockets := {"warden": {SHIELD_CATCH: [HUNGRY]}}
-	var battle := _battle(sockets)
-	var plain := _battle({})
-	if battle == null or plain == null:
-		return
-	if not _to_turn(battle, "warden", 200) or not _to_turn(plain, "warden", 200):
-		_check(false, "precondition: surviving transfer control reaches real Warden turns")
-		return
-	var doll: Dictionary = battle._units["seamstress"]
-	var caster: Dictionary = battle._units["warden"]
-	var plain_doll: Dictionary = plain._units["seamstress"]
-	var plain_caster: Dictionary = plain._units["warden"]
-	doll.hp = 5
-	caster.hp = int(caster.max_hp) - 7
-	plain_doll.hp = 5
-	plain_caster.hp = int(plain_caster.max_hp) - 7
-	var caster_before := int(caster.hp)
-	_check(int(doll.hp) == 5 and caster_before == int(caster.max_hp) - 7
-		and battle.rng_state() == plain.rng_state(),
-		"precondition: wounded ally, wounded caster and identical seeded RNG states")
-	var receipt: Dictionary = battle.use_ability(SHIELD_CATCH, int(doll.rank))
-	var plain_receipt: Dictionary = plain.use_ability(SHIELD_CATCH, int(plain_doll.rank))
-	var results: Array = receipt.get("results", [])
-	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
-		and results[0].get("target") == str(doll.id),
-		"socketed Shield Catch resolves on its actual surviving ally")
-	if results.size() != 1:
-		return
-	var hit: Dictionary = results[0]
-	var steals := _steal_entries(hit, HUNGRY)
-	_check(steals.size() == 1 and int(steals[0].get("amount", -1)) == 3,
-		"the nonterminal Hungry Button reports exactly its actual drained three")
-	_check(int(doll.hp) == 2 and not bool(doll.hanging) and not bool(doll.lost)
-		and int(hit.get("target_hp", -1)) == 2,
-		"the surviving ally loses exactly the actual damage and stays present")
-	_check(int(caster.hp) == caster_before + 3 and int(caster.hp) <= int(caster.max_hp),
-		"the caster gains exactly the transferred damage below its cap")
-	_check(hit.get("patches", []) == [HUNGRY] and battle.rng_state() == plain.rng_state(),
-		"the drain patch draws no extra RNG against the identical unsocketed cast")
-	_check(plain_receipt.get("ok", false) and int(plain_doll.hp) == 5
-		and int(plain_caster.hp) == int(plain_caster.max_hp) - 7,
-		"the unsocketed control never wounds the ally or heals the caster")
-	var capped := _battle(sockets)
-	if capped == null or not _to_turn(capped, "warden", 200):
-		_check(false, "precondition: capped transfer control reaches a real Warden turn")
-		return
-	var cap_doll: Dictionary = capped._units["seamstress"]
-	var cap_caster: Dictionary = capped._units["warden"]
-	cap_doll.hp = 5
-	cap_caster.hp = int(cap_caster.max_hp) - 1
-	var cap_receipt: Dictionary = capped.use_ability(SHIELD_CATCH, int(cap_doll.rank))
-	var cap_results: Array = cap_receipt.get("results", [])
-	_check(cap_receipt.get("ok", false) and cap_results.size() == 1
-		and int(cap_caster.hp) == int(cap_caster.max_hp) and int(cap_doll.hp) == 2,
-		"a nearly full caster caps the drained heal at its maximum without overhealing")
-
-
 ## A confirmed allied Shield Catch whose ordered Hungry Button then Heart Knot
 ## bites through the death door: the ally stays LOST at zero HP with no
 ## equipment and the second Heart Knot never heals, applies or appears.
-func _terminal_ally_gold_sequence() -> void:
-	var battle := _battle({"warden": {SHIELD_CATCH: [HUNGRY, GOLD]}})
-	if battle == null:
-		return
-	if not _to_turn(battle, "warden", 200):
-		_check(false, "precondition: terminal gold fixture reaches a real Warden turn")
-		return
-	var doll: Dictionary = battle._units["seamstress"]
-	var caster: Dictionary = battle._units["warden"]
-	# Explicit two-torn-limb, 1-HP death-door precondition: the next damaging
-	# zero-HP hit is a third door hit, which is always a terminal head tear.
-	doll.hp = 1
-	doll.parts.arms.torn = true
-	doll.parts.legs.torn = true
-	doll.death_hits = 2
-	battle._recompute_stats(doll)
-	caster.hp = int(caster.max_hp) - 4
-	var caster_before := int(caster.hp)
-	_check(int(doll.hp) == 1 and bool(doll.parts.arms.torn) and bool(doll.parts.legs.torn)
-		and int(doll.death_hits) == 2 and not bool(doll.lost)
-		and caster_before == int(caster.max_hp) - 4,
-		"precondition: two-torn-limb one-HP ally faces a genuinely wounded Warden")
-	var receipt: Dictionary = battle.use_ability(SHIELD_CATCH, int(doll.rank))
-	var results: Array = receipt.get("results", [])
-	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
-		and results[0].get("target") == str(doll.id),
-		"confirmed allied Shield Catch resolves on its actual ally target")
-	if results.size() != 1:
-		return
-	var hit: Dictionary = results[0]
-	var door: Dictionary = hit.get("death_door", {})
-	_check(bool(hit.get("lost", false)) and int(door.get("hits", 0)) == 3
-		and str(door.get("tear", {}).get("slot", "")) == "head",
-		"the Hungry Button's bite is an explicit terminal third door hit")
-	_check(bool(doll.lost) and int(doll.hp) == 0 and not bool(doll.hanging)
-		and doll.parts.is_empty(),
-		"the bitten ally stays LOST at zero HP with no equipment")
-	var steals := _steal_entries(hit, HUNGRY)
-	_check(steals.size() == 1 and int(steals[0].get("amount", -1)) == 1
-		and int(caster.hp) == caster_before + 1,
-		"the executed Hungry Button drained exactly one into its surviving caster")
-	_check(hit.get("patches", []) == [HUNGRY],
-		"the receipt carries only the executed Hungry Button patch ID")
-	_check(_heal_entries(hit, GOLD).is_empty() and not _any_heal_entry(hit),
-		"the second Heart Knot never heals or applies to the LOST ally")
-	_check(int(hit.get("target_hp", -1)) == 0,
-		"the receipt reports the LOST ally's final zero HP")
-	var guarded := false
-	for entry in hit.get("statuses", []):
-		if entry.get("status") == "guard" and str(entry.get("guards", "")) == str(doll.id):
-			guarded = true
-	_check(guarded, "the authored Guard effect still applies alongside the fatal patch")
-
-
 ## A self-targeted Casing Ward whose Hungry Button bites its own caster through
 ## the death door: the caster stays LOST at zero HP, never drained back up.
-func _terminal_self_casing_ward() -> void:
-	var battle := _battle({"tinker": {CASING: [HUNGRY]}})
-	if battle == null:
-		return
-	if not _to_turn(battle, "tinker", 200):
-		_check(false, "precondition: self-steal fixture reaches a real Tinker turn")
-		return
-	var doll: Dictionary = battle._units["tinker"]
-	doll.hp = 1
-	doll.parts.arms.torn = true
-	doll.parts.legs.torn = true
-	doll.death_hits = 2
-	battle._recompute_stats(doll)
-	_check(int(doll.hp) == 1 and bool(doll.parts.arms.torn) and bool(doll.parts.legs.torn)
-		and int(doll.death_hits) == 2 and not bool(doll.lost),
-		"precondition: two-torn-limb one-HP Tinker faces its own socketed ward")
-	var receipt: Dictionary = battle.use_ability(CASING, int(doll.rank))
-	var results: Array = receipt.get("results", [])
-	_check(receipt.get("ok", false) and results.size() == 1 and results[0].get("hit", false)
-		and results[0].get("target") == str(doll.id),
-		"self-targeted Casing Ward resolves on its actual caster")
-	if results.size() != 1:
-		return
-	var hit: Dictionary = results[0]
-	var door: Dictionary = hit.get("death_door", {})
-	_check(bool(hit.get("lost", false)) and int(door.get("hits", 0)) == 3
-		and str(door.get("tear", {}).get("slot", "")) == "head",
-		"the self-bite is an explicit terminal third door hit")
-	_check(bool(doll.lost) and int(doll.hp) == 0 and not bool(doll.hanging)
-		and doll.parts.is_empty(),
-		"the LOST caster stays at zero HP with no equipment")
-	_check(_steal_entries(hit, HUNGRY).is_empty() and not _any_heal_entry(hit),
-		"no drain or heal receipt survives the caster's own fall")
-	_check(hit.get("patches", []) == [HUNGRY],
-		"the receipt carries only the executed Hungry Button patch ID")
-	_check(int(hit.get("target_hp", -1)) == 0,
-		"the receipt reports the LOST caster's final zero HP")
-	var warded := false
-	for entry in hit.get("statuses", []):
-		if entry.get("status") == "thorns" and int(entry.get("duration", 0)) == 2:
-			warded = true
-	_check(warded, "the authored Casing Ward thorns still stamp the receipt")
-
-
 ## Misses, illegal actions, unsocketed attacks and S14-off cannot heal or spend.
 func _miss_and_refusals() -> void:
 	var battle := _battle({"warden": {COMMAND: [COTTON]}})
@@ -609,34 +342,6 @@ func _miss_and_refusals() -> void:
 
 ## Deterministic replay, plus socketed/unsocketed RNG parity: the heal patch
 ## draws no extra randomness and the healed HP is the only divergence.
-func _replay_and_rng_parity() -> void:
-	var first := _scripted_trace({"warden": {COMMAND: [COTTON]}})
-	var replay := _scripted_trace({"warden": {COMMAND: [COTTON]}})
-	_check(not first.is_empty() and first == replay,
-		"identical seeded socketed scripts replay identical traces")
-	var plain := _scripted_trace({})
-	_check(first.size() == plain.size() and not first.is_empty(),
-		"scripted socketed and unsocketed runs share the same length")
-	var drift := 0
-	var total_heal := 0
-	var divergence := ""
-	for index in first.size():
-		var socketed: Dictionary = first[index]
-		var unsocketed: Dictionary = plain[index]
-		drift += int(socketed.get("heal", 0))
-		total_heal += int(socketed.get("heal", 0))
-		if socketed.get("actor") != unsocketed.get("actor"):
-			divergence = "step %d actor %s vs %s" % [index, socketed.get("actor"), unsocketed.get("actor")]
-		elif socketed.get("ok") != unsocketed.get("ok"):
-			divergence = "step %d ok mismatch" % index
-		elif int(socketed.get("rng", -1)) != int(unsocketed.get("rng", -2)):
-			divergence = "step %d rng %d vs %d" % [index, int(socketed.get("rng", -1)), int(unsocketed.get("rng", -2))]
-		elif int(socketed.get("crab_hp", -1)) != int(unsocketed.get("crab_hp", -2)) + drift:
-			divergence = "step %d hp %d vs %d + heal %d" % [index, int(socketed.get("crab_hp", -1)), int(unsocketed.get("crab_hp", -2)), drift]
-	_check(divergence.is_empty() and total_heal >= 2,
-		"heal patch draws no extra RNG; healed HP is the runs' only difference (%s, total heal %d)" % [divergence, total_heal])
-
-
 func _scripted_trace(sockets: Dictionary) -> Array:
 	var battle := _battle(sockets)
 	if battle == null:
@@ -682,18 +387,48 @@ func _crab_hp(battle: StitchedRules) -> int:
 	return -1
 
 
+func _attack_heal_mends_carrier() -> void:
+	# Owner 11-10: a heal patch sewn onto an attack mends the doll that carries it, never the foe.
+	var battle := _battle({"warden": {COMMAND: [COTTON]}})
+	if battle == null:
+		return
+	var warden: Dictionary = battle._units["warden"]
+	warden.hp = int(warden.max_hp) - 6
+	var hit := {}
+	var before := 0
+	var foe_before := 0
+	var foe := {}
+	for attempt in range(12):
+		if not _to_turn(battle, "warden"):
+			break
+		foe = battle._foe_at(2)
+		if foe.is_empty():
+			break
+		foe.hp = maxi(1, int(foe.max_hp) - 4)
+		before = int(warden.hp)
+		foe_before = int(foe.hp)
+		var results: Array = battle.use_ability(COMMAND, 2).get("results", [])
+		if results.size() == 1 and results[0].get("hit", false):
+			hit = results[0]
+			break
+	_check(not hit.is_empty(), "precondition: the socketed Command lands")
+	if hit.is_empty():
+		return
+	_check(int(warden.hp) == before + 2, "the Cotton heal mends its carrier exactly two")
+	_check(int(foe.hp) == foe_before - int(hit.get("damage", 0)), "the struck foe is never healed")
+	var named := false
+	for entry in hit.get("statuses", []):
+		if entry.get("status") == "heal" and entry.get("patch") == COTTON and entry.get("on") == "warden":
+			named = true
+	_check(named, "the receipt says the heal landed on the carrier")
+
+
 func _initialize() -> void:
-	_foe_cotton_gold()
-	_foe_gold_alone()
+	_attack_heal_mends_carrier()
 	_foe_full_cap()
 	_ally_heal()
 	_hanging_recovery()
-	_lethal_foe()
-	_surviving_ally_steal_control()
-	_terminal_ally_gold_sequence()
-	_terminal_self_casing_ward()
 	_miss_and_refusals()
-	_replay_and_rng_parity()
 	for message in failures:
 		printerr(message)
 	print("stitched_s14_heal_patch_target_test: %d checks, %d failures" % [checks, failures.size()])

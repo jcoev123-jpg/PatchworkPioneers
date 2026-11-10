@@ -35,7 +35,11 @@ const FIGHT_PITCH := -4.0
 const FIGHT_FOG := 0.6
 const WALK_FOV := 70.0
 const WALK_LIGHT := Vector3(0.35, -0.25, -0.35)
-const FIGHT_LIGHT := Vector3(0.0, 0.4, -2.3)
+const FIGHT_LIGHT := Vector3(0.0, 0.5, -3.1)
+## The fight is seen from further off than the walk, so its candle burns stronger and reaches
+## the whole line (playtest 11-10: the dolls stood in the dark).
+const FIGHT_GLOW := 1.7
+const FIGHT_REACH := 1.5
 ## Owner 11-08 maze junction: how far the crossing is, how long each opening runs before
 ## its end wall, where the eye waits, and how deep the stops stand in the openings.
 const JUNCTION_STEPS := 2
@@ -354,14 +358,14 @@ func stop() -> void:
 func set_candle(band_name: String) -> void:
 	band = band_name if BANDS.has(band_name) else "dim"
 	environment.fog_density = BANDS[band][2] * (FIGHT_FOG if fighting else 1.0)
-	candle_light.omni_range = BANDS[band][1]
+	candle_light.omni_range = BANDS[band][1] * (FIGHT_REACH if fighting else 1.0)
 	set_dim(dim)
 
 
 ## Wren's fear flicker: a brightness factor on the candle only, never the camera.
 func set_dim(factor: float) -> void:
 	dim = clampf(factor, 0.0, 1.0)
-	candle_light.light_energy = BANDS[band][0] * dim
+	candle_light.light_energy = BANDS[band][0] * dim * (FIGHT_GLOW if fighting else 1.0)
 
 
 func lit_ranks() -> int:

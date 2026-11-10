@@ -5046,7 +5046,17 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 	var pictures: Array = []
 	for action in actions:
 		var part := session.visit_action_part(action)
-		pictures.append("" if part.is_empty() else StitchedSewnPatches.icon_path(part.id, part.slot))
+		var picture := "" if part.is_empty() else StitchedSewnPatches.icon_path(part.id, part.slot)
+		# Owner 11-10: sewing shows what goes where: the felt patch lies on the floor and each
+		# choice on the doll's tray is the ability it would be sewn onto (or cut from).
+		var arguments: Array = action.get("arguments", [])
+		if str(action.id) in ["sew", "unsew"] and arguments.size() == 3:
+			var sewing := str(action.id) == "sew"
+			picture = "res://assets/paper/stitched/abilities/%s.png" % str(arguments[2 if sewing else 1])
+			for item in session.ability_inventory:
+				if sewing and int(item.uid) == int(arguments[0]):
+					action["floor_art"] = "res://assets/paper/stitched/ability_patches/%s.png" % str(item.id)
+		pictures.append(picture)
 	var homes := visit.lay_out(actions, party, pictures)
 	visit.dress(_stitched_visit_choices(session, visit, session.snapshot(), homes))
 	var navigation := HBoxContainer.new()

@@ -17,6 +17,9 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	# Owner 11-10 retired fray and Wren's hand actions in live fights; this legacy test still covers them.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
 	_catalog()
 	_steady_and_budget()
 	_shield_candle()

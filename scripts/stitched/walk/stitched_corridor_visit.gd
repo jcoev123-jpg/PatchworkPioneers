@@ -239,6 +239,10 @@ func _group_art(group: Dictionary, actions: Array, pictures: Array) -> Texture2D
 		var doll := StitchedCorridorStage.hero_art(str(first.arguments[0]))
 		if doll != null:
 			return doll
+	# A thing that brings its own picture (a felt patch to sew on) lies there as itself.
+	var given := str(first.get("floor_art", ""))
+	if not given.is_empty() and _picture(given) != null:
+		return _picture(given)
 	# One part for the whole thing (a spare, a part to unpick): that part's own patch.
 	var own := str(pictures[group.actions[0]])
 	for index in group.actions:

@@ -18,6 +18,8 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	# Legacy rule kept under test; it is switched off in the live game (owner 11-10).
+	StitchedRules.wren_hands = true
 	_resist_rolls()
 	_resisted_status_never_attaches()
 	_rot_ticks_and_heals()

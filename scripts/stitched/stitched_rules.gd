@@ -353,7 +353,7 @@ func state_snapshot() -> Dictionary:
 ## S9a: true while Wren's one free hand action for this round is unspent and a doll has
 ## the turn (the action happens before that doll acts and never spends its turn).
 func hand_action_open() -> bool:
-	return wren_hands and _require_side_turn("hand", "hero").is_empty() and _hand_round != _round
+	return (wren_hands or not _s14) and _require_side_turn("hand", "hero").is_empty() and _hand_round != _round
 
 
 func hand_receipts() -> Array:
@@ -384,7 +384,7 @@ func eyes_covered(hero_id: String) -> bool:
 ## gift takes a hero id, a foe gift a living foe id, and the rest no target; only Lift takes
 ## a direction.
 func hand_action_check(action_id: String, target_id: String, direction: int) -> String:
-	if not wren_hands:
+	if not (wren_hands or not _s14):
 		return "Wren's hands stay out of the fight"
 	var gate := _require_side_turn("hand", "hero")
 	if not gate.is_empty():
@@ -942,10 +942,10 @@ func _setup(config: Dictionary) -> String:
 		if entry is Dictionary and cuts.has(entry.get("id")):
 			# The Walk already paid exactly +20, but defers combat resolve/seam
 			# transitions. Validate its pre-SNIP state, then settle that same gain.
-			if fray_enabled and (not entry.get("fray") is int or entry.fray < 20):
+			if (fray_enabled or not _s14) and (not entry.get("fray") is int or entry.fray < 20):
 				return "Walk cut requires its paid SNIP fray"
 			carried = entry.duplicate(true)
-			if fray_enabled:
+			if (fray_enabled or not _s14):
 				carried.fray -= 20
 		var built := _build_hero(carried, rank)
 		if not built["ok"]:
@@ -1087,7 +1087,7 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 	# Carry a settled FRAY state verbatim; never perform a setup-time resolve roll.
 	var starting_fray: Variant = entry.get("fray", 0)
 	var starting_resolve: Variant = entry.get("resolve", "")
-	if not fray_enabled:
+	if not (fray_enabled or not _s14):
 		starting_fray = 0
 		starting_resolve = ""
 	if typeof(starting_fray) != TYPE_INT or int(starting_fray) < 0 \
@@ -2432,7 +2432,7 @@ func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -
 	if str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
-	if not fray_enabled:
+	if not (fray_enabled or not _s14):
 		return {"ok": true, "action": "fray", "actor": str(hero["id"]), "before": before, "change": 0, "after": before, "transition": ""}
 	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle and not candle_shielded() else amount
 	if applied > 0 and eyes_covered(str(hero["id"])):

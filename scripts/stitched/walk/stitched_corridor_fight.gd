@@ -336,12 +336,12 @@ func _build_bar() -> void:
 	health_text = _label("", Rect2(236, BAR_TOP + 47, 230, 26), 15, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	add_child(health_text)
 	var fray_word := _label("FRAY", Rect2(158, BAR_TOP + 82, 80, 24), 17)
-	fray_word.visible = StitchedRules.fray_enabled
+	fray_word.visible = (StitchedRules.fray_enabled or not battle._s14)
 	add_child(fray_word)
 	fray_bar = _bar(Rect2(236, BAR_TOP + 84, 230, 22), FRAY)
 	fray_bar.name = "ActorFray"
 	fray_bar.max_value = 200
-	fray_bar.visible = StitchedRules.fray_enabled
+	fray_bar.visible = (StitchedRules.fray_enabled or not battle._s14)
 	add_child(fray_bar)
 	for index in StitchedBattleScreen.SLOTS.size():
 		var slot: String = StitchedBattleScreen.SLOTS[index]
@@ -399,7 +399,7 @@ func _build_bar() -> void:
 
 
 func _build_hands() -> void:
-	if not StitchedRules.wren_hands:
+	if not (StitchedRules.wren_hands or not battle._s14):
 		return
 	var slots := engine.hand_slots()
 	for index in slots.size():

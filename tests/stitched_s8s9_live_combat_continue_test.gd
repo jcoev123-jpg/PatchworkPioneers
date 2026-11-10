@@ -9,6 +9,9 @@ var checks := 0
 
 
 func _initialize() -> void:
+	# Owner 11-10 retired fray and Wren's hand actions in live fights; this legacy test still covers them.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
 	_run.call_deferred()
 
 

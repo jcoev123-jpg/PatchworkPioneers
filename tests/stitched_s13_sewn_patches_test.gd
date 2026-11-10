@@ -15,6 +15,8 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	# Legacy rule kept under test; it is switched off in the live game (owner 11-10).
+	StitchedRules.fray_enabled = true
 	_run.call_deferred()
 
 

@@ -16,6 +16,9 @@ func _check(ok: bool, message: String) -> void:
 
 
 func _initialize() -> void:
+	# Owner 11-10 retired fray and Wren's hand actions in live fights; this legacy test still covers them.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
 	config = JSON.parse_string(FileAccess.get_file_as_string("res://data/stitched/s2_preview.json"))
 	var base := StitchedRules.create(config)
 	_check(base.ok and base.battle != null, "authentic Stitched preview combat validates")

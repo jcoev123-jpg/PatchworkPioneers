@@ -186,11 +186,11 @@ func _combat() -> void:
 	var result := battle.use_ability("seamstress_head_mending_knot", 1)
 	_check(result.ok and result.results.size() == 1 and result.results[0].hit,
 		"signature heal actually resolves on a non-null ally target")
+	# Owner 11-10: a harmful patch on a heal goes to the front foe, never the healed ally.
 	_check(battle.get_unit("warden").hp > int(target.max_hp) - 9
-		and result.results[0].statuses.any(func(status: Dictionary) -> bool:
-			return status.get("status") == "bleed" and status.get("duration") == 2)
-		and battle.get_unit("warden").statuses.get("bleed", 0) > 0,
-		"harmful bleed patch on HEAL bleeds the healed ally")
+		and not battle.get_unit("warden").statuses.has("bleed")
+		and int(battle._living_foes()[0].statuses.get("bleed", 0)) > 0,
+		"harmful bleed patch on HEAL spares the healed ally and bleeds the front foe")
 	var clean := _battle(83)
 	if clean == null:
 		return
@@ -1088,13 +1088,9 @@ func _foe_push_pull() -> void:
 		var result := _shift_hit(_shift_turn(ally, "seamstress", "seamstress_head_mending_knot", 3))
 		var shift: Dictionary = result.get("shift", {})
 		_check(result.get("hit", false) and result.get("target") == "tinker"
-			and shift.get("ok", false) and shift.get("swapped") == other.id
-			and ally.get_unit("tinker").rank == 3 + direction
-			and ally.get_unit(other.id).rank == 3 and ally.get_unit("tinker").hp > before_hp
-			and ally.get_foes().all(func(foe: Dictionary) -> bool:
-				return int(foe.rank) == int(original_foes.filter(func(old: Dictionary) -> bool:
-					return old.id == foe.id)[0].rank)),
-			"ally-targeted " + patch_id + " heals and shifts the ally, never the foe")
+			and ally.get_unit("tinker").rank == 3 and ally.get_unit(other.id).rank == 3 + direction
+			and ally.get_unit("tinker").hp > before_hp,
+			"ally-targeted " + patch_id + " heals the ally and never drags it about")
 
 	# Blind guarantees a miss through the actual hit gate (not a fake
 	# _apply_effects call); no authored or socket movement may follow.

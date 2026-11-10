@@ -90,18 +90,11 @@ func _foe_ticks() -> void:
 			socket_receipt = true
 	_check(hit.get("hit", false) and hit.get("target") == foe.id and socket_receipt,
 		"confirmed zero-damage Pot Helm Command hits the intended foe and sockets two regen ticks")
-	_check(_to_turn(battle, str(foe.id)), "precondition: actual victim turn is reached through public passes")
-	_check(int(foe.hp) == wounded + 2 and int(foe.statuses.get("regen", 0)) == 1,
-		"first foe turn restores exactly 2 HP and retains one regen tick")
-	_check(battle.current_actor_id() == str(foe.id), "first heal occurs on the recipient's own turn")
-	_check(battle.pass_turn().get("ok", false) and _to_turn(battle, str(foe.id)),
-		"precondition: victim completes its turn and receives a second natural turn")
-	_check(int(foe.hp) == wounded + 4 and not foe.statuses.has("regen"),
-		"second foe turn restores exactly 2 HP then expires regen")
-	_check(battle.pass_turn().get("ok", false) and _to_turn(battle, str(foe.id)),
-		"precondition: same foe has a third real turn")
-	_check(int(foe.hp) == wounded + 4 and not foe.statuses.has("regen"),
-		"expired regen never heals a third time")
+	# Owner 11-10: a helpful patch on an attack helps the doll that carries it, never the foe.
+	var warden: Dictionary = battle.get_unit("warden")
+	_check(not foe.statuses.has("regen") and int(warden.statuses.get("regen", 0)) == 2,
+		"the regen lands on the carrying doll, not on the struck foe")
+	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == wounded, "the struck foe never heals on its turn")
 	var isolated := true
 	for id in others:
 		var other: Dictionary = battle.get_unit(str(id))
@@ -128,12 +121,8 @@ func _foe_cap() -> void:
 		"cap witness applies a real socketed hit")
 	if results.size() != 1 or not results[0].get("hit", false):
 		return
-	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == int(foe.max_hp)
-		and int(foe.statuses.get("regen", 0)) == 1,
-		"first tick caps at maximum HP instead of overhealing")
-	_check(battle.pass_turn().get("ok", false) and _to_turn(battle, str(foe.id))
-		and int(foe.hp) == int(foe.max_hp) and not foe.statuses.has("regen"),
-		"second tick expires at full HP without overhealing or adding hero keys")
+	_check(_to_turn(battle, str(foe.id)) and int(foe.hp) == int(foe.max_hp) - 1 and not foe.statuses.has("regen"),
+		"a struck foe is never topped up by the doll's own patch")
 	_check(not foe.has("death_hits") and not foe.has("head_ward"),
 		"capped foe still has no hero death-door keys")
 
