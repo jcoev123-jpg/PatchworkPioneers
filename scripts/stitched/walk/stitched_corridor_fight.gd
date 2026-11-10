@@ -58,7 +58,9 @@ var actor_name: Label
 var thread_knot: TextureRect
 var health_bar: TextureProgressBar
 var health_text: Label
+var health_word: Label
 var fray_bar: TextureProgressBar
+var fray_word: Label
 var log_label: Label
 var outcome_label: Label
 ## Owner 11-09: a move's name shows only while it is used; each unit's hover lists its moveset.
@@ -329,13 +331,16 @@ func _build_bar() -> void:
 	thread_knot.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	thread_knot.mouse_filter = Control.MOUSE_FILTER_PASS
 	add_child(thread_knot)
-	add_child(_label("HEALTH", Rect2(158, BAR_TOP + 48, 80, 24), 17))
+	health_word = _label("HEALTH", Rect2(158, BAR_TOP + 48, 80, 24), 17)
+	health_word.name = "HealthWord"
+	add_child(health_word)
 	health_bar = _bar(Rect2(236, BAR_TOP + 50, 230, 22), BLOOD)
 	health_bar.name = "ActorHealth"
 	add_child(health_bar)
 	health_text = _label("", Rect2(236, BAR_TOP + 47, 230, 26), 15, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	add_child(health_text)
-	var fray_word := _label("FRAY", Rect2(158, BAR_TOP + 82, 80, 24), 17)
+	fray_word = _label("FRAY", Rect2(158, BAR_TOP + 82, 80, 24), 17)
+	fray_word.name = "FrayWord"
 	fray_word.visible = (StitchedRules.fray_enabled or not battle._s14)
 	add_child(fray_word)
 	fray_bar = _bar(Rect2(236, BAR_TOP + 84, 230, 22), FRAY)
@@ -450,6 +455,9 @@ func _build_more() -> void:
 		["retreat", "Flee", func(): _act(engine.submit_retreat())],
 	]
 	for entry in actions:
+		# Owner 11-10: Re-tie thread is a retired hand action; live S14 fights hide it.
+		if entry[0] == "re_tie" and battle._s14 and not StitchedRules.wren_hands:
+			continue
 		add_more(entry[0], entry[1], entry[2])
 
 
@@ -547,7 +555,35 @@ func click_figure(side: String, rank: int) -> Dictionary:
 	if engine._selected_part.is_empty() and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
 		log_label.text = "Pick an ability first."
 		return {"ok": false, "error": "no part chosen"}
-	return _act(engine.submit_target(side, rank))
+	var receipt := _act(engine.submit_target(side, rank))
+	# A refused click says plainly who the chosen ability can be picked on.
+	if not bool(receipt.get("ok", false)) and str(receipt.get("error", "")) == "illegal target" \
+			and not engine._selected_part.is_empty():
+		log_label.text = _pickable_line()
+	return receipt
+
+
+## Plain words for who the chosen ability can target right now (the lit figures).
+func _pickable_line() -> String:
+	var actor := battle.get_unit(battle.current_actor_id())
+	var ability := engine.slot_ability(actor, engine._selected_part)
+	var ability_name := str(ability.get("name", ""))
+	if ability_name.is_empty():
+		ability_name = "That ability"
+	var foes := 0
+	var dolls := 0
+	for key in engine.legal_targets():
+		if key.begins_with("foe_"):
+			foes += 1
+		else:
+			dolls += 1
+	if foes > 0 and dolls == 0:
+		return "%s can only be used on the foes; pick a lit foe." % ability_name
+	if dolls > 0 and foes == 0:
+		return "%s can only be used on Wren's dolls; pick a lit doll." % ability_name
+	if foes == 0 and dolls == 0:
+		return "%s can reach no one from here." % ability_name
+	return "%s; pick a lit figure." % ability_name
 
 
 func finish() -> void:
@@ -632,6 +668,7 @@ func refresh() -> void:
 	for id in battle.turn_order():
 		entries.append(battle.get_unit(str(id)))
 	ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
+	ribbon.visible = not battle.is_over()
 	var boss := battle.is_boss_encounter()
 	for side in ["hero", "foe"]:
 		for rank in range(1, 5):
@@ -725,7 +762,7 @@ func _refresh_bar() -> void:
 	var worn_parts: Dictionary = shown.get("parts", {})
 	var knot := StitchedSewnPatches.set_thread(worn_parts) if hero_turn and not battle._s14 else ""
 	thread_knot.texture = _texture(StitchedSewnPatches.knot_path(knot)) if not knot.is_empty() else null
-	thread_knot.visible = not knot.is_empty()
+	thread_knot.visible = not knot.is_empty() and not battle.is_over()
 	thread_knot.tooltip_text = ("Whole cloth: every patch is sewn with one thread." if StitchedSewnPatches.whole_cloth(worn_parts)
 		else "Matching thread: some of these patches sit well together.") if not knot.is_empty() else ""
 	fray_bar.tint_progress = BLOOD if int(shown.get("fray", 0)) >= 100 else FRAY
@@ -772,7 +809,8 @@ func _refresh_bar() -> void:
 	more_buttons.move_back.disabled = not (battle.hand_action_check("lift", lift_id, 1).is_empty() if lifting
 		else hero_turn and engine._can_move(1))
 	more_buttons.pass.disabled = not hero_turn
-	more_buttons.re_tie.disabled = not cut
+	if more_buttons.has("re_tie"):
+		more_buttons.re_tie.disabled = not cut
 	more_buttons.retreat.disabled = not hero_turn or battle.is_boss_encounter()
 	for action_id in hand_buttons:
 		hand_buttons[action_id].disabled = not hand_open or battle.gift_spent(action_id)
@@ -785,6 +823,18 @@ func _refresh_bar() -> void:
 	outcome_label.text = battle.outcome().to_upper()
 	for slot in part_buttons:
 		part_buttons[slot].visible = not battle.is_over()
+	# At the end of the fight the bar keeps only the outcome line and Continue:
+	# no empty health plate, no actor name, no More button.
+	var over := battle.is_over()
+	var fray_shown := StitchedRules.fray_enabled or not battle._s14
+	portrait.visible = not over
+	actor_name.visible = not over
+	health_word.visible = not over
+	health_bar.visible = not over
+	health_text.visible = not over
+	fray_word.visible = fray_shown and not over
+	fray_bar.visible = fray_shown and not over
+	more_button.visible = not over
 	# Who did what stays off the screen (the move name flashes up during the move);
 	# only Wren's own words remain.
 	var shown_lines := PackedStringArray()
@@ -873,6 +923,18 @@ func _place_overlays() -> void:
 		if rect.size.x > 0.0:
 			boxes[key] = rect
 			spots[key] = spot.x
+	# Plates are wider than close feet can be; slide them apart so no name sits on another.
+	var ordered: Array = []
+	for key in plates:
+		if plates[key].visible:
+			ordered.append(key)
+	ordered.sort_custom(func(a, b): return plates[a].position.x < plates[b].position.x)
+	var edge := -INF
+	for key in ordered:
+		var plate: Control = plates[key]
+		if plate.position.x < edge + 4.0:
+			plate.position.x = minf(edge + 4.0, get_viewport_rect().size.x - plate.size.x - 4.0)
+		edge = plate.position.x + plate.size.x
 	# Wide art (the boss) overlaps its neighbour's box and the later box used to win the click:
 	# playtest 11-09 aimed at the Behemoth and struck the Scissor Crab. Neighbours (either side)
 	# split at the midpoint between their feet.

@@ -598,7 +598,7 @@ func _seat(side: String, rank: int, x: float) -> void:
 	_labels[key].add_theme_color_override("font_outline_color", Color("25181d"))
 	_labels[key].add_theme_constant_override("outline_size", 2)
 	_labels[key].visible = false
-	_rank_meters[key] = CHROME.make_rank_meters(self, side, foot_x)
+	_rank_meters[key] = CHROME.make_rank_meters(self, side, foot_x, StitchedRules.fray_enabled or battle == null or not battle._s14)
 
 
 func _scrap_input(event: InputEvent, rank: int) -> void:
@@ -887,7 +887,7 @@ func status_detail(side: String, rank: int) -> String:
 	var unit := _unit_at(side, rank)
 	if not unit.is_empty():
 		var header := "R%d %s · HP %d/%d" % [rank, str(unit.get("name", "")), int(unit.get("hp", 0)), int(unit.get("max_hp", 0))]
-		if side == "hero" or int(unit.get("fray", 0)) > 0:
+		if (side == "hero" or int(unit.get("fray", 0)) > 0) and (StitchedRules.fray_enabled or battle == null or not battle._s14):
 			header += " · FRAY %d/200" % int(unit.get("fray", 0))
 		var tokens := _status_tokens(unit)
 		return header + "\nSTATUS: " + (", ".join(tokens) if not tokens.is_empty() else "none")
@@ -979,9 +979,11 @@ func _refresh() -> void:
 	if acting.is_empty():
 		_labels["stats"].text = "Outcome: " + battle.outcome().capitalize()
 	else:
-		_labels["stats"].text = "R%d · %s  HP %d/%d\nFray %d/200 · Speed %d\nDodge %d · ACC %+d\nPROT %d%% · %s" % [
-			int(acting["rank"]), str(acting["side"]).capitalize(), int(acting["hp"]), int(acting["max_hp"]),
-			int(acting["fray"]), int(acting["speed"]), int(acting["dodge"]), int(acting["acc"]),
+		var stats_fmt := "R%d · %s  HP %d/%d\n%sSpeed %d\nDodge %d · ACC %+d\nPROT %d%% · %s"
+		var fray_bit := ("Fray %d/200 · " % int(acting["fray"])) if (StitchedRules.fray_enabled or not battle._s14) else ""
+		_labels["stats"].text = stats_fmt % [
+			int(acting["rank"]), str(acting["side"]).capitalize(), int(acting["hp"]), int(acting["max_hp"]), fray_bit,
+			int(acting["speed"]), int(acting["dodge"]), int(acting["acc"]),
 			int(acting["prot"]), str(acting.get("resolve", "none")) if not str(acting.get("resolve", "")).is_empty() else "steady"]
 	var cuts: Dictionary = battle.thread_cuts()
 	var cut_names := PackedStringArray()
@@ -1323,7 +1325,7 @@ func _refresh_action_cues(actor: Dictionary, hero_turn: bool, cuts: Dictionary) 
 		"short": "Pass — " + (turn_lock if not hero_turn else "spend this hero's turn without using a part."),
 		"full": "Pass turn\n" + (turn_lock if not hero_turn else
 			"Spend this hero's turn without using a sewn part.")}
-	var retreat_rules := "75% seeded success; success ends battle with no rewards and +15 fray for every hero. Failure spends this hero's turn."
+	var retreat_rules := "75% seeded success; success ends battle with no rewards" + (" and +15 fray for every hero" if (StitchedRules.fray_enabled or not battle._s14) else "") + ". Failure spends this hero's turn."
 	var retreat_reason := (turn_lock if not hero_turn else
 		"Unavailable — no retreat in a boss encounter." if battle.is_boss_encounter() else
 		"Available — attempt to leave this non-boss fight.")

@@ -585,7 +585,7 @@ func fight_point(side: String, rank: int) -> Vector3:
 	var depth := -0.15 if index % 2 == 1 else 0.1
 	if side == "hero":
 		return Vector3(depth, 0, fight_z() + 0.45 + index * 0.75)
-	return Vector3(depth, 0, fight_z() - 0.45 - index * 0.8)
+	return Vector3(depth, 0, fight_z() - 0.45 - index * 1.0)
 
 
 ## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.

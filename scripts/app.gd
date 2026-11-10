@@ -4265,7 +4265,7 @@ func _stitched_place_party(stage: StitchedCorridorStage, session: StitchedRunSes
 
 
 ## PanelContainer uses authored felt as a true nine-slice, never code-drawn shapes.
-func _stitched_run_felt(parent: Node, label: String, minimum: Vector2) -> VBoxContainer:
+func _stitched_run_felt(parent: Node, label: String, minimum: Vector2, pad_left: float = 0.0) -> VBoxContainer:
 	var panel := PanelContainer.new()
 	panel.name = label
 	panel.custom_minimum_size = minimum
@@ -4278,7 +4278,7 @@ func _stitched_run_felt(parent: Node, label: String, minimum: Vector2) -> VBoxCo
 		backing.texture_margin_right = 24
 		backing.texture_margin_top = 24
 		backing.texture_margin_bottom = 24
-		backing.content_margin_left = 18
+		backing.content_margin_left = 18 + pad_left
 		backing.content_margin_right = 18
 		backing.content_margin_top = 12
 		backing.content_margin_bottom = 12
@@ -4667,7 +4667,7 @@ func _present_stitched_run() -> void:
 	if terminal:
 		_note_bedroom_run(session)
 		var opened := _note_wren_gifts(session)
-		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150))
+		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150), 30.0)
 		var final_art := TextureRect.new()
 		final_art.name = "TerminalBanner"
 		final_art.texture = _stitched_run_texture("res://assets/paper/ui/reward_banner.png")

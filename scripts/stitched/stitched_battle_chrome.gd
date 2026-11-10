@@ -370,7 +370,7 @@ static func _present_badges(root: Control, unit: Dictionary, side: String) -> vo
 	row.visible = not entries.is_empty()
 
 
-static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Dictionary:
+static func make_rank_meters(parent: Control, side: String, foot_x: float, show_fray: bool = true) -> Dictionary:
 	# y530..554 is the existing HP row, below the full-size rank/name button.
 	var root := Control.new()
 	root.name = "RankMeters" + side.capitalize() + str(int(foot_x))
@@ -426,6 +426,9 @@ static func make_rank_meters(parent: Control, side: String, foot_x: float) -> Di
 		root.add_child(caption)
 		caption.size = Vector2(74, 16)
 		output["fray"] = fray
+		output["show_fray"] = show_fray
+		fray.visible = show_fray
+		caption.visible = show_fray
 		output["fray_text"] = caption
 	return output
 
@@ -454,21 +457,30 @@ static func present_rank(meters: Dictionary, unit: Dictionary, side: String) -> 
 		var fray: ProgressBar = meters["fray"]
 		var readout: Label = meters["fray_text"]
 		var fray_frame: NinePatchRect = surface.get_node("FrayFillSewnFrame")
-		var fray_value := int(unit.get("fray", 0)) if occupied else 0
-		var danger := occupied and fray_value >= 100
-		fray.max_value = 200.0
-		fray.value = clampf(float(fray_value), 0.0, 200.0)
-		fray.add_theme_stylebox_override("fill", _box(BUTTON,
-			Color("b95450") if danger else Color("d7a560"), 4.0))
-		fray_frame.self_modulate = Color("ffd18c") if danger else Color.WHITE
-		readout.add_theme_color_override("font_color", AMBER if danger else BONE)
-		_fit_readout(readout, "FRAY %d" % fray_value if occupied else "")
-		fray.tooltip_text = ""
-		if occupied:
-			# Thresholds are risks, not a guessed roll result. At 200,
-			# the battle model alone decides the supplied HANGING/LOST state.
-			fray.tooltip_text = ("FRAY %d/200" % fray_value
-				+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
-				+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
-			surface.tooltip_text += " | " + fray.tooltip_text
+		# Owner 11-10: the fray meter is retired; live S14 fights never paint it.
+		var show_fray: bool = meters.get("show_fray", true)
+		fray.visible = show_fray and occupied
+		readout.visible = show_fray
+		fray_frame.visible = show_fray and occupied
+		if show_fray:
+			var fray_value := int(unit.get("fray", 0)) if occupied else 0
+			var danger := occupied and fray_value >= 100
+			fray.max_value = 200.0
+			fray.value = clampf(float(fray_value), 0.0, 200.0)
+			fray.add_theme_stylebox_override("fill", _box(BUTTON,
+				Color("b95450") if danger else Color("d7a560"), 4.0))
+			fray_frame.self_modulate = Color("ffd18c") if danger else Color.WHITE
+			readout.add_theme_color_override("font_color", AMBER if danger else BONE)
+			_fit_readout(readout, "FRAY %d" % fray_value if occupied else "")
+			fray.tooltip_text = ""
+			if occupied:
+				# Thresholds are risks, not a guessed roll result. At 200,
+				# the battle model alone decides the supplied HANGING/LOST state.
+				fray.tooltip_text = ("FRAY %d/200" % fray_value
+					+ " | 100 FRAY: resolve threshold (STEADFAST or UNRAVELLED)."
+					+ " | 200 FRAY: COMES APART (HANGING, or LOST if already HANGING).")
+				surface.tooltip_text += " | " + fray.tooltip_text
+		else:
+			_fit_readout(readout, "")
+			fray.tooltip_text = ""
 	_present_badges(surface, unit if occupied else {}, side)

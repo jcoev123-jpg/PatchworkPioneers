@@ -9,6 +9,7 @@ var checks := 0
 
 
 func _initialize() -> void:
+	StitchedRules.fray_enabled = true
 	_run.call_deferred()
 
 

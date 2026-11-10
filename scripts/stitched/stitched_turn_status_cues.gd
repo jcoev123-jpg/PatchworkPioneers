@@ -109,7 +109,7 @@ static func cue(unit: Dictionary) -> String:
 	var trait_cue := resolve_cue(unit)
 	if not trait_cue.is_empty():
 		return trait_cue
-	if side == "hero" and _number(unit.get("fray")) and float(unit["fray"]) >= 100:
+	if StitchedRules.fray_enabled and side == "hero" and _number(unit.get("fray")) and float(unit["fray"]) >= 100:
 		return "FRAY"
 	if statuses is Dictionary and _positive_count(statuses.get("rot")):
 		return "ROT"
@@ -173,7 +173,7 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 			lines.append("RESIST: " + "  ".join(shown))
 
 	if side == "hero":
-		if _number(unit.get("fray")):
+		if StitchedRules.fray_enabled and _number(unit.get("fray")):
 			lines.append("FRAY: %s / 200" % str(unit["fray"]))
 		var resolve: Variant = unit.get("resolve")
 		if resolve is String and RESOLVE_EFFECTS.has(resolve):
