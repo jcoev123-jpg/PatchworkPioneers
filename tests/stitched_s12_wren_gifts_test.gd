@@ -23,6 +23,9 @@ func _initialize() -> void:
 
 
 func _run() -> void:
+	# Owner 11-10: this test covers the retired fray and hand-action code, so it switches both back on.
+	StitchedRules.fray_enabled = true
+	StitchedRules.wren_hands = true
 	_catalog()
 	_slots_config()
 	_foe_gifts()

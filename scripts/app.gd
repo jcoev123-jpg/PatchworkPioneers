@@ -4834,6 +4834,9 @@ func _note_wren_gifts(session: StitchedRunSession) -> Array:
 ## S12: the 1-of-3 gift pick over the map: three hand pictures, each with its name and what it
 ## does. With all four slots full, taking one then asks which old gift to let go. No numbers.
 func _show_wren_gift_pick(session: StitchedRunSession, chosen: String = "") -> void:
+	# Owner 11-10: Wren's hand actions are off in fights, so a gift to keep in his hands is a dead offer.
+	if not StitchedRules.wren_hands:
+		return
 	if is_instance_valid(_wren_gift_pick):
 		_wren_gift_pick.get_parent().remove_child(_wren_gift_pick)
 		_wren_gift_pick.queue_free()

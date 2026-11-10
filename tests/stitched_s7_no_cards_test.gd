@@ -141,6 +141,8 @@ func _enter_public_fight(app: Node, session: StitchedRunSession, id: String) -> 
 
 
 func _run() -> void:
+	# Owner 11-10: this test still covers Wren's keepsake gift pick, so it switches the hands back on.
+	StitchedRules.wren_hands = true
 	root.size = Vector2i(1280, 720)
 	DirAccess.remove_absolute(NO_CARDS_SAVE)
 	var app: Node = load("res://scenes/app.tscn").instantiate()
