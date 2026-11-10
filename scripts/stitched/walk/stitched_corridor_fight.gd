@@ -93,6 +93,9 @@ var _focus_target_ids: Array[String] = []
 ## The rules may advance before the held pose ends; keep the bar and NOW cue on its actor.
 var _held_actor_id := ""
 var _held_actor_index := -1
+## A boss may animate twice in one rolled round, including across separate receipt batches.
+var _beat_order_round := -1
+var _beat_order_appearances: Dictionary = {}
 ## Left alone on a turn, a doll speaks over its head (S10 barks, fight lines).
 var barks := StitchedWalkBarks.new()
 var bark_label: Label
@@ -940,7 +943,8 @@ func _shade_parts() -> void:
 func _shade_figures() -> void:
 	var targets := engine.legal_targets()
 	var choosing := not targets.is_empty()
-	var acting := battle.get_unit(battle.current_actor_id())
+	var acting_id := _held_actor_id if not _held_actor_id.is_empty() else battle.current_actor_id()
+	var acting := battle.get_unit(acting_id)
 	var actor_key := str(acting.get("side", "")) + "_" + str(acting.get("rank", 0)) if not battle.is_over() else ""
 	for key in plates:
 		var tone := Color.WHITE
@@ -1382,9 +1386,24 @@ func _play_new_receipts() -> void:
 	_start_beats(animated)
 
 
+## Use one occurrence count for the full rolled round, not one per animation batch.
+func _receipt_order_index(actor_id: String, rolled_order: Array) -> int:
+	if _beat_order_round != battle.round_number():
+		_beat_order_round = battle.round_number()
+		_beat_order_appearances.clear()
+	var seats: Array[int] = []
+	for index in rolled_order.size():
+		if str(rolled_order[index]) == actor_id:
+			seats.append(index)
+	if seats.is_empty():
+		return -1
+	var ordinal := mini(int(_beat_order_appearances.get(actor_id, 0)), seats.size() - 1)
+	_beat_order_appearances[actor_id] = int(_beat_order_appearances.get(actor_id, 0)) + 1
+	return seats[ordinal]
+
+
 func _start_beats(batch: Array) -> void:
 	_beats = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
-	var appearances: Dictionary = {}
 	var rolled_order := battle.turn_order()
 	for receipt in batch:
 		if str(receipt.get("action", "")) != "ability" or not bool(receipt.get("ok", false)):
@@ -1397,14 +1416,8 @@ func _start_beats(batch: Array) -> void:
 		var figure: Sprite3D = stage.figure_nodes[key]
 		var home := figure.position
 		var toward := -1.0 if str(actor.side) == "hero" else 1.0
-		# A boss may occupy two rolled slots: each held receipt lights its own NOW.
-		var seats: Array[int] = []
-		for order_index in rolled_order.size():
-			if str(rolled_order[order_index]) == actor_id:
-				seats.append(order_index)
-		var ordinal := mini(int(appearances.get(actor_id, 0)), maxi(0, seats.size() - 1))
-		appearances[actor_id] = int(appearances.get(actor_id, 0)) + 1
-		var held_index := seats[ordinal] if not seats.is_empty() else -1
+		# A boss's second turn must use its second slot even when another held beat intervenes.
+		var held_index := _receipt_order_index(actor_id, rolled_order)
 		_beats.tween_callback(Callable(self, "_begin_receipt_focus").bind(receipt.duplicate(true), held_index))
 		_beats.tween_callback(Callable(self, "_show_move_name").bind(
 			engine._ability_name(actor_id, str(receipt.get("ability", "")))))

@@ -52,6 +52,17 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 		and fight.actor_name.text.is_empty(), "held foe shows NOW without an orphaned hero health label")
 	fight._held_actor_id = ""
 	fight.refresh()
+	# Separate queued batches must advance a two-turn boss to its second ribbon seat.
+	var repeated_order := [held_foe, "intervening_hero", held_foe]
+	var first_slot := fight._receipt_order_index(held_foe, repeated_order)
+	var second_slot := fight._receipt_order_index(held_foe, repeated_order)
+	_check(first_slot == 0 and second_slot == 2,
+		"two boss receipts across separate batches highlight distinct rolled NOW slots")
+	fight._beat_order_round = fight.battle.round_number() - 1
+	_check(fight._receipt_order_index(held_foe, repeated_order) == 0,
+		"new rolled round resets the boss's held-NOW occurrence counter")
+	fight._beat_order_round = -1
+	fight._beat_order_appearances.clear()
 	_check(fight.battle.state_snapshot() == pristine and fight.battle.rng_state() == rng
 		and screen.receipts == receipts and screen._selected_part == part
 		and screen._hand_pending == hand_pending and fight.battle.hand_action_open() == hand_budget,
@@ -238,6 +249,13 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		_check(fight._held_actor_id == str(actor.id) and fight.actor_name.text == str(actor.name)
 			and now_id == str(actor.id),
 			"during held attack the bar and NOW ribbon remain on its actual attacker")
+		var live := screen.battle.get_unit(screen.battle.current_actor_id())
+		var live_key := "%s_%d" % [str(live.get("side", "")), int(live.get("rank", 0))]
+		var held_plate: NinePatchRect = fight.plates[attacker_key].get_node("Back")
+		var live_plate: NinePatchRect = fight.plates[live_key].get_node("Back")
+		_check(held_plate.self_modulate == Color(1.5, 1.2, 0.7)
+			and (live_key == attacker_key or live_plate.self_modulate != held_plate.self_modulate),
+			"held attacker, not the already-advanced actor, owns the highlighted figure plate")
 
 		var attacker_held: Sprite3D = stage.figure_nodes[attacker_key]
 		var target_held: Sprite3D = stage.figure_nodes[target_key]
