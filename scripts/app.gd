@@ -3899,6 +3899,7 @@ func _close_stitched_postevent() -> void:
 
 ## Full-screen Quilt village with no run, RNG, deck or currency allocation.
 func _open_base() -> bool:
+	_retire_hidden_base()
 	if deck != null or run_map != null or not is_instance_valid(title_view) \
 		or not title_view.is_visible_in_tree() or is_instance_valid(base_screen):
 		return false
@@ -4103,6 +4104,19 @@ func _close_base(view: BaseScreen = null) -> void:
 	if closing.get_parent() == self:
 		remove_child(closing)
 	closing.queue_free()
+
+
+## A torn-down picker can leave the village mounted but hidden behind the title
+## (a valid base_screen that is not visible and that no run owns). In that stale
+## state Wren's Room and Continue Run silently do nothing, so any hidden, unowned
+## base is closed before those entry points test it.
+func _retire_hidden_base() -> void:
+	if not is_instance_valid(base_screen) or base_screen.is_visible_in_tree():
+		return
+	var run_base: BaseScreen = _stitched_run_base.get_ref() as BaseScreen if _stitched_run_base != null else null
+	if run_base == base_screen:
+		return
+	_close_base(base_screen)
 
 
 ## Village Set out uses the same four-of-eight admission as live New Run.
@@ -5142,6 +5156,7 @@ func _stitched_run_save_file(session: StitchedRunSession) -> bool:
 
 
 func load_stitched_run(path: String) -> bool:
+	_retire_hidden_base()
 	if deck != null or run_map != null or is_instance_valid(base_screen) \
 		or is_instance_valid(stitched_fight_view) or stitched_event_gate != null:
 		return false
