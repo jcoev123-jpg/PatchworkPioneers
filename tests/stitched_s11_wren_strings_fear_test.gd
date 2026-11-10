@@ -6,6 +6,8 @@ var checks := 0
 
 
 func _initialize() -> void:
+	# Legacy S11 Wren interaction fixture; normal play keeps hand actions off.
+	StitchedRules.wren_hands = true
 	_run.call_deferred()
 
 
@@ -296,6 +298,7 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	StitchedRules.wren_hands = false
 	for failure in failures:
 		printerr("FAIL: " + failure)
 	print("stitched_s11_wren_strings_fear_test: %s (%d checks, %d failures)" % [

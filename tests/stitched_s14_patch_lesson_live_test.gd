@@ -387,8 +387,8 @@ func _run() -> void:
 	_check(visible_pages == 1, "exactly one page is visible at a time")
 	var page := guide.page_text(1)
 	var static_phrases := ["RETREAT", "SNIPPED THREAD", "ABILITY PATCH SOCKETS", "THREAD QUALITY",
-		"EFFECTS ON THE ACTUAL TARGET", "ALLY PATCHES", "Sewing Circle",
-		"cotton < wool < silk < gold", "bleed-patched HEAL", "your own ally"]
+		"SEWN EFFECT TARGETS", "ALLY PATCHES", "Sewing Circle",
+		"cotton < wool < silk < gold", "struck foe", "front foe", "ability user", "chosen ally"]
 	var missing: Array = []
 	for phrase in static_phrases:
 		if not page.contains(phrase):

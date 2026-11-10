@@ -5,6 +5,8 @@ var checks := 0
 
 
 func _initialize() -> void:
+	# Legacy S11 keyboard contract only; shipped Wren hand actions remain disabled.
+	StitchedRules.wren_hands = true
 	_run.call_deferred()
 
 
@@ -399,6 +401,7 @@ func _run() -> void:
 
 
 func _finish() -> void:
+	StitchedRules.wren_hands = false
 	for error in failures:
 		printerr(error)
 	print("stitched_s11_corridor_keyboard_target_test: %s (%d checks, %d failures)" % [

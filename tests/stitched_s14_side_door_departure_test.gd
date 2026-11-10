@@ -17,9 +17,9 @@ func _departure() -> void:
 	var original: StitchedRunSession
 	var next_id := ""
 	var combat_id := ""
-	# Owner 11-10: the retired fear trade is suppressed after its weighted draw, so
-	# fear-weighted picks now offer no door; the witness search needs a wider range.
-	for seed_number in 400:
+	# Fixed real Elite witness with a non-fear offer and both exit and combat routes.
+	# A single seed makes losing this route fail instead of quietly widening a search.
+	for seed_number in [165]:
 		var candidate := StitchedRunSession.start(seed_number)
 		if candidate == null:
 			continue

@@ -350,12 +350,12 @@ func _build_bar() -> void:
 	add_child(health_text)
 	fray_word = _label("FRAY", Rect2(158, BAR_TOP + 82, 80, 24), 17)
 	fray_word.name = "FrayWord"
-	fray_word.visible = (StitchedRules.fray_enabled or not battle._s14)
+	fray_word.visible = StitchedRules.fray_enabled
 	add_child(fray_word)
 	fray_bar = _bar(Rect2(236, BAR_TOP + 84, 230, 22), FRAY)
 	fray_bar.name = "ActorFray"
 	fray_bar.max_value = 200
-	fray_bar.visible = (StitchedRules.fray_enabled or not battle._s14)
+	fray_bar.visible = StitchedRules.fray_enabled
 	add_child(fray_bar)
 	for index in StitchedBattleScreen.SLOTS.size():
 		var slot: String = StitchedBattleScreen.SLOTS[index]
@@ -413,7 +413,8 @@ func _build_bar() -> void:
 
 
 func _build_hands() -> void:
-	if not (StitchedRules.wren_hands or not battle._s14):
+	# Retired Wren hand actions must never appear in live fights, including pre-S14 ones.
+	if not StitchedRules.wren_hands:
 		return
 	var slots := engine.hand_slots()
 	for index in slots.size():
@@ -689,7 +690,14 @@ func refresh() -> void:
 			if standing:
 				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss else FOE_HEIGHT)
 				# Doll and foe art is all drawn facing right; foes turn round to face the party.
-				stage.place(key, _figure_art(str(unit.id)), where, tall).flip_h = side == "foe"
+				# A turn can resolve while the prior hit is held; never replace its live pose,
+				# step or scale on the normal battle refresh. A different occupant still places.
+				var figure: Sprite3D = stage.figure_nodes.get(key)
+				if _beats == null or not _beats.is_running() or figure == null \
+						or str(figure.get_meta("fight_unit", "")) != str(unit.id):
+					figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
+					figure.set_meta("fight_unit", str(unit.id))
+				figure.flip_h = side == "foe"
 			elif not heap.is_empty():
 				stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT).flip_h = false
 			elif stage.figure_nodes.has(key):
@@ -835,7 +843,7 @@ func _refresh_bar() -> void:
 	# At the end of the fight the bar keeps only the outcome line and Continue:
 	# no empty health plate, no actor name, no More button.
 	var over := battle.is_over()
-	var fray_shown := StitchedRules.fray_enabled or not battle._s14
+	var fray_shown := StitchedRules.fray_enabled
 	portrait.visible = not over
 	actor_name.visible = not over
 	health_word.visible = not over
@@ -900,7 +908,7 @@ func _shade_figures() -> void:
 			tone = Color(1.4, 1.25, 1.0)
 		if key == _keyboard_target and targets.has(key):
 			tone = Color(1.75, 1.45, 0.85)
-		if stage.figure_nodes.has(key):
+		if stage.figure_nodes.has(key) and (_beats == null or not _beats.is_running()):
 			stage.figure_nodes[key].modulate = tone
 		var back: NinePatchRect = plates[key].get_node("Back")
 		back.self_modulate = Color(1.8, 1.45, 0.75) if key == _keyboard_target and targets.has(key) else (Color(1.5, 1.2, 0.7) if key == actor_key else (Color(1.2, 1.1, 0.9) if targets.has(key) else Color.WHITE))
@@ -1338,10 +1346,16 @@ func _start_beats(batch: Array) -> void:
 			homes[lit_key] = lit_home
 			var dz := toward * LUNGE if lit_key == key else signf(home.z - lit_home.z) * LUNGE * 0.5
 			steps[lit_key] = lit_home + Vector3(SPOT_STEP, 0.0, dz)
+		var first_step := true
 		for lit_key in homes:
 			var lit_figure: Sprite3D = stage.figure_nodes[lit_key]
-			_beats.tween_property(lit_figure, "position", steps[lit_key], BEAT_TIME * 0.4) \
-				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			if first_step:
+				_beats.tween_property(lit_figure, "position", steps[lit_key], BEAT_TIME * 0.4) \
+					.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+				first_step = false
+			else:
+				_beats.parallel().tween_property(lit_figure, "position", steps[lit_key], BEAT_TIME * 0.4) \
+					.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE * SPOT_GROW, BEAT_TIME * 0.4) \
 				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		for result in receipt.get("results", []):
@@ -1353,9 +1367,14 @@ func _start_beats(batch: Array) -> void:
 		_beats.tween_interval(HOLD_TIME)
 		# Owner 11-10: the spotlight eases back together with the figures' return to rank.
 		_beats.tween_callback(Callable(stage, "end_spotlight"))
+		var first_return := true
 		for lit_key in homes:
 			var lit_figure: Sprite3D = stage.figure_nodes[lit_key]
-			_beats.tween_property(lit_figure, "position", homes[lit_key], BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
+			if first_return:
+				_beats.tween_property(lit_figure, "position", homes[lit_key], BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
+				first_return = false
+			else:
+				_beats.parallel().tween_property(lit_figure, "position", homes[lit_key], BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
@@ -1369,6 +1388,8 @@ func _drain_queued_beats() -> void:
 	_beats = null
 	if not is_inside_tree() or battle == null or engine == null:
 		return
+	# Catch up any rank, death or idle art changes deferred during the held beat.
+	refresh()
 	if engine._motion_is_reduced() or battle.is_over() or _queued_receipts.is_empty():
 		return
 	var next := _queued_receipts.duplicate()

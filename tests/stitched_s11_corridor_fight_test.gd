@@ -166,6 +166,8 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	var attacker_key := "hero_%d" % int(actor.get("rank", 0))
 	_check(fight.hits[target_key].visible and fight.hits[attacker_key].visible,
 		"camera precondition: offensive attacker and authentic legal target have live 3D hit projections")
+	var attacker_start: Vector3 = stage.figure_nodes[attacker_key].position
+	var target_start: Vector3 = stage.figure_nodes[target_key].position
 	fight.hits[target_key].pressed.emit()
 	_check(screen.receipts.size() > initial_receipts.size()
 		and bool(screen.receipts[initial_receipts.size()].get("ok", false))
@@ -173,7 +175,22 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		"committed attack passes through the mounted corridor hit button and produces a real receipt")
 	# Headless process frames can be extremely short; sample at the real beat peak.
 	await create_timer(0.17).timeout
-	var lowest_fov := minf(baseline_fov, stage.camera.fov)
+	if not reduced:
+		var attacker_held: Sprite3D = stage.figure_nodes[attacker_key]
+		var target_held: Sprite3D = stage.figure_nodes[target_key]
+		_check(attacker_held.position.x > attacker_start.x + 0.1
+			and target_held.position.x > target_start.x + 0.1
+			and attacker_held.scale.x > 1.05 and target_held.scale.x > 1.05,
+			"attacker and target step and grow together before the held reaction")
+		var held_position := attacker_held.position
+		var held_scale := attacker_held.scale
+		var held_texture := attacker_held.texture
+		fight.refresh()
+		_check(attacker_held.position.is_equal_approx(held_position)
+			and attacker_held.scale.is_equal_approx(held_scale)
+			and attacker_held.texture == held_texture,
+			"battle refresh does not reset a live attack pose, step or scale")
+	var lowest_fov:= minf(baseline_fov, stage.camera.fov)
 	var pose_path := str(StitchedBattleScreen.ROSTER.art_paths(str(actor.get("id", ""))).get("attack", ""))
 	if not reduced and ResourceLoader.exists(pose_path, "Texture2D"):
 		_check(stage.figure_nodes[attacker_key].texture == load(pose_path),
@@ -275,10 +292,26 @@ func _run() -> void:
 	var fight := StitchedCorridorFight.attach(screen, "walls")
 	_check(fight != null, "the corridor view mounts over the engine")
 	await process_frame
+	# The live flag is off even in pre-S14 fights; legacy hand behavior below is
+	# exercised only with an explicit test-only opt-in, never in shipped play.
+	_check(not StitchedRules.wren_hands and fight.hand_buttons.is_empty(),
+		"retired Wren hand buttons are absent from the live pre-S14 fight bar")
+	StitchedRules.wren_hands = true
+	fight._build_hands()
+	fight.refresh()
 	_check(screen.get_child_count() == 2 and fight.chrome.get_child_count() == old_children
 		and not fight.chrome.visible, "the classic chrome is tucked away whole, not torn out")
 	_check(screen.is_visible_in_tree() and screen._action_buttons.has("exit"), "the engine itself stays live")
 	_check(fight.stage.fighting and fight.stage.camera.fov == StitchedCorridorStage.FIGHT_FOV, "the corridor turns to the fight view")
+	# Owner 11-10: the retired meter stays hidden even on a pre-S14 battle.
+	if not StitchedRules.fray_enabled:
+		var original_s14 := screen.battle._s14
+		screen.battle._s14 = false
+		fight.refresh()
+		_check(not fight.fray_word.visible and not fight.fray_bar.visible,
+			"pre-S14 live corridor shows neither the retired FRAY word nor its meter")
+		screen.battle._s14 = original_s14
+		fight.refresh()
 	_verify_live_intents(fight, 3)
 	_verify_inspection(fight)
 	_verify_intent_fixtures(fight)
@@ -420,7 +453,8 @@ STATUS: none"))
 			and normal.rng == reduced.rng and normal.receipts == reduced.receipts
 			and normal.targets == reduced.targets,
 			"normal/reduced seeded corridor actions produce identical rules, receipts, targets and RNG")
+	StitchedRules.wren_hands = false
 	for failure in failures:
 		printerr(failure)
-	print("stitched_s11_corridor_fight_test: ", "PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
+	print("stitched_s11_corridor_fight_test: ","PASS" if failures.is_empty() else "FAIL", " (", checks, " checks)")
 	quit(0 if failures.is_empty() else 1)

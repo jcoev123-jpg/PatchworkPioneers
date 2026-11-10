@@ -24,7 +24,7 @@ const PAGES := [
 		"ROUND ORDER  |  Each round, seeded SPEED + 1d8 sets action order. Ties favour heroes, then lower ranks. Each unit gets one turn, except some bosses acting twice.",
 		"FOUR SIGNATURE ABILITIES  |  Each of the eight heroes has FOUR fixed, distinct signature abilities chosen for their role, not granted by worn parts. Each has legal launch ranks, target ranks and a side: foe, ally or self.",
 		"ABILITY EXAMPLES  |  Heroes may heal an ally, mark a foe, pierce ranks or guard another doll; their kits are not just generic strike and guard.",
-		"WORN LIMBS  |  HEAD, ARMS, TORSO and LEGS are sewn physical body parts with cloth patches, not sources of the four active ability names.",
+		"WORN LIMBS  |  HEAD, ARMS, TORSO and LEGS are sewn physical body parts, separate from the sockets on the four fixed abilities.",
 		"HANGING BY A THREAD  |  At 0 HP the doll stays in its rank and can still act. Reaching 0 HP does not itself tear off a limb.",
 		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
 		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
@@ -36,7 +36,7 @@ const PAGES := [
 		"SNIPPED THREAD  |  A cut blocks that doll's movement and ally healing or guarding across the cut until RE-TIE repairs the shared thread.",
 		"ABILITY PATCH SOCKETS  |  Found effect patches SEW ONTO a fixed ability, not body-part stats. Each ability normally has one socket; a gold patch permits two.",
 		"THREAD QUALITY  |  Rarity runs cotton < wool < silk < gold. Cotton and wool are common in fights and events; silk and gold mainly come from Elite or Boss prizes. Quality shows in thread colour, never a numeric tier.",
-		"EFFECTS ON THE ACTUAL TARGET  |  Bleed, Pull, Push, Stun, Mark, Blind, stuffing steal or Chain to the next foe affect whoever the ability actually hits. A bleed-patched HEAL can bleed your own ally.",
+		"SEWN EFFECT TARGETS  |  Bleed, Pull, Push, Stun, Mark, Blind, stuffing steal and Chain are harmful: they land on the struck foe, or the front foe when helping an ally. Guard, heal, regen and cleanse help the chosen ally, or the ability user when striking a foe.",
 		"ALLY PATCHES  |  Some patches fit ally heals or guards: regen, cleanse and extra guard. Unsew and resew ability patches at the Sewing Circle."
 	],
 	[
@@ -49,7 +49,7 @@ const PAGES := [
 		"LOOT  |  Candle multipliers modify loot if awarded; they do not guarantee a drop.",
 		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP each; Tell Tales calms the dolls; Trim Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
 		"SATCHEL  |  Hold up to six spare parts. Sew worn HEAD, ARMS, TORSO and LEGS at a Campfire or Sewing Circle, not in a fight.",
-		"SIDE DOORS  |  After Elite or Boss fights, an optional door MAY appear. The under-bed door offers a silk/gold ability patch or Wren gift at a cost: limb, stuffing/max HP or Wren fear. The attic door may bless with mend all, steady candle or guard the head; ANY under-bed deal closes attic blessings for the rest of this run."
+		"SIDE DOORS  |  After Elite or Boss fights, an optional door MAY appear. The under-bed door offers a silk/gold ability patch at a cost: limb or stuffing/max HP. The attic door may bless with mend all, steady candle or guard the head; ANY under-bed deal closes attic blessings for the rest of this run."
 	]
 ]
 ## Owner 11-10: the Fray & resolve tab and its page are gone with the fray mechanic; the
@@ -85,8 +85,7 @@ static func side_door_examples(document: Variant = null) -> Array[String]:
 	return [
 		"UNDER-BED STUFFING  |  Giving up stuffing may bring a rare gold-thread ability patch.",
 		"UNDER-BED LEG  |  Giving up a leg may bring a silk-thread ability patch.",
-		"UNDER-BED FEAR  |  Letting Wren carry more fear may bring one of his gifts.",
-		"ATTIC BLESSINGS  |  The free attic door may brighten the candle, mend dolls or guard a head. Doors and payable bargains depend on the journey; none is promised.",
+		"ATTIC BLESSINGS|  The free attic door may brighten the candle, mend dolls or guard a head. Doors and payable bargains depend on the journey; none is promised.",
 	]
 
 var tab_buttons: Array[Button] = []
@@ -162,19 +161,14 @@ func _refresh_lesson_page() -> void:
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
 
 
-## Recreate Candle & stops from the authored baseline at every successful open: the
-## validated S14 door notes, then the passive Wren gift notes (the Fray & resolve page they
-## used to live on is gone with the fray mechanic). Invalid or contradictory door source
-## suppresses all four door notes together; an invalid profile or catalog suppresses the
-## gift notes without touching the rest. Profile reads are passive; no offers, saves or
-## global RNG are touched.
+## Recreate Candle & stops from its authored baseline and validated door notes.
+## The retired Wren hand gifts and fear bargain must not be advertised on a live page.
+## Invalid door sources suppress all optional notes; no run or RNG is touched.
 func _refresh_side_door_page() -> void:
 	if page_labels.size() <= SIDE_DOOR_PAGE:
 		return
 	var lines: Array = PAGES[SIDE_DOOR_PAGE].duplicate()
 	lines.append_array(side_door_examples(side_door_source))
-	var profile: Variant = StitchedWrenGifts.load_profile() if wren_gift_profile_source == null else wren_gift_profile_source
-	lines.append_array(StitchedWrenGiftFieldNotes.examples(profile, wren_gift_catalog_source))
 	page_labels[SIDE_DOOR_PAGE].text = "\n\n".join(lines)
 
 

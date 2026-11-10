@@ -73,21 +73,18 @@ func _assert_notes(guide: StitchedFieldGuide, profile: Dictionary, cue: String) 
 	var door_examples := StitchedFieldGuide.side_door_examples()
 	var expected: Array = StitchedFieldGuide.PAGES[2].duplicate()
 	expected.append_array(door_examples)
-	expected.append_array(notes)
 	var actual := guide.page_text(2)
-	_check(notes.size() == 3 and door_examples.size() == 4 and actual == "\n\n".join(expected),
-		"owner 11-10: open Candle page is baseline and door notes followed by three freshly validated notes")
-	_check(actual.begins_with("\n\n".join(StitchedFieldGuide.PAGES[2])) and actual.contains(cue),
-		"correct next unlock milestone: " + cue)
-	_check(actual.contains("four gifts") and actual.contains("one hand action") and
-		actual.contains("once per fight") and actual.contains("fear 50") and
-		actual.contains("three gifts") and actual.contains("swap") and
-		actual.contains("this run only") and actual.contains("later runs"),
-		"notes teach hand/fear/offers/swaps and later-run unlocks")
+	_check(notes.size() == 3 and door_examples.size() == 3 and actual == "\n\n".join(expected),
+		"owner 11-10: live Candle page has only its baseline and the three usable door notes")
+	_check("\n".join(notes).contains(cue), "legacy formatter remains deterministic for milestone: " + cue)
+	_check(not actual.contains("one hand action") and not actual.contains("four gifts")
+		and not actual.contains("fear 50") and not actual.contains("WREN'S HAND")
+		and not actual.contains("UNDER-BED FEAR"),
+		"retired Wren combat actions and fear bargain are absent from the live guide")
 	_check(not actual.contains("already equipped") and not actual.contains("guaranteed") and
 		not actual.contains("resist Wren"), "no fabricated ownership, offers or resisted hand")
 	for note in notes:
-		_check(actual.count(note) == 1, "no repeated gift sentence on open")
+		_check(actual.count(note) == 0, "no retired gift sentence on live open")
 
 
 func _pure_checks() -> void:
@@ -184,7 +181,7 @@ func _run() -> void:
 		guide.wren_gift_profile_source = bad_profile
 		await _click(drawings)
 		_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
-			"bad profile clears old Wren advice but keeps the Candle baseline and door notes")
+			"bad profile leaves only the Candle baseline and live door notes")
 		await _key(KEY_ESCAPE)
 		_check(not guide.is_open() and root.gui_get_focus_owner() == drawings,
 			"Escape restores Drawings focus from invalid advice")
@@ -193,7 +190,7 @@ func _run() -> void:
 	guide.wren_gift_catalog_source.by_id["point"]["name"] = "Fake Point"
 	await _click(drawings)
 	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
-		"invalid catalog clears stale Wren notes without changing the door-page baseline")
+		"invalid catalog cannot revive retired Wren notes or change the door page")
 	await _click(guide.tab_buttons[1])
 	await _click(guide.tab_buttons[2])
 	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
@@ -208,7 +205,7 @@ func _run() -> void:
 	guide.page_scroll.scroll_vertical = int(travel)
 	await process_frame
 	_check(travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
-		"original guide content scrolls with Wren notes visible")
+		"Candle guide remains scrollable without retired Wren notes")
 	await _key(KEY_ESCAPE)
 	_check(root.gui_get_focus_owner() == drawings and not guide.is_open(),
 		"Escape after scrolling restores bedroom focus")

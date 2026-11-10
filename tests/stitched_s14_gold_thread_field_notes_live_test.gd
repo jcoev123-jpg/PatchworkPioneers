@@ -253,9 +253,9 @@ func _run() -> void:
 			"other guide page stays exactly unchanged: " + str(i))
 	var gift_notes := StitchedWrenGiftFieldNotes.examples({"best_floor": 0, "boss_wins": 0})
 	var door_examples := StitchedFieldGuide.side_door_examples()
-	_check(gift_notes.size() == 3 and door_examples.size() == 4 and guide.page_text(2) == "\n\n".join(
-		StitchedFieldGuide.PAGES[2] + door_examples + gift_notes),
-		"owner 11-10: Candle page carries its baseline, four validated S14 door notes and the Wren gift notes")
+	_check(gift_notes.size() == 3 and door_examples.size() == 3 and guide.page_text(2) == "\n\n".join(
+		StitchedFieldGuide.PAGES[2] + door_examples) and not guide.page_text(2).contains("WREN'S HAND"),
+		"owner 11-10: Candle page keeps three live door notes, never the retired Wren hand advice")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree(),
 		"existing Seams tab is reachable by pointer")

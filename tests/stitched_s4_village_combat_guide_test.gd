@@ -140,39 +140,36 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 	var validated := StitchedS14SideDoors.catalog(source)
 	var lessons := StitchedFieldGuide.side_door_examples(source)
 	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[2])
-	_check(lessons.size() == 4 and lessons == StitchedFieldGuide.side_door_examples()
+	_check(lessons.size() == 3 and lessons == StitchedFieldGuide.side_door_examples()
 		and validated.has("underbed_stuffing_trade") and validated.has("underbed_leg_trade")
 		and validated.has("underbed_fear_trade") and validated.has("attic_waxlight")
 		and validated.has("attic_rethread") and validated.has("attic_headward"),
-		"real S14 catalog validates six named witness IDs and yields four deterministic notes")
-	if lessons.size() != 4:
+		"real S14 catalog validates all six entries but only describes the three live door options")
+	if lessons.size() != 3:
 		return
 	_check(lessons[0].contains("stuffing") and lessons[0].contains("gold-thread")
 		and lessons[0].contains("ability patch") and lessons[0].contains("may")
 		and lessons[1].contains("leg") and lessons[1].contains("silk-thread")
 		and lessons[1].contains("ability patch") and lessons[1].contains("may")
-		and lessons[2].contains("Wren") and lessons[2].contains("fear")
-		and lessons[2].contains("gifts") and lessons[2].contains("may")
-		and lessons[3].contains("free attic") and lessons[3].contains("candle")
-		and lessons[3].contains("mend") and lessons[3].contains("guard a head")
-		and lessons[3].contains("depend") and lessons[3].contains("none is promised"),
-		"all four notes teach possible stuffing/gold, limb/silk, fear/gift and free attic outcomes")
+		and lessons[2].contains("free attic") and lessons[2].contains("candle")
+		and lessons[2].contains("mend") and lessons[2].contains("guard a head")
+		and lessons[2].contains("depend") and lessons[2].contains("none is promised")
+		and not "\n".join(lessons).contains("fear"),
+		"three notes teach the live stuffing/gold, limb/silk and attic choices, not retired fear gifts")
 	var no_quotes := true
 	for line in lessons:
 		for character in line:
 			no_quotes = no_quotes and not character.is_valid_int()
 		no_quotes = no_quotes and not line.contains("%") and not line.contains(" HP ")
 	_check(no_quotes, "new guide examples quote no prices, costs, odds or HP forecasts")
-	var wren_notes := StitchedWrenGiftFieldNotes.examples(StitchedWrenGifts.load_profile())
-	var wren_text := "" if wren_notes.is_empty() else "\n\n" + "\n\n".join(wren_notes)
-	var expected := baseline + "\n\n" + "\n\n".join(lessons) + wren_text
+	var expected := baseline + "\n\n" + "\n\n".join(lessons)
 	await _click(guide.tab_buttons[2])
 	_check(guide.page_text(2) == expected
 		and guide.page_labels[2].is_visible_in_tree()
 		and guide.page_text(2).contains("SIDE DOORS")
 		and guide.page_text(2).contains("ANY under-bed deal")
 		and guide.page_text(2).contains("optional door MAY"),
-		"owner 11-10: Drawings -> Candle tab keeps SIDE DOORS, four sourced notes and Wren notes")
+		"owner 11-10: Drawings -> Candle tab keeps SIDE DOORS and three live choices")
 	for line in lessons:
 		_check(guide.page_text(2).count(line) == 1,
 			"mounted Candle page has one copy of " + line)
@@ -209,11 +206,11 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 		_check(not guide.is_open(), "guide dismisses before invalid source: " + str(pair[0]))
 		await _click(drawings)
 		_check(guide.is_open() and guide.page_index == 0
-			and guide.page_text(2) == baseline + wren_text
+			and guide.page_text(2) == baseline
 			and guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3,
 			"invalid source restores the Candle baseline without stale lines: " + str(pair[0]))
 		await _click(guide.tab_buttons[2])
-		_check(guide.page_text(2) == baseline + wren_text and guide.page_text(2).contains("SIDE DOORS"),
+		_check(guide.page_text(2) == baseline and guide.page_text(2).contains("SIDE DOORS"),
 			"invalid source shows only original SIDE DOORS after page turn: " + str(pair[0]))
 		await _click(guide.tab_buttons[0])
 	guide.side_door_source = reordered
@@ -321,7 +318,7 @@ func _run() -> void:
 			"FOUR SIGNATURE ABILITIES", "eight heroes", "FOUR fixed", "launch ranks",
 			"target ranks", "foe, ally or self", "heal an ally", "mark a foe",
 			"pierce ranks", "guard another doll", "HEAD, ARMS, TORSO and LEGS",
-			"not sources", "MOVE", "adjacent heroes", "RE-TIE", "PASS",
+			"separate from the sockets", "MOVE", "adjacent heroes", "RE-TIE", "PASS",
 			"HANGING BY A THREAD", "stays in its rank", "can still act",
 			"does not itself tear", "EACH further direct hit",
 			"seeded random remaining ARM, LEG or HEAD", "small on the first",
@@ -338,8 +335,8 @@ func _run() -> void:
 			"one socket", "gold patch permits two", "cotton < wool < silk < gold",
 			"fights and events", "Elite or Boss", "thread colour", "Bleed",
 			"Pull", "Push", "Stun", "Mark", "Blind", "stuffing steal",
-			"Chain", "whoever the ability actually hits", "bleed-patched HEAL",
-			"your own ally", "regen", "cleanse", "extra guard",
+			"Chain", "struck foe", "front foe", "ability user", "chosen ally",
+			"regen", "cleanse", "extra guard",
 			"Unsew and resew", "Sewing Circle"],
 		["Begins at 100", "entered routed stop", "CORRIDOR",
 			"costs 8 Candle", "BRIGHT 76–100", "15% chance the party acts first",
@@ -352,8 +349,8 @@ func _run() -> void:
 			"Trim Wick restores 50 Candle", "Peddler candle stub restores 25 Candle",
 			"up to six spare parts", "Campfire or Sewing Circle", "not in a fight",
 			"SIDE DOORS", "Elite or Boss fights", "optional door MAY",
-			"under-bed", "silk/gold ability patch", "Wren gift",
-			"limb, stuffing/max HP or Wren fear", "attic", "mend all",
+			"under-bed", "silk/gold ability patch", "limb or stuffing/max HP",
+			"attic", "mend all",
 			"steady candle", "guard the head", "ANY under-bed deal",
 			"rest of this run"]
 	]
