@@ -718,8 +718,10 @@ func refresh() -> void:
 						or str(figure.get_meta("fight_unit", "")) != str(unit.id):
 					if side == "hero" and bool(unit.get("hanging", false)):
 						# Hanging means zero HP with a torn limb, not an upright idle doll.
-						# Reuse the stage's painted floor pose; a recovered doll stands on refresh.
-						figure = stage.place_flat(key, _figure_art(str(unit.id)), where, HERO_HEIGHT * 0.82, -PI / 2.0)
+						# Lie on the floor but keep the doll's idle loop moving in combat.
+						var art := _figure_art(str(unit.id))
+						figure = stage.place_flat(key, art, where, HERO_HEIGHT * 0.82, -PI / 2.0)
+						figure.set_meta("idle_frames", stage.idle_frames(art))
 					else:
 						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))

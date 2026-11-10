@@ -105,6 +105,21 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 		"a zero-HP Hanging doll lies on the floor with its HANGING plate visible")
 	_check(fight.stage.screen_rect("hero_1").size.x > 0.0,
 		"the fallen doll still projects into the fight")
+	var fallen_frames: Array = fallen.get_meta("idle_frames", [])
+	_check(fallen_frames.size() > 1, "a Hanging doll keeps its animated idle strip")
+	if fallen_frames.size() > 1:
+		var old_clock := fight.stage._idle_clock
+		var art: Texture2D = fallen.get_meta("still")
+		var rate := float(StitchedCorridorStage._idle_rates.get(art.resource_path, StitchedCorridorStage.IDLE_FPS))
+		fight.stage._idle_clock = 0.0
+		fight.stage._idle_step(fallen, false)
+		var first_frame := fallen.texture
+		fight.stage._idle_clock = 1.0 / rate
+		fight.stage._idle_step(fallen, false)
+		_check(first_frame in fallen_frames and fallen.texture in fallen_frames
+			and first_frame != fallen.texture and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED,
+			"the fallen doll moves through its own idle frames without standing up")
+		fight.stage._idle_clock = old_clock
 	battle._units[hero_id] = saved_hero
 	fight.refresh()
 	var recovered: Sprite3D = fight.stage.figure_nodes["hero_1"]
