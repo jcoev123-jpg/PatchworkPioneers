@@ -1557,7 +1557,7 @@ func _fly_sprite(texture: Texture2D, where: Vector3, size: float, flip: bool) ->
 	sprite.texture = texture
 	sprite.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	sprite.no_depth_test = true
-	sprite.render_priority = 2
+	sprite.render_priority = 3
 	sprite.flip_h = flip
 	sprite.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	sprite.pixel_size = size / float(maxi(texture.get_width(), texture.get_height()))

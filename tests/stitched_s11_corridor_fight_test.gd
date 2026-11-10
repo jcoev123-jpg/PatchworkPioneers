@@ -410,7 +410,7 @@ func _verify_spotlight_teardown() -> void:
 		stage.place("hero_1", StitchedCorridorStage.hero_art("warden"), Vector3.ZERO, 1.15)
 		stage.begin_spotlight(lit, [], 0.01)
 		stage.end_spotlight(1.0)
-		_check(stage._spot_tween != null and stage.figure_nodes["hero_1"].render_priority == 1,
+		_check(stage._spot_tween != null and stage.figure_nodes["hero_1"].render_priority >= 1,
 			"%s precondition: active return fade keeps the doll foregrounded" % reset)
 		match reset:
 			"build":
@@ -479,9 +479,9 @@ func _run() -> void:
 		and fight.stage.figure_nodes[helped_key].modulate.r > 1.05,
 		"mounted non-damaging ally heal dims the corridor and brightens both dolls")
 	fight.stage.end_spotlight(0.2)
-	_check(fight.stage.figure_nodes[healer_key].render_priority == 1
+	_check(fight.stage.figure_nodes[healer_key].render_priority == 2
 		and fight.stage.figure_nodes[helped_key].render_priority == 1,
-		"spotlit healing pair stays in front as the return fade begins")
+		"spotlit healing pair stays in front as the return fade begins, the actor over its target")
 	await create_timer(0.25).timeout
 	_check(fight.stage.figure_nodes[healer_key].render_priority == 0
 		and fight.stage.figure_nodes[helped_key].render_priority == 0,

@@ -756,7 +756,10 @@ func begin_spotlight(lit_keys: Array[String], flash_keys: Array[String] = [], ti
 		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 	for key in figure_nodes:
 		var figure: Sprite3D = figure_nodes[key]
-		figure.render_priority = 1 if lit_keys.has(key) else 0
+		# The acting figure (first lit seat) is drawn over its targets so a close target, or a
+		# big foe, never hides the strike pose it has to read.
+		figure.render_priority = 2 if (not lit_keys.is_empty() and lit_keys[0] == key) \
+			else (1 if lit_keys.has(key) else 0)
 		if flash_keys.has(key):
 			continue
 		var tone := SPOT_LIT if lit_keys.has(key) else SPOT_DIM
