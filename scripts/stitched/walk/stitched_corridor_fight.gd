@@ -1227,7 +1227,9 @@ func _begin_receipt_focus(receipt: Dictionary) -> void:
 	if engine._motion_is_reduced() or battle.is_over() or str(receipt.get("action", "")) != "ability":
 		return
 	var spot := _receipt_spot_keys(receipt)
-	if spot.lit.size() < 2:
+	# Owner 11-10: a self-aimed mend and a killing blow leave only the actor lit;
+	# the corridor still dims around that one figure for the same held beat.
+	if spot.lit.is_empty():
 		return
 	_focus_target_ids = spot.targets
 	var focused := stage.start_fight_focus(spot.lit, _beat_span())
@@ -1443,7 +1445,7 @@ func _spotlight_without_motion(fresh: Array) -> void:
 		if not bool(receipt.get("ok", false)) or str(receipt.get("action", "")) != "ability":
 			continue
 		var spot := _receipt_spot_keys(receipt)
-		if spot.lit.size() >= 2:
+		if not spot.lit.is_empty():
 			stage.spot_pulse(spot.lit, [], HOLD_TIME)
 		return
 
