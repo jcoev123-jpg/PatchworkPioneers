@@ -4679,8 +4679,9 @@ func _present_stitched_run() -> void:
 		# The outcome reads centred inside the ribbon instead of under an empty banner.
 		var headline := _stitched_run_caption(final_art,
 			"ALL TWELVE FLOORS CLEARED" if session.phase == "victory" else "THE ROAD ENDS HERE", 22)
-		headline.set_anchors_preset(Control.PRESET_FULL_RECT)
-		headline.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		headline.autowrap_mode = TextServer.AUTOWRAP_OFF
+		headline.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		headline.horizontal_alignment= HORIZONTAL_ALIGNMENT_CENTER
 		headline.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_stitched_run_caption(terminal_panel,
