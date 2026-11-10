@@ -356,6 +356,14 @@ func _run() -> void:
 		and fight.stage.figure_nodes[healer_key].modulate.r > 1.05
 		and fight.stage.figure_nodes[helped_key].modulate.r > 1.05,
 		"mounted non-damaging ally heal dims the corridor and brightens both dolls")
+	fight.stage.end_spotlight(0.2)
+	_check(fight.stage.figure_nodes[healer_key].render_priority == 1
+		and fight.stage.figure_nodes[helped_key].render_priority == 1,
+		"spotlit healing pair stays in front as the return fade begins")
+	await create_timer(0.25).timeout
+	_check(fight.stage.figure_nodes[healer_key].render_priority == 0
+		and fight.stage.figure_nodes[helped_key].render_priority == 0,
+		"healing pair returns to ordinary draw order when the fade finishes")
 	fight.stage.cancel_fight_focus()
 	fight.refresh()
 	_check(screen.battle.state_snapshot() == before_heal_preview,

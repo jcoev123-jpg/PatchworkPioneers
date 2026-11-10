@@ -318,7 +318,7 @@ func _run() -> void:
 			"FOUR SIGNATURE ABILITIES", "eight heroes", "FOUR fixed", "launch ranks",
 			"target ranks", "foe, ally or self", "heal an ally", "mark a foe",
 			"pierce ranks", "guard another doll", "HEAD, ARMS, TORSO and LEGS",
-			"separate from the sockets", "MOVE", "adjacent heroes", "RE-TIE", "PASS",
+			"separate from the sockets", "MOVE", "adjacent heroes", "retired Re-tie", "PASS",
 			"HANGING BY A THREAD", "stays in its rank", "can still act",
 			"does not itself tear", "EACH further direct hit",
 			"seeded random remaining ARM, LEG or HEAD", "small on the first",
@@ -330,7 +330,7 @@ func _run() -> void:
 			"replace LOST dolls"],
 		["non-boss RETREAT", "seeded", "75%", "acting hero's turn",
 			"forfeits all rewards", "SNIPPED THREAD",
-			"ally healing or guarding", "RE-TIE", "ABILITY PATCH SOCKETS",
+			"ally healing or guarding", "no longer available", "ABILITY PATCH SOCKETS",
 			"SEW ONTO a fixed ability", "not body-part stats",
 			"one socket", "gold patch permits two", "cotton < wool < silk < gold",
 			"fights and events", "Elite or Boss", "thread colour", "Bleed",
@@ -368,6 +368,9 @@ func _run() -> void:
 		_check(single and _all_present(guide.page_labels[i].text, texts[i])
 			and guide.page_text(i) == guide.page_labels[i].text,
 			"mounted page %d renders exact current rules with no extra active page" % i)
+		if i < 2:
+			_check(not guide.page_text(i).contains("RE-TIE"),
+				"live guide no longer promises the retired Re-tie combat action")
 		var lower := guide.page_text(i).to_lower()
 		_check(guide.page_labels[i].get_theme_font_size("font_size") >= 18
 			and not lower.contains("energy cost") and not lower.contains("draw a card")

@@ -29,11 +29,11 @@ const PAGES := [
 		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
 		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
 		"RECOVERY  |  Tears persist through corridor Walk and later fights. Healing above 0 resets the further-hit count but never regrows a limb. Mend at the Sewing Circle or Campfire; replace LOST dolls from available heroes at the Sewing Circle.",
-		"OTHER ACTIONS  |  MOVE swaps adjacent heroes; RE-TIE repairs a snipped shared thread; PASS ends the hero's turn."
+		"OTHER ACTIONS  |  MOVE swaps adjacent heroes; PASS ends the hero's turn. The retired Re-tie action is not offered in live fights."
 	],
 	[
 		"RETREAT  |  A seeded non-boss RETREAT succeeds 75% of the time. Failure consumes the acting hero's turn. Success forfeits all rewards.",
-		"SNIPPED THREAD  |  A cut blocks that doll's movement and ally healing or guarding across the cut until RE-TIE repairs the shared thread.",
+		"SNIPPED THREAD  |  A cut blocks that doll's movement and ally healing or guarding across the cut. Re-tie is no longer available during live fights.",
 		"ABILITY PATCH SOCKETS  |  Found effect patches SEW ONTO a fixed ability, not body-part stats. Each ability normally has one socket; a gold patch permits two.",
 		"THREAD QUALITY  |  Rarity runs cotton < wool < silk < gold. Cotton and wool are common in fights and events; silk and gold mainly come from Elite or Boss prizes. Quality shows in thread colour, never a numeric tier.",
 		"SEWN EFFECT TARGETS  |  Bleed, Pull, Push, Stun, Mark, Blind, stuffing steal and Chain are harmful: they land on the struck foe, or the front foe when helping an ally. Guard, heal, regen and cleanse help the chosen ally, or the ability user when striking a foe.",

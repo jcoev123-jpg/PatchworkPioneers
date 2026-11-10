@@ -760,10 +760,10 @@ func end_spotlight(time: float = SPOT_EASE) -> void:
 	if _spot_tween != null:
 		_spot_tween.kill()
 		_spot_tween = null
-	if figure_nodes != null:
-		for key in figure_nodes:
-			figure_nodes[key].render_priority = 0
 	if time <= 0.0 or not is_inside_tree() or corridor == null:
+		if figure_nodes != null:
+			for key in figure_nodes:
+				figure_nodes[key].render_priority = 0
 		if corridor != null:
 			for surface_node in corridor.get_children():
 				var snap := (surface_node as MeshInstance3D).get_active_material(0) as StandardMaterial3D
@@ -787,7 +787,12 @@ func end_spotlight(time: float = SPOT_EASE) -> void:
 	for key in figure_nodes:
 		_spot_tween.parallel().tween_property(figure_nodes[key], "modulate", Color.WHITE, time) \
 			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-	_spot_tween.finished.connect(func(): _spot_tween = null)
+	# Keep the acting pair drawn in front until the return light has fully eased.
+	_spot_tween.finished.connect(func():
+		for figure in figure_nodes.values():
+			figure.render_priority = 0
+		_spot_tween = null
+	)
 
 
 ## The whole spotlight as one unattended pulse (reduced motion: the movement is
