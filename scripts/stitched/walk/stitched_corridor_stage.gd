@@ -40,6 +40,17 @@ const FIGHT_LIGHT := Vector3(0.0, 0.5, -3.1)
 ## the whole line (playtest 11-10: the dolls stood in the dark).
 const FIGHT_GLOW := 1.7
 const FIGHT_REACH := 1.5
+## Owner 11-10 attack spotlight: while a receipt's held beat plays the corridor surfaces
+## and every uninvolved figure dim clearly, the acting pair brightens a touch and stands
+## in front of everyone else. No new art: the existing materials and modulates move.
+const SURFACE_TINT := Color(0.85, 0.8, 0.78)
+const AMBIENT_BASE := 0.07
+const SPOT_SURFACE := 0.35
+const SPOT_AMBIENT := 0.02
+const SPOT_DIM := Color(0.42, 0.4, 0.46)
+const SPOT_LIT := Color(1.3, 1.22, 1.05)
+const SPOT_IN := 0.14
+const SPOT_EASE := 0.2
 ## Owner 11-08 maze junction: how far the crossing is, how long each opening runs before
 ## its end wall, where the eye waits, and how deep the stops stand in the openings.
 const JUNCTION_STEPS := 2
@@ -83,6 +94,8 @@ var fighting := false
 ## The exact side-on camera to restore after each receipt (no rules state).
 var _fight_home := Transform3D.IDENTITY
 var _focus_tween: Tween
+## The attack spotlight's own ease in/out (see begin_spotlight).
+var _spot_tween: Tween
 
 
 func _init() -> void:
@@ -103,7 +116,7 @@ func _init() -> void:
 	environment.background_color = Color(0.01, 0.008, 0.01)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
 	environment.ambient_light_color = Color(0.2, 0.13, 0.1)
-	environment.ambient_light_energy = 0.07
+	environment.ambient_light_energy = AMBIENT_BASE
 	environment.fog_enabled = true
 	environment.fog_light_color = Color(0.03, 0.02, 0.02)
 	environment.fog_density = BANDS.bright[2]
@@ -300,7 +313,7 @@ func _quad(title: String, extent: Vector2, where: Vector3, rotation_angles: Vect
 	mesh.size = extent
 	var material := StandardMaterial3D.new()
 	material.roughness = 1.0
-	material.albedo_color = Color(0.85, 0.8, 0.78)
+	material.albedo_color = SURFACE_TINT
 	if texture != null:
 		material.albedo_texture = texture
 		material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
@@ -701,9 +714,80 @@ func cancel_fight_focus() -> void:
 	if _focus_tween != null:
 		_focus_tween.kill()
 		_focus_tween = null
+	end_spotlight(0.0)
 	if fighting:
 		camera.transform = _fight_home
 		camera.fov = FIGHT_FOV
+
+
+## Owner 11-10 attack spotlight: the corridor dims around the acting pair (`lit_keys`),
+## the pair brightens a touch and is drawn in front of everyone else; figures in
+## `flash_keys` keep their own held hit-reaction colour instead of the brighten.
+func begin_spotlight(lit_keys: Array[String], flash_keys: Array[String] = [], time: float = SPOT_IN) -> void:
+	if not is_inside_tree() or corridor == null:
+		return
+	end_spotlight(0.0)
+	_spot_tween = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	for surface_node in corridor.get_children():
+		var material := (surface_node as MeshInstance3D).get_active_material(0) as StandardMaterial3D
+		if material != null:
+			_spot_tween.parallel().tween_property(material, "albedo_color", SURFACE_TINT * SPOT_SURFACE, time) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	_spot_tween.parallel().tween_property(environment, "ambient_light_energy", SPOT_AMBIENT, time) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+	for key in figure_nodes:
+		var figure: Sprite3D = figure_nodes[key]
+		figure.render_priority = 1 if lit_keys.has(key) else 0
+		if flash_keys.has(key):
+			continue
+		var tone := SPOT_LIT if lit_keys.has(key) else SPOT_DIM
+		_spot_tween.parallel().tween_property(figure, "modulate", tone, time) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+
+## Everything eases back to its normal light; figures return to plain white and the
+## fight re-shades them straight after. A `time` of 0 snaps (toggles, teardown).
+func end_spotlight(time: float = SPOT_EASE) -> void:
+	if _spot_tween != null:
+		_spot_tween.kill()
+		_spot_tween = null
+	if figure_nodes != null:
+		for key in figure_nodes:
+			figure_nodes[key].render_priority = 0
+	if time <= 0.0 or not is_inside_tree() or corridor == null:
+		if corridor != null:
+			for surface_node in corridor.get_children():
+				var snap := (surface_node as MeshInstance3D).get_active_material(0) as StandardMaterial3D
+				if snap != null:
+					snap.albedo_color = SURFACE_TINT
+		if environment != null:
+			environment.ambient_light_energy = AMBIENT_BASE
+		if figure_nodes != null:
+			for key in figure_nodes:
+				figure_nodes[key].modulate = Color.WHITE
+		return
+	_spot_tween = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+	for surface_node in corridor.get_children():
+		var material := (surface_node as MeshInstance3D).get_active_material(0) as StandardMaterial3D
+		if material != null:
+			_spot_tween.parallel().tween_property(material, "albedo_color", SURFACE_TINT, time) \
+				.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_spot_tween.parallel().tween_property(environment, "ambient_light_energy", AMBIENT_BASE, time) \
+		.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	for key in figure_nodes:
+		_spot_tween.parallel().tween_property(figure_nodes[key], "modulate", Color.WHITE, time) \
+			.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	_spot_tween.finished.connect(func(): _spot_tween = null)
+
+
+## The whole spotlight as one unattended pulse (reduced motion: the movement is
+## skipped, the dim/brighten beat still plays out and eases back by itself).
+func spot_pulse(lit_keys: Array[String], flash_keys: Array[String], hold: float, time: float = SPOT_IN) -> void:
+	begin_spotlight(lit_keys, flash_keys, time)
+	if _spot_tween == null:
+		return
+	_spot_tween.tween_interval(hold)
+	_spot_tween.tween_callback(end_spotlight)
 
 
 func _exit_tree() -> void:

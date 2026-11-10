@@ -1154,27 +1154,44 @@ func _live_receipt_key(unit_id: String) -> String:
 	return key if figure != null and figure.visible and figure.texture != null else ""
 
 
+## The live seats an attack spotlights: the acting figure first, then each target.
+## A hit target keeps its own held reaction colour, so it is marked, never brightened.
+func _receipt_spot_keys(receipt: Dictionary) -> Dictionary:
+	var lit: Array[String] = []
+	var flash: Array[String] = []
+	var targets: Array[String] = []
+	var actor_id := str(receipt.get("actor", ""))
+	var attacker_key := _live_receipt_key(actor_id)
+	if not attacker_key.is_empty():
+		lit.append(attacker_key)
+	for result in receipt.get("results", []):
+		var target_id := str(result.get("target", ""))
+		var target_key := _live_receipt_key(target_id)
+		if target_key.is_empty() or target_key == attacker_key or lit.has(target_key):
+			continue
+		lit.append(target_key)
+		targets.append(target_id)
+		if bool(result.get("hit", true)):
+			flash.append(target_key)
+	return {"lit": lit, "flash": flash, "targets": targets, "actor": actor_id}
+
+
 ## Called by the genuine receipt tween, never by selection, hover or refresh.
+## Owner 11-10: the beat is a spotlight: the pair steps forward into focus while the
+## corridor dims around them and they stand bright, drawn in front of everyone else.
 func _begin_receipt_focus(receipt: Dictionary) -> void:
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
 	if engine._motion_is_reduced() or battle.is_over() or not engine._damage_capable_receipt(receipt):
 		return
-	var actor_id := str(receipt.get("actor", ""))
-	var attacker_key := _live_receipt_key(actor_id)
-	if attacker_key.is_empty():
+	var spot := _receipt_spot_keys(receipt)
+	if spot.lit.size() < 2:
 		return
-	var keys: Array[String] = [attacker_key]
-	for result in receipt.get("results", []):
-		var target_id := str(result.get("target", ""))
-		var target_key := _live_receipt_key(target_id)
-		if not target_key.is_empty() and target_key != attacker_key and not keys.has(target_key):
-			keys.append(target_key)
-			_focus_target_ids.append(target_id)
-	if keys.size() < 2:
-		return
-	if stage.start_fight_focus(keys, _beat_span()):
-		_focus_actor_id = actor_id
+	_focus_target_ids = spot.targets
+	var focused := stage.start_fight_focus(spot.lit, _beat_span())
+	stage.begin_spotlight(spot.lit, spot.flash)
+	if focused:
+		_focus_actor_id = spot.actor
 
 
 ## One receipt's whole held beat: the strike out, the held pose and the ease back.
@@ -1265,10 +1282,14 @@ func _play_new_receipts() -> void:
 	_seen_receipts = engine.receipts.size()
 	if engine._motion_is_reduced() or battle.is_over():
 		_cancel_beats()
+		# Owner 11-10 reduced motion: the lunges and poses are skipped, but the attack
+		# still dims the corridor and brightens the acting pair for the same readable beat.
+		if engine._motion_is_reduced() and not battle.is_over():
+			_spotlight_without_motion(fresh)
 		return
 	if fresh.is_empty():
 		return
-	# Owner 11-10: a held beat is never cut short. New receipts queue behind the one
+	# Owner 11-10: a held beat is never cut short.New receipts queue behind the one
 	# playing, so the next turn's beat starts only after this hold eases back to idle.
 	if _beats != null and _beats.is_running():
 		_queued_receipts.append_array(fresh)
@@ -1305,6 +1326,8 @@ func _start_beats(batch: Array) -> void:
 				_beats.parallel().tween_property(struck, "modulate", Color(1.8, 0.55, 0.5), BEAT_TIME * 0.3)
 		# The held beat: attacker struck, targets hurt, camera focused, nothing moves.
 		_beats.tween_interval(HOLD_TIME)
+		# Owner 11-10: the spotlight eases back together with the figures' return to rank.
+		_beats.tween_callback(Callable(stage, "end_spotlight"))
 		_beats.tween_property(figure, "position:z", home.z, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
@@ -1323,6 +1346,19 @@ func _drain_queued_beats() -> void:
 	var next := _queued_receipts.duplicate()
 	_queued_receipts.clear()
 	_start_beats(next)
+
+
+## Owner 11-10 reduced motion: no lunges, no poses; the newest striking receipt still
+## plays its spotlight so the read stays slow, heavy and clear.
+func _spotlight_without_motion(fresh: Array) -> void:
+	for index in range(fresh.size() - 1, -1, -1):
+		var receipt: Dictionary = fresh[index]
+		if not bool(receipt.get("ok", false)) or not engine._damage_capable_receipt(receipt):
+			continue
+		var spot := _receipt_spot_keys(receipt)
+		if spot.lit.size() >= 2:
+			stage.spot_pulse(spot.lit, [], HOLD_TIME)
+		return
 
 
 ## Owner 11-09: a thrown thing (scrap bomb, lint, needle...) leaves the hand and flies to each target as
