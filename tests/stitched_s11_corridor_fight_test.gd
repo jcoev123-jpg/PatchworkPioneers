@@ -380,6 +380,27 @@ func _camera_sample(reduced: bool) -> Dictionary:
 
 ## A corridor rebuild or direct figure clear must cancel the pending fade before
 ## freeing the materials and Sprite3Ds that its tween is still targeting.
+func _verify_boss_minion_scale(fight: StitchedCorridorFight) -> void:
+	var battle := fight.battle
+	var front := fight.engine._unit_at("foe", 1)
+	var id := str(front.get("id", ""))
+	var original: Dictionary = battle._units[id].duplicate(true)
+	var original_encounter := battle._boss_encounter
+	battle._units[id]["is_boss"] = true
+	battle._boss_encounter = true
+	fight.refresh()
+	var boss_figure: Sprite3D = fight.stage.figure_nodes["foe_1"]
+	var minion_figure: Sprite3D = fight.stage.figure_nodes["foe_2"]
+	_check(is_equal_approx(fight.stage.placed_size(boss_figure).y, StitchedCorridorFight.BOSS_HEIGHT)
+		and is_equal_approx(fight.stage.placed_size(minion_figure).y, StitchedCorridorFight.FOE_HEIGHT),
+		"in a boss encounter only the actual boss is tall; its ordinary companion stays regular-sized")
+	battle._units[id] = original
+	battle._boss_encounter = original_encounter
+	fight.refresh()
+	_check(is_equal_approx(fight.stage.placed_size(fight.stage.figure_nodes["foe_1"]).y,
+		StitchedCorridorFight.FOE_HEIGHT), "the normal fight restores the front foe's ordinary size")
+
+
 func _verify_spotlight_teardown() -> void:
 	var stage := StitchedCorridorStage.new()
 	root.add_child(stage)
@@ -439,6 +460,7 @@ func _run() -> void:
 	_verify_live_intents(fight, 3)
 	_verify_inspection(fight)
 	_verify_intent_fixtures(fight)
+	_verify_boss_minion_scale(fight)
 	# The live spotlight must welcome an ally heal, rather than painting that doll red.
 	var healer: Dictionary = screen.battle.get_heroes()[0]
 	var helped: Dictionary = screen.battle.get_heroes()[1]

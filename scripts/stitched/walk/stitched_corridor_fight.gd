@@ -719,7 +719,8 @@ func refresh() -> void:
 			var heap: Dictionary = engine._heap_at(rank) if side == "foe" and not standing else {}
 			var where := stage.fight_point(side, rank)
 			if standing:
-				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss else FOE_HEIGHT)
+				# A boss encounter also contains ordinary minions; only the true boss grows.
+				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss and bool(unit.get("is_boss", false)) else FOE_HEIGHT)
 				# Doll and foe art is all drawn facing right; foes turn round to face the party.
 				# A turn can resolve while the prior hit is held; never replace its live pose,
 				# step or scale on the normal battle refresh. A different occupant still places.
