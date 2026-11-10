@@ -1278,7 +1278,8 @@ func _open_visit(kind: String) -> bool:
 			var unpicker_quote: Dictionary = _service.quote()
 			for outcome in unpicker_quote.get("calm_outcomes", []):
 				var calm_text := "Calm %s / %d gold" % [_hero_name(str(outcome.hero_id)), CALM_PRICE]
-				if StitchedRules.fray_enabled or not s14_enabled:
+				# Owner 11-10: no FRAY word on any live screen, S14 run or not, unless the meter is on.
+				if StitchedRules.fray_enabled:
 					calm_text = "Calm %s / -%d FRAY / %d gold" % [
 						_hero_name(str(outcome.hero_id)), int(outcome.fray_relief), CALM_PRICE]
 				_offer("calm", calm_text, true, [outcome.hero_id])

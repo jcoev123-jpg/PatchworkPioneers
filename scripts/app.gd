@@ -4681,7 +4681,7 @@ func _present_stitched_run() -> void:
 	if terminal:
 		_note_bedroom_run(session)
 		var opened := _note_wren_gifts(session)
-		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150), 30.0)
+		var terminal_panel := _stitched_run_felt(content, "TerminalRecap", Vector2(1120, 150), 64.0)
 		var final_art := TextureRect.new()
 		final_art.name = "TerminalBanner"
 		final_art.texture = _stitched_run_texture("res://assets/paper/ui/reward_banner.png")

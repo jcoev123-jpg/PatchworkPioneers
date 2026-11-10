@@ -28,7 +28,7 @@ const ARROW_X := [0.95, -0.95, 0.0]
 const ROUND := 84.0
 const OPTION := 62.0
 const TRAY_TOP := 62.0
-const STORY_RECT := Rect2(140, 660, 1000, 52)
+const STORY_RECT := Rect2(140, 646, 1000, 56)
 ## The picture lying on the floor for each kind of choice; the first that exists is used.
 const ITEM_ART := {
 	"leave": ["floor_arrow"],
