@@ -718,6 +718,16 @@ func refresh() -> void:
 			var standing := not unit.is_empty() and not bool(unit.get("dead", false)) and not bool(unit.get("lost", false))
 			var heap: Dictionary = engine._heap_at(rank) if side == "foe" and not standing else {}
 			var where := stage.fight_point(side, rank)
+			# Owner 11-10: a unit that fell on the blow being held keeps its struck pose on the seat;
+			# the scrap heap takes its place when the beat has eased back (see _drain_queued_beats).
+			var fallen: Sprite3D = stage.figure_nodes.get(key)
+			var fallen_unit := _fallen_foe_at(rank, str(fallen.get_meta("fight_unit", ""))) \
+				if side == "foe" and fallen != null and not standing else {}
+			if not fallen_unit.is_empty() and _hold_pending() and fallen.visible:
+				var held_plate: Control = plates[key]
+				(held_plate.get_node("Health") as TextureProgressBar).value = 0.0
+				(held_plate.get_node("HealthText") as Label).text = "0/%d" % int(fallen_unit.get("max_hp", 0))
+				continue
 			if standing:
 				# A boss encounter also contains ordinary minions; only the true boss grows.
 				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss and bool(unit.get("is_boss", false)) else FOE_HEIGHT)
@@ -738,9 +748,12 @@ func refresh() -> void:
 					figure.set_meta("fight_unit", str(unit.id))
 				figure.flip_h = side == "foe"
 			elif not heap.is_empty():
-				stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT).flip_h = false
+				var pile := stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT)
+				pile.flip_h = false
+				pile.set_meta("fight_unit", "")
 			elif stage.figure_nodes.has(key):
 				stage.figure_nodes[key].visible = false
+				stage.figure_nodes[key].set_meta("fight_unit", "")
 			var plate: Control = plates[key]
 			plate.visible = standing or not heap.is_empty()
 			var title: Label = plate.get_node("Name")
@@ -1161,6 +1174,30 @@ func _input(event: InputEvent) -> void:
 	get_viewport().set_input_as_handled()
 
 
+## The foe that just fell at this rank, if its own picture still stands there.
+func _fallen_foe_at(rank: int, unit_id: String) -> Dictionary:
+	if unit_id.is_empty():
+		return {}
+	for foe in battle.get_foes():
+		if str(foe.get("id", "")) == unit_id and bool(foe.get("dead", false)) and int(foe.get("rank", 0)) == rank:
+			return foe
+	return {}
+
+
+## True while a held beat playsor an ability receipt is about to start one: a unit that fell
+## on that blow keeps its picture on the seat until the beat has eased back.
+func _hold_pending() -> bool:
+	if engine._motion_is_reduced() or battle.is_over():
+		return false
+	if _beats != null and _beats.is_running():
+		return true
+	for index in range(_seen_receipts, engine.receipts.size()):
+		var entry: Dictionary = engine.receipts[index]
+		if bool(entry.get("ok", false)) and str(entry.get("action", "")) == "ability":
+			return true
+	return false
+
+
 func _state_signature() -> String:
 	return "%d|%s|%s|%s|%s|%d" % [engine.receipts.size(), engine._selected_part, engine._hand_pending,
 		battle.current_actor_id(), battle.outcome(), battle.candle()]
@@ -1186,6 +1223,8 @@ func _process(_delta: float) -> void:
 	if engine.receipts.size() != _seen_receipts:
 		refresh()
 		_play_new_receipts()
+		if _beats == null or not _beats.is_running():
+			refresh()
 		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 	elif _state_signature() != _signature:
 		refresh()
@@ -1210,16 +1249,21 @@ static func _simple_detail(detail: String) -> String:
 ## A heap or a later replacement at the same rank is NOT the struck unit.
 func _live_receipt_key(unit_id: String) -> String:
 	var unit := battle.get_unit(unit_id)
-	if unit.is_empty() or bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
+	if unit.is_empty() or bool(unit.get("lost", false)):
 		return ""
 	var side := str(unit.get("side", ""))
 	var rank := int(unit.get("rank", 0))
 	if not side in ["hero", "foe"] or rank < 1 or rank > 4:
 		return ""
-	if str(engine._unit_at(side, rank).get("id", "")) != unit_id:
-		return ""
 	var key := "%s_%d" % [side, rank]
 	var figure: Sprite3D = stage.figure_nodes.get(key)
+	# Owner 11-10: a struck unit that fell on this blow still stands in its held pose until the beat
+	# ends; only while its own picture is still on the seat (not the scrap heap that replaces it).
+	if bool(unit.get("dead", false)):
+		if figure == null or str(figure.get_meta("fight_unit", "")) != unit_id:
+			return ""
+	elif str(engine._unit_at(side, rank).get("id", "")) != unit_id:
+		return ""
 	return key if figure != null and figure.visible and figure.texture != null else ""
 
 
