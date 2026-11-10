@@ -69,6 +69,10 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	_verify_live_intents(fight, 4)
 	_check(fight.stage.figure_nodes.has("foe_4") and fight.stage.figure_nodes["foe_4"].visible,
 		"a fourth living unit appears in the mounted 3D corridor with its own ticket")
+	var rear_box := fight.stage.screen_rect("foe_4")
+	_check(rear_box.size.x > 0.0 and rear_box.position.x >= 0.0 and rear_box.end.x <= 1280.0
+		and fight.hits["foe_4"].visible and fight.hits["foe_4"].size.x > 20.0,
+		"fourth foe fits inside the corridor and retains a usable click target")
 	battle._units.erase(str(extra["id"]))
 	fight.refresh()
 	_verify_live_intents(fight, 3)
@@ -173,6 +177,11 @@ func _camera_sample(reduced: bool) -> Dictionary:
 		and bool(screen.receipts[initial_receipts.size()].get("ok", false))
 		and screen.receipts[initial_receipts.size()].get("action", "") == "ability",
 		"committed attack passes through the mounted corridor hit button and produces a real receipt")
+	var input_shield: Control = fight._beat_input_shield
+	_check(input_shield.visible == not reduced and input_shield.mouse_filter == Control.MOUSE_FILTER_STOP
+		and input_shield.get_global_rect().has_point(Vector2(679, 651))
+		and input_shield.get_index() == fight.get_child_count() - 1,
+		"live held beat intercepts next-turn physical clicks; reduced motion never blocks the bar")
 	# Headless process frames can be extremely short; sample at the real beat peak.
 	await create_timer(0.17).timeout
 	if not reduced:
@@ -231,6 +240,7 @@ func _camera_sample(reduced: bool) -> Dictionary:
 	_check(stage.camera.transform == baseline and is_equal_approx(stage.camera.fov, baseline_fov)
 		and not stage.fight_focus_active(),
 		"queued receipts restore the exact original camera transform and FOV")
+	_check(not input_shield.visible, "after the final beat eases back, player input is unblocked")
 	if stage.figure_nodes.has(attacker_key) and stage.figure_nodes[attacker_key].visible:
 		_check(stage.placed_texture(stage.figure_nodes[attacker_key]) == fight._figure_art(str(actor.get("id", ""))),
 			"after the authored pose beat, the real 3D attacker returns to its original picture")
@@ -315,6 +325,27 @@ func _run() -> void:
 	_verify_live_intents(fight, 3)
 	_verify_inspection(fight)
 	_verify_intent_fixtures(fight)
+	# The live spotlight must welcome an ally heal, rather than painting that doll red.
+	var healer: Dictionary = screen.battle.get_heroes()[0]
+	var helped: Dictionary = screen.battle.get_heroes()[1]
+	var heal_receipt := {"ok": true, "action": "ability", "actor": str(healer.id),
+		"results": [{"target": str(helped.id), "hit": true, "damage": 0, "heal": 4}]}
+	var heal_spot := fight._receipt_spot_keys(heal_receipt)
+	var healer_key := "hero_%d" % int(healer.rank)
+	var helped_key := "hero_%d" % int(helped.rank)
+	_check(heal_spot.lit.has(healer_key) and heal_spot.lit.has(helped_key)
+		and heal_spot.flash.is_empty(), "healing an ally lights both dolls without a red hit flash")
+	var before_heal_preview := screen.battle.state_snapshot()
+	fight._begin_receipt_focus(heal_receipt)
+	await create_timer(0.2).timeout
+	_check(fight.stage.environment.ambient_light_energy < StitchedCorridorStage.AMBIENT_BASE
+		and fight.stage.figure_nodes[healer_key].modulate.r > 1.05
+		and fight.stage.figure_nodes[helped_key].modulate.r > 1.05,
+		"mounted non-damaging ally heal dims the corridor and brightens both dolls")
+	fight.stage.cancel_fight_focus()
+	fight.refresh()
+	_check(screen.battle.state_snapshot() == before_heal_preview,
+		"healing spotlight only presents a receipt and never changes battle rules")
 	var heroes := 0
 	var foes := 0
 	for key in fight.plates:

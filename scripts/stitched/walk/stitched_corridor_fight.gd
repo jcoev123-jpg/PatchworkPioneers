@@ -81,6 +81,9 @@ var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
 var _beats: Tween
+## An invisible mouse shield keeps the next doll from acting during the held beat.
+## It intercepts physical clicks, not the public methods used by deterministic tests.
+var _beat_input_shield: Control
 ## Receipts that arrive while a held beat is still playing; they play after it, never over it.
 var _queued_receipts: Array = []
 ## Thrown things and hit effects in flight (picture sprites); gone when their beat ends or is cut short.
@@ -138,6 +141,13 @@ func _ready() -> void:
 	_build_bar()
 	_build_more()
 	_build_bark()
+	# Last child wins hit-testing, but draws nothing over the animation.
+	_beat_input_shield = Control.new()
+	_beat_input_shield.name = "BeatInputShield"
+	_beat_input_shield.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(_beat_input_shield)
+	_beat_input_shield.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_beat_input_shield.hide()
 	_seen_receipts = engine.receipts.size()
 	refresh()
 
@@ -505,6 +515,16 @@ func _act(receipt: Dictionary) -> Dictionary:
 		set_more_open(false)
 		_drop_bar_focus()
 	refresh()
+	# Block an immediate second click only when an actual ability beat is pending.
+	# Wren's free hand action has no held pose and must not block the doll's turn.
+	var has_new_ability := false
+	for index in range(_seen_receipts, engine.receipts.size()):
+		if str(engine.receipts[index].get("action", "")) == "ability":
+			has_new_ability = true
+			break
+	if bool(receipt.get("ok", false)) and str(receipt.get("pending", "")).is_empty() \
+			and has_new_ability and not engine._motion_is_reduced() and not battle.is_over():
+		_beat_input_shield.show()
 	# After refresh: its "Pick a target." line used to hide why a click was refused (Mistral playtest 11-09).
 	if not bool(receipt.get("ok", false)) and receipt.has("error"):
 		log_label.text = str(receipt.error).capitalize()
@@ -1075,6 +1095,12 @@ func hush() -> void:
 func _input(event: InputEvent) -> void:
 	if event is InputEventKey or event is InputEventMouseButton:
 		hush()
+	if _beat_input_shield.visible:
+		# A queued beat may already have advanced the rules to another doll; its
+		# input must wait until the visual turn has finished as well.
+		if event is InputEventKey and event.pressed:
+			get_viewport().set_input_as_handled()
+		return
 	if not event is InputEventKey or not event.pressed or event.echo or battle == null or battle.is_over():
 		return
 	if not event.keycode in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
@@ -1139,6 +1165,9 @@ func _process(_delta: float) -> void:
 	elif _sync_keyboard_targets():
 		_shade_figures()
 		_target_hint()
+	# Keep physical mouse/touch input asleep until the entire queued hold returns to idle.
+	_beat_input_shield.visible = not engine._motion_is_reduced() and not battle.is_over() \
+		and ((_beats != null and _beats.is_running()) or not _queued_receipts.is_empty())
 	_place_overlays()
 
 
@@ -1166,13 +1195,14 @@ func _live_receipt_key(unit_id: String) -> String:
 	return key if figure != null and figure.visible and figure.texture != null else ""
 
 
-## The live seats an attack spotlights: the acting figure first, then each target.
-## A hit target keeps its own held reaction colour, so it is marked, never brightened.
+## The live seats an ability spotlights: the acting figure first, then each target.
+## Only a struck opponent takes the red hit flash; an ally being mended stays lit.
 func _receipt_spot_keys(receipt: Dictionary) -> Dictionary:
 	var lit: Array[String] = []
 	var flash: Array[String] = []
 	var targets: Array[String] = []
 	var actor_id := str(receipt.get("actor", ""))
+	var actor_side := str(battle.get_unit(actor_id).get("side", ""))
 	var attacker_key := _live_receipt_key(actor_id)
 	if not attacker_key.is_empty():
 		lit.append(attacker_key)
@@ -1183,18 +1213,17 @@ func _receipt_spot_keys(receipt: Dictionary) -> Dictionary:
 			continue
 		lit.append(target_key)
 		targets.append(target_id)
-		if bool(result.get("hit", true)):
+		if bool(result.get("hit", true)) and str(battle.get_unit(target_id).get("side", "")) != actor_side:
 			flash.append(target_key)
 	return {"lit": lit, "flash": flash, "targets": targets, "actor": actor_id}
 
 
 ## Called by the genuine receipt tween, never by selection, hover or refresh.
-## Owner 11-10: the beat is a spotlight: the pair steps forward into focus while the
-## corridor dims around them and they stand bright, drawn in front of everyone else.
+## Owner 11-10: healing and guarding also focus their pair, without a red injury flash.
 func _begin_receipt_focus(receipt: Dictionary) -> void:
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
-	if engine._motion_is_reduced() or battle.is_over() or not engine._damage_capable_receipt(receipt):
+	if engine._motion_is_reduced() or battle.is_over() or str(receipt.get("action", "")) != "ability":
 		return
 	var spot := _receipt_spot_keys(receipt)
 	if spot.lit.size() < 2:
@@ -1216,6 +1245,8 @@ func _cancel_beats() -> void:
 		_beats.kill()
 		_beats = null
 	_queued_receipts.clear()
+	if _beat_input_shield != null:
+		_beat_input_shield.hide()
 	_show_move_name("")
 	_clear_flying()
 	stage.cancel_fight_focus()
@@ -1303,16 +1334,22 @@ func _play_new_receipts() -> void:
 		if engine._motion_is_reduced() and not battle.is_over():
 			_spotlight_without_motion(fresh)
 		return
-	if fresh.is_empty():
+	# Only ability receipts have a held pose. Free hand actions, passes and moves
+	# should never create a phantom tween that blocks subsequent input.
+	var animated: Array = []
+	for entry in fresh:
+		if bool(entry.get("ok", false)) and str(entry.get("action", "")) == "ability":
+			animated.append(entry)
+	if animated.is_empty():
 		return
-	# Owner 11-10: a held beat is never cut short.New receipts queue behind the one
-	# playing, so the next turn's beat starts only after this hold eases back to idle.
+	# Owner 11-10: a held beat is never cut short. New ability receipts queue
+	# behind it, so the next beat starts only after the hold eases back to idle.
 	if _beats != null and _beats.is_running():
-		_queued_receipts.append_array(fresh)
+		_queued_receipts.append_array(animated)
 		return
 	if stage.fight_focus_active():
 		stage.cancel_fight_focus()
-	_start_beats(fresh)
+	_start_beats(animated)
 
 
 func _start_beats(batch: Array) -> void:
@@ -1361,7 +1398,7 @@ func _start_beats(batch: Array) -> void:
 		for result in receipt.get("results", []):
 			var target_key := _live_receipt_key(str(result.get("target", "")))
 			var struck: Sprite3D = stage.figure_nodes.get(target_key)
-			if struck != null and struck != figure and bool(result.get("hit", true)):
+			if struck != null and struck != figure and spot.flash.has(target_key):
 				_beats.parallel().tween_property(struck, "modulate", Color(1.8, 0.55, 0.5), BEAT_TIME * 0.3)
 		# The held beat: attacker struck, targets hurt, camera focused, nothing moves.
 		_beats.tween_interval(HOLD_TIME)
@@ -1402,7 +1439,7 @@ func _drain_queued_beats() -> void:
 func _spotlight_without_motion(fresh: Array) -> void:
 	for index in range(fresh.size() - 1, -1, -1):
 		var receipt: Dictionary = fresh[index]
-		if not bool(receipt.get("ok", false)) or not engine._damage_capable_receipt(receipt):
+		if not bool(receipt.get("ok", false)) or str(receipt.get("action", "")) != "ability":
 			continue
 		var spot := _receipt_spot_keys(receipt)
 		if spot.lit.size() >= 2:
@@ -1506,7 +1543,7 @@ func _moveset(unit: Dictionary) -> String:
 
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not event is InputEventKey or not event.pressed or event.echo:
+	if _beat_input_shield.visible or not event is InputEventKey or not event.pressed or event.echo:
 		return
 	var slots := {KEY_1: "head", KEY_2: "arms", KEY_3: "torso", KEY_4: "legs"}
 	var hand_keys := [KEY_Q, KEY_W, KEY_E, KEY_R]

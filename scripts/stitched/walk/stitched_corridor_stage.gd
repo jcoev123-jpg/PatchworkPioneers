@@ -621,7 +621,9 @@ func fight_point(side: String, rank: int) -> Vector3:
 	var depth := -0.15 if index % 2 == 1 else 0.1
 	if side == "hero":
 		return Vector3(depth, 0, fight_z() + 0.45 + index * 0.75)
-	return Vector3(depth, 0, fight_z() - 0.45 - index * 1.0)
+	# Four foes may occupy the line (including a surviving foe moved into R4).
+	# At a full metre between them the rear foe falls entirely off the right edge.
+	return Vector3(depth, 0, fight_z() - 0.45 - index * 0.62)
 
 
 ## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.

@@ -186,6 +186,11 @@ func _run() -> void:
 		and screen._hand_pending.is_empty(),
 		"pointer passes Wren strings to legal 3D hero and commits existing Steady action")
 	_projection(fight, "after live hand")
+	_check(not fight._beat_input_shield.visible,
+		"free Wren hand action never blocks the next doll's part click")
+	await process_frame
+	_check(not fight._beat_input_shield.visible,
+		"free hand receipt creates no phantom held beat on the following frame")
 	# Exercise the first real enabled body-part button and its legal targeting.
 	var part := ""
 	for slot in StitchedBattleScreen.SLOTS:
