@@ -415,6 +415,10 @@ func place(id: String, texture: Texture2D, where: Vector3, height: float) -> Spr
 		figure.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 		figures.add_child(figure)
 		figure_nodes[id] = figure
+	# A seat reused after a Hanging doll recovers must stand upright again.
+	# place_flat() sets a lying pose after this common reset.
+	figure.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	figure.rotation = Vector3.ZERO
 	figure.texture = texture
 	figure.offset = Vector2.ZERO
 	figure.scale = Vector3.ONE

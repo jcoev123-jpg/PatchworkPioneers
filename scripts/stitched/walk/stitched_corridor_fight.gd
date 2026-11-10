@@ -716,7 +716,12 @@ func refresh() -> void:
 				var figure: Sprite3D = stage.figure_nodes.get(key)
 				if _beats == null or not _beats.is_running() or figure == null \
 						or str(figure.get_meta("fight_unit", "")) != str(unit.id):
-					figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
+					if side == "hero" and bool(unit.get("hanging", false)):
+						# Hanging means zero HP with a torn limb, not an upright idle doll.
+						# Reuse the stage's painted floor pose; a recovered doll stands on refresh.
+						figure = stage.place_flat(key, _figure_art(str(unit.id)), where, HERO_HEIGHT * 0.82, -PI / 2.0)
+					else:
+						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))
 				figure.flip_h = side == "foe"
 			elif not heap.is_empty():

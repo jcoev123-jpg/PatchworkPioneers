@@ -92,6 +92,25 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	battle._units[str(original["id"])] = original.duplicate(true)
 	fight.refresh()
 	_verify_live_intents(fight, 3)
+	# A recoverable zero-HP doll visibly falls, then stands when mended.
+	var hero: Dictionary = screen._unit_at("hero", 1)
+	var hero_id := str(hero.get("id", ""))
+	var saved_hero: Dictionary = battle._units[hero_id].duplicate(true)
+	battle._units[hero_id]["hp"] = 0
+	battle._units[hero_id]["hanging"] = true
+	fight.refresh()
+	var fallen: Sprite3D = fight.stage.figure_nodes["hero_1"]
+	_check(fallen.visible and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED
+		and fight.plates["hero_1"].get_node("HealthText").text == "HANGING",
+		"a zero-HP Hanging doll lies on the floor with its HANGING plate visible")
+	_check(fight.stage.screen_rect("hero_1").size.x > 0.0,
+		"the fallen doll still projects into the fight")
+	battle._units[hero_id] = saved_hero
+	fight.refresh()
+	var recovered: Sprite3D = fight.stage.figure_nodes["hero_1"]
+	_check(recovered.billboard == BaseMaterial3D.BILLBOARD_FIXED_Y
+		and recovered.visible and fight.plates["hero_1"].get_node("HealthText").text != "HANGING",
+		"a recovered doll returns upright with its regular health plate")
 	_check(battle.state_snapshot() == pristine and battle.rng_state() == rng
 		and screen.receipts == receipts and screen._selected_part.is_empty()
 		and battle.hand_action_open(), "all detached fixtures restore the genuine 4v3 battle, RNG and hand")
