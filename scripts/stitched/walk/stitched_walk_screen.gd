@@ -733,13 +733,17 @@ func refresh(animate: bool = false) -> void:
 
 func _input(event: InputEvent) -> void:
 	if walk != null and _walk_key(event):
-		get_viewport().set_input_as_handled()
+		# The corridor fight can be mounting while this node leaves the tree;
+		# a stray key then has no viewport to mark handled.
+		if is_inside_tree():
+			get_viewport().set_input_as_handled()
 		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 		return
 	if drawer_toggle != null and drawer_toggle.has_focus() and event is InputEventKey \
 		and event.pressed and not event.echo and event.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 		_toggle_drawer()
-		get_viewport().set_input_as_handled()
+		if is_inside_tree():
+			get_viewport().set_input_as_handled()
 	if walk != null and (event is InputEventKey or event is InputEventMouseButton or event is InputEventMouseMotion):
 		_arm_barks(float(barks.data.get("idle_delay", 9.0)))
 

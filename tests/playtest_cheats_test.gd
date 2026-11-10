@@ -81,7 +81,8 @@ func _run() -> void:
 	_check(session.heroes[0].hp == session.heroes[0].max_hp and session.is_consistent(), "heal restores HP")
 
 	_check(cheats.run_script("run;floor:3;fight boss") == "Boss battle" and app.stitched_run_session.phase == "battle"
-		and app.stitched_run_session.map.get_current_floor() == 2, "a ';' script chains commands")
+		and app.stitched_run_session.map.get_current_floor() == 12,
+		"a ';' script chains commands and the Boss stands on floor 12")
 	_finish()
 
 
