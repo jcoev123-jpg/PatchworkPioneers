@@ -542,11 +542,13 @@ func _assert_preview_purpose(graph: StitchedRouteGraphView, session: StitchedRun
 		_check(lead in text and str(preview.get_meta("stop_purpose", "")) == lead,
 			label + " " + str(node.type) + " shows its stop purpose from the shared helper")
 	if kind == "Campfire":
-		_check("30%" in text and "25" in text and "50" in text and "100" in text
-			and "Mend 30% HP" in text and "Tales -25 FRAY" in text
+		# Owner 11-10: the fray meter is retired, so the live hint shows no FRAY word or number.
+		_check("30%" in text and "50" in text and "100" in text
+			and "Mend 30% HP" in text and "Tales" in text
+			and not "FRAY" in text.to_upper()
 			and "Wick +50 CANDLE" in text and "max 100" in text
 			and "pick one" in text and "Possible" in text,
-			label + " Campfire shows all three recovery values as one possible pick")
+			label + " Campfire shows its recovery values as one possible pick with no FRAY")
 		_check(not RunV3StopChoiceProjection.stitched_stop_help_for("Campfire").lead in text,
 			label + " Campfire hint replaces the generic lead")
 		_check(not "guarantee" in text.to_lower() and not "heals " in text.to_lower(),
@@ -594,13 +596,26 @@ func _check_stop_purpose_helper() -> void:
 		_check(StitchedRouteGraphView.stop_purpose_for(kind).is_empty(),
 			"'" + kind + "' gains no split-stop purpose")
 	var hint := StitchedRouteGraphView.campfire_recovery_hint_for("Campfire")
-	_check(hint == "Possible, pick one: Mend %d%% HP / Tales -%d FRAY / Wick +%d CANDLE, max %d" % [
-		RunCampfireVisit.MEND_HEAL_PERCENT, RunCampfireVisit.TALES_FRAY_REDUCTION,
+	_check(hint == "Possible, pick one: Mend %d%% HP / Tales / Wick +%d CANDLE, max %d" % [
+		RunCampfireVisit.MEND_HEAL_PERCENT,
 		RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
-		and "Mend 30% HP" in hint and "Tales -25 FRAY" in hint
+		and "Mend 30% HP" in hint and not "FRAY" in hint.to_upper()
 		and "Wick +50 CANDLE" in hint and "max 100" in hint
 		and not "GOLD" in hint.to_upper(),
-		"Campfire hint shows 30/25/50/100 from the real constants and no price")
+		"Campfire hint shows 30/50/100 from the real constants, no price and no FRAY")
+	for help_kind in ["Campfire", "Unpicker"]:
+		var help_detail := str(RunV3StopChoiceProjection.stitched_stop_help_for(help_kind).get("detail", ""))
+		_check(not help_detail.is_empty() and not "FRAY" in help_detail.to_upper(),
+			help_kind + " stop help detail shows no FRAY while the meter is retired")
+	# The legacy wording stays reachable only when the fray flag is switched on.
+	var fray_before := StitchedRules.fray_enabled
+	StitchedRules.fray_enabled = true
+	var legacy_hint := StitchedRouteGraphView.campfire_recovery_hint_for("Campfire")
+	_check(legacy_hint == "Possible, pick one: Mend %d%% HP / Tales -%d FRAY / Wick +%d CANDLE, max %d" % [
+		RunCampfireVisit.MEND_HEAL_PERCENT, RunCampfireVisit.TALES_FRAY_REDUCTION,
+		RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
+		and "Tales -25 FRAY" in legacy_hint, "flag on keeps the FRAY hint wording")
+	StitchedRules.fray_enabled = fray_before
 	_check(StitchedRouteGraphView.campfire_recovery_hint_for("Rest") == hint,
 		"legacy Rest maps to the same Campfire hint")
 	for kind in ["Peddler", "SewingCircle", "Unpicker", "PatchStall", "Shop"]:

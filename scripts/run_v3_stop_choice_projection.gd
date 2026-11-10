@@ -55,6 +55,17 @@ static func project_stitched_legal_choices(map: RunMap) -> Array:
 static func stitched_stop_help_for(v3_kind: String) -> Dictionary:
 	match v3_kind:
 		"Campfire":
+			# The fray meter is retired from live screens (owner 11-10): no FRAY word unless it is on.
+			if not StitchedRules.fray_enabled:
+				return {
+					"lead": "Campfire: rest the dolls and tend the flame.",
+					"detail": "May offer Mend (%d%% max HP for each non-lost doll), Tell Tales or Trim Wick (+%d CANDLE, cap %d), plus eligible part swaps from a satchel of up to %d spare parts. Possible services, not guaranteed gains." % [
+						RunCampfireVisit.MEND_HEAL_PERCENT,
+						RunCampfireVisit.WICK_CANDLE_RESTORE,
+						RunCampfireVisit.STITCHED_CANDLE_MAX,
+						RunUnpickerVisit.SATCHEL_MAX,
+					],
+				}
 			return {
 				"lead": "Campfire: rest the dolls and tend the flame.",
 				"detail": "May offer Mend (%d%% max HP for each non-lost doll), Tell Tales (-%d FRAY each) or Trim Wick (+%d CANDLE, cap %d), plus eligible part swaps from a satchel of up to %d spare parts. Possible services, not guaranteed gains." % [
@@ -76,6 +87,11 @@ static func stitched_stop_help_for(v3_kind: String) -> Dictionary:
 				"detail": "May sell a priced part or patch, a +%d CANDLE stub, or a bandage that cures Bleed, subject to the real offers and your gold. Nothing is promised until you arrive." % RunPeddlerVisit.CANDLE_STUB_RESTORE,
 			}
 		"Unpicker":
+			if not StitchedRules.fray_enabled:
+				return {
+					"lead": "Unpicker: loosen stitches and trade spare parts.",
+					"detail": "May unpick one eligible doll at a quoted gold price, or take a spare part for quoted scraps. Quotes are given on arrival.",
+				}
 			return {
 				"lead": "Unpicker: loosen stitches and trade spare parts.",
 				"detail": "May unpick one eligible doll for -%d FRAY at a quoted gold price, or take a spare part for quoted scraps. Quotes are given on arrival." % RunUnpickerVisit.CALM_AMOUNT,

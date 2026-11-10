@@ -322,6 +322,11 @@ static func stop_purpose_for(kind: String) -> String:
 static func campfire_recovery_hint_for(kind: String) -> String:
 	if RunV3StopChoiceProjection.v3_kind_for(kind) != "Campfire":
 		return ""
+	# The fray meter is retired from live screens (owner 11-10): no FRAY word unless it is on.
+	if not StitchedRules.fray_enabled:
+		return "Possible, pick one: Mend %d%% HP / Tales / Wick +%d CANDLE, max %d" % [
+			RunCampfireVisit.MEND_HEAL_PERCENT,
+			RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
 	return "Possible, pick one: Mend %d%% HP / Tales -%d FRAY / Wick +%d CANDLE, max %d" % [
 		RunCampfireVisit.MEND_HEAL_PERCENT, RunCampfireVisit.TALES_FRAY_REDUCTION,
 		RunCampfireVisit.WICK_CANDLE_RESTORE, RunCampfireVisit.STITCHED_CANDLE_MAX]
