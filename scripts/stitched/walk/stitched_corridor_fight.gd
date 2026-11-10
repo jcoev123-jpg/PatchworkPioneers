@@ -481,8 +481,9 @@ func _build_more() -> void:
 		["retreat", "Flee", func(): _act(engine.submit_retreat())],
 	]
 	for entry in actions:
-		# Owner 11-10: Re-tie thread is a retired hand action; live S14 fights hide it.
-		if entry[0] == "re_tie" and battle._s14 and not StitchedRules.wren_hands:
+		# Owner 11-10: Re-tie is retired in every live fight, including older
+		# non-S14 encounters. Explicit legacy tests can still opt into it.
+		if entry[0] == "re_tie" and not StitchedRules.wren_hands:
 			continue
 		add_more(entry[0], entry[1], entry[2])
 

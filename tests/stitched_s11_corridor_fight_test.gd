@@ -418,6 +418,8 @@ func _run() -> void:
 	# exercised only with an explicit test-only opt-in, never in shipped play.
 	_check(not StitchedRules.wren_hands and fight.hand_buttons.is_empty(),
 		"retired Wren hand buttons are absent from the live pre-S14 fight bar")
+	_check(not fight.more_buttons.has("re_tie"),
+		"retired Re-tie is absent from the pre-S14 live More menu")
 	StitchedRules.wren_hands = true
 	fight._build_hands()
 	fight.refresh()
