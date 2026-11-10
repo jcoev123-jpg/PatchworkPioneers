@@ -7358,7 +7358,7 @@ func _test_require_fray_or_fear_keyhole_choir() -> void:
 		_choice("follow_humming", "Follow humming.", {
 			"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room": true
 		}),
-		_choice("buy_silence", "Spend scraps to quiet Wren and ease the dolls' fray", {
+		_choice("buy_silence", "Spend scraps to quiet Wren and ease the dolls' seams", {
 			"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true
 		}),
 		_choice("leave", "Leave.", _effect(0, 0, "party")),
@@ -7380,7 +7380,7 @@ func _test_require_fray_or_fear_keyhole_choir() -> void:
 			keyhole_buy = ch
 			break
 	_check(not keyhole_buy.is_empty(), "AC1: buy_silence choice found in catalog")
-	_check(keyhole_buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' fray",
+	_check(keyhole_buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' seams",
 		"AC1: buy_silence text matches exactly")
 	var buy_eff: Dictionary = keyhole_buy.get("stitched_effect", {})
 	_check(buy_eff.get("target") == "party"

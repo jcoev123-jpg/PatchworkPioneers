@@ -37,6 +37,6 @@
 		{"id": "whisper", "name": "Whisper", "target": "doll", "rarity": "rare", "unlock": "boss", "once_per_fight": true, "icon": "hand_lift",
 			"text": "Wren whispers to one doll and it takes another turn this round."},
 		{"id": "nightlight", "name": "Nightlight", "target": "none", "rarity": "rare", "unlock": "boss", "once_per_fight": true, "icon": "hand_shield_candle",
-			"text": "Wren switches on his nightlight: for the rest of this fight the dark adds no fray."}
+			"text": "Wren switches on his nightlight: for the rest of this fight the dark leaves the dolls alone."}
 	]
 }

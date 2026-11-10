@@ -27,8 +27,8 @@ const EXPECTED := {
 		"title": "The Glassfront Pin Cabinet",
 		"description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
 		"choices": [
-			{"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
-			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
+			{"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle; the cold draft strains every doll)", "effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
+			{"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle; every doll settles)", "effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
 			{"id": "leave", "text": "Let the cabinet's velvet drawers close", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -36,8 +36,8 @@ const EXPECTED := {
 		"title": "The Moonblack Paperweight",
 		"description": "A moonblack glass paperweight pins a torn house plan to the floorboards; a small cream-felt mapkeeper waits beneath its cold reflection, holding an ink-stained spool.",
 		"choices": [
-			{"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16, "min_fray": 1}},
-			{"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
+			{"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (every doll settles)", "effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16, "min_fray": 1}},
+			{"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle; every doll strains)", "effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the black glass holding down the plan", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -45,8 +45,8 @@ const EXPECTED := {
 		"title": "The Cinder-Brass Bedwarmer",
 		"description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
 		"choices": [
-			{"id": "rent_ember_lid", "text": "When the candle gutters, borrow embers; gain light but fray the dolls", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true, "required_candle_bands": ["snuffed", "dark", "gloom"]}},
-			{"id": "sift_cooling_ashes", "text": "Sift cooling ashes for scraps; dim the candle and ease fray", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
+			{"id": "rent_ember_lid", "text": "When the candle gutters, borrow embers; gain light but strain the dolls", "effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true, "required_candle_bands": ["snuffed", "dark", "gloom"]}},
+			{"id": "sift_cooling_ashes", "text": "Sift cooling ashes for scraps; dim the candle and calm the dolls", "effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
 			{"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},

@@ -671,6 +671,10 @@ func refresh(animate: bool = false) -> void:
 		var turning := stage.turn(expected.looking_back, animate and not moved)
 		if turning != null:
 			travel = turning
+	# The turn or creep above places the name plates against a camera that is still
+	# moving; re-place them once the move lands so they sit under their figures.
+	if travel != null:
+		travel.finished.connect(_place_figure_controls)
 	var viewpoint: Dictionary = {}
 	for doll in expected.dolls:
 		if doll.id == expected.viewpoint:

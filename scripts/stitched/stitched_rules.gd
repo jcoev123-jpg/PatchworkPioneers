@@ -1504,13 +1504,9 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			if int(unit["hp"]) == 0:
 				_begin_hanging_or_death(unit)
 				return true
-		elif _s14 and str(unit["side"]) == "hero" and not bool(unit["lost"]):
-			# Playtest 11-10: a doll already at 0 HP is on its last threads, so a leaking seam
-			# pulls at it like any other blow. Without this a doll no foe could reach with a
-			# real hit stood at 0 HP forever and the fight never ended.
-			_death_door_hit(unit)
-			if bool(unit["lost"]):
-				return true
+		# A Hanging doll ticks its clocks down but never door-hits itself: the escalating
+		# death door answers real blows only, and the shared FRAY cascade can still finish a
+		# doll no foe could reach, so a leaking seam alone never tears a head off on its own turn.
 	# S15 Rot: a steady mildew tick after Bleed, ignoring PROT, one turn used per tick.
 	var rot := int(statuses.get("rot", 0))
 	if rot > 0:
@@ -1522,13 +1518,9 @@ func _tick_turn_start(unit: Dictionary) -> bool:
 			if int(unit["hp"]) == 0:
 				_begin_hanging_or_death(unit)
 				return true
-		elif _s14 and str(unit["side"]) == "hero" and not bool(unit["lost"]):
-			# Playtest 11-10: a doll already at 0 HP is on its last threads, so a leaking seam
-			# pulls at it like any other blow. Without this a doll no foe could reach with a
-			# real hit stood at 0 HP forever and the fight never ended.
-			_death_door_hit(unit)
-			if bool(unit["lost"]):
-				return true
+		# A Hanging doll ticks its clocks down but never door-hits itself: the escalating
+		# death door answers real blows only, and the shared FRAY cascade can still finish a
+		# doll no foe could reach, so a leaking seam alone never tears a head off on its own turn.
 	for key in COUNTDOWN_KEYS:
 		if not statuses.has(key):
 			continue
@@ -1743,8 +1735,8 @@ const PATCH_HELPFUL := ["guard", "heal", "regen", "cleanse"]
 
 
 ## Owner 11-10 ("the felt patches mechanic that goes onto abilities isnt working"): a sewn patch always
-## works for the doll that carries it. A helping patch on an attack lands on the attacker (a guard
-## patch shelters its frailest friend); a harming patch on a friendly ability lands on the front foe.
+## rides the ability's actual struck target (mend the struck foe, bleed the healed ally, bite its
+## own caster); this retired redirect helper stays unused - _s14_apply_patches aims at the struck.
 func _s14_patch_aim(actor: Dictionary, struck: Dictionary, effect: String) -> Dictionary:
 	var friendly := str(struck.side) == str(actor.side)
 	if effect in PATCH_HELPFUL:
@@ -1773,7 +1765,7 @@ func _s14_apply_patches(actor: Dictionary, ability: Dictionary, receipt: Diction
 		var amount: int = int(patch.amount)
 		if effect == "chain":
 			continue
-		var target := _s14_patch_aim(actor, struck, effect)
+		var target := struck
 		if target.is_empty() or target.get("dead", false) or target.get("lost", false):
 			continue
 		# A patch that lands on someone other than the struck unit keeps its own note, so the
@@ -2432,8 +2424,8 @@ func _change_fray(hero: Dictionary, amount: int, scale_by_candle: bool = true) -
 	if str(hero["side"]) != "hero" or bool(hero["lost"]):
 		return _reject("fray", str(hero["id"]), "hero is lost or not a hero")
 	var before := int(hero["fray"])
-	if not (fray_enabled or not _s14):
-		return {"ok": true, "action": "fray", "actor": str(hero["id"]), "before": before, "change": 0, "after": before, "transition": ""}
+	# Battle fray always applies: the s14 death door's authored party fray and resolve rolls
+	# are real combat state; only the visible meter and the cross-battle carry stay flag-gated.
 	var applied := StitchedS1BEffects.fray_gain(amount, _candle) if amount > 0 and scale_by_candle and not candle_shielded() else amount
 	if applied > 0 and eyes_covered(str(hero["id"])):
 		applied = 0

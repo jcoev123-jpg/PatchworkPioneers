@@ -243,6 +243,7 @@ func _run() -> void:
 	await _host_tug_mount()
 	await _mimic_mounts()
 	await _deferred_items()
+	await _animated_lookback_labels()
 	var source := FileAccess.get_file_as_string("res://scripts/stitched/walk/stitched_walk_screen.gd")
 	for forbidden in ["func _draw", "draw_", "StyleBoxFlat.new", "GradientTexture", "GPUParticles", "randi()", "randomize()"]:
 		_check(not source.contains(forbidden), "screen has no generated art or unseeded RNG " + forbidden)
@@ -395,6 +396,29 @@ func _mimic_mounts() -> void:
 			_reject(stage, "snip", {"target": "extra_thread_shadow"})
 		stage.free()
 	_check(witnesses[true] > 0 and witnesses[false] > 0, "non-vacuous shadow and ordinary public seeds")
+
+
+## Playtest 11-10: after an animated Look back the trailing name plates must
+## settle under their own figures once the turn finishes, not stay stacked on the
+## shared fallback point the mid-turn placement falls back to.
+func _animated_lookback_labels() -> void:
+	var stage := StitchedWalkScreen.new()
+	_check(stage.begin(), "animated look back witness starts")
+	root.add_child(stage)
+	await process_frame
+	stage.back_button.pressed.emit()
+	_check(stage.travel != null, "live animated turn runs for the look back")
+	if stage.travel == null:
+		stage.free()
+		return
+	await stage.travel.finished
+	var spots := {}
+	for id in stage.figure_labels:
+		spots[stage.figure_labels[id].position] = id
+	_check(spots.size() == stage.figure_labels.size(), "finished turn spreads every name plate apart")
+	for id in stage.figure_labels:
+		_check(stage.figure_labels[id].position != Vector2(550, 424), "no name plate rests on the shared fallback point " + str(id))
+	stage.free()
 
 
 func _deferred_items() -> void:

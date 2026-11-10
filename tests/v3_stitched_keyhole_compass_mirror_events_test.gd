@@ -32,8 +32,8 @@ const EXPECTED := {
 		"title": "The Keyhole Choir",
 		"description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
 		"choices": [
-			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
-			{"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' fray", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
+			{"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, strain their seams", "effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
+			{"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' seams", "effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
 			{"id": "leave", "text": "Leave the little choir singing behind the door", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
 	},
@@ -41,7 +41,7 @@ const EXPECTED := {
 		"title": "The Compass of Loose Ends",
 		"description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
 		"choices": [
-			{"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
+			{"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle; requires Yarn Ranger)", "effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
 			{"id": "buy_quiet_bearing", "text": "Trade gold for a quiet bearing to calm the dolls", "effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10, "min_fray": 1}},
 			{"id": "leave", "text": "Leave the needle turning in circles", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],
@@ -50,7 +50,7 @@ const EXPECTED := {
 		"title": "The Veiled Wardrobe Mirror",
 		"description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
 		"choices": [
-			{"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and fray every doll", "effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
+			{"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and strain every doll", "effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
 			{"id": "pin_lace_veil", "text": "Pin the veil back with a scrap to soothe the dolls", "effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
 			{"id": "leave", "text": "Pass without looking into the silver again", "effect": {"target": "party", "candle": 0, "fray": 0}},
 		],

@@ -1,6 +1,6 @@
 extends SceneTree
 ## S14 heal patches: the sewn-on Cotton (2) / Gold (5) healing mends the ally its signature
-## helps, or the doll that carries it when the signature strikes a foe (owner 11-10).
+## helps, or the foe its signature strikes when that foe survives (owner 11-10).
 ## Seeded, catalog-built battles driven only by public signature, foe-ability
 ## and pass actions; wounds and deaths come from real legal play, never from
 ## direct _apply_effects calls or test-only unit mutation. The terminal
@@ -387,8 +387,9 @@ func _crab_hp(battle: StitchedRules) -> int:
 	return -1
 
 
-func _attack_heal_mends_carrier() -> void:
-	# Owner 11-10: a heal patch sewn onto an attack mends the doll that carries it, never the foe.
+func _attack_heal_mends_struck_foe() -> void:
+	# Owner 11-10: a heal patch sewn onto a hostile strike mends the foe it strikes if
+	# that foe survives; the carrying doll keeps its own stuffing.
 	var battle := _battle({"warden": {COMMAND: [COTTON]}})
 	if battle == null:
 		return
@@ -414,17 +415,17 @@ func _attack_heal_mends_carrier() -> void:
 	_check(not hit.is_empty(), "precondition: the socketed Command lands")
 	if hit.is_empty():
 		return
-	_check(int(warden.hp) == before + 2, "the Cotton heal mends its carrier exactly two")
-	_check(int(foe.hp) == foe_before - int(hit.get("damage", 0)), "the struck foe is never healed")
+	_check(int(warden.hp) == before, "the carrying doll keeps its own stuffing on a hostile strike")
+	_check(int(foe.hp) == foe_before - int(hit.get("damage", 0)) + 2, "the Cotton heal mends the struck foe exactly two")
 	var named := false
 	for entry in hit.get("statuses", []):
-		if entry.get("status") == "heal" and entry.get("patch") == COTTON and entry.get("on") == "warden":
+		if entry.get("status") == "heal" and entry.get("patch") == COTTON and not entry.has("on"):
 			named = true
-	_check(named, "the receipt says the heal landed on the carrier")
+	_check(named, "the receipt says the heal landed on the struck foe")
 
 
 func _initialize() -> void:
-	_attack_heal_mends_carrier()
+	_attack_heal_mends_struck_foe()
 	_foe_full_cap()
 	_ally_heal()
 	_hanging_recovery()

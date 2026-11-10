@@ -131,14 +131,14 @@ func _offer_text(witness: Dictionary) -> void:
 	if outcomes.size() == 2 and calms.size() == 2:
 		_check(outcomes[0].fray_relief == 12 and outcomes[1].fray_relief == 50,
 			"the quoted reliefs are 12 and 50 for 12 and 85 FRAY")
-		_check(str(calms[0].text).contains("-12 FRAY") and str(calms[1].text).contains("-50 FRAY")
+		_check(not str(calms[0].text).contains("FRAY") and not str(calms[1].text).contains("FRAY")
 			and str(calms[0].text).contains("75 gold") and str(calms[1].text).contains("75 gold"),
-			"the calm labels disclose -12, -50 and the 75-gold charge")
+			"the calm labels stay FRAY-free in live s14 mode and disclose the 75-gold charge")
 		for index in 2:
 			var row: Dictionary = outcomes[index]
 			var hero := _hero(session, str(row.hero_id))
-			_check(not hero.is_empty() and calms[index].text == "Calm %s / -%d FRAY / %d gold" % [
-					hero.name, int(row.fray_relief), PRICE]
+			_check(not hero.is_empty() and calms[index].text == "Calm %s / %d gold" % [
+					hero.name, PRICE]
 					and calms[index].arguments == [row.hero_id] and calms[index].arguments == [session.heroes[index].id]
 					and calms[index].enabled == true,
 				"calm %d shows the quoted relief row with its id, hero argument, order and enabled flag" % index)

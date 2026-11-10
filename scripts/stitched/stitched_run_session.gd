@@ -1272,8 +1272,11 @@ func _open_visit(kind: String) -> bool:
 			# Labels only read the service's own quote: its relief rows and tiered spares.
 			var unpicker_quote: Dictionary = _service.quote()
 			for outcome in unpicker_quote.get("calm_outcomes", []):
-				_offer("calm", "Calm %s / -%d FRAY / %d gold" % [
-					_hero_name(str(outcome.hero_id)), int(outcome.fray_relief), CALM_PRICE], true, [outcome.hero_id])
+				var calm_text := "Calm %s / %d gold" % [_hero_name(str(outcome.hero_id)), CALM_PRICE]
+				if StitchedRules.fray_enabled or not s14_enabled:
+					calm_text = "Calm %s / -%d FRAY / %d gold" % [
+						_hero_name(str(outcome.hero_id)), int(outcome.fray_relief), CALM_PRICE]
+				_offer("calm", calm_text, true, [outcome.hero_id])
 			for spare in unpicker_quote.get("spares", []):
 				var spare_name: String = str(catalog[spare.id].name) if catalog.has(spare.id) else str(spare.id)
 				_offer("unpick", "Unpick %s (Tier %s) / +%d scraps" % [

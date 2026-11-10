@@ -28,8 +28,8 @@
       "title": "Frayed Debt Parcel",
       "description": "Borrowed stitches offer stronger spare parts at a cost to composure.",
       "choices": [
-        {"id": "offer_0", "text": "Take a tier II claw (requires DARK or SNUFFED candlelight, +25 fray to the party)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "scissor_crab_claw_arm", "tier": 2}, "required_candle_bands": ["dark", "snuffed"]}},
-        {"id": "offer_1", "text": "Take a tier II moth wing (+25 fray to the party)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "moth_swarm_wings", "tier": 2}}},
+        {"id": "offer_0", "text": "Take a tier II claw (requires DARK or SNUFFED candlelight; the borrowed stitches strain every doll)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "scissor_crab_claw_arm", "tier": 2}, "required_candle_bands": ["dark", "snuffed"]}},
+        {"id": "offer_1", "text": "Take a tier II moth wing (the borrowed stitches strain every doll)", "stitched_effect": {"target": "party", "candle": 0, "fray": 25, "part": {"id": "moth_swarm_wings", "tier": 2}}},
         {"id": "safe_exit", "text": "Gather loose thread (+1 scrap)", "stitched_effect": {"target": "party", "candle": 0, "fray": 0, "scraps": 1}}
       ]
     },
@@ -48,8 +48,8 @@
       "title": "The Glassfront Pin Cabinet",
       "description": "A giant glass-front sewing cabinet looms above the doll-sized passage; behind warped panes a plump button-eyed keeper sorts copper pins into black velvet drawers.",
       "choices": [
-        {"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle, +4 fray each)", "stitched_effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
-        {"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle, -4 fray each)", "stitched_effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
+        {"id": "salvage_loose_pinheads", "text": "Open a draughty pin tray (+3 scraps, -8 candle; the cold draft strains every doll)", "stitched_effect": {"target": "party", "candle": -8, "fray": 4, "scraps": 3, "require_full_candle": true}},
+        {"id": "brace_wick_with_pins", "text": "Spend 2 scraps bracing the candle wick (+15 candle; every doll settles)", "stitched_effect": {"target": "party", "candle": 15, "fray": -4, "scraps": -2, "require_full_candle_gain": true}},
         {"id": "leave", "text": "Let the cabinet's velvet drawers close", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
@@ -58,8 +58,8 @@
       "title": "The Moonblack Paperweight",
       "description": "A moonblack glass paperweight pins a torn house plan to the floorboards; a small cream-felt mapkeeper waits beneath its cold reflection, holding an ink-stained spool.",
       "choices": [
-        {"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (-10 fray each)", "stitched_effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16, "min_fray": 1}},
-        {"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "stitched_effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
+        {"id": "buy_quiet_house_plan", "text": "Pay 16 gold for a reassuring house plan (every doll settles)", "stitched_effect": {"target": "party", "candle": 0, "fray": -10, "gold": -16, "min_fray": 1}},
+        {"id": "lift_shadowed_map", "text": "Lift the shadowed weight (+23 gold, -10 candle; every doll strains)", "stitched_effect": {"target": "party", "candle": -10, "fray": 7, "gold": 23, "require_full_candle": true}},
         {"id": "leave", "text": "Leave the black glass holding down the plan", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
@@ -68,8 +68,8 @@
       "title": "The Cinder-Brass Bedwarmer",
       "description": "A bedwarmer the size of a wagon glows behind a perforated brass lid; a soot-dark round ragdoll steadies its long wooden handle beside a threadbare carpet.",
       "choices": [
-        {"id": "rent_ember_lid", "text": "When the candle gutters, borrow embers; gain light but fray the dolls", "stitched_effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true, "required_candle_bands": ["snuffed", "dark", "gloom"]}},
-        {"id": "sift_cooling_ashes", "text": "Sift cooling ashes for scraps; dim the candle and ease fray", "stitched_effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
+        {"id": "rent_ember_lid", "text": "When the candle gutters, borrow embers; gain light but strain the dolls", "stitched_effect": {"target": "party", "candle": 22, "fray": 5, "gold": -11, "require_candle_room": true, "required_candle_bands": ["snuffed", "dark", "gloom"]}},
+        {"id": "sift_cooling_ashes", "text": "Sift cooling ashes for scraps; dim the candle and calm the dolls", "stitched_effect": {"target": "party", "candle": -12, "fray": -6, "scraps": 2, "require_full_candle": true}},
         {"id": "leave", "text": "Leave the bedwarmer glowing in the dark", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
@@ -78,8 +78,8 @@
       "title": "The Keyhole Choir",
       "description": "A brass keyhole towers above the doll-sized skirting board. Three round, button-eyed singers sway behind its dark throat, and their humming makes the candle flame bow toward the door.",
       "choices": [
-        {"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, fray their seams", "stitched_effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
-        {"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' fray", "stitched_effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
+        {"id": "follow_humming", "text": "Follow the warm humming; mend the dolls, kindle the wick, strain their seams", "stitched_effect": {"target": "party", "candle": 16, "fray": 7, "hp": 5, "require_candle_room_or_wound": true}},
+        {"id": "buy_silence", "text": "Spend scraps to quiet Wren and ease the dolls' seams", "stitched_effect": {"target": "party", "candle": 0, "fray": -12, "scraps": -2, "fear": -8, "require_fray_or_fear": true}},
         {"id": "leave", "text": "Leave the little choir singing behind the door", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
     },
@@ -88,7 +88,7 @@
       "title": "The Compass of Loose Ends",
       "description": "A dinner-plate compass sits on a vast overturned spool. Its needle is a bent knitting pin, turning toward a knot that only the little hooded dolls seem able to read.",
       "choices": [
-        {"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle, +6 fray each; requires Yarn Ranger)", "stitched_effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
+        {"id": "follow_yarn_bolas", "text": "Let the Yarn Ranger trace the knot (+2 scraps, -9 candle; requires Yarn Ranger)", "stitched_effect": {"target": "party", "candle": -9, "fray": 6, "scraps": 2, "required_hero": "yarn_ranger", "require_full_candle": true}},
         {"id": "buy_quiet_bearing", "text": "Trade gold for a quiet bearing to calm the dolls", "stitched_effect": {"target": "party", "candle": 0, "fray": -8, "gold": -10, "min_fray": 1}},
         {"id": "leave", "text": "Leave the needle turning in circles", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]
@@ -98,7 +98,7 @@
       "title": "The Veiled Wardrobe Mirror",
       "description": "A wardrobe mirror looms like a silver wall. A small stitched doll in the glass wears a lace veil and copies every movement a heartbeat too late.",
       "choices": [
-        {"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and fray every doll", "stitched_effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
+        {"id": "lift_silver_seam", "text": "Pry the silver seam for a rich purse; dim the wick and strain every doll", "stitched_effect": {"target": "party", "candle": -18, "fray": 15, "gold": 35, "require_full_candle": true, "min_active_heroes": 2}},
         {"id": "pin_lace_veil", "text": "Pin the veil back with a scrap to soothe the dolls", "stitched_effect": {"target": "party", "candle": 0, "fray": -9, "scraps": -1, "min_fray": 1}},
         {"id": "leave", "text": "Pass without looking into the silver again", "stitched_effect": {"target": "party", "candle": 0, "fray": 0}}
       ]

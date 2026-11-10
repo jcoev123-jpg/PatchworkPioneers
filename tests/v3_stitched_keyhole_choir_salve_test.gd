@@ -102,7 +102,7 @@ func _test_catalogue_ac1(event_record: Dictionary) -> void:
 
 	var follow := _find_choice(event_record, "follow_humming")
 	_check(not follow.is_empty(), "AC1: follow_humming choice present")
-	_check(follow.get("text") == "Follow the warm humming; mend the dolls, kindle the wick, fray their seams",
+	_check(follow.get("text") == "Follow the warm humming; mend the dolls, kindle the wick, strain their seams",
 		"AC1: follow_humming text is qualitatively changed with no numeric exposition")
 	var follow_effect: Dictionary = follow.get("stitched_effect", {})
 	_check(follow_effect.get("target") == "party", "AC1: follow_humming target is party")
@@ -114,7 +114,7 @@ func _test_catalogue_ac1(event_record: Dictionary) -> void:
 
 	var buy := _find_choice(event_record, "buy_silence")
 	_check(not buy.is_empty(), "AC1: buy_silence choice present")
-	_check(buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' fray",
+	_check(buy.get("text") == "Spend scraps to quiet Wren and ease the dolls' seams",
 		"AC1: buy_silence authored text updated")
 	var buy_effect: Dictionary = buy.get("stitched_effect", {})
 	_check(buy_effect.get("target") == "party", "AC1: buy_silence target is party")

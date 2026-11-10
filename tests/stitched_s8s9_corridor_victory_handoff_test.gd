@@ -902,8 +902,8 @@ func _run() -> void:
 				"Recap_" + str(hero.id), true, false) as Label
 			var ended_state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
 			_check(recap_label != null and recap_label.text.contains(ended_state)
-				and recap_label.text.contains("FRAY %d / 200" % int(hero.fray)),
-				str(hero.id) + "'s terminal recap shows its actual ended state and fray")
+				and not recap_label.text.contains("FRAY"),
+				str(hero.id) + "'s terminal recap shows its actual ended state with the fray readout hidden")
 		_check(StitchedBedroomRecord.valid(fresh.bedroom_record)
 			and fresh.bedroom_record == expected_record,
 			"mounting the terminal creates exactly the ended run's bedroom record")

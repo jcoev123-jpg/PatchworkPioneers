@@ -3172,6 +3172,10 @@ func _prepare_stitched_campfire(roster: Array, projected_candle: int) -> Diction
 		"swap_state": swap_state, "swap_quote": swap_quote}
 
 
+func _stitched_fray_words_shown() -> bool:
+	return StitchedRules.fray_enabled or (stitched_run_session != null and not stitched_run_session.s14_enabled)
+
+
 func _mount_stitched_campfire(state: Dictionary, generation: int,
 		swap_quote: Dictionary) -> Dictionary:
 	var panel := Control.new()
@@ -3209,7 +3213,7 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 			RunCampfireVisit.MEND:
 				choice_labels.append("Mend HP")
 			RunCampfireVisit.TELL_TALES:
-				choice_labels.append("Tell Tales (-25 FRAY)")
+				choice_labels.append("Tell Tales (-25 FRAY)" if _stitched_fray_words_shown() else "Tell Tales")
 			RunCampfireVisit.TRIM_THE_WICK:
 				choice_labels.append("Trim Wick (+%d CANDLE)" % mini(50, 100 - int(state["candle"])))
 			RunCampfireVisit.STITCHED_LEAVE:
@@ -3238,9 +3242,9 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 			(maximum * RunCampfireVisit.MEND_HEAL_PERCENT) / 100)
 		var row := Label.new()
 		row.name = "CampfireHero_%s" % str(hero["id"])
-		row.text = "%d  %s  HP %d/%d  FRAY %d  MEND +%d" % [
+		row.text = "%d  %s  HP %d/%d%s  MEND +%d" % [
 			int(hero["position"]), str(hero["name"]), int(hero["hp"]),
-			maximum, int(hero["fray"]), heal]
+			maximum, ("  FRAY %d" % int(hero["fray"])) if _stitched_fray_words_shown() else "", heal]
 		row.position = Vector2(165, 270 + index * 57)
 		row.size = Vector2(535, 47)
 		row.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
@@ -3305,7 +3309,7 @@ func _mount_stitched_campfire(state: Dictionary, generation: int,
 				button.text = "Mend · +30% HP · free"
 			RunCampfireVisit.TELL_TALES:
 				button.name = "CampfireTales"
-				button.text = "Tell Tales · -25 FRAY · free"
+				button.text = "Tell Tales · -25 FRAY · free" if _stitched_fray_words_shown() else "Tell Tales · free"
 			RunCampfireVisit.TRIM_THE_WICK:
 				button.name = "CampfireWick"
 				button.text = "Trim Wick · +%d CANDLE · free" % wick_gain
@@ -4655,7 +4659,9 @@ func _present_stitched_run() -> void:
 		recap.add_theme_font_size_override("font_size", 17)
 		recap.add_theme_color_override("font_color", Color("#e7d6b3"))
 		var state := "LOST" if hero.lost else "HANGING" if hero.hp == 0 else "IN THREAD"
-		recap.text = "R%d / %s\nHP %d / %d  %s\nFRAY %d / 200  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state, hero.fray, hero.resolve]
+		recap.text = "R%d / %s\nHP %d / %d  %s" % [hero.rank, hero.name, hero.hp, hero.max_hp, state]
+		if _stitched_fray_words_shown():
+			recap.text += "\nFRAY %d / 200  %s" % [hero.fray, hero.resolve]
 		card.add_child(recap)
 	if terminal:
 		_note_bedroom_run(session)
@@ -4675,7 +4681,7 @@ func _present_stitched_run() -> void:
 				"ALL TWELVE FLOORS CLEARED" if session.phase == "victory" else "THE ROAD ENDS HERE",
 				session.map.get_current_floor(), session.receipts.size()], 22)
 		_stitched_run_caption(terminal_panel,
-			"All four doll records remain above with their exact HP, fray and losses. The ledger is sealed.", 18)
+			("All four doll records remain above with their exact HP, fray and losses. The ledger is sealed." if _stitched_fray_words_shown() else "All four doll records remain above with their exact HP and losses. The ledger is sealed."), 18)
 		if not opened.is_empty():
 			var names: Array = []
 			for id in opened:

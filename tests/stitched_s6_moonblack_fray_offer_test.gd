@@ -107,7 +107,7 @@ func _test_ac1_authored_schema(record: Dictionary) -> void:
 
 	var buy_choice := _find_choice(record, "buy_quiet_house_plan")
 	_check(not buy_choice.is_empty(), "AC1: buy_quiet_house_plan choice present")
-	_check(buy_choice.get("text") == "Pay 16 gold for a reassuring house plan (-10 fray each)", "AC1: buy_quiet_house_plan text matches")
+	_check(buy_choice.get("text") == "Pay 16 gold for a reassuring house plan (every doll settles)", "AC1: buy_quiet_house_plan text matches")
 	var buy_effect: Dictionary = buy_choice.get("stitched_effect", {})
 	_check(buy_effect.get("target") == "party", "AC1: buy target is party")
 	_check(int(buy_effect.get("candle")) == 0, "AC1: buy candle delta is 0")
@@ -118,7 +118,7 @@ func _test_ac1_authored_schema(record: Dictionary) -> void:
 
 	var lift_choice := _find_choice(record, "lift_shadowed_map")
 	_check(not lift_choice.is_empty(), "AC1: lift_shadowed_map choice present")
-	_check(lift_choice.get("text") == "Lift the shadowed weight (+23 gold, -10 candle, +7 fray each)", "AC1: lift text matches")
+	_check(lift_choice.get("text") == "Lift the shadowed weight (+23 gold, -10 candle; every doll strains)", "AC1: lift text matches")
 	var lift_effect: Dictionary = lift_choice.get("stitched_effect", {})
 	_check(lift_effect.get("target") == "party", "AC1: lift target is party")
 	_check(int(lift_effect.get("candle")) == -10, "AC1: lift candle delta is -10")

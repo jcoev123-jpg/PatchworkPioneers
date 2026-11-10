@@ -42,9 +42,9 @@ func _page(app: Node, expected_kind: String, label: String) -> Control:
 		for hero in app.stitched_run_session.heroes:
 			var recap: Label = cards.find_child("Recap_" + str(hero.id), true, false)
 			_check(recap != null and "HP %d / %d" % [hero.hp, hero.max_hp] in recap.text
-				and "FRAY %d / 200" % hero.fray in recap.text
+				and not recap.text.contains("FRAY")
 				and ("LOST" in recap.text) == bool(hero.lost),
-				label + " reads true HP, fray and loss for " + str(hero.id))
+				label + " reads true HP and loss with the fray readout hidden for " + str(hero.id))
 	return page
 
 
