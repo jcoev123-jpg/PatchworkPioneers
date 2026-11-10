@@ -180,7 +180,10 @@ func _camera_sample(reduced: bool) -> Dictionary:
 			"live corridor attacker holds its shipped authored attack silhouette during focus")
 	var projected := false
 	var focused := false
-	for frame in range(36):
+	# Owner 11-10: the strike pose now holds under focus; headless process frames can
+	# be extremely short, so sample by wall clock instead of a fixed frame count.
+	var deadline := Time.get_ticks_msec() + 1200
+	while Time.get_ticks_msec() < deadline:
 		await process_frame
 		lowest_fov = minf(lowest_fov, stage.camera.fov)
 		if stage.fight_focus_active():
@@ -205,11 +208,9 @@ func _camera_sample(reduced: bool) -> Dictionary:
 			"committed offensive receipt eases toward both visible figures with exact projected hit regions (active=%s, min_fov=%.2f, projected=%s, actor=%s, target=%s)" % [str(focused), lowest_fov, str(projected), attacker_key, target_key])
 	# The rest of the synchronous receipts (including automatic foe attacks)
 	# may queue multiple beats. All must restore the original side-on pose.
-	var ability_beats := 0
-	for receipt in screen.receipts:
-		if receipt.get("action", "") == "ability":
-			ability_beats += 1
-	await create_timer(float(ability_beats) * 0.4 + 0.5).timeout
+	# Owner 11-10: every queued beat now carries the 1.35s strike hold; wait past the last.
+	var beat_receipts := screen.receipts.size() - initial_receipts.size()
+	await create_timer(float(maxi(beat_receipts, 1)) * (StitchedCorridorFight.BEAT_TIME + StitchedCorridorFight.HOLD_TIME + 0.08) + 0.5).timeout
 	_check(stage.camera.transform == baseline and is_equal_approx(stage.camera.fov, baseline_fov)
 		and not stage.fight_focus_active(),
 		"queued receipts restore the exact original camera transform and FOV")

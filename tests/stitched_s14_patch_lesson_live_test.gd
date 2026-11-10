@@ -369,19 +369,19 @@ func _run() -> void:
 	_check(guide.is_open() and guide.is_visible_in_tree()
 		and root.gui_get_focus_owner() == guide.tab_buttons[0],
 		"Drawings opens the guide focused on tab 0")
-	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
-		and guide.TABS == ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"],
-		"four original tabs and pages remain")
+	_check(guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3
+		and guide.TABS == ["Ranks & turns", "Seams & retreat", "Candle & stops"],
+		"owner 11-10: three tabs and pages remain after Fray & resolve retired")
 	_check(guide.get_child_count() == 2, "no extra child controls were added to the guide")
 	var focusable: Array = []
 	_collect_focusable(guide, focusable)
-	_check(focusable.size() == 6, "exactly the six original controls are focusable inside the guide")
+	_check(focusable.size() == 5, "owner 11-10: exactly five controls are focusable inside the guide")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree()
 		and guide.tab_buttons[1].button_pressed,
 		"tab 1 selects the Seams & retreat page")
 	var visible_pages := 0
-	for i in range(4):
+	for i in range(3):
 		if guide.page_labels[i].visible:
 			visible_pages += 1
 	_check(visible_pages == 1, "exactly one page is visible at a time")
@@ -493,10 +493,10 @@ func _run() -> void:
 	_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
 		"focused real bedroom Drawings opens guide through existing activation")
 	await _pad(JOY_BUTTON_LEFT_SHOULDER, true)
-	_check(guide.page_index == 3 and root.gui_get_focus_owner() == guide.tab_buttons[3],
+	_check(guide.page_index == 2 and root.gui_get_focus_owner() == guide.tab_buttons[2],
 		"left shoulder wraps focused page from first to last")
 	await _pad(JOY_BUTTON_LEFT_SHOULDER, true)
-	_check(guide.page_index == 3, "held shoulder event cannot double-page")
+	_check(guide.page_index == 2, "held shoulder event cannot double-page")
 	await _pad(JOY_BUTTON_LEFT_SHOULDER, false)
 	await _pad(JOY_BUTTON_RIGHT_SHOULDER, true)
 	_check(guide.page_index == 0 and root.gui_get_focus_owner() == guide.tab_buttons[0],

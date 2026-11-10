@@ -213,6 +213,12 @@ func focus_first() -> void:
 		(row[row.size() / 2] as Button).grab_focus()
 
 
+## Owner 11-10: one quiet line in the caption corner, e.g. that the run was saved.
+func say(text: String) -> void:
+	_ensure_stage()
+	caption.text = text
+
+
 ## A small quiet corner button (Save run, Return to title).
 func add_action(text: String, action: Callable) -> Button:
 	var button := Button.new()

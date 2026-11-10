@@ -226,24 +226,21 @@ func _run() -> void:
 	await _click(drawings)
 	_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
 		"real Drawings opens guide on first focused tab")
-	_check(guide.TABS == ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
-		and guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
-		and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 4,
-		"original four tabs and pages, without extra controls")
-	_check(_focusable(guide) == 6 and guide.get_child_count() == 2
+	_check(guide.TABS == ["Ranks & turns", "Seams & retreat", "Candle & stops"]
+		and guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3
+		and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 3,
+		"owner 11-10: three tabs and pages after Fray & resolve retired, without extra controls")
+	_check(_focusable(guide) == 5 and guide.get_child_count() == 2
 		and guide.get_node("FeltPanel") is NinePatchRect and guide.theme == null,
-		"original six-focus ring and inherited gothic felt panel remain")
+		"owner 11-10: five-focus ring and inherited gothic felt panel remain")
 	for index in [0]:
 		_check(guide.page_text(index) == "\n\n".join(StitchedFieldGuide.PAGES[index]),
 			"non-Seams page remains precisely unchanged: " + str(index))
 	var gift_notes := StitchedWrenGiftFieldNotes.examples({"best_floor": 0, "boss_wins": 0})
-	_check(gift_notes.size() == 3 and guide.page_text(2) == "\n\n".join(
-		StitchedFieldGuide.PAGES[2] + gift_notes),
-		"Fray page keeps its baseline and validated Wren gift notes")
 	var door_examples := StitchedFieldGuide.side_door_examples()
-	_check(door_examples.size() == 4 and guide.page_text(3) == "\n\n".join(
-		StitchedFieldGuide.PAGES[3] + door_examples),
-		"Candle page retains its baseline and exactly four validated S14 door notes")
+	_check(gift_notes.size() == 3 and door_examples.size() == 4 and guide.page_text(2) == "\n\n".join(
+		StitchedFieldGuide.PAGES[2] + door_examples + gift_notes),
+		"owner 11-10: Candle page carries its baseline, four validated S14 door notes and the Wren gift notes")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree(),
 		"existing second tab is opened by real pointer input")

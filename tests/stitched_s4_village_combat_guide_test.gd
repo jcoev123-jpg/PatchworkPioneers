@@ -139,7 +139,7 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 	var original := source.duplicate(true)
 	var validated := StitchedS14SideDoors.catalog(source)
 	var lessons := StitchedFieldGuide.side_door_examples(source)
-	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[3])
+	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[2])
 	_check(lessons.size() == 4 and lessons == StitchedFieldGuide.side_door_examples()
 		and validated.has("underbed_stuffing_trade") and validated.has("underbed_leg_trade")
 		and validated.has("underbed_fear_trade") and validated.has("attic_waxlight")
@@ -163,34 +163,32 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 			no_quotes = no_quotes and not character.is_valid_int()
 		no_quotes = no_quotes and not line.contains("%") and not line.contains(" HP ")
 	_check(no_quotes, "new guide examples quote no prices, costs, odds or HP forecasts")
-	var expected := baseline + "\n\n" + "\n\n".join(lessons)
-	await _click(guide.tab_buttons[3])
-	_check(guide.page_text(3) == expected
-		and guide.page_labels[3].is_visible_in_tree()
-		and guide.page_text(3).contains("SIDE DOORS")
-		and guide.page_text(3).contains("ANY under-bed deal")
-		and guide.page_text(3).contains("optional door MAY"),
-		"real Drawings -> Candle tab retains SIDE DOORS and exactly four sourced notes")
+	var wren_notes := StitchedWrenGiftFieldNotes.examples(StitchedWrenGifts.load_profile())
+	var wren_text := "" if wren_notes.is_empty() else "\n\n" + "\n\n".join(wren_notes)
+	var expected := baseline + "\n\n" + "\n\n".join(lessons) + wren_text
+	await _click(guide.tab_buttons[2])
+	_check(guide.page_text(2) == expected
+		and guide.page_labels[2].is_visible_in_tree()
+		and guide.page_text(2).contains("SIDE DOORS")
+		and guide.page_text(2).contains("ANY under-bed deal")
+		and guide.page_text(2).contains("optional door MAY"),
+		"owner 11-10: Drawings -> Candle tab keeps SIDE DOORS, four sourced notes and Wren notes")
 	for line in lessons:
-		_check(guide.page_text(3).count(line) == 1,
+		_check(guide.page_text(2).count(line) == 1,
 			"mounted Candle page has one copy of " + line)
 	var bar := guide.page_scroll.get_v_scroll_bar()
 	var travel := maxf(0.0, bar.max_value - bar.page)
 	guide.page_scroll.scroll_vertical = int(travel)
 	await process_frame
 	_check(guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
-		and guide.page_labels[3].get_theme_font_size("font_size") >= 18
+		and guide.page_labels[2].get_theme_font_size("font_size") >= 18
 		and travel > 0.0 and guide.page_scroll.scroll_vertical > 0,
-		"four appended door examples remain reachable by vertical scroll at 18pt")
+		"appended door examples remain reachable by vertical scroll at 18pt")
 	await _click(guide.tab_buttons[0])
-	var expected_fray := "\n\n".join(StitchedFieldGuide.PAGES[2])
-	var wren_notes := StitchedWrenGiftFieldNotes.examples(StitchedWrenGifts.load_profile())
-	if not wren_notes.is_empty():
-		expected_fray += "\n\n" + "\n\n".join(wren_notes)
 	_check(guide.page_scroll.scroll_vertical == 0
 		and guide.page_text(0) == "\n\n".join(StitchedFieldGuide.PAGES[0])
-		and guide.page_text(2) == expected_fray,
-		"page switch resets scroll, preserves Ranks and adds only validated Wren notes to Fray")
+		and guide.page_text(2) == expected,
+		"owner 11-10: page switch resets scroll, preserves Ranks and keeps the merged Candle page")
 
 	var reordered := source.duplicate(true)
 	reordered.doors.reverse()
@@ -211,30 +209,30 @@ func _bedroom_door_checks(guide: StitchedFieldGuide, drawings: Button) -> void:
 		_check(not guide.is_open(), "guide dismisses before invalid source: " + str(pair[0]))
 		await _click(drawings)
 		_check(guide.is_open() and guide.page_index == 0
-			and guide.page_text(3) == baseline
-			and guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4,
-			"invalid source restores entire page-3 baseline without stale lines: " + str(pair[0]))
-		await _click(guide.tab_buttons[3])
-		_check(guide.page_text(3) == baseline and guide.page_text(3).contains("SIDE DOORS"),
+			and guide.page_text(2) == baseline + wren_text
+			and guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3,
+			"invalid source restores the Candle baseline without stale lines: " + str(pair[0]))
+		await _click(guide.tab_buttons[2])
+		_check(guide.page_text(2) == baseline + wren_text and guide.page_text(2).contains("SIDE DOORS"),
 			"invalid source shows only original SIDE DOORS after page turn: " + str(pair[0]))
 		await _click(guide.tab_buttons[0])
 	guide.side_door_source = reordered
 	await _click(guide.close_button)
 	await _click(drawings)
-	_check(guide.page_text(3) == expected and guide.page_index == 0,
+	_check(guide.page_text(2) == expected and guide.page_index == 0,
 		"valid reordered source restores one full note set after invalid reopens")
 	guide.side_door_source = null
 	await _click(guide.close_button)
 	await _click(drawings)
-	_check(guide.page_text(3) == expected and source == original
+	_check(guide.page_text(2) == expected and source == original
 		and reordered == reordered_before
 		and StitchedS14SideDoors.catalog(source) == validated,
 		"reset live source restores notes once, without altering actual side-door catalog")
-	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
-		and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 4
+	_check(guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3
+		and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 3
 		and guide.get_child_count() == 2
 		and guide.page_text(1).begins_with("\n\n".join(StitchedFieldGuide.PAGES[1])),
-		"reopened guide retains four tabs, unchanged Seams teaching and no new controls")
+		"owner 11-10: reopened guide retains three tabs, unchanged Seams teaching and no new controls")
 
 
 func _state() -> Array:
@@ -303,19 +301,19 @@ func _run() -> void:
 		and guide.get_node("FeltPanel") is NinePatchRect
 		and (guide.get_node("FeltPanel") as NinePatchRect).texture != null,
 		"inherited Gothic theme contract and supplied felt art mount")
-	var expected_titles := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
-	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
-		and guide.page_scroll != null and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 4,
-		"real mounted 1280x720 guide provides four native tabs and scrollable pages")
+	var expected_titles := ["Ranks & turns", "Seams & retreat", "Candle & stops"]
+	_check(guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3
+		and guide.page_scroll != null and guide.get_node("FeltPanel/GuideContent/GuideTabs").get_child_count() == 3,
+		"owner 11-10: real mounted 1280x720 guide provides three native tabs and scrollable pages")
 	var tab_bounds := Rect2()
-	for i in range(4):
+	for i in range(3):
 		var tab := guide.tab_buttons[i]
 		var bounds := tab.get_global_rect()
 		_check(tab.text == expected_titles[i] and tab.focus_mode == Control.FOCUS_ALL
 			and tab.mouse_default_cursor_shape == Control.CURSOR_POINTING_HAND
 			and root.get_visible_rect().encloses(bounds)
 			and (i == 0 or not bounds.intersects(tab_bounds)),
-			"fourth compact button fits and every tab is focusable at 1280x720: %d" % i)
+			"each compact tab fits and stays focusable at 1280x720: %d" % i)
 		tab_bounds = bounds
 	var texts := [
 		["Four allied ranks", "1 (front)", "4 (back)", "2–3 foes", "summon or split",
@@ -323,9 +321,18 @@ func _run() -> void:
 			"FOUR SIGNATURE ABILITIES", "eight heroes", "FOUR fixed", "launch ranks",
 			"target ranks", "foe, ally or self", "heal an ally", "mark a foe",
 			"pierce ranks", "guard another doll", "HEAD, ARMS, TORSO and LEGS",
-			"not sources", "MOVE", "adjacent heroes", "RE-TIE", "PASS"],
+			"not sources", "MOVE", "adjacent heroes", "RE-TIE", "PASS",
+			"HANGING BY A THREAD", "stays in its rank", "can still act",
+			"does not itself tear", "EACH further direct hit",
+			"seeded random remaining ARM, LEG or HEAD", "small on the first",
+			"larger on the second", "CERTAIN on the third", "HEAD means LOST",
+			"lost arm weakens strikes", "disables that arm's patched ability",
+			"lost leg prevents rank changes", "delays turns",
+			"corridor Walk", "later fights", "Healing above 0 resets",
+			"never regrows a limb", "Sewing Circle or Campfire",
+			"replace LOST dolls"],
 		["non-boss RETREAT", "seeded", "75%", "acting hero's turn",
-			"forfeits all rewards", "EACH hero +15 Fray", "SNIPPED THREAD",
+			"forfeits all rewards", "SNIPPED THREAD",
 			"ally healing or guarding", "RE-TIE", "ABILITY PATCH SOCKETS",
 			"SEW ONTO a fixed ability", "not body-part stats",
 			"one socket", "gold patch permits two", "cotton < wool < silk < gold",
@@ -334,27 +341,14 @@ func _run() -> void:
 			"Chain", "whoever the ability actually hits", "bleed-patched HEAL",
 			"your own ally", "regen", "cleanse", "extra guard",
 			"Unsew and resew", "Sewing Circle"],
-		["0–200", "Reaching 100", "25%", "STEADFAST", "45 Fray",
-			"+10% damage", "every party member's Fray by 2", "floor ends",
-			"75%", "Unravelled", "below 50", "200 Fray", "Comes Apart",
-			"HP becomes 0", "Fray becomes 150", "already Hanging by a Thread",
-			"LOST", "HANGING BY A THREAD", "stays in its rank", "can still act",
-			"does not itself tear", "EACH further direct hit", "0 HP",
-			"seeded random remaining ARM, LEG or HEAD", "small on the first",
-			"larger on the second", "CERTAIN on the third", "HEAD means LOST",
-			"lost arm weakens strikes", "disables that arm's patched ability",
-			"lost leg prevents rank changes", "delays turns",
-			"corridor Walk", "later fights", "Healing above 0 resets",
-			"never regrows a limb", "Sewing Circle or Campfire",
-			"replace LOST dolls"],
 		["Begins at 100", "entered routed stop", "CORRIDOR",
 			"costs 8 Candle", "BRIGHT 76–100", "15% chance the party acts first",
-			"DIM 51–75", "+10% Fray gain", "+25% loot",
-			"GLOOM 26–50", "+20% Fray gain", "+5 ACC", "+10% damage", "+50% loot",
-			"DARK 1–25", "+30% Fray gain", "+10 ACC", "+15% damage", "+75% loot",
-			"SNUFFED 0", "+40% Fray gain", "+25% damage",
+			"DIM 51–75", "+25% loot",
+			"GLOOM 26–50", "+5 ACC", "+10% damage", "+50% loot",
+			"DARK 1–25", "+10 ACC", "+15% damage", "+75% loot",
+			"SNUFFED 0", "+25% damage",
 			"25% chance foes act first", "+100% loot", "do not guarantee a drop",
-			"Choose ONE", "Mend heals 30% HP each", "Tell Tales reduces Fray by 25 each",
+			"Choose ONE", "Mend heals 30% HP each", "Tell Tales calms the dolls",
 			"Trim Wick restores 50 Candle", "Peddler candle stub restores 25 Candle",
 			"up to six spare parts", "Campfire or Sewing Circle", "not in a fight",
 			"SIDE DOORS", "Elite or Boss fights", "optional door MAY",
@@ -364,14 +358,14 @@ func _run() -> void:
 			"rest of this run"]
 	]
 
-	for i in range(4):
+	for i in range(3):
 		if i > 0:
 			await _click(guide.tab_buttons[i])
 		_check(guide.page_index == i and guide.page_labels[i].is_visible_in_tree()
 			and guide.tab_buttons[i].button_pressed,
 			"actual tab %d reveals one selected page" % i)
 		var single := true
-		for j in range(4):
+		for j in range(3):
 			single = single and (guide.page_labels[j].visible == (i == j))
 			single = single and (guide.tab_buttons[j].button_pressed == (i == j))
 		_check(single and _all_present(guide.page_labels[i].text, texts[i])
@@ -390,7 +384,7 @@ func _run() -> void:
 			"first transition tears", "first reaching 0 HP", "67%",
 			"33%", "each map node", "go to map page"]:
 		var combined := "\n".join([
-			guide.page_text(0), guide.page_text(1), guide.page_text(2), guide.page_text(3)])
+			guide.page_text(0), guide.page_text(1), guide.page_text(2)])
 		_check(not combined.to_lower().contains(forbidden.to_lower()),
 			"all authored pages reject retired rule: " + forbidden)
 	_check(guide.atlas_status.text.contains("sewn limbs")
@@ -401,8 +395,8 @@ func _run() -> void:
 	guide.page_scroll.scroll_vertical = int(travel)
 	await process_frame
 	_check(guide.page_scroll.horizontal_scroll_mode == ScrollContainer.SCROLL_MODE_DISABLED
-		and guide.page_labels[3].get_theme_font_size("font_size") >= 18
-		and guide.page_labels[3].size.y > 0.0
+		and guide.page_labels[2].get_theme_font_size("font_size") >= 18
+		and guide.page_labels[2].size.y > 0.0
 		and (travel <= 0.0 or guide.page_scroll.scroll_vertical > 0),
 		"legible candle guide allows vertical scrolling if page exceeds viewport")
 	guide.page_scroll.scroll_vertical = 0
@@ -422,7 +416,7 @@ func _run() -> void:
 	await _direction_key(KEY_LEFT, true)
 	_check(_selected_page(guide, 0), "left key moves one page back")
 	await _direction_key(KEY_LEFT, true)
-	_check(_selected_page(guide, 3), "left key wraps first tab to last")
+	_check(_selected_page(guide, 2), "left key wraps first tab to last")
 	await _direction_key(KEY_RIGHT, true)
 	_check(_selected_page(guide, 0), "right key wraps last tab to first")
 	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
@@ -433,7 +427,7 @@ func _run() -> void:
 	_check(_selected_page(guide, 0), "left D-pad moves one page")
 	await _direction_pad(JOY_BUTTON_DPAD_LEFT, false)
 	await _direction_pad(JOY_BUTTON_DPAD_LEFT, true)
-	_check(_selected_page(guide, 3), "left D-pad wraps to last page")
+	_check(_selected_page(guide, 2), "left D-pad wraps to last page")
 	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
 	_check(_selected_page(guide, 0), "right D-pad wraps to first page")
 	# Shoulders wrap; repeated presses without releases are held, not new edges.
@@ -447,21 +441,21 @@ func _run() -> void:
 	_check(_selected_page(guide, 0), "left shoulder moves back")
 	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, false)
 	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, true)
-	_check(_selected_page(guide, 3), "left shoulder wraps first to last")
+	_check(_selected_page(guide, 2), "left shoulder wraps first to last")
 	await _direction_pad(JOY_BUTTON_LEFT_SHOULDER, false)
 	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, true)
 	_check(_selected_page(guide, 0), "right shoulder wraps last to first")
 	await _direction_pad(JOY_BUTTON_RIGHT_SHOULDER, false)
-	# Navigate the already-mounted six-control guide focus loop by real
+	# Navigate the already-mounted five-control guide focus loop by real
 	# D-pad edges. Neither direction may activate a tab or open the atlas.
 	var focus_ring: Array[Button] = guide.tab_buttons.duplicate()
 	focus_ring.append(guide.atlas_button)
 	focus_ring.append(guide.close_button)
-	_check(focus_ring.size() == 6 and focus_ring[0].name == "GuideTab0"
-		and focus_ring[3].name == "GuideTab3"
-		and focus_ring[4].name == "PartAtlasButton"
-		and focus_ring[5].name == "CloseGuideButton",
-		"gamepad uses the existing named six-control guide ring")
+	_check(focus_ring.size() == 5 and focus_ring[0].name == "GuideTab0"
+		and focus_ring[2].name == "GuideTab2"
+		and focus_ring[3].name == "PartAtlasButton"
+		and focus_ring[4].name == "CloseGuideButton",
+		"owner 11-10: gamepad uses the existing named five-control guide ring")
 	var focus_page := guide.page_index
 	guide.tab_buttons[0].grab_focus()
 	for i in range(1, focus_ring.size() + 1):
@@ -487,14 +481,14 @@ func _run() -> void:
 		await _direction_pad(JOY_BUTTON_DPAD_UP, false)
 	# Hidden/disabled buttons must be skipped, never focused or invoked.
 	guide.atlas_button.disabled = true
-	guide.tab_buttons[3].grab_focus()
+	guide.tab_buttons[2].grab_focus()
 	await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
 	_check(root.gui_get_focus_owner() == guide.close_button and not guide._atlas_is_open(),
 		"disabled Parts button is omitted from gamepad focus")
 	await _direction_pad(JOY_BUTTON_DPAD_DOWN, false)
 	guide.atlas_button.disabled = false
 	guide.atlas_button.hide()
-	guide.tab_buttons[3].grab_focus()
+	guide.tab_buttons[2].grab_focus()
 	await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
 	_check(root.gui_get_focus_owner() == guide.close_button and not guide._atlas_is_open(),
 		"hidden Parts button is omitted from gamepad focus")
@@ -513,14 +507,14 @@ func _run() -> void:
 	guide.tab_buttons[0].grab_focus()
 	await _key(KEY_ENTER)
 	_check(_selected_page(guide, 0), "ui_accept restores page zero without duplicate dispatch")
-	# Check the full native Tab and Shift-Tab ring, including the new fourth tab.
+	# Check the full native Tab and Shift-Tab ring, including atlas and Close.
 	for i in range(focus_ring.size()):
 		var current := focus_ring[i]
 		var next := focus_ring[(i + 1) % focus_ring.size()]
 		var previous := focus_ring[(i - 1 + focus_ring.size()) % focus_ring.size()]
 		_check(current.focus_next == current.get_path_to(next)
 			and current.focus_previous == current.get_path_to(previous),
-			"real six-control Tab/Shift-Tab ring links %s both ways" % current.name)
+			"real five-control Tab/Shift-Tab ring links %s both ways" % current.name)
 	guide.tab_buttons[0].grab_focus()
 	for i in range(1, focus_ring.size() + 1):
 		await _key(KEY_TAB)
@@ -529,7 +523,7 @@ func _run() -> void:
 	for i in range(focus_ring.size() - 1, -1, -1):
 		await _key(KEY_TAB, true)
 		_check(root.gui_get_focus_owner() == focus_ring[i],
-			"Shift-Tab reverse stays inside six-control ring %d" % i)
+			"Shift-Tab reverse stays inside five-control ring %d" % i)
 	# The same shipped atlas is reachable through the live BaseScreen guide, not a test-only scene.
 	seed(820631)
 	var atlas_next_rng := randi()
@@ -819,7 +813,7 @@ func _bedroom_route() -> void:
 		"real Drawings click opens sole tab-zero StitchedFieldGuide")
 	await _bedroom_door_checks(guide, drawings)
 	await _direction_key(KEY_LEFT, true)
-	_check(_selected_page(guide, 3), "Wren Drawings left key wraps to tab 3")
+	_check(_selected_page(guide, 2), "Wren Drawings left key wraps to the last tab")
 	await _direction_pad(JOY_BUTTON_DPAD_RIGHT, true)
 	_check(_selected_page(guide, 0), "Wren Drawings right D-pad wraps to tab 0")
 	await _click(guide.atlas_button)

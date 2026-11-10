@@ -4806,7 +4806,8 @@ func _present_stitched_junction(session: StitchedRunSession) -> void:
 		stitched_run_buttons.append(junction.doors[id])
 	stitched_run_buttons.append(junction.add_action("Save run", func():
 		if stitched_run_session == session and stitched_run_panel == junction:
-			_stitched_run_save_file(session)))
+			if _stitched_run_save_file(session):
+				junction.say("The run was saved.")))
 	stitched_run_buttons.append(junction.add_action("Return to title", func():
 		if stitched_run_session == session and stitched_run_panel == junction:
 			_return_stitched_run_title()))

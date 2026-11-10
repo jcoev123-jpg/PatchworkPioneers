@@ -242,23 +242,20 @@ func _run() -> void:
 	await _click(drawings)
 	_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
 		"Drawings opens original guide with first tab focused")
-	_check(guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4
-		and guide.TABS == ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"],
-		"all four guide tabs and pages stay unchanged")
+	_check(guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3
+		and guide.TABS == ["Ranks & turns", "Seams & retreat", "Candle & stops"],
+		"owner 11-10: three guide tabs and pages after Fray & resolve retired")
 	_check(guide.get_child_count() == 2 and guide.get_node("FeltPanel") is NinePatchRect
-		and guide.theme == null and _focusable(guide) == 6,
-		"same felt artwork, inherited theme and six-control focus ring, no added controls")
+		and guide.theme == null and _focusable(guide) == 5,
+		"same felt artwork, inherited theme and five-control focus ring, no added controls")
 	for i in [0]:
 		_check(guide.page_text(i) == "\n\n".join(StitchedFieldGuide.PAGES[i]),
 			"other guide page stays exactly unchanged: " + str(i))
 	var gift_notes := StitchedWrenGiftFieldNotes.examples({"best_floor": 0, "boss_wins": 0})
-	_check(gift_notes.size() == 3 and guide.page_text(2) == "\n\n".join(
-		StitchedFieldGuide.PAGES[2] + gift_notes),
-		"Fray page keeps its baseline and validated Wren gift notes")
 	var door_examples := StitchedFieldGuide.side_door_examples()
-	_check(door_examples.size() == 4 and guide.page_text(3) == "\n\n".join(
-		StitchedFieldGuide.PAGES[3] + door_examples),
-		"Candle page keeps its original baseline and exactly four validated S14 door notes")
+	_check(gift_notes.size() == 3 and door_examples.size() == 4 and guide.page_text(2) == "\n\n".join(
+		StitchedFieldGuide.PAGES[2] + door_examples + gift_notes),
+		"owner 11-10: Candle page carries its baseline, four validated S14 door notes and the Wren gift notes")
 	await _click(guide.tab_buttons[1])
 	_check(guide.page_index == 1 and guide.page_labels[1].is_visible_in_tree(),
 		"existing Seams tab is reachable by pointer")

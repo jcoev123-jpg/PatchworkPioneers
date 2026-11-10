@@ -61,7 +61,10 @@ func _run() -> void:
 
 	var seen: Dictionary = {}
 	var feet_world: Array[float] = []
-	for _beat in range(12):
+	# Owner 11-10: idles breathe slower now; sample by wall clock so several distinct
+	# frames show even when headless process frames run extremely short.
+	var idle_deadline := Time.get_ticks_msec() + 1100
+	while Time.get_ticks_msec() < idle_deadline and seen.size() < 4:
 		await _frames(3)
 		seen[figure.texture] = true
 		var drawn: float = figure.position.y + (figure.offset.y - figure.texture.get_height() / 2.0) * figure.pixel_size
@@ -88,7 +91,9 @@ func _run() -> void:
 	await _frames(6)
 	_check(figure.texture == pose and figure.offset == Vector2.ZERO, "a fight pose is never overwritten by the loop")
 	figure.texture = still
-	await _frames(6)
+	var resume_deadline := Time.get_ticks_msec() + 400
+	while Time.get_ticks_msec() < resume_deadline and not (figure.texture in frames):
+		await _frames(3)
 	_check(figure.texture in frames, "handing the figure back its still resumes the loop")
 
 	stage.reduced_motion = true
@@ -102,7 +107,9 @@ func _run() -> void:
 		var foe := stage.place("foe_1", guard, stage.ahead_point(1.2, 0.4), StitchedCorridorStage.DOLL_HEIGHT)
 		foe.flip_h = true
 		var still_box := _drawn_box(foe)
-		await _frames(4)
+		var foe_deadline := Time.get_ticks_msec() + 400
+		while Time.get_ticks_msec() < foe_deadline and not (foe.texture in stage.idle_frames(guard)):
+			await _frames(3)
 		_check(foe.texture in stage.idle_frames(guard), "precondition: the foe is idling")
 		var loop_box := _drawn_box(foe)
 		_check(absf(loop_box.size.y - still_box.size.y) < still_box.size.y * 0.12,

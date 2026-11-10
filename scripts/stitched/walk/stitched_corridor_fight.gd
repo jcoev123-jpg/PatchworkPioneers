@@ -24,6 +24,9 @@ const HEAP_HEIGHT := 0.55
 const BAR_TOP := 588.0
 const LUNGE := 0.35
 const BEAT_TIME := 0.32
+## Owner 11-10: slow, heavy fights. The strike lands quickly, then the attacker holds its
+## pose and the struck hold their reaction for a readable beat before easing back to idle.
+const HOLD_TIME := 1.35
 ## Owner 11-09: no hoop behind a round, only a thin outline; a sewn patch's tier shows as
 ## the outline's colour: plain bone, silver thread, gold thread.
 const TIER_OUTLINE := {1: Color("c9b79a"), 2: Color("cfd6ff"), 3: Color("ffcf6e")}
@@ -74,6 +77,8 @@ var _signature := ""
 var _seen_receipts := 0
 var _textures: Dictionary = {}
 var _beats: Tween
+## Receipts that arrive while a held beat is still playing; they play after it, never over it.
+var _queued_receipts: Array = []
 ## Thrown things and hit effects in flight (picture sprites); gone when their beat ends or is cut short.
 var _flying: Array[Sprite3D] = []
 var _focus_actor_id := ""
@@ -1168,14 +1173,20 @@ func _begin_receipt_focus(receipt: Dictionary) -> void:
 			_focus_target_ids.append(target_id)
 	if keys.size() < 2:
 		return
-	if stage.start_fight_focus(keys, BEAT_TIME + 0.08):
+	if stage.start_fight_focus(keys, _beat_span()):
 		_focus_actor_id = actor_id
+
+
+## One receipt's whole held beat: the strike out, the held pose and the ease back.
+func _beat_span() -> float:
+	return BEAT_TIME * 0.4 + HOLD_TIME + BEAT_TIME * 0.6
 
 
 func _cancel_beats() -> void:
 	if _beats != null:
 		_beats.kill()
 		_beats = null
+	_queued_receipts.clear()
 	_show_move_name("")
 	_clear_flying()
 	stage.cancel_fight_focus()
@@ -1189,6 +1200,7 @@ func _exit_tree() -> void:
 	if _beats != null:
 		_beats.kill()
 		_beats = null
+	_queued_receipts.clear()
 	_clear_flying()
 	if stage != null:
 		stage.cancel_fight_focus()
@@ -1256,10 +1268,19 @@ func _play_new_receipts() -> void:
 		return
 	if fresh.is_empty():
 		return
-	if _beats != null or stage.fight_focus_active():
-		_cancel_beats()
+	# Owner 11-10: a held beat is never cut short. New receipts queue behind the one
+	# playing, so the next turn's beat starts only after this hold eases back to idle.
+	if _beats != null and _beats.is_running():
+		_queued_receipts.append_array(fresh)
+		return
+	if stage.fight_focus_active():
+		stage.cancel_fight_focus()
+	_start_beats(fresh)
+
+
+func _start_beats(batch: Array) -> void:
 	_beats = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
-	for receipt in fresh:
+	for receipt in batch:
 		if str(receipt.get("action", "")) != "ability" or not bool(receipt.get("ok", false)):
 			continue
 		var actor_id := str(receipt.get("actor", ""))
@@ -1282,11 +1303,26 @@ func _play_new_receipts() -> void:
 			var struck: Sprite3D = stage.figure_nodes.get(target_key)
 			if struck != null and struck != figure and bool(result.get("hit", true)):
 				_beats.parallel().tween_property(struck, "modulate", Color(1.8, 0.55, 0.5), BEAT_TIME * 0.3)
+		# The held beat: attacker struck, targets hurt, camera focused, nothing moves.
+		_beats.tween_interval(HOLD_TIME)
 		_beats.tween_property(figure, "position:z", home.z, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
 	_beats.tween_callback(Callable(self, "_show_move_name").bind(""))
 	_beats.tween_callback(_shade_figures)
+	_beats.finished.connect(_drain_queued_beats)
+
+
+## The whole batch eased back to idle; any receipts that queued behind its holds play now.
+func _drain_queued_beats() -> void:
+	_beats = null
+	if not is_inside_tree() or battle == null or engine == null:
+		return
+	if engine._motion_is_reduced() or battle.is_over() or _queued_receipts.is_empty():
+		return
+	var next := _queued_receipts.duplicate()
+	_queued_receipts.clear()
+	_start_beats(next)
 
 
 ## Owner 11-09: a thrown thing (scrap bomb, lint, needle...) leaves the hand and flies to each target as

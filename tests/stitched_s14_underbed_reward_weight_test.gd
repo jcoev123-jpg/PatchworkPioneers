@@ -217,11 +217,24 @@ func _test_ac1_eligibility_boundaries() -> void:
 		and s15.door_offer.get("kind") == "attic",
 		"base_max_hp 15 fails 15 - 6 >= 10: stuffing trade is never offered; Attic offered instead")
 
-	# Case B: fear 85 versus 86
+	# Case B: fear 85 versus 86. Owner 11-10: Wren's hand actions are retired, so the
+	# session never marks fear payable; live sessions never offer the fear trade even
+	# below the old fear-85 ceiling, and an open door picks the free Attic side instead.
 	var fear_85 := func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 85, false)
-	var seed_b := _door_witness(fear_85, "underbed_fear_trade")
-	_check(seed_b >= 0,
-		"fear 85 <= 85 with living dolls and available gifts: fear trade offered in live session")
+	var seed_b := -1
+	var attic_witnessed := false
+	for seed_number in 30:
+		var s85 := _elite_victory(seed_number, fear_85)
+		if s85 == null:
+			continue
+		_check(s85.door_offer.get("id") != "underbed_fear_trade",
+			"fear 85 <= 85 with living dolls and available gifts: fear trade is never offered in live session")
+		if s85.door_offer.get("kind") == "attic":
+			seed_b = seed_number
+			attic_witnessed = true
+			break
+	_check(attic_witnessed and seed_b >= 0,
+		"fear-85 live session that offers a door picks the Attic side, not the fear trade")
 	var sf86 := _elite_victory(seed_b, func(s: StitchedRunSession) -> void: _underbed_setup(s, true, 15, 86, false))
 	_check(sf86 != null and sf86.door_offer.get("id") != "underbed_fear_trade",
 		"fear 86 > 85: fear trade is never offered in live session")

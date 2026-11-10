@@ -885,6 +885,7 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 			var leg_payer := false
 			var stuffing_payer := false
 			var living_hero := false
+			var has_gift := false
 			for settled_hero in heroes:
 				if not settled_hero.lost:
 					living_hero = true
@@ -892,14 +893,18 @@ func settle_battle(expected_battle: StitchedRules) -> bool:
 						stuffing_payer = true
 					if settled_hero.parts.has("legs") and not settled_hero.parts.legs.torn:
 						leg_payer = true
-			var has_gift := false
-			for gift in gift_pool:
-				if not gift in gift_slots:
+			for pool_gift in gift_pool:
+				if not pool_gift in gift_slots:
 					has_gift = true
-					break
-			var fear_payer: bool = living_hero and kid_fear() <= 85 and has_gift
+			var fear_payer := living_hero and has_gift \
+				and kid_fear() + StitchedKidFear.LOST_FEAR_DELTA <= 100
 			door_offer = StitchedS14SideDoors.offer(rng, str(pending.kind), underbed_taken,
 					leg_payer, stuffing_payer, fear_payer)
+			# Owner 11-10: Wren's hand actions are off, so the fear trade is never offered.
+			# Its payer still shapes the weighted draw above, keeping the seeded door RNG on
+			# its historical profile so journal replays stay exactly aligned.
+			if str(door_offer.get("cost", "")) == "fear":
+				door_offer = {}
 			if not door_offer.is_empty():
 				door_offer["node_id"] = pending.node_id
 	# Floor resolve and cut cleanup belongs to the rules authority.

@@ -539,15 +539,13 @@ func _run() -> void:
     _check(guide.is_open() and guide.atlas_button != null
         and guide.atlas_button.text == "Parts & spoils"
         and guide.atlas_button.focus_mode == Control.FOCUS_ALL
-        and guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4,
-        "four current guide pages coexist with one guide-level atlas action")
+        and guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3,
+        "owner 11-10: three current guide pages coexist with one guide-level atlas action")
     _check(guide.page_text(0).contains("ROUND ORDER")
         and guide.page_text(1).contains("RETREAT")
-        and guide.page_text(2).contains("STEADFAST")
-        and guide.page_text(2).contains("UNRAVELLED")
-        and guide.page_text(3).contains("CANDLE")
-        and guide.page_text(3).contains("SNUFFED 0"),
-        "ranks and seams persist, Fray is page 2 and the live Candle bands are page 3")
+        and guide.page_text(2).contains("CANDLE")
+        and guide.page_text(2).contains("SNUFFED 0"),
+        "owner 11-10: ranks and seams persist and the live Candle bands are page 2")
     # Open the same inspector using gamepad focus, then ordinary ui_accept;
     # focus traversal alone cannot select another guide page or spend anything.
     _check(root.gui_get_focus_owner() == guide.tab_buttons[0],
@@ -556,9 +554,9 @@ func _run() -> void:
     var controller_next_rng := randi()
     seed(654061)
     var controller_host := _state()
-    for i in range(1, 5):
+    for i in range(1, 4):
         await _direction_pad(JOY_BUTTON_DPAD_DOWN, true)
-        var expected_focus: Button = guide.tab_buttons[i] if i < 4 else guide.atlas_button
+        var expected_focus: Button = guide.tab_buttons[i] if i < 3 else guide.atlas_button
         _check(root.gui_get_focus_owner() == expected_focus and guide.page_index == 0
             and not guide._atlas_is_open(),
             "controller DOWN reaches guide tab or Parts & spoils without activation: %d" % i)

@@ -70,11 +70,14 @@ func _saved_bytes() -> PackedByteArray:
 
 func _assert_notes(guide: StitchedFieldGuide, profile: Dictionary, cue: String) -> void:
 	var notes := StitchedWrenGiftFieldNotes.examples(profile)
-	var baseline := "\n\n".join(StitchedFieldGuide.PAGES[2])
+	var door_examples := StitchedFieldGuide.side_door_examples()
+	var expected: Array = StitchedFieldGuide.PAGES[2].duplicate()
+	expected.append_array(door_examples)
+	expected.append_array(notes)
 	var actual := guide.page_text(2)
-	_check(notes.size() == 3 and actual == baseline + "\n\n" + "\n\n".join(notes),
-		"open Fray page is exactly baseline followed by three freshly validated notes")
-	_check(actual.begins_with(baseline) and actual.contains(cue),
+	_check(notes.size() == 3 and door_examples.size() == 4 and actual == "\n\n".join(expected),
+		"owner 11-10: open Candle page is baseline and door notes followed by three freshly validated notes")
+	_check(actual.begins_with("\n\n".join(StitchedFieldGuide.PAGES[2])) and actual.contains(cue),
 		"correct next unlock milestone: " + cue)
 	_check(actual.contains("four gifts") and actual.contains("one hand action") and
 		actual.contains("once per fight") and actual.contains("fear 50") and
@@ -164,12 +167,12 @@ func _run() -> void:
 		await _click(drawings)
 		_check(guide.is_open() and root.gui_get_focus_owner() == guide.tab_buttons[0],
 			"Drawings opens guide with first tab focused")
-		_check(guide.get_child_count() == 2 and _focusable(guide) == 6 and
-			guide.tab_buttons.size() == 4 and guide.page_labels.size() == 4,
-			"unchanged four-tab, six-focusable-control hierarchy")
+		_check(guide.get_child_count() == 2 and _focusable(guide) == 5 and
+			guide.tab_buttons.size() == 3 and guide.page_labels.size() == 3,
+			"owner 11-10: three-tab, five-focusable-control hierarchy after Fray retired")
 		await _click(guide.tab_buttons[2])
 		_check(guide.page_index == 2 and guide.page_labels[2].is_visible_in_tree(),
-			"real Fray & resolve tab is selected")
+			"real Candle & stops tab is selected")
 		_assert_notes(guide, record[0], str(record[1]))
 		_check(guide.page_text(0) == "\n\n".join(StitchedFieldGuide.PAGES[0]),
 			"rank page unchanged")
@@ -180,8 +183,8 @@ func _run() -> void:
 	for bad_profile in [{"best_floor": "8", "boss_wins": 0}, {"best_floor": 8}]:
 		guide.wren_gift_profile_source = bad_profile
 		await _click(drawings)
-		_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2]),
-			"bad profile clears old Wren advice but keeps original Fray notes")
+		_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
+			"bad profile clears old Wren advice but keeps the Candle baseline and door notes")
 		await _key(KEY_ESCAPE)
 		_check(not guide.is_open() and root.gui_get_focus_owner() == drawings,
 			"Escape restores Drawings focus from invalid advice")
@@ -189,11 +192,11 @@ func _run() -> void:
 	guide.wren_gift_catalog_source = StitchedWrenGifts.catalog()
 	guide.wren_gift_catalog_source.by_id["point"]["name"] = "Fake Point"
 	await _click(drawings)
-	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2]),
-		"invalid catalog clears stale Wren notes without changing baseline")
+	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
+		"invalid catalog clears stale Wren notes without changing the door-page baseline")
 	await _click(guide.tab_buttons[1])
 	await _click(guide.tab_buttons[2])
-	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2]),
+	_check(guide.page_text(2) == "\n\n".join(StitchedFieldGuide.PAGES[2] + StitchedFieldGuide.side_door_examples()),
 		"tab switching cannot revive rejected notes")
 	await _key(KEY_ESCAPE)
 	guide.wren_gift_catalog_source = null

@@ -25,10 +25,14 @@ const PAGES := [
 		"FOUR SIGNATURE ABILITIES  |  Each of the eight heroes has FOUR fixed, distinct signature abilities chosen for their role, not granted by worn parts. Each has legal launch ranks, target ranks and a side: foe, ally or self.",
 		"ABILITY EXAMPLES  |  Heroes may heal an ally, mark a foe, pierce ranks or guard another doll; their kits are not just generic strike and guard.",
 		"WORN LIMBS  |  HEAD, ARMS, TORSO and LEGS are sewn physical body parts with cloth patches, not sources of the four active ability names.",
+		"HANGING BY A THREAD  |  At 0 HP the doll stays in its rank and can still act. Reaching 0 HP does not itself tear off a limb.",
+		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
+		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
+		"RECOVERY  |  Tears persist through corridor Walk and later fights. Healing above 0 resets the further-hit count but never regrows a limb. Mend at the Sewing Circle or Campfire; replace LOST dolls from available heroes at the Sewing Circle.",
 		"OTHER ACTIONS  |  MOVE swaps adjacent heroes; RE-TIE repairs a snipped shared thread; PASS ends the hero's turn."
 	],
 	[
-		"RETREAT  |  A seeded non-boss RETREAT succeeds 75% of the time. Failure consumes the acting hero's turn. Success forfeits all rewards and gives EACH hero +15 Fray.",
+		"RETREAT  |  A seeded non-boss RETREAT succeeds 75% of the time. Failure consumes the acting hero's turn. Success forfeits all rewards.",
 		"SNIPPED THREAD  |  A cut blocks that doll's movement and ally healing or guarding across the cut until RE-TIE repairs the shared thread.",
 		"ABILITY PATCH SOCKETS  |  Found effect patches SEW ONTO a fixed ability, not body-part stats. Each ability normally has one socket; a gold patch permits two.",
 		"THREAD QUALITY  |  Rarity runs cotton < wool < silk < gold. Cotton and wool are common in fights and events; silk and gold mainly come from Elite or Boss prizes. Quality shows in thread colour, never a numeric tier.",
@@ -36,33 +40,24 @@ const PAGES := [
 		"ALLY PATCHES  |  Some patches fit ally heals or guards: regen, cleanse and extra guard. Unsew and resew ability patches at the Sewing Circle."
 	],
 	[
-		"FRAY  |  Fray ranges from 0–200. Reaching 100 triggers a resolve check.",
-		"STEADFAST  |  25% chance: return to 45 Fray, deal +10% damage, and reduce every party member's Fray by 2 on this hero's turns until the floor ends.",
-		"UNRAVELLED  |  75% chance at 100 Fray: Unravelled lasts until Fray falls below 50.",
-		"COMING APART  |  At 200 Fray, the hero Comes Apart: HP becomes 0 and Fray becomes 150. If already Hanging by a Thread, that hero is LOST.",
-		"HANGING BY A THREAD  |  At 0 HP the doll stays in its rank and can still act. Reaching 0 HP does not itself tear off a limb.",
-		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
-		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
-		"RECOVERY  |  Tears persist through corridor Walk and later fights. Healing above 0 resets the further-hit count but never regrows a limb. Mend at the Sewing Circle or Campfire; replace LOST dolls from available heroes at the Sewing Circle."
-	],
-	[
 		"CANDLE  |  Begins at 100. Each entered routed stop in the CORRIDOR costs 8 Candle, down to 0. Visits happen in the corridor, not on a separate map screen.",
 		"BRIGHT 76–100  |  15% chance the party acts first; no penalty.",
-		"DIM 51–75  |  +10% Fray gain; +25% loot.",
-		"GLOOM 26–50  |  +20% Fray gain; foes gain +5 ACC and +10% damage; +50% loot.",
-		"DARK 1–25  |  +30% Fray gain; foes gain +10 ACC and +15% damage; +75% loot.",
-		"SNUFFED 0  |  +40% Fray gain; foes gain +25% damage; 25% chance foes act first; +100% loot.",
+		"DIM 51–75  |  +25% loot.",
+		"GLOOM 26–50  |  Foes gain +5 ACC and +10% damage; +50% loot.",
+		"DARK 1–25  |  Foes gain +10 ACC and +15% damage; +75% loot.",
+		"SNUFFED 0  |  Foes gain +25% damage; 25% chance foes act first; +100% loot.",
 		"LOOT  |  Candle multipliers modify loot if awarded; they do not guarantee a drop.",
-		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP each; Tell Tales reduces Fray by 25 each; Trim Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
+		"CAMPFIRE  |  Choose ONE: Mend heals 30% HP each; Tell Tales calms the dolls; Trim Wick restores 50 Candle. A Peddler candle stub restores 25 Candle.",
 		"SATCHEL  |  Hold up to six spare parts. Sew worn HEAD, ARMS, TORSO and LEGS at a Campfire or Sewing Circle, not in a fight.",
 		"SIDE DOORS  |  After Elite or Boss fights, an optional door MAY appear. The under-bed door offers a silk/gold ability patch or Wren gift at a cost: limb, stuffing/max HP or Wren fear. The attic door may bless with mend all, steady candle or guard the head; ANY under-bed deal closes attic blessings for the rest of this run."
 	]
 ]
-const TABS := ["Ranks & turns", "Seams & retreat", "Fray & resolve", "Candle & stops"]
+## Owner 11-10: the Fray & resolve tab and its page are gone with the fray mechanic; the
+## still-true 0-HP tear rules moved to Ranks & turns.
+const TABS := ["Ranks & turns", "Seams & retreat", "Candle & stops"]
 ## Seams & retreat carries four catalog-derived examples, three gold notes and three S15 notes.
 const LESSON_PAGE := 1
-const WREN_GIFT_PAGE := 2
-const SIDE_DOOR_PAGE := 3
+const SIDE_DOOR_PAGE := 2
 
 ## Only the six named, validated witnesses can teach these possible bargains.
 ## Additional legal catalog entries are welcome; no run offer/RNG is consulted.
@@ -146,7 +141,6 @@ func open_guide() -> bool:
 		return false
 	_active = true
 	_refresh_lesson_page()
-	_refresh_wren_gift_page()
 	_refresh_side_door_page()
 	show()
 	select_page(0)
@@ -168,24 +162,19 @@ func _refresh_lesson_page() -> void:
 	page_labels[LESSON_PAGE].text = "\n\n".join(lines)
 
 
-## Rebuild the existing Fray page from its original, unchanged static notes.
-## Profile reads are passive; no offers, saves or global RNG are touched.
-func _refresh_wren_gift_page() -> void:
-	if page_labels.size() <= WREN_GIFT_PAGE:
-		return
-	var lines: Array = PAGES[WREN_GIFT_PAGE].duplicate()
-	var profile: Variant = StitchedWrenGifts.load_profile() if wren_gift_profile_source == null else wren_gift_profile_source
-	lines.append_array(StitchedWrenGiftFieldNotes.examples(profile, wren_gift_catalog_source))
-	page_labels[WREN_GIFT_PAGE].text = "\n\n".join(lines)
-
-
-## Recreate Candle & stops from the authored baseline at every successful open.
-## Invalid or contradictory source suppresses all four optional notes together.
+## Recreate Candle & stops from the authored baseline at every successful open: the
+## validated S14 door notes, then the passive Wren gift notes (the Fray & resolve page they
+## used to live on is gone with the fray mechanic). Invalid or contradictory door source
+## suppresses all four door notes together; an invalid profile or catalog suppresses the
+## gift notes without touching the rest. Profile reads are passive; no offers, saves or
+## global RNG are touched.
 func _refresh_side_door_page() -> void:
 	if page_labels.size() <= SIDE_DOOR_PAGE:
 		return
 	var lines: Array = PAGES[SIDE_DOOR_PAGE].duplicate()
 	lines.append_array(side_door_examples(side_door_source))
+	var profile: Variant = StitchedWrenGifts.load_profile() if wren_gift_profile_source == null else wren_gift_profile_source
+	lines.append_array(StitchedWrenGiftFieldNotes.examples(profile, wren_gift_catalog_source))
 	page_labels[SIDE_DOOR_PAGE].text = "\n\n".join(lines)
 
 
