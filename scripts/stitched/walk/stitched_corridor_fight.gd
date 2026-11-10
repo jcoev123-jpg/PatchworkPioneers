@@ -660,7 +660,7 @@ func _target_hint() -> void:
 	if _keyboard_targets.is_empty() or more_panel.visible:
 		return
 	if _keyboard_target.is_empty():
-		log_label.text = "Arrows choose a target · Enter / Space confirms."
+		log_label.text = "Arrows choose a target, then Enter / Space confirms."
 		return
 	var side := _keyboard_target.get_slice("_", 0)
 	var rank := int(_keyboard_target.get_slice("_", 1))
@@ -697,7 +697,8 @@ func refresh() -> void:
 	var entries: Array[Dictionary] = []
 	for id in battle.turn_order():
 		entries.append(battle.get_unit(str(id)))
-	ribbon.show_order(entries, battle.current_actor_id(), battle.is_over())
+	ribbon.show_order(entries, battle.current_actor_id(), battle.is_over(),
+		int(battle.state_snapshot().get("turn_index", -1)))
 	ribbon.visible = not battle.is_over()
 	var boss := battle.is_boss_encounter()
 	for side in ["hero", "foe"]:

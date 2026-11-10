@@ -192,9 +192,14 @@ func _layout_tag(tag: Dictionary, index: int, width: float) -> void:
 ## Entries are supplied from public StitchedRules.turn_order() and get_unit().
 ## The original order and repeated IDs are preserved; only dead/lost entries vanish.
 ## The caller supplies an empty actor ID or is_over=true to clear NOW at battle end.
-func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
+## acting_index (optional) is the battle's turn pointer into entries: when given, only that one slot
+## reads NOW, so a boss that stands in the order twice never lights both of its places.
+func show_order(entries: Array, acting_id: String, is_over: bool, acting_index: int = -1) -> void:
 	displayed_entries.clear()
+	var source_slots: Array[int] = []
+	var slot := -1
 	for raw in entries:
+		slot += 1
 		if not raw is Dictionary:
 			continue
 		var unit: Dictionary = raw
@@ -205,6 +210,7 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 			(unit.get("hp") is int or unit.get("hp") is float) and float(unit["hp"]) <= 0):
 			continue
 		displayed_entries.append(unit.duplicate(true))
+		source_slots.append(slot)
 		if displayed_entries.size() == MAX_TAGS:
 			break
 	var count := displayed_entries.size()
@@ -238,7 +244,8 @@ func show_order(entries: Array, acting_id: String, is_over: bool) -> void:
 		control.tooltip_text = StitchedTurnStatusCues.tooltip(unit)
 		tag["help_label"].text = control.tooltip_text
 		_fit_chip_text(tag["rank"], code, 16, 10, Vector2(tag["rank"].size.x, 19))
-		var active := not is_over and not acting_id.is_empty() and id == acting_id
+		var active := not is_over and not acting_id.is_empty() and id == acting_id \
+			and (acting_index < 0 or source_slots[index] == acting_index)
 		_fit_chip_text(tag["marker"], "NOW" if active else StitchedTurnStatusCues.cue(unit), 13, 10, Vector2(tag["marker"].size.x, 17))
 		tag["marker"].add_theme_color_override("font_color", AMBER if active else MUTED)
 		tag["frame"].self_modulate = ACTIVE_FABRIC if active else FABRIC
