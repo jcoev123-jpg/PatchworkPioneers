@@ -566,6 +566,8 @@ func wire_focus(navigation: Array[Button]) -> void:
 	for button in floor_buttons:
 		if not button.disabled:
 			button.grab_focus()
+			# The first choice takes focus on arrival; the strip keeps the stop's own words.
+			_say("")
 			return
 
 
