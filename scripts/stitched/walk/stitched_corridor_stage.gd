@@ -50,6 +50,9 @@ const JUNCTION_AHEAD_IN := 2.6
 ## Owner 11-09 "idle animations for characters": standing figures play their Flow idle strip at the
 ## 2D puppets' pace, each from its own point in the loop so a rank never breathes in step.
 const IDLE_FPS := 12.0
+## Loops rebuilt with twice the frames play twice as fast, so the motion keeps its speed.
+const IDLE_SMOOTH_FPS := 24.0
+const IDLE_SMOOTH_CHUNKS := 8
 
 var viewport: SubViewport
 var world: Node3D
@@ -67,6 +70,8 @@ var _idle_clock := 0.0
 static var _idle_cache: Dictionary = {}
 ## Still path -> how its loop cells line up with it (see _idle_fit).
 static var _idle_fits: Dictionary = {}
+## Still path -> the frame rate its loop was cut for.
+static var _idle_rates: Dictionary = {}
 var area := ""
 var steps := 0
 var step := 0
@@ -412,9 +417,25 @@ func idle_frames(still: Texture2D) -> Array:
 		return []
 	var path := still.resource_path
 	if not _idle_cache.has(path):
-		var strip_path := path.get_basename() + "_idle.png"
-		var strip: Texture2D = load(strip_path) if ResourceLoader.exists(strip_path) else null
-		var frames: Array = ROSTER.Puppet.loop_frames(strip, still)
+		# Smooth loop first: "<still>_idle24_<n>.png" strips played in order at IDLE_SMOOTH_FPS.
+		var strip: Texture2D = null
+		var frames: Array = []
+		for chunk in range(IDLE_SMOOTH_CHUNKS):
+			var chunk_path := "%s_idle24_%d.png" % [path.get_basename(), chunk]
+			if not ResourceLoader.exists(chunk_path):
+				break
+			var part: Texture2D = load(chunk_path)
+			var cut: Array = ROSTER.Puppet.loop_frames(part, still)
+			if cut.is_empty():
+				frames = []
+				break
+			strip = part if strip == null else strip
+			frames.append_array(cut)
+		_idle_rates[path] = IDLE_SMOOTH_FPS if not frames.is_empty() else IDLE_FPS
+		if frames.is_empty():
+			var strip_path := path.get_basename() + "_idle.png"
+			strip = load(strip_path) if ResourceLoader.exists(strip_path) else null
+			frames = ROSTER.Puppet.loop_frames(strip, still)
 		_idle_cache[path] = frames
 		if not frames.is_empty():
 			_idle_fits[path] = _idle_fit(strip, still)
@@ -512,7 +533,8 @@ func _idle_step(figure: Sprite3D, held: bool) -> void:
 		return
 	var count := frames.size()
 	var fit: Vector3 = figure.get_meta("idle_fit", Vector3.ONE)
-	figure.texture = frames[int(_idle_clock * IDLE_FPS + float(figure.get_meta("idle_phase", 0.0)) * count) % count]
+	var rate := float(_idle_rates.get(still.resource_path, IDLE_FPS))
+	figure.texture = frames[int(_idle_clock * rate + float(figure.get_meta("idle_phase", 0.0)) * count) % count]
 	figure.pixel_size = still_size * fit.x
 	# Sprite3D mirrors only the picture inside its rect, so a flipped figure mirrors the offset too.
 	figure.offset = Vector2(-fit.y if figure.flip_h else fit.y, fit.z)
