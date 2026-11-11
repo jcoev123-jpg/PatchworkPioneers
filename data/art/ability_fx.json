@@ -29,6 +29,31 @@
   "guard": "res://assets/paper/fx/hit_guard.png",
   "hex": "res://assets/paper/fx/hit_hex.png"
  },
+ "reaction_by_fx": {
+  "blood": "hit",
+  "felt": "hit",
+  "sparks": "hit",
+  "stuffing": "hit",
+  "blast": "heavy",
+  "dust": "shudder",
+  "ink": "shudder",
+  "hex": "shudder",
+  "heal": "brace",
+  "guard": "brace"
+ },
+ "reaction_overrides": {
+  "behemoth_maul": "heavy",
+  "behemoth_phase2_crushing_lash": "heavy",
+  "behemoth_phase2_gut_rope": "heavy",
+  "colossus_treadle": "heavy",
+  "felt_slam": "heavy",
+  "hauler_slam": "heavy",
+  "horn_charge": "heavy",
+  "clamp_crush": "heavy",
+  "queen_devour": "heavy",
+  "tinker_arms_scrap_bomb": "heavy",
+  "button_golem_arms_brass_knuckle": "heavy"
+ },
  "abilities": {
   "back_shove": {
    "fx": "hex"

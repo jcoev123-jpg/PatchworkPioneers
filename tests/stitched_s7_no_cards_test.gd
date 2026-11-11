@@ -438,6 +438,12 @@ func _run() -> void:
 				_check(corridor_continue != null and corridor_continue.is_visible_in_tree()
 					and not corridor_continue.disabled,
 					"the finished battle shows its public Continue action")
+				var corridor_fight := loss_stage.find_child("CorridorFight", true, false) as StitchedCorridorFight
+				_check(corridor_fight != null and corridor_continue != null
+					and corridor_continue.get_parent() == corridor_fight
+					and corridor_continue.get_index() == corridor_fight.get_child_count() - 1
+					and not corridor_fight._beat_input_shield.visible,
+					"defeat Continue stays above late reaction overlays and the input shield")
 				if corridor_continue != null:
 					await _click(corridor_continue)
 				await process_frame

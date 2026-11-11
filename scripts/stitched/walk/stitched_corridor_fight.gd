@@ -97,6 +97,13 @@ var _beat_input_shield: Control
 var _queued_receipts: Array = []
 ## Thrown things and hit effects in flight (picture sprites); gone when their beat ends or is cut short.
 var _flying: Array[Sprite3D] = []
+## Job 6: held receipt reactions are picture swaps, not new puppet art. The live
+## rules/receipts decide the kind; absent pictures use an unmistakable recoil.
+var _reaction_kinds: Dictionary = {}
+var _reaction_units: Dictionary = {}
+var _reaction_shakes: Array[Tween] = []
+var _miss_labels: Dictionary = {}
+var _beat_homes: Dictionary = {}
 var _focus_actor_id := ""
 var _focus_target_ids: Array[String] = []
 ## The rules may advance before the held pose ends; keep the bar and NOW cue on its actor.
@@ -989,6 +996,10 @@ func refresh() -> void:
 	_sync_keyboard_targets()
 	_refresh_bar()
 	_shade_figures()
+	# Hover details must follow current HP/rank (including a killing receipt),
+	# not the snapshot taken when the pointer first entered the foe.
+	if hovered.begins_with("foe_"):
+		_update_corner_foe()
 	_place_overlays()
 
 
@@ -1350,7 +1361,8 @@ func _shade_figures() -> void:
 	var choosing := not targets.is_empty()
 	var acting_id := _held_actor_id if not _held_actor_id.is_empty() else battle.current_actor_id()
 	var acting := battle.get_unit(acting_id)
-	var actor_key := str(acting.get("side", "")) + "_" + str(acting.get("rank", 0)) if not battle.is_over() else ""
+	var actor_key := str(acting.get("side", "")) + "_" + str(acting.get("rank", 0)) \
+		if not battle.is_over() or not _held_actor_id.is_empty() else ""
 	for key in plates:
 		var marker: TextureRect = plates[key].get_node("TargetMarker")
 		var marked: bool = choosing and targets.has(key) and plates[key].visible and not more_panel.visible
@@ -1444,6 +1456,15 @@ func _place_overlays() -> void:
 		hits[key].position = boxes[key].position
 		hits[key].size = boxes[key].size
 		hits[key].visible = boxes[key].size.x > 0.0
+	# The only reaction text is MISS; it follows the actual dodger's 3D projection.
+	for key in _miss_labels:
+		var label: Label = _miss_labels[key]
+		if not label.visible:
+			continue
+		var rect := stage.screen_rect(key)
+		if rect.size.x > 0.0:
+			label.position = Vector2(clampf(rect.get_center().x - label.size.x / 2.0,
+				0.0, 1280.0 - label.size.x), maxf(125.0, rect.position.y + rect.size.y * 0.35))
 	_refresh_wren()
 
 
@@ -1591,7 +1612,7 @@ func _fallen_foe_at(rank: int, unit_id: String) -> Dictionary:
 ## True while a held beat playsor an ability receipt is about to start one: a unit that fell
 ## on that blow keeps its picture on the seat until the beat has eased back.
 func _hold_pending() -> bool:
-	if engine._motion_is_reduced() or battle.is_over():
+	if engine._motion_is_reduced():
 		return false
 	if _beats != null and _beats.is_running():
 		return true
@@ -1612,7 +1633,7 @@ func _process(_delta: float) -> void:
 		return
 	# Toggles, a dying actor and the end of combat may interrupt an active shot.
 	# The camera and figures must not keep an old pose into the next turn.
-	if engine._motion_is_reduced() or battle.is_over():
+	if engine._motion_is_reduced():
 		if (_beats != null and _beats.is_running()) or stage.fight_focus_active():
 			_cancel_beats()
 	elif stage.fight_focus_active():
@@ -1636,9 +1657,14 @@ func _process(_delta: float) -> void:
 	elif _sync_keyboard_targets():
 		_shade_figures()
 		_target_hint()
-	# Keep physical mouse/touch input asleep until the entire queued hold returns to idle.
+	# Block double actions during held turns, but never cover the finished
+	# battle's Continue button. The final blow still plays unless the player
+	# explicitly chooses to leave early. Reaction overlays can be created during
+	# that last hold, so keep Continue above them and the retired Wren controls.
 	_beat_input_shield.visible = not engine._motion_is_reduced() and not battle.is_over() \
 		and ((_beats != null and _beats.is_running()) or not _queued_receipts.is_empty())
+	if battle.is_over() and continue_button.get_index() != get_child_count() - 1:
+		move_child(continue_button, get_child_count() - 1)
 	_place_overlays()
 
 
@@ -1700,7 +1726,7 @@ func _begin_receipt_focus(receipt: Dictionary, order_index: int = -1) -> void:
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
 	_clear_foe_spotlight()
-	if engine._motion_is_reduced() or battle.is_over() or str(receipt.get("action", "")) != "ability":
+	if engine._motion_is_reduced() or str(receipt.get("action", "")) != "ability":
 		return
 	var spot := _receipt_spot_keys(receipt)
 	# Owner 11-10: a self-aimed mend and a killing blow leave only the actor lit;
@@ -1733,6 +1759,13 @@ func _cancel_beats() -> void:
 		_beat_input_shield.hide()
 	_show_move_name("")
 	_clear_flying()
+	_clear_target_reactions()
+	for home_key in _beat_homes:
+		var returned: Sprite3D = stage.figure_nodes.get(home_key)
+		if returned != null:
+			returned.position = _beat_homes[home_key]
+			returned.rotation.z = 0.0
+	_beat_homes.clear()
 	_hide_ability_card()
 	stage.cancel_fight_focus()
 	# A killed beat must not leave a spotlight-grown figure behind.
@@ -1753,6 +1786,8 @@ func _exit_tree() -> void:
 		_beats = null
 	_queued_receipts.clear()
 	_clear_flying()
+	_clear_target_reactions()
+	_beat_homes.clear()
 	if stage != null:
 		stage.cancel_fight_focus()
 
@@ -1811,12 +1846,128 @@ func _set_receipt_pose(actor_id: String, ability_id: String, attack_pose: bool) 
 	figure.pixel_size = height / float(texture.get_height())
 
 
+## The finished rules receipt, not the pointer or the image filename, picks the pose.
+## A failed attack dodges; a critical or lethal blow is heavy; applied statuses win
+## over the ability's ordinary, authored reaction family.
+func _receipt_reaction_kind(receipt: Dictionary, result: Dictionary) -> String:
+	if not bool(result.get("hit", true)):
+		return "dodge"
+	if bool(result.get("crit", false)) or bool(result.get("lost", false)) \
+			or bool(result.get("hanging", false)) or result.has("heap") \
+			or (int(result.get("damage", 0)) > 0 and int(result.get("target_hp", 1)) <= 0) \
+			or int(result.get("damage", 0)) >= 8:
+		return "heavy"
+	for entry in result.get("statuses", []):
+		if (bool(entry.get("resisted", false)) or bool(entry.get("refused", false))):
+			continue
+		if str(entry.get("status", "")) == "stun":
+			return "stun"
+	for entry in result.get("statuses", []):
+		if not bool(entry.get("resisted", false)) and str(entry.get("status", "")) in ["bleed", "rot"]:
+			return "shudder"
+	var actor_side := str(battle.get_unit(str(receipt.get("actor", ""))).get("side", ""))
+	var target_side := str(result.get("target_side", ""))
+	if target_side == actor_side and not actor_side.is_empty():
+		return "brace"
+	return StitchedBattleScreen.ability_reaction(str(receipt.get("ability", "")))
+
+
+## All six kinds try the dedicated painted sprite first. Until an illustration
+## arrives, older enemy hit strips supply a single held cell; movement supplies
+## the rest. The target keeps its established silhouette and idle frames.
+func _reaction_texture(unit_id: String, kind: String) -> Texture2D:
+	var paths := StitchedBattleScreen.ROSTER.art_paths(unit_id)
+	var still_path := str(paths.get("idle", ""))
+	if still_path.is_empty():
+		return null
+	var art := _texture(still_path.get_basename() + "_react_" + kind + ".png")
+	if art != null:
+		return art
+	if kind in ["hit", "heavy"]:
+		var old := _texture(str(paths.get("hit_loop", "")))
+		if old != null:
+			var frames: Array = StitchedBattleScreen.ROSTER.Puppet.loop_frames(old, _figure_art(unit_id))
+			if not frames.is_empty():
+				return frames[0] as Texture2D
+			return old
+	return null
+
+
+func _apply_target_reactions(receipt: Dictionary) -> void:
+	_clear_target_reactions()
+	var actor_key := _live_receipt_key(str(receipt.get("actor", "")))
+	for result in receipt.get("results", []):
+		var unit_id := str(result.get("target", ""))
+		var key := _live_receipt_key(unit_id)
+		if key.is_empty() or _reaction_kinds.has(key):
+			continue
+		var figure: Sprite3D = stage.figure_nodes.get(key)
+		if figure == null:
+			continue
+		var kind := _receipt_reaction_kind(receipt, result)
+		_reaction_kinds[key] = kind
+		_reaction_units[key] = unit_id
+		# An actor healing itself keeps the doing pose; a helped ally braces.
+		if key != actor_key:
+			var texture := _reaction_texture(unit_id, kind)
+			if texture != null and figure.texture != null:
+				var height := _figure_height(figure)
+				figure.texture = texture
+				figure.offset = Vector2.ZERO
+				figure.pixel_size = height / float(texture.get_height())
+		if kind in ["heavy", "shudder"] and key != actor_key:
+			# The shove has already landed. Shake the painted figure, without
+			# changing its rank, rules state or reserved spotlight movement.
+			var shake := create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+			var baseline_tilt := -0.21 if kind == "heavy" else 0.12
+			for pulse in range(4 if kind == "heavy" else 6):
+				shake.tween_property(figure, "rotation:z", baseline_tilt + (0.10 if pulse % 2 == 0 else -0.10), 0.065)
+			shake.tween_property(figure, "rotation:z", baseline_tilt, 0.08)
+			_reaction_shakes.append(shake)
+		if kind == "dodge":
+			var label: Label = _miss_labels.get(key)
+			if label == null:
+				label = _label("MISS", Rect2(0, 0, 104, 32), 27, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+				label.name = "Miss_" + key
+				add_child(label)
+				_miss_labels[key] = label
+				# The invisible beat shield must remain the last input control.
+				move_child(_beat_input_shield, get_child_count() - 1)
+			label.visible = true
+	_place_overlays()
+
+
+func _clear_target_reactions() -> void:
+	for shake in _reaction_shakes:
+		if shake != null and shake.is_running():
+			shake.kill()
+	_reaction_shakes.clear()
+	for key in _reaction_units:
+		var figure: Sprite3D = stage.figure_nodes.get(key) if stage != null else null
+		if figure == null or str(figure.get_meta("fight_unit", "")) != str(_reaction_units[key]):
+			continue
+		var idle: Texture2D = figure.get_meta("still")
+		if idle != null:
+			figure.texture = idle
+			figure.pixel_size = float(figure.get_meta("still_pixel_size", figure.pixel_size))
+			figure.offset = Vector2.ZERO
+		figure.rotation.z = 0.0
+	_reaction_kinds.clear()
+	_reaction_units.clear()
+	for label in _miss_labels.values():
+		label.hide()
+
+
+func _remember_beat_homes(homes: Dictionary) -> void:
+	_beat_homes = homes.duplicate(true)
+
+
 func _play_new_receipts() -> void:
 	var fresh := engine.receipts.slice(_seen_receipts)
 	_seen_receipts = engine.receipts.size()
-	if engine._motion_is_reduced() or battle.is_over():
+	if engine._motion_is_reduced():
 		_cancel_beats()
-		# Owner 11-10 reduced motion: the lunges and poses are skipped, but the attack
+		# Owner 11-10 reduced motion:the lunges and poses are skipped, but the attack
 		# still dims the corridor and brightens the acting pair for the same readable beat.
 		if engine._motion_is_reduced() and not battle.is_over():
 			_spotlight_without_motion(fresh)
@@ -1881,6 +2032,11 @@ func _start_beats(batch: Array) -> void:
 		var spot := _receipt_spot_keys(receipt)
 		var homes := {}
 		var steps := {}
+		var target_reactions := {}
+		for result in receipt.get("results", []):
+			var reaction_key := _live_receipt_key(str(result.get("target", "")))
+			if not reaction_key.is_empty():
+				target_reactions[reaction_key] = _receipt_reaction_kind(receipt, result)
 		# Owner 11-10: the pair steps toward each other, but the strike never closes the last
 		# SPOT_MIN_GAP of the ranks: a doll lunging at the front foe covers it otherwise.
 		var near_gap := INF
@@ -1899,12 +2055,30 @@ func _start_beats(batch: Array) -> void:
 			var lit_home: Vector3 = lit_figure.position
 			homes[lit_key] = lit_home
 			var dz := 0.0
+			var dy := 0.0
 			if lit_key == key:
 				dz = toward * lunge
 			else:
 				var spare := absf(lit_home.z - (home.z + toward * lunge)) - SPOT_MIN_GAP
 				dz = signf(home.z - lit_home.z) * clampf(spare, 0.0, LUNGE * 0.5)
-			steps[lit_key] = lit_home + Vector3(SPOT_STEP, 0.0, dz)
+				# A struck figure recoils AWAY from the blow, not toward the attacker.
+				# Distinct falls/slumps stay legible even before reaction art arrives.
+				match str(target_reactions.get(lit_key, "")):
+					"heavy":
+						dz = toward * 0.28
+					"hit":
+						dz = toward * 0.11
+					"dodge":
+						dz = toward * 0.23
+					"stun":
+						dz = toward * 0.10
+						dy = -0.08 # knees buckle and the doll drops
+					"shudder":
+						dz = toward * 0.07
+					"brace":
+						dy = 0.07 # helped doll straightens upward
+			steps[lit_key] = lit_home + Vector3(SPOT_STEP, dy, dz)
+		_beats.tween_callback(Callable(self, "_remember_beat_homes").bind(homes.duplicate(true)))
 		var first_step := true
 		for lit_key in homes:
 			var lit_figure: Sprite3D = stage.figure_nodes[lit_key]
@@ -1917,12 +2091,17 @@ func _start_beats(batch: Array) -> void:
 					.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE * SPOT_GROW, BEAT_TIME * 0.4) \
 				.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+			if lit_key != key and target_reactions.has(lit_key):
+				var tilt: float = float({"heavy": -0.21, "hit": -0.10, "dodge": 0.16, "stun": -0.29,
+					"shudder": 0.12, "brace": -0.10}.get(str(target_reactions[lit_key]), 0.0))
+				_beats.parallel().tween_property(lit_figure, "rotation:z", float(tilt), BEAT_TIME * 0.4)
 		for result in receipt.get("results", []):
 			var target_key := _live_receipt_key(str(result.get("target", "")))
 			var struck: Sprite3D = stage.figure_nodes.get(target_key)
 			if struck != null and struck != figure and spot.flash.has(target_key):
 				_beats.parallel().tween_property(struck, "modulate", Color(1.8, 0.55, 0.5), BEAT_TIME * 0.3)
-		# The held beat: attacker struck, targets hurt, camera focused, nothing moves.
+		# Change the target's painted reaction at impact, then hold that silhouette.
+		_beats.tween_callback(Callable(self, "_apply_target_reactions").bind(receipt.duplicate(true)))
 		_beats.tween_interval(HOLD_TIME)
 		# Owner 11-10: the spotlight eases back together with the figures' return to rank.
 		_beats.tween_callback(Callable(stage, "end_spotlight"))
@@ -1935,7 +2114,9 @@ func _start_beats(batch: Array) -> void:
 			else:
 				_beats.parallel().tween_property(lit_figure, "position", homes[lit_key], BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 			_beats.parallel().tween_property(lit_figure, "scale", Vector3.ONE, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
+			_beats.parallel().tween_property(lit_figure, "rotation:z", 0.0, BEAT_TIME * 0.6).set_trans(Tween.TRANS_SINE)
 		_beats.tween_interval(0.08)
+		_beats.tween_callback(_clear_target_reactions)
 		_beats.tween_callback(Callable(self, "_set_receipt_pose").bind(actor_id, str(receipt.get("ability", "")), false))
 	_beats.tween_callback(Callable(self, "_show_move_name").bind(""))
 	_beats.tween_callback(_shade_figures)
@@ -1945,13 +2126,14 @@ func _start_beats(batch: Array) -> void:
 ## The whole batch eased back to idle; any receipts that queued behind its holds play now.
 func _drain_queued_beats() -> void:
 	_beats = null
+	_beat_homes.clear()
 	_held_actor_id = ""
 	_held_actor_index = -1
-	if not is_inside_tree() or battle == null or engine == null:
+	if not is_inside_tree()or battle == null or engine == null:
 		return
 	# Catch up any rank, death or idle art changes deferred during the held beat.
 	refresh()
-	if engine._motion_is_reduced() or battle.is_over() or _queued_receipts.is_empty():
+	if engine._motion_is_reduced() or _queued_receipts.is_empty():
 		return
 	var next := _queued_receipts.duplicate()
 	_queued_receipts.clear()

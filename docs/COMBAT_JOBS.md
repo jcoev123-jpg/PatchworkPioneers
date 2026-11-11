@@ -82,7 +82,7 @@ brighter, the others dimmed, with the spotlight functions `begin_spotlight` / `e
 
 ## Job 6: figures react to being hit (DONE 2026-11-11)
 
-Built receipt-driven six-kind reactions with per-ability metadata in `data/art/ability_fx.json`, dedicated authored art lookup, old enemy hit-frame fallback, and distinct knockback/tilt/shake motions when new art is absent. A miss visibly says MISS, a heal or guard braces an ally, and final kills retain their held reaction before returning to idle/scrap. Live-tested the normal 4v3 fight through victory with hero and foe attacks; added deterministic reaction/hover-state assertions without changing the rules or RNG. The existing stage spotlight, zoom, held-attack timing and input shield remain in charge.
+Built receipt-driven six-kind reactions with per-ability metadata in `data/art/ability_fx.json`, dedicated authored art lookup, old enemy hit-frame fallback, and distinct knockback/tilt/shake motions when new art is absent. A miss visibly says MISS, a heal or guard braces an ally, and final kills retain their held reaction before returning to idle/scrap. Live-tested normal, elite and boss fights through victory with hero and foe attacks, plus title/party, walk, Wren, shops and event screens; added deterministic reaction/hover-state assertionswithout changing the rules or RNG. The existing stage spotlight, zoom, held-attack timing and input shield remain in charge.
 
 A struck figure reacts,and the reaction depends on the ability used: a light cut jerks it back a little, a heavy
 blow knocks it far back and shakes it, bleed or rot makes it shudder, a stun leaves it slumped, a miss shows it
@@ -91,6 +91,21 @@ reaction kind in data and play that kind on the target. Where a figure has `<nam
 `assets/paper/enemies` use it. The owner will have a reaction picture drawn for every reaction kind and figure:
 load `assets/paper/<folder>/<figure>_react_<kind>.png` when it exists, fall back to moving the standing picture,
 and list every missing file under `## Art needed`.
+
+## Art needed (Job 6; 2026-11-11)
+
+109 required reaction images remain missing across 46 registered figures (the sixth kind, brace, is hero-only).File name for each entry below:
+`assets/paper/<actor_path>_react_<kind>.png`, where `actor_path` includes
+`heroes/`, `enemies/` or `boss/` as listed in `LiveEnemyRoster.ACTOR_ART`.
+This groups every required missing filename without a 109-line repeated path list.Existing
+129 reaction imports remain untouched; missing art uses a sprite/recoil fallback.
+
+- `brace` — every `heroes/*` actor in `LiveEnemyRoster.ACTOR_ART` (8): helped doll straightens or raises protection.
+- `shudder` — every actor (46): stitched body shivers under bleed or rot.
+- `stun` — every `enemies/*` and `boss/*` actor in the roster (38): head slumps, limbs go limp.
+- `hit` (8) — `heroes/warden`, `enemies/moth_swarm_broodling`, `enemies/button_guard`, `enemies/spool_hexer`, `enemies/zipper_snake`, `enemies/moth_swarm`, `enemies/needle_wasp`, `enemies/spindle_ram`: light jerk backward.
+- `heavy` (4) — `enemies/fray_scavenger`, `enemies/spool_hexer`, `enemies/crochet_hook_harrier`, `enemies/spool_leech`: large stagger from a forceful blow.
+- `dodge` (5) — `enemies/fray_scavenger`, `enemies/spool_hexer`, `boss/patchwork_behemoth`, `enemies/quilt_termite`, `enemies/felt_bulwark`: lean away, unharmed.
 
 ## Job 7: facing (TODO)
 

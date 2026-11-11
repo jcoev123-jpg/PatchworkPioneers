@@ -1781,6 +1781,15 @@ static func ability_fx(ability_id: String) -> Dictionary:
 	return out
 
 
+## Reaction classification is separate from ability_fx's image-only contract.
+static func ability_reaction(ability_id: String) -> String:
+	# The established accessor lazily opens the shared picture manifest.
+	ability_fx(ability_id)
+	var row: Dictionary = _ability_fx.get("abilities", {}).get(ability_id, {})
+	return str(_ability_fx.get("reaction_overrides", {}).get(ability_id,
+		row.get("reaction", _ability_fx.get("reaction_by_fx", {}).get(str(row.get("fx", "")), "hit"))))
+
+
 func _apply_named_pose(puppet: Variant, id: String, ability_id: String, side: String) -> void:
 	var own := ability_pose_path(side, id, ability_id)
 	if not own.is_empty():
