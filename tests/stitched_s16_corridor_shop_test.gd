@@ -148,6 +148,78 @@ func _run() -> void:
 		"leave arrow retains a genuinely clear 30px target around multiple wares")
 	visit.queue_free()
 
+	# Event exits must use the floor arrow even if their prose talks about coins,
+	# or has no navigation word (album, fortune, observatory). Unaffordable
+	# event trades should not leave a dead object on the floor.
+	var event := StitchedCorridorVisit.new()
+	root.add_child(event)
+	event.present("floorboards", "bright", "The Moss Garden", "Roses bloom.", ["stop_event"])
+	var event_actions := [
+		{"id": "gather_garden_trim", "text": "Collect rose hems", "arguments": [], "enabled": true},
+		{"id": "sell_rose_ribbon", "text": "Trade a scrap for coins", "arguments": [], "enabled": false},
+		{"id": "leave_garden", "text": "Close the moss gate", "arguments": [], "enabled": true},
+		{"id": "leave", "text": "Fold the giant album shut", "arguments": [], "enabled": true},
+	]
+	var event_homes := event.lay_out(event_actions, [], ["", "", "", ""])
+	var event_buttons: Array[Button] = []
+	for index in event_actions.size():
+		var button := Button.new()
+		button.text = event_actions[index].text
+		button.disabled = not event_actions[index].enabled
+		event_homes[index].add_child(button)
+		event_buttons.append(button)
+	event.dress(event_buttons)
+	var arrow_art := StitchedCorridorStage.art("floor_arrow")
+	_check(event.groups[2].arrow and event.groups[3].arrow
+		and event.groups[2].art == arrow_art and event.groups[3].art == arrow_art,
+		"all event exits are arrows, irrespective of their wording or unrelated object words")
+	_check(not event.groups[1].available and not event_buttons[1].visible
+		and not event.stage.figure_nodes.has("thing_1")
+		and event.stage.figure_nodes.has("thing_0"),
+		"an unaffordable event trade has neither a clickable control nor a dead coin pile")
+	_check(event._is_arrow("leave_stars", "Close the observatory hatch")
+		and event._is_arrow("watch_sails", "Watch the sails turn and leave")
+		and event._is_arrow("pass_by", "Wave the caravan onward")
+		and event._is_arrow("walk_round_gate", "Walk around the silent gate")
+		and event._is_arrow("decline_trade", "Decline the trade")
+		and not event._is_arrow("watch_bell", "Watch the cold bell (gain 17 gold)")
+		and not event._is_arrow("turn_button_clock", "Turn the button clock for gold")
+		and not event._is_arrow("gather_garden_trim", "Collect rose hems"),
+		"scanned no-cost event exits are arrows without classifying rewarded actions as exits")
+	_check(event._group_art({"actions": [0]},
+		[{"id": "pass_by", "text": "Wave the caravan onward"}], [""]) == arrow_art,
+		"an exit with no navigation words on its label uses arrow artwork, not a parcel")
+	event.queue_free()
+
+	# Empty Moth visits quote disabled sacrifices and fumigation. Those controls
+	# must stay on the mounted page across Save/Reload and title Continue, unlike
+	# the Garden's no-scraps coin pile.
+	var moth := StitchedCorridorVisit.new()
+	root.add_child(moth)
+	moth.present("floorboards", "bright", "Moth Infestation", "Moths stir.", ["prop_moth_infestation", "stop_event"])
+	var moth_actions := [
+		{"id": "sacrifice_part", "text": "Feed a spare part to the moths", "arguments": [0], "enabled": false},
+		{"id": "fumigate", "text": "Fumigate the satchel (spend 1 scrap)", "arguments": [], "enabled": false},
+		{"id": "escape", "text": "Escape before the moths spread", "arguments": [], "enabled": true},
+	]
+	var moth_homes := moth.lay_out(moth_actions, [], ["", "", ""])
+	var moth_buttons: Array[Button] = []
+	for index in moth_actions.size():
+		var choice := Button.new()
+		choice.text = moth_actions[index].text
+		choice.disabled = not moth_actions[index].enabled
+		moth_homes[index].add_child(choice)
+		moth_buttons.append(choice)
+	moth.dress(moth_buttons)
+	_check(moth_buttons.all(func(button): return button.is_visible_in_tree()),
+		"empty Moth retains every quoted control, including disabled choices")
+	_check(moth_buttons[0].disabled and moth_buttons[1].disabled and not moth_buttons[2].disabled,
+		"empty Moth preserves the refusal states of both unaffordable choices")
+	_check(moth.stage.figure_nodes.has("thing_0") and moth.stage.figure_nodes.has("thing_1")
+		and moth.stage.figure_nodes.has("thing_2"),
+		"empty Moth displays the disabled options and its escape floor arrow")
+	moth.queue_free()
+
 	# The junction tells only the way, never what waits down it.
 	for side in ["left", "ahead", "right"]:
 		var words := StitchedCorridorJunction.describe(side)

@@ -57,6 +57,9 @@ const WORD_ART := [
 	[["rest", "sleep", "nap"], "item_pillow"],
 	[["button"], "item_buttons"],
 ]
+## Every currently authored Event choice with these IDs is a no-effect departure.
+## Keep reward choices such as watch_bell and turn_button_clock as actual objects.
+const EXIT_ID_PREFIXES := ["leave_", "walk_", "pass_", "ignore_", "close_", "skip_", "decline_"]
 const FALLBACK := ["item_parcel", "item_bundle", ICONS + "satchel.png"]
 
 var stage: StitchedCorridorStage
@@ -76,6 +79,9 @@ var _party: Dictionary = {}
 var _pictures: Array = []
 var _keeper: Texture2D
 var _navigation: Array[Button] = []
+## Only the Garden's unavailable rose-ribbon trade is omitted from the floor.
+## Other events (notably Moth sacrifice) retain disabled, inspectable controls.
+var _event_visit := false
 
 
 func _ready() -> void:
@@ -120,6 +126,7 @@ func _label(title: String, font_size: int, tone: Color) -> Label:
 ## The corridor where the walk stopped, seen with the doll's eye; the keeper waits ahead.
 func present(area_name: String, band_name: String, title: String, words: String, keeper_keys: Array = []) -> void:
 	_ensure_parts()
+	_event_visit = keeper_keys.has("stop_event")
 	stage.build(area_name, 2)
 	stage.set_candle(band_name)
 	heading.text = title
@@ -183,6 +190,10 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 		var group: Dictionary = groups[number]
 		var first: Dictionary = actions[group.actions[0]]
 		group.words = _group_words(group, actions)
+		group.available = false
+		for index in group.actions:
+			if actions[index].get("enabled", true):
+				group.available = true
 		group.art = _group_art(group, actions, pictures)
 		group.arrow = _is_arrow(str(first.id), str(first.text))
 		group.tall = str(first.id) == "replace"
@@ -196,8 +207,11 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 
 
 func _is_arrow(id: String, text: String) -> bool:
-	if id == "leave":
+	if id in ["leave", "turn_away"]:
 		return true
+	for prefix in EXIT_ID_PREFIXES:
+		if id.begins_with(prefix):
+			return true
 	var lower:= text.to_lower()
 	for word in WORD_ART[0][0]:
 		if lower.contains(word):
@@ -238,6 +252,12 @@ func _without_dolls(text: String) -> Array:
 
 func _group_art(group: Dictionary, actions: Array, pictures: Array) -> Texture2D:
 	var first: Dictionary = actions[group.actions[0]]
+	# An exit is the road arrow even when its prose mentions coins, threads or
+	# no navigation words at all. Do not substitute a parcel for an exit.
+	if _is_arrow(str(first.id), str(first.text)):
+		var arrow_art := _picture("floor_arrow")
+		if arrow_art != null:
+			return arrow_art
 	if str(first.id) == "replace" and not first.get("arguments", []).is_empty():
 		var doll := StitchedCorridorStage.hero_art(str(first.arguments[0]))
 		if doll != null:
@@ -276,11 +296,20 @@ static func _picture(key: String) -> Texture2D:
 	return StitchedCorridorStage.art(key)
 
 
+## Do not hide arbitrary disabled Event choices: they must survive Save/Reload
+## with their quoted controls, especially the empty Moth's sacrifice and fumigate.
+## The Garden's empty-wallet ribbon offer alone is a misleading coin pile.
+func _hide_unavailable_offer(group: Dictionary) -> bool:
+	return _event_visit and not bool(group.available) and str(group.key) == "sell_rose_ribbon"
+
+
 ## Puts every thing on the floor: arrows past the keeper, the rest in rows nearest first.
 func _lay_floor(actions: Array) -> void:
 	var things: Array = []
 	var arrows: Array = []
 	for number in groups.size():
+		if _hide_unavailable_offer(groups[number]):
+			continue
 		(arrows if groups[number].arrow else things).append(number)
 	var rows := maxi(1, ceili(things.size() / float(PER_ROW)))
 	var keeper_distance := maxf(3.6, FIRST_ROW + rows * ROW_GAP + 0.5)
@@ -392,6 +421,7 @@ func dress(buttons: Array[Button]) -> void:
 			add_child(button)
 			button.pressed.connect(func(): toggle(number))
 		_plain(button)
+		button.visible = not _hide_unavailable_offer(group)
 		button.set_meta("thing", number)
 		button.mouse_entered.connect(func(): _look(number, true))
 		button.mouse_exited.connect(func(): _look(number, false))
@@ -468,7 +498,7 @@ func _words(index: int) -> String:
 func _place_items() -> void:
 	for number in floor_buttons.size():
 		var button := floor_buttons[number]
-		if not is_instance_valid(button):
+		if not is_instance_valid(button) or not button.visible:
 			continue
 		var seen := stage.screen_rect(_thing_id(number))
 		var middle: Variant = stage.screen_point(_thing_id(number))
@@ -485,7 +515,7 @@ func _place_items() -> void:
 		button.position = seen.position
 		button.size = seen.size
 	for number in floor_buttons.size():
-		if is_instance_valid(floor_buttons[number]) and groups[number].arrow:
+		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:
 			_clear_arrow_overlap(floor_buttons[number])
 
 
@@ -497,7 +527,7 @@ func _clear_arrow_overlap(arrow: Button) -> void:
 	# corner of its original picture remains usable.
 	var available: Array[Rect2] = [Rect2(arrow.position, arrow.size)]
 	for other in floor_buttons:
-		if other == arrow or not is_instance_valid(other):
+		if other == arrow or not is_instance_valid(other) or not other.visible:
 			continue
 		var blocked := Rect2(other.position, other.size).grow(4.0)
 		var next: Array[Rect2] = []
