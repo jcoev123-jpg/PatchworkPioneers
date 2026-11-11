@@ -2113,6 +2113,16 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 					shown_patches[signature] = true
 					_float_add(events, patch_key, str(patch_book.get(patch, {}).get("name",
 						patch.replace("_", " ").capitalize())).to_upper(), "strength", "patch:" + patch)
+			# Thorns and Riposte damage the attacker, not the struck unit. Authored
+			# Drain heals that same attacker. Use only amounts the rules settled.
+			var attacker_key := _live_receipt_key(str(receipt.get("actor", "")))
+			for counter in ["thorns", "riposte"]:
+				var amount := int(result.get(counter, 0))
+				if amount > 0:
+					_float_add(events, attacker_key, counter.to_upper() + " -" + str(amount), "damage")
+			var drained := int(result.get("drain", 0))
+			if drained > 0:
+				_float_add(events, attacker_key, "DRAIN +" + str(drained), "heal")
 		# A dodge uses the existing held MISS label (with its own reaction picture).
 	return events
 

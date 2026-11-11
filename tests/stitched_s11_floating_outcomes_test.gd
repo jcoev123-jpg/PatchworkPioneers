@@ -96,6 +96,30 @@ func _run() -> void:
 	_check(_words(events, hero_key).has("REGEN") and _words(events, hero_key).has("LIFE LOOP"),
 		"redirected helpful patch cue follows actual recipient")
 	_check(not _words(events, foe_key).has("LIFE LOOP"), "patch is not falsely credited to struck foe")
+	# A hero hitting a foe's Thorns/Riposte takes the counter damage itself.
+	receipt.results = [{"target": foe_id, "target_side": "foe", "hit": true,
+		"damage": 3, "thorns": 2, "riposte": 4, "statuses": []}]
+	events = fight._float_events(receipt)
+	_check(_words(events, hero_key).has("THORNS -2")
+		and _words(events, hero_key).has("RIPOSTE -4"),
+		"confirmed counter damage floats on the attacking doll")
+	_check(not _words(events, foe_key).has("THORNS -2"),
+		"counter damage cannot be misattributed to the defender")
+	receipt.results[0].erase("thorns")
+	receipt.results[0].erase("riposte")
+	_check(not fight._float_events(receipt).has(hero_key),
+		"absent counter receipts never invent a callout")
+	# An authored foe Drain heals the foe after damaging a hero, not its victim.
+	receipt.actor = foe_id
+	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
+		"damage": 3, "drain": 3, "statuses": []}]
+	events = fight._float_events(receipt)
+	_check(_words(events, foe_key).has("DRAIN +3")
+		and not _words(events, hero_key).has("DRAIN +3"),
+		"confirmed foe drain credits the attacker, never the damaged doll")
+	receipt.results[0].erase("drain")
+	_check(not fight._float_events(receipt).has(foe_key),
+		"absent drain receipt never invents healing")
 	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng
 		and screen.receipts == receipts, "floating callouts do not mutate rules or receipts")
 	# A result can finish the fight before its delayed held-beat callouts appear.
