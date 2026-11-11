@@ -217,6 +217,9 @@ func _group_words(group: Dictionary, actions: Array) -> String:
 		for word in str(lists[0][slot]).split(" "):
 			if lists.all(func(other): return slot < other.size() and str(other[slot]).split(" ").has(word)):
 				kept.append(word)
+		# A word that only joins to a dropped name ("Sew Red Lint onto <ability>") must not dangle.
+		while not kept.is_empty() and str(kept.back()).to_lower() in ["onto", "on", "from", "to"]:
+			kept.pop_back()
 		if not kept.is_empty():
 			shared.append(" ".join(kept))
 	return " · ".join(shared if not shared.is_empty() else lists[0])
