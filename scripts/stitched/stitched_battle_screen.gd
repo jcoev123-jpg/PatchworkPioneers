@@ -984,7 +984,7 @@ func _refresh() -> void:
 		_labels["stats"].text = "Outcome: " + battle.outcome().capitalize()
 	else:
 		var stats_fmt := "R%d · %s  HP %d/%d\n%sSpeed %d\nDodge %d · ACC %+d\nPROT %d%% · %s"
-		var fray_bit := ("Fray %d/200 · " % int(acting["fray"])) if (StitchedRules.fray_enabled or not battle._s14) else ""
+		var fray_bit := ("Fray %d/200 · " % int(acting["fray"])) if StitchedRules.fray_enabled else ""
 		_labels["stats"].text = stats_fmt % [
 			int(acting["rank"]), str(acting["side"]).capitalize(), int(acting["hp"]), int(acting["max_hp"]), fray_bit,
 			int(acting["speed"]), int(acting["dodge"]), int(acting["acc"]),
