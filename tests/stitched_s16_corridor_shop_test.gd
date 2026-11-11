@@ -218,6 +218,12 @@ func _run() -> void:
 	_check(moth.stage.figure_nodes.has("thing_0") and moth.stage.figure_nodes.has("thing_1")
 		and moth.stage.figure_nodes.has("thing_2"),
 		"empty Moth displays the disabled options and its escape floor arrow")
+	_check(moth.groups[2].arrow and moth.groups[2].art == arrow_art,
+		"the Moth's cost-free escape uses the departure arrow, not a parcel")
+	var escaped := []
+	moth_buttons[2].pressed.connect(func(): escaped.append(true))
+	moth._input(_key(KEY_UP))
+	_check(escaped.size() == 1, "Up activates the Moth's exit, even when the other choices are disabled")
 	moth.queue_free()
 
 	# The junction tells only the way, never what waits down it.

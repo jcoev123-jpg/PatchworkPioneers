@@ -207,7 +207,7 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 
 
 func _is_arrow(id: String, text: String) -> bool:
-	if id in ["leave", "turn_away"]:
+	if id in ["leave", "turn_away", "escape"]:
 		return true
 	for prefix in EXIT_ID_PREFIXES:
 		if id.begins_with(prefix):
