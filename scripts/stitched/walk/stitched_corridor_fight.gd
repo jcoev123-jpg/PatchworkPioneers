@@ -154,6 +154,8 @@ var corner_map: StitchedCornerMap
 var fight_kind := ""
 var _foe_hover_lit := ""
 var _foe_hover_grow: Tween
+var _foe_hover_return: Tween
+var _foe_hover_return_key := ""
 
 
 ## Mounts the corridor view over a ready battle screen and tucks the classic chrome away.
@@ -896,6 +898,7 @@ func _foe_corner_lines(unit: Dictionary) -> PackedStringArray:
 func _begin_foe_spotlight(key: String) -> void:
 	if key == _foe_hover_lit:
 		return
+	_cancel_foe_hover_return()
 	if not _foe_hover_lit.is_empty():
 		var was := _foe_hover_lit
 		_foe_hover_lit = ""
@@ -905,8 +908,9 @@ func _begin_foe_spotlight(key: String) -> void:
 			_foe_hover_grow = null
 		var eased: Sprite3D = stage.figure_nodes.get(was)
 		if eased != null:
-			var ease_back := create_tween()
-			ease_back.tween_property(eased, "scale", Vector3.ONE, 0.2).set_trans(Tween.TRANS_SINE)
+			_foe_hover_return_key = was
+			_foe_hover_return = create_tween()
+			_foe_hover_return.tween_property(eased, "scale", Vector3.ONE, 0.2).set_trans(Tween.TRANS_SINE)
 	if key.is_empty() or engine._motion_is_reduced():
 		return
 	if _beats != null and _beats.is_running():
@@ -919,8 +923,21 @@ func _begin_foe_spotlight(key: String) -> void:
 		_foe_hover_grow.tween_property(figure, "scale", Vector3.ONE * 1.1, 0.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
 
 
+## A new hover or a held strike must not inherit an older foe's return tween.
+func _cancel_foe_hover_return() -> void:
+	if _foe_hover_return != null:
+		_foe_hover_return.kill()
+		_foe_hover_return = null
+	if not _foe_hover_return_key.is_empty():
+		var returning: Sprite3D = stage.figure_nodes.get(_foe_hover_return_key) if stage != null else null
+		if returning != null:
+			returning.scale = Vector3.ONE
+		_foe_hover_return_key = ""
+
+
 ## A starting or cancelled beat owns the stage: no hover spotlight may linger.
 func _clear_foe_spotlight() -> void:
+	_cancel_foe_hover_return()
 	if _foe_hover_grow != null:
 		_foe_hover_grow.kill()
 		_foe_hover_grow = null
@@ -1155,10 +1172,14 @@ func _ability_card_lines(actor: Dictionary, ability: Dictionary) -> PackedString
 	lines.append(str(kind_words.get(str(ability.get("kind", "")), "Ability")))
 	var dmg: Array = ability.get("dmg", [0, 0])
 	if int(dmg[1]) > 0:
+		# Gear adds to the rolled base (including criticals) before status and PROT
+		# modifiers. Report the same pre-modifier numbers the rules actually use.
 		var bonus := int(actor.get("dmg_bonus", 0))
-		lines.append("Damage %d-%d%s" % [int(dmg[0]), int(dmg[1]), (" +%d" % bonus) if bonus > 0 else ""])
+		lines.append("Base damage %d-%d" % [maxi(0, int(dmg[0]) + bonus),
+			maxi(0, int(dmg[1]) + bonus)])
 		var crit_chance := StitchedRules.CRIT_BASE + int(ability.get("crit", 0)) + int(actor.get("crit", 0))
-		lines.append("Crit %d%% for x1.5 (deals %d)" % [crit_chance, StitchedRules.crit_damage(int(dmg[1]))])
+		lines.append("Crit %d%%: base %d before modifiers" % [clampi(crit_chance, 0, 100),
+			maxi(0, StitchedRules.crit_damage(int(dmg[1])) + bonus)])
 	var side := str(ability.get("target_side", "enemy"))
 	if side == "enemy":
 		var hit_lines := PackedStringArray()

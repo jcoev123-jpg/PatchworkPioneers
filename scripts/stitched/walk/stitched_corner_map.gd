@@ -130,7 +130,9 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 		icon.position = Vector2((slot - ICON) / 2.0, 0)
 		icon.size = Vector2(ICON, ICON)
 		icon.modulate = HERE if here else (VISITED if walked else FUTURE)
-		icon.tooltip_text = "%s · %s" % [kind, "you are here" if here else ("visited" if walked else "ahead")]
+		# Rooms on a floor are parallel choices. Only outgoing edges to the NEXT
+		# floor are corridors; do not label an unchosen sibling as "ahead".
+		icon.tooltip_text = "%s · %s" % [kind, "you are here" if here else ("visited" if walked else "alternate route")]
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		column.add_child(icon)
 		if here:
@@ -146,12 +148,8 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 			candle.tooltip_text = "The party stands here"
 			candle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			column.add_child(candle)
-		if index > 0:
-			# The seam sits halfway between the two rooms: the column's own left edge.
-			var seam := _label(Rect2(-12.0, 0, 24.0, ICON), 17, FUTURE, column)
-			seam.name = "Seam_" + id
-			seam.text = "→"
-			seam.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# The map graph has no same-floor edges: these rooms are alternatives,
+		# not a corridor chain. Never draw a connecting seam between them.
 
 
 ## The hovered foe takes the corner; the fight view builds the lines from live rules.

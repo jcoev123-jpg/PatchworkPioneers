@@ -41,8 +41,10 @@ func _component_checks() -> void:
 	_check(here.has_node("HereMark"), "the candle marks the room the party stands in")
 	var ahead: Control = map.map_holder.get_node("Room_f02_n1")
 	_check(not ahead.has_node("HereMark"), "an ahead room carries no candle")
-	_check(ahead.get_node("Icon").modulate == StitchedCornerMap.FUTURE, "an ahead room reads as ahead")
-	_check(ahead.get_node("Icon").tooltip_text.contains("ahead"), "the room's tooltip says it is ahead")
+	_check(ahead.get_node("Icon").modulate == StitchedCornerMap.FUTURE, "an alternate room has the unchosen tint")
+	_check(ahead.get_node("Icon").tooltip_text.contains("alternate route")
+		and not ahead.has_node("Seam_f02_n1") and not map.map_holder.get_node("Room_f02_n2").has_node("Seam_f02_n2"),
+		"same-floor alternatives never imply a real onward corridor")
 	map.present_floor(2, records, ["f02_n0"], "f02_n0")
 	_check(map.map_holder.get_child_count() == 3, "an unchanged route does not rebuild the row")
 	map.show_foe("Moth Scribe", PackedStringArray(["Foe · rank 2", "Health 9 / 12"]))
@@ -119,6 +121,15 @@ func _mounted_checks() -> void:
 	fight._update_corner_foe()
 	_check(not fight.corner_map.foe_body.visible, "leaving the foe brings the map back")
 	_check(fight._foe_hover_lit.is_empty(), "the hover spotlight eases back")
+	_check(fight._foe_hover_return != null, "a departing hovered foe has a return tween")
+	fight.hovered = "foe_" + str(foe_rank)
+	fight._update_corner_foe()
+	_check(fight._foe_hover_return == null and fight._foe_hover_return_key.is_empty(),
+		"re-hovering a returning foe cancels its stale zoom tween")
+	fight._clear_foe_spotlight()
+	_check(fight.stage.figure_nodes["foe_" + str(foe_rank)].scale == Vector3.ONE
+		and fight._foe_hover_return == null and fight._foe_hover_lit.is_empty(),
+		"starting a held beat restores the foe scale and clears hover tweens")
 	fight.hovered = "hero_1"
 	fight._update_corner_foe()
 	_check(not fight.corner_map.foe_body.visible, "a hovered doll keeps the road map in the corner")

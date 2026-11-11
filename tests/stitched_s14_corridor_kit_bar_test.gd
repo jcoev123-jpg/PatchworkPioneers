@@ -50,6 +50,25 @@ func _run() -> void:
 	var fight := StitchedCorridorFight.attach(screen, "walls")
 	await process_frame
 	fight.refresh()
+	# A damage bonus applies to both ordinary and critical bases. The card
+	# must not advertise the raw critical maximum as the final equipped value.
+	var attack: Dictionary = {}
+	for move in actor.abilities:
+		if int(move.get("dmg", [0, 0])[1]) > 0:
+			attack = move
+			break
+	_check(not attack.is_empty(), "fixture has a damaging signature ability")
+	if not attack.is_empty():
+		var geared := actor.duplicate(true)
+		geared["dmg_bonus"] = 3
+		var damage: Array = attack["dmg"]
+		var card := fight._ability_card_lines(geared, attack)
+		_check(card.has("Base damage %d-%d" % [int(damage[0]) + 3, int(damage[1]) + 3]),
+			"ability card includes equipped bonus in both base damage bounds")
+		_check(card.has("Crit %d%%: base %d before modifiers" % [clampi(StitchedRules.CRIT_BASE
+			+ int(attack.get("crit", 0)) + int(geared.get("crit", 0)), 0, 100),
+			StitchedRules.crit_damage(int(damage[1])) + 3]),
+			"ability card includes equipped bonus in critical base and labels modifiers honestly")
 	for ability in actor.abilities:
 		var button: TextureButton = fight.part_buttons.get(str(ability.slot))
 		_check(button != null and button.tooltip_text.begins_with(str(ability.name)),

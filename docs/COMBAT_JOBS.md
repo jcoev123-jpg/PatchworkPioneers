@@ -69,9 +69,11 @@ like ref3: a bleed patch that gives the ability +X bleed shows the bleed design.
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
 sewn on really changes the ability in the next fight; if it does not, that is the bug to fix first.
 
-## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (PART 2026-11-12)
 
-Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms, current candle marker and seam arrows. Foe hover replaces the route with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar, shifted the four ability buttons and moved More/Continue to keep all controls, foe HP plates and fight text clear. Visually checked the normal fight, hovered Moth Scribe and restored map; mounted 32-check corner regression and corridor/Continue/victory tests pass.
+Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
+
+(11-12 review): RunMap nodes within one floor are **parallel alternatives**; its actual outgoing edges connect to the next floor. Removed misleading same-floor seam arrows and changed unchosen-room tooltips from "ahead" to "alternate route". Added coverage for this and for cancelled hover-return tweens. Remaining: illustrate the real cross-floor outgoing paths and junctions before calling the route-map portion DONE.
 
 The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see
@@ -121,7 +123,7 @@ never by editing the picture. List the foes you fixed.
 
 ## Job 8: compare with the references (PART 2026-11-11)
 
-Played floor-1 normal, floor-5 normal, floor-10 elite and boss against ref1/ref2. Widened ranks 1-3 when no fourth foe is present (0.62 to 0.82 metres), retaining compact spacing for an actual fourth seat; verified live `f5a_spaced` and the focused-attack, victory handoff and Continue tests. Still to reconcile: the map is above the foes rather than in the lower-right reference location, the bottom bar is shallower, and outcome lettering beyond the existing MISS awaits job 9.
+Played floor-1 normal, floor-5 normal, floor-10 elite and boss against ref1/ref2. Widened ranks 1-3 when no fourth foe is present (0.62 to 0.82 metres), retaining compact spacing for an actual fourth seat; verified live `f5a_spaced` and the focused-attack, victory handoff and Continue tests. Still to reconcile: the map is now in the lower-right corner but lacks the reference's real cross-floor paths and junctions; the bottom bar remains shallower, and some outcome lettering and icon art awaits job 9.
 
 Play three fights, hold each screen next to ref1 and ref2, and fix or list every remaining difference in layout,
 size of the figures, pacing of an attack, and readability.
