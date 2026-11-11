@@ -30,6 +30,9 @@ var parts: Dictionary = {}
 var reduced_motion := false
 var receipts: Array[Dictionary] = []
 var last_receipt: Dictionary = {}
+## Presentation-only changes seen between consecutive settled actions. No rules edits.
+var turn_cues: Array = []
+var _observed_units: Dictionary = {}
 var _history_entries: Array[Dictionary] = []
 var _history_omitted := 0
 var _history_overlay: Control
@@ -127,6 +130,7 @@ func begin(data: Dictionary = {}) -> bool:
 		return false
 	battle = result["battle"]
 	parts = catalog["by_id"]
+	_observed_units = _capture_turn_units()
 	reduced_motion = bool(ProjectSettings.get_setting("patchwork/reduced_motion", false))
 	return true
 
@@ -1550,7 +1554,59 @@ func _named_entry(value: Variant, entry_id: String) -> String:
 	return ""
 
 
+## Only changes on an untouched figure are attributable unambiguously to its
+## start-of-turn clock. A figure affected by the just-settled ability is skipped:
+## its HP/status delta could combine a strike, cleanse or patch with the tick.
+static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dictionary) -> Array:
+	var touched := {str(receipt.get("actor", "")): true}
+	for result in receipt.get("results", []):
+		touched[str(result.get("target", ""))] = true
+		for effect in result.get("statuses", []):
+			var on_id := str(effect.get("on", ""))
+			if not on_id.is_empty():
+				touched[on_id] = true
+	var cues := []
+	for id in before:
+		if touched.has(id) or not after.has(id):
+			continue
+		var old: Dictionary = before[id]
+		var now: Dictionary = after[id]
+		if bool(old.get("dead", false)) or bool(old.get("lost", false)):
+			continue
+		var prior: Dictionary = old.get("statuses", {})
+		var current: Dictionary = now.get("statuses", {})
+		for status in prior:
+			var count := int(prior[status])
+			if count <= 0 or int(current.get(status, 0)) != count - 1:
+				continue
+			var amount := 0
+			match str(status):
+				"bleed": amount = mini(count, maxi(0, int(old.get("hp", 0))))
+				"rot": amount = mini(StitchedRules.ROT_TICK, maxi(0, int(old.get("hp", 0))))
+				"regen":
+					var restored := 1 if int(prior.get("rot", 0)) > 0 else 2
+					amount = mini(restored, maxi(0, int(old.get("max_hp", 0)) - int(old.get("hp", 0))))
+			cues.append({"target": id, "status": str(status), "amount": amount,
+				"expired": count == 1})
+		if bool(now.get("lost", false)) and not bool(old.get("lost", false)):
+			cues.append({"target": id, "lost": true})
+		elif bool(now.get("hanging", false)) and not bool(old.get("hanging", false)):
+			cues.append({"target": id, "hanging": true})
+	return cues
+
+
+func _capture_turn_units() -> Dictionary:
+	var units := {}
+	if battle != null:
+		for unit in battle.get_heroes() + battle.get_foes():
+			units[str(unit.get("id", ""))] = unit
+	return units
+
+
 func _record(receipt: Dictionary) -> void:
+	var settled := _capture_turn_units()
+	turn_cues.append(turn_change_cues(_observed_units, settled, receipt))
+	_observed_units = settled
 	last_receipt = receipt.duplicate(true)
 	receipts.append(last_receipt.duplicate(true))
 	# Snapshot presentation names NOW, before later deaths, swaps or rank reuse.

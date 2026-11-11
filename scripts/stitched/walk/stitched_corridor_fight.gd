@@ -2054,10 +2054,13 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 		if bool(result.get("hit", true)):
 			var patch_recipients := {}
 			var damage := int(result.get("damage", 0))
-			var lethal: bool = bool(result.get("lost", false)) or result.has("heap") \
-				or (damage > 0 and int(result.get("target_hp", 1)) == 0 \
+			var lost: bool = bool(result.get("lost", false))
+			var foe_killed: bool = result.has("heap") or (damage > 0 \
+				and int(result.get("target_hp", 1)) == 0 \
 				and str(result.get("target_side", "")) == "foe")
-			if lethal:
+			if lost:
+				_float_add(events, key, "LOST!", "kill", "float_kill")
+			elif foe_killed:
 				_float_add(events, key, "UNSTITCHED!", "kill", "float_kill")
 			elif bool(result.get("hanging", false)):
 				_float_add(events, key, "HANGING", "bleed", "status_hanging")
@@ -2127,7 +2130,30 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 			var attacker_torn: Dictionary = result.get("attacker_tear", {})
 			if bool(attacker_torn.get("ok", true)) and not str(attacker_torn.get("slot", "")).is_empty():
 				_float_add(events, attacker_key, "SEAM TORN!", "bleed", "status_hanging")
+			if bool(result.get("attacker_lost", false)):
+				_float_add(events, attacker_key, "LOST!", "kill", "float_kill")
+			elif result.has("attacker_heap"):
+				_float_add(events, attacker_key, "UNSTITCHED!", "kill", "float_kill")
+			elif bool(result.get("attacker_hanging", false)):
+				_float_add(events, attacker_key, "HANGING", "bleed", "status_hanging")
 		# A dodge uses the existing held MISS label (with its own reaction picture).
+	# The battle screen observes settled start-of-turn clocks separately from the
+	# attack receipts. It only reports untouched units, never guesses a tick from
+	# the damage number on the unit the ability itself just struck.
+	for cue in receipt.get("turn_cues", []):
+		var on_key := _live_receipt_key(str(cue.get("target", "")))
+		if bool(cue.get("lost", false)):
+			_float_add(events, on_key, "LOST!", "kill", "float_kill")
+		elif bool(cue.get("hanging", false)):
+			_float_add(events, on_key, "HANGING", "bleed", "status_hanging")
+		var status := str(cue.get("status", ""))
+		var amount := int(cue.get("amount", 0))
+		if amount > 0 and status in ["bleed", "rot", "regen"]:
+			_float_add(events, on_key, status.to_upper() + (" +" if status == "regen" else " -")
+				+ str(amount), status, "status_" + status)
+		if bool(cue.get("expired", false)) and not status.is_empty():
+			_float_add(events, on_key, status.replace("_", " ").to_upper() + " ENDED",
+				"cleanse", "status_" + status)
 	return events
 
 
@@ -2228,7 +2254,12 @@ func _remember_beat_homes(homes: Dictionary) -> void:
 
 
 func _play_new_receipts() -> void:
-	var fresh := engine.receipts.slice(_seen_receipts)
+	var fresh := []
+	for index in range(_seen_receipts, engine.receipts.size()):
+		var entry: Dictionary = engine.receipts[index].duplicate(true)
+		if index < engine.turn_cues.size():
+			entry["turn_cues"] = engine.turn_cues[index].duplicate(true)
+		fresh.append(entry)
 	_seen_receipts = engine.receipts.size()
 	if engine._motion_is_reduced():
 		_cancel_beats()

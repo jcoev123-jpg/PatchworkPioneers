@@ -50,6 +50,35 @@ func _run() -> void:
 	_check(words.has("BLEED") and words.has("RESIST"), "applied bleed and refused stun are distinct")
 	_check(words.count("RED LINT") == 1, "one sewn patch firing cue, no duplicate for its status")
 	_check(not events.has(hero_key), "damage and debuffs never jump onto the attacker")
+	var prior_units := {"victim": {"id": "victim", "hp": 12, "max_hp": 20,
+		"statuses": {"bleed": 2, "rot": 1, "weak": 1}},
+		"ally": {"id": "ally", "hp": 8, "max_hp": 20, "statuses": {"regen": 1}}}
+	var settled_units := {"victim": {"id": "victim", "hp": 8, "max_hp": 20,
+		"statuses": {"bleed": 1}},
+		"ally": {"id": "ally", "hp": 10, "max_hp": 20, "statuses": {}}}
+	var tick_cues := StitchedBattleScreen.turn_change_cues(prior_units, settled_units,
+		{"actor": "someone_else", "results": []})
+	var saw_bleed := false
+	var saw_regen := false
+	for cue in tick_cues:
+		if str(cue.get("status", "")) == "bleed" and int(cue.get("amount", 0)) == 2:
+			saw_bleed = true
+		if str(cue.get("status", "")) == "regen" and int(cue.get("amount", 0)) == 2 \
+				and bool(cue.get("expired", false)):
+			saw_regen = true
+	_check(tick_cues.size() == 4 and saw_bleed,
+		"unaffected units expose exact bleed, rot, regen ticks and status expiry")
+	_check(saw_regen, "regen heal and expiration use the settled clock")
+	_check(StitchedBattleScreen.turn_change_cues(prior_units, settled_units,
+		{"actor": "someone_else", "results": [{"target": "victim"}]}).size() == 1,
+		"do not misattribute attack damage or applied statuses to turn-start ticks")
+	receipt["turn_cues"] = [{"target": foe_id, "status": "bleed", "amount": 2, "expired": false},
+		{"target": hero_id, "status": "regen", "amount": 2, "expired": true}]
+	_check(_words(fight._float_events(receipt), foe_key).has("BLEED -2")
+		and _words(fight._float_events(receipt), hero_key).has("REGEN +2")
+		and _words(fight._float_events(receipt), hero_key).has("REGEN ENDED"),
+		"turn-start ticks and expiration float over the units whose clocks actually changed")
+	receipt.erase("turn_cues")
 	fight._show_float_receipt(receipt)
 	_check(fight._float_groups.has(foe_key)
 		and fight._float_groups[foe_key].get_child_count() >= 4,
@@ -76,12 +105,26 @@ func _run() -> void:
 	words = _words(fight._float_events(receipt), hero_key)
 	_check(words.has("HANGING") and words.has("SEAM TORN!"),
 		"confirmed death-door limb loss is named without exposing a limb slot")
+	receipt.results[0].lost = true
+	words = _words(fight._float_events(receipt), hero_key)
+	_check(words.has("LOST!") and not words.has("UNSTITCHED!") and not words.has("HANGING"),
+		"terminal doll loss has its own callout, never the foe kill or hanging word")
 
 	receipt.actor = hero_id
 	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
 		"damage": 0, "attacker_tear": {"ok": true, "slot": "legs"}, "statuses": []}]
 	words = _words(fight._float_events(receipt), hero_key)
 	_check(words.has("SEAM TORN!"), "a confirmed counter-tear on the attacker is called out")
+	receipt.results[0].attacker_lost = true
+	words = _words(fight._float_events(receipt), hero_key)
+	_check(words.has("LOST!") and words.has("SEAM TORN!"),
+		"counter damage that loses the attacking doll announces both the tear and final loss")
+	receipt.results[0].erase("attacker_lost")
+	receipt.results[0].attacker_heap = {"rank": int(foe.rank), "hp": 3}
+	receipt.actor = foe_id
+	words = _words(fight._float_events(receipt), foe_key)
+	_check(words.has("UNSTITCHED!"), "counter-killed foe is called out on the attacker")
+	receipt.actor = hero_id
 
 	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
 		"damage": 0, "statuses": [{"status": "heal", "amount": 5},
