@@ -50,7 +50,7 @@ const ITEM_ART := {
 }
 ## Event choices have only words; a few telling words pick what lies on the floor.
 const WORD_ART := [
-	[["walk on", "leave", "move on", "back away", "long road", "keep going", "go around", "ignore"], "floor_arrow"],
+	[["walk on", "walk out", "leave", "move on","back away", "long road", "keep going", "go around", "ignore"], "floor_arrow"],
 	[["gold", "coin"], "item_coins"],
 	[["scrap", "thread", "bundle", "offcut"], "item_bundle"],
 	[["candle", "wick"], "item_candle"],
@@ -198,7 +198,7 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 func _is_arrow(id: String, text: String) -> bool:
 	if id == "leave":
 		return true
-	var lower := text.to_lower()
+	var lower:= text.to_lower()
 	for word in WORD_ART[0][0]:
 		if lower.contains(word):
 			return true
