@@ -94,6 +94,12 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	var spread_three := absf(fight.stage.figure_nodes["foe_3"].position.z - fight.stage.figure_nodes["foe_2"].position.z)
 	_check(is_equal_approx(spread_three, StitchedCorridorStage.FOE_SPREAD_THREE),
 		"2-3 foe fights spread wide silhouettes farther apart across the right-hand ranks")
+	for rank in [1, 2]:
+		var front_bounds := fight.stage.screen_rect("foe_%d" % rank)
+		var rear_bounds := fight.stage.screen_rect("foe_%d" % (rank + 1))
+		_check(front_bounds.size.x > 0.0 and rear_bounds.size.x > 0.0
+			and rear_bounds.position.x - front_bounds.end.x >= 6.0,
+			"three-foe side view keeps a visible gap between painted rank %d and %d (gap %.1f px)" % [rank, rank + 1, rear_bounds.position.x - front_bounds.end.x])
 	# The same kind of retained combat unit as the S2 post-summon fixture.
 	var extra := third.duplicate(true)
 	extra["id"] = "ragling"
@@ -425,13 +431,13 @@ func _verify_boss_minion_scale(fight: StitchedCorridorFight) -> void:
 	var boss_figure: Sprite3D = fight.stage.figure_nodes["foe_1"]
 	var minion_figure: Sprite3D = fight.stage.figure_nodes["foe_2"]
 	_check(is_equal_approx(fight.stage.placed_size(boss_figure).y, StitchedCorridorFight.BOSS_HEIGHT)
-		and is_equal_approx(fight.stage.placed_size(minion_figure).y, StitchedCorridorFight.FOE_HEIGHT),
+		and is_equal_approx(fight.stage.placed_size(minion_figure).y, StitchedCorridorFight.FOE_HEIGHT * 0.9),
 		"in a boss encounter only the actual boss is tall; its ordinary companion stays regular-sized")
 	battle._units[id] = original
 	battle._boss_encounter = original_encounter
 	fight.refresh()
 	_check(is_equal_approx(fight.stage.placed_size(fight.stage.figure_nodes["foe_1"]).y,
-		StitchedCorridorFight.FOE_HEIGHT), "the normal fight restores the front foe's ordinary size")
+		StitchedCorridorFight.FOE_HEIGHT * 0.9), "the normal fight restores the front foe's scaled three-seat size")
 
 
 ## A corridor rebuild or direct figure clear must cancel the pending fade before

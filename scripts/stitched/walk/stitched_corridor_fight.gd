@@ -448,7 +448,8 @@ func _build_top() -> void:
 
 ## One bottom bar: the acting doll, its health and fray, and its four body parts.
 func _build_bar() -> void:
-	var bar := _felt(Rect2(16, BAR_TOP, 944, 126))
+	# Give the felt command rail a taller backdrop without moving the HP plates or map.
+	var bar := _felt(Rect2(16, BAR_TOP - 48.0, 944, 174))
 	bar.name = "BottomBar"
 	add_child(bar)
 	portrait = TextureRect.new()
@@ -986,6 +987,8 @@ func refresh() -> void:
 	var fourth := engine._unit_at("foe", 4)
 	var four_foes := (not fourth.is_empty() and not bool(fourth.get("dead", false))) \
 		or not engine._heap_at(4).is_empty()
+	var third := engine._unit_at("foe", 3)
+	var three_foes := not four_foes and not third.is_empty() and not bool(third.get("dead", false))
 	for side in ["hero", "foe"]:
 		for rank in range(1, 5):
 			var key: String = side + "_" + str(rank)
@@ -1010,6 +1013,10 @@ func refresh() -> void:
 			if standing:
 				# A boss encounter also contains ordinary minions; only the true boss grows.
 				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss and bool(unit.get("is_boss", false)) else FOE_HEIGHT)
+				# Three ordinary foes may have unusually broad painted silhouettes. Keep a
+				# readable seam between their seats; the boss keeps its dramatic scale.
+				if side == "foe" and three_foes and not bool(unit.get("is_boss", false)):
+					tall *= 0.9
 				# Most foes are painted looking right; a few already look left and must
 				# not be mirrored. Keep each one's art facing the hero ranks.
 				# A turn can resolve while the prior hit is held; never replace its live pose,

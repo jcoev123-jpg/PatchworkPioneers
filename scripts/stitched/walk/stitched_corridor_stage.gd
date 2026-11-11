@@ -30,7 +30,7 @@ const STEP_TIME := 1.05   # owner 11-11: a step was too quick
 const TURN_TIME := 0.8   # owner 11-11: turning round was too quick
 ## S11 fights stay in the corridor: the eye steps out through the near wall and looks across it.
 const FIGHT_EYE := Vector2(5.0, 1.0)
-const FIGHT_FOV := 40.0
+const FIGHT_FOV := 44.0
 const FIGHT_PITCH := -4.0
 const FIGHT_FOG := 0.6
 const WALK_FOV := 70.0
@@ -608,7 +608,7 @@ func fight_view(on: bool = true) -> void:
 	stop()
 	if on:
 		camera.fov = FIGHT_FOV
-		camera.position = Vector3(FIGHT_EYE.x, FIGHT_EYE.y, fight_z() + 0.3)
+		camera.position = Vector3(FIGHT_EYE.x, FIGHT_EYE.y, fight_z() - 0.25)
 		camera.rotation = Vector3(deg_to_rad(FIGHT_PITCH), PI / 2, 0)
 		_fight_home = camera.transform
 		candle_light.position = FIGHT_LIGHT
@@ -628,7 +628,7 @@ func fight_z() -> float:
 ## A rank's spot in the fight; rank 1 of each side stands nearest the middle.
 ## Three foes get breathing room for broad stitched silhouettes. A fourth occupant
 ## uses the tighter layout so the back rank and its hit target remain on screen.
-const FOE_SPREAD_THREE := 0.82
+const FOE_SPREAD_THREE := 1.23
 const FOE_SPREAD_FOUR := 0.62
 func fight_point(side: String, rank: int, four_foes: bool = false) -> Vector3:
 	var index := clampi(rank, 1, 4) - 1
@@ -703,7 +703,7 @@ func start_fight_focus(keys: Array[String], duration: float = 0.4) -> bool:
 	# still reject any candidate that would actually clip a sprite off screen.
 	var safe := Rect2(size.x * 0.01, size.y * 0.15, size.x * 0.98, size.y * 0.62)
 	camera.position = aim
-	for candidate in [31.5, 33.0, 35.0, 37.0, 38.0, 39.0]:
+	for candidate in [33.0, 35.0, 37.0, 39.0, 41.0, 42.0, 43.0]:
 		camera.fov = candidate
 		var within := true
 		for key in framed:

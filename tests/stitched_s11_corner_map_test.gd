@@ -107,6 +107,14 @@ func _mounted_checks() -> void:
 	# the shortened ability bar, never across an actionable button or fight text.
 	var corner := fight.corner_map.get_rect()
 	var bottom: Control = fight.get_node("BottomBar")
+	var rail := bottom.get_rect()
+	var rail_clears_health := true
+	for plate in fight.plates.values():
+		if plate.visible and rail.intersects(plate.get_rect()):
+			rail_clears_health = false
+	_check(rail.position.y <= StitchedCorridorFight.BAR_TOP - 40.0
+		and rail.end.y <= 720.0 and rail_clears_health,
+		"deeper felt command rail fits below every HP plate without clipping the screen")
 	_check(corner.position.x >= bottom.get_rect().end.x and corner.position.y >= 540.0
 		and corner.end.x <= 1280.0 and corner.end.y <= 720.0,
 		"the fight map occupies the lower-right free corner inside the screen")
