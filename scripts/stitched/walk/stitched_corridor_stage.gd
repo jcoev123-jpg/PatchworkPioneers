@@ -635,7 +635,9 @@ func fight_point(side: String, rank: int, four_foes: bool = false) -> Vector3:
 	var depth := -0.15 if index % 2 == 1 else 0.1
 	if side == "hero":
 		return Vector3(depth, 0, fight_z() + 0.45 + index * 0.75)
-	return Vector3(depth, 0, fight_z() - 0.45 - index * (FOE_SPREAD_FOUR if four_foes else FOE_SPREAD_THREE))
+	# Three foes also stand a little farther from the heroes so the front foe no longer touches the front doll's shield.
+	var lead := 0.45 if four_foes else 0.5
+	return Vector3(depth, 0, fight_z() - lead - index * (FOE_SPREAD_FOUR if four_foes else FOE_SPREAD_THREE))
 
 
 ## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.
