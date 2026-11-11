@@ -30,14 +30,18 @@ All pictures must come from picture files (no shapes drawn by code). Use picture
 load the expected file when it exists and fall back to the nearest existing picture, and list the file under
 `## Art needed` in your report with one line describing the picture. The pictures are drawn afterwards.
 
-## Job 1: target markers (TODO)
+## Job 1: target markers (DONE 2026-11-11)
+
+The existing HP plates now show red foe / green ally marker textures for engine-legal targets, with a tinted existing-art fallback until the dedicated files arrive; cancellation or commitment removes them. Verified in a live normal fight and mounted targeting tests.
 
 When the player clicks an ability, every figure that ability may be used on gets the felt marker around its HP bar:
 `target_marker_red.png` on foes for a harmful ability, `target_marker_green.png` on allies for a helping ability
 (heal, guard, cleanse and so on). Figures it cannot reach get nothing. Keep the yellow highlight we have: it shows
 the one figure the pointer is on, or the one chosen. Markers go away when the ability is used or cancelled.
 
-## Job 2: HP bars (TODO)
+## Job 2: HP bars (DONE 2026-11-11)
+
+Removed on-bar figure names and put the canonical active-status emblems above each HP strip, with an existing felt/text fallback for missing icons. HP remains numeric even for Hanging dolls; status rows refresh on every combat state change and the full name and effect details remain accessible on figure inspection until job 5 adds the information corner.
 
 No name on or beside the HP bar (see ref4, that is the fault). The bar shows health only. Status effects (bleed,
 rot, stun, guard, marks and so on) show as their small icons in a row sitting on top of the bar, as in ref6. The

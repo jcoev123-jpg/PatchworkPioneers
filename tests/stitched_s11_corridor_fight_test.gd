@@ -133,8 +133,9 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	fight.refresh()
 	var fallen: Sprite3D = fight.stage.figure_nodes["hero_1"]
 	_check(fallen.visible and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED
-		and fight.plates["hero_1"].get_node("HealthText").text == "HANGING",
-		"a zero-HP Hanging doll lies on the floor with its HANGING plate visible")
+		and fight.plates["hero_1"].get_node("HealthText").text == "0/%d" % int(saved_hero.max_hp)
+		and fight.plates["hero_1"].get_node("StatusRow").visible,
+		"a zero-HP Hanging doll lies on the floor; HP stays numeric and its status icon appears")
 	_check(fight.stage.screen_rect("hero_1").size.x > 0.0,
 		"the fallen doll still projects into the fight")
 	var fallen_frames: Array = fallen.get_meta("idle_frames", [])
@@ -152,12 +153,30 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 			and first_frame != fallen.texture and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED,
 			"the fallen doll moves through its own idle frames without standing up")
 		fight.stage._idle_clock = old_clock
-	battle._units[hero_id] = saved_hero
+	battle._units[hero_id] = saved_hero.duplicate(true)
 	fight.refresh()
-	var recovered: Sprite3D = fight.stage.figure_nodes["hero_1"]
+	var recovered: Sprite3D= fight.stage.figure_nodes["hero_1"]
 	_check(recovered.billboard == BaseMaterial3D.BILLBOARD_FIXED_Y
-		and recovered.visible and fight.plates["hero_1"].get_node("HealthText").text != "HANGING",
-		"a recovered doll returns upright with its regular health plate")
+		and recovered.visible and fight.plates["hero_1"].get_node("HealthText").text == "%d/%d" % [int(saved_hero.hp), int(saved_hero.max_hp)],
+		"a recovered doll returns upright with its numeric health plate")
+	# Job 2: the mounted status strip follows authoritative combat state, never a name label.
+	battle._units[hero_id]["statuses"] = {"bleed": 2, "rot": 3, "guard": 1}
+	fight.refresh()
+	var status_row: Control = fight.plates["hero_1"].get_node("StatusRow")
+	_check(status_row.visible and not fight.plates["hero_1"].get_node("Name").visible
+		and not fight.plates["foe_1"].get_node("Name").visible,
+		"both sides keep names off their HP bars, while active effects get the status row")
+	for index in range(3):
+		var chip: TextureRect = status_row.get_node("Status%d" % index)
+		_check(chip.visible and chip.texture != null and not chip.tooltip_text.is_empty(),
+			"status %d uses an authored emblem or felt fallback with readable detail" % index)
+	_check(not status_row.get_node("Status3").visible and fight.hits["hero_1"].tooltip_text.contains("BLEED 2")
+		and fight.hits["hero_1"].tooltip_text.contains("ROT 3")
+		and fight.hits["hero_1"].tooltip_text.contains("GUARD 1"),
+		"status row holds only active effects; inspection preserves their exact counts")
+	battle._units[hero_id] = saved_hero.duplicate(true)
+	fight.refresh()
+	_check(not status_row.visible,"cleared status effects disappear from the same HP plate")
 	_check(battle.state_snapshot() == pristine and battle.rng_state() == rng
 		and screen.receipts == receipts and screen._selected_part.is_empty()
 		and battle.hand_action_open(), "all detached fixtures restore the genuine 4v3 battle, RNG and hand")

@@ -100,6 +100,19 @@ func _run() -> void:
 	_check(choice.get("pending") == slot and ordered.size() >= 2
 		and fight._keyboard_targets == ordered and fight._keyboard_target.is_empty(),
 		"part choice reads engine legal keys in deterministic side/rank order, none preselected")
+	var marker_count := 0
+	for plate_key in fight.plates:
+		var marker: TextureRect = fight.plates[plate_key].get_node("TargetMarker")
+		var should_mark: bool = legal.has(plate_key) and fight.plates[plate_key].visible
+		_check(marker.visible == should_mark,
+			"felt target marker matches real legal, visible rank %s" % plate_key)
+		if should_mark:
+			marker_count += 1
+			_check(marker.texture != null, "target marker has dedicated art or existing picture fallback")
+			if marker.texture == StitchedCorridorFight.BAR_FRAME:
+				_check(marker.modulate.g > marker.modulate.r if plate_key.begins_with("hero_") else marker.modulate.r > marker.modulate.g,
+					"missing-art marker uses green for allies and red for foes")
+	_check(marker_count == ordered.size(), "every and only legal rank carries a marker")
 	var pristine := fight.battle.state_snapshot()
 	var rng := fight.battle.rng_state()
 	var receipts := screen.receipts.duplicate(true)
@@ -132,6 +145,9 @@ func _run() -> void:
 	_key(KEY_ESCAPE)
 	_check(fight._keyboard_target.is_empty() and screen._selected_part.is_empty(),
 		"Escape clears keyboard cursor and engine choice")
+	for plate_key in fight.plates:
+		_check(not (fight.plates[plate_key].get_node("TargetMarker") as TextureRect).visible,
+			"Escape removes the marker from %s" % plate_key)
 	_unchanged(fight, pristine, rng, receipts, hand_open, "Escape cancel")
 	fight.choose_part(slot)
 	_key(KEY_LEFT)
@@ -186,6 +202,9 @@ func _run() -> void:
 	_check(screen.receipts.size() > before and hero_actions == 1
 		and screen._selected_part.is_empty() and fight._keyboard_target.is_empty(),
 		"keyboard Enter commits exactly one real equipped part action and clears cursor")
+	for plate_key in fight.plates:
+		_check(not (fight.plates[plate_key].get_node("TargetMarker") as TextureRect).visible,
+			"committed action removes the marker from %s" % plate_key)
 	fight.engine.free()
 	await process_frame
 	var clicked := await _mount()

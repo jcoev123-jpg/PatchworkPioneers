@@ -280,10 +280,43 @@ func _build_plates() -> void:
 			back.size = plate.size
 			back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			plate.add_child(back)
+			# Owner combat job 1: the authored red/green felt marker follows the health plate.
+			# Until its dedicated art arrives, reuse the existing bar-frame picture.
+			var marker := TextureRect.new()
+			marker.name = "TargetMarker"
+			marker.position = Vector2(2, 18)
+			marker.size = Vector2(146, 26)
+			marker.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			marker.stretch_mode = TextureRect.STRETCH_SCALE
+			marker.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			marker.visible = false
+			plate.add_child(marker)
+			# Job 2: the strip above HP belongs to status emblems, never the unit name.
+			# Keep the hidden name for scripted inspection until the information corner lands.
 			var title := _label("", Rect2(8, 1, 134, 22), 16, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 			title.name = "Name"
 			title.clip_text = true
+			title.hide()
 			plate.add_child(title)
+			var statuses := Control.new()
+			statuses.name = "StatusRow"
+			statuses.position = Vector2(10, 2)
+			statuses.size = Vector2(133, 19)
+			statuses.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			plate.add_child(statuses)
+			for index in range(7):
+				var chip := TextureRect.new()
+				chip.name = "Status%d" % index
+				chip.position = Vector2(index * 19, 0)
+				chip.size = Vector2(18, 18)
+				chip.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				chip.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				chip.visible = false
+				statuses.add_child(chip)
+				var short := _label("", Rect2(0, 1, 18, 16), 10, BONE, HORIZONTAL_ALIGNMENT_CENTER)
+				short.name = "Short"
+				chip.add_child(short)
 			var hp := _bar(Rect2(10, 24, 130, 14), BLOOD)
 			hp.name = "Health"
 			plate.add_child(hp)
@@ -303,6 +336,31 @@ func _build_plates() -> void:
 			hit.pressed.connect(func(): click_figure(side, rank))
 			add_child(hit)
 			hits[key] = hit
+
+
+## Reuse the canonical combat badge order and authored status pictures on each HP plate.
+## Missing status art stays readable on existing felt, never a code-drawn symbol.
+func _present_plate_statuses(plate: Control, unit: Dictionary, side: String) -> void:
+	var row: Control = plate.get_node("StatusRow")
+	var entries := StitchedBattleChrome._badge_entries(unit, side)
+	row.visible = not entries.is_empty()
+	for index in range(7):
+		var chip: TextureRect = row.get_node("Status%d" % index)
+		chip.visible = index < mini(7, entries.size())
+		if not chip.visible:
+			chip.tooltip_text = ""
+			continue
+		var entry: Dictionary = entries[index]
+		if entries.size() > 7 and index == 6:
+			entry = {"id": "overflow", "short": "+", "full": "%d more statuses" % (entries.size() - 6), "icon": ""}
+		var icon_id := str(entry.get("icon", ""))
+		if icon_id.is_empty() and str(entry.get("id", "")) != "overflow":
+			icon_id = "status_" + str(entry.get("id", ""))
+		var pictured := _texture(ICONS + icon_id + ".png") if not icon_id.is_empty() else null
+		chip.texture = pictured if pictured != null else NAME_PLATE
+		chip.modulate = Color.WHITE if pictured != null else Color("bba19a")
+		(chip.get_node("Short") as Label).text = "" if pictured != null else str(entry.get("short", ""))
+		chip.tooltip_text = str(entry.get("full", ""))
 
 
 ## The turn strip under the candle: who acts, in order, at a glance.
@@ -736,6 +794,7 @@ func refresh() -> void:
 				var held_plate: Control = plates[key]
 				(held_plate.get_node("Health") as TextureProgressBar).value = 0.0
 				(held_plate.get_node("HealthText") as Label).text = "0/%d" % int(fallen_unit.get("max_hp", 0))
+				_present_plate_statuses(held_plate, fallen_unit, side)
 				continue
 			if standing:
 				# A boss encounter also contains ordinary minions; only the true boss grows.
@@ -773,14 +832,12 @@ func refresh() -> void:
 				hp.max_value = maxf(1.0, float(unit.get("max_hp", 1)))
 				hp.value = float(unit.get("hp", 0))
 				numbers.text = "%d/%d" % [int(unit.get("hp", 0)), int(unit.get("max_hp", 0))]
-				if bool(unit.get("hanging", false)):
-					numbers.text = "HANGING"
 			elif not heap.is_empty():
 				title.text = "Scrap heap"
 				hp.max_value = maxf(1.0, float(heap.get("max_hp", heap.get("hp", 1))))
 				hp.value = float(heap.get("hp", 0))
 				numbers.text = str(int(heap.get("hp", 0)))
-			_fit_name(title)
+			_present_plate_statuses(plate, unit if standing else {}, side)
 			hits[key].visible = plate.visible
 			var moves := _moveset(unit) if standing else ""
 			hits[key].tooltip_text = (_simple_detail(engine.status_detail(side, rank)) + "\n" + moves).strip_edges() \
@@ -979,6 +1036,16 @@ func _shade_figures() -> void:
 	var acting := battle.get_unit(acting_id)
 	var actor_key := str(acting.get("side", "")) + "_" + str(acting.get("rank", 0)) if not battle.is_over() else ""
 	for key in plates:
+		var marker: TextureRect = plates[key].get_node("TargetMarker")
+		var marked: bool = choosing and targets.has(key) and plates[key].visible and not more_panel.visible
+		marker.visible = marked
+		if marked:
+			var path := "res://assets/paper/stitched/ui/target_marker_green.png" if key.begins_with("hero_") \
+				else "res://assets/paper/stitched/ui/target_marker_red.png"
+			var art := _texture(path)
+			marker.texture = art if art != null else BAR_FRAME
+			marker.modulate = Color.WHITE if art != null else (
+				Color("68c78b") if key.begins_with("hero_") else Color("e75b54"))
 		var tone := Color.WHITE
 		if choosing:
 			tone = Color(1.25, 1.12, 0.95) if targets.has(key) else Color(0.5, 0.48, 0.5)
