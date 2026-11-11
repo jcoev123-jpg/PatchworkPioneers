@@ -65,6 +65,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 web play pass): Sewed Heel Knot onto Warden's Pot Helm Command at the live Sewing Circle and inspected normal, elite and boss fight screens. The one-socket visual and ability hover details remain intact. Gold still permits two effects through the legacy loadout and Sewing Circle rules; their protected regressions explicitly expect this. Job stays PART pending an owner-approved rules migration. No gameplay rule changed while the active S15 lane owns the run session.
 
+(2026-11-12 09:07 play pass): Sewed Red Lint onto Warden's Pot Helm Command with 2 scraps, then used it against Thread Biter in the next normal battle. The fight button identified the sewn patch and the held beat showed RED LINT plus BLEED on the target; therefore one-slot display and real patch application are live-confirmed. Job stays PART only because the existing gold two-effect rule conflicts with the one-patch requirement and its protected tests cannot be rewritten here.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
@@ -155,6 +157,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 (11-12 play pass): A foe killed by an untouched Bleed/Rot turn-start clock now keeps its final numeric tick and UNSTITCHED! over the held figure, even though the rules clear its statuses on death. Regen-before-Bleed, Bleed-before-Rot, and false-death cases have six new deterministic checks (67 total); corridor, victory handoff and Continue regressions pass. Job remains PART for ambiguous multi-hit attribution, summon/split notices, missing art and rare live outcomes.
 
 (11-12 small-fix pass): Summon/split notices are blocked: the stitched rules (`stitched_rules.gd`, not editable by small fixes) emit no summon or split receipt (`grep` of `scripts/stitched` finds only the field-guide sentence; `summon` / `split_on_death` exist only in the legacy `combat_*` scripts), so `_float_events` in `stitched_corridor_fight.gd` has nothing to confirm. DESIGN: the rules must report a fourth foe arriving, with its seat, before a notice can float. Live check: floor 1 normal fight and floor 12 boss fight show no overlap or cut-off text; the boss's two turn-ribbon tags (F1, F1) are its two turns, not a bug. The fatal-tick case was not reproduced live.
+
+(2026-11-12 09:07 play pass): The fatal-tick case is NOW reproduced live (`tinker_after`): Felt Bulwark reached 0 HP from Bleed at turn start while Scissor Crab used Pinch; the correct held seat showed `BLEED -1`, `UNSTITCHED!` and a 0/18 plate, without a phantom hit attribution. A separate `monk_hit_beat` captured `CRIT! 7` and BLEED on the target. `sewn_patch_hit` confirmed RESIST, BLEED and RED LINT stacking on Thread Biter. Job remains PART for missing summon/split receipts, other ambiguous overlaps, remaining icon art and further rare-outcome visual coverage.
 
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
