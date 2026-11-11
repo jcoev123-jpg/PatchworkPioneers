@@ -10,6 +10,7 @@ const FELT := preload("res://assets/paper/ui/panel_felt.png")
 const FONT := preload("res://assets/fonts/PatrickHand-Regular.ttf")
 const NODE_ART := "res://assets/paper/ui/map_node_%s.png"
 const CANDLE_ART := "res://assets/paper/stitched/icons/candle_bright.png"
+const ROUTE_ART := "res://assets/paper/stitched/ui/map_route_thread.png"
 const BONE := Color("f0ddc0")
 const AMBER := Color("e4b76a")
 ## A room the party has walked dims like the visited rows of the route atlas.
@@ -94,8 +95,10 @@ func _node_art(kind: String) -> Texture2D:
 
 ## The run's real route: this floor's rooms in corridor order, the ones already
 ## walked, and the candle marking where the party stands now.
-func present_floor(floor_number: int, records: Array, visited: Array, current_id: String) -> void:
-	var stamp := "%d|%s|%s" % [floor_number, current_id, ",".join(PackedStringArray(visited))]
+func present_floor(floor_number: int, records: Array, visited: Array, current_id: String,
+		next_records: Array = []) -> void:
+	var stamp := "%d|%s|%s|%s|%s" % [floor_number, current_id,
+		",".join(PackedStringArray(visited)), JSON.stringify(records), JSON.stringify(next_records)]
 	if stamp == _stamp:
 		return
 	_stamp = stamp
@@ -148,8 +151,52 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 			candle.tooltip_text = "The party stands here"
 			candle.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			column.add_child(candle)
-		# The map graph has no same-floor edges: these rooms are alternatives,
-		# not a corridor chain. Never draw a connecting seam between them.
+		# Same-floor rooms are alternatives, never an invented chain.
+	if next_records.is_empty():
+		return
+	var next_ordered: Array = next_records.duplicate()
+	next_ordered.sort_custom(func(a, b): return int(a.get("position", 0)) < int(b.get("position", 0)))
+	var next_slot := (size.x - 16.0) / float(next_ordered.size())
+	var exits := {}
+	for index in next_ordered.size():
+		var target: Dictionary = next_ordered[index]
+		var id := str(target.get("id", ""))
+		var x := 8.0 + next_slot * (float(index) + 0.5)
+		exits[id] = x
+		var icon := Sprite2D.new()
+		icon.name = "Next_" + id
+		icon.texture = _node_art(str(target.get("type", "event")))
+		icon.position = Vector2(x, size.y - ICON / 2.0 - 8.0)
+		if icon.texture != null:
+			icon.scale = Vector2.ONE * (ICON / float(maxi(icon.texture.get_width(), icon.texture.get_height())))
+		icon.modulate = FUTURE
+		icon.set_meta("route_id", id)
+		icon.set_meta("next_floor", true)
+		map_holder.add_child(icon)
+	for index in count:
+		var record: Dictionary = ordered[index]
+		for target_id in record.get("outgoing", []):
+			if not exits.has(str(target_id)):
+				continue
+			var start := Vector2(8.0 + slot * (float(index) + 0.5), 34.0 + ICON)
+			var finish := Vector2(float(exits[str(target_id)]), size.y - ICON - 9.0)
+			var delta := finish - start
+			# An authored texture scaled to a narrow seam, never a code-drawn line.
+			# Sprite2D has no Control minimum size: a large felt fallback cannot
+			# expand the entire fight corner into giant overlapping panels.
+			var thread := Sprite2D.new()
+			thread.name = "Seam_%s_%s" % [str(record.get("id", "")), str(target_id)]
+			thread.texture = _texture(ROUTE_ART)
+			if thread.texture == null:
+				thread.texture = FELT
+			thread.centered = false
+			thread.position = start
+			thread.scale = Vector2(delta.length() / float(thread.texture.get_width()),
+				3.0 / float(thread.texture.get_height()))
+			thread.rotation = delta.angle()
+			thread.modulate = HERE if str(record.get("id", "")) == current_id else FUTURE
+			map_holder.add_child(thread)
+			map_holder.move_child(thread, 0)
 
 
 ## The hovered foe takes the corner; the fight view builds the lines from live rules.

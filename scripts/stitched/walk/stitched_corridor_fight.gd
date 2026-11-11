@@ -843,7 +843,7 @@ func present_corner_map(run: StitchedRunSession) -> void:
 	# so its rooms sit one index below the choice count.
 	var floor_index := clampi(run.map.get_current_floor() - 1, 0, floors.size() - 1)
 	corner_map.present_floor(floor_index + 1, floors[floor_index], run.map.get_route(),
-		run.map.get_current_node_id())
+		run.map.get_current_node_id(), floors[floor_index + 1] if floor_index + 1 < floors.size() else [])
 
 
 ## Owner combat job 5: a hovered foe takes the corner card and the foreground; the

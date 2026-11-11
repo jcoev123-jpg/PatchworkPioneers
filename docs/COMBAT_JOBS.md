@@ -69,11 +69,13 @@ like ref3: a bleed patch that gives the ability +X bleed shows the bleed design.
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
 sewn on really changes the ability in the next fight; if it does not, that is the bug to fix first.
 
-## Job 5: information corner: map, and foe details on hover (PART 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
 
-(11-12 review): RunMap nodes within one floor are **parallel alternatives**; its actual outgoing edges connect to the next floor. Removed misleading same-floor seam arrows and changed unchosen-room tooltips from "ahead" to "alternate route". Added coverage for this and for cancelled hover-return tweens. Remaining: illustrate the real cross-floor outgoing paths and junctions before calling the route-map portion DONE.
+(11-12 review): RunMap nodes within one floor are **parallel alternatives**; its actual outgoing edges connect to the next floor. Removed misleading same-floor seam arrows and changed unchosen-room tooltips from "ahead" to "alternate route". Added coverage for this and for cancelled hover-return tweens.
+
+(11-12 completion): The corner now shows the next floor and its actual directed outgoing seams, including crossed branches, without inventing same-floor links. The last floor shows no next-floor row. A missing route-thread texture falls back to existing felt art. Verified on live fight, Peddler, and floor-12 boss screens and by mounted route-map tests.
 
 The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see

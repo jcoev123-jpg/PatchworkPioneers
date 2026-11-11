@@ -5103,7 +5103,8 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 		# so its rooms sit one index below the choice count.
 		var visit_floor := clampi(session.map.get_current_floor() - 1, 0, visit_floors.size() - 1)
 		corner.present_floor(visit_floor + 1, visit_floors[visit_floor], session.map.get_route(),
-			session.map.get_current_node_id())
+			session.map.get_current_node_id(),
+			visit_floors[visit_floor + 1] if visit_floor + 1 < visit_floors.size() else [])
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
 	navigation.position = Vector2(1280 - 2 * 136 - 8 - 16, 12)

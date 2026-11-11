@@ -233,7 +233,7 @@ func _ready() -> void:
 			# so its rooms sit one index below the choice count.
 			var floor_index := clampi(host.map.get_current_floor() - 1, 0, floors.size() - 1)
 			corner_map.present_floor(floor_index + 1, floors[floor_index], host.map.get_route(),
-				host.map.get_current_node_id())
+				host.map.get_current_node_id(), floors[floor_index + 1] if floor_index + 1 < floors.size() else [])
 	if walk != null:
 		refresh()
 		forward_button.grab_focus()

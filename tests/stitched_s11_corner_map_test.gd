@@ -47,6 +47,43 @@ func _component_checks() -> void:
 		"same-floor alternatives never imply a real onward corridor")
 	map.present_floor(2, records, ["f02_n0"], "f02_n0")
 	_check(map.map_holder.get_child_count() == 3, "an unchanged route does not rebuild the row")
+	var next_floor := [
+		{"id": "f03_n0", "type": "Event", "position": 0, "floor": 3},
+		{"id": "f03_n1", "type": "Elite", "position": 1, "floor": 3},
+	]
+	var linked := records.duplicate(true)
+	linked[0]["outgoing"] = ["f03_n1"]
+	linked[1]["outgoing"] = ["f03_n0"]
+	# Real crossed edges, not guessed lines between parallel rooms.
+	map.present_floor(2, linked, ["f02_n0"], "f02_n0", next_floor)
+	await process_frame
+	_check(map.map_holder.has_node("Next_f03_n0") and map.map_holder.has_node("Next_f03_n1"),
+		"the following floor is visible below the current rooms")
+	var next_icon: Sprite2D = map.map_holder.get_node("Next_f03_n1")
+	_check(next_icon.texture != null and next_icon.texture.get_width() * next_icon.scale.x <= 30.1
+		and next_icon.texture.get_height() * next_icon.scale.y <= 30.1,
+		"next-floor art must fit within 30 pixels (texture %s, scale %s)" % [
+			str(next_icon.texture), str(next_icon.scale)])
+	_check(map.map_holder.has_node("Seam_f02_n0_f03_n1")
+		and map.map_holder.has_node("Seam_f02_n1_f03_n0"),
+		"only actual outgoing edges join the two floors, including crossings")
+	_check(not map.map_holder.has_node("Seam_f02_n2_f03_n0")
+		and not map.map_holder.has_node("Seam_f02_n0_f02_n1"),
+		"no imagined cross-floor or same-floor link is shown")
+	var seam: Sprite2D = map.map_holder.get_node("Seam_f02_n0_f03_n1")
+	_check(seam.texture != null and seam.scale.x > 0.0 and seam.scale.y > 0.0,
+		"links are rendered with bounded image-backed thread art or the felt fallback")
+	# Rebuild when the same node IDs carry a different real connection graph.
+	linked[0]["outgoing"] = ["f03_n0"]
+	map.present_floor(2, linked, ["f02_n0"], "f02_n0", next_floor)
+	await process_frame
+	_check(map.map_holder.has_node("Seam_f02_n0_f03_n0")
+		and not map.map_holder.has_node("Seam_f02_n0_f03_n1"),
+		"the route stamp responds to changed outgoing connections")
+	map.present_floor(2, records, ["f02_n0"], "f02_n0")
+	await process_frame
+	_check(not map.map_holder.has_node("Next_f03_n0"),
+		"the final floor or a missing next-floor record leaves no fictitious exits")
 	map.show_foe("Moth Scribe", PackedStringArray(["Foe · rank 2", "Health 9 / 12"]))
 	_check(map.foe_body.visible and not map.map_holder.visible, "a hovered foe takes the corner")
 	_check(map.title_label.text == "Moth Scribe", "the foe's own name heads the card")
