@@ -38,6 +38,25 @@ func _run() -> void:
 	var baseline := fight.battle.state_snapshot()
 	var receipts := screen.receipts.duplicate(true)
 	var rng := fight.battle.rng_state()
+	# The rules expose mutable unit dictionaries; an observer must freeze both
+	# their HP and nested status maps before the real battle changes them.
+	var original_foe: Dictionary = fight.battle._units[foe_id].duplicate(true)
+	fight.battle._units[foe_id]["statuses"]["bleed"] = 2
+	var captured_before := screen._capture_turn_units()
+	fight.battle._units[foe_id]["hp"] = int(original_foe["hp"]) - 2
+	fight.battle._units[foe_id]["statuses"]["bleed"] = 1
+	var captured_after := screen._capture_turn_units()
+	_check(int(captured_before[foe_id]["hp"]) == int(original_foe["hp"])
+		and int(captured_before[foe_id]["statuses"].get("bleed", 0)) == 2
+		and int(captured_after[foe_id]["statuses"].get("bleed", 0)) == 1,
+		"real-battle observer snapshots hold original HP and nested statuses")
+	var mounted_cues := StitchedBattleScreen.turn_change_cues(captured_before, captured_after,
+		{"actor": "another_unit", "results": []})
+	_check(mounted_cues.size() == 1 and str(mounted_cues[0].get("target", "")) == foe_id
+		and str(mounted_cues[0].get("status", "")) == "bleed"
+		and int(mounted_cues[0].get("amount", 0)) == 2,
+		"real-battle mutable units produce a confirmed tick instead of vanishing")
+	fight.battle._units[foe_id] = original_foe
 	var receipt := {"action": "ability", "ok": true, "actor": hero_id, "results": [{
 		"target": foe_id, "target_side": "foe", "hit": true, "crit": true,
 		"damage": 14, "target_hp": 7, "statuses": [
@@ -141,6 +160,20 @@ func _run() -> void:
 	_check(combo.size() == 2 and int(numbers.get("bleed", -1)) == 2
 		and int(numbers.get("rot", -1)) == 1,
 		"bleed first leaves one HP for rot, so no phantom extra rot damage")
+	# A status duration can decrease alongside an unrelated state change.
+	# Without matching settled HP, no bleeding or regeneration may be announced.
+	var unexplained_before := {"seat": {"hp": 12, "max_hp": 20,
+		"statuses": {"bleed": 2}}}
+	var unexplained_after := {"seat": {"hp": 12, "max_hp": 20,
+		"statuses": {"bleed": 1}}}
+	_check(StitchedBattleScreen.turn_change_cues(unexplained_before, unexplained_after,
+		{"actor": "other", "results": []}).is_empty(),
+		"duration drop without matching damage never reports a phantom bleed tick")
+	unexplained_before["seat"] = {"hp": 12, "max_hp": 20, "statuses": {"regen": 1}}
+	unexplained_after["seat"] = {"hp": 13, "max_hp": 20, "statuses": {}}
+	_check(StitchedBattleScreen.turn_change_cues(unexplained_before, unexplained_after,
+		{"actor": "other", "results": []}).is_empty(),
+		"regen with an unexplained one-HP settlement never reports +2 or expiry")
 	receipt["turn_cues"] = [{"target": foe_id, "status": "bleed", "amount": 2, "expired": false},
 		{"target": hero_id, "status": "regen", "amount": 2, "expired": true}]
 	_check(_words(fight._float_events(receipt), foe_key).has("BLEED -2")

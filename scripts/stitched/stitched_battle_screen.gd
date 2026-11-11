@@ -1622,8 +1622,9 @@ static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dic
 				continue
 			local_cues.append({"target": id, "status": str(status),
 				"amount": int(tick_amounts.get(str(status), 0)), "expired": count == 1})
-		# The snapshot disagrees with the simulated clock: do not invent a tick.
-		if overlap and remaining_hp != int(now.get("hp", 0)):
+		# Even an untouched seat needs a matching HP settlement; a counter
+		# decrement alone cannot prove damage or healing from that clock.
+		if remaining_hp != int(now.get("hp", 0)):
 			continue
 		cues.append_array(local_cues)
 		if not overlap:
@@ -1638,7 +1639,9 @@ func _capture_turn_units() -> Dictionary:
 	var units := {}
 	if battle != null:
 		for unit in battle.get_heroes() + battle.get_foes():
-			units[str(unit.get("id", ""))] = unit
+			# StitchedRules returns references here. Without a deep copy, the
+			# "before" view changes with the live battle and ticks vanish.
+			units[str(unit.get("id", ""))] = unit.duplicate(true)
 	return units
 
 

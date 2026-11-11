@@ -146,6 +146,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (11-12 overlap pass): When an ability strikes the next unit to tick, reconcile its single result's post-hit HP with actual Regen/Bleed/Rot clock order, exclude any status rewritten by the ability, and float only proven tick/expiry cues on that same figure. Six new deterministic checks pass (53 total); ambiguous multi-hits, redirected effects, counter/actor HP and inconsistent settlements remain withheld rather than guessed. Still PART: summon/split announcements, remaining ambiguous overlaps, icon art and rare live outcomes.
 
+(11-12 code review): Frozen per-turn unit observations now deep-copy nested statuses (the rules' side lists expose mutable unit references), so actual live ticks remain visible. Unchanged seats must also reconcile their simulated HP against the settled HP before floating a tick. Mounted regression covers both, with 57 floating-outcome checks passing. Job remains PART for summon/split, unresolved ambiguous overlaps, missing art and rare live outcomes.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
