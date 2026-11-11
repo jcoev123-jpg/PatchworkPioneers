@@ -107,7 +107,9 @@ This groups every required missing filename without a 109-line repeated path lis
 - `heavy` (4) — `enemies/fray_scavenger`, `enemies/spool_hexer`, `enemies/crochet_hook_harrier`, `enemies/spool_leech`: large stagger from a forceful blow.
 - `dodge` (5) — `enemies/fray_scavenger`, `enemies/spool_hexer`, `boss/patchwork_behemoth`, `enemies/quilt_termite`, `enemies/felt_bulwark`: lean away, unharmed.
 
-## Job 7: facing (TODO)
+## Job 7: facing (PART 2026-11-11)
+
+Corrected the mirrored stills of Thimble Beetle, Thread Biter, Clothespin Crusher and Crochet Hook Harrier without touching art. Restarted and confirmed the beetle, biter and harrier now point left in live floor-6/8 battles, with facing regression checks passing. More foe types still need visual inspection; some nearly frontal artwork cannot be made side-facing by mirroring.
 
 Heroes face right, foes face left, toward each other. Some foes face the wrong way in fights. Check every foe
 picture in a fight (the cheats can start any fight) and fix the wrong ones with a flip setting in data or code,

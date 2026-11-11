@@ -553,7 +553,17 @@ func _run() -> void:
 			var b: Rect2 = fight.hits[shown[j]].get_rect()
 			_check(a.intersection(b).size.x < 1.0, "%s and %s click boxes never overlap" % [shown[i], shown[j]])
 	_check(fight.stage.figure_nodes["foe_1"].flip_h and not fight.stage.figure_nodes["hero_1"].flip_h,
-		"foes turn round to face the party")
+		"foes whose source pictures face right turn toward the party")
+	# Playtest 11-11: these four source pictures already face the party; mirroring
+	# them made jaws, pincers or beaks point off the right edge of the fight.
+	for foe_id in ["thimble_beetle", "thread_biter", "clothespin_crusher", "crochet_hook_harrier"]:
+		_check(not StitchedCorridorFight.battle_flip("foe", foe_id),
+			foe_id + " retains its painted left-facing pose")
+		_check(not StitchedCorridorFight.battle_flip("hero", foe_id),
+			"a hero never receives the foe mirroring override")
+	_check(StitchedCorridorFight.battle_flip("foe", "scissor_crab")
+		and StitchedCorridorFight.battle_flip("foe", "spindle_ram"),
+		"other right-facing foe pictures still mirror toward the heroes")
 	for key in fight.hits:
 		_check(not fight.hits[key].tooltip_text.contains("FRAY") and not fight.hits[key].tooltip_text.contains("/200"),
 			key + " hover shows no fray count: " + fight.hits[key].tooltip_text)

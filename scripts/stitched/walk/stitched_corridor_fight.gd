@@ -43,6 +43,13 @@ const ABILITY_ART := "res://assets/paper/stitched/abilities/"
 const SEWN_ART := "res://assets/paper/stitched/ability_patches/"
 const SEWN := 34.0
 const PORTRAIT := 100.0
+## These painted foe stills already look left toward the dolls. Mirroring them like
+## the other foe stills makes their faces, jaws or weapons point away from battle.
+const FOES_DRAWN_LEFT := ["thimble_beetle", "thread_biter", "clothespin_crusher", "crochet_hook_harrier"]
+
+static func battle_flip(side: String, unit_id: String) -> bool:
+	return side == "foe" and not unit_id in FOES_DRAWN_LEFT
+
 
 var engine: StitchedBattleScreen
 var battle: StitchedRules
@@ -950,7 +957,8 @@ func refresh() -> void:
 			if standing:
 				# A boss encounter also contains ordinary minions; only the true boss grows.
 				var tall := HERO_HEIGHT if side == "hero" else (BOSS_HEIGHT if boss and bool(unit.get("is_boss", false)) else FOE_HEIGHT)
-				# Doll and foe art is all drawn facing right; foes turn round to face the party.
+				# Most foes are painted looking right; a few already look left and must
+				# not be mirrored. Keep each one's art facing the hero ranks.
 				# A turn can resolve while the prior hit is held; never replace its live pose,
 				# step or scale on the normal battle refresh. A different occupant still places.
 				var figure: Sprite3D = stage.figure_nodes.get(key)
@@ -965,7 +973,7 @@ func refresh() -> void:
 					else:
 						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))
-				figure.flip_h = side == "foe"
+				figure.flip_h = battle_flip(side, str(unit.id))
 			elif not heap.is_empty():
 				var pile := stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT)
 				pile.flip_h = false
