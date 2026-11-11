@@ -348,6 +348,19 @@ func _run() -> void:
 		"reduced-motion status-only pass shows a float and light, with no attack beat")
 	screen.receipts.pop_back()
 	fight._seen_receipts = screen.receipts.size()
+	var reduced_miss := {"action": "ability", "ok": true, "actor": hero_id, "results": [
+		{"target": foe_id, "target_side": "foe", "hit": false, "statuses": []}]}
+	screen.receipts.append(reduced_miss)
+	fight._play_new_receipts()
+	var miss_shown := false
+	if fight._float_groups.has(foe_key):
+		for child in fight._float_groups[foe_key].get_children():
+			if child is Label and child.text == "MISS":
+				miss_shown = true
+	_check(miss_shown and fight._beats == null,
+		"reduced-motion miss shows a truthful MISS word without a held attack")
+	screen.receipts.pop_back()
+	fight._seen_receipts = screen.receipts.size()
 	fight.battle._outcome = "victory"
 	var reduced_finish := {"action": "ability", "ok": true, "actor": hero_id, "results": [
 		{"target": foe_id, "target_side": "foe", "hit": true,

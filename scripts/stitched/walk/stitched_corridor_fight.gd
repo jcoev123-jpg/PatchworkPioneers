@@ -2094,7 +2094,7 @@ static func _float_add(events: Dictionary, key: String, words: String, family: S
 	events[key].append({"words": words, "family": family, "icon": icon, "arrow": arrow})
 
 
-func _float_events(receipt: Dictionary) -> Dictionary:
+func _float_events(receipt: Dictionary, show_misses: bool = false) -> Dictionary:
 	var events := {}
 	if not bool(receipt.get("ok", true)):
 		return events
@@ -2205,7 +2205,10 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 				_float_add(events, attacker_key, "UNSTITCHED!", "kill", "float_kill")
 			elif bool(result.get("attacker_hanging", false)):
 				_float_add(events, attacker_key, "HANGING", "bleed", "status_hanging")
-		# A dodge uses the existing held MISS label (with its own reaction picture).
+		elif show_misses:
+			# Reduced motion has no reaction beat to create the usual MISS label.
+			_float_add(events, key, "MISS", "damage")
+		# Normal motion uses the existing held MISS reaction label.
 	# The battle screen observes settled start-of-turn clocks separately from the
 	# attack receipts. It only reports untouched units, never guesses a tick from
 	# the damage number on the unit the ability itself just struck.
@@ -2237,9 +2240,9 @@ func _clear_float_words() -> void:
 	_float_groups.clear()
 
 
-func _show_float_receipt(receipt: Dictionary) -> void:
+func _show_float_receipt(receipt: Dictionary, show_misses: bool = false) -> void:
 	_clear_float_words()
-	var events := _float_events(receipt)
+	var events := _float_events(receipt, show_misses)
 	for key in events:
 		var cues: Array = events[key]
 		var group := Control.new()
@@ -2529,7 +2532,7 @@ func _spotlight_without_motion(fresh: Array) -> void:
 		var receipt: Dictionary = fresh[index]
 		if not bool(receipt.get("ok", false)):
 			continue
-		var events := _float_events(receipt)
+		var events := _float_events(receipt, true)
 		var is_ability := str(receipt.get("action", "")) == "ability"
 		if not is_ability and events.is_empty():
 			continue
@@ -2542,7 +2545,7 @@ func _spotlight_without_motion(fresh: Array) -> void:
 		if not lit.is_empty():
 			stage.spot_pulse(lit, [], HOLD_TIME)
 		if not events.is_empty():
-			_show_float_receipt(receipt)
+			_show_float_receipt(receipt, true)
 		return
 
 

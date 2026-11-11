@@ -111,6 +111,30 @@ func _run() -> void:
 		"leave arrow keeps a four-pixel gap from wares on both sides")
 	_check(arrow.size.x >= 30.0 and arrow.size.y >= 30.0,
 		"trimmed leave arrow stays clickable")
+	# If the overlap eats the arrow's width, the usable part may be below
+	# the ware instead. Do not leave the blocker over the whole hit target.
+	right.position = Vector2(1050, 100)
+	left.position = Vector2(220, 390)
+	left.size = Vector2(100, 80)
+	arrow.position = Vector2(250, 390)
+	arrow.size = Vector2(72, 115)
+	visit._clear_arrow_overlap(arrow)
+	_check(not arrow.get_rect().intersects(left.get_rect().grow(4.0))
+		and arrow.size.x >= 30.0 and arrow.size.y >= 30.0,
+		"deep arrow overlap uses a vertical clearance when a horizontal trim cannot fit")
+	# Two wares can each leave one tempting cut, yet only their shared
+	# upper-left gap fits a full cursor. A greedy trim must not miss it.
+	left.position = Vector2(250, 430)
+	left.size = Vector2(50, 60)
+	right.position = Vector2(310, 390)
+	right.size = Vector2(40, 100)
+	arrow.position = Vector2(250, 390)
+	arrow.size = Vector2(100, 100)
+	visit._clear_arrow_overlap(arrow)
+	_check(not arrow.get_rect().intersects(left.get_rect().grow(4.0))
+		and not arrow.get_rect().intersects(right.get_rect().grow(4.0))
+		and arrow.size.x >= 30.0 and arrow.size.y >= 30.0,
+		"leave arrow retains a genuinely clear 30px target around multiple wares")
 	visit.queue_free()
 
 	# The junction tells only the way, never what waits down it.

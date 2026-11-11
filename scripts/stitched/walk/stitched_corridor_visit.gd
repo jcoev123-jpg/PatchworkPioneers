@@ -492,26 +492,37 @@ func _place_items() -> void:
 ## The leave arrow's box is tall and can lie beside wares with no gap. Trim it
 ## with a small cursor-clearance margin, keeping at least a 30px usable target.
 func _clear_arrow_overlap(arrow: Button) -> void:
+	# Keep each available rectangle until every ware has been considered. A
+	# greedy cut can leave a later ware blocking the arrow even when a clear
+	# corner of its original picture remains usable.
+	var available: Array[Rect2] = [Rect2(arrow.position, arrow.size)]
 	for other in floor_buttons:
 		if other == arrow or not is_instance_valid(other):
 			continue
-		var mine := Rect2(arrow.position, arrow.size)
-		var hit := mine.intersection(Rect2(other.position, other.size).grow(4.0))
-		if hit.size.x <= 0.0 or hit.size.y <= 0.0:
-			continue
-		var cut := mine
-		if hit.size.x <= hit.size.y:
-			if other.position.x + other.size.x * 0.5 < mine.position.x + mine.size.x * 0.5:
-				cut = Rect2(Vector2(hit.end.x, mine.position.y), Vector2(mine.end.x - hit.end.x, mine.size.y))
-			else:
-				cut = Rect2(mine.position, Vector2(hit.position.x - mine.position.x, mine.size.y))
-		elif other.position.y + other.size.y * 0.5 < mine.position.y + mine.size.y * 0.5:
-			cut = Rect2(Vector2(mine.position.x, hit.end.y), Vector2(mine.size.x, mine.end.y - hit.end.y))
-		else:
-			cut = Rect2(mine.position, Vector2(mine.size.x, hit.position.y - mine.position.y))
-		if cut.size.x >= 30.0 and cut.size.y >= 30.0:
-			arrow.position = cut.position
-			arrow.size = cut.size
+		var blocked := Rect2(other.position, other.size).grow(4.0)
+		var next: Array[Rect2] = []
+		for space in available:
+			var hit := space.intersection(blocked)
+			if not hit.has_area():
+				next.append(space)
+				continue
+			var cuts: Array[Rect2] = [
+				Rect2(space.position, Vector2(hit.position.x - space.position.x, space.size.y)),
+				Rect2(Vector2(hit.end.x, space.position.y), Vector2(space.end.x - hit.end.x, space.size.y)),
+				Rect2(space.position, Vector2(space.size.x, hit.position.y - space.position.y)),
+				Rect2(Vector2(space.position.x, hit.end.y), Vector2(space.size.x, space.end.y - hit.end.y)),
+			]
+			for cut in cuts:
+				if cut.size.x >= 30.0 and cut.size.y >= 30.0:
+					next.append(cut)
+		available = next
+	var best := Rect2()
+	for space in available:
+		if space.get_area() > best.get_area():
+			best = space
+	if best.has_area():
+		arrow.position = best.position
+		arrow.size = best.size
 
 
 ## Opens a thing's tray of dolls, or closes it again; only one tray is open at a time.
