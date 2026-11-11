@@ -1863,6 +1863,7 @@ func _cancel_beats() -> void:
 	_show_move_name("")
 	_clear_flying()
 	_clear_target_reactions()
+	_clear_float_words()
 	for home_key in _beat_homes:
 		var returned: Sprite3D = stage.figure_nodes.get(home_key)
 		if returned != null:
@@ -2331,10 +2332,9 @@ func _play_new_receipts() -> void:
 	_seen_receipts = engine.receipts.size()
 	if engine._motion_is_reduced():
 		_cancel_beats()
-		# Owner 11-10 reduced motion:the lunges and poses are skipped, but the attack
-		# still dims the corridor and brightens the acting pair for the same readable beat.
-		if engine._motion_is_reduced() and not battle.is_over():
-			_spotlight_without_motion(fresh)
+		# Reduced motion keeps the spotlight and truthful outcome words, including
+		# a finishing blow, but skips every lunge and held attack pose.
+		_spotlight_without_motion(fresh)
 		return
 	# Only actual abilities or confirmed tick-only turns earn a held beat.
 	# Empty passes, free hand actions and moves never block player input.
@@ -2522,16 +2522,27 @@ func _drain_queued_beats() -> void:
 	_start_beats(next)
 
 
-## Owner 11-10 reduced motion: no lunges, no poses; the newest striking receipt still
-## plays its spotlight so the read stays slow, heavy and clear.
+## Reduced motion skips lunges and poses but preserves confirmed outcome words.
+## A pass that only settles a status clock is just as visible as a striking blow.
 func _spotlight_without_motion(fresh: Array) -> void:
 	for index in range(fresh.size() - 1, -1, -1):
 		var receipt: Dictionary = fresh[index]
-		if not bool(receipt.get("ok", false)) or str(receipt.get("action", "")) != "ability":
+		if not bool(receipt.get("ok", false)):
 			continue
-		var spot := _receipt_spot_keys(receipt)
-		if not spot.lit.is_empty():
-			stage.spot_pulse(spot.lit, [], HOLD_TIME)
+		var events := _float_events(receipt)
+		var is_ability := str(receipt.get("action", "")) == "ability"
+		if not is_ability and events.is_empty():
+			continue
+		var lit: Array[String] = []
+		if is_ability:
+			lit = _receipt_spot_keys(receipt).lit
+		else:
+			for key in events:
+				lit.append(str(key))
+		if not lit.is_empty():
+			stage.spot_pulse(lit, [], HOLD_TIME)
+		if not events.is_empty():
+			_show_float_receipt(receipt)
 		return
 
 

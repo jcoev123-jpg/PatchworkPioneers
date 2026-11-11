@@ -207,6 +207,10 @@ func _run() -> void:
 		"floating words cannot intercept the held input shield")
 	fight._clear_float_words()
 	_check(fight._float_groups.is_empty(), "callout cleanup releases the prior beat")
+	fight._show_float_receipt(receipt)
+	fight._cancel_beats()
+	_check(fight._float_groups.is_empty(),
+		"interrupting a held beat clears its words before a reduced-motion action")
 
 	receipt.results[0].crit = false
 	receipt.results[0].damage = 4
@@ -333,6 +337,33 @@ func _run() -> void:
 	fight.refresh()
 	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng
 		and screen.receipts == receipts, "floating callouts do not mutate rules or receipts")
+	# Accessibility: reduced motion must not erase confirmed pass ticks or the
+	# final kill. Words fade in place while the stage only pulses its lighting.
+	screen.reduced_motion = true
+	fight._seen_receipts = screen.receipts.size()
+	screen.receipts.append(passed)
+	fight._play_new_receipts()
+	_check(fight._float_groups.has(foe_key) and fight._beats == null
+		and fight.stage._spot_tween != null,
+		"reduced-motion status-only pass shows a float and light, with no attack beat")
+	screen.receipts.pop_back()
+	fight._seen_receipts = screen.receipts.size()
+	fight.battle._outcome = "victory"
+	var reduced_finish := {"action": "ability", "ok": true, "actor": hero_id, "results": [
+		{"target": foe_id, "target_side": "foe", "hit": true,
+		"damage": 5, "target_hp": 0, "heap": {"rank": int(foe.rank)}, "statuses": []}]}
+	screen.receipts.append(reduced_finish)
+	fight._play_new_receipts()
+	_check(_words(fight._float_events(reduced_finish), foe_key).has("UNSTITCHED!")
+		and fight._float_groups.has(foe_key) and not fight._beat_input_shield.visible
+		and fight.continue_button.get_index() == fight.get_child_count() - 1,
+		"reduced-motion final kill floats above the foe without covering Continue")
+	screen.receipts.pop_back()
+	fight._seen_receipts = screen.receipts.size()
+	fight._clear_float_words()
+	fight.stage.end_spotlight(0.0)
+	screen.reduced_motion = false
+	fight.battle._outcome = "ongoing"
 	# A result can finish the fight before its delayed held-beat callouts appear.
 	# Both the floating words and a late MISS must leave public Continue on top.
 	fight.battle._outcome = "defeat"

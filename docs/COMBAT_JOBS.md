@@ -148,6 +148,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (11-12 code review): Frozen per-turn unit observations now deep-copy nested statuses (the rules' side lists expose mutable unit references), so actual live ticks remain visible. Unchanged seats must also reconcile their simulated HP against the settled HP before floating a tick. Mounted regression covers both, with 57 floating-outcome checks passing. Job remains PART for summon/split, unresolved ambiguous overlaps, missing art and rare live outcomes.
 
+(11-12 reduced-motion pass): Reduced-motion fights now show receipt-confirmed floating words for strikes, status-only pass ticks and final kills, without lunges or delaying input; the spotlight still pulses. Interrupting a held beat clears stale words. Three new mounted checks (60 total), corridor focus, victory handoff and Continue regressions pass. Job remains PART for the other outstanding cases and live reduced-motion visual proof.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
