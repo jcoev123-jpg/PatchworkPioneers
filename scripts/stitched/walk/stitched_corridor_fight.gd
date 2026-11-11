@@ -2094,6 +2094,16 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 				_float_add(events, key, ("CRIT! " if bool(result.get("crit", false)) else "") \
 					+ str(damage), "crit" if bool(result.get("crit", false)) else "damage",
 					"float_crit" if bool(result.get("crit", false)) else "")
+			# The rules' settled rank receipt, not the selected ability's promise,
+			# confirms a push or pull. A blocked shift and a failed snip say nothing.
+			var shift: Dictionary = result.get("shift", {})
+			if bool(shift.get("ok", false)):
+				var from_rank := int(shift.get("from", 0))
+				var to_rank := int(shift.get("to", 0))
+				if from_rank != to_rank:
+					_float_add(events, key, "PUSHED BACK" if to_rank > from_rank else "PULLED FORWARD", "damage")
+			if bool(result.get("snip", {}).get("ok", false)):
+				_float_add(events, key, "THREAD CUT!", "bleed")
 			for effect in result.get("statuses", []):
 				var status := str(effect.get("status", ""))
 				if status.is_empty():

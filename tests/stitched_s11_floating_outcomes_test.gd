@@ -180,6 +180,25 @@ func _run() -> void:
 	receipt.results[0].statuses = [{"status": "weak", "duration": 2}]
 	_check(fight._float_events(receipt)[hero_key][0].get("arrow", "") == "float_down",
 		"weakness requests the painted downward arrow without drawing geometry")
+	# Announce only rules-confirmed forced movement and a successful cut; a
+	# failed/blocked effect cannot become a phantom floating outcome.
+	receipt.results = [{"target": foe_id, "target_side": "foe", "hit": true,
+		"damage": 0, "statuses": [], "shift": {"ok": true, "from": 1, "to": 2}}]
+	_check(_words(fight._float_events(receipt), foe_key).has("PUSHED BACK"),
+		"a confirmed rank increase announces the pushed foe")
+	receipt.results[0].shift = {"ok": true, "from": 2, "to": 1}
+	_check(_words(fight._float_events(receipt), foe_key).has("PULLED FORWARD"),
+		"a confirmed rank decrease announces the pulled foe")
+	receipt.results[0].shift = {"ok": false, "reason": "blocked"}
+	_check(not fight._float_events(receipt).has(foe_key),
+		"a blocked displacement cannot float a movement cue")
+	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
+		"damage": 0, "statuses": [], "snip": {"ok": true, "hero": hero_id, "after_rank": 1}}]
+	_check(_words(fight._float_events(receipt), hero_key).has("THREAD CUT!"),
+		"a confirmed severed thread floats over the affected doll")
+	receipt.results[0].snip = {"ok": false, "error": "already cut"}
+	_check(not fight._float_events(receipt).has(hero_key),
+		"a refused thread cut cannot invent a callout")
 
 	receipt.results = [{"target": foe_id, "target_side": "foe", "hit": true,
 		"damage": 3, "statuses": [{"status": "regen", "duration": 2,

@@ -132,6 +132,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (11-12 code review): Corrected tick numbers for overlapping Regen → Bleed → Rot, matching the rules' actual HP settlement order; a truly LOST doll now retains its figure and 0-HP plate for the held blow so its LOST! callout is not silently discarded. Both are covered by mounted deterministic regressions (42 checks). This job remains PART: simultaneous action/tick attribution, summon/split notices, missing icon art and live visual coverage still need work.
 
+(11-12 play pass): Added receipt-confirmed PUSHED BACK, PULLED FORWARD and THREAD CUT! notices to the held target beat. Failed moves and refused cuts remain silent; five new mounted checks pass (47 total). Restarted and saw Warden's Rim Toss push Moth Scribe from rank 3 to rank 4: damage and PUSHED BACK appeared over its moved figure during the spotlight. Remaining: overlapping ability/tick attribution, summon/split announcements, icon art and live proof of pull/cut and the other rare outcomes.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
