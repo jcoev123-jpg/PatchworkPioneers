@@ -124,11 +124,11 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 		map_holder.add_child(column)
 		var icon := TextureRect.new()
 		icon.name = "Icon"
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.texture = _node_art(kind)
 		icon.position = Vector2((slot - ICON) / 2.0, 0)
 		icon.size = Vector2(ICON, ICON)
-		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 		icon.modulate = HERE if here else (VISITED if walked else FUTURE)
 		icon.tooltip_text = "%s · %s" % [kind, "you are here" if here else ("visited" if walked else "ahead")]
 		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -137,11 +137,11 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 			# A clear mark where the party is now: the run's own candle under the room.
 			var candle := TextureRect.new()
 			candle.name = "HereMark"
+			candle.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			candle.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			candle.texture = _texture(CANDLE_ART)
 			candle.position = Vector2((slot - MARK) / 2.0, ICON + 8.0)
 			candle.size = Vector2(MARK, MARK)
-			candle.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			candle.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 			candle.modulate = HERE
 			candle.tooltip_text = "The party stands here"
 			candle.mouse_filter = Control.MOUSE_FILTER_IGNORE
