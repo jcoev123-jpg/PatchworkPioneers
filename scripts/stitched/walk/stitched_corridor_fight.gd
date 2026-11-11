@@ -2089,7 +2089,10 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 				if bool(effect.get("resisted", false)) or bool(effect.get("refused", false)):
 					_float_add(events, on_key, "RESIST", "resist")
 				elif status == "heal":
-					_float_add(events, on_key, "HEAL +" + str(int(effect.get("amount", 0))),
+					# A heal that restored nothing (target already at full HP) says so
+					# instead of floating a meaningless "HEAL +0".
+					var healed := int(effect.get("amount", 0))
+					_float_add(events, on_key, "HEAL +" + str(healed) if healed > 0 else "FULL HP",
 						"heal", "status_heal")
 				elif status == "steal":
 					_float_add(events, on_key, "DRAIN " + str(int(effect.get("amount", 0))),
