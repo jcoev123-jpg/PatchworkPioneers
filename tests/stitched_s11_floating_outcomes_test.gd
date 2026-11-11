@@ -77,6 +77,12 @@ func _run() -> void:
 	_check(words.has("HANGING") and words.has("SEAM TORN!"),
 		"confirmed death-door limb loss is named without exposing a limb slot")
 
+	receipt.actor = hero_id
+	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
+		"damage": 0, "attacker_tear": {"ok": true, "slot": "legs"}, "statuses": []}]
+	words = _words(fight._float_events(receipt), hero_key)
+	_check(words.has("SEAM TORN!"), "a confirmed counter-tear on the attacker is called out")
+
 	receipt.results = [{"target": hero_id, "target_side": "hero", "hit": true,
 		"damage": 0, "statuses": [{"status": "heal", "amount": 5},
 			{"status": "guard", "duration": 2}]}]

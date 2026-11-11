@@ -2123,6 +2123,10 @@ func _float_events(receipt: Dictionary) -> Dictionary:
 			var drained := int(result.get("drain", 0))
 			if drained > 0:
 				_float_add(events, attacker_key, "DRAIN +" + str(drained), "heal")
+			# A counter that tears the attacker's seam gets the same confirmed callout.
+			var attacker_torn: Dictionary = result.get("attacker_tear", {})
+			if bool(attacker_torn.get("ok", true)) and not str(attacker_torn.get("slot", "")).is_empty():
+				_float_add(events, attacker_key, "SEAM TORN!", "bleed", "status_hanging")
 		# A dodge uses the existing held MISS label (with its own reaction picture).
 	return events
 
