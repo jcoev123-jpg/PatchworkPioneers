@@ -79,6 +79,8 @@ Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from rea
 
 (11-12 completion): The corner now shows the next floor and its actual directed outgoing seams, including crossed branches, without inventing same-floor links. The last floor shows no next-floor row. A missing route-thread texture falls back to existing felt art. Verified on live fight, Peddler, and floor-12 boss screens and by mounted route-map tests.
 
+(11-12 play review): Foe hover details now shrink the existing card font only when long move/resistance rows would hide the final live-status line; shorter foes keep the standard font. Verified in the mounted corner-map test and live normal fight. Job 5 remains DONE.
+
 The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see
 the map in ref2). Use the run's real route data.

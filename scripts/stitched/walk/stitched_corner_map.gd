@@ -204,6 +204,22 @@ func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 	_foe_mode = true
 	title_label.text = foe_name
 	foe_body.text = "\n".join(lines)
+	# Long authored move and resistance lists can wrap past the bottom of this
+	# fixed-size corner. Fit the real wrapped lines instead of hiding statuses.
+	for font_size in range(15, 9, -1):
+		foe_body.add_theme_font_size_override("font_size", font_size)
+		# The Label may still report its OLD line count in this same frame.
+		# Estimate each authored row's word wrapping independently so even
+		# long boss moves leave room for the final live-status row.
+		var wrapped_rows := 0
+		for line in lines:
+			var row_width := FONT.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT,
+				-1, font_size).x
+			wrapped_rows += maxi(1, ceili(row_width / maxf(1.0, foe_body.size.x - 12.0)))
+		# Allow inter-line spacing and a small bottom gutter; a nominal font
+		# height by itself understates the actual Label's rendered rows.
+		if wrapped_rows * (FONT.get_height(font_size) + 3.0) <= foe_body.size.y - 12.0:
+			break
 	map_holder.visible = false
 	foe_body.visible = true
 

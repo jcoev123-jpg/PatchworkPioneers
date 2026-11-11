@@ -25,7 +25,7 @@ func _run() -> void:
 
 
 func _component_checks() -> void:
-	var map := StitchedCornerMap.new(Rect2(972, 400, 304, 180))
+	var map := StitchedCornerMap.new(Rect2(968, 542, 306, 170))
 	root.add_child(map)
 	await process_frame
 	var records := [
@@ -88,6 +88,31 @@ func _component_checks() -> void:
 	_check(map.foe_body.visible and not map.map_holder.visible, "a hovered foe takes the corner")
 	_check(map.title_label.text == "Moth Scribe", "the foe's own name heads the card")
 	_check(map.foe_body.text.contains("Health 9 / 12"), "the foe card carries its lines")
+	# A four-line foe summary becomes seven or more rendered lines once long
+	# move and resistance names wrap. The active-status line must still fit.
+	map.show_foe("Felt Bulwark", PackedStringArray([
+		"Foe · rank 1", "Health 15 / 18",
+		"Moves: Felt Slam, Bulwark Pad, Button Shelter",
+		"Resists stun 50%, bleed 20%, rot 10%, move 60%, debuff 20%",
+		"Now: BLEED 2", ]))
+	await process_frame
+	_check(map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
+		"wrapped foe moves and resistances leave room for the final status line")
+	_check(map.foe_body.text.ends_with("Now: BLEED 2"),
+		"dense foe details preserve their live status rather than discarding it")
+	map.show_foe("Patchwork Behemoth", PackedStringArray([
+		"Boss · rank 1", "Health 45 / 50",
+		"Moves: Behemoth Maul, Stuffing Hurl, Rope Lash, Stitch Ward",
+		"Resists stun 45%, bleed 40%, rot 40%, move 70%, debuff 45%",
+		"Now: BLEED 1", ]))
+	await process_frame
+	_check(map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
+		"boss move and resistance rows fit without hiding current Bleed")
+	_check(map.foe_body.get_theme_font_size("font_size") < 15,
+		"the crowded boss card adapts its font rather than clipping its last row")
+	map.show_foe("Moth Scribe", PackedStringArray(["Foe · rank 2", "Health 9 / 12"]))
+	_check(map.foe_body.get_theme_font_size("font_size") == 15,
+		"a short foe card recovers the regular readable font size")
 	map.show_map()
 	_check(not map.foe_body.visible and map.map_holder.visible, "the road map returns with the pointer")
 	_check(map.title_label.text.contains("FLOOR 02 OF 12"), "the map title returns with the map")
