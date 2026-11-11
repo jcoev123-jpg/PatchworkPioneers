@@ -57,9 +57,11 @@ how long, which places in the row it can be used from and which places it can hi
 what its sewn-on patch adds. Use the real values the fight uses, not text written by hand. The card goes away when
 the pointer leaves.
 
-## Job 4: one patch slot on every hero ability (TODO)
+## Job 4: one patch slot on every hero ability (PART 2026-11-11)
 
-Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
+Built one round, faint-when-empty socket on each signature ability and a patch-picture badge with existing-art fallback when occupied; the hover card includes its effects. Verified a live Heel Knot sewn onto Pot Helm Command pushed Moth Scribe from rank 3 to rank 4 in the next fight, plus 38 mounted kit-bar checks. Still to reconcile: the existing gold-patch rule and protected regression coverage permit two effects per ability; the view keeps a single slot but those legacy effects remain in play until the owner resolves that rule conflict.
+
+Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch

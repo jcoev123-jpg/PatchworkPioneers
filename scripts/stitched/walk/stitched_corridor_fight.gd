@@ -471,16 +471,26 @@ func _build_bar() -> void:
 			art.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			art.material = round_material(ICON, TIER_OUTLINE[1] if layer == "Patch" else Color(0, 0, 0, 0))
 			button.add_child(art)
-		# Owner 11-09: patches are add-ons sewn onto an ability, so they sit on its rim as small badges.
-		for sewn_index in 2:
-			var sewn := TextureRect.new()
-			sewn.name = "Sewn_%d" % sewn_index
-			sewn.position = Vector2((114.0 + ICON) / 2.0 - SEWN + 4 - sewn_index * (SEWN - 6), ICON - SEWN + 4)
-			sewn.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			sewn.size = Vector2(SEWN, SEWN)
-			sewn.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			sewn.mouse_filter = Control.MOUSE_FILTER_IGNORE
-			button.add_child(sewn)
+		# Job 4: exactly one visible socket on each signature ability, even when empty.
+		# Reuse the felt name-plate picture for its circular rim; never draw UI art in code.
+		var frame := TextureRect.new()
+		frame.name = "SewnFrame"
+		frame.position = Vector2(77, 64)
+		frame.size = Vector2(SEWN, SEWN)
+		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		frame.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		frame.texture = NAME_PLATE
+		frame.material = round_material(SEWN)
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(frame)
+		var sewn := TextureRect.new()
+		sewn.name = "Sewn_0"
+		sewn.position = frame.position + Vector2(3, 3)
+		sewn.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		sewn.size = Vector2(SEWN - 6, SEWN - 6)
+		sewn.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		sewn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		button.add_child(sewn)
 		var slot_label := _label(SLOT_NAMES[slot], Rect2(12, 31, 90, 30), 24, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 		slot_label.name = "Slot"
 		button.add_child(slot_label)
@@ -859,16 +869,24 @@ func refresh() -> void:
 	_place_overlays()
 
 
-## S14: the button is the hero's own signature ability for the slot, with its sewn patches as badges; the
-## old part patch picture, tier outline and part cue step aside.
+## S14: each fixed signature ability keeps one visible socket for its add-on patch.
+## Existing gold two-patch saves keep both effects and both hover lines, without a second UI socket.
+func _sewn_picture(patch_id: String, entry: Dictionary) -> Texture2D:
+	var picture := _texture(SEWN_ART + patch_id + ".png")
+	if picture == null:
+		picture = _texture("res://assets/paper/stitched/patches/" + patch_id + ".png")
+	if picture == null:
+		picture = _texture(ICONS + "status_" + str(entry.get("effect", "")) + ".png")
+	return picture if picture != null else NAME_PLATE
+
+
 func _show_kit_ability(button: TextureButton, shown: Dictionary, slot: String, torn: bool, hero_turn: bool) -> void:
 	var ability := engine.slot_ability(shown, slot) if not shown.is_empty() else {}
 	var picture: TextureRect = button.get_node("Patch")
 	var id := str(ability.get("id", ""))
 	picture.texture = _texture(ABILITY_ART + id + ".png") if not id.is_empty() else null
 	picture.material = round_material(ICON, TIER_OUTLINE[1])
-	# Owner 11-09 "it went back to the limb system": no body-part word on an S14 button; until its
-	# picture exists the ability's own name stands in.
+	# Without the signature picture, show its own name, never a retired limb label.
 	var stand_in: Label = button.get_node("Slot")
 	stand_in.text = str(ability.get("name", ""))
 	stand_in.add_theme_font_size_override("font_size", 15)
@@ -878,11 +896,22 @@ func _show_kit_ability(button: TextureButton, shown: Dictionary, slot: String, t
 	stand_in.visible = picture.texture == null
 	var lines: Array[String] = [str(ability.get("name", "")) if not torn else str(ability.get("name", "")) + " (torn)"]
 	var catalog: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
-	var sewn: Array = battle._s14_sockets.get(str(shown.get("id", "")), {}).get(id, [])
-	for sewn_index in mini(2, sewn.size()):
-		var patch_id := str(sewn[sewn_index])
-		(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = _texture(SEWN_ART + patch_id + ".png")
-		lines.append("Sewn on: " + str(catalog.get(patch_id, {}).get("name", patch_id.capitalize())))
+	var socketed: Array = battle._s14_sockets.get(str(shown.get("id", "")), {}).get(id, [])
+	var frame: TextureRect = button.get_node("SewnFrame")
+	var badge: TextureRect = button.get_node("Sewn_0")
+	frame.visible = not ability.is_empty()
+	frame.modulate = Color("eee1c8", 0.95) if not socketed.is_empty() else Color("c8b8a5", 0.34)
+	badge.texture = null
+	badge.visible = not socketed.is_empty() and frame.visible
+	if badge.visible:
+		var first_id := str(socketed[0])
+		badge.texture = _sewn_picture(first_id, catalog.get(first_id, {}))
+		badge.tooltip_text = str(catalog.get(first_id, {}).get("name", first_id.capitalize()))
+	else:
+		badge.tooltip_text = "Empty patch slot"
+	for patch_id in socketed:
+		var key := str(patch_id)
+		lines.append("Sewn on: " + str(catalog.get(key, {}).get("name", key.capitalize())))
 	button.disabled = not hero_turn or not engine.valid_slot(shown, slot)
 	button.tooltip_text = "\n".join(lines).strip_edges()
 
@@ -1099,8 +1128,9 @@ func _refresh_bar() -> void:
 			# Owner 11-09: the hover is the move name, never a slot heading, tier or stat sheet.
 			cue = _plain_lock(engine._part_lock_reason(kit_actor, equipped)) if kit_turn and button.disabled else ""
 		button.tooltip_text = (move_label.text + "\n" + cue).strip_edges()
-		for sewn_index in 2:
-			(button.get_node("Sewn_%d" % sewn_index) as TextureRect).texture = null
+		(button.get_node("Sewn_0") as TextureRect).texture = null
+		(button.get_node("Sewn_0") as TextureRect).visible = false
+		(button.get_node("SewnFrame") as TextureRect).visible = false
 		if battle._s14:
 			_show_kit_ability(button, kit_actor, slot, torn, kit_turn)
 			button.disabled = not live_hero_turn or not engine.valid_slot(live_actor, slot)

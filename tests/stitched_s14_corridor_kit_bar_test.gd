@@ -57,8 +57,18 @@ func _run() -> void:
 		var sewn: bool = str(ability.id) == socketed
 		_check(button != null and button.tooltip_text.contains("Sewn on: " + patch_name) == sewn,
 			"%s hover text lists only patches sewn onto it" % ability.slot)
-		if sewn and ResourceLoader.exists(StitchedCorridorFight.SEWN_ART + patch_id + ".png"):
-			_check((button.get_node("Sewn_0") as TextureRect).texture != null, "the sewn patch shows as a badge")
+		# Job 4: one (and only one) patch socket is visible on every ability,
+		# including the faint empty frame on unsewn abilities.
+		var frame: TextureRect = button.get_node_or_null("SewnFrame")
+		var badge: TextureRect = button.get_node_or_null("Sewn_0")
+		_check(frame != null and frame.visible, "%s always has a patch socket" % ability.slot)
+		_check(button.get_node_or_null("Sewn_1") == null, "%s never has a second patch socket" % ability.slot)
+		_check(badge != null and badge.visible == sewn, "%s fills only its sewn socket" % ability.slot)
+		if frame != null:
+			_check(frame.modulate.a > 0.8 if sewn else frame.modulate.a < 0.5,
+				"%s occupied socket has a bright frame, empty socket a faint one" % ability.slot)
+		if sewn and badge != null:
+			_check(badge.texture != null, "the sewn patch has a picture or a felt fallback")
 		_check(not button.tooltip_text.to_lower().contains("patch:"), "no ability is called a patch")
 		var stand_in: Label = button.get_node("Slot") if button != null else null
 		_check(stand_in != null and not stand_in.text in StitchedCorridorFight.SLOT_NAMES.values()
