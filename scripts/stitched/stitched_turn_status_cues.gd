@@ -68,7 +68,7 @@ static func _has_valid_guard(unit: Dictionary) -> bool:
 
 
 static func resolve_cue(unit: Dictionary) -> String:
-	if unit.get("side") != "hero":
+	if not StitchedRules.fray_enabled or unit.get("side") != "hero":
 		return ""
 	var resolve: Variant = unit.get("resolve")
 	if resolve is String and RESOLVE_CUES.has(resolve):
@@ -77,7 +77,7 @@ static func resolve_cue(unit: Dictionary) -> String:
 
 
 static func resolve_effect(unit: Dictionary) -> String:
-	if unit.get("side") != "hero":
+	if not StitchedRules.fray_enabled or unit.get("side") != "hero":
 		return ""
 	var resolve: Variant = unit.get("resolve")
 	if resolve is String and RESOLVE_EFFECTS.has(resolve):
@@ -176,7 +176,7 @@ static func tooltip_lines(unit: Dictionary) -> PackedStringArray:
 		if StitchedRules.fray_enabled and _number(unit.get("fray")):
 			lines.append("FRAY: %s / 200" % str(unit["fray"]))
 		var resolve: Variant = unit.get("resolve")
-		if resolve is String and RESOLVE_EFFECTS.has(resolve):
+		if StitchedRules.fray_enabled and resolve is String and RESOLVE_EFFECTS.has(resolve):
 			lines.append("Resolve: " + resolve)
 			lines.append(str(RESOLVE_EFFECTS[resolve]))
 		var torn := torn_slots(unit)

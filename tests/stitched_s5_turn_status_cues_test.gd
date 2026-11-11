@@ -209,6 +209,17 @@ func _run() -> void:
 				all_terms = false
 		_check(all_terms, "resolve %s tooltip effect line accurately states documented numbers/rules" % trait_name)
 	_check(seen_cues.size() == 6, "all six documented resolves have distinct short cues")
+	# Retired live mode must not revive hidden FRAY/resolve text from an old saved hero.
+	StitchedRules.fray_enabled = false
+	for unit_copy in resolve_snapshots:
+		var retired_tip := StitchedTurnStatusCues.tooltip(unit_copy)
+		_check(StitchedTurnStatusCues.cue(unit_copy) == "HERO"
+			and StitchedTurnStatusCues.resolve_cue(unit_copy).is_empty()
+			and StitchedTurnStatusCues.resolve_effect(unit_copy).is_empty()
+			and not retired_tip.to_lower().contains("fray")
+			and not retired_tip.contains("Resolve:"),
+			"retired mode hides the legacy resolve cue and its fray tooltip for " + str(unit_copy.get("resolve", "")))
+	StitchedRules.fray_enabled = true
 
 	ribbon.show_order(resolve_snapshots, "", false)
 	_check(ribbon.displayed_entries.size() == 6 and ribbon.get_child_count() == 9,
