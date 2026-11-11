@@ -61,6 +61,8 @@ the pointer leaves.
 
 Built one round, faint-when-empty socket on each signature ability and a patch-picture badge with existing-art fallback when occupied; the hover card includes its effects. Verified a live Heel Knot sewn onto Pot Helm Command pushed Moth Scribe from rank 3 to rank 4 in the next fight, plus 38 mounted kit-bar checks. Still to reconcile: the existing gold-patch rule and protected regression coverage permit two effects per ability; the view keeps a single slot but those legacy effects remain in play until the owner resolves that rule conflict.
 
+(2026-11-12 play pass): Completed a live Sewing Circle sew of Mildew Spore onto Warden's Pot Helm Command for 2 scraps after a boss cheat-finish. The next fight showed the sewn-patch label on that ability, and using it applied ROT 2 to Spindle Ram. The gold two-effect rule conflict still prevents marking this job DONE.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint

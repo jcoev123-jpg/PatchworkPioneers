@@ -78,8 +78,8 @@ static func stitched_stop_help_for(v3_kind: String) -> Dictionary:
 			}
 		"SewingCircle":
 			return {
-				"lead": "Sewing Circle: mend, upgrade or swap worn parts.",
-				"detail": "May offer paid scraps mending, one tier upgrade (I to II or II to III), same-slot part swaps from a satchel of up to %d spare parts, and replacing a LOST doll with an unused starter doll. Offers and costs are checked on arrival." % RunUnpickerVisit.SATCHEL_MAX,
+				"lead": "Sewing Circle: sew found patches onto fixed abilities.",
+				"detail": "Sew a loose effect patch onto a doll\'s signature ability for scraps, or unsew an existing patch. May also offer mending, a tier upgrade, same-slot spare-part swaps (up to %d spares), and a replacement for a LOST doll. Offers and costs are checked on arrival." % RunUnpickerVisit.SATCHEL_MAX,
 			}
 		"Peddler":
 			return {

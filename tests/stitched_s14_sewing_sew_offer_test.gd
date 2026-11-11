@@ -20,6 +20,12 @@ func _initialize() -> void:
 	var greeting: String = StitchedRunSession.VISIT_GREETINGS["SewingCircle"]
 	_check(greeting.contains("patches onto a doll's abilities") and not greeting.contains("Torn parts"),
 		"Sewing Circle describes sewing patches onto fixed abilities, not mending obsolete body-part abilities")
+	var preview := RunV3StopChoiceProjection.stitched_stop_help_for("SewingCircle")
+	_check(str(preview.get("lead", "")).contains("sew found patches onto fixed abilities")
+		and str(preview.get("detail", "")).contains("signature ability")
+		and str(preview.get("detail", "")).contains("unsew")
+		and not str(preview.get("detail", "")).contains("body-part abilities"),
+		"the map preview explains the real ability-patch sewing service")
 	var run := _enter()
 	_check(run != null, "a real seeded Sewing Circle is entered")
 	if run != null:
