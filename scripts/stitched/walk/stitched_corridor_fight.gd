@@ -959,13 +959,18 @@ func refresh() -> void:
 	ribbon.show_order(entries, visible_actor, battle.is_over(), visible_index)
 	ribbon.visible = not battle.is_over()
 	var boss := battle.is_boss_encounter()
+	# A summoned / displaced fourth foe needs compact spacing; normal 2-3 foe
+	# groups can spread out so wide bodies do not bury their neighbours.
+	var fourth := engine._unit_at("foe", 4)
+	var four_foes := (not fourth.is_empty() and not bool(fourth.get("dead", false))) \
+		or not engine._heap_at(4).is_empty()
 	for side in ["hero", "foe"]:
 		for rank in range(1, 5):
 			var key: String = side + "_" + str(rank)
 			var unit: Dictionary = engine._unit_at(side, rank)
 			var standing := not unit.is_empty() and not bool(unit.get("dead", false)) and not bool(unit.get("lost", false))
 			var heap: Dictionary = engine._heap_at(rank) if side == "foe" and not standing else {}
-			var where := stage.fight_point(side, rank)
+			var where := stage.fight_point(side, rank, four_foes)
 			# Owner 11-10: a unit that fell on the blow being held keeps its struck pose on the seat;
 			# the scrap heap takes its place when the beat has eased back (see _drain_queued_beats).
 			var fallen: Sprite3D = stage.figure_nodes.get(key)

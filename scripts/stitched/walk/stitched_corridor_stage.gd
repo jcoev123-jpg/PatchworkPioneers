@@ -626,14 +626,16 @@ func fight_z() -> float:
 
 
 ## A rank's spot in the fight; rank 1 of each side stands nearest the middle.
-func fight_point(side: String, rank: int) -> Vector3:
+## Three foes get breathing room for broad stitched silhouettes. A fourth occupant
+## uses the tighter layout so the back rank and its hit target remain on screen.
+const FOE_SPREAD_THREE := 0.82
+const FOE_SPREAD_FOUR := 0.62
+func fight_point(side: String, rank: int, four_foes: bool = false) -> Vector3:
 	var index := clampi(rank, 1, 4) - 1
 	var depth := -0.15 if index % 2 == 1 else 0.1
 	if side == "hero":
 		return Vector3(depth, 0, fight_z() + 0.45 + index * 0.75)
-	# Four foes may occupy the line (including a surviving foe moved into R4).
-	# At a full metre between them the rear foe falls entirely off the right edge.
-	return Vector3(depth, 0, fight_z() - 0.45 - index * 0.62)
+	return Vector3(depth, 0, fight_z() - 0.45 - index * (FOE_SPREAD_FOUR if four_foes else FOE_SPREAD_THREE))
 
 
 ## The figure's whole picture on screen (in this stage's pixels); empty when out of sight.
@@ -695,7 +697,9 @@ func start_fight_focus(keys: Array[String], duration: float = 0.4) -> bool:
 	var chosen := FIGHT_FOV
 	# Leave room for a wider follow-through silhouette and the 10% foreground
 	# growth after the framing check (the still is narrower than some poses).
-	var safe := Rect2(size.x * 0.04, size.y * 0.15, size.x * 0.92, size.y * 0.62)
+	# A three-foe line needs the outer safe margin for its wider separation;
+	# still reject any candidate that would actually clip a sprite off screen.
+	var safe := Rect2(size.x * 0.01, size.y * 0.15, size.x * 0.98, size.y * 0.62)
 	camera.position = aim
 	for candidate in [31.5, 33.0, 35.0, 37.0, 38.0, 39.0]:
 		camera.fov = candidate

@@ -110,7 +110,7 @@ const VISIT_GREETINGS := {
 	"Peddler": "A peddler has spread a handkerchief of wares across the boards.",
 	"PatchStall": "Scraps of cloth hang from a matchbox stall. Every patch has its price.",
 	"Unpicker": "A thin figure with a seam ripper offers to unpick what the dark has sewn in.",
-	"SewingCircle": "Old needles stand in a ring. Torn parts can be mended here, and lost dolls replaced.",
+	"SewingCircle": "Old needles stand in a ring. Sew found patches onto a doll's abilities, strengthen their stitches, or welcome back a lost doll.",
 }
 var _replacement_visit: RunStitchedSewingReplacement
 var _kid_fear: StitchedKidFear

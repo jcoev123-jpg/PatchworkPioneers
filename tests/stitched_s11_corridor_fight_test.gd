@@ -91,6 +91,9 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 		"precondition: actual 4v3 fight has authored foe abilities and a vacant fourth rank")
 	if original.is_empty() or third.is_empty() or original.get("abilities", []).is_empty():
 		return
+	var spread_three := absf(fight.stage.figure_nodes["foe_3"].position.z - fight.stage.figure_nodes["foe_2"].position.z)
+	_check(is_equal_approx(spread_three, StitchedCorridorStage.FOE_SPREAD_THREE),
+		"2-3 foe fights spread wide silhouettes farther apart across the right-hand ranks")
 	# The same kind of retained combat unit as the S2 post-summon fixture.
 	var extra := third.duplicate(true)
 	extra["id"] = "ragling"
@@ -101,6 +104,9 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	_verify_live_intents(fight, 4)
 	_check(fight.stage.figure_nodes.has("foe_4") and fight.stage.figure_nodes["foe_4"].visible,
 		"a fourth living unit appears in the mounted 3D corridor with its own ticket")
+	var spread_four := absf(fight.stage.figure_nodes["foe_3"].position.z - fight.stage.figure_nodes["foe_2"].position.z)
+	_check(is_equal_approx(spread_four, StitchedCorridorStage.FOE_SPREAD_FOUR),
+		"the occupied fourth foe rank restores compact spacing without clipping the rear")
 	var rear_box := fight.stage.screen_rect("foe_4")
 	_check(rear_box.size.x > 0.0 and rear_box.position.x >= 0.0 and rear_box.end.x <= 1280.0
 		and fight.hits["foe_4"].visible and fight.hits["foe_4"].size.x > 20.0,

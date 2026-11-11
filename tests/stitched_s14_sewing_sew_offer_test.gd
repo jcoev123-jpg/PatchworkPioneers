@@ -17,6 +17,9 @@ func _check(ok: bool, label: String) -> void:
 
 
 func _initialize() -> void:
+	var greeting: String = StitchedRunSession.VISIT_GREETINGS["SewingCircle"]
+	_check(greeting.contains("patches onto a doll's abilities") and not greeting.contains("Torn parts"),
+		"Sewing Circle describes sewing patches onto fixed abilities, not mending obsolete body-part abilities")
 	var run := _enter()
 	_check(run != null, "a real seeded Sewing Circle is entered")
 	if run != null:

@@ -117,7 +117,9 @@ Heroes face right, foes face left, toward each other. Some foes face the wrong w
 picture in a fight (the cheats can start any fight) and fix the wrong ones with a flip setting in data or code,
 never by editing the picture. List the foes you fixed.
 
-## Job 8: compare with the references (TODO)
+## Job 8: compare with the references (PART 2026-11-11)
+
+Played floor-1 normal, floor-5 normal, floor-10 elite and boss against ref1/ref2. Widened ranks 1-3 when no fourth foe is present (0.62 to 0.82 metres), retaining compact spacing for an actual fourth seat; verified live `f5a_spaced` and the focused-attack, victory handoff and Continue tests. Still to reconcile: the map is above the foes rather than in the lower-right reference location, the bottom bar is shallower, and outcome lettering beyond the existing MISS awaits job 9.
 
 Play three fights, hold each screen next to ref1 and ref2, and fix or list every remaining difference in layout,
 size of the figures, pacing of an attack, and readability.
