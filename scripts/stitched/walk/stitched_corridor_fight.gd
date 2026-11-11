@@ -1659,8 +1659,7 @@ func _fallen_foe_at(rank: int, unit_id: String) -> Dictionary:
 	return {}
 
 
-## True while a held beat playsor an ability receipt is about to start one: a unit that fell
-## on that blow keeps its picture on the seat until the beat has eased back.
+## Preserve a fallen figure during an ability hold or a confirmed tick-only beat.
 func _hold_pending() -> bool:
 	if engine._motion_is_reduced():
 		return false
@@ -1668,7 +1667,11 @@ func _hold_pending() -> bool:
 		return true
 	for index in range(_seen_receipts, engine.receipts.size()):
 		var entry: Dictionary = engine.receipts[index]
-		if bool(entry.get("ok", false)) and str(entry.get("action", "")) == "ability":
+		if not bool(entry.get("ok", false)):
+			continue
+		if str(entry.get("action", "")) == "ability":
+			return true
+		if index < engine.turn_cues.size() and not engine.turn_cues[index].is_empty():
 			return true
 	return false
 
@@ -2042,11 +2045,13 @@ static func _float_add(events: Dictionary, key: String, words: String, family: S
 
 func _float_events(receipt: Dictionary) -> Dictionary:
 	var events := {}
-	if str(receipt.get("action", "ability")) != "ability" or not bool(receipt.get("ok", true)):
+	if not bool(receipt.get("ok", true)):
 		return events
 	var patch_book: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
 	var shown_patches := {}
-	for result in receipt.get("results", []):
+	# Passes and skips have no attack results, but may settle turn-start clocks.
+	var results: Array = receipt.get("results", []) if str(receipt.get("action", "ability")) == "ability" else []
+	for result in results:
 		var target_id := str(result.get("target", ""))
 		var key := _live_receipt_key(target_id)
 		if key.is_empty():
@@ -2268,11 +2273,13 @@ func _play_new_receipts() -> void:
 		if engine._motion_is_reduced() and not battle.is_over():
 			_spotlight_without_motion(fresh)
 		return
-	# Only ability receipts have a held pose. Free hand actions, passes and moves
-	# should never create a phantom tween that blocks subsequent input.
+	# Only actual abilities or confirmed tick-only turns earn a held beat.
+	# Empty passes, free hand actions and moves never block player input.
 	var animated: Array = []
 	for entry in fresh:
-		if bool(entry.get("ok", false)) and str(entry.get("action", "")) == "ability":
+		if not bool(entry.get("ok", false)):
+			continue
+		if str(entry.get("action", "")) == "ability" or not _float_events(entry).is_empty():
 			animated.append(entry)
 	if animated.is_empty():
 		return
@@ -2306,7 +2313,23 @@ func _start_beats(batch: Array) -> void:
 	_beats = create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
 	var rolled_order := battle.turn_order()
 	for receipt in batch:
-		if str(receipt.get("action", "")) != "ability" or not bool(receipt.get("ok", false)):
+		if not bool(receipt.get("ok", false)):
+			continue
+		if str(receipt.get("action", "")) != "ability":
+			# A pass or forced skip can settle Bleed, Rot, Regen or an expiry.
+			# Float only those observed changes, without inventing an attack pose.
+			var tick_keys: Array[String] = []
+			for tick_key in _float_events(receipt):
+				tick_keys.append(str(tick_key))
+			if tick_keys.is_empty():
+				continue
+			var no_flashes: Array[String] = []
+			_beats.tween_callback(Callable(stage, "begin_spotlight").bind(tick_keys, no_flashes))
+			_beats.tween_callback(Callable(self, "_show_float_receipt").bind(receipt.duplicate(true)))
+			_beats.tween_interval(HOLD_TIME)
+			_beats.tween_callback(Callable(stage, "end_spotlight"))
+			_beats.tween_interval(BEAT_TIME * 0.6)
+			_beats.tween_callback(_clear_float_words)
 			continue
 		var actor_id := str(receipt.get("actor", ""))
 		var key := _live_receipt_key(actor_id)

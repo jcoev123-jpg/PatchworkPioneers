@@ -78,6 +78,24 @@ func _run() -> void:
 		and _words(fight._float_events(receipt), hero_key).has("REGEN +2")
 		and _words(fight._float_events(receipt), hero_key).has("REGEN ENDED"),
 		"turn-start ticks and expiration float over the units whose clocks actually changed")
+	# A pass can advance a bleed/rot/regen clock without an attack receipt.
+	# It needs its own held word beat, never a fabricated strike.
+	var passed := {"action": "pass", "ok": true, "actor": hero_id, "turn_cues": [
+		{"target": foe_id, "status": "rot", "amount": 2, "expired": true}]}
+	words = _words(fight._float_events(passed), foe_key)
+	_check(words.has("ROT -2") and words.has("ROT ENDED"),
+		"pass-only settled clock has visible tick and expiry, with no invented attack")
+	_check(fight._float_events({"action": "pass", "ok": true}).is_empty(),
+		"pass without a settled status has no phantom outcome")
+	fight._start_beats([passed])
+	await physics_frame
+	await physics_frame
+	_check(fight._beats != null and fight._beats.is_running()
+		and fight._float_groups.has(foe_key),
+		"status-only pass animates its observed cues in a held beat")
+	_check(fight.stage._spot_tween != null and fight.stage._spot_tween.is_running(),
+		"tick-only spotlight starts with correctly typed Godot seat arrays")
+	fight._cancel_beats()
 	receipt.erase("turn_cues")
 	fight._show_float_receipt(receipt)
 	_check(fight._float_groups.has(foe_key)
