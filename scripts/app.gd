@@ -1290,7 +1290,7 @@ func _build_stitched_sewing(panel: Control, quote: Dictionary,
 	heading.add_theme_font_size_override("font_size", 27)
 	panel.add_child(heading)
 	var description := Label.new()
-	description.text = "A crab claw, scavenger sack and Scribe inkbrush await the needle. Sew new arms on a living hero without coin."
+	description.text = "A crab claw, scavenger sack and Scribe inkbrush await the needle. Sew these patches onto a living hero's abilities without coin."
 	description.position = Vector2(170, 143)
 	description.size = Vector2(950, 64)
 	description.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
