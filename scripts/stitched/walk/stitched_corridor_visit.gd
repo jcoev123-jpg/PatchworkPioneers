@@ -489,14 +489,14 @@ func _place_items() -> void:
 			_clear_arrow_overlap(floor_buttons[number])
 
 
-## The leave arrow's box is tall and can lie over the wares beside it: trim it so a click on a
-## ware never counts as leaving. Only trims while the arrow keeps a usable size.
+## The leave arrow's box is tall and can lie beside wares with no gap. Trim it
+## with a small cursor-clearance margin, keeping at least a 30px usable target.
 func _clear_arrow_overlap(arrow: Button) -> void:
 	for other in floor_buttons:
 		if other == arrow or not is_instance_valid(other):
 			continue
 		var mine := Rect2(arrow.position, arrow.size)
-		var hit := mine.intersection(Rect2(other.position, other.size))
+		var hit := mine.intersection(Rect2(other.position, other.size).grow(4.0))
 		if hit.size.x <= 0.0 or hit.size.y <= 0.0:
 			continue
 		var cut := mine

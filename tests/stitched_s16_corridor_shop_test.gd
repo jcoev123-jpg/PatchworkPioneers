@@ -92,6 +92,25 @@ func _run() -> void:
 	buttons[1].pressed.emit()
 	visit._input(_key(KEY_UP))
 	_check(pressed.has(5), "Up walks on by the arrow")
+	# A leave arrow between two wares must leave a cursor gap on both sides,
+	# even when the original clickable rectangles merely touch edge-to-edge.
+	for candidate in visit.floor_buttons:
+		candidate.position = Vector2(1050, 100)
+	var left := visit.floor_buttons[0]
+	var right := visit.floor_buttons[1]
+	var arrow := visit.floor_buttons[3]
+	left.position = Vector2(180, 420)
+	left.size = Vector2(70, 110)
+	right.position = Vector2(322, 420)
+	right.size = Vector2(70, 110)
+	arrow.position = Vector2(250, 390)
+	arrow.size = Vector2(72, 115)
+	visit._clear_arrow_overlap(arrow)
+	_check(not arrow.get_rect().intersects(left.get_rect().grow(4.0))
+		and not arrow.get_rect().intersects(right.get_rect().grow(4.0)),
+		"leave arrow keeps a four-pixel gap from wares on both sides")
+	_check(arrow.size.x >= 30.0 and arrow.size.y >= 30.0,
+		"trimmed leave arrow stays clickable")
 	visit.queue_free()
 
 	# The junction tells only the way, never what waits down it.
