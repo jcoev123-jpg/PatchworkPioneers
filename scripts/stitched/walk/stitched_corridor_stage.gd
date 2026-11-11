@@ -26,8 +26,8 @@ const BANDS := {
 }
 ## Trailing dolls stand a little apart so all four read when the camera turns round.
 const TRAIL_X := [0.0, -0.75, 0.75, 0.0]
-const STEP_TIME := 0.5
-const TURN_TIME := 0.35
+const STEP_TIME := 1.05   # owner 11-11: a step was too quick
+const TURN_TIME := 0.8   # owner 11-11: turning round was too quick
 ## S11 fights stay in the corridor: the eye steps out through the near wall and looks across it.
 const FIGHT_EYE := Vector2(5.0, 1.0)
 const FIGHT_FOV := 40.0

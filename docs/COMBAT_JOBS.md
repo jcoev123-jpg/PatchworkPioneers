@@ -2,7 +2,7 @@
 
 The owner does not like the fights yet. They want the fight screen to read like a classic side-view, turn-based
 dungeon crawler: heroes in a row on the left, foes in a row on the right, an ability bar under the heroes, and an
-information corner on the right. The owner's pictures are in `owner_refs/` (use `view_image`):
+information corner on the right. The owner's pictures are shown by `view_image` (pass the file name only, for example `ref2_fight_screen.png`):
 
 - `ref1_attack_moment.png`: an attack. The attacker and the struck foe are big and bright in the foreground, the
   rest is dark and blurred, the damage number sits on the struck foe, the foe recoils.
