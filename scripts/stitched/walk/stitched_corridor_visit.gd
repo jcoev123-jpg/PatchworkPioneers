@@ -484,6 +484,34 @@ func _place_items() -> void:
 			seen = seen.grow_individual(0, least.y - seen.size.y, 0, 0)
 		button.position = seen.position
 		button.size = seen.size
+	for number in floor_buttons.size():
+		if is_instance_valid(floor_buttons[number]) and groups[number].arrow:
+			_clear_arrow_overlap(floor_buttons[number])
+
+
+## The leave arrow's box is tall and can lie over the wares beside it: trim it so a click on a
+## ware never counts as leaving. Only trims while the arrow keeps a usable size.
+func _clear_arrow_overlap(arrow: Button) -> void:
+	for other in floor_buttons:
+		if other == arrow or not is_instance_valid(other):
+			continue
+		var mine := Rect2(arrow.position, arrow.size)
+		var hit := mine.intersection(Rect2(other.position, other.size))
+		if hit.size.x <= 0.0 or hit.size.y <= 0.0:
+			continue
+		var cut := mine
+		if hit.size.x <= hit.size.y:
+			if other.position.x + other.size.x * 0.5 < mine.position.x + mine.size.x * 0.5:
+				cut = Rect2(Vector2(hit.end.x, mine.position.y), Vector2(mine.end.x - hit.end.x, mine.size.y))
+			else:
+				cut = Rect2(mine.position, Vector2(hit.position.x - mine.position.x, mine.size.y))
+		elif other.position.y + other.size.y * 0.5 < mine.position.y + mine.size.y * 0.5:
+			cut = Rect2(Vector2(mine.position.x, hit.end.y), Vector2(mine.size.x, mine.end.y - hit.end.y))
+		else:
+			cut = Rect2(mine.position, Vector2(mine.size.x, hit.position.y - mine.position.y))
+		if cut.size.x >= 30.0 and cut.size.y >= 30.0:
+			arrow.position = cut.position
+			arrow.size = cut.size
 
 
 ## Opens a thing's tray of dolls, or closes it again; only one tray is open at a time.
