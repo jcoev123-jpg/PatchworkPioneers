@@ -91,6 +91,42 @@ func _run() -> void:
 	_check(StitchedBattleScreen.turn_change_cues(prior_units, settled_units,
 		{"actor": "someone_else", "results": [{"target": "victim"}]}).size() == 1,
 		"do not misattribute attack damage or applied statuses to turn-start ticks")
+	# A foe killed by its own clock loses every status immediately, rather than
+	# showing a normal countdown. Verify the lethal clock, not merely dead=true.
+	var fatal_before := {foe_id: {"side": "foe", "hp": 2, "max_hp": 20,
+		"dead": false, "statuses": {"bleed": 2, "rot": 2}}}
+	var fatal_after := {foe_id: {"side": "foe", "hp": 0, "max_hp": 20,
+		"dead": true, "statuses": {}}}
+	var fatal_receipt := {"action": "pass", "ok": true, "actor": hero_id, "results": []}
+	var fatal_cues := StitchedBattleScreen.turn_change_cues(fatal_before, fatal_after, fatal_receipt)
+	_check(fatal_cues.size() == 2 and str(fatal_cues[0].get("status", "")) == "bleed"
+		and int(fatal_cues[0].get("amount", 0)) == 2 and bool(fatal_cues[1].get("killed", false)),
+		"fatal Bleed reports exact damage and foe death, without a phantom Rot tick")
+	fatal_receipt["turn_cues"] = fatal_cues
+	var fatal_words := _words(fight._float_events(fatal_receipt), foe_key)
+	_check(fatal_words.has("BLEED -2") and fatal_words.has("UNSTITCHED!")
+		and not fatal_words.has("ROT -2"), "a fatal Bleed tick floats the kill on the foe")
+	fatal_before[foe_id]["hp"] = 3
+	fatal_cues = StitchedBattleScreen.turn_change_cues(fatal_before, fatal_after, fatal_receipt)
+	_check(fatal_cues.size() == 3 and int(fatal_cues[1].get("amount", 0)) == 1
+		and str(fatal_cues[1].get("status", "")) == "rot"
+		and bool(fatal_cues[2].get("killed", false)),
+		"Rot kills after nonfatal Bleed with its actual remaining-HP damage")
+	fatal_before[foe_id] = {"side": "foe", "hp": 1, "max_hp": 20,
+		"dead": false, "statuses": {"regen": 1, "bleed": 3}}
+	fatal_cues = StitchedBattleScreen.turn_change_cues(fatal_before, fatal_after, fatal_receipt)
+	_check(fatal_cues.size() == 3 and str(fatal_cues[0].get("status", "")) == "regen"
+		and int(fatal_cues[0].get("amount", 0)) == 2
+		and int(fatal_cues[1].get("amount", 0)) == 3
+		and bool(fatal_cues[2].get("killed", false)),
+		"final foe kill accounts for regeneration before Bleed")
+	fatal_before[foe_id]["hp"] = 6
+	_check(StitchedBattleScreen.turn_change_cues(fatal_before, fatal_after, fatal_receipt).is_empty(),
+		"dead flag without lethal clocks cannot invent a foe kill")
+	fatal_before[foe_id]["hp"] = 1
+	fatal_receipt["actor"] = foe_id
+	_check(StitchedBattleScreen.turn_change_cues(fatal_before, fatal_after, fatal_receipt).is_empty(),
+		"an actor death with unrelated actions cannot be assigned to its clocks")
 	# A next-to-act foe can be struck and tick Bleed in the same settlement.
 	# The result's target_hp (after the hit, before clocks) proves which
 	# portion is a hit and which is the settled start-of-turn tick.

@@ -2216,6 +2216,8 @@ func _float_events(receipt: Dictionary, show_misses: bool = false) -> Dictionary
 		var on_key := _live_receipt_key(str(cue.get("target", "")))
 		if bool(cue.get("lost", false)):
 			_float_add(events, on_key, "LOST!", "kill", "float_kill")
+		elif bool(cue.get("killed", false)):
+			_float_add(events, on_key, "UNSTITCHED!", "kill", "float_kill")
 		elif bool(cue.get("hanging", false)):
 			_float_add(events, on_key, "HANGING", "bleed", "status_hanging")
 		var status := str(cue.get("status", ""))

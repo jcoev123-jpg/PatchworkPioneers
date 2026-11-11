@@ -1599,6 +1599,33 @@ static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dic
 		var prior: Dictionary = old.get("statuses", {})
 		var current: Dictionary = now.get("statuses", {})
 		var changed: Dictionary = applied.get(id, {})
+		# A lethal foe clock clears every status immediately (_kill_foe), so the
+		# usual countdown comparison cannot see its final Bleed/Rot tick. Only
+		# announce it when an untouched foe's old clocks alone explain its death.
+		if not overlap and str(old.get("side", "")) == "foe" \
+				and not bool(old.get("dead", false)) and bool(now.get("dead", false)) \
+				and int(old.get("hp", 0)) > 0 and int(now.get("hp", -1)) == 0 \
+				and current.is_empty():
+			var fatal_hp := int(old.get("hp", 0))
+			var fatal_regen := 0
+			if int(prior.get("regen", 0)) > 0:
+				fatal_regen = mini(1 if int(prior.get("rot", 0)) > 0 else 2,
+					maxi(0, int(old.get("max_hp", fatal_hp)) - fatal_hp))
+				fatal_hp += fatal_regen
+			var fatal_bleed := mini(int(prior.get("bleed", 0)), fatal_hp)
+			fatal_hp -= fatal_bleed
+			var fatal_rot := mini(StitchedRules.ROT_TICK, fatal_hp) \
+				if fatal_hp > 0 and int(prior.get("rot", 0)) > 0 else 0
+			fatal_hp -= fatal_rot
+			if fatal_hp == 0 and (fatal_bleed > 0 or fatal_rot > 0):
+				if fatal_regen > 0:
+					cues.append({"target": id, "status": "regen", "amount": fatal_regen})
+				if fatal_bleed > 0:
+					cues.append({"target": id, "status": "bleed", "amount": fatal_bleed})
+				if fatal_rot > 0:
+					cues.append({"target": id, "status": "rot", "amount": fatal_rot})
+				cues.append({"target": id, "killed": true})
+				continue
 		var local_cues := []
 		var tick_amounts := {}
 		var remaining_hp := maxi(0, int(hp_after_hit[id]) if overlap else int(old.get("hp", 0)))

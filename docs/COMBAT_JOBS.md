@@ -152,6 +152,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (11-12 reduced-motion pass): Reduced-motion fights now show receipt-confirmed floating words for strikes, status-only pass ticks and final kills, without lunges or delaying input; the spotlight still pulses. Interrupting a held beat clears stale words. Three new mounted checks (60 total), corridor focus, victory handoff and Continue regressions pass. Job remains PART for the other outstanding cases and live reduced-motion visual proof.
 
+(11-12 play pass): A foe killed by an untouched Bleed/Rot turn-start clock now keeps its final numeric tick and UNSTITCHED! over the held figure, even though the rules clear its statuses on death. Regen-before-Bleed, Bleed-before-Rot, and false-death cases have six new deterministic checks (67 total); corridor, victory handoff and Continue regressions pass. Job remains PART for ambiguous multi-hit attribution, summon/split notices, missing art and rare live outcomes.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
