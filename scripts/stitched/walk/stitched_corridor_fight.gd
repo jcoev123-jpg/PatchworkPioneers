@@ -1144,9 +1144,15 @@ func _show_ability_card(slot: String) -> void:
 	ability_card_title.text = str(ability.get("name", "")) + (" (torn)" if bool(equipped.get("torn", false)) else "")
 	var lines := _ability_card_lines(actor, ability)
 	ability_card_body.text = "\n".join(lines)
-	var height := 42.0 + FONT.get_multiline_string_size(ability_card_body.text, HORIZONTAL_ALIGNMENT_LEFT, CARD_W - 28.0, 14).y + 10.0
+	# Measure with the label itself (it wraps differently from the font helper), so no line spills out.
+	# The felt's torn edge is see-through on the right and bottom, so keep text inside the visible cloth.
+	var body_w := CARD_W - 28.0 - 34.0
+	ability_card_body.size = Vector2(body_w, 80)
+	var body_h := maxf(FONT.get_multiline_string_size(ability_card_body.text, HORIZONTAL_ALIGNMENT_LEFT, body_w, 14).y,
+			float(ability_card_body.get_line_count() * ability_card_body.get_line_height()))
+	var height := 42.0 + body_h + 44.0
 	ability_card.size = Vector2(CARD_W, height)
-	ability_card_body.size = Vector2(CARD_W - 28, height - 44.0)
+	ability_card_body.size = Vector2(body_w, body_h + 4.0)
 	var button: TextureButton = part_buttons.get(slot)
 	if button != null:
 		var x := clampf(button.position.x + button.size.x / 2.0 - CARD_W / 2.0, 8.0, 1280.0 - CARD_W - 8.0)
