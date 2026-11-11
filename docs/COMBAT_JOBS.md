@@ -124,9 +124,11 @@ Played floor-1 normal, floor-5 normal, floor-10 elite and boss against ref1/ref2
 Play three fights, hold each screen next to ref1 and ref2, and fix or list every remaining difference in layout,
 size of the figures, pacing of an attack, and readability.
 
-## Job 9: floating words and icons (TODO, owner 2026-11-11)
+## Job 9: floating words and icons (PART 2026-11-11)
 
-References: `ref7_float_kill.jpg`, `ref8_float_crit.jpg` (open with `view_image`, file name only).
+Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED kill, HANGING, direct and redirected statuses, RESIST, guard, heal, cleanse, sewn-on patch names, and up/down-arrow image slots for buffs/debuffs. They follow the true struck figure above HP bars, stack without overlapping, fade within the existing hold, respect the input shield, and fall back to words when art is missing. Verified real damage + bleed on the elite Needle Briar Guard and 18 deterministic checks; corridor, reaction, Continue, and victory regressions pass. Confirmed nonterminal death-door tears show SEAM TORN! without naming a limb. Still to build: start-of-turn bleed/rot/regen ticks, status expiration, final LOST/counter-tear and summon/split notices, and full live visual proof of crit, miss, kill, guard, heal and sewn patch.No new combat rules or clocks were introduced.
+
+References: `ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
 figure during the held beat, then fade. Like the references: large, bold, slightly tilted hand-inked lettering in

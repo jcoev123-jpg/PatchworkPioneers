@@ -129,6 +129,9 @@ var _reaction_kinds: Dictionary = {}
 var _reaction_units: Dictionary = {}
 var _reaction_shakes: Array[Tween] = []
 var _miss_labels: Dictionary = {}
+## Job 9: painted-icon and ink-letter outcome cues on the *actual* receipt targets.
+var _float_groups: Dictionary = {}
+var _float_tweens: Array[Tween] = []
 var _beat_homes: Dictionary = {}
 var _focus_actor_id := ""
 var _focus_target_ids: Array[String] = []
@@ -1492,6 +1495,17 @@ func _place_overlays() -> void:
 		hits[key].position = boxes[key].position
 		hits[key].size = boxes[key].size
 		hits[key].visible = boxes[key].size.x > 0.0
+	# Outcome words follow the moving figures and stay above the health plates.
+	for float_key in _float_groups:
+		var group: Control = _float_groups[float_key]
+		var bounds := stage.screen_rect(float_key)
+		if bounds.size.x <= 0.0:
+			group.hide()
+			continue
+		group.show()
+		group.position = Vector2(clampf(bounds.get_center().x - group.size.x * 0.5,
+			4.0, 1276.0 - group.size.x), clampf(bounds.position.y + bounds.size.y * 0.15 - group.size.y,
+			104.0, BAR_TOP - group.size.y - 110.0))
 	# The only reaction text is MISS; it follows the actual dodger's 3D projection.
 	for key in _miss_labels:
 		var label: Label = _miss_labels[key]
@@ -1931,7 +1945,8 @@ func _reaction_texture(unit_id: String, kind: String) -> Texture2D:
 
 func _apply_target_reactions(receipt: Dictionary) -> void:
 	_clear_target_reactions()
-	var actor_key := _live_receipt_key(str(receipt.get("actor", "")))
+	_show_float_receipt(receipt)
+	var actor_key:= _live_receipt_key(str(receipt.get("actor", "")))
 	for result in receipt.get("results", []):
 		var unit_id := str(result.get("target", ""))
 		var key := _live_receipt_key(unit_id)
@@ -1963,17 +1978,22 @@ func _apply_target_reactions(receipt: Dictionary) -> void:
 		if kind == "dodge":
 			var label: Label = _miss_labels.get(key)
 			if label == null:
-				label = _label("MISS", Rect2(0, 0, 104, 32), 27, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+				label = _label("MISS", Rect2(0, 0, 136, 43), 36, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
 				label.name = "Miss_" + key
 				add_child(label)
 				_miss_labels[key] = label
-				# The invisible beat shield must remain the last input control.
-				move_child(_beat_input_shield, get_child_count() - 1)
+				# Continue wins on a finished fight; otherwise the shield catches a second click.
+				_raise_beat_input_layer()
+			label.modulate.a = 1.0
 			label.visible = true
+			var miss_fade := create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+			miss_fade.tween_interval(HOLD_TIME * 0.86)
+			miss_fade.tween_property(label, "modulate:a", 0.0, HOLD_TIME * 0.14)
+			_float_tweens.append(miss_fade)
 	_place_overlays()
 
 
-func _clear_target_reactions() -> void:
+func _clear_target_reactions()-> void:
 	for shake in _reaction_shakes:
 		if shake != null and shake.is_running():
 			shake.kill()
@@ -1990,8 +2010,203 @@ func _clear_target_reactions() -> void:
 		figure.rotation.z = 0.0
 	_reaction_kinds.clear()
 	_reaction_units.clear()
+	_clear_float_words()
 	for label in _miss_labels.values():
 		label.hide()
+
+
+## Receipt-only callouts: no damage, crit, status or patch cue may be guessed from
+## the selected ability. Redirected patch notes carry their own "on" unit id.
+static func _float_tone(kind: String) -> Color:
+	match kind:
+		"kill": return Color("ed5149")
+		"crit": return Color("ffac54")
+		"damage": return Color("e6a061")
+		"bleed": return Color("b94e50")
+		"rot": return Color("a0bd65")
+		"stun": return Color("ead172")
+		"heal", "cleanse", "regen": return Color("b4d6ab")
+		"guard", "strength": return Color("9ecae5")
+		"resist": return Color("d9cfa8")
+		_: return Color("e3ae79")
+
+
+static func _float_add(events: Dictionary, key: String, words: String, family: String,
+		icon: String = "", arrow: String = "") -> void:
+	if key.is_empty() or words.is_empty():
+		return
+	if not events.has(key):
+		events[key] = []
+	events[key].append({"words": words, "family": family, "icon": icon, "arrow": arrow})
+
+
+func _float_events(receipt: Dictionary) -> Dictionary:
+	var events := {}
+	if str(receipt.get("action", "ability")) != "ability" or not bool(receipt.get("ok", true)):
+		return events
+	var patch_book: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+	var shown_patches := {}
+	for result in receipt.get("results", []):
+		var target_id := str(result.get("target", ""))
+		var key := _live_receipt_key(target_id)
+		if key.is_empty():
+			continue
+		if bool(result.get("hit", true)):
+			var patch_recipients := {}
+			var damage := int(result.get("damage", 0))
+			var lethal: bool = bool(result.get("lost", false)) or result.has("heap") \
+				or (damage > 0 and int(result.get("target_hp", 1)) == 0 \
+				and str(result.get("target_side", "")) == "foe")
+			if lethal:
+				_float_add(events, key, "UNSTITCHED!", "kill", "float_kill")
+			elif bool(result.get("hanging", false)):
+				_float_add(events, key, "HANGING", "bleed", "status_hanging")
+			# Only a confirmed death-door tear can call out a torn seam.
+			# Never label a limb or infer one from an ordinary Bleed status.
+			var torn: Dictionary = result.get("tear", {})
+			if bool(torn.get("ok", true)) and not str(torn.get("slot", "")).is_empty():
+				_float_add(events, key, "SEAM TORN!", "bleed", "status_hanging")
+			if damage > 0:
+				_float_add(events, key, ("CRIT! " if bool(result.get("crit", false)) else "") \
+					+ str(damage), "crit" if bool(result.get("crit", false)) else "damage",
+					"float_crit" if bool(result.get("crit", false)) else "")
+			for effect in result.get("statuses", []):
+				var status := str(effect.get("status", ""))
+				if status.is_empty():
+					continue
+				var on_id := str(effect.get("on", target_id))
+				if status == "guard" and not effect.has("on"):
+					on_id = str(receipt.get("actor", ""))
+				var on_key := _live_receipt_key(on_id)
+				if bool(effect.get("resisted", false)) or bool(effect.get("refused", false)):
+					_float_add(events, on_key, "RESIST", "resist")
+				elif status == "heal":
+					_float_add(events, on_key, "HEAL +" + str(int(effect.get("amount", 0))),
+						"heal", "status_heal")
+				elif status == "steal":
+					_float_add(events, on_key, "DRAIN " + str(int(effect.get("amount", 0))),
+						"damage", "status_steal")
+				elif status == "cleanse":
+					_float_add(events, on_key, "CLEANSED", "cleanse", "status_cleanse")
+				else:
+					var strong := status in ["dodge", "thorns", "riposte", "guard", "regen"]
+					var weak := status in ["weak", "exposed", "blind", "mark", "tangled"]
+					var family := "strength" if strong else status
+					var arrow := "float_up" if strong else ("float_down" if weak else "")
+					_float_add(events, on_key, status.to_upper(), family, "status_" + status, arrow)
+				var effect_patch := str(effect.get("patch", ""))
+				if not effect_patch.is_empty():
+					patch_recipients[effect_patch] = on_key
+					var signature := on_key + ":" + effect_patch
+					if not shown_patches.has(signature):
+						shown_patches[signature] = true
+						_float_add(events, on_key, str(patch_book.get(effect_patch, {}).get("name",
+							effect_patch.replace("_", " ").capitalize())).to_upper(), "strength",
+							"patch:" + effect_patch)
+			for patch_id in result.get("patches", []):
+				var patch := str(patch_id)
+				# A redirected helpful effect belongs to the healed/guarded doll,
+				# not the foe the underlying signature struck.
+				var patch_key := str(patch_recipients.get(patch, key))
+				var signature := patch_key + ":" + patch
+				if not shown_patches.has(signature):
+					shown_patches[signature] = true
+					_float_add(events, patch_key, str(patch_book.get(patch, {}).get("name",
+						patch.replace("_", " ").capitalize())).to_upper(), "strength", "patch:" + patch)
+		# A dodge uses the existing held MISS label (with its own reaction picture).
+	return events
+
+
+func _clear_float_words() -> void:
+	for tween in _float_tweens:
+		if tween != null and tween.is_running():
+			tween.kill()
+	_float_tweens.clear()
+	for group in _float_groups.values():
+		if is_instance_valid(group):
+			group.queue_free()
+	_float_groups.clear()
+
+
+func _show_float_receipt(receipt: Dictionary) -> void:
+	_clear_float_words()
+	var events := _float_events(receipt)
+	for key in events:
+		var cues: Array = events[key]
+		var group := Control.new()
+		group.name = "Float_" + str(key)
+		group.size = Vector2(352, float(cues.size()) * 38.0)
+		group.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(group)
+		_float_groups[key] = group
+		for index in cues.size():
+			var cue: Dictionary = cues[index]
+			var family := str(cue.family)
+			var large := family in ["kill", "crit"]
+			var font_size := 36 if family == "kill" else (33 if large else 29)
+			var art_name := str(cue.icon)
+			var texture: Texture2D = null
+			if art_name.begins_with("patch:"):
+				var patch_id := art_name.trim_prefix("patch:")
+				texture = _texture(SEWN_ART + patch_id + ".png")
+				if texture == null:
+					texture = _texture("res://assets/paper/stitched/patches/" + patch_id + ".png")
+				if texture == null:
+					var entry: Dictionary = StitchedS14Abilities.patches().get("by_id", {}).get(patch_id, {})
+					texture = _texture(ICONS + "status_" + str(entry.get("effect", "")) + ".png")
+			elif not art_name.is_empty():
+				texture = _texture(ICONS + art_name + ".png")
+			# Both status and stat-arrow pictures are optional. Missing art stays text-only.
+			var arrow_name := str(cue.get("arrow", ""))
+			var arrow: Texture2D = _texture(ICONS + arrow_name + ".png") if not arrow_name.is_empty() else null
+			var width := minf(302.0, FONT.get_string_size(str(cue.words),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 12.0)
+			var start_x := (group.size.x - width - (34.0 if texture != null else 0.0) \
+				- (28.0 if arrow != null else 0.0)) / 2.0
+			if texture != null:
+				var picture := TextureRect.new()
+				picture.texture = texture
+				picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				picture.position = Vector2(start_x, float(index) * 38.0 + 2.0)
+				picture.size = Vector2(32, 32)
+				picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				group.add_child(picture)
+				start_x += 34.0
+			if arrow != null:
+				var direction_icon := TextureRect.new()
+				direction_icon.texture = arrow
+				direction_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+				direction_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+				direction_icon.position = Vector2(start_x, float(index) * 38.0 + 4.0)
+				direction_icon.size = Vector2(26, 28)
+				direction_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+				group.add_child(direction_icon)
+				start_x += 28.0
+			var word := _label(str(cue.words), Rect2(start_x, float(index) * 38.0,
+				width, 36.0), font_size, _float_tone(family))
+			word.add_theme_constant_override("outline_size", 6)
+			word.rotation = -0.035 if index % 2 == 0 else 0.03
+			group.add_child(word)
+		# Stay present for nearly all of the held strike, then fade without
+		# increasing HOLD_TIME or ever holding the next actor's input.
+		var fade := create_tween().set_process_mode(Tween.TWEEN_PROCESS_PHYSICS)
+		fade.tween_interval(HOLD_TIME * 0.86)
+		fade.tween_property(group, "modulate:a", 0.0, HOLD_TIME * 0.14)
+		_float_tweens.append(fade)
+	# A final blow can finish before this delayed callback runs. Never put
+	# the input shield above the newly visible Continue button.
+	_raise_beat_input_layer()
+
+
+func _raise_beat_input_layer() -> void:
+	if battle != null and battle.is_over():
+		if _beat_input_shield != null:
+			_beat_input_shield.hide()
+		if continue_button != null and continue_button.get_parent() == self:
+			move_child(continue_button, get_child_count() - 1)
+	elif _beat_input_shield != null:
+		move_child(_beat_input_shield, get_child_count() - 1)
 
 
 func _remember_beat_homes(homes: Dictionary) -> void:
