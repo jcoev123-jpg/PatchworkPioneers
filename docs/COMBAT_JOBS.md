@@ -111,6 +111,8 @@ This groups every required missing filename without a 109-line repeated path lis
 
 Corrected the mirrored stills of Thimble Beetle, Thread Biter, Clothespin Crusher and Crochet Hook Harrier without touching art. Restarted and confirmed the beetle, biter and harrier now point left in live floor-6/8 battles, with facing regression checks passing. More foe types still need visual inspection; some nearly frontal artwork cannot be made side-facing by mirroring.
 
+(PART 2nd pass 2026-11-11): inspected floors 1-10 fights. Face-on foes that mirroring cannot fix: Moth Scribe, Thistle Patch Doll, Razor Ribbon Wraith, Bobbin Bat, Moth Swarm. Code now loads `<still>_side.png` (left-facing, unmirrored) when it exists together with its idle strip (`StitchedCorridorFight.side_art_path` / `has_side_art`); until the art is drawn nothing changes. Left: draw those five side stills.
+
 Heroes face right, foes face left, toward each other. Some foes face the wrong way in fights. Check every foe
 picture in a fight (the cheats can start any fight) and fix the wrong ones with a flip setting in data or code,
 never by editing the picture. List the foes you fixed.

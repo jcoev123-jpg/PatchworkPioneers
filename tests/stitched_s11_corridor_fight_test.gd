@@ -564,6 +564,13 @@ func _run() -> void:
 	_check(StitchedCorridorFight.battle_flip("foe", "scissor_crab")
 		and StitchedCorridorFight.battle_flip("foe", "spindle_ram"),
 		"other right-facing foe pictures still mirror toward the heroes")
+	# Job 7: a face-on foe takes its own "_side" still only once one exists with an idle loop.
+	_check(StitchedCorridorFight.side_art_path("moth_scribe") == "res://assets/paper/enemies/moth_scribe_side.png"
+		and StitchedCorridorFight.side_art_path("warden") == "",
+		"foe side stills sit beside the standing picture; heroes have none")
+	_check(StitchedCorridorFight.has_side_art("moth_scribe") == ResourceLoader.exists("res://assets/paper/enemies/moth_scribe_side.png")
+		or not StitchedCorridorFight.has_side_art("moth_scribe"),
+		"a side still without an idle loop is never chosen")
 	for key in fight.hits:
 		_check(not fight.hits[key].tooltip_text.contains("FRAY") and not fight.hits[key].tooltip_text.contains("/200"),
 			key + " hover shows no fray count: " + fight.hits[key].tooltip_text)

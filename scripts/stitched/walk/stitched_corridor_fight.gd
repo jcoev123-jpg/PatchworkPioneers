@@ -47,8 +47,27 @@ const PORTRAIT := 100.0
 ## the other foe stills makes their faces, jaws or weapons point away from battle.
 const FOES_DRAWN_LEFT := ["thimble_beetle", "thread_biter", "clothespin_crusher", "crochet_hook_harrier"]
 
+## Job 7: a foe painted nearly face-on cannot be turned side-on by mirroring. When its artist has
+## drawn "<still>_side.png" (a left-facing still with its own idle strip) the fight shows that
+## picture, unmirrored; until then the old still is used.
+static func side_art_path(unit_id: String) -> String:
+	var still := str(StitchedBattleScreen.ROSTER.art_paths(unit_id).get("idle", ""))
+	if still.is_empty() or still.contains("/heroes/"):
+		return ""
+	return still.get_basename() + "_side.png"
+
+
+static func has_side_art(unit_id: String) -> bool:
+	var path := side_art_path(unit_id)
+	if path.is_empty() or not ResourceLoader.exists(path, "Texture2D"):
+		return false
+	# A side still without an idle loop would freeze the figure; keep the old still instead.
+	var base := path.get_basename()
+	return ResourceLoader.exists(base + "_idle.png") or ResourceLoader.exists(base + "_idle24_0.png")
+
+
 static func battle_flip(side: String, unit_id: String) -> bool:
-	return side == "foe" and not unit_id in FOES_DRAWN_LEFT
+	return side == "foe" and not unit_id in FOES_DRAWN_LEFT and not has_side_art(unit_id)
 
 
 var engine: StitchedBattleScreen
@@ -914,6 +933,10 @@ func _texture(path: String) -> Texture2D:
 
 
 func _figure_art(unit_id: String) -> Texture2D:
+	if has_side_art(unit_id):
+		var side_still := _texture(side_art_path(unit_id))
+		if side_still != null:
+			return side_still
 	return _texture(str(StitchedBattleScreen.ROSTER.art_paths(unit_id).get("idle", "")))
 
 
