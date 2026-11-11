@@ -80,9 +80,11 @@ its abilities by name, its resistances, and the effects on it now. That foe also
 brighter, the others dimmed, with the spotlight functions `begin_spotlight` / `end_spotlight` already in
 `stitched_corridor_stage.gd`) so it is easy to see. Moving the pointer away brings the map back.
 
-## Job 6: figures react to being hit (TODO)
+## Job 6: figures react to being hit (DONE 2026-11-11)
 
-A struck figure reacts, and the reaction depends on the ability used: a light cut jerks it back a little, a heavy
+Built receipt-driven six-kind reactions with per-ability metadata in `data/art/ability_fx.json`, dedicated authored art lookup, old enemy hit-frame fallback, and distinct knockback/tilt/shake motions when new art is absent. A miss visibly says MISS, a heal or guard braces an ally, and final kills retain their held reaction before returning to idle/scrap. Live-tested the normal 4v3 fight through victory with hero and foe attacks; added deterministic reaction/hover-state assertions without changing the rules or RNG. The existing stage spotlight, zoom, held-attack timing and input shield remain in charge.
+
+A struck figure reacts,and the reaction depends on the ability used: a light cut jerks it back a little, a heavy
 blow knocks it far back and shakes it, bleed or rot makes it shudder, a stun leaves it slumped, a miss shows it
 leaning out of the way with a clear MISS, a heal or guard makes an ally straighten or brace. Give every ability a
 reaction kind in data and play that kind on the target. Where a figure has `<name>_hit_anim.png` in
@@ -100,3 +102,34 @@ never by editing the picture. List the foes you fixed.
 
 Play three fights, hold each screen next to ref1 and ref2, and fix or list every remaining difference in layout,
 size of the figures, pacing of an attack, and readability.
+
+## Job 9: floating words and icons (TODO, owner 2026-11-11)
+
+References: `ref7_float_kill.jpg`, `ref8_float_crit.jpg` (open with `view_image`, file name only).
+
+Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that
+figure during the held beat, then fade. Like the references: large, bold, slightly tilted hand-inked lettering in
+the game's own font, with the damage or heal number beside or under it, readable against the darkened background.
+Cover EVERY outcome and effect the game already has, and only those (read them from the fight rules and the
+receipts; do not invent new effects or rules):
+
+- outcomes: a normal hit (number only), `CRIT!` with the number, `MISS` / `DODGE`, a kill (`UNSTITCHED!`, the
+  biggest and longest, in red, with the kill picture if one exists), a heal (number in a soft colour), a limb coming
+  off at 0 HP, a summon or split arriving;
+- every status when it is put on a figure, with its picture from `assets/paper/stitched/icons/status_*.png`:
+  `BLEED`, `ROT`, `STUN`, `GUARD`, `MARK`, `BLIND`, `TANGLED`, `HANGING` and any other status in the rules;
+- every status tick (the bleed / rot number with its icon), a status that is resisted (`RESIST`), and a status that
+  wears off or is cleansed;
+- stat changes: a strengthening shows its word with an up-arrow picture, a weakening with a down-arrow picture;
+- a sewn-on patch firing: the patch's name with the patch's own picture.
+
+Rules for it: one colour per family (damage warm orange, crit brighter and bigger, kill red, bleed dark red, rot
+sickly green, stun yellow, guard / strengthen blue, weaken orange, heal pale green). Several things on one figure
+in the same beat stack upward, never on top of each other, and never cover the HP bars or the ability bar. The
+words stay up for the whole hold (about 1.2 s) and never delay the turn. Words are text in the game font; icons
+are picture files only, no shapes drawn by code. Where an icon or the kill picture is missing, show the word alone
+and list the file under `## Art needed` (expected names: `assets/paper/stitched/icons/status_<id>.png`,
+`float_up.png`, `float_down.png`, `float_kill.png`, `float_crit.png` in the same folder). Never show a limb word
+(HEAD, ARM, TORSO, LEG) and never call an ability a patch. Reduced motion: no drift, just show and fade.
+Check on screen with a hit, a crit, a miss, a kill, a bleed tick, a stun, a guard, a heal and a patch firing
+(use `burst` during the beat), hero turns and foe turns.
