@@ -63,6 +63,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 play pass): Completed a live Sewing Circle sew of Mildew Spore onto Warden's Pot Helm Command for 2 scraps after a boss cheat-finish. The next fight showed the sewn-patch label on that ability, and using it applied ROT 2 to Spindle Ram. The gold two-effect rule conflict still prevents marking this job DONE.
 
+(2026-11-12 web play pass): Sewed Heel Knot onto Warden's Pot Helm Command at the live Sewing Circle and inspected normal, elite and boss fight screens. The one-socket visual and ability hover details remain intact. Gold still permits two effects through the legacy loadout and Sewing Circle rules; their protected regressions explicitly expect this. Job stays PART pending an owner-approved rules migration. No gameplay rule changed while the active S15 lane owns the run session.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint

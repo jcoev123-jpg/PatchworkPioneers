@@ -79,3 +79,4 @@ func _flow(run: StitchedRunSession) -> void:
 	_check(_sews(run).all(func(action: Dictionary) -> bool: return not action.enabled), "sewing needs the scraps")
 	_check(not run.choose_visit("sew", [int(poor.uid), HERO, "warden_head_pot_helm_command"], run.snapshot()),
 		"a disabled sew is refused")
+
