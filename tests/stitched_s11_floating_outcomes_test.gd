@@ -72,6 +72,32 @@ func _run() -> void:
 	_check(StitchedBattleScreen.turn_change_cues(prior_units, settled_units,
 		{"actor": "someone_else", "results": [{"target": "victim"}]}).size() == 1,
 		"do not misattribute attack damage or applied statuses to turn-start ticks")
+	# A single turn can regenerate before bleeding, or bleed before rotting.
+	# The numbers must reflect the intervening HP, not separate old-HP caps.
+	var combo_before := {"seat": {"hp": 1, "max_hp": 12,
+		"statuses": {"regen": 1, "bleed": 2}}}
+	var combo_after := {"seat": {"hp": 1, "max_hp": 12,
+		"statuses": {"bleed": 1}}}
+	var combo := StitchedBattleScreen.turn_change_cues(combo_before, combo_after,
+		{"actor": "other", "results": []})
+	var numbers := {}
+	for cue in combo:
+		numbers[str(cue.get("status", ""))] = int(cue.get("amount", -1))
+	_check(combo.size() == 2 and int(numbers.get("regen", -1)) == 2
+		and int(numbers.get("bleed", -1)) == 2,
+		"regen first restores two, letting subsequent bleed deal its full two")
+	combo_before["seat"] = {"hp": 3, "max_hp": 12,
+		"statuses": {"bleed": 2, "rot": 1}}
+	combo_after["seat"] = {"hp": 0, "max_hp": 12,
+		"statuses": {"bleed": 1}}
+	combo = StitchedBattleScreen.turn_change_cues(combo_before, combo_after,
+		{"actor": "other", "results": []})
+	numbers.clear()
+	for cue in combo:
+		numbers[str(cue.get("status", ""))] = int(cue.get("amount", -1))
+	_check(combo.size() == 2 and int(numbers.get("bleed", -1)) == 2
+		and int(numbers.get("rot", -1)) == 1,
+		"bleed first leaves one HP for rot, so no phantom extra rot damage")
 	receipt["turn_cues"] = [{"target": foe_id, "status": "bleed", "amount": 2, "expired": false},
 		{"target": hero_id, "status": "regen", "amount": 2, "expired": true}]
 	_check(_words(fight._float_events(receipt), foe_key).has("BLEED -2")
@@ -187,6 +213,29 @@ func _run() -> void:
 	receipt.results[0].erase("drain")
 	_check(not fight._float_events(receipt).has(foe_key),
 		"absent drain receipt never invents healing")
+	# The actual lost state used to hide the doll during the held blow, dropping LOST!
+	# despite a synthetic "lost" receipt appearing correct against a living doll.
+	var saved_hero: Dictionary = fight.battle.get_unit(hero_id).duplicate(true)
+	var lost_receipt := {"ok": true, "action": "ability", "actor": foe_id, "results": [
+		{"target": hero_id, "target_side": "hero", "hit": true,
+		"damage": 6, "target_hp": 0, "lost": true, "statuses": []}]}
+	screen.receipts.append(lost_receipt)
+	fight.battle._units[hero_id]["lost"] = true
+	fight.battle._units[hero_id]["hp"] = 0
+	fight.refresh()
+	_check(fight._live_receipt_key(hero_id) == hero_key
+		and fight.stage.figure_nodes[hero_key].visible and fight.plates[hero_key].visible
+		and fight.plates[hero_key].get_node("HealthText").text.begins_with("0/"),
+		"truly LOST doll holds its own picture and zero-HP plate for the pending blow")
+	_check(_words(fight._float_events(lost_receipt), hero_key).has("LOST!"),
+		"terminal loss is called out on the actually LOST doll, not only a living fixture")
+	var fatal_tick := {"action": "pass", "ok": true, "actor": foe_id, "turn_cues": [
+		{"target": hero_id, "lost": true}]}
+	_check(_words(fight._float_events(fatal_tick), hero_key).has("LOST!"),
+		"a death-door bleed tick can announce terminal loss over the held doll")
+	screen.receipts.pop_back()
+	fight.battle._units[hero_id] = saved_hero
+	fight.refresh()
 	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng
 		and screen.receipts == receipts, "floating callouts do not mutate rules or receipts")
 	# A result can finish the fight before its delayed held-beat callouts appear.

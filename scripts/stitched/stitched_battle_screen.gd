@@ -1578,19 +1578,29 @@ static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dic
 			continue
 		var prior: Dictionary = old.get("statuses", {})
 		var current: Dictionary = now.get("statuses", {})
+		# The rules settle Regen, then Bleed, then Rot. Each clock sees the HP
+		# left by the preceding clock, not the snapshot's original HP.
+		var tick_amounts := {}
+		var remaining_hp := maxi(0, int(old.get("hp", 0)))
+		var regen := int(prior.get("regen", 0))
+		if regen > 0 and int(current.get("regen", 0)) == regen - 1:
+			var restored := 1 if int(prior.get("rot", 0)) > 0 else 2
+			tick_amounts["regen"] = mini(restored, maxi(0, int(old.get("max_hp", 0)) - remaining_hp))
+			remaining_hp += int(tick_amounts["regen"])
+		var bleed := int(prior.get("bleed", 0))
+		if bleed > 0 and int(current.get("bleed", 0)) == bleed - 1:
+			tick_amounts["bleed"] = mini(bleed, remaining_hp)
+			remaining_hp -= int(tick_amounts["bleed"])
+		var rot := int(prior.get("rot", 0))
+		if rot > 0 and int(current.get("rot", 0)) == rot - 1:
+			tick_amounts["rot"] = mini(StitchedRules.ROT_TICK, remaining_hp)
+			remaining_hp -= int(tick_amounts["rot"])
 		for status in prior:
 			var count := int(prior[status])
 			if count <= 0 or int(current.get(status, 0)) != count - 1:
 				continue
-			var amount := 0
-			match str(status):
-				"bleed": amount = mini(count, maxi(0, int(old.get("hp", 0))))
-				"rot": amount = mini(StitchedRules.ROT_TICK, maxi(0, int(old.get("hp", 0))))
-				"regen":
-					var restored := 1 if int(prior.get("rot", 0)) > 0 else 2
-					amount = mini(restored, maxi(0, int(old.get("max_hp", 0)) - int(old.get("hp", 0))))
-			cues.append({"target": id, "status": str(status), "amount": amount,
-				"expired": count == 1})
+			cues.append({"target": id, "status": str(status),
+				"amount": int(tick_amounts.get(str(status), 0)), "expired": count == 1})
 		if bool(now.get("lost", false)) and not bool(old.get("lost", false)):
 			cues.append({"target": id, "lost": true})
 		elif bool(now.get("hanging", false)) and not bool(old.get("hanging", false)):

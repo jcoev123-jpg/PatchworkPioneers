@@ -977,8 +977,11 @@ func refresh() -> void:
 			# Owner 11-10: a unit that fell on the blow being held keeps its struck pose on the seat;
 			# the scrap heap takes its place when the beat has eased back (see _drain_queued_beats).
 			var fallen: Sprite3D = stage.figure_nodes.get(key)
-			var fallen_unit := _fallen_foe_at(rank, str(fallen.get_meta("fight_unit", ""))) \
-				if side == "foe" and fallen != null and not standing else {}
+			var fallen_unit := {}
+			if fallen != null and not standing:
+				var fallen_id := str(fallen.get_meta("fight_unit", ""))
+				fallen_unit = _fallen_foe_at(rank, fallen_id) if side == "foe" \
+					else _lost_hero_at(rank, fallen_id)
 			if not fallen_unit.is_empty() and _hold_pending() and fallen.visible:
 				var held_plate: Control = plates[key]
 				(held_plate.get_node("Health") as TextureProgressBar).value = 0.0
@@ -1659,6 +1662,17 @@ func _fallen_foe_at(rank: int, unit_id: String) -> Dictionary:
 	return {}
 
 
+## A terminally lost doll holds its own last struck picture until the beat ends.
+func _lost_hero_at(rank: int, unit_id: String) -> Dictionary:
+	if unit_id.is_empty():
+		return {}
+	var hero: Dictionary = battle.get_unit(unit_id)
+	if str(hero.get("side", "")) == "hero" and bool(hero.get("lost", false)) \
+			and int(hero.get("rank", 0)) == rank:
+		return hero
+	return {}
+
+
 ## Preserve a fallen figure during an ability hold or a confirmed tick-only beat.
 func _hold_pending() -> bool:
 	if engine._motion_is_reduced():
@@ -1732,7 +1746,7 @@ static func _simple_detail(detail: String) -> String:
 ## A heap or a later replacement at the same rank is NOT the struck unit.
 func _live_receipt_key(unit_id: String) -> String:
 	var unit := battle.get_unit(unit_id)
-	if unit.is_empty() or bool(unit.get("lost", false)):
+	if unit.is_empty():
 		return ""
 	var side := str(unit.get("side", ""))
 	var rank := int(unit.get("rank", 0))
@@ -1740,9 +1754,9 @@ func _live_receipt_key(unit_id: String) -> String:
 		return ""
 	var key := "%s_%d" % [side, rank]
 	var figure: Sprite3D = stage.figure_nodes.get(key)
-	# Owner 11-10: a struck unit that fell on this blow still stands in its held pose until the beat
-	# ends; only while its own picture is still on the seat (not the scrap heap that replaces it).
-	if bool(unit.get("dead", false)):
+	# A slain foe or LOST doll may still have its own picture in the held seat.
+	# Never let a heap or a newly moved unit inherit the old receipt's callouts.
+	if bool(unit.get("dead", false)) or bool(unit.get("lost", false)):
 		if figure == null or str(figure.get_meta("fight_unit", "")) != unit_id:
 			return ""
 	elif str(engine._unit_at(side, rank).get("id", "")) != unit_id:
