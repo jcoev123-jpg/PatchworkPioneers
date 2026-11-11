@@ -1026,6 +1026,9 @@ func _refresh() -> void:
 		_displayed_actor = actor_key
 		_part_hover_slot = ""
 		_part_focus_slot = ""
+		# A slot picked for the previous hero must not carry over to the next hero's turn,
+		# or ally clicks are judged against an ability the player never chose.
+		_selected_part = ""
 	_part_cues.clear()
 	for slot in SLOTS:
 		var button: Button = _part_buttons[slot]
