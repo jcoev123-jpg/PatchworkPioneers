@@ -67,6 +67,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 09:07 play pass): Sewed Red Lint onto Warden's Pot Helm Command with 2 scraps, then used it against Thread Biter in the next normal battle. The fight button identified the sewn patch and the held beat showed RED LINT plus BLEED on the target; therefore one-slot display and real patch application are live-confirmed. Job stays PART only because the existing gold two-effect rule conflicts with the one-patch requirement and its protected tests cannot be rewritten here.
 
+(2026-11-12 09:27 play pass): Sewed Heel Knot onto Pot Helm Command at the Sewing Circle, then used it in a normal fight to push the Moth Scribe from rank 3 to rank 4 and apply Mark. The ability showed one occupied badge and the real sewn effect in its hover card. Job remains PART: gold still retains two effects under protected rules and tests, pending an owner-approved migration.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint

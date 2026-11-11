@@ -50,24 +50,50 @@ func _press_route(app: Node, id: String) -> bool:
 	return true
 
 
+## A valid mounted visit choice is either on the visible floor or inside its
+## current-generation tray. A closed tray must truly hide and de-focus its
+## children; an open tray must expose them. Never count a detached button.
+func _mounted_visit_choice(page: StitchedCorridorVisit, button: Button, index: int) -> bool:
+	if not is_instance_valid(button) or index >= page._homes.size() \
+			or button.get_parent() != page._homes[index] or not button.visible \
+			or not button.is_inside_tree():
+		return false
+	if button.get_parent() == page:
+		return button.is_visible_in_tree()
+	for number in page.trays:
+		var tray: Control = page.trays[number]
+		if tray.is_ancestor_of(button):
+			var showing: bool = page.open_group == number
+			return tray.visible == showing and button.is_visible_in_tree() == showing \
+				and button.focus_mode == (Control.FOCUS_ALL if showing else Control.FOCUS_NONE) \
+				and button.mouse_filter == (Control.MOUSE_FILTER_STOP if showing else Control.MOUSE_FILTER_IGNORE) \
+				and number < page.floor_buttons.size() \
+				and page.floor_buttons[number].is_visible_in_tree()
+	return false
+
+
 func _visit_button(app: Node, id: String, arguments: Array = []) -> Button:
 	# A returned control must be the CURRENT generation's projection: exact
 	# metadata, text and enabled state on the live parented page, so a retired
 	# or out-of-sync button is never returned as a usable Shop action.
 	var session: StitchedRunSession = app.stitched_run_session
+	var page := app.stitched_run_panel as StitchedCorridorVisit
 	var actions: Array = session.visit_actions() if session != null and session.phase == "visit" else []
 	for index in actions.size():
 		if actions[index].id == id and actions[index].arguments == arguments:
 			var button: Button = app.stitched_run_buttons[index] if index < app.stitched_run_buttons.size() else null
-			if is_instance_valid(button) and is_instance_valid(app.stitched_run_panel) \
-					and app.stitched_run_panel.is_ancestor_of(button) and button.is_visible_in_tree() \
+			if is_instance_valid(page) and page.get_parent() == app and page.is_visible_in_tree() \
+					and _mounted_visit_choice(page, button, index) \
 					and button.get_meta("action_id", "") == id \
 					and button.get_meta("action_arguments", []) == arguments \
 					and button.text == str(actions[index].text) \
 					and button.disabled == not bool(actions[index].enabled):
-				return button
+				# A mounted choice in a closed tray must be revealed before it can be pressed.
+				page.reveal(button)
+				if button.is_visible_in_tree():
+					return button
 	_check(false, "current mounted visit has requested action " + id + str(arguments) + "; "
-		+ _controls_evidence(app, "wanted visible visit action " + id + str(arguments)))
+		+ _controls_evidence(app, "wanted revealed visit action " + id + str(arguments)))
 	return null
 
 
@@ -158,8 +184,8 @@ func _await_controls(app: Node, phase: String, service: String = "") -> bool:
 					for index in actions.size():
 						var button := buttons[index]
 						if not is_instance_valid(button) or not panel.is_ancestor_of(button) \
-								or not button.is_visible_in_tree() \
-								or button.get_meta("action_id", "") != actions[index].id \
+								or not _mounted_visit_choice(panel as StitchedCorridorVisit, button, index) \
+								or button.get_meta("action_id", "") != actions[index].id\
 								or button.get_meta("action_arguments", []) != actions[index].arguments \
 								or button.text != str(actions[index].text) \
 								or button.disabled != not bool(actions[index].enabled):

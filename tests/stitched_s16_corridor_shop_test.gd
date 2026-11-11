@@ -66,7 +66,9 @@ func _run() -> void:
 	_check(visit.floor_buttons.size() == 4 and visit.floor_buttons[0] == buttons[0] and visit.floor_buttons[3] == buttons[5], "lone choices are their own floor buttons")
 	_check(not buttons.has(visit.floor_buttons[1]) and not buttons.has(visit.floor_buttons[2]), "things with several choices open a tray instead")
 	for index in buttons.size():
-		_check(buttons[index].is_visible_in_tree() and buttons[index].text == actions[index].text and visit.is_ancestor_of(buttons[index]), "every choice keeps its words and stays in the page")
+		_check(buttons[index].is_visible_in_tree() == (homes[index] == visit)
+			and buttons[index].text == actions[index].text and visit.is_ancestor_of(buttons[index]),
+			"only floor choices are visible before a tray is opened; all choices retain their text")
 	for number in visit.groups.size():
 		var figure: Sprite3D = visit.stage.figure_nodes.get("thing_%d" % number)
 		_check(figure != null, "every thing lies in the corridor")
@@ -79,16 +81,25 @@ func _run() -> void:
 	visit.floor_buttons[0].mouse_exited.emit()
 	_check(visit.story.text == "A peddler waits.", "the stop's own words come back")
 	var tray: Control = visit.trays[1]
-	_check(tray.modulate.a == 0.0 and buttons[1].focus_mode == Control.FOCUS_NONE and buttons[1].mouse_filter == Control.MOUSE_FILTER_IGNORE, "a closed tray is clear and deaf")
+	_check(not tray.visible and not buttons[1].is_visible_in_tree() and tray.modulate.a == 0.0
+		and buttons[1].focus_mode == Control.FOCUS_NONE and buttons[1].mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"a closed tray is invisible, clear and deaf")
 	visit.floor_buttons[1].pressed.emit()
-	_check(visit.open_group == 1 and tray.modulate.a == 1.0 and buttons[1].focus_mode == Control.FOCUS_ALL and buttons[1].has_focus(), "picking a thing up opens its dolls and focuses the first that can take it")
+	_check(visit.open_group == 1 and tray.visible and buttons[1].is_visible_in_tree()
+		and tray.modulate.a == 1.0 and buttons[1].focus_mode == Control.FOCUS_ALL and buttons[1].has_focus(),
+		"picking a thing up reveals its dolls and focuses the first that can take it")
 	_check(tray.get_global_rect().position.y < 300 and buttons[1].get_node_or_null("Round") != null, "the dolls are round portraits along the top")
 	_check(buttons[1].focus_next != NodePath() and save.focus_next != NodePath(), "the open tray joins the focus chain")
 	visit.floor_buttons[2].pressed.emit()
-	_check(visit.open_group == 2 and tray.modulate.a == 0.0 and visit.trays[2].modulate.a == 1.0, "only one tray is open at a time")
+	_check(visit.open_group == 2 and not tray.visible and not buttons[1].is_visible_in_tree()
+		and tray.modulate.a == 0.0 and visit.trays[2].visible
+		and buttons[3].is_visible_in_tree() and visit.trays[2].modulate.a == 1.0,
+		"opening another thing hides the previous tray from visible choices")
 	_check(buttons[3].position.y > 0.0 and buttons[3].size.x < StitchedCorridorVisit.ROUND, "a doll with several ways shows each way as a small round under its face")
 	visit._input(_key(KEY_ESCAPE))
-	_check(visit.open_group == -1 and visit.trays[2].modulate.a == 0.0 and visit.floor_buttons[2].has_focus(), "Esc puts the thing back down")
+	_check(visit.open_group == -1 and not visit.trays[2].visible
+		and not buttons[3].is_visible_in_tree() and visit.trays[2].modulate.a == 0.0
+		and visit.floor_buttons[2].has_focus(), "Esc hides the tray and puts the thing back down")
 	buttons[1].pressed.emit()
 	visit._input(_key(KEY_UP))
 	_check(pressed.has(5), "Up walks on by the arrow")

@@ -558,8 +558,9 @@ func close_tray() -> void:
 			floor_buttons[number].grab_focus()
 
 
-## A closed tray stays in the tree but is clear, deaf and out of the focus chain.
+## A closed tray stays in the tree but is hidden from hit-testing, assistive tools and focus.
 func _show_tray(tray: Control, shown: bool) -> void:
+	tray.visible = shown
 	tray.modulate.a = 1.0 if shown else 0.0
 	for button in _tray_buttons(tray):
 		button.mouse_filter = Control.MOUSE_FILTER_STOP if shown else Control.MOUSE_FILTER_IGNORE
