@@ -112,6 +112,12 @@ var bark_timer: Timer
 var bark_count := 0
 var last_bark: Dictionary = {}
 var _bark_fade: Tween
+## Owner combat job 5: the corner map of the corridor routes, which a hovered foe's
+## full details replace during a fight (see _hover and _update_corner_foe).
+var corner_map: StitchedCornerMap
+var fight_kind := ""
+var _foe_hover_lit := ""
+var _foe_hover_grow: Tween
 
 
 ## Mounts the corridor view over a ready battle screen and tucks the classic chrome away.
@@ -157,6 +163,7 @@ func _ready() -> void:
 	_build_more()
 	_build_bark()
 	_build_ability_card()
+	_build_corner_map()
 	# Last child wins hit-testing, but draws nothing over the animation.
 	_beat_input_shield = Control.new()
 	_beat_input_shield.name = "BeatInputShield"
@@ -585,6 +592,9 @@ func set_more_open(open: bool) -> void:
 	if open:
 		_clear_keyboard_target()
 	more_panel.visible = open
+	# Owner combat job 5: the More tray opens over the corner, so the map steps aside.
+	if corner_map != null:
+		corner_map.visible = not open
 	if open and not more_buttons.is_empty():
 		for key in more_buttons:
 			if not more_buttons[key].disabled:
@@ -768,6 +778,119 @@ func _target_hint() -> void:
 func _hover(key: String, inside: bool) -> void:
 	hovered = key if inside else ("" if hovered == key else hovered)
 	_shade_figures()
+	_update_corner_foe()
+
+
+## Owner combat job 5: the right edge above the foes holds the run's route map; hovering
+## a foe swaps it for that foe's full details (see _update_corner_foe). The owner's lower
+## right corner is the foes' stage and the ability bar, so the corner rides the free strip
+## between the top bar and the figures.
+func _build_corner_map() -> void:
+	corner_map = StitchedCornerMap.new(Rect2(972, 106, 304, 180))
+	add_child(corner_map)
+
+
+## The host run feeds the corner its real route data (rooms, walked path, the
+## candle on the room the party stands in) and this fight's kind word.
+func present_corner_map(run: StitchedRunSession) -> void:
+	if run == null or run.map == null or corner_map == null:
+		return
+	fight_kind = str(run.pending.get("kind", ""))
+	var floors := run.map.get_floors()
+	if floors.is_empty():
+		return
+	# get_current_floor() counts the doors chosen: this fight happens on that floor,
+	# so its rooms sit one index below the choice count.
+	var floor_index := clampi(run.map.get_current_floor() - 1, 0, floors.size() - 1)
+	corner_map.present_floor(floor_index + 1, floors[floor_index], run.map.get_route(),
+		run.map.get_current_node_id())
+
+
+## Owner combat job 5: a hovered foe takes the corner card and the foreground; the
+## road map returns as soon as the pointer leaves it. A heap or the fight's end
+## never takes the corner.
+func _update_corner_foe() -> void:
+	if corner_map == null:
+		return
+	var unit := engine._unit_at("foe", int(hovered.get_slice("_", 1))) if hovered.begins_with("foe_") else {}
+	var live := not unit.is_empty() and not bool(unit.get("dead", false)) and not battle.is_over()
+	if live:
+		corner_map.show_foe(str(unit.get("name", "Foe")), _foe_corner_lines(unit))
+	else:
+		corner_map.show_map()
+	_begin_foe_spotlight(hovered if live else "")
+
+
+## The hovered foe's own corner lines, every value from the live rules state.
+func _foe_corner_lines(unit: Dictionary) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var kind_word := str({"Boss": "Boss", "Elite": "Elite"}.get(fight_kind, "Foe"))
+	if bool(unit.get("is_boss", false)):
+		kind_word = "Boss"
+	lines.append("%s · rank %d" % [str(kind_word), int(unit.get("rank", 0))])
+	lines.append("Health %d / %d" % [int(unit.get("hp", 0)), int(unit.get("max_hp", 0))])
+	var moves := PackedStringArray()
+	for ability in unit.get("abilities", []):
+		var move := str(ability.get("name", ""))
+		if not move.is_empty():
+			moves.append(move)
+	if not moves.is_empty():
+		lines.append("Moves: " + ", ".join(moves))
+	var resists: Dictionary = unit.get("resist", {})
+	if not resists.is_empty():
+		var words := PackedStringArray()
+		for group in resists:
+			words.append("%s %d%%" % [str(group), int(resists[group])])
+		lines.append("Resists " + ", ".join(words))
+	var badges := StitchedBattleChrome._badge_entries(unit, "foe")
+	var effects := PackedStringArray()
+	for entry in badges:
+		var full := str(entry.get("full", ""))
+		if not full.is_empty():
+			effects.append(full)
+	lines.append(("Now: " + ", ".join(effects)) if not effects.is_empty() else "Nothing clings to it now")
+	return lines
+
+
+## Owner combat job 5: the hovered foe comes to the foreground — the corridor dims
+## around it and it brightens and grows a touch, easing back when the pointer leaves.
+## A held attack beat keeps its own spotlight; the hover never cuts into one.
+func _begin_foe_spotlight(key: String) -> void:
+	if key == _foe_hover_lit:
+		return
+	if not _foe_hover_lit.is_empty():
+		var was := _foe_hover_lit
+		_foe_hover_lit = ""
+		stage.end_spotlight()
+		if _foe_hover_grow != null:
+			_foe_hover_grow.kill()
+			_foe_hover_grow = null
+		var eased: Sprite3D = stage.figure_nodes.get(was)
+		if eased != null:
+			var ease_back := create_tween()
+			ease_back.tween_property(eased, "scale", Vector3.ONE, 0.2).set_trans(Tween.TRANS_SINE)
+	if key.is_empty() or engine._motion_is_reduced():
+		return
+	if _beats != null and _beats.is_running():
+		return
+	_foe_hover_lit = key
+	stage.begin_spotlight([key], [], 0.2)
+	var figure: Sprite3D = stage.figure_nodes.get(key)
+	if figure != null:
+		_foe_hover_grow = create_tween()
+		_foe_hover_grow.tween_property(figure, "scale", Vector3.ONE * 1.1, 0.2).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_OUT)
+
+
+## A starting or cancelled beat owns the stage: no hover spotlight may linger.
+func _clear_foe_spotlight() -> void:
+	if _foe_hover_grow != null:
+		_foe_hover_grow.kill()
+		_foe_hover_grow = null
+	if not _foe_hover_lit.is_empty():
+		var figure: Sprite3D = stage.figure_nodes.get(_foe_hover_lit) if stage != null else null
+		if figure != null:
+			figure.scale = Vector3.ONE
+		_foe_hover_lit = ""
 
 
 func _texture(path: String) -> Texture2D:
@@ -1240,7 +1363,11 @@ func _shade_figures() -> void:
 			marker.modulate = Color.WHITE if art != null else (
 				Color("68c78b") if key.begins_with("hero_") else Color("e75b54"))
 		var tone := Color.WHITE
-		if choosing:
+		# Owner combat job 5: while a foe holds the corner its spotlight owns the tones.
+		var foe_spot := not _foe_hover_lit.is_empty() and (_beats == null or not _beats.is_running())
+		if foe_spot:
+			tone = StitchedCorridorStage.SPOT_LIT if key == _foe_hover_lit else StitchedCorridorStage.SPOT_DIM
+		elif choosing:
 			tone = Color(1.25, 1.12, 0.95) if targets.has(key) else Color(0.5, 0.48, 0.5)
 		if key == hovered and (not choosing or targets.has(key)):
 			tone = Color(1.4, 1.25, 1.0)
@@ -1572,6 +1699,7 @@ func _receipt_spot_keys(receipt: Dictionary) -> Dictionary:
 func _begin_receipt_focus(receipt: Dictionary, order_index: int = -1) -> void:
 	_focus_actor_id = ""
 	_focus_target_ids.clear()
+	_clear_foe_spotlight()
 	if engine._motion_is_reduced() or battle.is_over() or str(receipt.get("action", "")) != "ability":
 		return
 	var spot := _receipt_spot_keys(receipt)
@@ -1596,6 +1724,7 @@ func _beat_span() -> float:
 
 
 func _cancel_beats() -> void:
+	_clear_foe_spotlight()
 	if _beats != null:
 		_beats.kill()
 		_beats = null

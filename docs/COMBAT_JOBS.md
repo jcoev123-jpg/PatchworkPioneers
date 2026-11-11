@@ -67,9 +67,11 @@ like ref3: a bleed patch that gives the ability +X bleed shows the bleed design.
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
 sewn on really changes the ability in the next fight; if it does not, that is the bug to fix first.
 
-## Job 5: information corner: map, and foe details on hover (TODO)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-11)
 
-The lower right corner of the fight and corridor screens holds a small map of the corridor routes: the rooms and
+Built the new `StitchedCornerMap` and mounted it on the walk, fight and visit corridor screens, fed from the run's real route records: this floor's rooms in corridor order, visited dimming, a candle here-mark, seam arrows between rooms. During a fight a hovered foe swaps the map for its live details (kind/rank, health, moves, resists, effects now) and takes the foreground via `begin_spotlight` with a small grow, easing back when the pointer leaves; the More tray hides the corner. In the fight view the owner's lower right corner is the foes' stage and the ability bar, so the corner rides the free right edge above the figures; the walk and visit corridors keep the lower right. Also fixed an off-by-one that showed the next floor's rooms (`get_current_floor()` counts chosen doors, so the walked floor sits one index below it). Verified live on floors 1, 6, 10 and 12 (normal/elite/boss), all stops, an event, save/reload and victory.
+
+The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see
 the map in ref2). Use the run's real route data.
 

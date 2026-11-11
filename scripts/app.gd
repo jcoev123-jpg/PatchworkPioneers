@@ -4612,6 +4612,8 @@ func _present_stitched_run() -> void:
 		# S11: the fight plays in the corridor the walk stopped in; the classic screen stays as the engine.
 		var corridor := StitchedCorridorFight.attach(stage, session.walk_area())
 		if corridor != null:
+			# Owner combat job 5: the run's real route feeds the fight's corner map.
+			corridor.present_corner_map(session)
 			corridor.add_more("save", "Save run", func():
 				if stitched_run_session == session and stitched_run_battle == stage:
 					_stitched_run_save_file(session))
@@ -5092,6 +5094,16 @@ func _present_stitched_corridor_visit(session: StitchedRunSession) -> void:
 		pictures.append(picture)
 	var homes := visit.lay_out(actions, party, pictures)
 	visit.dress(_stitched_visit_choices(session, visit, session.snapshot(), homes))
+	# Owner combat job 5: the road map rides the visit corridor's lower right corner.
+	var corner := StitchedCornerMap.new(Rect2(1010, 468, 260, 152))
+	visit.add_child(corner)
+	var visit_floors := session.map.get_floors()
+	if not visit_floors.is_empty():
+		# get_current_floor() counts the doors chosen: the visit happens on that floor,
+		# so its rooms sit one index below the choice count.
+		var visit_floor := clampi(session.map.get_current_floor() - 1, 0, visit_floors.size() - 1)
+		corner.present_floor(visit_floor + 1, visit_floors[visit_floor], session.map.get_route(),
+			session.map.get_current_node_id())
 	var navigation := HBoxContainer.new()
 	navigation.name = "RunNavigation"
 	navigation.position = Vector2(1280 - 2 * 136 - 8 - 16, 12)

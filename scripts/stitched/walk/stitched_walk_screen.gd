@@ -73,6 +73,8 @@ var preview_fear := 0
 var flickering := false
 var _flicker_time := 0.0
 var _built_for := ""
+## Owner combat job 5: the small route map riding the lower right corner.
+var corner_map: StitchedCornerMap
 ## Idle chatter: a trailing doll speaks when the player leaves the walk alone.
 var barks := StitchedWalkBarks.new()
 var bark_label: Label
@@ -220,6 +222,18 @@ func _ready() -> void:
 	bark_timer.one_shot = true
 	bark_timer.timeout.connect(_on_bark_timer)
 	add_child(bark_timer)
+	# Owner combat job 5: a live run's floor rides the lower right corner; the preview
+	# walk has no route to show.
+	if host != null and host.map != null:
+		corner_map = StitchedCornerMap.new(Rect2(1004, 500, 264, 152))
+		add_child(corner_map)
+		var floors := host.map.get_floors()
+		if not floors.is_empty():
+			# get_current_floor() counts the doors chosen: this walk happens on that floor,
+			# so its rooms sit one index below the choice count.
+			var floor_index := clampi(host.map.get_current_floor() - 1, 0, floors.size() - 1)
+			corner_map.present_floor(floor_index + 1, floors[floor_index], host.map.get_route(),
+				host.map.get_current_node_id())
 	if walk != null:
 		refresh()
 		forward_button.grab_focus()
