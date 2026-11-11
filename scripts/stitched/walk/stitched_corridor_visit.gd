@@ -92,9 +92,9 @@ func _ensure_parts() -> void:
 	add_child(stage)
 	move_child(stage, 0)
 	heading = _label("StitchedPageHeading", 22, CHROME.BONE)
-	heading.position = Vector2(240, 14)
-	heading.size = Vector2(800, 36)
-	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	heading.position = Vector2(28, 14)
+	heading.size = Vector2(1000, 36)
+	heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
 	add_child(heading)
 	story = _label("RouteOrVisitStory", 19, Color("e8d6b8"))
 	story.position = STORY_RECT.position
