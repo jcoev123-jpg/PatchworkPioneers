@@ -428,7 +428,7 @@ func _build_top() -> void:
 	ribbon.position = Vector2(295, 66)
 	ribbon.size = Vector2(690, 42)
 	add_child(ribbon)
-	log_label = _label("", Rect2(190, 540, 900, 44), 19, BONE, HORIZONTAL_ALIGNMENT_CENTER)
+	log_label = _label("", Rect2(190, 540, 768, 44), 19, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	log_label.name = "FightLine"
 	# Long joined notices wrap inside the 900 px line instead of spilling past the screen.
 	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -446,7 +446,7 @@ func _build_top() -> void:
 
 ## One bottom bar: the acting doll, its health and fray, and its four body parts.
 func _build_bar() -> void:
-	var bar := _felt(Rect2(16, BAR_TOP, 1248, 126))
+	var bar := _felt(Rect2(16, BAR_TOP, 944, 126))
 	bar.name = "BottomBar"
 	add_child(bar)
 	portrait = TextureRect.new()
@@ -493,7 +493,7 @@ func _build_bar() -> void:
 		button.name = "Part_" + slot
 		button.ignore_texture_size = true
 		button.stretch_mode = TextureButton.STRETCH_KEEP_ASPECT_CENTERED
-		button.position = Vector2(500 + index * 122, BAR_TOP + 6)
+		button.position = Vector2(480 + index * 116, BAR_TOP + 6)
 		button.size = Vector2(114, 114)
 		button.focus_mode = Control.FOCUS_ALL
 		button.pressed.connect(func(): choose_part(slot))
@@ -547,10 +547,10 @@ func _build_bar() -> void:
 		button.add_child(move_label)
 		add_child(button)
 		part_buttons[slot] = button
-	more_button = _button("More", Rect2(1012, BAR_TOP + 22, 108, 40), func(): set_more_open(not more_panel.visible))
+	more_button = _button("More", Rect2(348, BAR_TOP + 80, 108, 38), func(): set_more_open(not more_panel.visible))
 	more_button.name = "More"
 	add_child(more_button)
-	continue_button = _button("Continue", Rect2(1012, BAR_TOP + 70, 230, 40), finish)
+	continue_button = _button("Continue", Rect2(480, BAR_TOP + 48, 230, 44), finish)
 	continue_button.name = "Continue"
 	add_child(continue_button)
 	_build_hands()
@@ -820,12 +820,11 @@ func _hover(key: String, inside: bool) -> void:
 	_update_corner_foe()
 
 
-## Owner combat job 5: the right edge above the foes holds the run's route map; hovering
-## a foe swaps it for that foe's full details (see _update_corner_foe). The owner's lower
-## right corner is the foes' stage and the ability bar, so the corner rides the free strip
-## between the top bar and the figures.
+## Owner combat job 5: give the route map / hovered foe details their own lower-right
+## information corner. The bar and its buttons end to the left of it, while the corner
+## begins below the foe HP plates (which end at y=540).
 func _build_corner_map() -> void:
-	corner_map = StitchedCornerMap.new(Rect2(972, 106, 304, 180))
+	corner_map = StitchedCornerMap.new(Rect2(968, 542, 306, 170))
 	add_child(corner_map)
 
 

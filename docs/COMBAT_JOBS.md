@@ -67,11 +67,9 @@ like ref3: a bleed patch that gives the ability +X bleed shows the bleed design.
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
 sewn on really changes the ability in the next fight; if it does not, that is the bug to fix first.
 
-## Job 5: information corner: map, and foe details on hover (PART 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
-Built the new `StitchedCornerMap` and mounted it on the walk, fight and visit corridor screens, fed from the run's real route records: this floor's rooms in corridor order, visited dimming, a candle here-mark, seam arrows between rooms. During a fight a hovered foe swaps the map for its live details (kind/rank, health, moves, resists, effects now) and takes the foreground via `begin_spotlight` with a small grow, easing back when the pointer leaves; the More tray hides the corner. The floor index was also corrected; live normal/elite/boss and visit checks passed.
-
-Review 2026-11-12: **not done against ref2**. The fight map is still at the upper right (`Rect2(972, 106, 304, 180)`), not the owner's specified lower-right information corner; only the walk/visit maps are lower right. Move/rebalance the fight map and foe-details corner without covering foes, HP plates or abilities, then visually verify before marking DONE.
+Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms, current candle marker and seam arrows. Foe hover replaces the route with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar, shifted the four ability buttons and moved More/Continue to keep all controls, foe HP plates and fight text clear. Visually checked the normal fight, hovered Moth Scribe and restored map; mounted 32-check corner regression and corridor/Continue/victory tests pass.
 
 The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see

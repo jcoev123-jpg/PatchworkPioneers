@@ -18,6 +18,10 @@ func _run() -> void:
 	root.size = Vector2i(1280, 720)
 	var barks := StitchedWalkBarks.new()
 	_check(barks.valid(), "authored bark lines load")
+	_check("Well? Someone pick a move and swing it." in barks.data.contexts.get("fight_idle", []),
+		"combat chatter asks for a fixed move, not a retired body-part ability")
+	_check(not str(barks.data.contexts.get("fight_idle", [])).contains("pick a part"),
+		"retired part-picking line cannot appear during a fight")
 	for kind in ["idle", "hurt", "dark", "shadow", "tug", "whirr", "mannequins", "wren", "curio"]:
 		_check(not barks.data.contexts.get(kind, []).is_empty(), "lines for " + kind)
 	var stage := StitchedWalkScreen.new()

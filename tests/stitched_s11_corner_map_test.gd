@@ -64,6 +64,33 @@ func _mounted_checks() -> void:
 	var fight := StitchedCorridorFight.attach(screen, "walls")
 	_check(fight != null and fight.corner_map != null, "the corridor fight carries a corner map")
 	await process_frame
+	# Job 5: the information corner must sit BELOW the foe HP plates and BESIDE
+	# the shortened ability bar, never across an actionable button or fight text.
+	var corner := fight.corner_map.get_rect()
+	var bottom: Control = fight.get_node("BottomBar")
+	_check(corner.position.x >= bottom.get_rect().end.x and corner.position.y >= 540.0
+		and corner.end.x <= 1280.0 and corner.end.y <= 720.0,
+		"the fight map occupies the lower-right free corner inside the screen")
+	var free_of_plates := true
+	for plate in fight.plates.values():
+		if plate.visible and corner.intersects(plate.get_rect()):
+			free_of_plates = false
+	_check(free_of_plates, "the information corner does not cover any living HP plate")
+	var free_of_actions := true
+	for button in fight.part_buttons.values():
+		if corner.intersects(button.get_rect()):
+			free_of_actions = false
+	_check(free_of_actions and not corner.intersects(fight.more_button.get_rect())
+		and not corner.intersects(fight.continue_button.get_rect())
+		and not corner.intersects(fight.log_label.get_rect()),
+		"the map leaves abilities, More, Continue and the fight log unobscured")
+	_check(bottom.get_rect().encloses(fight.more_button.get_rect()),
+		"More stays inside the shortened bottom bar")
+	fight.set_more_open(true)
+	_check(fight.more_panel.visible and not fight.corner_map.visible,
+		"the More tray hides the lower-right information corner")
+	fight.set_more_open(false)
+	_check(fight.corner_map.visible, "closing More restores the lower-right corner")
 	fight.present_corner_map(null)
 	_check(fight.fight_kind.is_empty(), "a fight without a run keeps its kind word empty")
 	var foe_rank := -1
