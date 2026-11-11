@@ -72,6 +72,49 @@ func _run() -> void:
 	_check(StitchedBattleScreen.turn_change_cues(prior_units, settled_units,
 		{"actor": "someone_else", "results": [{"target": "victim"}]}).size() == 1,
 		"do not misattribute attack damage or applied statuses to turn-start ticks")
+	# A next-to-act foe can be struck and tick Bleed in the same settlement.
+	# The result's target_hp (after the hit, before clocks) proves which
+	# portion is a hit and which is the settled start-of-turn tick.
+	var overlap_before := {foe_id: {"hp": 12, "max_hp": 20,
+		"statuses": {"bleed": 2, "weak": 1}}}
+	var overlap_after := {foe_id: {"hp": 6, "max_hp": 20,
+		"statuses": {"bleed": 1}}}
+	var overlap_receipt := {"action": "ability", "ok": true, "actor": hero_id,
+		"results": [{"target": foe_id, "target_side": "foe", "hit": true,
+			"damage": 4, "target_hp": 8, "statuses": []}]}
+	var overlap_cues := StitchedBattleScreen.turn_change_cues(
+		overlap_before, overlap_after, overlap_receipt)
+	_check(overlap_cues.size() == 2 and int(overlap_cues[0].get("amount", 0)) == 2
+		and str(overlap_cues[0].get("status", "")) == "bleed",
+		"overlapping strike and bleed separate from post-hit HP without double counting")
+	overlap_receipt["turn_cues"] = overlap_cues
+	_check(_words(fight._float_events(overlap_receipt), foe_key).has("BLEED -2")
+		and _words(fight._float_events(overlap_receipt), foe_key).has("WEAK ENDED"),
+		"strike and tick words stack over their actual target")
+	overlap_receipt.erase("turn_cues")
+	overlap_receipt.results[0].target_hp = 7
+	_check(StitchedBattleScreen.turn_change_cues(
+		overlap_before, overlap_after, overlap_receipt).is_empty(),
+		"an inconsistent post-hit HP cannot invent a clock tick")
+	overlap_receipt.results[0].target_hp = 8
+	overlap_receipt.results[0].statuses = [{"status": "bleed", "duration": 2}]
+	_check(StitchedBattleScreen.turn_change_cues(
+		overlap_before, overlap_after, overlap_receipt).is_empty(),
+		"an ability reapplying a status cannot be mistaken for its expiration")
+	overlap_receipt.results[0].statuses = []
+	overlap_receipt.results.append({"target": foe_id, "target_hp": 8})
+	_check(StitchedBattleScreen.turn_change_cues(
+		overlap_before, overlap_after, overlap_receipt).is_empty(),
+		"two results on the same foe cannot claim one intermediate HP")
+	overlap_receipt.results.pop_back()
+	overlap_before[foe_id] = {"hp": 12, "max_hp": 20,
+		"statuses": {"regen": 1, "rot": 1}}
+	overlap_after[foe_id] = {"hp": 7, "max_hp": 20, "statuses": {}}
+	overlap_cues = StitchedBattleScreen.turn_change_cues(
+		overlap_before, overlap_after, overlap_receipt)
+	_check(overlap_cues.size() == 2 and int(overlap_cues[0].get("amount", 0)) == 1
+		and int(overlap_cues[1].get("amount", 0)) == 2,
+		"overlapping regen and rot use rule order after the blow")
 	# A single turn can regenerate before bleeding, or bleed before rotting.
 	# The numbers must reflect the intervening HP, not separate old-HP caps.
 	var combo_before := {"seat": {"hp": 1, "max_hp": 12,

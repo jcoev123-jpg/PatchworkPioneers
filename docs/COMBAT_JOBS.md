@@ -134,6 +134,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (11-12 play pass): Added receipt-confirmed PUSHED BACK, PULLED FORWARD and THREAD CUT! notices to the held target beat. Failed moves and refused cuts remain silent; five new mounted checks pass (47 total). Restarted and saw Warden's Rim Toss push Moth Scribe from rank 3 to rank 4: damage and PUSHED BACK appeared over its moved figure during the spotlight. Remaining: overlapping ability/tick attribution, summon/split announcements, icon art and live proof of pull/cut and the other rare outcomes.
 
+(11-12 overlap pass): When an ability strikes the next unit to tick, reconcile its single result's post-hit HP with actual Regen/Bleed/Rot clock order, exclude any status rewritten by the ability, and float only proven tick/expiry cues on that same figure. Six new deterministic checks pass (53 total); ambiguous multi-hits, redirected effects, counter/actor HP and inconsistent settlements remain withheld rather than guessed. Still PART: summon/split announcements, remaining ambiguous overlaps, icon art and rare live outcomes.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that

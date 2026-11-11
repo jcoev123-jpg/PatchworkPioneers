@@ -1557,54 +1557,80 @@ func _named_entry(value: Variant, entry_id: String) -> String:
 	return ""
 
 
-## Only changes on an untouched figure are attributable unambiguously to its
-## start-of-turn clock. A figure affected by the just-settled ability is skipped:
-## its HP/status delta could combine a strike, cleanse or patch with the tick.
+## A touched target may also tick as the next actor. Only attribute that clock
+## when the receipt gives one post-action HP anchor, no effect rewrites that
+## status, and replaying its clocks exactly reaches the settled HP.
 static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dictionary) -> Array:
-	var touched := {str(receipt.get("actor", "")): true}
+	var actor_id := str(receipt.get("actor", ""))
+	var touched := {actor_id: true}
+	var hp_after_hit := {}
+	var ambiguous := {}
+	var applied := {}
 	for result in receipt.get("results", []):
-		touched[str(result.get("target", ""))] = true
+		var victim := str(result.get("target", ""))
+		touched[victim] = true
+		if hp_after_hit.has(victim):
+			ambiguous[victim] = true
+		if result.has("target_hp"):
+			hp_after_hit[victim] = int(result["target_hp"])
 		for effect in result.get("statuses", []):
-			var on_id := str(effect.get("on", ""))
-			if not on_id.is_empty():
-				touched[on_id] = true
+			var on_id := str(effect.get("on", victim))
+			if str(effect.get("status", "")) == "guard" and not effect.has("on"):
+				on_id = actor_id
+			if on_id.is_empty():
+				continue
+			touched[on_id] = true
+			if not applied.has(on_id):
+				applied[on_id] = {}
+			var status := str(effect.get("status", ""))
+			applied[on_id]["*" if status == "cleanse" else status] = true
 	var cues := []
 	for id in before:
-		if touched.has(id) or not after.has(id):
+		if not after.has(id):
 			continue
 		var old: Dictionary = before[id]
 		var now: Dictionary = after[id]
 		if bool(old.get("dead", false)) or bool(old.get("lost", false)):
 			continue
+		var overlap := touched.has(id)
+		# Counter hits and redirected patches can mutate the actor independently.
+		if overlap and (id == actor_id or not hp_after_hit.has(id) or ambiguous.has(id)):
+			continue
 		var prior: Dictionary = old.get("statuses", {})
 		var current: Dictionary = now.get("statuses", {})
-		# The rules settle Regen, then Bleed, then Rot. Each clock sees the HP
-		# left by the preceding clock, not the snapshot's original HP.
+		var changed: Dictionary = applied.get(id, {})
+		var local_cues := []
 		var tick_amounts := {}
-		var remaining_hp := maxi(0, int(old.get("hp", 0)))
+		var remaining_hp := maxi(0, int(hp_after_hit[id]) if overlap else int(old.get("hp", 0)))
 		var regen := int(prior.get("regen", 0))
-		if regen > 0 and int(current.get("regen", 0)) == regen - 1:
+		if regen > 0 and int(current.get("regen", 0)) == regen - 1 and not changed.has("regen") and not changed.has("*"):
 			var restored := 1 if int(prior.get("rot", 0)) > 0 else 2
 			tick_amounts["regen"] = mini(restored, maxi(0, int(old.get("max_hp", 0)) - remaining_hp))
 			remaining_hp += int(tick_amounts["regen"])
 		var bleed := int(prior.get("bleed", 0))
-		if bleed > 0 and int(current.get("bleed", 0)) == bleed - 1:
+		if bleed > 0 and int(current.get("bleed", 0)) == bleed - 1 and not changed.has("bleed") and not changed.has("*"):
 			tick_amounts["bleed"] = mini(bleed, remaining_hp)
 			remaining_hp -= int(tick_amounts["bleed"])
 		var rot := int(prior.get("rot", 0))
-		if rot > 0 and int(current.get("rot", 0)) == rot - 1:
+		if rot > 0 and int(current.get("rot", 0)) == rot - 1 and not changed.has("rot") and not changed.has("*"):
 			tick_amounts["rot"] = mini(StitchedRules.ROT_TICK, remaining_hp)
 			remaining_hp -= int(tick_amounts["rot"])
 		for status in prior:
 			var count := int(prior[status])
-			if count <= 0 or int(current.get(status, 0)) != count - 1:
+			if count <= 0 or int(current.get(status, 0)) != count - 1 \
+					or changed.has(str(status)) or changed.has("*"):
 				continue
-			cues.append({"target": id, "status": str(status),
+			local_cues.append({"target": id, "status": str(status),
 				"amount": int(tick_amounts.get(str(status), 0)), "expired": count == 1})
-		if bool(now.get("lost", false)) and not bool(old.get("lost", false)):
-			cues.append({"target": id, "lost": true})
-		elif bool(now.get("hanging", false)) and not bool(old.get("hanging", false)):
-			cues.append({"target": id, "hanging": true})
+		# The snapshot disagrees with the simulated clock: do not invent a tick.
+		if overlap and remaining_hp != int(now.get("hp", 0)):
+			continue
+		cues.append_array(local_cues)
+		if not overlap:
+			if bool(now.get("lost", false)) and not bool(old.get("lost", false)):
+				cues.append({"target": id, "lost": true})
+			elif bool(now.get("hanging", false)) and not bool(old.get("hanging", false)):
+				cues.append({"target": id, "hanging": true})
 	return cues
 
 
