@@ -47,7 +47,9 @@ No name on or beside the HP bar (see ref4, that is the fault). The bar shows hea
 rot, stun, guard, marks and so on) show as their small icons in a row sitting on top of the bar, as in ref6. The
 name is shown in the information corner instead (job 5).
 
-## Job 3: ability hover card (TODO)
+## Job 3: ability hover card (DONE 2026-11-11)
+
+Built: hovering (or keyboard-focusing) a hero ability button shows a felt card above the bar with the real values (kind, damage range, crit, per-foe hit chance, heal, effects with duration, launch/target ranks, sewn patch adds); it hides when the pointer leaves. Verified in a live normal fight.
 
 Hovering a hero's ability button shows a small card beside it, as in ref2, with everything about the ability: its
 name, what it does in plain numbers (damage range, chance to hit, heal amount), every effect it applies and for

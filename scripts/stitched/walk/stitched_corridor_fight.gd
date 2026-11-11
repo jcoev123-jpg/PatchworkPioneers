@@ -76,6 +76,12 @@ var outcome_label: Label
 ## Owner 11-09: a move's name shows only while it is used; each unit's hover lists its moveset.
 var move_banner: Label
 var hovered := ""
+## Owner combat job 3: the hover card beside a hero ability button, with the real numbers.
+var ability_card: NinePatchRect
+var ability_card_title: Label
+var ability_card_body: Label
+var ability_card_slot := ""
+const CARD_W := 348.0
 ## A local cursor only: engine.legal_targets() owns all legality and all commits.
 var _keyboard_targets: Array[String] = []
 var _keyboard_target := ""
@@ -150,6 +156,7 @@ func _ready() -> void:
 	_build_bar()
 	_build_more()
 	_build_bark()
+	_build_ability_card()
 	# Last child wins hit-testing, but draws nothing over the animation.
 	_beat_input_shield = Control.new()
 	_beat_input_shield.name = "BeatInputShield"
@@ -448,6 +455,10 @@ func _build_bar() -> void:
 		button.mouse_exited.connect(func(): _shade_parts())
 		button.focus_entered.connect(func(): _shade_parts())
 		button.focus_exited.connect(func(): _shade_parts())
+		button.mouse_entered.connect(func(): _show_ability_card(slot))
+		button.mouse_exited.connect(func(): _hide_ability_card(slot))
+		button.focus_entered.connect(func(): _show_ability_card(slot))
+		button.focus_exited.connect(func(): _hide_ability_card(slot))
 		# S13: the part shows as the cloth patch sewn on that limb; its outline tells the tier.
 		# Owner 11-09: the abilities are round icons with a thin outline and nothing behind.
 		for layer in ["Patch", "Frayed"]:
@@ -650,7 +661,7 @@ func choose_part(slot: String) -> Dictionary:
 
 
 func click_figure(side: String, rank: int) -> Dictionary:
-	if engine._selected_part.is_empty() and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
+	if engine._selected_part.is_empty()and (engine._hand_pending.is_empty() or engine._hand_pending.begins_with("lift:")):
 		log_label.text = "Pick an ability first."
 		return {"ok": false, "error": "no part chosen"}
 	var receipt := _act(engine.submit_target(side, rank))
@@ -876,6 +887,153 @@ func _show_kit_ability(button: TextureButton, shown: Dictionary, slot: String, t
 	button.tooltip_text = "\n".join(lines).strip_edges()
 
 
+## Owner combat job 3: the hover card itself, a felt panel above the ability bar.
+func _build_ability_card() -> void:
+	ability_card = _felt(Rect2(0, 0, CARD_W, 120), Color("241c2af5"))
+	ability_card.name = "AbilityCard"
+	ability_card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ability_card.visible = false
+	add_child(ability_card)
+	ability_card_title = _label("", Rect2(14, 8, CARD_W - 28, 26), 19, AMBER)
+	ability_card_title.name = "CardTitle"
+	ability_card.add_child(ability_card_title)
+	ability_card_body = _label("", Rect2(14, 36, CARD_W - 28, 80), 14, BONE)
+	ability_card_body.name = "CardBody"
+	ability_card_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ability_card_body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	ability_card.add_child(ability_card_body)
+
+
+## Fills and places the card beside the hovered ability button, above the bar and clear
+## of the fight log. Real values come from the live actor and the rules' own helpers.
+func _show_ability_card(slot: String) -> void:
+	if battle == null or engine == null or battle.is_over() or ability_card == null:
+		return
+	var actor := battle.get_unit(battle.current_actor_id())
+	if actor.is_empty() or str(actor.get("side", "")) != "hero":
+		return
+	var ability := engine.slot_ability(actor, slot)
+	if ability.is_empty():
+		return
+	ability_card_slot = slot
+	var equipped: Dictionary = actor.get("parts", {}).get(slot, {})
+	ability_card_title.text = str(ability.get("name", "")) + (" (torn)" if bool(equipped.get("torn", false)) else "")
+	var lines := _ability_card_lines(actor, ability)
+	ability_card_body.text = "\n".join(lines)
+	var height := 42.0 + FONT.get_multiline_string_size(ability_card_body.text, HORIZONTAL_ALIGNMENT_LEFT, CARD_W - 28.0, 14).y + 10.0
+	ability_card.size = Vector2(CARD_W, height)
+	ability_card_body.size = Vector2(CARD_W - 28, height - 44.0)
+	var button: TextureButton = part_buttons.get(slot)
+	if button != null:
+		var x := clampf(button.position.x + button.size.x / 2.0 - CARD_W / 2.0, 8.0, 1280.0 - CARD_W - 8.0)
+		ability_card.position = Vector2(x, maxf(116.0, 492.0 - height))
+	ability_card.visible = true
+
+
+func _hide_ability_card(slot: String = "") -> void:
+	if not slot.is_empty() and not ability_card_slot.is_empty() and slot != ability_card_slot:
+		return
+	ability_card_slot = ""
+	if ability_card != null:
+		ability_card.visible = false
+
+
+## The card's lines in plain numbers: kind, damage, crit, hit chance per living foe in
+## reach, heal, every effect with its duration, launch and target ranks, and the sewn patch.
+func _ability_card_lines(actor: Dictionary, ability: Dictionary) -> PackedStringArray:
+	var lines := PackedStringArray()
+	var kind_words := {"melee": "Melee attack", "ranged": "Ranged attack", "heal": "Heal",
+		"guard": "Guard", "buff": "Buff", "debuff": "Debuff", "move": "Move"}
+	var side_words := {"enemy": "foes", "ally": "dolls", "self": "self"}
+	lines.append(str(kind_words.get(str(ability.get("kind", "")), "Ability")))
+	var dmg: Array = ability.get("dmg", [0, 0])
+	if int(dmg[1]) > 0:
+		var bonus := int(actor.get("dmg_bonus", 0))
+		lines.append("Damage %d-%d%s" % [int(dmg[0]), int(dmg[1]), (" +%d" % bonus) if bonus > 0 else ""])
+		var crit_chance := StitchedRules.CRIT_BASE + int(ability.get("crit", 0)) + int(actor.get("crit", 0))
+		lines.append("Crit %d%% for x1.5 (deals %d)" % [crit_chance, StitchedRules.crit_damage(int(dmg[1]))])
+	var side := str(ability.get("target_side", "enemy"))
+	if side == "enemy":
+		var hit_lines := PackedStringArray()
+		var mask := int(ability.get("target_mask", 0))
+		for rank in range(1, 5):
+			if not StitchedParts.ranks_allowed(mask, rank):
+				continue
+			var target := engine._unit_at("foe", rank)
+			if target.is_empty() or bool(target.get("dead", false)):
+				continue
+			var chance := StitchedRules.hit_chance(int(ability["acc"]) + int(actor.get("acc", 0)),
+				StitchedRules.effective_dodge(target), int(actor.get("miss_streak", 0)))
+			hit_lines.append("%d%% vs %s (R%d)" % [chance, str(target.get("name", "foe")), rank])
+		if hit_lines.is_empty():
+			lines.append("No foe in reach from here now")
+		else:
+			lines.append("Hit: " + ", ".join(hit_lines))
+	else:
+		lines.append("Always lands on the %s" % str(side_words.get(side, side)))
+	var effects: Dictionary = ability.get("effects", {})
+	for key in effects:
+		if key == "duration" or key == "fray":
+			continue
+		var value := int(effects[key])
+		match str(key):
+			"dodge":
+				lines.append("Dodge +%d for %d turn%s" % [value, int(effects["duration"]), "s" if int(effects["duration"]) != 1 else ""])
+			"heal":
+				lines.append("Heals %d HP" % value)
+			"push":
+				lines.append("Pushes 1 rank back")
+			"pull":
+				lines.append("Pulls 1 rank forward")
+			"snip":
+				lines.append("Snips the thread behind")
+			"tear":
+				lines.append("Tears a seam open")
+			"guard":
+				lines.append("Guards an ally for %d turns" % value)
+			_:
+				lines.append("%s %d turn%s" % [str(key).capitalize(), value, "s" if value != 1 else ""])
+	lines.append("Use from R%s" % _rank_span(ability.get("launch", [])))
+	lines.append("Hits %s R%s" % [str(side_words.get(side, side)), _rank_span(ability.get("target", []))])
+	if bool(ability.get("multi", false)):
+		lines.append("Hits every legal target")
+	if int(ability.get("self_move", 0)) != 0:
+		lines.append("Then steps %s" % ("forward" if int(ability["self_move"]) < 0 else "back"))
+	var sewn: Array = battle._s14_sockets.get(str(actor.get("id", "")), {}).get(str(ability.get("id", "")), [])
+	if sewn.is_empty():
+		lines.append("Patch slot: empty")
+	else:
+		var catalog: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+		for patch_id in sewn:
+			var patch: Dictionary = catalog.get(str(patch_id), {})
+			if patch.is_empty():
+				continue
+			if str(patch.get("effect", "")) == "chain":
+				lines.append("Sewn: %s - chains to the next foe" % str(patch.get("name", patch_id)))
+			else:
+				lines.append("Sewn: %s - %s %d" % [str(patch.get("name", patch_id)), str(patch.get("effect", "")), int(patch.get("amount", 0))])
+	return lines
+
+
+## [1, 2, 3] -> "1-3", [1, 2, 4] -> "1, 2, 4".
+static func _rank_span(ranks: Variant) -> String:
+	if not ranks is Array or ranks.is_empty():
+		return "-"
+	var sorted: Array = ranks.duplicate()
+	sorted.sort()
+	var parts := PackedStringArray()
+	var index := 0
+	while index < sorted.size():
+		var start := int(sorted[index])
+		var end := start
+		while index + 1 < sorted.size() and int(sorted[index + 1]) == end + 1:
+			index += 1
+			end = int(sorted[index])
+		parts.append(str(start) if start == end else "%d-%d" % [start, end])
+		index += 1
+	return ", ".join(parts)
+
+
 func _refresh_bar() -> void:
 	var acting_id := _held_actor_id if not _held_actor_id.is_empty() else battle.current_actor_id()
 	var acting := battle.get_unit(acting_id)
@@ -973,6 +1131,11 @@ func _refresh_bar() -> void:
 		# The engine's live turn owns the kit: a foe's turn hides it, and a foe's held
 		# pose leaves the next doll's real kit ready beside the foe's own plate.
 		part_buttons[slot].visible = not battle.is_over() and live_hero_turn
+	# Owner combat job 3: the hover card follows the live kit; it hides with the buttons.
+	if battle.is_over() or not live_hero_turn:
+		_hide_ability_card()
+	elif not ability_card_slot.is_empty():
+		_show_ability_card(ability_card_slot)
 	# At the end of the fight the bar keeps only the outcome line and Continue:
 	# no empty health plate, no actor name, no More button.
 	var over := battle.is_over()
@@ -1251,7 +1414,7 @@ func _input(event: InputEvent) -> void:
 		# Re-read the live authority immediately before committing. A changed actor,
 		# vanished rank or revised legal set never spends a turn, hand or RNG.
 		_sync_keyboard_targets()
-		if not _keyboard_target.is_empty() and _keyboard_targets.has(_keyboard_target) \
+		if not _keyboard_target.is_empty()and _keyboard_targets.has(_keyboard_target) \
 				and engine.legal_targets().has(_keyboard_target):
 			var chosen := _keyboard_target
 			click_figure(chosen.get_slice("_", 0), int(chosen.get_slice("_", 1)))
@@ -1411,6 +1574,7 @@ func _cancel_beats() -> void:
 		_beat_input_shield.hide()
 	_show_move_name("")
 	_clear_flying()
+	_hide_ability_card()
 	stage.cancel_fight_focus()
 	# A killed beat must not leave a spotlight-grown figure behind.
 	if stage != null:
