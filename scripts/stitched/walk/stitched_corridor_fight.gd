@@ -435,6 +435,8 @@ func _build_top() -> void:
 	# Long joined notices wrap inside the 900 px line instead of spilling past the screen.
 	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	log_label.max_lines_visible = 2
+	# The bar is built after this line and would paint over its top half: draw the line above the bar.
+	log_label.z_index = 1
 	add_child(log_label)
 	move_banner = _label("", Rect2(240, 124, 800, 56), 36, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
 	move_banner.name = "MoveName"
