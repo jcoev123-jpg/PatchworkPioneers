@@ -428,6 +428,40 @@ func _run() -> void:
 		"Needle Gate's two trade captions do not overlap each other or the map")
 	needle_gate.queue_free()
 
+	# Some road events have three genuine trades, with no leave arrow. Their
+	# captions must all remain legible within the space left of the corner map.
+	var three_offers := StitchedCorridorVisit.new()
+	root.add_child(three_offers)
+	three_offers.present("floorboards", "bright", "Mismatched Mittens", "Gloves rustle.", ["stop_event"])
+	var mitten_actions := [
+		{"id": "untangle", "text": "Help untangle pairs (+1 scrap)", "arguments": [], "enabled": true},
+		{"id": "trade_copper", "text": "Trade copper for threads (-15 gold, +2 scraps)", "arguments": [], "enabled": true},
+		{"id": "sell_pair", "text": "Sell a matched pair (+18 gold, -1 scrap)", "arguments": [], "enabled": true},
+	]
+	var mitten_homes := three_offers.lay_out(mitten_actions, [], ["", "", ""])
+	var mitten_buttons: Array[Button] = []
+	for index in mitten_actions.size():
+		var button := Button.new()
+		button.text = mitten_actions[index].text
+		mitten_homes[index].add_child(button)
+		mitten_buttons.append(button)
+	three_offers.dress(mitten_buttons)
+	await process_frame
+	await process_frame
+	var mitten_bounds: Array[Rect2] = []
+	for index in mitten_actions.size():
+		var caption := three_offers.floor_buttons[index].get_node("WareName") as Label
+		var bounds := caption.get_global_rect()
+		_check(bounds.position.x >= 8.0 and bounds.end.x <= 750.0
+			and bounds.end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0
+			and caption.text == mitten_actions[index].text.get_slice(" (", 0)
+			and mitten_buttons[index].text == mitten_actions[index].text,
+			"three-trade event caption %d is onscreen, left of the map, and keeps the full button" % index)
+		for previous in mitten_bounds:
+			_check(not previous.intersects(bounds), "three-trade event caption %d never overlaps an earlier one" % index)
+		mitten_bounds.append(bounds)
+	three_offers.queue_free()
+
 	# Empty Moth visits quote disabled sacrifices and fumigation.Those controls
 	# must stay on the mounted page across Save/Reload and title Continue, unlike
 	# the Garden's no-scraps coin pile.

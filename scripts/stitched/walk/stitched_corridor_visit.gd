@@ -598,9 +598,38 @@ func _place_items() -> void:
 						prior.position.x -= prior.get_global_rect().end.x - tag.get_global_rect().position.x + 8.0
 			ware_slot += 1
 	_thin_crowded_visit_labels()
+	_fit_crowded_event_captions()
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:
 			_clear_arrow_overlap(floor_buttons[number])
+
+
+## Three or more Event trades cannot all carry 290px captions on one projected
+## row left of the map. Keep the actual floor hit targets where they are, but
+## give their captions two tidy rows instead of pushing older words offscreen.
+func _fit_crowded_event_captions() -> void:
+	if not _event_visit:
+		return
+	var labels: Array[Label] = []
+	var owners: Array[Button] = []
+	for number in floor_buttons.size():
+		var button := floor_buttons[number]
+		if not is_instance_valid(button) or not button.visible or groups[number].arrow:
+			continue
+		var label := button.get_node_or_null("WareName") as Label
+		if label != null:
+			labels.append(label)
+			owners.append(button)
+	if labels.size() < 3:
+		return
+	var rows := ceili(labels.size() / 3.0)
+	for index in labels.size():
+		var label := labels[index]
+		label.size = Vector2(230.0, 44.0)
+		label.add_theme_font_size_override("font_size", 15)
+		var x := 10.0 + float(index % 3) * 246.0
+		var y := STORY_RECT.position.y - 48.0 - float(rows - 1 - index / 3) * 50.0
+		label.position = Vector2(x, y) - owners[index].position
 
 
 ## Crowded Peddler and Sewing Circle wares can project several captions into the
