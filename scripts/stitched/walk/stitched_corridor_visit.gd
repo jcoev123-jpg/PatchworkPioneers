@@ -232,7 +232,8 @@ func _group_words(group: Dictionary, actions: Array) -> String:
 			if lists.all(func(other): return slot < other.size() and str(other[slot]).split(" ").has(word)):
 				kept.append(word)
 		# A word that only joins to a dropped name ("Sew Red Lint onto <ability>") must not dangle.
-		while not kept.is_empty() and str(kept.back()).to_lower() in ["onto", "on", "from", "to"]:
+		# Likewise a "slot" or "button" whose number differs per doll ("Padded Vest · button · 35 gold").
+		while not kept.is_empty() and str(kept.back()).to_lower() in ["onto", "on", "from", "to", "slot", "button"]:
 			kept.pop_back()
 		if not kept.is_empty():
 			shared.append(" ".join(kept))
