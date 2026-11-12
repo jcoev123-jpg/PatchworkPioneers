@@ -15,9 +15,10 @@ const ICONS := "res://assets/paper/stitched/icons/"
 const BONE := Color("f0ddc0")
 const LIT := Color(1.45, 1.25, 1.0)
 const DIM := Color(0.42, 0.4, 0.44)
-# Disabled Event captions must remain legible against dark, textured floorboards;
+# Unavailable captions must remain legible against dark, textured floorboards;
 # the item artwork and actual buttons stay disabled/dimmed as before.
 const EVENT_CAPTION_DIM := Color(0.75, 0.72, 0.69)
+const WARE_CAPTION_DIM := Color(0.7, 0.68, 0.65)
 const KEEPER_HEIGHT:= 1.45
 const ITEM_HEIGHT := 0.42
 const DOLL_HEIGHT := 0.9
@@ -565,7 +566,7 @@ func _place_items() -> void:
 				tag.text = tag.text.get_slice(" (", 0)
 			# Unaffordable choices stay visible for inspection, but their captions
 			# must not look as actionable as the fully lit affordable options.
-			tag.modulate = (EVENT_CAPTION_DIM if _event_visit else DIM) if not groups[number].available else Color.WHITE
+			tag.modulate = (EVENT_CAPTION_DIM if _event_visit else WARE_CAPTION_DIM) if not groups[number].available else Color.WHITE
 			tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			# A back-row name must paint over the front-row ware in front of it, not hide behind it.
 			tag.z_index = 1

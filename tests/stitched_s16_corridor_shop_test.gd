@@ -303,6 +303,13 @@ func _run() -> void:
 		orphaned.close_tray()
 	_check(orphaned.floor_buttons[2].visible and orphaned.floor_buttons[2].disabled,
 		"ordinary unavailable stock remains visible and inspectable")
+	var unavailable_tag := orphaned.floor_buttons[2].get_node("WareName") as Label
+	var available_tag := orphaned.floor_buttons[0].get_node("WareName") as Label
+	_check(unavailable_tag != null and available_tag != null
+		and unavailable_tag.modulate == StitchedCorridorVisit.WARE_CAPTION_DIM
+		and unavailable_tag.modulate.r > 0.69 and unavailable_tag.modulate.r < available_tag.modulate.r
+		and available_tag.modulate == Color.WHITE,
+		"unavailable Peddler names remain readable against dark floorboards without looking buyable")
 	orphaned.queue_free()
 
 	# Event exits must use the floor arrow even if their prose talks about coins,
