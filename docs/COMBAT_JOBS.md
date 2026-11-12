@@ -83,6 +83,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 late play pass): Mid-fight debug sewing refreshes the existing battle and single patch badge without replacing the mounted stage, turn or receipt queue. Live Red Lint appeared on Warden's Pot Helm Command and applied BLEED 2 beside its native MARK 2 against Spool Stalker; the focused cheat regression passes. Job remains PART until the owner decides how to migrate legacy gold two-effect sockets.
 
+(2026-11-12 23:12 web play pass): Inspected title, party, Wren intro/room, floor-1 corridor, floor-10 wicker tunnel, Peddler and Patch Stall purchases, Sewing Circle, camp, Unpicker, Needle Gate choice, floor-1 normal four-foe fight, floor-6 elite and floor-12 boss, victory and defeat. Debug-sewed Red Lint onto Pot Helm Command during combat; its one occupied socket remained visible on later floors and the mounted turn advanced after a real command. Committed real abilities in normal, elite and boss fights, with the normal strike photographed during its held spotlight; no visible FRAY words or Wren hand actions appeared. Job stays PART because gold's protected two-effect rule remains unresolved; no battle balance or protected test was changed.
+
 Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
