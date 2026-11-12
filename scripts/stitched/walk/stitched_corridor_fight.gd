@@ -593,14 +593,15 @@ static func _plain(text: String) -> String:
 
 ## The rarely needed choices live behind More: stepping, passing and fleeing.
 func _build_more() -> void:
-	more_panel = _felt(Rect2(880, 312, 384, 270))
+	# Sits on the wall above the figures so it never hides a foe or its health bar.
+	more_panel = _felt(Rect2(880, 120, 384, 160))
 	more_panel.name = "MorePanel"
 	more_panel.visible = false
 	add_child(more_panel)
 	more_grid = GridContainer.new()
 	more_grid.columns = 2
 	more_grid.position = Vector2(22, 22)
-	more_grid.size = Vector2(340, 226)
+	more_grid.size = Vector2(340, 116)
 	more_grid.add_theme_constant_override("h_separation", 8)
 	more_grid.add_theme_constant_override("v_separation", 6)
 	more_panel.add_child(more_grid)
