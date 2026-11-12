@@ -226,6 +226,18 @@ func _run() -> void:
 	_check(escaped.size() == 1, "Up activates the Moth's exit, even when the other choices are disabled")
 	moth.queue_free()
 
+	# An undrawn named event prop must borrow a matching figure rather than the
+	# unrelated generic keeper. The authored prop wins once it is imported.
+	var parade := StitchedCorridorVisit.new()
+	root.add_child(parade)
+	parade.present("walls", "bright", "The Cinder Shield Parade", "A guard braces a shield.",
+		["prop_v3_warden_cinder_shield_parade", "stop_event"])
+	var parade_art := StitchedCorridorStage.art("prop_v3_warden_cinder_shield_parade")
+	var parade_expected := parade_art if parade_art != null else StitchedCorridorStage.hero_art("warden")
+	_check(parade_expected != null and parade._keeper == parade_expected,
+		"the cinder parade uses its authored prop or a pot-helmeted Warden, never the hooded keeper")
+	parade.queue_free()
+
 	# The junction tells only the way, never what waits down it.
 	for side in ["left", "ahead", "right"]:
 		var words := StitchedCorridorJunction.describe(side)

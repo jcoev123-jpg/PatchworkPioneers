@@ -135,6 +135,10 @@ func present(area_name: String, band_name: String, title: String, words: String,
 	_keeper = null
 	for key in keeper_keys:
 		_keeper = StitchedCorridorStage.art(str(key))
+		# The parade needs a shield-bearing guard, not the hooded generic event keeper.
+		# The dedicated parade picture takes priority whenever it arrives.
+		if _keeper == null and str(key) == "prop_v3_warden_cinder_shield_parade":
+			_keeper = StitchedCorridorStage.hero_art("warden")
 		if _keeper != null:
 			break
 	var glow := OmniLight3D.new()
