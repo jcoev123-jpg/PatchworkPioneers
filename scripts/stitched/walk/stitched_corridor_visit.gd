@@ -537,6 +537,8 @@ func _place_items() -> void:
 			var tag := _label("WareName", 14, BONE)
 			tag.text = str(groups[number].words).split(" · ")[0]
 			tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			# A back-row name must paint over the front-row ware in front of it, not hide behind it.
+			tag.z_index = 1
 			var tag_y := seen.size.y - 6.0
 			# A long event choice may wrap to two lines. Keep its lower line
 			# above the permanent story instead of painting both over each other.
