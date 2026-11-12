@@ -811,6 +811,8 @@ func _clear_keyboard_target() -> void:
 func _target_hint() -> void:
 	if _keyboard_targets.is_empty() or more_panel.visible:
 		return
+	# The ability card sits over the front foes: once a target is being picked it steps aside.
+	_hide_ability_card()
 	if _keyboard_target.is_empty():
 		log_label.text = "Arrows choose a target, then Enter / Space confirms."
 		return
