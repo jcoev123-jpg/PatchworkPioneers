@@ -4703,8 +4703,9 @@ func _present_stitched_run() -> void:
 		headline.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		headline.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_stitched_run_caption(terminal_panel,
-			"%d FLOORS REACHED  /  %d SEALED RECEIPT%s" % [
-				session.map.get_current_floor(), session.receipts.size(), "" if session.receipts.size() == 1 else "S"], 18)
+			"%d FLOOR%s REACHED  /  %d SEALED RECEIPT%s" % [
+				session.map.get_current_floor(), "" if session.map.get_current_floor() == 1 else "S",
+				session.receipts.size(), "" if session.receipts.size() == 1 else "S"], 18)
 		_stitched_run_caption(terminal_panel,
 			("All four doll records remain above with their exact HP, fray and losses. The ledger is sealed." if _stitched_fray_words_shown() else "All four doll records remain above with their exact HP and losses. The ledger is sealed."), 18)
 		if not opened.is_empty():
