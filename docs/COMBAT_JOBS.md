@@ -119,7 +119,9 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 07:20 web play pass): In a live normal fight, debug-sewn Red Lint occupied Warden's only visible Pot Helm Command slot; using it applied BLEED 2 and native MARK 2 to Spoolback Hound. Rechecked normal, floor-6 elite and floor-12 boss layouts, a fourth-foe summon, 0-HP Hanging, floor-1 thread tug and floor-10 Walk, visits, six event choices, victory and defeat. No FRAY meter or Wren hand controls appeared. Job 4 remains PART: `socket_limit()` still admits two patches when gold is present; the read-only `stitched_s14_rules_gate_test` and the live Sewing Circle regression both explicitly assert that legacy capacity, so changing it alone would break required tests. An owner-approved rules/save/test migration is needed; no gameplay code was changed.
 
-## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
+(2026-11-13 08:28 web play pass): Title, picker, Wren intro/room, save and Continue, first-person floor-1/6/10 walks and thread tug, Peddler tonic, Sewing Circle, camp, Unpicker, Patch Stall vest, Needle Gate and two other events, normal/elite/boss turns and both ending recaps were exercised. Live Pot Helm Command with Red Lint applied native MARK 2 and sewn BLEED 2 to Button Guard; one occupied socket showed on the button. Debug patch setup now also accepts `pot_helm_command` without the old catalog's body-slot prefix, with focused regression and live checks. No visible FRAY or Wren hands. Job 4 remains PART: the owner-pending saved gold double-effect migration is not attempted here.
+
+## Job 5:information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
 

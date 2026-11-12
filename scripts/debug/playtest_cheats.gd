@@ -540,7 +540,9 @@ func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
 		if bool(hero.lost):
 			continue
 		for ability in StitchedS14Abilities.kits().get(str(hero.id), {}).values():
-			if str(ability.id).to_lower() == query or str(ability.name).to_lower() == query:
+			var name_key := str(ability.name).to_lower()
+			if str(ability.id).to_lower() == query or name_key == query \
+					or name_key.replace(" ", "_") == query:
 				if not owner.is_empty():
 					return "failed: ability name is ambiguous; use its id"
 				owner = str(hero.id)

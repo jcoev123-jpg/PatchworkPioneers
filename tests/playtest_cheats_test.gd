@@ -410,6 +410,16 @@ func _run() -> void:
 	_check(not settled_lost.is_empty() and bool(settled_lost.lost) and int(settled_lost.hp) == 0
 		and settled_lost.parts.is_empty() and session.is_consistent(),
 		"battle settlement preserves the lost doll after a debug heal")
+	# The visible signature name can be pasted as a slug without knowing the
+	# internal legacy body-slot prefix in its catalog id.
+	cheats.run("run 102")
+	session = app.stitched_run_session
+	said = cheats.run("patch pot_helm_command cotton_red_lint")
+	_check(said == "Red Lint sewn onto warden_head_pot_helm_command"
+		and session._battle_sockets().get("warden", {}).get("warden_head_pot_helm_command", []) == ["cotton_red_lint"]
+		and session.is_consistent(), "patch accepts the visible signature's underscore slug")
+	_check(cheats.run("patch nonexistent_command cotton_red_lint").begins_with("failed:")
+		and session.is_consistent(), "patch still rejects unknown signature slugs")
 	_finish()
 
 
