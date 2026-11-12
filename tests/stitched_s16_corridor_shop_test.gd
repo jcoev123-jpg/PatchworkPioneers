@@ -385,8 +385,10 @@ func _run() -> void:
 		"right-hand Event choice stays clear of route map, companion choice and bottom story (right %s, left %s, y %s)" % [right_tag.get_global_rect(), left_tag.get_global_rect(), StitchedCorridorVisit.STORY_RECT.position.y])
 	_check(offer_buttons[1].text == offer_actions[1].text,
 		"moving the long floor caption preserves its full choice text")
-	_check(right_tag.modulate == StitchedCorridorVisit.DIM and left_tag.modulate == Color.WHITE,
-		"unaffordable event choices have dim captions, while reachable choices stay fully lit")
+	_check(right_tag.modulate == StitchedCorridorVisit.EVENT_CAPTION_DIM
+		and right_tag.modulate.r < left_tag.modulate.r
+		and left_tag.modulate == Color.WHITE and offer_buttons[1].disabled,
+		"unaffordable event captions remain visibly dimmer but readable, while the choice stays disabled")
 	_check(left_tag.text == "Collect the spilled glowing thread"
 		and right_tag.text == "Polish the parade's spoon joints"
 		and left_tag.get_theme_font_size("font_size") == 17
@@ -426,6 +428,10 @@ func _run() -> void:
 	_check(not gate_left.get_global_rect().intersects(gate_right.get_global_rect())
 		and gate_right.get_global_rect().end.x <= 750.0,
 		"Needle Gate's two trade captions do not overlap each other or the map")
+	_check(gate_left.modulate.r >= 0.7 and gate_left.modulate.r < 1.0
+		and gate_right.modulate.r >= 0.7 and gate_right.modulate.r < 1.0
+		and gate_buttons[0].disabled and gate_buttons[2].disabled,
+		"unaffordable Event captions remain legible on the dark floor without enabling trades")
 	needle_gate.queue_free()
 
 	# Some road events have three genuine trades, with no leave arrow. Their
