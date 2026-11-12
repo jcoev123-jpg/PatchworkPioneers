@@ -175,12 +175,14 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	battle._units[hero_id]["hanging"] = true
 	fight.refresh()
 	var fallen: Sprite3D = fight.stage.figure_nodes["hero_1"]
-	_check(fallen.visible and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED
+	_check(fallen.visible and fallen.billboard == BaseMaterial3D.BILLBOARD_FIXED_Y
+		and is_equal_approx(fallen.rotation.z, -PI / 2.0) and fallen.position.y < 0.4
 		and fight.plates["hero_1"].get_node("HealthText").text == "0/%d" % int(saved_hero.max_hp)
 		and fight.plates["hero_1"].get_node("StatusRow").visible,
-		"a zero-HP Hanging doll lies on the floor; HP stays numeric and its status icon appears")
-	_check(fight.stage.screen_rect("hero_1").size.x > 0.0,
-		"the fallen doll still projects into the fight")
+		"a zero-HP Hanging doll stays low and camera-facing; HP and status remain visible")
+	var fallen_rect := fight.stage.screen_rect("hero_1")
+	_check(fallen_rect.size.x > 0.0 and fallen_rect.size.y > 90.0,
+		"the fallen doll remains a readable figure in the side-view fight")
 	var fallen_frames: Array = fallen.get_meta("idle_frames", [])
 	_check(fallen_frames.size() > 1, "a Hanging doll keeps its animated idle strip")
 	if fallen_frames.size() > 1:
@@ -193,8 +195,9 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 		fight.stage._idle_clock = 1.0 / rate
 		fight.stage._idle_step(fallen, false)
 		_check(first_frame in fallen_frames and fallen.texture in fallen_frames
-			and first_frame != fallen.texture and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED,
-			"the fallen doll moves through its own idle frames without standing up")
+			and first_frame != fallen.texture and fallen.billboard == BaseMaterial3D.BILLBOARD_FIXED_Y
+			and is_equal_approx(fallen.rotation.z, -PI / 2.0),
+			"the camera-facing fallen doll keeps its idle frames and low pose")
 		fight.stage._idle_clock = old_clock
 	battle._units[hero_id] = saved_hero.duplicate(true)
 	fight.refresh()

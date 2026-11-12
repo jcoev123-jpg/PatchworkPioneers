@@ -1031,14 +1031,17 @@ func refresh() -> void:
 				if _beats == null or not _beats.is_running() or figure == null \
 						or str(figure.get_meta("fight_unit", "")) != str(unit.id):
 					if side == "hero" and bool(unit.get("hanging", false)):
-						# Hanging means zero HP with a torn limb, not an upright idle doll.
-						# Lie on the floor but keep the doll's idle loop moving in combat.
+						# The fight camera looks along the corridor's side. A true floor
+						# plane is edge-on and vanishes; rotate the facing paper puppet
+						# onto the floor in the camera plane instead, keeping its idle loop.
 						var art := _figure_art(str(unit.id))
-						figure = stage.place_flat(key, art, where, HERO_HEIGHT * 0.82, -PI / 2.0)
-						figure.set_meta("idle_frames", stage.idle_frames(art))
+						figure = stage.place(key, art, where, HERO_HEIGHT * 0.82)
+						figure.rotation.z = -PI / 2.0
+						figure.position.y = 0.24
 					else:
 						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))
+				figure.shaded = true
 				figure.flip_h = battle_flip(side, str(unit.id))
 			elif not heap.is_empty():
 				var pile := stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT)
