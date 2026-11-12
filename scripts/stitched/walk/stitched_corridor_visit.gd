@@ -558,6 +558,10 @@ func _place_items() -> void:
 			# A back-row name must paint over the front-row ware in front of it, not hide behind it.
 			tag.z_index = 1
 			var tag_y := seen.size.y - 6.0
+			# The rear Fresh stuffing caption grazes the top of the tall front-row
+			# patch frame; lift its words only, without moving wares or hit targets.
+			if heading.text == "Peddler" and str(groups[number].key).get_slice("|", 0) == "buy_fresh_stuffing":
+				tag_y -= 12.0
 			# A long event choice may wrap to two lines. Keep its lower line
 			# above the permanent story instead of painting both over each other.
 			if tag.text.length() > 32:
