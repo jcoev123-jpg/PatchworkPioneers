@@ -443,7 +443,8 @@ func _build_top() -> void:
 	move_banner.name = "MoveName"
 	move_banner.visible = false
 	add_child(move_banner)
-	outcome_label = _label("", Rect2(240, 250, 800, 90), 64, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+	# Sits under the kill words and damage numbers that float over the foes, above the health plates.
+	outcome_label = _label("", Rect2(240, 366, 800, 80), 64, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
 	outcome_label.name = "Outcome"
 	outcome_label.visible = false
 	add_child(outcome_label)
