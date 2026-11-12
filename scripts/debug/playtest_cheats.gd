@@ -314,7 +314,10 @@ func _finish_cheat_battle(session: StitchedRunSession, message: String) -> Strin
 	return _done(session, message)
 
 
+
 func _defeat(session: StitchedRunSession) -> String:
+	if session.phase == "battle" and session.battle != null and session.battle.is_over():
+		return "failed: the battle has already ended"
 	if session.phase != "battle" or session.battle == null:
 		var opened := _fight(session, "Fight")
 		if session.phase != "battle":
@@ -330,7 +333,7 @@ func _defeat(session: StitchedRunSession) -> String:
 
 
 func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
-	if session.phase != "battle" or session.battle == null or words.size() < 3:
+	if session.phase != "battle" or session.battle == null or session.battle.is_over() or words.size() < 3:
 		return "failed: hp needs a running battle, WHO and integer N"
 	if not words[words.size() - 1].is_valid_int():
 		return "failed: hp needs a running battle, WHO and integer N"
@@ -355,7 +358,7 @@ func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
 
 
 func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
-	if session.phase != "battle" or session.battle == null or words.size() < 4:
+	if session.phase != "battle" or session.battle == null or session.battle.is_over() or words.size() < 4:
 		return "failed: status needs a running battle, WHO KIND N"
 	if not words[words.size() - 1].is_valid_int():
 		return "failed: status needs a running battle, WHO KIND N"

@@ -59,6 +59,17 @@ func _run() -> void:
 			and is_instance_valid(app.stitched_run_battle) and app.stitched_run_battle.battle == session.battle,
 			"fight %s: a mounted battle (%s)" % [kind, said])
 	cheats.run("fight elite")
+	# The held victory beat can precede settlement. Cheats must not corrupt a
+	# terminal battle's heroes, HP, statuses or outcome in that interval.
+	var terminal_battle: StitchedRules = session.battle
+	terminal_battle._outcome = "victory"
+	var terminal_state := terminal_battle.state_snapshot()
+	for terminal_command in ["defeat", "hp h1 0", "status h1 stun 1"]:
+		var refusal: String = cheats.run(terminal_command)
+		_check(refusal.begins_with("failed:") and terminal_battle.state_snapshot() == terminal_state
+			and session.battle == terminal_battle and session.phase == "battle",
+			"terminal battle rejects %s without changing a finished snapshot" % terminal_command)
+	terminal_battle._outcome = "ongoing"
 	var gold_before := session.gold
 	var before_foes := session.battle._living_foes().size()
 	said = cheats.run("summon")

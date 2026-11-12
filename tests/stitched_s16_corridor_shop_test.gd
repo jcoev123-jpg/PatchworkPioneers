@@ -74,7 +74,12 @@ func _run() -> void:
 		_check(figure != null, "every thing lies in the corridor")
 		var seen := visit.floor_buttons[number].get_rect()
 		_check(seen.size.x >= 40 and Rect2(0, 0, 1280, 720).intersects(seen), "every floor button covers its thing on screen")
-	_check(visit.floor_buttons[0].get_theme_stylebox("normal") is StyleBoxEmpty and visit.floor_buttons[0].get_theme_color("font_color").a == 0.0, "a floor button shows only the thing, never a framed label")
+	_check(visit.floor_buttons[0].get_theme_stylebox("normal") is StyleBoxEmpty and visit.floor_buttons[0].get_theme_color("font_color").a == 0.0, "a floor button has no framed text of its own")
+	_check(visit.floor_buttons[0].get_node("WareName").text == "Candle stub"
+		and visit.floor_buttons[1].get_node("WareName").text == "Bandage"
+		and visit.floor_buttons[2].get_node("WareName").text == "Mend"
+		and visit.floor_buttons[3].get_node_or_null("WareName") == null,
+		"floor labels name each ware without a visible price or an extra exit label")
 	_check(visit.floor_buttons[0].has_focus(), "the first thing on the floor has focus")
 	visit.floor_buttons[0].mouse_entered.emit()
 	_check(visit.story.text == "Candle stub · 5 gold", "the words show on the thing looked at")
