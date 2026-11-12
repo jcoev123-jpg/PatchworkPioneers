@@ -71,6 +71,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 11:00 play pass): Added debug-only patch/summon/status/hp/defeat setup helpers and regression checks. Live normal fight: Red Lint appeared as one occupied badge on Warden's Pot Helm Command; the command then applied Mark and Bleed to Crochet Hook Harrier. The summoned fourth Ragling carried the requested Bleed and HP. Job stays PART: the protected two-effect gold rule is unchanged, and the required one-patch migration remains a design decision.
 
+(2026-11-12 15:31 play pass): Rechecked Red Lint on Pot Helm Command in a live floor-1 elite fight: one occupied ability badge was present and using the move applied both its native Mark and the sewn Bleed 2 to Zipper Hauler. The same socket remained visible in the floor-12 boss fight. Debug summon/status/hp, normal/elite/boss transitions, victory and defeat also mounted correctly; focused cheat, combat, continuation and S14 patch tests pass. Job stays PART: the gold two-effect rules/test contract still needs an owner-approved decision.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
