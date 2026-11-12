@@ -137,14 +137,41 @@ func run(command: String) -> String:
 		"event":
 			return _visit(session, "Event", arg)
 		"heal":
+			if session.phase == "battle" and session.battle != null and session.battle.is_over():
+				return "failed: the battle has already ended"
+			var healed_results: Array = []
 			for hero in session.heroes:
 				if hero.get("lost", false):
 					continue
+				# A live battle owns separate unit dictionaries. Heal them too, or a
+				# Hanging doll remains at 0 HP and settlement overwrites this cheat.
+				if session.phase == "battle" and session.battle != null:
+					var unit: Dictionary = session.battle._units.get(str(hero.id), {})
+					if not unit.is_empty() and not bool(unit.get("lost", false)):
+						var before_hp := int(unit.hp)
+						for slot in unit.parts:
+							if unit.parts[slot] is Dictionary:
+								unit.parts[slot].torn = false
+						session.battle._recompute_stats(unit)
+						unit.hp = unit.max_hp
+						unit.hanging = false
+						unit.death_hits = 0
+						unit.fray = 0
+						var gained := int(unit.hp) - before_hp
+						if gained > 0:
+							healed_results.append({"target": str(unit.id), "target_side": "hero",
+								"hit": true, "damage": 0, "statuses": [
+									{"status": "heal", "amount": gained, "on": str(unit.id)}]})
+						hero.max_hp = unit.max_hp
+						hero.parts = unit.parts.duplicate(true)
 				hero.hp = hero.max_hp
 				hero["fray"] = 0
 				for slot in hero.parts:
 					if hero.parts[slot] is Dictionary:
 						hero.parts[slot].torn = false
+			if session.phase == "battle"and session.battle != null:
+				return _record_cheat_receipt(session, "party healed",
+					{"ok": true, "action": "cheat_heal", "results": healed_results})
 			return _done(session, "party healed")
 		"candle":
 			session.candle = clampi(number, 0, 100)

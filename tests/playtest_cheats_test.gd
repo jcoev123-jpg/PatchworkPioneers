@@ -68,7 +68,7 @@ func _run() -> void:
 	var terminal_battle: StitchedRules = session.battle
 	terminal_battle._outcome = "victory"
 	var terminal_state := terminal_battle.state_snapshot()
-	for terminal_command in ["defeat", "hp h1 0", "status h1 stun 1"]:
+	for terminal_command in ["defeat", "hp h1 0", "status h1 stun 1", "heal"]:
 		var refusal: String = cheats.run(terminal_command)
 		_check(refusal.begins_with("failed:") and terminal_battle.state_snapshot() == terminal_state
 			and session.battle == terminal_battle and session.phase == "battle",
@@ -137,6 +137,30 @@ func _run() -> void:
 		"patch: changing a socket retains the mounted fight, its turn and held receipts")
 	_check(cheats.run("status unknown rot 2").begins_with("failed:") and session.is_consistent(),
 		"invalid figure refuses without damaging the session")
+	# Heal during battle must cure the actual 0-HP Hanging doll, not just the
+	# session's pre-battle hero snapshot, and retain the held fight/receipt.
+	cheats.run("hp h2 0")
+	var hanging: Dictionary = session.battle.get_unit("seamstress")
+	_check(int(hanging.hp) == 0 and bool(hanging.hanging),
+		"battle heal setup: a doll is Hanging at 0 HP")
+	var heal_receipts_before := mounted_view.receipts.size()
+	var heal_actor := session.battle.current_actor_id()
+	said = cheats.run("heal")
+	var recovered: Dictionary = session.battle.get_unit("seamstress")
+	_check(said == "party healed" and int(recovered.hp) == int(recovered.max_hp)
+		and not bool(recovered.hanging) and session.heroes[1].hp == recovered.hp
+		and session.is_consistent(), "heal repairs the live Hanging hero and session (%s)" % said)
+	_check(app.stitched_run_battle == mounted_view
+		and mounted_view.receipts.size() == heal_receipts_before + 1
+		and str(mounted_view.last_receipt.get("action", "")) == "cheat_heal"
+		and session.battle.current_actor_id() == heal_actor
+		and mounted_fight._float_events(mounted_view.last_receipt).has("hero_2"),
+		"battle heal preserves the mounted turn and emits a true ally healing cue")
+	for hero in session.battle.get_heroes():
+		if bool(hero.lost):
+			continue
+		_check(int(hero.hp) == int(hero.max_hp) and not bool(hero.hanging),
+			"heal restores each living combat hero to full health")
 	said = cheats.run("win")
 	_check(said == "battle won" and session.phase == "map" and session.gold > gold_before and session.is_consistent(),
 		"win: elite settles to the map with gold (%s)" % said)
