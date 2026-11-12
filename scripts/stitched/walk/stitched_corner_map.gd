@@ -79,6 +79,14 @@ func _fit_back() -> void:
 	back.size = size + FELT_RIM.size
 
 
+## A long title shrinks to fit the felt instead of running over its right edge.
+func _fit_title() -> void:
+	var title_size := 17
+	while title_size > 11 and FONT.get_string_size(title_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, title_size).x + 8.0 > title_label.size.x:
+		title_size -= 1
+	title_label.add_theme_font_size_override("font_size", title_size)
+
+
 func _label(rect: Rect2, font_size: int, color: Color, parent: Control = self) -> Label:
 	var label := Label.new()
 	label.position = rect.position
@@ -122,6 +130,7 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 	_stamp = stamp
 	_map_title = "THE STITCHED ROAD · FLOOR %02d OF %d" % [clampi(floor_number, 1, FLOOR_COUNT), FLOOR_COUNT]
 	title_label.text = _map_title
+	_fit_title()
 	for child in map_holder.get_children():
 		child.queue_free()
 	var ordered: Array = records.duplicate()
@@ -221,6 +230,7 @@ func present_floor(floor_number: int, records: Array, visited: Array, current_id
 func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 	_foe_mode = true
 	title_label.text = foe_name
+	_fit_title()
 	foe_body.text = "\n".join(lines)
 	# Expand upward only for dense foes: keep the body at a legible font
 	# before sacrificing text size to the fixed-height map footprint.
@@ -275,5 +285,6 @@ func show_map() -> void:
 	_fit_back()
 	foe_body.size.y = size.y - 34.0
 	title_label.text = _map_title
+	_fit_title()
 	map_holder.visible = true
 	foe_body.visible = false
