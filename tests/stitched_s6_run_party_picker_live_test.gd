@@ -252,8 +252,8 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 			if not entry is Dictionary or not sides.has(entry.get("target_side", null)):
 				_check(false, context + ": complete authored " + slot + " entry for " + id)
 				continue
-			var line := "%s — %s · %s · %s%s" % [
-				slot.capitalize(), str(entry.get("name", "")), sides[entry["target_side"]],
+			var line := "%s · %s · %s%s" % [
+				str(entry.get("name", "")), sides[entry["target_side"]],
 				_source_effect_phrase(entry), _source_target_reach(entry)]
 			if four_admitted and id in admitted_ids:
 				var rank: int = admitted_ids.find(id) + 1
@@ -301,37 +301,37 @@ func _check_hints(picker: StitchedRunPartyPicker, originals: Dictionary, context
 	_check((launchable + blocked == StitchedPartyAdmission.RANK_COUNT * StitchedParts.SLOTS.size()
 		and launchable > 0) if four_admitted else (launchable == 0 and blocked == 0),
 		context + ": all sixteen selected slot fits are checked (or none for incomplete picks)")
-	_check(picker.tiles["warden"].tooltip_text.contains("Head — Pot Helm Command · Foe")
-		and picker.tiles["warden"].tooltip_text.contains("Arms — Shield Catch · Ally")
-		and picker.tiles["warden"].tooltip_text.contains("Torso — Iron Challenge · Foe")
-		and picker.tiles["warden"].tooltip_text.contains("Legs — Rim Toss · Foe"),
+	_check(picker.tiles["warden"].tooltip_text.contains("Pot Helm Command · Foe")
+		and picker.tiles["warden"].tooltip_text.contains("Shield Catch · Ally")
+		and picker.tiles["warden"].tooltip_text.contains("Iron Challenge · Foe")
+		and picker.tiles["warden"].tooltip_text.contains("Rim Toss · Foe"),
 		context + ": Warden's four contrasting authored move names are legible")
-	_check(picker.tiles["seamstress"].tooltip_text.contains("Head — Mending Knot · Ally")
-		and picker.tiles["seamstress"].tooltip_text.contains("Arms — Needle Prick · Foe")
-		and picker.tiles["seamstress"].tooltip_text.contains("Torso — Shielding Hem · Ally")
-		and picker.tiles["seamstress"].tooltip_text.contains("Legs — Tether Spools · Foe"),
+	_check(picker.tiles["seamstress"].tooltip_text.contains("Mending Knot · Ally")
+		and picker.tiles["seamstress"].tooltip_text.contains("Needle Prick · Foe")
+		and picker.tiles["seamstress"].tooltip_text.contains("Shielding Hem · Ally")
+		and picker.tiles["seamstress"].tooltip_text.contains("Tether Spools · Foe"),
 		context + ": Seamstress's ally and foe moves are distinguished")
-	_check(picker.tiles["tinker"].tooltip_text.contains("Torso — Casing Ward · Self"),
+	_check(picker.tiles["tinker"].tooltip_text.contains("Casing Ward · Self"),
 		context + ": Tinker's self-only move is labelled Self")
-	_check(picker.tiles["warden"].tooltip_text.contains("Head — Pot Helm Command · Foe · Can mark")
-		and picker.tiles["warden"].tooltip_text.contains("Arms — Shield Catch · Ally · Can guard")
-		and picker.tiles["warden"].tooltip_text.contains("Torso — Iron Challenge · Foe · Can strike and weaken")
-		and picker.tiles["warden"].tooltip_text.contains("Legs — Rim Toss · Foe · Can strike and push back"),
+	_check(picker.tiles["warden"].tooltip_text.contains("Pot Helm Command · Foe · Can mark")
+		and picker.tiles["warden"].tooltip_text.contains("Shield Catch · Ally · Can guard")
+		and picker.tiles["warden"].tooltip_text.contains("Iron Challenge · Foe · Can strike and weaken")
+		and picker.tiles["warden"].tooltip_text.contains("Rim Toss · Foe · Can strike and push back"),
 		context + ": Warden's mark, guard, weak, push are distinct")
-	_check(picker.tiles["seamstress"].tooltip_text.contains("Head — Mending Knot · Ally · Can mend")
-		and picker.tiles["seamstress"].tooltip_text.contains("Arms — Needle Prick · Foe · Can strike and bleed")
-		and picker.tiles["seamstress"].tooltip_text.contains("Torso — Shielding Hem · Ally · Can guard")
-		and picker.tiles["seamstress"].tooltip_text.contains("Legs — Tether Spools · Foe · Can tangle"),
+	_check(picker.tiles["seamstress"].tooltip_text.contains("Mending Knot · Ally · Can mend")
+		and picker.tiles["seamstress"].tooltip_text.contains("Needle Prick · Foe · Can strike and bleed")
+		and picker.tiles["seamstress"].tooltip_text.contains("Shielding Hem · Ally · Can guard")
+		and picker.tiles["seamstress"].tooltip_text.contains("Tether Spools · Foe · Can tangle"),
 		context + ": Seamstress's ally heal/guard and foe bleed/tangle are distinct")
-	_check(picker.tiles["tinker"].tooltip_text.contains("Arms — Scrap Bomb · Foe · Can strike and expose several eligible foes")
-		and picker.tiles["tinker"].tooltip_text.contains("Torso — Casing Ward · Self · Can return harm")
-		and picker.tiles["tinker"].tooltip_text.contains("Legs — Tune Up · Ally · Can mend"),
+	_check(picker.tiles["tinker"].tooltip_text.contains("Scrap Bomb · Foe · Can strike and expose several eligible foes")
+		and picker.tiles["tinker"].tooltip_text.contains("Casing Ward · Self · Can return harm")
+		and picker.tiles["tinker"].tooltip_text.contains("Tune Up · Ally · Can mend"),
 		context + ": Tinker's multi-foe Exposed, self Thorns and ally Heal are distinct")
 	_check(picker.tiles["lantern_monk"].tooltip_text.contains(
-		"Torso — Lamplight Wash · Ally · Can mend several eligible allies"),
+		"Lamplight Wash · Ally · Can mend several eligible allies"),
 		context + ": Lantern Monk can mend several eligible allies, not everyone")
-	_check(picker.tiles["rag_duelist"].tooltip_text.contains("Torso — Feint Stitch · Self · Can evade")
-		and picker.tiles["button_golem"].tooltip_text.contains("Head — Button Brow · Foe · Can stun"),
+	_check(picker.tiles["rag_duelist"].tooltip_text.contains("Feint Stitch · Self · Can evade")
+		and picker.tiles["button_golem"].tooltip_text.contains("Button Brow · Foe · Can stun"),
 		context + ": Rag Duelist's duration Dodge and Button Golem's foe Stun are native")
 	if marked_id == "warden":
 		_check(picker.tiles["warden"].tooltip_text.count("Needs another rank") == StitchedParts.SLOTS.size()
@@ -371,10 +371,12 @@ func _target_reach_fixtures() -> void:
 			if verified.get("ok") != true or not sides.has(entry.get("target_side")):
 				continue
 			var normalized: Dictionary = verified["ability"]
-			var expected := "%s — %s · %s · %s%s" % [
-				slot.capitalize(), normalized["name"], sides[normalized["target_side"]],
+			var expected := "%s · %s · %s%s" % [
+				normalized["name"], sides[normalized["target_side"]],
 				_source_effect_phrase(normalized), _source_target_reach(normalized)]
 			_check(index < lines.size() and lines[index] == expected
+				and lines[index].begins_with(str(normalized["name"]) + " · ")
+				and not lines[index].contains(slot.capitalize() + " — ")
 				and (lines[index].contains(" · This doll only") if normalized["target_side"] == "self"
 					else lines[index].contains(" · May reach "))
 				and not lines[index].contains("From this rank"),
@@ -461,7 +463,7 @@ func _invalid_hints() -> void:
 	altered["warden"]["head"]["multi"] = true
 	var altered_text := StitchedPartyKitHints.tooltip("warden", altered)
 	_check(altered_text.split("\n").size() == StitchedParts.SLOTS.size()
-		and altered_text.begins_with("Head — Pot Helm Command · Foe · Can strike and blind several eligible foes")
+		and altered_text.begins_with("Pot Helm Command · Foe · Can strike and blind several eligible foes")
 		and not altered_text.contains("Can mark")
 		and StitchedPartyKitHints.tooltip("warden", source).contains("Can mark"),
 		"a valid detached source derives damage, effect and multi without stale move-specific prose")

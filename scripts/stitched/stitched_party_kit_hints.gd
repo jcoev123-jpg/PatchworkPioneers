@@ -36,7 +36,7 @@ static func tooltip(hero_id: String, kits_source: Variant = null) -> String:
 			return ""
 		seen_ids[id] = true
 		seen_names[name] = true
-		lines.append("%s — %s · %s · %s%s" % [slot.capitalize(), name,
+		lines.append("%s · %s · %s%s" % [name,
 			SIDE_LABELS[side], _effect_summary(record), _target_reach(record)])
 	return "\n".join(lines)
 
