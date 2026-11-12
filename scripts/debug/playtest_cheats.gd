@@ -147,29 +147,32 @@ func run(command: String) -> String:
 				# Hanging doll remains at 0 HP and settlement overwrites this cheat.
 				if session.phase == "battle" and session.battle != null:
 					var unit: Dictionary = session.battle._units.get(str(hero.id), {})
-					if not unit.is_empty() and not bool(unit.get("lost", false)):
-						var before_hp := int(unit.hp)
-						for slot in unit.parts:
-							if unit.parts[slot] is Dictionary:
-								unit.parts[slot].torn = false
-						session.battle._recompute_stats(unit)
-						unit.hp = unit.max_hp
-						unit.hanging = false
-						unit.death_hits = 0
-						unit.fray = 0
-						var gained := int(unit.hp) - before_hp
-						if gained > 0:
-							healed_results.append({"target": str(unit.id), "target_side": "hero",
-								"hit": true, "damage": 0, "statuses": [
-									{"status": "heal", "amount": gained, "on": str(unit.id)}]})
-						hero.max_hp = unit.max_hp
-						hero.parts = unit.parts.duplicate(true)
+					# A LOST combatant is gone for good even though the session's
+					# pre-fight roster can still say it is present until settlement.
+					if unit.is_empty() or bool(unit.get("lost", false)):
+						continue
+					var before_hp := int(unit.hp)
+					for slot in unit.parts:
+						if unit.parts[slot] is Dictionary:
+							unit.parts[slot].torn = false
+					session.battle._recompute_stats(unit)
+					unit.hp = unit.max_hp
+					unit.hanging = false
+					unit.death_hits = 0
+					unit.fray = 0
+					var gained := int(unit.hp) - before_hp
+					if gained > 0:
+						healed_results.append({"target": str(unit.id), "target_side": "hero",
+							"hit": true, "damage": 0, "statuses": [
+								{"status": "heal", "amount": gained, "on": str(unit.id)}]})
+					hero.max_hp = unit.max_hp
+					hero.parts = unit.parts.duplicate(true)
 				hero.hp = hero.max_hp
 				hero["fray"] = 0
 				for slot in hero.parts:
 					if hero.parts[slot] is Dictionary:
 						hero.parts[slot].torn = false
-			if session.phase == "battle"and session.battle != null:
+			if session.phase == "battle" and session.battle != null:
 				return _record_cheat_receipt(session, "party healed",
 					{"ok": true, "action": "cheat_heal", "results": healed_results})
 			return _done(session, "party healed")

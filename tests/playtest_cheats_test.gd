@@ -356,6 +356,48 @@ func _run() -> void:
 	_check(floor_caption.contains("1 FLOOR REACHED") and not floor_caption.contains("1 FLOORS REACHED"),
 		"first-floor defeat recap uses singular FLOOR")
 	_check(not visible_fray, "disabled fray never appears in the terminal recap")
+
+	# The session roster lags combat losses until settlement. A debug heal must
+	# neither revive a LOST doll nor change its pre-fight record.
+	cheats.run("run 101")
+	cheats.run("fight normal")
+	session = app.stitched_run_session
+	var lost_unit: Dictionary = session.battle._units["seamstress"]
+	session.battle._lose_hero(lost_unit)
+	session.heroes[1].hp = 1
+	var lost_record: Dictionary = session.heroes[1].duplicate(true)
+	var warden: Dictionary = session.battle._units["warden"]
+	warden.parts.arms.torn = true
+	session.battle._recompute_stats(warden)
+	warden.hp = 2
+	session.battle._battle_finished()
+	session._seal()
+	var lost_snapshot := session.battle.get_unit("seamstress")
+	var heal_rng := session.battle.rng_state()
+	var heal_turn := session.battle.current_actor_id()
+	said = cheats.run("heal")
+	var heal_results: Array = app.stitched_run_battle.last_receipt.get("results", [])
+	var includes_lost := false
+	for entry in heal_results:
+		if str(entry.get("target", "")) == "seamstress":
+			includes_lost = true
+	_check(said == "party healed" and session.battle.get_unit("seamstress") == lost_snapshot
+		and session.heroes[1] == lost_record and not includes_lost,
+		"heal never revives or reports a permanently LOST combat doll")
+	_check(not bool(warden.parts.arms.torn) and int(warden.hp) == int(warden.max_hp)
+		and session.heroes[0].parts == warden.parts
+		and int(session.heroes[0].max_hp) == int(warden.max_hp)
+		and session.battle.rng_state() == heal_rng and session.battle.current_actor_id() == heal_turn
+		and session.is_consistent(),
+		"heal also mends torn living gear, synchronizes its stats, and spends no turn or RNG")
+	cheats.run("win")
+	var settled_lost: Dictionary = {}
+	for hero in session.heroes:
+		if str(hero.id) == "seamstress":
+			settled_lost = hero
+	_check(not settled_lost.is_empty() and bool(settled_lost.lost) and int(settled_lost.hp) == 0
+		and settled_lost.parts.is_empty() and session.is_consistent(),
+		"battle settlement preserves the lost doll after a debug heal")
 	_finish()
 
 
