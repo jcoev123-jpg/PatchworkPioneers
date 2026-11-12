@@ -490,10 +490,22 @@ func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
 	# The cheat intentionally substitutes one socket; previous owned patches remain
 	# loose in inventory for a later real Sewing Circle visit.
 	session.ability_sockets[owner][signature_id] = [uid]
+	var said := "%s sewn onto %s" % [str(record.name), signature_id]
 	if session.phase == "battle" and session.battle != null:
 		session.battle._s14_sockets = session._battle_sockets()
 		session.battle_config["s14_sockets"] = session.battle._s14_sockets.duplicate(true)
-	return _done(session, "%s sewn onto %s" % [str(record.name), signature_id])
+		var view: StitchedBattleScreen = app.stitched_run_battle
+		if is_instance_valid(view) and view.battle == session.battle:
+			# Update the sewn badge without destroying the live target choice,
+			# held spotlight or queued receipts on this mounted battle.
+			session.journal.append({"action": "cheat", "text": said})
+			session._seal()
+			view._refresh()
+			var fight: StitchedCorridorFight = view.get_node_or_null("CorridorFight")
+			if is_instance_valid(fight):
+				fight.refresh()
+			return said
+	return _done(session, said)
 
 
 func _visit(session: StitchedRunSession, kind: String, event_id := "") -> String:

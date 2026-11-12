@@ -81,6 +81,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 22:27 play pass): Debug-sewed Red Lint onto Pot Helm Command, then used it against Felt Bulwark in a floor-1 normal fight. The one occupied socket remained on the ability; the target received the native MARK 2 and sewn BLEED 2. Also chose Borrow spools at the Threadmill Loft, actually sewed Guard Stitch onto Pot Helm Command, and in the next fight saw GUARD 1 on Warden (the attacker), not on the struck Razor Ribbon Wraith. Floor-6 elite and floor-12 boss fights were inspected. Job remains PART for the pre-existing gold two-effect contract, which needs an owner-approved migration; no combat rules changed.
 
+(2026-11-12 late play pass): Mid-fight debug sewing refreshes the existing battle and single patch badge without replacing the mounted stage, turn or receipt queue. Live Red Lint appeared on Warden's Pot Helm Command and applied BLEED 2 beside its native MARK 2 against Spool Stalker; the focused cheat regression passes. Job remains PART until the owner decides how to migrate legacy gold two-effect sockets.
+
 Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint

@@ -124,10 +124,17 @@ func _run() -> void:
 		and app.stitched_run_battle == mounted_view
 		and mounted_fight._float_events(mounted_view.last_receipt).has("foe_4"),
 		"HP healing setup keeps the fight and reports only actual recovered HP (%s)" % said)
+	var before_patch_actor := session.battle.current_actor_id()
+	var before_patch_receipts := mounted_view.receipts.size()
+	var before_patch_stage := mounted_view.get_node_or_null("CorridorFight")
 	said = cheats.run("patch Pot Helm Command cotton_red_lint")
 	_check(session._battle_sockets().get("warden", {}).get("warden_head_pot_helm_command", []) == ["cotton_red_lint"]
 		and session.battle._s14_sockets == session._battle_sockets() and session.is_consistent(),
 		"patch: one signature socket is active in current battle (%s)" % said)
+	_check(app.stitched_run_battle == mounted_view and mounted_view.get_node_or_null("CorridorFight") == before_patch_stage
+		and mounted_view.receipts.size() == before_patch_receipts
+		and session.battle.current_actor_id() == before_patch_actor,
+		"patch: changing a socket retains the mounted fight, its turn and held receipts")
 	_check(cheats.run("status unknown rot 2").begins_with("failed:") and session.is_consistent(),
 		"invalid figure refuses without damaging the session")
 	said = cheats.run("win")
