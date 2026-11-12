@@ -570,6 +570,10 @@ func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
 			if is_instance_valid(fight):
 				fight.refresh()
 			return said
+	# A mounted Sewing Circle quoted its options before the debug patch was sewn.
+	# Rebuild those choices now so Unsew is available without leaving the stop.
+	if session.phase == "visit" and str(session.pending.get("service", "")) == "SewingCircle":
+		session._open_visit("SewingCircle")
 	return _done(session, said)
 
 

@@ -260,6 +260,18 @@ func _run() -> void:
 		"scraps 20 re-enables affordable Sewing Circle upgrades without leaving")
 	_check(str(session.pending.get("node_id", "")) == sewing_node and session.rng.state == sewing_rng,
 		"Sewing Circle re-quote keeps its node and the run RNG")
+	# Sewing a debug patch while this visit is open must reveal its new Unsew offer
+	# immediately, not leave the old quoted choices on the mounted screen.
+	said = cheats.run("patch Pot Helm Command cotton_red_lint")
+	var can_unsew_debug_patch := false
+	for action in session._actions:
+		if action.id == "unsew" and action.enabled and str(action.text).contains("Red Lint"):
+			can_unsew_debug_patch = true
+	_check(said.begins_with("Red Lint sewn") and can_unsew_debug_patch
+		and is_instance_valid(app.stitched_run_panel) and session.is_consistent(),
+		"patch refreshes the mounted Sewing Circle's Unsew choice immediately")
+	_check(str(session.pending.get("node_id", "")) == sewing_node and session.rng.state == sewing_rng,
+		"debug patch refresh does not change the Sewing Circle node or RNG")
 
 	# A mounted event must not keep a stale unaffordable choice after gold changes,
 	# nor replace its selected story or consume a second random event roll.
