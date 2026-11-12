@@ -232,7 +232,7 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 
 
 func _is_arrow(id: String, text: String) -> bool:
-	if id in ["leave", "turn_away", "escape"]:
+	if id in ["leave", "turn_away", "escape", "pass"]:
 		return true
 	for prefix in EXIT_ID_PREFIXES:
 		if id.begins_with(prefix):
@@ -553,8 +553,13 @@ func _place_items() -> void:
 		if old != null:
 			old.free()
 		if not groups[number].arrow:
-			var tag := _label("WareName", 14, BONE)
+			var tag := _label("WareName", 17 if _event_visit else 14, BONE)
 			tag.text = str(groups[number].words).split(" · ")[0]
+			# Event wares name the action on the floor; the full priced
+			# description remains on the actual button for hover and focus.
+			# Dropping the parenthetical avoids a tiny two-line price fragment.
+			if _event_visit:
+				tag.text = tag.text.get_slice(" (", 0)
 			# Unaffordable choices stay visible for inspection, but their captions
 			# must not look as actionable as the fully lit affordable options.
 			tag.modulate = DIM if not groups[number].available else Color.WHITE
@@ -566,22 +571,31 @@ func _place_items() -> void:
 			# patch frame; lift its words only, without moving wares or hit targets.
 			if heading.text == "Peddler" and ware_slot >= PER_ROW and str(groups[number].key).get_slice("|", 0) == "buy_fresh_stuffing":
 				tag_y -= 12.0
-			# A long event choice may wrap to two lines. Keep its lower line
-			# above the permanent story instead of painting both over each other.
-			if tag.text.length() > 32:
-				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 52.0)
-			tag.size = Vector2(seen.size.x + 48, 40)
-			var tag_x := -24.0
+			# Even a shortened Event name can project below the bottom story;
+			# reserve its full caption height before placing it.
+			if _event_visit:
+				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 48.0)
+			tag.size = Vector2(maxf(seen.size.x + 48, 290.0) if _event_visit else seen.size.x + 48,
+				44.0 if _event_visit else 40.0)
+			var tag_x := (seen.size.x - tag.size.x) / 2.0 if _event_visit else -24.0
 			# The spool lies right next to the red exit arrow at the Peddler.
 			# Shift only its caption right, leaving the ware and its hit area in place.
 			if not _event_visit and str(groups[number].key).get_slice("|", 0) == "buy_spare_spool":
 				tag_x += 18.0
-			# The permanent route map covers the lower-right of an Event. Shift
-			# long choice names left rather than letting their text cross the map.
+			# The lower-right route map starts at 758px on the Event page;
+			# long choice names stay to its left, with room for their letters.
 			if _event_visit:
-				tag_x = minf(tag_x, 998.0 - button.position.x - tag.size.x)
+				tag_x = minf(tag_x, 750.0 - button.position.x - tag.size.x)
 			tag.position = Vector2(tag_x, tag_y)
 			button.add_child(tag)
+			# The rightmost Event caption is bounded by the route map.
+			# If that makes it touch a previous caption, nudge the earlier
+			# words left, keeping both labels centred near their floor objects.
+			if _event_visit:
+				for previous_number in number:
+					var prior := floor_buttons[previous_number].get_node_or_null("WareName") as Label
+					if prior != null and prior.get_global_rect().intersects(tag.get_global_rect()):
+						prior.position.x -= prior.get_global_rect().end.x - tag.get_global_rect().position.x + 8.0
 			ware_slot += 1
 	_thin_crowded_visit_labels()
 	for number in floor_buttons.size():

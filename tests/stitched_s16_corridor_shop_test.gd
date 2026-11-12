@@ -382,12 +382,51 @@ func _run() -> void:
 		and right_tag.get_global_rect().end.x <= 998.0
 		and not right_tag.get_global_rect().intersects(left_tag.get_global_rect())
 		and right_tag.get_global_rect().end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0,
-		"right-hand Event choice stays clear of route map, companion choice and bottom story")
+		"right-hand Event choice stays clear of route map, companion choice and bottom story (right %s, left %s, y %s)" % [right_tag.get_global_rect(), left_tag.get_global_rect(), StitchedCorridorVisit.STORY_RECT.position.y])
 	_check(offer_buttons[1].text == offer_actions[1].text,
 		"moving the long floor caption preserves its full choice text")
 	_check(right_tag.modulate == StitchedCorridorVisit.DIM and left_tag.modulate == Color.WHITE,
 		"unaffordable event choices have dim captions, while reachable choices stay fully lit")
+	_check(left_tag.text == "Collect the spilled glowing thread"
+		and right_tag.text == "Polish the parade's spoon joints"
+		and left_tag.get_theme_font_size("font_size") == 17
+		and right_tag.get_theme_font_size("font_size") == 17,
+		"event floor captions use legible action names; prices remain in the full buttons")
+	_check(right_tag.size.x >= 290.0 and left_tag.size.x >= 290.0
+		and offer_buttons[0].text == offer_actions[0].text,
+		"readable event caption width leaves quoted costs on the buttons")
 	two_offers.queue_free()
+
+	# Needle Gate's cost-free 'pass' is the exit arrow, not a third
+	# floor ware squeezed into the same caption lane as its two trades.
+	var needle_gate := StitchedCorridorVisit.new()
+	root.add_child(needle_gate)
+	needle_gate.present("floorboards", "bright", "The Needle Gate", "Crossed needles.", ["stop_event"])
+	var gate_actions := [
+		{"id": "examine", "text": "Spend 1 scrap to unpick the gate and claim 12 gold", "arguments": [], "enabled": false},
+		{"id": "pass", "text": "Pass without stopping", "arguments": [], "enabled": true},
+		{"id": "cut_bindings", "text": "Cut the binding threads (spend 2 scraps; gain 28 gold)", "arguments": [], "enabled": false},
+	]
+	var gate_homes := needle_gate.lay_out(gate_actions, [], ["", "", ""])
+	var gate_buttons: Array[Button] = []
+	for index in gate_actions.size():
+		var button := Button.new()
+		button.text = gate_actions[index].text
+		button.disabled = not gate_actions[index].enabled
+		gate_homes[index].add_child(button)
+		gate_buttons.append(button)
+	needle_gate.dress(gate_buttons)
+	await process_frame
+	await process_frame
+	var gate_left := needle_gate.floor_buttons[0].get_node("WareName") as Label
+	var gate_right := needle_gate.floor_buttons[2].get_node("WareName") as Label
+	_check(needle_gate.groups[1].arrow and needle_gate.floor_buttons[1].get_node_or_null("WareName") == null
+		and gate_buttons[1].text == "Pass without stopping",
+		"Needle Gate's no-cost pass is a real exit arrow with its original accessible action")
+	_check(not gate_left.get_global_rect().intersects(gate_right.get_global_rect())
+		and gate_right.get_global_rect().end.x <= 750.0,
+		"Needle Gate's two trade captions do not overlap each other or the map")
+	needle_gate.queue_free()
 
 	# Empty Moth visits quote disabled sacrifices and fumigation.Those controls
 	# must stay on the mounted page across Save/Reload and title Continue, unlike
