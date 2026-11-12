@@ -1036,12 +1036,14 @@ func refresh() -> void:
 						# onto the floor in the camera plane instead, keeping its idle loop.
 						var art := _figure_art(str(unit.id))
 						figure = stage.place(key, art, where, HERO_HEIGHT * 0.82)
-						figure.rotation.z = -PI / 2.0
+						# A fixed-Y billboard discards the roll in the shader. Face the
+						# side-view camera explicitly so the fallen puppet lies horizontally.
+						figure.billboard = BaseMaterial3D.BILLBOARD_DISABLED
+						figure.rotation = Vector3(0, PI / 2.0, -PI / 2.0)
 						figure.position.y = 0.24
 					else:
 						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))
-				figure.shaded = true
 				figure.flip_h = battle_flip(side, str(unit.id))
 			elif not heap.is_empty():
 				var pile := stage.place(key, StitchedBattleScreen.SCRAP_TEXTURE, where, HEAP_HEIGHT)
