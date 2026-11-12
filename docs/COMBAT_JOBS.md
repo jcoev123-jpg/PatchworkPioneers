@@ -121,7 +121,7 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 08:28 web play pass): Title, picker, Wren intro/room, save and Continue, first-person floor-1/6/10 walks and thread tug, Peddler tonic, Sewing Circle, camp, Unpicker, Patch Stall vest, Needle Gate and two other events, normal/elite/boss turns and both ending recaps were exercised. Live Pot Helm Command with Red Lint applied native MARK 2 and sewn BLEED 2 to Button Guard; one occupied socket showed on the button. Debug patch setup now also accepts `pot_helm_command` without the old catalog's body-slot prefix, with focused regression and live checks. No visible FRAY or Wren hands. Job 4 remains PART: the owner-pending saved gold double-effect migration is not attempted here.
 
-## Job 5:information corner: map, and foe details on hover (DONE 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
 
