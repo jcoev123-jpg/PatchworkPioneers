@@ -105,6 +105,8 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 03:44 web play pass): Unsewed and re-sewed Red Lint at the live Sewing Circle for 2 scraps. Pot Helm Command displayed one occupied badge and applied BLEED 2 to Crochet Hook Harrier in a real normal fight; the same patched command remained available in a floor-6 elite fight. Confirmed a fourth foe summon, Bleed status and a 0-HP Hanging doll. Shifted only the rear Fresh stuffing caption upward at the Peddler and verified its new clearance on screen. Job 4 stays PART pending the existing gold two-effect save/rules migration decision.
 
+(2026-11-13 03:57 web play pass): Unsewed Red Lint in the live Sewing Circle, then sewed it onto Warden's Pot Helm Command for 2 scraps; the next floor-6 elite fight displayed one occupied ability socket and a real command applied BLEED 2 to Spool Hexer. Verified a 0-HP Hanging doll returns to its standing pose when restored, a summoned fourth foe and live normal/elite/boss attacks, mid-run save/reload, visits, victory, defeat and Wren's room. No new FRAY meter or hand action appeared. Job 4 remains PART for the protected legacy gold two-effect migration; no rule or balance change was made.
+
 ## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
