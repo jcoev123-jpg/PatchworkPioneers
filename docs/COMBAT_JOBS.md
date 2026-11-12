@@ -75,7 +75,7 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 16:28 play pass): In a live floor-6 elite fight, Red Lint again occupied Warden's single visible Pot Helm Command slot; the same sewn ability was present against the floor-12 Colossus. The debugger's fourth-foe summon and HP/Bleed setup stayed consistent. A separate party-picker tooltip fix now names the four fixed signature moves without body-slot labels (2,794 mounted checks). Job remains PART: the gold two-effect contract still needs an owner-approved migration.
 
-Every hero ability buttoncarries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
+Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
