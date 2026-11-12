@@ -555,6 +555,9 @@ func _place_items() -> void:
 		if not groups[number].arrow:
 			var tag := _label("WareName", 14, BONE)
 			tag.text = str(groups[number].words).split(" · ")[0]
+			# Unaffordable choices stay visible for inspection, but their captions
+			# must not look as actionable as the fully lit affordable options.
+			tag.modulate = DIM if not groups[number].available else Color.WHITE
 			tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 			# A back-row name must paint over the front-row ware in front of it, not hide behind it.
 			tag.z_index = 1

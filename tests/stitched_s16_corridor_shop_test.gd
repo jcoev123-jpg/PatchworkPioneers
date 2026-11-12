@@ -385,6 +385,8 @@ func _run() -> void:
 		"right-hand Event choice stays clear of route map, companion choice and bottom story")
 	_check(offer_buttons[1].text == offer_actions[1].text,
 		"moving the long floor caption preserves its full choice text")
+	_check(right_tag.modulate == StitchedCorridorVisit.DIM and left_tag.modulate == Color.WHITE,
+		"unaffordable event choices have dim captions, while reachable choices stay fully lit")
 	two_offers.queue_free()
 
 	# Empty Moth visits quote disabled sacrifices and fumigation.Those controls
