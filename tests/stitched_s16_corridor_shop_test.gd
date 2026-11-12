@@ -194,6 +194,14 @@ func _run() -> void:
 	_check(event._group_art({"actions": [0]},
 		[{"id": "pass_by", "text": "Wave the caravan onward"}], [""]) == arrow_art,
 		"an exit with no navigation words on its label uses arrow artwork, not a parcel")
+	# The Moonpatch Archway's long purchase text used to wrap into the
+	# bottom story; the floor tag must reserve both its lines above it.
+	event.groups[0].words = "Purchase two spools (spend 15 gold; gain 2 scraps)"
+	event._place_items()
+	var long_tag := event.floor_buttons[0].get_node_or_null("WareName") as Label
+	_check(long_tag != null and event.floor_buttons[0].position.y + long_tag.position.y
+		+ long_tag.size.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0,
+		"long event floor labels stay wholly above the story (%s, %s; story top %s)" % [event.floor_buttons[0].position, long_tag.get_rect() if long_tag != null else Rect2(), StitchedCorridorVisit.STORY_RECT.position.y])
 	event.queue_free()
 
 	# Empty Moth visits quote disabled sacrifices and fumigation. Those controls

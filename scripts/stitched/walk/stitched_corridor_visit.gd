@@ -537,7 +537,12 @@ func _place_items() -> void:
 			var tag := _label("WareName", 14, BONE)
 			tag.text = str(groups[number].words).split(" · ")[0]
 			tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-			tag.position = Vector2(-24, seen.size.y - 6)
+			var tag_y := seen.size.y - 6.0
+			# A long event choice may wrap to two lines. Keep its lower line
+			# above the permanent story instead of painting both over each other.
+			if tag.text.length() > 32:
+				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 52.0)
+			tag.position = Vector2(-24, tag_y)
 			tag.size = Vector2(seen.size.x + 48, 40)
 			button.add_child(tag)
 	for number in floor_buttons.size():
