@@ -178,6 +178,24 @@ func _run() -> void:
 		_check(session.phase == "visit" and session.is_consistent() and is_instance_valid(app.stitched_run_panel),
 			"%s opens its visit page (%s)" % [verb, said])
 
+	# The gold cheat must re-quote an already-open stall without rerolling stock.
+	var stall_stock: Array = session.pending.stock.duplicate(true)
+	var stall_rng := session.rng.state
+	cheats.run("gold 0")
+	var blocked := 0
+	for action in session._actions:
+		if action.id == "buy_patch" and not action.enabled:
+			blocked += 1
+	_check(blocked > 0 and session.is_consistent(), "gold 0 disables offers in the mounted stall")
+	cheats.run("gold 250")
+	var available := 0
+	for action in session._actions:
+		if action.id == "buy_patch" and action.enabled and not str(action.text).contains("need"):
+			available += 1
+	_check(available > 0 and session.is_consistent(), "gold 250 reprices the mounted stall immediately")
+	_check(session.pending.stock == stall_stock and session.rng.state == stall_rng,
+		"requoting the stall does not resample stock or consume RNG")
+
 	cheats.run("candle 7")
 	cheats.run("gold 250")
 	cheats.run("scraps 9")

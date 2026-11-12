@@ -154,6 +154,12 @@ func run(command: String) -> String:
 			return _done(session, "fear %d" % session.kid_fear())
 		"gold":
 			session.gold = maxi(0, number)
+			# Visit quotes snapshot the wallet on entry. Requote the same stock so
+			# an open Peddler or stall immediately reflects the cheat's new gold.
+			var service_kind := str(session.pending.get("service", ""))
+			if session.phase == "visit" and service_kind in ["Peddler", "PatchStall", "Unpicker"]:
+				if not session._open_visit(service_kind):
+					return "failed: could not refresh %s prices" % service_kind
 			return _done(session, "gold %d" % session.gold)
 		"scraps":
 			session.scraps = maxi(0, number)
