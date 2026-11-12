@@ -196,6 +196,24 @@ func _run() -> void:
 	_check(session.pending.stock == stall_stock and session.rng.state == stall_rng,
 		"requoting the stall does not resample stock or consume RNG")
 
+	cheats.run("shop")
+	var peddler_stock: Dictionary = session.pending.peddler_stock.duplicate(true)
+	var peddler_rng := session.rng.state
+	cheats.run("gold 0")
+	var part_blocked := false
+	for action in session._actions:
+		if action.id == "buy_part":
+			part_blocked = not action.enabled
+	_check(part_blocked and session.is_consistent(), "gold 0 disables the open Peddler part offer")
+	cheats.run("gold 250")
+	var part_available := false
+	for action in session._actions:
+		if action.id == "buy_part":
+			part_available = action.enabled
+	_check(part_available and session.is_consistent(), "gold 250 enables the same Peddler part offer")
+	_check(session.pending.peddler_stock == peddler_stock and session.rng.state == peddler_rng,
+		"requoting the Peddler preserves its sampled stock and RNG state")
+
 	cheats.run("candle 7")
 	cheats.run("gold 250")
 	cheats.run("scraps 9")

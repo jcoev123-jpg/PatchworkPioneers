@@ -68,6 +68,10 @@ func _run() -> void:
 			"gold paid for scraps places the earned bundle on the corridor floor")
 		_check(page._group_art({"actions": [0]}, sell, [""]) == coins,
 			"scraps paid for gold places the earned coins on the corridor floor")
+		var spine_thread := [{"id": "buy_spine_thread",
+			"text": "Pay 19 gold for three bundles of spine thread (+3 scraps)"}]
+		_check(page._group_art({"actions": [0]}, spine_thread, [""]) == bundles,
+			"parenthesized scrap reward places earned bundles, not spent gold, on the floor")
 	page.queue_free()
 	await process_frame
 	for failure in failures:
