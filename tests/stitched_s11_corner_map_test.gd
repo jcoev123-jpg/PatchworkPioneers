@@ -96,8 +96,9 @@ func _component_checks() -> void:
 		"Resists stun 50%, bleed 20%, rot 10%, move 60%, debuff 20%",
 		"Now: BLEED 2", ]))
 	await process_frame
-	_check(map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
-		"wrapped foe moves and resistances leave room for the final status line")
+	_check(map.foe_body.get_visible_line_count() == map.foe_body.get_line_count()
+		and map.foe_body.size.y <= map.size.y - 34.0,
+		"wrapped foe moves and resistances display the final status line inside the fixed corner")
 	_check(map.foe_body.text.ends_with("Now: BLEED 2"),
 		"dense foe details preserve their live status rather than discarding it")
 	map.show_foe("Patchwork Behemoth", PackedStringArray([
@@ -106,10 +107,33 @@ func _component_checks() -> void:
 		"Resists stun 45%, bleed 40%, rot 40%, move 70%, debuff 45%",
 		"Now: BLEED 1", ]))
 	await process_frame
-	_check(map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
+	_check(map.foe_body.get_visible_line_count() == map.foe_body.get_line_count(),
 		"boss move and resistance rows fit without hiding current Bleed")
-	_check(map.foe_body.get_theme_font_size("font_size") < 15,
-		"the crowded boss card adapts its font rather than clipping its last row")
+	_check(map.foe_body.get_theme_font_size("font_size") >= 13,
+		"the expanded corner keeps standard boss details readable")
+	# A genuinely crowded boss must still scale down rather than cut off statuses.
+	map.show_foe("Patchwork Behemoth", PackedStringArray([
+		"Boss · rank 1", "Health 45 / 50",
+		"Moves: Behemoth Maul, Stuffing Hurl, Rope Lash, Stitch Ward, Hemquake, Needlestorm, Thread Snare",
+		"Resists stun 45%, bleed 40%, rot 40%, move 70%, debuff 45%, blind 30%, mark 40%",
+		"Now: BLEED 1, GUARD 2, MARK 1", ]))
+	await process_frame
+	_check(map.foe_body.get_theme_font_size("font_size") < 15
+		and map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
+		"very long boss details adapt without clipping the status line (font %d, lines %d, height %d, room %.0f)" % [
+			map.foe_body.get_theme_font_size("font_size"), map.foe_body.get_line_count(),
+			map.foe_body.get_line_height(), map.foe_body.size.y])
+	# An ordinary three-foe encounter still needs its full resistance readout,
+	# without shrinking the existing fixed corner to the boss-only tiny size.
+	map.show_foe("Crochet Hook Harrier", PackedStringArray([
+		"Foe · rank 1", "Health 22 / 26", "Moves: Hook Drag, Harry",
+		"Resists stun 25%, bleed 35%, rot 20%, move 20%, debuff 25%",
+		"Now: BLEED 1", ]))
+	await process_frame
+	_check(map.foe_body.get_theme_font_size("font_size") >= 13,
+		"a regular foe's full details use a readable font")
+	_check(map.foe_body.get_visible_line_count() == map.foe_body.get_line_count(),
+		"the legible foe summary still fits above the map's lower edge")
 	map.show_foe("Moth Scribe", PackedStringArray(["Foe · rank 2", "Health 9 / 12"]))
 	_check(map.foe_body.get_theme_font_size("font_size") == 15,
 		"a short foe card recovers the regular readable font size")

@@ -54,9 +54,12 @@ func _init(rect: Rect2) -> void:
 	map_holder.size = rect.size
 	map_holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(map_holder)
-	foe_body = _label(Rect2(12, 34, rect.size.x - 24, rect.size.y - 44), 15, BONE)
+	# Keep the details below the 24px title, but spend the unused bottom gutter
+	# on legibility instead of shrinking even ordinary foes to a 12px font.
+	foe_body = _label(Rect2(12, 30, rect.size.x - 24, rect.size.y - 34), 15, BONE)
 	foe_body.name = "FoeDetail"
 	foe_body.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	foe_body.clip_text = true
 	foe_body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	foe_body.visible = false
 
@@ -204,21 +207,18 @@ func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 	_foe_mode = true
 	title_label.text = foe_name
 	foe_body.text = "\n".join(lines)
-	# Long authored move and resistance lists can wrap past the bottom of this
-	# fixed-size corner. Fit the real wrapped lines instead of hiding statuses.
+	# Measure the real word-wrapped paragraph at each size. A sum of glyph
+	# widths undercounts a wrap when a long move name does not fit at the end
+	# of a row; it used to leave boss statuses beyond this fixed corner.
 	for font_size in range(15, 9, -1):
+		var paragraph := TextParagraph.new()
+		paragraph.width = foe_body.size.x
+		paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND
+		paragraph.add_string(foe_body.text, FONT, font_size)
 		foe_body.add_theme_font_size_override("font_size", font_size)
-		# The Label may still report its OLD line count in this same frame.
-		# Estimate each authored row's word wrapping independently so even
-		# long boss moves leave room for the final live-status row.
-		var wrapped_rows := 0
-		for line in lines:
-			var row_width := FONT.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT,
-				-1, font_size).x
-			wrapped_rows += maxi(1, ceili(row_width / maxf(1.0, foe_body.size.x - 12.0)))
-		# Allow inter-line spacing and a small bottom gutter; a nominal font
-		# height by itself understates the actual Label's rendered rows.
-		if wrapped_rows * (FONT.get_height(font_size) + 3.0) <= foe_body.size.y - 12.0:
+		# Godot's Label adds row leading beyond TextParagraph's raw height.
+		# Budget for that leading or the last status may be clipped offscreen.
+		if paragraph.get_line_count() * (FONT.get_height(font_size) + 3.0) <= size.y - 38.0:
 			break
 	map_holder.visible = false
 	foe_body.visible = true
