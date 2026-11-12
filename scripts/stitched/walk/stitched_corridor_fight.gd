@@ -872,8 +872,9 @@ func _foe_corner_lines(unit: Dictionary) -> PackedStringArray:
 	var kind_word := str({"Boss": "Boss", "Elite": "Elite"}.get(fight_kind, "Foe"))
 	if bool(unit.get("is_boss", false)):
 		kind_word = "Boss"
-	lines.append("%s · rank %d" % [str(kind_word), int(unit.get("rank", 0))])
-	lines.append("Health %d / %d" % [int(unit.get("hp", 0)), int(unit.get("max_hp", 0))])
+	# One row for kind, rank and health: a spare row lets long move and resist lines keep a larger font.
+	lines.append("%s · rank %d · Health %d / %d" % [str(kind_word), int(unit.get("rank", 0)),
+		int(unit.get("hp", 0)), int(unit.get("max_hp", 0))])
 	var moves := PackedStringArray()
 	for ability in unit.get("abilities", []):
 		var move := str(ability.get("name", ""))
