@@ -93,9 +93,15 @@ func _run() -> void:
 		and mounted_fight._beats != null and mounted_fight._beats.is_running(),
 		"summon floats a held fourth-seat arrival without rebuilding the view")
 	var fourth: Dictionary = session.battle._foe_at(4)
+	var before_status_receipts := mounted_view.receipts.size()
 	said = cheats.run("status f4 bleed 2")
 	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("bleed", 0)) == 2
 		and session.is_consistent(), "status: new foe receives real bleed (%s)" % said)
+	_check(app.stitched_run_battle == mounted_view
+		and mounted_view.receipts.size() == before_status_receipts + 1
+		and str(mounted_view.last_receipt.get("action", "")) == "cheat_status"
+		and mounted_fight._float_events(mounted_view.last_receipt).has("foe_4"),
+		"status setup preserves the mounted fight and queues the true status float")
 	said = cheats.run("status f4 rot 3")
 	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("rot", 0)) == 3
 		and session.is_consistent(), "status: rot enters the real rule statuses (%s)" % said)
@@ -104,9 +110,20 @@ func _run() -> void:
 		and session.is_consistent(), "status: stun enters the real rule statuses (%s)" % said)
 	_check(cheats.run("summon").begins_with("failed:") and session.battle._living_foes().size() == 4,
 		"summon refuses when fourth foe seat is occupied")
+	var before_hp_receipts := mounted_view.receipts.size()
 	said = cheats.run("hp f4 1")
 	_check(int(session.battle.get_unit(str(fourth.id)).hp) == 1 and session.is_consistent(),
 		"hp: fourth foe lowered through damage rules (%s)" % said)
+	_check(app.stitched_run_battle == mounted_view
+		and mounted_view.receipts.size() == before_hp_receipts + 1
+		and str(mounted_view.last_receipt.get("action", "")) == "cheat_hp"
+		and mounted_fight._float_events(mounted_view.last_receipt).has("foe_4"),
+		"HP damage setup preserves the mounted fight and queues a true damage float")
+	said = cheats.run("hp f4 2")
+	_check(int(session.battle.get_unit(str(fourth.id)).hp) == 2 and session.is_consistent()
+		and app.stitched_run_battle == mounted_view
+		and mounted_fight._float_events(mounted_view.last_receipt).has("foe_4"),
+		"HP healing setup keeps the fight and reports only actual recovered HP (%s)" % said)
 	said = cheats.run("patch Pot Helm Command cotton_red_lint")
 	_check(session._battle_sockets().get("warden", {}).get("warden_head_pot_helm_command", []) == ["cotton_red_lint"]
 		and session.battle._s14_sockets == session._battle_sockets() and session.is_consistent(),

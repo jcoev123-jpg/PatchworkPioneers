@@ -2149,7 +2149,10 @@ func _float_events(receipt: Dictionary, show_misses: bool = false) -> Dictionary
 	var patch_book: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
 	var shown_patches := {}
 	# Passes and skips have no attack results, but may settle turn-start clocks.
-	var results: Array = receipt.get("results", []) if str(receipt.get("action", "ability")) == "ability" else []
+	# Debug-only HP/status setup uses the same settled rules and needs its real
+	# feedback, without pretending a test setup was a hero's attack animation.
+	var action := str(receipt.get("action", "ability"))
+	var results: Array = receipt.get("results", []) if action in ["ability", "cheat_hp", "cheat_status"] else []
 	for result in results:
 		var target_id := str(result.get("target", ""))
 		var key := _live_receipt_key(target_id)

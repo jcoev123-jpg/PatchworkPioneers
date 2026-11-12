@@ -316,6 +316,19 @@ func _finish_cheat_battle(session: StitchedRunSession, message: String) -> Strin
 
 
 
+## Keep the fight mounted so genuine rule effects can animate as held receipts.
+func _record_cheat_receipt(session: StitchedRunSession, message: String, receipt: Dictionary) -> String:
+	session.journal.append({"action": "cheat", "text": message})
+	session._seal()
+	var view: StitchedBattleScreen = app.stitched_run_battle
+	if is_instance_valid(view) and view.battle == session.battle:
+		view._record(receipt)
+	else:
+		_close_views()
+		app._present_stitched_run()
+	return message
+
+
 func _defeat(session: StitchedRunSession) -> String:
 	if session.phase == "battle" and session.battle != null and session.battle.is_over():
 		return "failed: the battle has already ended"
@@ -346,16 +359,24 @@ func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
 	if value < 0 or value > int(target.max_hp):
 		return "failed: HP must be between 0 and %d" % int(target.max_hp)
 	var before := int(target.hp)
+	var result := {"target": str(target.id), "target_side": str(target.side),
+		"hit": true, "damage": maxi(0, before - value), "statuses": []}
 	if value < before:
 		# Real rule damage performs Hanging, seam tears and foe-heap settlement.
-		session.battle._damage_target(target, before - value, {"target": str(target.id), "statuses": []})
+		session.battle._damage_target(target, before - value, result)
 	else:
 		target.hp = value
+		if value > before:
+			result.statuses.append({"status": "heal", "amount": value - before, "on": str(target.id)})
 		if str(target.side) == "hero" and value > 0:
 			target.hanging = false
 			target.death_hits = 0
 	session.battle._battle_finished()
-	return _finish_cheat_battle(session, "%s hp %d" % [str(target.name), value])
+	var said := "%s hp %d" % [str(target.name), value]
+	if session.battle.is_over():
+		return _finish_cheat_battle(session, said)
+	return _record_cheat_receipt(session, said, {"ok": true, "action": "cheat_hp",
+		"actor": str(target.id), "results": [result]})
 
 
 func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
@@ -371,13 +392,15 @@ func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
 	var target := _battle_unit(session.battle, who)
 	if target.is_empty() or bool(target.get("dead", false)) or bool(target.get("lost", false)):
 		return "failed: no living figure '%s'" % who
-	var receipt := {"target": str(target.id), "statuses": []}
+	var result := {"target": str(target.id), "target_side": str(target.side),
+		"hit": true, "damage": 0, "statuses": []}
 	# Apply the real effects handler; the figure itself is the debug source, so
 	# foe resistance does not randomly refuse the playtest's requested condition.
-	session.battle._apply_effects(target, target, {"effects": {kind: amount}}, receipt)
-	if receipt.statuses.is_empty() or bool(receipt.statuses[0].get("refused", false)):
+	session.battle._apply_effects(target, target, {"effects": {kind: amount}}, result)
+	if result.statuses.is_empty() or bool(result.statuses[0].get("refused", false)):
 		return "failed: %s resisted %s" % [str(target.name), kind]
-	return _done(session, "%s %s %d" % [str(target.name), kind, amount])
+	return _record_cheat_receipt(session, "%s %s %d" % [str(target.name), kind, amount],
+		{"ok": true, "action": "cheat_status", "actor": str(target.id), "results": [result]})
 
 
 func _summon(session: StitchedRunSession) -> String:
