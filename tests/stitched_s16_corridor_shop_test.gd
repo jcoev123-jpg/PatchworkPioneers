@@ -185,6 +185,52 @@ func _run() -> void:
 				"Peddler's spare spool caption has extra clearance from the exit arrow")
 	crowded.queue_free()
 
+	# A deep Peddler has distinct offers for the same ware. The keyed offers
+	# still need the spool offset, but unreadable captions must not pile up.
+	var dense := StitchedCorridorVisit.new()
+	root.add_child(dense)
+	dense.present("floorboards", "bright", "Peddler", "Many spools for sale.", ["stop_peddler"])
+	var dense_actions: Array = []
+	var dense_pictures: Array = []
+	for index in range(18):
+		dense_actions.append({"id": "buy_spare_spool", "text": "Spare spool / 10 gold",
+			"arguments": [index], "enabled": true})
+		dense_pictures.append("")
+	dense_actions.append({"id": "leave", "text": "Leave Peddler", "arguments": [], "enabled": true})
+	dense_pictures.append("")
+	var dense_homes := dense.lay_out(dense_actions, [], dense_pictures)
+	var dense_buttons: Array[Button] = []
+	for index in dense_actions.size():
+		var button := Button.new()
+		button.text = dense_actions[index].text
+		dense_homes[index].add_child(button)
+		dense_buttons.append(button)
+	dense.dress(dense_buttons)
+	await process_frame
+	await process_frame
+	_check(dense.groups.size() == 19, "individually keyed spool offers remain separately clickable")
+	var shown_captions: Array[Rect2] = []
+	var shown_count := 0
+	for index in range(18):
+		var tag := dense.floor_buttons[index].get_node("WareName") as Label
+		_check(str(dense.groups[index].key) == "buy_spare_spool|%d" % index
+			and is_equal_approx(tag.position.x, -6.0),
+			"individually keyed spool %d keeps the exit-arrow clearance" % index)
+		if tag.visible:
+			shown_count += 1
+			var bounds := dense._caption_text_bounds(tag)
+			for previous in shown_captions:
+				_check(not previous.grow(2.0).intersects(bounds),
+					"dense Peddler captions do not paint over each other (item %d)" % index)
+			shown_captions.append(bounds)
+	_check(shown_count > 0 and shown_count < 18,
+		"crowded captions thin out without hiding every name")
+	dense.floor_buttons[12].mouse_entered.emit()
+	_check(dense.story.text == "Spare spool · 10 gold"
+		and dense.floor_buttons[12].visible and not dense.floor_buttons[12].disabled,
+		"a thinned caption still has a clickable ware and readable hover details")
+	dense.queue_free()
+
 	# Event exits must use the floor arrow even if their prose talks about coins,
 	# or has no navigation word (album, fortune, observatory). Unaffordable
 	# event trades should not leave a dead object on the floor.

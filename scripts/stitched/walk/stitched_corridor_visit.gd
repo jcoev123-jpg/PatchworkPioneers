@@ -559,7 +559,7 @@ func _place_items() -> void:
 			var tag_x := -24.0
 			# The spool lies right next to the red exit arrow at the Peddler.
 			# Shift only its caption right, leaving the ware and its hit area in place.
-			if not _event_visit and str(groups[number].key) == "buy_spare_spool":
+			if not _event_visit and str(groups[number].key).get_slice("|", 0) == "buy_spare_spool":
 				tag_x += 18.0
 			# The permanent route map covers the lower-right of an Event. Shift
 			# long choice names left rather than letting their text cross the map.
@@ -567,9 +567,44 @@ func _place_items() -> void:
 				tag_x = minf(tag_x, 998.0 - button.position.x - tag.size.x)
 			tag.position = Vector2(tag_x, tag_y)
 			button.add_child(tag)
+	_thin_crowded_peddler_labels()
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:
 			_clear_arrow_overlap(floor_buttons[number])
+
+
+## A deep Peddler stall projects many captions into the same narrow space.
+## Hide the overlapping ones, not their wares: focus/hover still tells their full story.
+func _thin_crowded_peddler_labels() -> void:
+	if heading.text != "Peddler" or floor_buttons.size() <= 10:
+		return
+	var shown: Array[Rect2] = []
+	for number in floor_buttons.size():
+		var button := floor_buttons[number]
+		if not is_instance_valid(button) or not button.visible or groups[number].arrow:
+			continue
+		var tag := button.get_node_or_null("WareName") as Label
+		if tag == null:
+			continue
+		var bounds := _caption_text_bounds(tag)
+		var overlaps := false
+		for previous in shown:
+			if previous.grow(2.0).intersects(bounds):
+				overlaps = true
+				break
+		if overlaps:
+			tag.hide()
+		else:
+			shown.append(bounds)
+
+
+func _caption_text_bounds(tag: Label) -> Rect2:
+	var rect := tag.get_global_rect()
+	var font := tag.get_theme_font("font")
+	var size := tag.get_theme_font_size("font_size")
+	var text_width := minf(rect.size.x, font.get_string_size(tag.text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x)
+	return Rect2(rect.position.x + (rect.size.x - text_width) / 2.0,
+		rect.position.y, text_width, rect.size.y)
 
 
 ## The leave arrow's box is tall and can lie beside wares with no gap. Trim it
