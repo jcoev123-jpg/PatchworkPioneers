@@ -140,6 +140,10 @@ func present(area_name: String, band_name: String, title: String, words: String,
 		# The dedicated parade picture takes priority whenever it arrives.
 		if _keeper == null and str(key) == "prop_v3_warden_cinder_shield_parade":
 			_keeper = StitchedCorridorStage.hero_art("warden")
+		# Until its glove-puppet tableau is painted, show the Seamstress holding
+		# the needle rather than a generic hooded road keeper.
+		if _keeper == null and str(key) == "prop_v3_seamstress_crimson_shadow_choir":
+			_keeper = StitchedCorridorStage.hero_art("seamstress")
 		if _keeper != null:
 			break
 	var glow := OmniLight3D.new()

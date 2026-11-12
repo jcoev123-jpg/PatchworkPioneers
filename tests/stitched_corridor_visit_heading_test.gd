@@ -45,6 +45,19 @@ func _run() -> void:
 	page.present("floorboards", "bright", "Unpicker", unpicker_greeting)
 	page.lay_out([leave, {"id": "unpick", "text": "Unpick a seam", "arguments": [], "enabled": true}], [], ["", ""])
 	_check(page.story.text == unpicker_greeting, "Unpicker with actual work keeps original story")
+	# A named event's dedicated illustration wins when supplied; until then the
+	# Choir displays the Seamstress with her needle, not the unrelated hooded keeper.
+	page.present("floorboards", "bright", "The Crimson Shadow Choir", "A glove-puppet chorus.",
+		["prop_v3_seamstress_crimson_shadow_choir", "stop_event"])
+	var choir_art := StitchedCorridorStage.art("prop_v3_seamstress_crimson_shadow_choir")
+	var expected_art := choir_art if choir_art != null else StitchedCorridorStage.hero_art("seamstress")
+	_check(page._keeper != null and expected_art != null
+		and page._keeper.resource_path == expected_art.resource_path,
+		"Choir prefers its own art and otherwise uses the Seamstress, never an unrelated event keeper")
+	page.present("floorboards", "bright", "Unknown Event", "A stranger waits.",
+		["prop_event_that_has_no_specific_picture", "stop_event"])
+	_check(page._keeper != null and page._keeper.resource_path == StitchedCorridorStage.art("stop_event").resource_path,
+		"other events still use the standard event keeper when no dedicated picture exists")
 	page.queue_free()
 	await process_frame
 	for failure in failures:
