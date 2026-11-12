@@ -79,7 +79,7 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 late web play pass): Inspected the one-slot ability layout in normal, elite and floor-12 boss battles; verified the Red Lint debug sew resolves to Warden's real fixed Pot Helm Command ability. Reproduced boss VICTORY and DEFEAT endings and checked the Wren's Room aftermath. Job remains PART: gold still accepts two effects under protected rules, so enforcing one effect requires the owner's migration decision; no battle rule was changed in this pass.
 
-Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
+Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch

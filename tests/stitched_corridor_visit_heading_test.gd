@@ -58,6 +58,16 @@ func _run() -> void:
 		["prop_event_that_has_no_specific_picture", "stop_event"])
 	_check(page._keeper != null and page._keeper.resource_path == StitchedCorridorStage.art("stop_event").resource_path,
 		"other events still use the standard event keeper when no dedicated picture exists")
+	# Trade floor art must picture what the choice awards, not what the player pays.
+	var coins := StitchedCorridorStage.art("item_coins")
+	var bundles := StitchedCorridorStage.art("item_bundle")
+	if coins != null and bundles != null:
+		var buy := [{"id": "buy_thread", "text": "Buy thread (spend 13 gold; gain 2 scraps)"}]
+		var sell := [{"id": "sell_buttons", "text": "Sell buttons (spend 1 scrap; gain 18 gold)"}]
+		_check(page._group_art({"actions": [0]}, buy, [""]) == bundles,
+			"gold paid for scraps places the earned bundle on the corridor floor")
+		_check(page._group_art({"actions": [0]}, sell, [""]) == coins,
+			"scraps paid for gold places the earned coins on the corridor floor")
 	page.queue_free()
 	await process_frame
 	for failure in failures:
