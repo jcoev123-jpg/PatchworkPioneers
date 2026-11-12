@@ -227,6 +227,22 @@ func _mounted_checks() -> void:
 			break
 	_check(names_move, "the foe card names the foe's moves")
 	_check(text.contains("rank %d" % foe_rank), "the foe card names the foe's rank")
+	# Encounter kind is not the rank of every foe: boss/elite escorts stay ordinary.
+	fight.fight_kind = "Boss"
+	_check(fight._foe_corner_lines(foe)[0].begins_with("Foe ·"),
+		"a normal escort in a boss encounter is not labelled Boss")
+	var boss_foe := foe.duplicate(true)
+	boss_foe["is_boss"] = true
+	_check(fight._foe_corner_lines(boss_foe)[0].begins_with("Boss ·"),
+		"the authored boss alone retains its Boss label")
+	fight.fight_kind = "Elite"
+	_check(fight._foe_corner_lines(foe)[0].begins_with("Foe ·"),
+		"a normal escort in an elite encounter is not labelled Elite")
+	fight._foe_tiers[str(foe.id)] = StitchedEnemyCatalog.TIER_ELITE
+	_check(fight._foe_corner_lines(foe)[0].begins_with("Elite ·"),
+		"a catalogued elite keeps its own Elite label")
+	fight._foe_tiers.clear()
+	fight.fight_kind = ""
 	_check(fight._foe_hover_lit == "foe_" + str(foe_rank), "the hovered foe holds the spotlight")
 	fight.hovered = ""
 	fight._update_corner_foe()

@@ -152,6 +152,7 @@ var _bark_fade: Tween
 ## full details replace during a fight (see _hover and _update_corner_foe).
 var corner_map: StitchedCornerMap
 var fight_kind := ""
+var _foe_tiers: Dictionary = {}
 var _foe_hover_lit := ""
 var _foe_hover_grow: Tween
 var _foe_hover_return: Tween
@@ -844,6 +845,11 @@ func present_corner_map(run: StitchedRunSession) -> void:
 	if run == null or run.map == null or corner_map == null:
 		return
 	fight_kind = str(run.pending.get("kind", ""))
+	# An encounter's Boss/Elite label applies to its lead foe, not its ordinary escorts.
+	_foe_tiers.clear()
+	var records: Dictionary = run.enemies.get("enemies", {})
+	for foe_id in records:
+		_foe_tiers[str(foe_id)] = str(records[foe_id].get("tier", ""))
 	var floors := run.map.get_floors()
 	if floors.is_empty():
 		return
@@ -872,9 +878,11 @@ func _update_corner_foe() -> void:
 ## The hovered foe's own corner lines, every value from the live rules state.
 func _foe_corner_lines(unit: Dictionary) -> PackedStringArray:
 	var lines := PackedStringArray()
-	var kind_word := str({"Boss": "Boss", "Elite": "Elite"}.get(fight_kind, "Foe"))
+	var kind_word := "Foe"
 	if bool(unit.get("is_boss", false)):
 		kind_word = "Boss"
+	elif str(_foe_tiers.get(str(unit.get("id", "")), "")) == StitchedEnemyCatalog.TIER_ELITE:
+		kind_word = "Elite"
 	# One row for kind, rank and health: a spare row lets long move and resist lines keep a larger font.
 	lines.append("%s · rank %d · Health %d / %d" % [str(kind_word), int(unit.get("rank", 0)),
 		int(unit.get("hp", 0)), int(unit.get("max_hp", 0))])
