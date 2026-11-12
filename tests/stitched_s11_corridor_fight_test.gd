@@ -50,15 +50,22 @@ func _verify_inspection(fight: StitchedCorridorFight) -> void:
 		if str(fight.ribbon.displayed_entries[index].get("id", "")) == held_foe:
 			foe_now = fight.ribbon.marker_at(index).text == "NOW"
 	var foe_unit: Dictionary = screen._unit_at("foe", 1)
+	var live_hero: Dictionary = fight.battle.get_unit(fight.battle.current_actor_id())
 	var kit_live := true
+	var kit_names_live := not live_hero.is_empty() and str(live_hero.get("side", "")) == "hero"
 	for slot in fight.part_buttons:
 		var kit_button: TextureButton = fight.part_buttons[slot]
 		if not kit_button.visible or (kit_button.get_node("Patch") as TextureRect).texture == null:
 			kit_live = false
+		if fight.battle._s14:
+			var live_ability: Dictionary = screen.slot_ability(live_hero, slot)
+			kit_names_live = kit_names_live and not live_ability.is_empty() \
+				and (kit_button.get_node("Move") as Label).text == str(live_ability.get("name", ""))
 	_check(foe_now and fight.health_word.visible and fight.health_bar.visible
 		and fight.portrait.visible and fight.actor_name.text == str(foe_unit.get("name", ""))
 		and fight.health_text.text == "%d / %d" % [int(foe_unit.get("hp", 0)), int(foe_unit.get("max_hp", 0))]
 		and kit_live, "held foe owns NOW with its own name, portrait and health on the bar; the live doll's kit keeps its real part pictures")
+	_check(kit_names_live, "held foe plate never replaces the next doll's actual signature move names")
 	fight._held_actor_id = ""
 	fight.refresh()
 	# Separate queued batches must advance a two-turn boss to its second ribbon seat.

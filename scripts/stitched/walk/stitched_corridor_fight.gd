@@ -1330,7 +1330,7 @@ func _refresh_bar() -> void:
 		var s14 := bool(engine.config.get("s14", false))
 		if not part.is_empty():
 			# S14: the button performs the fixed signature ability, so hover names that one.
-			move_label.text = str((engine._dispatched_ability(shown, equipped) if s14
+			move_label.text = str((engine._dispatched_ability(kit_actor, equipped) if s14
 				else StitchedParts.ability_at_tier(part, int(equipped.get("tier", 1)))).get("name", ""))
 			if torn:
 				move_label.text = "torn"

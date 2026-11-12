@@ -38,6 +38,10 @@ func _run() -> void:
 	_check(session.map.get_current_floor() == 5 and session.phase == "map" and session.is_consistent(),
 		"floor 6: map before floor 6")
 	_check(session.choices().size() > 0, "floor 6: the next floor's nodes are choosable")
+	var shortcut: String = cheats.run("fight elite")
+	_check(session.map.get_current_floor() == 6 and session.phase == "battle"
+		and session.is_consistent(), "floor 6 then fight: enters floor 6 rather than showing floor 5 (%s)" % shortcut)
+	cheats.run("floor 6")
 
 	var said: String = cheats.run("walk walls")
 	_check(session.phase == "walk" and session.walk != null and session.is_consistent()
