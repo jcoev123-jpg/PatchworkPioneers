@@ -1588,7 +1588,9 @@ func _place_overlays() -> void:
 		hits[key].position = boxes[key].position
 		hits[key].size = boxes[key].size
 		hits[key].visible = boxes[key].size.x > 0.0
-	# Outcome words follow the moving figures and stay above the health plates.
+	# Outcome words follow their targets. Multi-target effects use compact, separate
+	# ink columns anchored to the settled HP plates: an AOE spotlight can pull the
+	# puppet silhouettes together until projected figure centres nearly coincide.
 	for float_key in _float_groups:
 		var group: Control = _float_groups[float_key]
 		var bounds := stage.screen_rect(float_key)
@@ -1596,7 +1598,11 @@ func _place_overlays() -> void:
 			group.hide()
 			continue
 		group.show()
-		group.position = Vector2(clampf(bounds.get_center().x - group.size.x * 0.5,
+		var centre_x := bounds.get_center().x
+		if bool(group.get_meta("compact", false)) and plates.has(float_key):
+			var plate: Control = plates[float_key]
+			centre_x = plate.position.x + plate.size.x * 0.5
+		group.position = Vector2(clampf(centre_x - group.size.x * 0.5,
 			4.0, 1276.0 - group.size.x), clampf(bounds.position.y + bounds.size.y * 0.15 - group.size.y,
 			160.0, BAR_TOP - group.size.y - 110.0))
 	# The only reaction text is MISS; it follows the actual dodger's 3D projection.
@@ -2316,11 +2322,21 @@ func _clear_float_words() -> void:
 func _show_float_receipt(receipt: Dictionary, show_misses: bool = false) -> void:
 	_clear_float_words()
 	var events := _float_events(receipt, show_misses)
+	var side_counts := {"hero": 0, "foe": 0}
+	for key in events:
+		var side := str(key).get_slice("_", 0)
+		if side_counts.has(side):
+			side_counts[side] += 1
 	for key in events:
 		var cues: Array = events[key]
+		# Queen Dust and other line-wide effects need separate columns over
+		# each doll rather than four 352px-wide stacks painted over one another.
+		var compact := int(side_counts.get(str(key).get_slice("_", 0), 0)) > 1
 		var group := Control.new()
 		group.name = "Float_" + str(key)
-		group.size = Vector2(352, float(cues.size()) * 38.0)
+		group.set_meta("compact", compact)
+		group.size = Vector2(100.0 if compact else 352.0,
+			float(cues.size()) * (33.0 if compact else 38.0))
 		group.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(group)
 		_float_groups[key] = group
@@ -2328,7 +2344,8 @@ func _show_float_receipt(receipt: Dictionary, show_misses: bool = false) -> void
 			var cue: Dictionary = cues[index]
 			var family := str(cue.family)
 			var large := family in ["kill", "crit"]
-			var font_size := 36 if family == "kill" else (33 if large else 29)
+			var font_size := (30 if family == "kill" else 26) if compact \
+				else (36 if family == "kill" else (33 if large else 29))
 			var art_name := str(cue.icon)
 			var texture: Texture2D = null
 			if art_name.begins_with("patch:"):
@@ -2344,32 +2361,41 @@ func _show_float_receipt(receipt: Dictionary, show_misses: bool = false) -> void
 			# Both status and stat-arrow pictures are optional. Missing art stays text-only.
 			var arrow_name := str(cue.get("arrow", ""))
 			var arrow: Texture2D = _texture(ICONS + arrow_name + ".png") if not arrow_name.is_empty() else null
-			var width := minf(302.0, FONT.get_string_size(str(cue.words),
-				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 12.0)
-			var start_x := (group.size.x - width - (34.0 if texture != null else 0.0) \
-				- (28.0 if arrow != null else 0.0)) / 2.0
+			var icon_width := 22.0 if compact else 32.0
+			var arrow_width := 18.0 if compact else 26.0
+			var icon_space := icon_width + 2.0 if texture != null else 0.0
+			var arrow_space := arrow_width + 2.0 if arrow != null else 0.0
+			var available := group.size.x - icon_space - arrow_space - 4.0
+			if compact:
+				while font_size > 12 and FONT.get_string_size(str(cue.words),
+						HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + 5.0 > available:
+					font_size -= 1
+			var width := minf(available, FONT.get_string_size(str(cue.words),
+				HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x + (5.0 if compact else 12.0))
+			var start_x := (group.size.x - width - icon_space - arrow_space) / 2.0
+			var row_y := float(index) * (33.0 if compact else 38.0)
 			if texture != null:
 				var picture := TextureRect.new()
 				picture.texture = texture
 				picture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				picture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				picture.position = Vector2(start_x, float(index) * 38.0 + 2.0)
-				picture.size = Vector2(32, 32)
+				picture.position = Vector2(start_x, row_y + 2.0)
+				picture.size = Vector2(icon_width, icon_width)
 				picture.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				group.add_child(picture)
-				start_x += 34.0
+				start_x += icon_space
 			if arrow != null:
 				var direction_icon := TextureRect.new()
 				direction_icon.texture = arrow
 				direction_icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 				direction_icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-				direction_icon.position = Vector2(start_x, float(index) * 38.0 + 4.0)
-				direction_icon.size = Vector2(26, 28)
+				direction_icon.position = Vector2(start_x, row_y + 4.0)
+				direction_icon.size = Vector2(arrow_width, arrow_width + 2.0)
 				direction_icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 				group.add_child(direction_icon)
-				start_x += 28.0
-			var word := _label(str(cue.words), Rect2(start_x, float(index) * 38.0,
-				width, 36.0), font_size, _float_tone(family))
+				start_x += arrow_space
+			var word := _label(str(cue.words), Rect2(start_x, row_y,
+				width, 31.0 if compact else 36.0), font_size, _float_tone(family))
 			word.add_theme_constant_override("outline_size", 6)
 			word.rotation = -0.035 if index % 2 == 0 else 0.03
 			group.add_child(word)

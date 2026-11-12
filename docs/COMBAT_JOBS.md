@@ -224,6 +224,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (2026-11-13 07:48 web play fix): A hit leaving a next-to-act foe on 1 HP can now report its genuine fatal Bleed/Rot tick and UNSTITCHED! from the receipt's post-hit HP anchor. Resisted or refused applications no longer mask pre-existing clocks. Replayed seed 548: Seamstress's Needle Prick dealt 5 to a 6-HP Button Guard, its new Bleed was resisted, then the prior Bleed killed it; the mounted receipt now contains BLEED -1 and the kill cue. Six new deterministic checks pass (86 total). Ambiguous multi-result/reapplied clocks still withhold cues. Job remains PART for unverified rare outcomes and missing icon art.
 
+(2026-11-13 09:47 web play fix): Reproduced Moth Queen's Queen Dust stacking WEAK, BLIND and ROT over adjacent dolls. Simultaneous same-side targets now receive compact, dynamically fitted ink stacks anchored to their distinct HP plates rather than overlapping figure projections during the AOE spotlight. Live boss screenshot `boss_float_recheck` shows all three status columns and numbers legible without a collision; floating-outcome test now passes 94 checks. Job remains PART for rare outcome/art coverage and unresolved gold socket migration elsewhere.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that

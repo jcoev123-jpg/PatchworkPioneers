@@ -301,6 +301,37 @@ func _run() -> void:
 		"floating words cannot intercept the held input shield")
 	fight._clear_float_words()
 	_check(fight._float_groups.is_empty(), "callout cleanup releases the prior beat")
+	# Queen Dust strikes a whole close-set doll line. Its simultaneous WEAK,
+	# BLIND and ROT must have distinct readable columns over the correct plates.
+	var line_results: Array = []
+	var line_keys: Array[String] = []
+	for index in range(3):
+		var line_hero: Dictionary = fight.battle.get_heroes()[index]
+		line_keys.append("hero_%d" % int(line_hero.rank))
+		line_results.append({"target": str(line_hero.id), "target_side": "hero",
+			"hit": true, "damage": 3, "statuses": [
+				{"status": "weak", "duration": 1}, {"status": "blind", "duration": 1},
+				{"status": "rot", "duration": 3}]})
+	fight._show_float_receipt({"ok": true, "action": "ability", "actor": foe_id,
+		"results": line_results})
+	fight._place_overlays()
+	var columns: Array[Rect2] = []
+	for line_key in line_keys:
+		_check(fight._float_groups.has(line_key), "line-wide status cue stays on each hit doll")
+		if not fight._float_groups.has(line_key):
+			continue
+		var group: Control = fight._float_groups[line_key]
+		var plate: Control = fight.plates[line_key]
+		var column := Rect2(group.position, group.size)
+		columns.append(column)
+		_check(bool(group.get_meta("compact", false)) and group.size.x <= 100.0
+			and absf(column.get_center().x - (plate.position.x + plate.size.x * 0.5)) < 2.0,
+			"simultaneous status words use compact columns centred above their own HP plates")
+	columns.sort_custom(func(a: Rect2, b: Rect2): return a.position.x < b.position.x)
+	for index in range(1, columns.size()):
+		_check(columns[index - 1].end.x <= columns[index].position.x + 1.0,
+			"adjacent multi-target status stacks never overlap each other")
+	fight._clear_float_words()
 	fight._show_float_receipt(receipt)
 	fight._cancel_beats()
 	_check(fight._float_groups.is_empty(),
