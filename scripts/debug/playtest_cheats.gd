@@ -11,7 +11,11 @@ extends Node
 ##   floor N             go to the map just before floor N (1-12)
 ##   walk [area]         start a Walk now: floorboards, walls or basket (default: this floor's)
 ##   fight [kind]        open a battle now: normal, elite or boss
-##   win                 win the open battle at once (rewards as usual)
+##   win | defeat        end the battle as a victory or a party defeat
+##   hp WHO N            set a hero's/foe's HP (name, id, h1-h4 or f1-f4)
+##   status WHO KIND N   give bleed, rot, stun or guard to a figure
+##   summon              add one ordinary foe at rank 4 during a battle
+##   patch ABILITY ID    attach a named ability patch to a signature, free
 ##   event [id]          open an event now (a random one without an id)
 ##   camp | shop | sewing | unpicker | stall    open that visit now
 ##   heal                full HP, no fray, no torn parts
@@ -23,7 +27,7 @@ const SEED := 548
 const AREAS := {"floorboards": "floorboards", "walls": "walls", "basket": "sewing_basket", "sewing_basket": "sewing_basket"}
 const FIGHTS := {"normal": "Fight", "fight": "Fight", "elite": "Elite", "boss": "Boss"}
 const VISITS := {"camp": "Campfire", "shop": "Peddler", "sewing": "SewingCircle", "unpicker": "Unpicker", "stall": "PatchStall"}
-const HELP := "run [seed] | floor N | walk [floorboards|walls|basket] | fight [normal|elite|boss] | win | event [id] | camp | shop | sewing | unpicker | stall | heal | candle N | fear N | gold N | scraps N"
+const HELP := "run [seed] | floor N | walk [floorboards|walls|basket] | fight [normal|elite|boss] | win | defeat | hp WHO N | status WHO KIND N | summon | patch ABILITY ID | event [id] | camp | shop | sewing | unpicker | stall | heal | candle N | fear N | gold N | scraps N"
 
 var app: Node
 var last := ""
@@ -120,6 +124,16 @@ func run(command: String) -> String:
 			return _fight(session, FIGHTS.get(arg.to_lower(), "Fight"))
 		"win":
 			return _win(session)
+		"defeat":
+			return _defeat(session)
+		"hp":
+			return _hp(session, words)
+		"status":
+			return _status(session, words)
+		"summon":
+			return _summon(session)
+		"patch":
+			return _patch(session, words)
 		"event":
 			return _visit(session, "Event", arg)
 		"heal":
@@ -258,6 +272,160 @@ func _win(session: StitchedRunSession) -> String:
 	if not session.settle_battle(battle):
 		return _done(session, "failed: the battle would not settle")
 	return _done(session, "battle won")
+
+
+func _battle_unit(battle: StitchedRules, who: String) -> Dictionary:
+	var query := who.strip_edges().to_lower()
+	for unit in battle._units.values():
+		if str(unit.id).to_lower() == query or str(unit.name).to_lower() == query:
+			return unit
+	var seat := query.trim_prefix("hero").trim_prefix("foe")
+	var side := "hero" if query.begins_with("hero") or query.begins_with("h") else "foe"
+	if query.begins_with("hero") or query.begins_with("foe"):
+		seat = query.trim_prefix("hero").trim_prefix("foe")
+	elif query.begins_with("h") or query.begins_with("f"):
+		seat = query.substr(1)
+	else:
+		return {}
+	if not seat.is_valid_int() or int(seat) < 1 or int(seat) > 4:
+		return {}
+	for unit in battle._units.values():
+		if str(unit.side) != side or int(unit.rank) != int(seat):
+			continue
+		if not bool(unit.get("dead", false)) and not bool(unit.get("lost", false)):
+			return unit
+	return {}
+
+
+func _finish_cheat_battle(session: StitchedRunSession, message: String) -> String:
+	var battle: StitchedRules = session.battle
+	if battle == null or not battle.is_over():
+		return _done(session, message)
+	session._seal()
+	_close_views()
+	if not session.settle_battle(battle):
+		return "failed: the finished battle would not settle"
+	return _done(session, message)
+
+
+func _defeat(session: StitchedRunSession) -> String:
+	if session.phase != "battle" or session.battle == null:
+		var opened := _fight(session, "Fight")
+		if session.phase != "battle":
+			return "failed: could not start defeat battle (%s)" % opened
+	var battle: StitchedRules = session.battle
+	for hero in battle._units_of_side("hero"):
+		if not bool(hero.lost):
+			battle._lose_hero(hero)
+	battle._battle_finished()
+	if battle.outcome() != "defeat":
+		return "failed: party loss did not resolve"
+	return _finish_cheat_battle(session, "party defeated")
+
+
+func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
+	if session.phase != "battle" or session.battle == null or words.size() < 3:
+		return "failed: hp needs a running battle, WHO and integer N"
+	if not words[words.size() - 1].is_valid_int():
+		return "failed: hp needs a running battle, WHO and integer N"
+	var who := " ".join(words.slice(1, words.size() - 1))
+	var target := _battle_unit(session.battle, who)
+	if target.is_empty() or target.get("dead", false) or target.get("lost", false):
+		return "failed: no living figure '%s'" % who
+	var value := int(words[words.size() - 1])
+	if value < 0 or value > int(target.max_hp):
+		return "failed: HP must be between 0 and %d" % int(target.max_hp)
+	var before := int(target.hp)
+	if value < before:
+		# Real rule damage performs Hanging, seam tears and foe-heap settlement.
+		session.battle._damage_target(target, before - value, {"target": str(target.id), "statuses": []})
+	else:
+		target.hp = value
+		if str(target.side) == "hero" and value > 0:
+			target.hanging = false
+			target.death_hits = 0
+	session.battle._battle_finished()
+	return _finish_cheat_battle(session, "%s hp %d" % [str(target.name), value])
+
+
+func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
+	if session.phase != "battle" or session.battle == null or words.size() < 4:
+		return "failed: status needs a running battle, WHO KIND N"
+	if not words[words.size() - 1].is_valid_int():
+		return "failed: status needs a running battle, WHO KIND N"
+	var amount := int(words[words.size() - 1])
+	var kind := words[words.size() - 2].to_lower()
+	var who := " ".join(words.slice(1, words.size() - 2))
+	if not kind in ["bleed", "rot", "stun", "guard"] or amount < 1 or amount > 99:
+		return "failed: status accepts bleed, rot, stun or guard and N from 1 to 99"
+	var target := _battle_unit(session.battle, who)
+	if target.is_empty() or bool(target.get("dead", false)) or bool(target.get("lost", false)):
+		return "failed: no living figure '%s'" % who
+	var receipt := {"target": str(target.id), "statuses": []}
+	# Apply the real effects handler; the figure itself is the debug source, so
+	# foe resistance does not randomly refuse the playtest's requested condition.
+	session.battle._apply_effects(target, target, {"effects": {kind: amount}}, receipt)
+	if receipt.statuses.is_empty() or bool(receipt.statuses[0].get("refused", false)):
+		return "failed: %s resisted %s" % [str(target.name), kind]
+	return _done(session, "%s %s %d" % [str(target.name), kind, amount])
+
+
+func _summon(session: StitchedRunSession) -> String:
+	if session.phase != "battle" or session.battle == null or session.battle.is_over():
+		return "failed: summon needs a running battle"
+	var battle: StitchedRules = session.battle
+	if battle._enemy_rank_taken(4) or battle._living_foes().size() >= 4:
+		return "failed: no fourth foe seat available"
+	var chosen := {}
+	for id in session.enemies.order:
+		if session.enemies.enemies[id].tier != StitchedEnemyCatalog.TIER_NORMAL or battle._units.has(id):
+			continue
+		chosen = StitchedEnemyCatalog.foe_for(session.enemies, id)
+		break
+	if chosen.is_empty():
+		return "failed: no distinct ordinary foe is available"
+	StitchedDeeperSeams.apply(chosen, session.map.get_current_floor(), "Fight")
+	var built := battle._build_foe(chosen, 4)
+	if not bool(built.get("ok", false)):
+		return "failed: summoned foe refused by rules"
+	battle._units[str(chosen.id)] = built.unit
+	# The next natural round rolls the new foe's initiative, not this round.
+	return _done(session, "%s summoned at foe seat 4" % str(chosen.name))
+
+
+func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
+	if not session.s14_enabled or words.size() < 3:
+		return "failed: patch needs ABILITY and patch ID"
+	var patch_id := words[words.size() - 1].to_lower()
+	var record: Dictionary = StitchedS14Abilities.patches().get("by_id", {}).get(patch_id, {})
+	if record.is_empty():
+		return "failed: unknown ability patch '%s'" % patch_id
+	var query := " ".join(words.slice(1, words.size() - 1)).to_lower()
+	var owner := ""
+	var signature_id := ""
+	for hero in session.heroes:
+		if bool(hero.lost):
+			continue
+		for ability in StitchedS14Abilities.kits().get(str(hero.id), {}).values():
+			if str(ability.id).to_lower() == query or str(ability.name).to_lower() == query:
+				if not owner.is_empty():
+					return "failed: ability name is ambiguous; use its id"
+				owner = str(hero.id)
+				signature_id = str(ability.id)
+	if owner.is_empty():
+		return "failed: unknown signature ability '%s'" % query
+	session.ability_serial += 1
+	var uid := session.ability_serial
+	session.ability_inventory.append({"uid": uid, "id": patch_id, "rarity": str(record.rarity)})
+	if not session.ability_sockets.has(owner):
+		session.ability_sockets[owner] = {}
+	# The cheat intentionally substitutes one socket; previous owned patches remain
+	# loose in inventory for a later real Sewing Circle visit.
+	session.ability_sockets[owner][signature_id] = [uid]
+	if session.phase == "battle" and session.battle != null:
+		session.battle._s14_sockets = session._battle_sockets()
+		session.battle_config["s14_sockets"] = session.battle._s14_sockets.duplicate(true)
+	return _done(session, "%s sewn onto %s" % [str(record.name), signature_id])
 
 
 func _visit(session: StitchedRunSession, kind: String, event_id := "") -> String:

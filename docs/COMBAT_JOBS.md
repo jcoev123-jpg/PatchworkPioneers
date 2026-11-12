@@ -69,6 +69,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-12 09:27 play pass): Sewed Heel Knot onto Pot Helm Command at the Sewing Circle, then used it in a normal fight to push the Moth Scribe from rank 3 to rank 4 and apply Mark. The ability showed one occupied badge and the real sewn effect in its hover card. Job remains PART: gold still retains two effects under protected rules and tests, pending an owner-approved migration.
 
+(2026-11-12 11:00 play pass): Added debug-only patch/summon/status/hp/defeat setup helpers and regression checks. Live normal fight: Red Lint appeared as one occupied badge on Warden's Pot Helm Command; the command then applied Mark and Bleed to Crochet Hook Harrier. The summoned fourth Ragling carried the requested Bleed and HP. Job stays PART: the protected two-effect gold rule is unchanged, and the required one-patch migration remains a design decision.
+
 Every hero ability button carries exactly one patch slot.With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint

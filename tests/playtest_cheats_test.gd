@@ -54,6 +54,32 @@ func _run() -> void:
 			"fight %s: a mounted battle (%s)" % [kind, said])
 	cheats.run("fight elite")
 	var gold_before := session.gold
+	var before_foes := session.battle._living_foes().size()
+	said = cheats.run("summon")
+	_check(before_foes == 3 and session.battle._living_foes().size() == 4
+		and not session.battle._foe_at(4).is_empty() and session.is_consistent(),
+		"summon: fourth real foe joins the running battle (%s)" % said)
+	var fourth: Dictionary = session.battle._foe_at(4)
+	said = cheats.run("status f4 bleed 2")
+	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("bleed", 0)) == 2
+		and session.is_consistent(), "status: new foe receives real bleed (%s)" % said)
+	said = cheats.run("status f4 rot 3")
+	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("rot", 0)) == 3
+		and session.is_consistent(), "status: rot enters the real rule statuses (%s)" % said)
+	said = cheats.run("status f4 stun 1")
+	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("stun", 0)) == 1
+		and session.is_consistent(), "status: stun enters the real rule statuses (%s)" % said)
+	_check(cheats.run("summon").begins_with("failed:") and session.battle._living_foes().size() == 4,
+		"summon refuses when fourth foe seat is occupied")
+	said = cheats.run("hp f4 1")
+	_check(int(session.battle.get_unit(str(fourth.id)).hp) == 1 and session.is_consistent(),
+		"hp: fourth foe lowered through damage rules (%s)" % said)
+	said = cheats.run("patch Pot Helm Command cotton_red_lint")
+	_check(session._battle_sockets().get("warden", {}).get("warden_head_pot_helm_command", []) == ["cotton_red_lint"]
+		and session.battle._s14_sockets == session._battle_sockets() and session.is_consistent(),
+		"patch: one signature socket is active in current battle (%s)" % said)
+	_check(cheats.run("status unknown rot 2").begins_with("failed:") and session.is_consistent(),
+		"invalid figure refuses without damaging the session")
 	said = cheats.run("win")
 	_check(said == "battle won" and session.phase == "map" and session.gold > gold_before and session.is_consistent(),
 		"win: elite settles to the map with gold (%s)" % said)
@@ -83,6 +109,18 @@ func _run() -> void:
 	_check(cheats.run_script("run;floor:3;fight boss") == "Boss battle" and app.stitched_run_session.phase == "battle"
 		and app.stitched_run_session.map.get_current_floor() == 12,
 		"a ';' script chains commands and the Boss stands on floor 12")
+	session = app.stitched_run_session
+	said = cheats.run("hp h1 2")
+	_check(session.battle != null and int(session.battle._hero_at(1).hp) == 2 and session.is_consistent(),
+		"hp: hero seat obeys requested HP (%s)" % said)
+	said = cheats.run("status Warden guard 2")
+	_check(int(session.battle.get_unit("warden").statuses.get("guard", 0)) == 2
+		and session.is_consistent(), "status: full hero name accepts guard (%s)" % said)
+	said = cheats.run("defeat")
+	_check(said == "party defeated" and session.phase == "defeat" and session.battle == null
+		and session.is_consistent(), "defeat: a real terminal loss is settled (%s)" % said)
+	_check(cheats.run("defeat").begins_with("party defeated") and app.stitched_run_session.phase == "defeat",
+		"defeat: command can also create and end a fresh battle")
 	_finish()
 
 
