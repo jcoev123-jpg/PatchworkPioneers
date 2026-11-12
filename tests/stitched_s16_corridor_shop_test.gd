@@ -180,6 +180,9 @@ func _run() -> void:
 		var tag := crowded.floor_buttons[index].get_node("WareName") as Label
 		_check(tag != null and tag.get_global_rect().end.y < front_midpoint - 8.0,
 			"second-row Peddler labels stay above foreground wares (item %d)" % index)
+		if str(crowded.groups[index].key) == "buy_spare_spool":
+			_check(is_equal_approx(tag.position.x, -6.0),
+				"Peddler's spare spool caption has extra clearance from the exit arrow")
 	crowded.queue_free()
 
 	# Event exits must use the floor arrow even if their prose talks about coins,

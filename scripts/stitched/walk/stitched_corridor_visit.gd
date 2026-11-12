@@ -557,6 +557,10 @@ func _place_items() -> void:
 				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 52.0)
 			tag.size = Vector2(seen.size.x + 48, 40)
 			var tag_x := -24.0
+			# The spool lies right next to the red exit arrow at the Peddler.
+			# Shift only its caption right, leaving the ware and its hit area in place.
+			if not _event_visit and str(groups[number].key) == "buy_spare_spool":
+				tag_x += 18.0
 			# The permanent route map covers the lower-right of an Event. Shift
 			# long choice names left rather than letting their text cross the map.
 			if _event_visit:
