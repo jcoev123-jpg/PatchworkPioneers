@@ -297,6 +297,9 @@ func _group_art(group: Dictionary, actions: Array, pictures: Array) -> Texture2D
 	var lower := str(first.text).to_lower()
 	# What the choice gives is what lies on the floor: "spend 13 gold; gain 2 scraps" shows scraps.
 	var gained := lower.get_slice("gain ", 1) if lower.contains("gain ") else ""
+	# "Pay 19 gold for spine thread (+3 scraps)" gives scraps too: what follows "(+" is the gift.
+	if gained.is_empty() and lower.contains("(+"):
+		gained = lower.get_slice("(+", 1)
 	for source in [gained, lower]:
 		for row in WORD_ART:
 			for word in row[0]:
