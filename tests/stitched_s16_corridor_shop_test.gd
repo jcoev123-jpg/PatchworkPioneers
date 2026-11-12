@@ -231,6 +231,55 @@ func _run() -> void:
 		"a thinned caption still has a clickable ware and readable hover details")
 	dense.queue_free()
 
+	# A lost doll's disabled purchase variants must not project duplicate wares
+	# onto the floor, while unavailable stock for living dolls remains inspectable.
+	var orphaned := StitchedCorridorVisit.new()
+	root.add_child(orphaned)
+	orphaned.present("floorboards", "bright", "Peddler", "A peddler waits.", ["stop_peddler"])
+	var orphaned_actions := [
+		{"id": "buy_patch", "text": "Scrap Lined Vest / 20 gold", "arguments": ["scrap_lined_vest", "warden", 0], "enabled": true},
+		{"id": "buy_patch", "text": "Scrap Lined Vest / Seamstress / button 1 / 20 gold", "arguments": ["scrap_lined_vest", "seamstress", 0], "enabled": false},
+		{"id": "buy_patch", "text": "Scrap Lined Vest / Seamstress / button 2 / 20 gold", "arguments": ["scrap_lined_vest", "seamstress", 1], "enabled": false},
+		{"id": "buy_pins", "text": "Pins / 10 gold", "arguments": ["warden"], "enabled": true},
+		{"id": "buy_pins", "text": "Pins / Seamstress / 10 gold", "arguments": ["seamstress"], "enabled": false},
+		{"id": "buy_candle_stub", "text": "Candle stub / 10 gold", "arguments": [], "enabled": false},
+		{"id": "leave", "text": "Leave Peddler", "arguments": [], "enabled": true},
+	]
+	var orphaned_homes := orphaned.lay_out(orphaned_actions, [{"id": "warden", "name": "Warden"}],
+		["", "", "", "", "", "", ""])
+	var orphaned_buttons: Array[Button] = []
+	for index in orphaned_actions.size():
+		var button := Button.new()
+		button.text = str(orphaned_actions[index].text)
+		button.disabled = not bool(orphaned_actions[index].enabled)
+		orphaned_homes[index].add_child(button)
+		orphaned_buttons.append(button)
+	orphaned.dress(orphaned_buttons)
+	await process_frame
+	await process_frame
+	_check(orphaned.groups.size() == 4 and orphaned.floor_buttons.size() == 4
+		and orphaned._homes.size() == orphaned_actions.size(),
+		"lost-doll purchase choices share wares instead of adding ghost floor items")
+	_check(orphaned.groups[0].actions == [0, 1, 2] and orphaned.groups[1].actions == [3, 4],
+		"all living and lost doll choices stay grouped with their matching ware")
+	for number in orphaned.floor_buttons.size():
+		_check(orphaned.floor_buttons[number].visible
+			and orphaned.stage.figure_nodes.has("thing_%d" % number),
+			"one visible floor item per actual Peddler ware (%d)" % number)
+	for index in [1, 2, 4]:
+		var disabled_choice := orphaned_buttons[index]
+		_check(disabled_choice.visible and disabled_choice.disabled
+			and orphaned._homes[index] == disabled_choice.get_parent()
+			and not disabled_choice.is_visible_in_tree(),
+			"lost-doll choice %d remains an unavailable, closed-tray control" % index)
+		orphaned.reveal(disabled_choice)
+		_check(disabled_choice.is_visible_in_tree() and disabled_choice.disabled,
+			"lost-doll choice %d can still be inspected after opening its shared ware" % index)
+		orphaned.close_tray()
+	_check(orphaned.floor_buttons[2].visible and orphaned.floor_buttons[2].disabled,
+		"ordinary unavailable stock remains visible and inspectable")
+	orphaned.queue_free()
+
 	# Event exits must use the floor arrow even if their prose talks about coins,
 	# or has no navigation word (album, fortune, observatory). Unaffordable
 	# event trades should not leave a dead object on the floor.

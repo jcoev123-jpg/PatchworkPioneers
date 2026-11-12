@@ -189,6 +189,13 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 	for hero in party:
 		hero_ids.append(str(hero.id))
 		_party[str(hero.id)] = hero
+	# The Peddler quotes disabled purchases for lost dolls too. Group those
+	# choices under the same ware as the living dolls, rather than displaying
+	# ghost copies on the floor or hiding their inspectable tray controls.
+	if heading.text == "Peddler":
+		for id in StitchedPartyAdmission.HERO_IDS:
+			if not hero_ids.has(id):
+				hero_ids.append(id)
 	var by_key := {}
 	var spot: Array = []
 	for index in actions.size():
