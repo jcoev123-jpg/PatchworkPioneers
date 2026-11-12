@@ -608,9 +608,9 @@ func _place_items() -> void:
 			_clear_arrow_overlap(floor_buttons[number])
 
 
-## Three or more Event trades cannot all carry 290px captions on one projected
-## row left of the map. Keep the actual floor hit targets where they are, but
-## give their captions two tidy rows instead of pushing older words offscreen.
+## Three or more Event trades need shorter captions above the bottom story.
+## Centre each name beneath its actual floor object; only the rightmost name
+## slides left of the route map. Additional rows keep dense events readable.
 func _fit_crowded_event_captions() -> void:
 	if not _event_visit:
 		return
@@ -631,7 +631,8 @@ func _fit_crowded_event_captions() -> void:
 		var label := labels[index]
 		label.size = Vector2(230.0, 44.0)
 		label.add_theme_font_size_override("font_size", 15)
-		var x := 10.0 + float(index % 3) * 246.0
+		var centre := owners[index].position.x + owners[index].size.x * 0.5
+		var x := clampf(centre - label.size.x * 0.5, 8.0, 998.0 - label.size.x)
 		var y := STORY_RECT.position.y - 48.0 - float(rows - 1 - index / 3) * 50.0
 		label.position = Vector2(x, y) - owners[index].position
 

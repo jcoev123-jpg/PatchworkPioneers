@@ -441,8 +441,8 @@ func _run() -> void:
 		"unaffordable Event captions remain legible on the dark floor without enabling trades")
 	needle_gate.queue_free()
 
-	# Some road events have three genuine trades, with no leave arrow. Their
-	# captions must all remain legible within the space left of the corner map.
+	# Some road events have three genuine trades, with no leave arrow. Each
+	# caption stays close to its own floor item, readable left of the corner map.
 	var three_offers := StitchedCorridorVisit.new()
 	root.add_child(three_offers)
 	three_offers.present("floorboards", "bright", "Mismatched Mittens", "Gloves rustle.", ["stop_event"])
@@ -465,11 +465,15 @@ func _run() -> void:
 	for index in mitten_actions.size():
 		var caption := three_offers.floor_buttons[index].get_node("WareName") as Label
 		var bounds := caption.get_global_rect()
-		_check(bounds.position.x >= 8.0 and bounds.end.x <= 750.0
+		_check(bounds.position.x >= 8.0 and bounds.end.x <= 998.0
 			and bounds.end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0
 			and caption.text == mitten_actions[index].text.get_slice(" (", 0)
 			and mitten_buttons[index].text == mitten_actions[index].text,
 			"three-trade event caption %d is onscreen, left of the map, and keeps the full button" % index)
+		var item := three_offers.floor_buttons[index]
+		var item_centre := item.position.x + item.size.x * 0.5
+		_check(absf(item_centre - (bounds.position.x + bounds.size.x * 0.5)) <= 65.0,
+			"three-trade event caption %d stays near its own floor object" % index)
 		for previous in mitten_bounds:
 			_check(not previous.intersects(bounds), "three-trade event caption %d never overlaps an earlier one" % index)
 		mitten_bounds.append(bounds)
