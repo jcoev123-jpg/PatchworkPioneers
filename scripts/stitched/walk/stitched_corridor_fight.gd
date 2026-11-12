@@ -1761,6 +1761,10 @@ func _hold_pending() -> bool:
 			return true
 		if index < engine.turn_cues.size() and not engine.turn_cues[index].is_empty():
 			return true
+		# Debug HP/status shortcuts float real outcome words (a finishing blow
+		# included), so the fallen figure must be held for that beat too.
+		if not _float_events(entry).is_empty():
+			return true
 	return false
 
 
