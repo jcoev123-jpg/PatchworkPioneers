@@ -95,6 +95,8 @@ like ref3: a bleed patch that gives the ability +X bleed shows the bleed design.
 empty frame. The hover card (job 3) says what the patch adds. One patch per ability, never two. Check that a patch
 sewn on really changes the ability in the next fight; if it does not, that is the bug to fix first.
 
+(2026-11-13 00:30 web play pass): Inspected title, party picker, Wren intro, floor-1 corridor, Peddler, camp, Unpicker, Patch Stall, Needle Gate, a normal battle, floor-6 elite, floor-10 wicker Walk and floor-12 boss. Unsewed Red Lint from Warden's Pot Helm Command at the Sewing Circle, then spent 2 scraps to sew it back onto that exact signature, with the occupied option restored. A real Wick Spark hit the Moth Queen for 4 HP and applied Bleed 1 in the boss fight; the prior Cog Shot advanced without an evident hit, so it was not labelled a bug. The 0-HP Seamstress showed HANGING, no visible FRAY or Wren hand actions appeared, and the boss F1 twice is intentional. Job 4 remains PART: the older gold two-effect rule requires an owner-approved migration and protected-test reconciliation.
+
 ## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
