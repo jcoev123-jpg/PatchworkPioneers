@@ -574,16 +574,17 @@ func _place_items() -> void:
 				tag_x = minf(tag_x, 998.0 - button.position.x - tag.size.x)
 			tag.position = Vector2(tag_x, tag_y)
 			button.add_child(tag)
-	_thin_crowded_peddler_labels()
+	_thin_crowded_visit_labels()
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:
 			_clear_arrow_overlap(floor_buttons[number])
 
 
-## A deep Peddler stall projects many captions into the same narrow space.
-## Hide the overlapping ones, not their wares: focus/hover still tells their full story.
-func _thin_crowded_peddler_labels() -> void:
-	if heading.text != "Peddler" or floor_buttons.size() <= 10:
+## Crowded Peddler and Sewing Circle wares can project several captions into the
+## same narrow space. Hide only colliding captions; their buttons and full
+## choice descriptions remain available through focus/hover.
+func _thin_crowded_visit_labels() -> void:
+	if not heading.text in ["Peddler", "Sewing Circle"] or floor_buttons.size() <= 7:
 		return
 	var shown: Array[Rect2] = []
 	for number in floor_buttons.size():

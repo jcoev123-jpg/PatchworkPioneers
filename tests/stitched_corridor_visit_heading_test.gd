@@ -72,6 +72,51 @@ func _run() -> void:
 			"text": "Pay 19 gold for three bundles of spine thread (+3 scraps)"}]
 		_check(page._group_art({"actions": [0]}, spine_thread, [""]) == bundles,
 			"parenthesized scrap reward places earned bundles, not spent gold, on the floor")
+	# A crowded Sewing Circle keeps floor wares clickable without stacking
+	# unreadable recruitment and patch captions across the middle of the screen.
+	var crowded := StitchedCorridorVisit.new()
+	root.add_child(crowded)
+	await process_frame
+	crowded.present("floorboards", "bright", "Sewing Circle", "A ring of old needles waits.")
+	var offers: Array = []
+	var pictures: Array = []
+	for index in 12:
+		offers.append({"id": "sew", "text": "Sew long patch %d onto a signature" % index,
+			"arguments": [index], "enabled": true})
+		pictures.append("")
+	var homes: Array = crowded.lay_out(offers, [], pictures)
+	var choices: Array[Button] = []
+	for index in offers.size():
+		var choice := Button.new()
+		choice.text = str(offers[index].text)
+		homes[index].add_child(choice)
+		choices.append(choice)
+	crowded.dress(choices)
+	await process_frame
+	var caption_bounds: Array[Rect2] = []
+	var hidden_captions := 0
+	for number in crowded.floor_buttons.size():
+		var floor_button: Button = crowded.floor_buttons[number]
+		var caption := floor_button.get_node_or_null("WareName") as Label
+		if caption == null:
+			continue
+		if not caption.visible:
+			hidden_captions += 1
+			crowded._look(number, true)
+			_check(crowded.story.text.contains("Sew long patch"),
+				"a hidden caption retains its full hover/focus description")
+			continue
+		var bounds: Rect2 = crowded._caption_text_bounds(caption)
+		for prior in caption_bounds:
+			_check(not prior.grow(2.0).intersects(bounds),
+				"crowded Sewing Circle shows no overlapping captions")
+		caption_bounds.append(bounds)
+	_check(hidden_captions > 0 and caption_bounds.size() > 1,
+		"crowded Sewing Circle thins names but keeps several captions visible")
+	_check(choices.size() == 12 and crowded.floor_buttons.size() == 12
+		and choices.all(func(choice): return is_instance_valid(choice)),
+		"thinning captions leaves every Sewing Circle action present")
+	crowded.queue_free()
 	page.queue_free()
 	await process_frame
 	for failure in failures:
