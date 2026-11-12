@@ -214,6 +214,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (2026-11-12 evening play pass): Added a rules-confirmed fourth-seat arrival receipt for summoned/split foes. The debug summon now preserves the mounted battle instead of discarding its receipt in a screen rebuild; the existing non-ability spotlight holds SUMMONED! or SPLIT! above the new foe. Invalid, blocked and stale arrivals remain silent. Mounted regression checks and the live `summon_float` normal fight show the cue above Ragling without disrupting the next actor; protected combat-rule tests pass. Job remains PART: no naturally authored summon/split ability currently triggers this receipt, ambiguous multi-hit clock attribution and rare-outcome/icon coverage remain.
 
+(2026-11-13 07:48 web play fix): A hit leaving a next-to-act foe on 1 HP can now report its genuine fatal Bleed/Rot tick and UNSTITCHED! from the receipt's post-hit HP anchor. Resisted or refused applications no longer mask pre-existing clocks. Replayed seed 548: Seamstress's Needle Prick dealt 5 to a 6-HP Button Guard, its new Bleed was resisted, then the prior Bleed killed it; the mounted receipt now contains BLEED -1 and the kill cue. Six new deterministic checks pass (86 total). Ambiguous multi-result/reapplied clocks still withhold cues. Job remains PART for unverified rare outcomes and missing icon art.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that

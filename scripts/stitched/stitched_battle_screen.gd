@@ -1574,6 +1574,10 @@ static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dic
 		if result.has("target_hp"):
 			hp_after_hit[victim] = int(result["target_hp"])
 		for effect in result.get("statuses", []):
+			# Resisted/refused effects changed no clock. They must not hide an
+			# existing Bleed/Rot tick on a foe that is next to act.
+			if bool(effect.get("resisted", false)) or bool(effect.get("refused", false)):
+				continue
 			var on_id := str(effect.get("on", victim))
 			if str(effect.get("status", "")) == "guard" and not effect.has("on"):
 				on_id = actor_id
@@ -1599,14 +1603,17 @@ static func turn_change_cues(before: Dictionary, after: Dictionary, receipt: Dic
 		var prior: Dictionary = old.get("statuses", {})
 		var current: Dictionary = now.get("statuses", {})
 		var changed: Dictionary = applied.get(id, {})
-		# A lethal foe clock clears every status immediately (_kill_foe), so the
-		# usual countdown comparison cannot see its final Bleed/Rot tick. Only
-		# announce it when an untouched foe's old clocks alone explain its death.
-		if not overlap and str(old.get("side", "")) == "foe" \
+		# A fatal foe clock clears all statuses (_kill_foe). A single struck
+		# target can still show that tick when the receipt anchors its post-hit HP;
+		# exclude rewritten clocks, multiple hits and the acting unit.
+		var fatal_anchor := int(hp_after_hit.get(id, old.get("hp", 0)))
+		var changed_clock := changed.has("*") or changed.has("regen") \
+			or changed.has("bleed") or changed.has("rot")
+		if str(old.get("side", "")) == "foe" and not changed_clock \
 				and not bool(old.get("dead", false)) and bool(now.get("dead", false)) \
-				and int(old.get("hp", 0)) > 0 and int(now.get("hp", -1)) == 0 \
+				and fatal_anchor > 0 and int(now.get("hp", -1)) == 0 \
 				and current.is_empty():
-			var fatal_hp := int(old.get("hp", 0))
+			var fatal_hp := fatal_anchor
 			var fatal_regen := 0
 			if int(prior.get("regen", 0)) > 0:
 				fatal_regen = mini(1 if int(prior.get("rot", 0)) > 0 else 2,

@@ -162,6 +162,56 @@ func _run() -> void:
 		overlap_before, overlap_after, overlap_receipt).is_empty(),
 		"two results on the same foe cannot claim one intermediate HP")
 	overlap_receipt.results.pop_back()
+	# When a hit leaves a foe at 1 HP and that foe is next to tick, a
+	# confirmed Bleed death must not lose its damage or UNSTITCHED word.
+	var clock_kill_before := {foe_id: {"side": "foe", "hp": 5, "max_hp": 20,
+		"dead": false, "statuses": {"bleed": 2, "rot": 2}}}
+	var clock_kill_after := {foe_id: {"side": "foe", "hp": 0, "max_hp": 20,
+		"dead": true, "statuses": {}}}
+	var clock_kill_receipt := {"action": "ability", "ok": true, "actor": hero_id,
+		"results": [{"target": foe_id, "target_side": "foe", "hit": true,
+			"damage": 4, "target_hp": 1, "statuses": []}]}
+	var clock_kill_cues := StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt)
+	_check(clock_kill_cues.size() == 2
+		and str(clock_kill_cues[0].get("status", "")) == "bleed"
+		and int(clock_kill_cues[0].get("amount", -1)) == 1
+		and bool(clock_kill_cues[1].get("killed", false)),
+		"a post-hit HP anchor proves a fatal overlapping Bleed tick, not phantom Rot")
+	clock_kill_receipt["turn_cues"] = clock_kill_cues
+	var clock_kill_words := _words(fight._float_events(clock_kill_receipt), foe_key)
+	_check(clock_kill_words.has("4") and clock_kill_words.has("BLEED -1")
+		and clock_kill_words.count("UNSTITCHED!") == 1,
+		"real hit, fatal Bleed tick and kill remain distinct floated outcomes")
+	clock_kill_receipt.erase("turn_cues")
+	clock_kill_receipt.results[0].erase("target_hp")
+	_check(StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt).is_empty(),
+		"missing post-hit HP cannot claim a fatal overlapping clock")
+	clock_kill_receipt.results[0]["target_hp"] = 0
+	_check(StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt).is_empty(),
+		"a kill from the hit itself cannot claim extra fatal clock damage")
+	clock_kill_receipt.results[0]["target_hp"] = 1
+	clock_kill_receipt.results[0]["statuses"] = [{"status": "bleed", "duration": 2}]
+	_check(StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt).is_empty(),
+		"a status rewritten by the hit cannot be used to invent its fatal tick")
+	clock_kill_receipt.results[0]["statuses"] = [{"status": "bleed", "resisted": true}]
+	clock_kill_cues = StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt)
+	_check(clock_kill_cues.size() == 2 and int(clock_kill_cues[0].get("amount", 0)) == 1
+		and bool(clock_kill_cues[1].get("killed", false)),
+		"a resisted Bleed application leaves the earlier Bleed clock free to finish the foe")
+	clock_kill_receipt.results[0]["statuses"] = [{"status": "bleed", "refused": true}]
+	_check(StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt).size() == 2,
+		"a refused status also cannot erase a settled existing Bleed tick")
+	clock_kill_receipt.results[0]["statuses"] = []
+	clock_kill_receipt.results.append({"target": foe_id, "target_hp": 1})
+	_check(StitchedBattleScreen.turn_change_cues(
+		clock_kill_before, clock_kill_after, clock_kill_receipt).is_empty(),
+		"multiple results against one foe leave fatal clock attribution ambiguous")
 	overlap_before[foe_id] = {"hp": 12, "max_hp": 20,
 		"statuses": {"regen": 1, "rot": 1}}
 	overlap_after[foe_id] = {"hp": 7, "max_hp": 20, "statuses": {}}
