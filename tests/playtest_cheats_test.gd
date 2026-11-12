@@ -76,10 +76,22 @@ func _run() -> void:
 	terminal_battle._outcome = "ongoing"
 	var gold_before := session.gold
 	var before_foes := session.battle._living_foes().size()
+	var mounted_view: StitchedBattleScreen = app.stitched_run_battle
+	var receipt_count := mounted_view.receipts.size()
 	said = cheats.run("summon")
 	_check(before_foes == 3 and session.battle._living_foes().size() == 4
 		and not session.battle._foe_at(4).is_empty() and session.is_consistent(),
 		"summon: fourth real foe joins the running battle (%s)" % said)
+	_check(app.stitched_run_battle == mounted_view and mounted_view.receipts.size() == receipt_count + 1
+		and str(mounted_view.last_receipt.get("action", "")) == "summon"
+		and str(mounted_view.last_receipt.get("target", "")) == str(session.battle._foe_at(4).id),
+		"summon keeps the mounted battle and records its actual fourth-seat arrival")
+	await process_frame
+	await process_frame
+	var mounted_fight: StitchedCorridorFight = mounted_view.get_node_or_null("CorridorFight")
+	_check(mounted_fight != null and mounted_fight._float_groups.has("foe_4")
+		and mounted_fight._beats != null and mounted_fight._beats.is_running(),
+		"summon floats a held fourth-seat arrival without rebuilding the view")
 	var fourth: Dictionary = session.battle._foe_at(4)
 	said = cheats.run("status f4 bleed 2")
 	_check(int(session.battle.get_unit(str(fourth.id)).statuses.get("bleed", 0)) == 2

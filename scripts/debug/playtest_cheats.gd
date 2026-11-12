@@ -395,12 +395,22 @@ func _summon(session: StitchedRunSession) -> String:
 	if chosen.is_empty():
 		return "failed: no distinct ordinary foe is available"
 	StitchedDeeperSeams.apply(chosen, session.map.get_current_floor(), "Fight")
-	var built := battle._build_foe(chosen, 4)
-	if not bool(built.get("ok", false)):
-		return "failed: summoned foe refused by rules"
-	battle._units[str(chosen.id)] = built.unit
+	var arrival := battle.summon_foe(chosen)
+	if not bool(arrival.get("ok", false)):
+		return "failed: " + str(arrival.get("error", "summoned foe refused by rules"))
+	# Keep the mounted fight alive: a scene rebuild used to drop the arrival
+	# receipt before its fourth-seat spotlight or floating word could play.
+	var said := "%s summoned at foe seat 4" % str(chosen.name)
+	session.journal.append({"action": "cheat", "text": said})
+	session._seal()
+	var view: StitchedBattleScreen = app.stitched_run_battle
+	if is_instance_valid(view) and view.battle == battle:
+		view._record(arrival)
+	else:
+		_close_views()
+		app._present_stitched_run()
 	# The next natural round rolls the new foe's initiative, not this round.
-	return _done(session, "%s summoned at foe seat 4" % str(chosen.name))
+	return said
 
 
 func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:

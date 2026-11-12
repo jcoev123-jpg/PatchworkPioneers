@@ -1172,6 +1172,24 @@ func _build_hero(entry: Variant, rank: int) -> Dictionary:
 	return {"ok": true, "error": "", "unit": unit}
 
 
+## Admit a real fourth foe without advancing the round or borrowing battle RNG.
+## The receipt identifies the newly occupied seat for the combat presentation.
+func summon_foe(entry: Dictionary, arrival: String = "summon") -> Dictionary:
+	if not _valid or is_over():
+		return {"ok": false, "error": "battle is not ongoing"}
+	if not arrival in ["summon", "split"]:
+		return {"ok": false, "error": "unknown arrival kind"}
+	if _enemy_rank_taken(MAX_RANK) or _living_foes().size() >= MAX_RANK:
+		return {"ok": false, "error": "no fourth foe seat available"}
+	var built := _build_foe(entry, MAX_RANK)
+	if not bool(built.get("ok", false)):
+		return {"ok": false, "error": str(built.get("error", "invalid foe"))}
+	var foe: Dictionary = built.unit
+	_units[str(foe.id)] = foe
+	return {"ok": true, "action": arrival, "target": str(foe.id), "rank": MAX_RANK,
+		"name": str(foe.name)}
+
+
 func _build_foe(entry: Variant, rank: int) -> Dictionary:
 	if not entry is Dictionary:
 		return {"ok": false, "error": "foe is not a dictionary", "unit": {}}

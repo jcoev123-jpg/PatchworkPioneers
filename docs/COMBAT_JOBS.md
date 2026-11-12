@@ -176,6 +176,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (2026-11-12 18:00 play pass): In a floor-12 boss hit, the centered move title collided with a three-outcome stack (MARK, RESIST, RED LINT). Moved the move title just below the turn ribbon and reserved a clear vertical band before floating words, without shifting HP plates or the bottom rail; the mounted four-cue collision check and live boss strike confirm separation. Job remains PART for the other receipt/art limitations above.
 
+(2026-11-12 evening play pass): Added a rules-confirmed fourth-seat arrival receipt for summoned/split foes. The debug summon now preserves the mounted battle instead of discarding its receipt in a screen rebuild; the existing non-ability spotlight holds SUMMONED! or SPLIT! above the new foe. Invalid, blocked and stale arrivals remain silent. Mounted regression checks and the live `summon_float` normal fight show the cue above Ragling without disrupting the next actor; protected combat-rule tests pass. Job remains PART: no naturally authored summon/split ability currently triggers this receipt, ambiguous multi-hit clock attribution and rare-outcome/icon coverage remain.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that

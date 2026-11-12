@@ -381,6 +381,42 @@ func _run() -> void:
 	fight.refresh()
 	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng
 		and screen.receipts == receipts, "floating callouts do not mutate rules or receipts")
+	# A fourth foe's arrival is an actual rules receipt, not a guessed
+	# announcement based on an empty rank suddenly becoming occupied.
+	var new_foe := StitchedEnemyCatalog.foe_for(StitchedEnemyCatalog.load_catalog(), "ragling")
+	var arrived := fight.battle.summon_foe(new_foe)
+	fight.refresh()
+	_check(bool(arrived.get("ok", false)) and str(arrived.get("action", "")) == "summon"
+		and str(arrived.get("target", "")) == "ragling" and int(arrived.get("rank", 0)) == 4
+		and _words(fight._float_events(arrived), "foe_4").has("SUMMONED!"),
+		"a real fourth-foe summon receipt floats on the newly occupied seat")
+	_check(fight.battle.rng_state() == rng and not bool(fight.battle.summon_foe(new_foe).get("ok", true)),
+		"summoning uses no RNG and refuses an already occupied fourth seat")
+	var invalid_arrival: Dictionary = arrived.duplicate(true)
+	invalid_arrival["rank"] = 3
+	_check(fight._float_events(invalid_arrival).is_empty(),
+		"an arrival receipt for a different seat cannot float on its occupant")
+	invalid_arrival["rank"] = 4
+	invalid_arrival["ok"] = false
+	_check(fight._float_events(invalid_arrival).is_empty(),
+		"a refused arrival never announces itself")
+	fight._start_beats([arrived])
+	await physics_frame
+	await physics_frame
+	_check(fight._beats != null and fight._beats.is_running()
+		and fight._float_groups.has("foe_4"),
+		"summon arrival holds a visible floated word over the fourth seat")
+	fight._cancel_beats()
+	fight.battle._units.erase("ragling")
+	var split_arrival := fight.battle.summon_foe(new_foe, "split")
+	fight.refresh()
+	_check(bool(split_arrival.get("ok", false))
+		and _words(fight._float_events(split_arrival), "foe_4").has("SPLIT!"),
+		"a rules-confirmed split arrival uses its own fourth-seat cue")
+	fight.battle._units.erase("ragling")
+	fight.refresh()
+	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng,
+		"arrival callout checks leave the original preview battle untouched")
 	# Accessibility: reduced motion must not erase confirmed pass ticks or the
 	# final kill. Words fade in place while the stage only pulses its lighting.
 	screen.reduced_motion = true

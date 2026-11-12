@@ -2136,6 +2136,16 @@ func _float_events(receipt: Dictionary, show_misses: bool = false) -> Dictionary
 	var events := {}
 	if not bool(receipt.get("ok", true)):
 		return events
+	# A new foe only announces itself when the rules admitted that exact
+	# occupant to its recorded seat; a rejected or stale arrival is silent.
+	var arrival := str(receipt.get("action", ""))
+	if arrival in ["summon", "split"]:
+		var arrived_id := str(receipt.get("target", ""))
+		var arrived: Dictionary = battle.get_unit(arrived_id)
+		if str(arrived.get("side", "")) == "foe" and not bool(arrived.get("dead", false)) \
+				and int(arrived.get("rank", 0)) == int(receipt.get("rank", 0)):
+			_float_add(events, _live_receipt_key(arrived_id),
+				"SUMMONED!" if arrival == "summon" else "SPLIT!", "strength")
 	var patch_book: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
 	var shown_patches := {}
 	# Passes and skips have no attack results, but may settle turn-start clocks.
