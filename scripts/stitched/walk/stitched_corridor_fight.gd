@@ -430,7 +430,7 @@ func _build_top() -> void:
 	ribbon.position = Vector2(295, 66)
 	ribbon.size = Vector2(690, 42)
 	add_child(ribbon)
-	log_label = _label("", Rect2(190, 540, 768, 44), 19, BONE, HORIZONTAL_ALIGNMENT_CENTER)
+	log_label = _label("", Rect2(190, 518, 768, 44), 19, BONE, HORIZONTAL_ALIGNMENT_CENTER)
 	log_label.name = "FightLine"
 	# Long joined notices wrap inside the 900 px line instead of spilling past the screen.
 	log_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
