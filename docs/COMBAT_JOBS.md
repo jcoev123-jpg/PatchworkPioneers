@@ -170,6 +170,8 @@ Built receipt-driven held-beat callouts: numeric hit/crit damage, red UNSTITCHED
 
 (2026-11-12 09:07 play pass): The fatal-tick case is NOW reproduced live (`tinker_after`): Felt Bulwark reached 0 HP from Bleed at turn start while Scissor Crab used Pinch; the correct held seat showed `BLEED -1`, `UNSTITCHED!` and a 0/18 plate, without a phantom hit attribution. A separate `monk_hit_beat` captured `CRIT! 7` and BLEED on the target. `sewn_patch_hit` confirmed RESIST, BLEED and RED LINT stacking on Thread Biter. Job remains PART for missing summon/split receipts, other ambiguous overlaps, remaining icon art and further rare-outcome visual coverage.
 
+(2026-11-12 18:00 play pass): In a floor-12 boss hit, the centered move title collided with a three-outcome stack (MARK, RESIST, RED LINT). Moved the move title just below the turn ribbon and reserved a clear vertical band before floating words, without shifting HP plates or the bottom rail; the mounted four-cue collision check and live boss strike confirm separation. Job remains PART for the other receipt/art limitations above.
+
 References:`ref7_float_kill.jpg`,`ref8_float_crit.jpg` (open with `view_image`, file name only).
 
 Whenever something happens to a figure in a fight, a big word and, where one exists, an icon float up over that

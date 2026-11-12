@@ -112,6 +112,11 @@ func _invalid_cases(source: Dictionary) -> Array:
 
 
 func _pure_checks() -> void:
+	var ranks: Array = StitchedFieldGuide.PAGES[0]
+	_check(ranks[2].contains("FOUR fixed") and ranks[4].contains("separate from the sockets")
+		and ranks[7].contains("fixed signature abilities") and ranks[7].contains("sewn patches")
+		and not ranks[7].contains("patched ability"),
+		"ranks guide separates fixed signature kits, sewn effects and torn-limb penalties")
 	var source: Dictionary = StitchedDeeperSeams.table()
 	var snapshot := source.duplicate(true)
 	_check(not source.is_empty() and source.get("resists") is Dictionary

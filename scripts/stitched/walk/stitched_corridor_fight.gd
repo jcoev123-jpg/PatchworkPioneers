@@ -438,7 +438,8 @@ func _build_top() -> void:
 	# The bar is built after this line and would paint over its top half: draw the line above the bar.
 	log_label.z_index = 1
 	add_child(log_label)
-	move_banner = _label("", Rect2(240, 124, 800, 56), 36, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
+	# Leave the turn ribbon above and the tallest four-cue outcome stack below.
+	move_banner = _label("", Rect2(240, 110, 800, 42), 30, AMBER, HORIZONTAL_ALIGNMENT_CENTER)
 	move_banner.name = "MoveName"
 	move_banner.visible = false
 	add_child(move_banner)
@@ -1580,7 +1581,7 @@ func _place_overlays() -> void:
 		group.show()
 		group.position = Vector2(clampf(bounds.get_center().x - group.size.x * 0.5,
 			4.0, 1276.0 - group.size.x), clampf(bounds.position.y + bounds.size.y * 0.15 - group.size.y,
-			104.0, BAR_TOP - group.size.y - 110.0))
+			160.0, BAR_TOP - group.size.y - 110.0))
 	# The only reaction text is MISS; it follows the actual dodger's 3D projection.
 	for key in _miss_labels:
 		var label: Label = _miss_labels[key]

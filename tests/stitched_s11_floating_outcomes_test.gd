@@ -239,6 +239,14 @@ func _run() -> void:
 	_check(fight._float_groups.has(foe_key)
 		and fight._float_groups[foe_key].get_child_count() >= 4,
 		"ink words render on the struck figure")
+	fight._show_move_name("Pot Helm Command")
+	fight._place_overlays()
+	var words_rect := Rect2(fight._float_groups[foe_key].position, fight._float_groups[foe_key].size)
+	var title_rect := Rect2(fight.move_banner.position, fight.move_banner.size)
+	_check(words_rect.position.y >= title_rect.end.y + 4.0
+		and words_rect.end.y < fight.BAR_TOP - 90.0,
+		"four stacked status words clear the held move title and bottom bar")
+	fight._show_move_name("")
 	_check(fight._beat_input_shield.get_index() == fight.get_child_count() - 1,
 		"floating words cannot intercept the held input shield")
 	fight._clear_float_words()

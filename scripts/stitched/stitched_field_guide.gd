@@ -27,7 +27,7 @@ const PAGES := [
 		"WORN LIMBS  |  HEAD, ARMS, TORSO and LEGS are sewn physical body parts, separate from the sockets on the four fixed abilities.",
 		"HANGING BY A THREAD  |  At 0 HP the doll stays in its rank and can still act. Reaching 0 HP does not itself tear off a limb.",
 		"FURTHER DIRECT HITS  |  EACH further direct hit while at 0 HP tears off one seeded random remaining ARM, LEG or HEAD. Head chance is small on the first further hit, larger on the second and CERTAIN on the third. Losing the HEAD means LOST.",
-		"TORN LIMBS  |  A lost arm weakens strikes and disables that arm's patched ability. A lost leg prevents rank changes and delays turns.",
+		"TORN LIMBS  |  A torn arm weakens strikes and blocks fixed signature abilities tied to that limb; it does not remove their sewn patches. A torn leg prevents rank changes and delays turns.",
 		"RECOVERY  |  Tears persist through corridor Walk and later fights. Healing above 0 resets the further-hit count but never regrows a limb. Mend at the Sewing Circle or Campfire; replace LOST dolls from available heroes at the Sewing Circle.",
 		"OTHER ACTIONS  |  MOVE swaps adjacent heroes; PASS ends the hero's turn. The retired Re-tie action is not offered in live fights."
 	],
