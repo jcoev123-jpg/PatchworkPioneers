@@ -99,6 +99,8 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 play pass): Unsewed Red Lint at a live Sewing Circle, then sewed it back onto Warden's Pot Helm Command for 2 scraps. The following normal fight displayed one occupied badge; the real command applied native MARK 2 plus sewn BLEED 2 to Felt Bulwark. Job 4 stays PART solely for the protected legacy gold two-effect save migration decision. Separately fixed an invisible 0-HP Hanging doll in the side-view battle by keeping its low, rotating puppet camera-facing; live heal restores the standing pose.
 
+(2026-11-13 01:38 web play pass): Unsewed then re-sewed Red Lint onto Warden's Pot Helm Command for 2 scraps using the actual Sewing Circle choices. The next normal fight showed the occupied one-patch badge and real Pot Helm Command applied MARK 2 plus BLEED 2 to Button Guard; the target's inspected detail agreed. Also checked floor-6 elite and floor-12 boss layouts, the lower-right map/detail felt, a four-foe summon and 0-HP Hanging doll revived by Mending Knot, and both end screens. Job 4 stays PART because enforcing the single socket in the saved gold two-effect rules still requires an owner decision and protected regression migration; no rule was changed.
+
 ## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.

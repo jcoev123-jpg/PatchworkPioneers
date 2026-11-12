@@ -154,11 +154,26 @@ func run(command: String) -> String:
 			return _done(session, "fear %d" % session.kid_fear())
 		"gold":
 			session.gold = maxi(0, number)
-			# Visit quotes snapshot the wallet on entry. Requote the same stock so
-			# an open Peddler or stall immediately reflects the cheat's new gold.
+			# Visit quotes snapshot the wallet on entry. Requote the same stock or
+			# event so the open purchase choices reflect the cheat's new gold.
 			var service_kind := str(session.pending.get("service", ""))
-			if session.phase == "visit" and service_kind in ["Peddler", "PatchStall", "Unpicker"]:
-				if not session._open_visit(service_kind):
+			if session.phase == "visit" and service_kind in ["Peddler", "PatchStall", "Unpicker", "Event"]:
+				if service_kind == "Event":
+					# _open_event samples an event even with an explicit ID. Keep the
+					# current event and restore that setup-only draw's RNG state.
+					var current_id := str(session.pending.get("event_id", ""))
+					var prior_cheat_id := session.cheat_event_id
+					var prior_pinned_id := StitchedRunSession.pinned_event_id
+					var rng_before := session.rng.state
+					session.cheat_event_id = current_id
+					StitchedRunSession.pinned_event_id = ""
+					var refreshed := session._open_visit("Event") if not current_id.is_empty() else false
+					session.cheat_event_id = prior_cheat_id
+					StitchedRunSession.pinned_event_id = prior_pinned_id
+					session.rng.state = rng_before
+					if not refreshed:
+						return "failed: could not refresh Event prices"
+				elif not session._open_visit(service_kind):
 					return "failed: could not refresh %s prices" % service_kind
 			return _done(session, "gold %d" % session.gold)
 		"scraps":

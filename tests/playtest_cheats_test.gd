@@ -214,6 +214,34 @@ func _run() -> void:
 	_check(session.pending.peddler_stock == peddler_stock and session.rng.state == peddler_rng,
 		"requoting the Peddler preserves its sampled stock and RNG state")
 
+	# A mounted event must not keep a stale unaffordable choice after gold changes,
+	# nor replace its selected story or consume a second random event roll.
+	cheats.run("event v3_copper_cicada_chapel")
+	var event_id := str(session.pending.get("event_id", ""))
+	var event_rng := session.rng.state
+	cheats.run("gold 0")
+	var incense_blocked := false
+	for action in session._actions:
+		if action.id == "purchase_incense_spools":
+			incense_blocked = not action.enabled
+	_check(event_id == "v3_copper_cicada_chapel" and incense_blocked
+		and session.is_consistent(), "gold 0 disables incense in the mounted chapel")
+	# An unrelated test-pinned event must not replace the current one during a quote refresh.
+	StitchedRunSession.pinned_event_id = "needle_gate"
+	cheats.run("gold 20")
+	var incense_available := false
+	for action in session._actions:
+		if action.id == "purchase_incense_spools":
+			incense_available = action.enabled
+	_check(incense_available and session.is_consistent()
+		and is_instance_valid(app.stitched_run_panel),
+		"gold 20 re-enables the chapel purchase without reopening the event")
+	_check(str(session.pending.get("event_id", "")) == event_id and session.rng.state == event_rng,
+		"event re-quote preserves the selected event and the run RNG")
+	_check(StitchedRunSession.pinned_event_id == "needle_gate",
+		"event re-quote restores the debug-pinned event override")
+	StitchedRunSession.pinned_event_id = ""
+
 	cheats.run("candle 7")
 	cheats.run("gold 250")
 	cheats.run("scraps 9")
