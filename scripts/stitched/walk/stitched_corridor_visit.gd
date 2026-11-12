@@ -528,6 +528,23 @@ func _place_items() -> void:
 			seen = seen.grow_individual(0, least.y - seen.size.y, 0, 0)
 		button.position = seen.position
 		button.size = seen.size
+		# The ware's name and price stay on the boards beside its picture, not only on hover.
+		var old := button.get_node_or_null("WareName")
+		if old != null:
+			old.free()
+		if not groups[number].arrow:
+			var tag := _label("WareName", 14, BONE)
+			var bits: Array = str(groups[number].words).split(" · ")
+			var kept: Array = bits.slice(0, 1)
+			for bit in bits.slice(1):
+				if str(bit).contains("gold"):
+					kept.append(bit)
+					break
+			tag.text = " · ".join(kept if kept.size() > 1 else bits.slice(0, 2))
+			tag.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+			tag.position = Vector2(-24, seen.size.y - 6)
+			tag.size = Vector2(seen.size.x + 48, 40)
+			button.add_child(tag)
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:
 			_clear_arrow_overlap(floor_buttons[number])
