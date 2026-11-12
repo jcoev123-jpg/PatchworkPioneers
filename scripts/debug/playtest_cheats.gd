@@ -159,29 +159,43 @@ func run(command: String) -> String:
 			var service_kind := str(session.pending.get("service", ""))
 			if session.phase == "visit" and service_kind in ["Peddler", "PatchStall", "Unpicker", "Event"]:
 				if service_kind == "Event":
-					# _open_event samples an event even with an explicit ID. Keep the
-					# current event and restore that setup-only draw's RNG state.
-					var current_id := str(session.pending.get("event_id", ""))
-					var prior_cheat_id := session.cheat_event_id
-					var prior_pinned_id := StitchedRunSession.pinned_event_id
-					var rng_before := session.rng.state
-					session.cheat_event_id = current_id
-					StitchedRunSession.pinned_event_id = ""
-					var refreshed := session._open_visit("Event") if not current_id.is_empty() else false
-					session.cheat_event_id = prior_cheat_id
-					StitchedRunSession.pinned_event_id = prior_pinned_id
-					session.rng.state = rng_before
-					if not refreshed:
+					if not _refresh_current_event(session):
 						return "failed: could not refresh Event prices"
 				elif not session._open_visit(service_kind):
 					return "failed: could not refresh %s prices" % service_kind
 			return _done(session, "gold %d" % session.gold)
 		"scraps":
 			session.scraps = maxi(0, number)
+			# Sewing and some events quote scrap costs on entry. Requote the
+			# current visit so the new wallet changes its enabled choices now.
+			if session.phase == "visit":
+				var service_kind := str(session.pending.get("service", ""))
+				if service_kind == "Event" and not _refresh_current_event(session):
+					return "failed: could not refresh Event scrap costs"
+				if service_kind == "SewingCircle" and not session._open_visit("SewingCircle"):
+					return "failed: could not refresh Sewing Circle costs"
 			return _done(session, "scraps %d" % session.scraps)
 	if VISITS.has(verb):
 		return _visit(session, VISITS[verb])
 	return "unknown command '%s'; %s" % [verb, HELP]
+
+
+## Reopening an Event draws for selection even when its ID is pinned. A wallet
+## refresh is not a new visit: preserve the exact event, RNG and debug pin.
+func _refresh_current_event(session: StitchedRunSession) -> bool:
+	var current_id := str(session.pending.get("event_id", ""))
+	if current_id.is_empty():
+		return false
+	var prior_cheat_id := session.cheat_event_id
+	var prior_pinned_id := StitchedRunSession.pinned_event_id
+	var rng_before := session.rng.state
+	session.cheat_event_id = current_id
+	StitchedRunSession.pinned_event_id = ""
+	var refreshed := session._open_visit("Event")
+	session.cheat_event_id = prior_cheat_id
+	StitchedRunSession.pinned_event_id = prior_pinned_id
+	session.rng.state = rng_before
+	return refreshed
 
 
 func _say(text: String) -> void:

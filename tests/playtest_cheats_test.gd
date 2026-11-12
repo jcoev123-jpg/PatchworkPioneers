@@ -214,6 +214,29 @@ func _run() -> void:
 	_check(session.pending.peddler_stock == peddler_stock and session.rng.state == peddler_rng,
 		"requoting the Peddler preserves its sampled stock and RNG state")
 
+	# Sewing prices also snapshot scraps: a change during the open visit must
+	# immediately refresh the same offers, without any new route or RNG draw.
+	cheats.run("sewing")
+	var sewing_node := str(session.pending.get("node_id", ""))
+	var sewing_rng := session.rng.state
+	cheats.run("scraps 0")
+	var blocked_upgrades := 0
+	for action in session._actions:
+		if action.id == "upgrade" and not action.enabled:
+			blocked_upgrades += 1
+	_check(blocked_upgrades > 0 and session.is_consistent(),
+		"scraps 0 disables the mounted Sewing Circle upgrades")
+	cheats.run("scraps 20")
+	var available_upgrades := 0
+	for action in session._actions:
+		if action.id == "upgrade" and action.enabled:
+			available_upgrades += 1
+	_check(available_upgrades > 0 and session.is_consistent()
+		and is_instance_valid(app.stitched_run_panel),
+		"scraps 20 re-enables affordable Sewing Circle upgrades without leaving")
+	_check(str(session.pending.get("node_id", "")) == sewing_node and session.rng.state == sewing_rng,
+		"Sewing Circle re-quote keeps its node and the run RNG")
+
 	# A mounted event must not keep a stale unaffordable choice after gold changes,
 	# nor replace its selected story or consume a second random event roll.
 	cheats.run("event v3_copper_cicada_chapel")
@@ -240,6 +263,31 @@ func _run() -> void:
 		"event re-quote preserves the selected event and the run RNG")
 	_check(StitchedRunSession.pinned_event_id == "needle_gate",
 		"event re-quote restores the debug-pinned event override")
+	StitchedRunSession.pinned_event_id = ""
+
+	# Scrap-priced story choices must refresh too, without picking another event
+	# or advancing the run RNG even if another test has pinned an event.
+	cheats.run("event needle_gate")
+	var gate_rng := session.rng.state
+	cheats.run("scraps 0")
+	var gate_blocked := true
+	for action in session._actions:
+		if action.id in ["examine", "cut_bindings"]:
+			gate_blocked = gate_blocked and not action.enabled
+	_check(gate_blocked and session.is_consistent(),
+		"scraps 0 blocks the mounted Needle Gate scrap choices")
+	StitchedRunSession.pinned_event_id = "v3_copper_cicada_chapel"
+	cheats.run("scraps 20")
+	var gate_available := 0
+	for action in session._actions:
+		if action.id in ["examine", "cut_bindings"] and action.enabled:
+			gate_available += 1
+	_check(gate_available == 2 and session.is_consistent(),
+		"scraps 20 enables both Needle Gate scrap choices without reopening")
+	_check(str(session.pending.get("event_id", "")) == "needle_gate"
+		and session.rng.state == gate_rng
+		and StitchedRunSession.pinned_event_id == "v3_copper_cicada_chapel",
+		"scrap event re-quote preserves the selected story, RNG and pin")
 	StitchedRunSession.pinned_event_id = ""
 
 	cheats.run("candle 7")
