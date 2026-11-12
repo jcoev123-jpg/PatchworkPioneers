@@ -135,6 +135,16 @@ func _run() -> void:
 		and mounted_view.receipts.size() == before_patch_receipts
 		and session.battle.current_actor_id() == before_patch_actor,
 		"patch: changing a socket retains the mounted fight, its turn and held receipts")
+	var inventory_before_alias := session.ability_inventory.size()
+	said = cheats.run("patch pot_helm_command red_lint")
+	_check(said == "Red Lint sewn onto warden_head_pot_helm_command"
+		and session.ability_inventory.size() == inventory_before_alias + 1
+		and session.ability_inventory.back().id == "cotton_red_lint"
+		and session._battle_sockets().get("warden", {}).get("warden_head_pot_helm_command", []) == ["cotton_red_lint"]
+		and session.is_consistent(), "patch: rarity-free ID resolves to canonical patch without stacking sockets")
+	_check(app.stitched_run_battle == mounted_view and mounted_view.receipts.size() == before_patch_receipts
+		and session.battle.current_actor_id() == before_patch_actor,
+		"patch alias preserves the mounted fight and current turn")
 	_check(cheats.run("status unknown rot 2").begins_with("failed:") and session.is_consistent(),
 		"invalid figure refuses without damaging the session")
 	# Heal during battle must cure the actual 0-HP Hanging doll, not just the

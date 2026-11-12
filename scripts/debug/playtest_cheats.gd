@@ -529,10 +529,22 @@ func _summon(session: StitchedRunSession) -> String:
 func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
 	if not session.s14_enabled or words.size() < 3:
 		return "failed: patch needs ABILITY and patch ID"
-	var patch_id := words[words.size() - 1].to_lower()
-	var record: Dictionary = StitchedS14Abilities.patches().get("by_id", {}).get(patch_id, {})
+	var requested_patch := words[words.size() - 1].to_lower()
+	var catalog: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
+	var patch_id := requested_patch
+	var record: Dictionary = catalog.get(patch_id, {})
 	if record.is_empty():
-		return "failed: unknown ability patch '%s'" % patch_id
+		# Allow an unambiguous rarity-free slug, but persist the full catalog ID.
+		for full_id in catalog:
+			var candidate := str(full_id)
+			var separator := candidate.find("_")
+			if separator >= 0 and candidate.substr(separator + 1) == requested_patch:
+				if not record.is_empty():
+					return "failed: ambiguous ability patch '%s'; use its full ID" % requested_patch
+				patch_id = candidate
+				record = catalog[full_id]
+	if record.is_empty():
+		return "failed: unknown ability patch '%s'" % requested_patch
 	var query := " ".join(words.slice(1, words.size() - 1)).to_lower()
 	var owner := ""
 	var signature_id := ""
