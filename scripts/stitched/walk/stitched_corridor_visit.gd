@@ -528,6 +528,7 @@ func _words(index: int) -> String:
 
 ## The floor buttons cover what the eye sees of their things; a lone arrow keeps a fair size.
 func _place_items() -> void:
+	var ware_slot := 0
 	for number in floor_buttons.size():
 		var button := floor_buttons[number]
 		if not is_instance_valid(button) or not button.visible:
@@ -560,7 +561,7 @@ func _place_items() -> void:
 			var tag_y := seen.size.y - 6.0
 			# The rear Fresh stuffing caption grazes the top of the tall front-row
 			# patch frame; lift its words only, without moving wares or hit targets.
-			if heading.text == "Peddler" and str(groups[number].key).get_slice("|", 0) == "buy_fresh_stuffing":
+			if heading.text == "Peddler" and ware_slot >= PER_ROW and str(groups[number].key).get_slice("|", 0) == "buy_fresh_stuffing":
 				tag_y -= 12.0
 			# A long event choice may wrap to two lines. Keep its lower line
 			# above the permanent story instead of painting both over each other.
@@ -578,6 +579,7 @@ func _place_items() -> void:
 				tag_x = minf(tag_x, 998.0 - button.position.x - tag.size.x)
 			tag.position = Vector2(tag_x, tag_y)
 			button.add_child(tag)
+			ware_slot += 1
 	_thin_crowded_visit_labels()
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:

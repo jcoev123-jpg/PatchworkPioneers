@@ -188,6 +188,28 @@ func _run() -> void:
 				"Peddler's spare spool caption has extra clearance from the exit arrow")
 	crowded.queue_free()
 
+	# Fresh stuffing needs extra caption clearance only from the rear row.
+	# A sparse Peddler may put that same ware in front, where it stays put.
+	var sparse := StitchedCorridorVisit.new()
+	root.add_child(sparse)
+	sparse.present("floorboards", "bright", "Peddler", "Few wares remain.", ["stop_peddler"])
+	var sparse_actions := [{"id": "buy_fresh_stuffing", "text": "Fresh stuffing / 10 gold", "arguments": [], "enabled": true},
+		{"id": "leave", "text": "Leave Peddler", "arguments": [], "enabled": true}]
+	var sparse_homes := sparse.lay_out(sparse_actions, [], ["", ""])
+	var sparse_buttons: Array[Button] = []
+	for index in sparse_actions.size():
+		var button := Button.new()
+		button.text = str(sparse_actions[index].text)
+		sparse_homes[index].add_child(button)
+		sparse_buttons.append(button)
+	sparse.dress(sparse_buttons)
+	await process_frame
+	await process_frame
+	var sparse_caption := sparse.floor_buttons[0].get_node("WareName") as Label
+	_check(is_equal_approx(sparse_caption.position.y, sparse.floor_buttons[0].size.y - 6.0),
+		"front-row Fresh stuffing keeps the standard caption height")
+	sparse.queue_free()
+
 	# A deep Peddler has distinct offers for the same ware. The keyed offers
 	# still need the spool offset, but unreadable captions must not pile up.
 	var dense := StitchedCorridorVisit.new()
