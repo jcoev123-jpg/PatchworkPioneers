@@ -134,6 +134,19 @@ func _component_checks() -> void:
 		"a regular foe's full details use a readable font")
 	_check(map.foe_body.get_visible_line_count() == map.foe_body.get_line_count(),
 		"the legible foe summary still fits above the map's lower edge")
+	# Long unbroken authored move/status names need grapheme fallback just as
+	# Label's WORD_SMART wrapping does; otherwise the measured rows are too few.
+	map.show_foe("Spool Sentinel", PackedStringArray([
+		"Foe · rank 1", "Health 18 / 24",
+		"Moves: " + "Needlechain".repeat(8),
+		"Resists " + "Buttonlock".repeat(9),
+		"Now: BLEED 2", ]))
+	await process_frame
+	_check(map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y
+		and map.foe_body.get_visible_line_count() == map.foe_body.get_line_count(),
+		"compound names fit: font %d, lines %d, visible %d, line height %d, card height %.0f" % [
+			map.foe_body.get_theme_font_size("font_size"), map.foe_body.get_line_count(),
+			map.foe_body.get_visible_line_count(), map.foe_body.get_line_height(), map.foe_body.size.y])
 	map.show_foe("Moth Scribe", PackedStringArray(["Foe · rank 2", "Health 9 / 12"]))
 	_check(map.foe_body.get_theme_font_size("font_size") == 15,
 		"a short foe card recovers the regular readable font size")

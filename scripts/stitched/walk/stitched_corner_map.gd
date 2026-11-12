@@ -210,15 +210,23 @@ func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 	# Measure the real word-wrapped paragraph at each size. A sum of glyph
 	# widths undercounts a wrap when a long move name does not fit at the end
 	# of a row; it used to leave boss statuses beyond this fixed corner.
-	for font_size in range(15, 9, -1):
+	# WORD_SMART also splits a word wider than the card. Allow extra leading
+	# for that rare fallback so the final live-status row does not get clipped.
+	var oversized_word := false
+	for word in foe_body.text.replace("\n", " ").split(" ", false):
+		if FONT.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x > foe_body.size.x:
+			oversized_word = true
+			break
+	for font_size in range(15, 7 if oversized_word else 9, -1):
 		var paragraph := TextParagraph.new()
 		paragraph.width = foe_body.size.x
-		paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND
+		# Match Label's WORD_SMART fallback for unbroken names wider than the card.
+		paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_GRAPHEME_BOUND
 		paragraph.add_string(foe_body.text, FONT, font_size)
 		foe_body.add_theme_font_size_override("font_size", font_size)
 		# Godot's Label adds row leading beyond TextParagraph's raw height.
 		# Budget for that leading or the last status may be clipped offscreen.
-		if paragraph.get_line_count() * (FONT.get_height(font_size) + 3.0) <= size.y - 38.0:
+		if paragraph.get_line_count() * (FONT.get_height(font_size) + (7.0 if oversized_word else 3.0)) <= size.y - 38.0:
 			break
 	map_holder.visible = false
 	foe_body.visible = true
