@@ -171,6 +171,15 @@ func lay_out(actions: Array, party: Array, pictures: Array) -> Array:
 	trays.clear()
 	_party.clear()
 	_pictures = pictures
+	# A stop with no usable work should not advertise actions that are absent.
+	if not actions.is_empty() and actions.all(func(action): return str(action.get("id", "")) == "leave"):
+		match heading.text:
+			"Campfire":
+				_story_words = "A thimble of wax burns low between the floorboards. There is nothing to do here but walk on."
+			"Unpicker":
+				_story_words = "A thin figure waits with a seam ripper. There is nothing here to unpick."
+		if heading.text in ["Campfire", "Unpicker"]:
+			story.text = _story_words
 	var hero_ids: Array = []
 	for hero in party:
 		hero_ids.append(str(hero.id))

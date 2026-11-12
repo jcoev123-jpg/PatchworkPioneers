@@ -24,6 +24,27 @@ func _run() -> void:
 		_check(is_equal_approx(page.heading.position.x, 28.0), "event title starts at the Walk's x=28 rail")
 		_check(page.heading.horizontal_alignment == HORIZONTAL_ALIGNMENT_LEFT, "event and stop titles read from left to right")
 		_check(page.heading.position.x + page.heading.size.x <= 1280.0, "long stop titles stay within the screen")
+	var greeting := "A thimble of wax burns low. The dolls can rest, talk, or trade places."
+	page.present("floorboards", "bright", "Campfire", greeting)
+	var leave := {"id": "leave", "text": "Leave", "arguments": [], "enabled": true}
+	page.lay_out([leave], [], [""])
+	_check(page.story.text.contains("nothing to do here but walk on"), "fresh Campfire does not promise unavailable recovery")
+	page._say("Leave")
+	page._say("")
+	_check(page.story.text.contains("nothing to do here but walk on"), "Campfire returns to the honest caption after hover")
+	page.present("floorboards", "bright", "Campfire", greeting)
+	page.lay_out([leave, {"id": "trim_the_wick", "text": "Trim the wick", "arguments": [], "enabled": true}], [], ["", ""])
+	_check(page.story.text == greeting, "Campfire with actual recovery keeps the original choice greeting")
+	var unpicker_greeting := "A thin figure with a seam ripper offers to unpick what the dark has sewn in."
+	page.present("floorboards", "bright", "Unpicker", unpicker_greeting)
+	page.lay_out([leave], [], [""])
+	_check(page.story.text.contains("nothing here to unpick"), "empty Unpicker does not promise unavailable work")
+	page._say("Leave")
+	page._say("")
+	_check(page.story.text.contains("nothing here to unpick"), "Unpicker restores honest caption after hover")
+	page.present("floorboards", "bright", "Unpicker", unpicker_greeting)
+	page.lay_out([leave, {"id": "unpick", "text": "Unpick a seam", "arguments": [], "enabled": true}], [], ["", ""])
+	_check(page.story.text == unpicker_greeting, "Unpicker with actual work keeps original story")
 	page.queue_free()
 	await process_frame
 	for failure in failures:
