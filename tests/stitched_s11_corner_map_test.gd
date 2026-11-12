@@ -118,9 +118,11 @@ func _component_checks() -> void:
 		"Resists stun 45%, bleed 40%, rot 40%, move 70%, debuff 45%, blind 30%, mark 40%",
 		"Now: BLEED 1, GUARD 2, MARK 1", ]))
 	await process_frame
-	_check(map.foe_body.get_theme_font_size("font_size") < 15
+	_check(map.position.y < 542.0 and map.size.y > 170.0
+		and map.foe_body.get_theme_font_size("font_size") >= 13
+		and map.foe_body.get_visible_line_count() == map.foe_body.get_line_count()
 		and map.foe_body.get_line_count() * map.foe_body.get_line_height() <= map.foe_body.size.y,
-		"very long boss details adapt without clipping the status line (font %d, lines %d, height %d, room %.0f)" % [
+		"very long boss details expand upward to stay readable without clipping the status line (font %d, lines %d, height %d, room %.0f)" % [
 			map.foe_body.get_theme_font_size("font_size"), map.foe_body.get_line_count(),
 			map.foe_body.get_line_height(), map.foe_body.size.y])
 	# An ordinary three-foe encounter still needs its full resistance readout,
@@ -151,6 +153,8 @@ func _component_checks() -> void:
 	_check(map.foe_body.get_theme_font_size("font_size") == 15,
 		"a short foe card recovers the regular readable font size")
 	map.show_map()
+	_check(map.position == Vector2(968, 542) and map.size == Vector2(306, 170),
+		"foe inspection restores the route map's original footprint")
 	_check(not map.foe_body.visible and map.map_holder.visible, "the road map returns with the pointer")
 	_check(map.title_label.text.contains("FLOOR 02 OF 12"), "the map title returns with the map")
 	map.queue_free()

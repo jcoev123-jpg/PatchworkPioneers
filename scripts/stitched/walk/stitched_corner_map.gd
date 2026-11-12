@@ -20,7 +20,11 @@ const HERE := Color("ffe0a0")
 const ICON := 30.0
 const MARK := 16.0
 const FLOOR_COUNT := 12
+# On a crowded foe inspect, reclaim unused space directly above this corner.
+# The route map retains its original small footprint outside foe inspection.
+const MAX_FOE_RISE := 88.0
 
+var _base_rect: Rect2
 var back: NinePatchRect
 var title_label: Label
 var map_holder: Control
@@ -32,6 +36,7 @@ static var _textures: Dictionary = {}
 
 
 func _init(rect: Rect2) -> void:
+	_base_rect = rect
 	name = "CornerMap"
 	position = rect.position
 	size = rect.size
@@ -207,6 +212,24 @@ func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 	_foe_mode = true
 	title_label.text = foe_name
 	foe_body.text = "\n".join(lines)
+	# Expand upward only for dense foes: keep the body at a legible font
+	# before sacrificing text size to the fixed-height map footprint.
+	var full_paragraph := TextParagraph.new()
+	full_paragraph.width = foe_body.size.x
+	full_paragraph.break_flags = TextServer.BREAK_MANDATORY | TextServer.BREAK_WORD_BOUND | TextServer.BREAK_GRAPHEME_BOUND
+	full_paragraph.add_string(foe_body.text, FONT, 15)
+	var needed := float(full_paragraph.get_line_count()) * (FONT.get_height(15) + 3.0)
+	var rise := minf(MAX_FOE_RISE, maxf(0.0, ceilf(needed - (_base_rect.size.y - 38.0))))
+	# Unbroken authored names cost extra grapheme rows in Label's layout.
+	# Give those the entire free band instead of clipping their last status.
+	for word in foe_body.text.replace("\n", " ").split(" ", false):
+		if FONT.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, 15).x > foe_body.size.x:
+			rise = MAX_FOE_RISE
+			break
+	position = _base_rect.position - Vector2(0, rise)
+	size = _base_rect.size + Vector2(0, rise)
+	back.size = size
+	foe_body.size.y = size.y - 34.0
 	# Measure the real word-wrapped paragraph at each size. A sum of glyph
 	# widths undercounts a wrap when a long move name does not fit at the end
 	# of a row; it used to leave boss statuses beyond this fixed corner.
@@ -237,6 +260,10 @@ func show_map() -> void:
 	if not _foe_mode:
 		return
 	_foe_mode = false
+	position = _base_rect.position
+	size = _base_rect.size
+	back.size = size
+	foe_body.size.y = size.y - 34.0
 	title_label.text = _map_title
 	map_holder.visible = true
 	foe_body.visible = false

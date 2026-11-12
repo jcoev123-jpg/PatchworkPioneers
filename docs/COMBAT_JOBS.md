@@ -93,6 +93,8 @@ Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from rea
 
 (11-12 play review): Foe hover details now shrink the existing card font only when long move/resistance rows would hide the final live-status line; shorter foes keep the standard font. Verified in the mounted corner-map test and live normal fight. Job 5 remains DONE.
 
+(11-12 19:53 play pass): Dense foe descriptions now grow the existing detail corner upward by up to 88px while keeping its right and lower edges fixed; shorter foes retain the compact size, and the route map regains its original footprint on hover exit. Moth Queen and Scissor Crab details were inspected live after restart; the corner, fight, victory handoff and Continue regressions pass. Job 5 remains DONE.
+
 The lower right cornerof the fight and corridor screens holds a small map of the corridor routes: the rooms and
 junctions of this floor, the paths between them, which are visited, and a clear mark where the party is now (see
 the map in ref2). Use the run's real route data.
