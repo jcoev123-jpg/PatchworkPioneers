@@ -134,6 +134,32 @@ func _run() -> void:
 	_check(said == "battle won" and session.phase == "map" and session.gold > gold_before and session.is_consistent(),
 		"win: elite settles to the map with gold (%s)" % said)
 
+	# A terminal HP shortcut must preserve the real damage float and its held
+	# stage beat instead of freeing the battle before that blow is visible.
+	cheats.run("fight normal")
+	var final_view: StitchedBattleScreen = app.stitched_run_battle
+	var final_foes: Array = session.battle._living_foes()
+	for i in range(final_foes.size() - 1):
+		session.battle._kill_foe(final_foes[i])
+	var final_foe: Dictionary = final_foes.back()
+	said = cheats.run("hp %s 0" % str(final_foe.id))
+	_check(session.phase == "battle" and session.battle.is_over()
+		and app.stitched_run_battle == final_view and final_view.last_receipt.get("action") == "cheat_hp",
+		"terminal HP keeps the battle mounted and records its final blow (%s)" % said)
+	await process_frame
+	await process_frame
+	await process_frame
+	var final_stage: StitchedCorridorFight = final_view.get_node_or_null("CorridorFight")
+	_check(final_stage != null and final_stage._beats != null and final_stage._beats.is_running()
+		and session.phase == "battle" and final_stage._float_events(final_view.last_receipt).size() > 0,
+		"terminal HP still shows its held damage cue before settlement")
+	await create_timer(0.6).timeout
+	_check(session.phase == "battle" and app.stitched_run_battle == final_view,
+		"terminal HP does not cut away during the held damage pose")
+	await create_timer(2.4).timeout
+	_check(session.phase == "map" and session.battle == null and session.is_consistent(),
+		"terminal HP settles after the held final blow")
+
 	said = cheats.run("event needle_gate")
 	_check(session.phase == "visit" and session.pending.get("event_id") == "needle_gate" and session.is_consistent(),
 		"event needle_gate opens that event (%s)" % said)

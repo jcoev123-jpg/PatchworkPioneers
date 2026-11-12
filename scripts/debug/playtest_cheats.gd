@@ -304,15 +304,39 @@ func _battle_unit(battle: StitchedRules, who: String) -> Dictionary:
 	return {}
 
 
-func _finish_cheat_battle(session: StitchedRunSession, message: String) -> String:
+func _finish_cheat_battle(session: StitchedRunSession, message: String,
+		receipt: Dictionary = {}) -> String:
 	var battle: StitchedRules = session.battle
 	if battle == null or not battle.is_over():
 		return _done(session, message)
+	var view: StitchedBattleScreen = app.stitched_run_battle
+	if not receipt.is_empty() and is_instance_valid(view) and view.battle == battle:
+		_record_cheat_receipt(session, message, receipt)
+		_settle_after_hp_beat(session, battle, view)
+		return message
 	session._seal()
 	_close_views()
 	if not session.settle_battle(battle):
 		return "failed: the finished battle would not settle"
 	return _done(session, message)
+
+
+## The final damage cue must finish on the mounted stage before App shows the recap.
+func _settle_after_hp_beat(session: StitchedRunSession, battle: StitchedRules,
+		view: StitchedBattleScreen) -> void:
+	# The corridor consumes freshly recorded receipts on its next process frame.
+	await get_tree().process_frame
+	await get_tree().process_frame
+	if not is_instance_valid(view) or app.stitched_run_battle != view:
+		return
+	var fight: StitchedCorridorFight = view.get_node_or_null("CorridorFight")
+	if is_instance_valid(fight) and not view._motion_is_reduced():
+		while is_instance_valid(fight) and fight._beats != null and fight._beats.is_running():
+			await fight._beats.finished
+			await get_tree().process_frame
+	if is_instance_valid(view) and app.stitched_run_battle == view \
+			and app.stitched_run_session == session and session.battle == battle and battle.is_over():
+		view.exit_requested.emit()
 
 
 
@@ -373,10 +397,11 @@ func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
 			target.death_hits = 0
 	session.battle._battle_finished()
 	var said := "%s hp %d" % [str(target.name), value]
+	var receipt := {"ok": true, "action": "cheat_hp",
+		"actor": str(target.id), "results": [result]}
 	if session.battle.is_over():
-		return _finish_cheat_battle(session, said)
-	return _record_cheat_receipt(session, said, {"ok": true, "action": "cheat_hp",
-		"actor": str(target.id), "results": [result]})
+		return _finish_cheat_battle(session, said, receipt)
+	return _record_cheat_receipt(session, said, receipt)
 
 
 func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
