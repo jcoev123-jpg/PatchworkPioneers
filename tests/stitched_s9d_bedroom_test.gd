@@ -237,6 +237,10 @@ func _room_rules() -> void:
 		_check(spot.get_theme_stylebox("normal") is StyleBoxEmpty, "the %s rests in the picture" % id)
 		_check((room.labels[id].text == spot.text or id == "window") and not room.labels[id].text.is_empty(),
 			"pinned label on the " + id)
+		_check(room.labels[id].get_theme_font_size("font_size") >= 20
+			and room.labels[id].get_theme_constant("outline_size") >= 4
+			and room.labels[id].get_theme_color("font_outline_color").a > 0.0,
+			"the %s caption remains legible on the painted room" % id)
 	var mark_instances := {}
 	for id in StitchedPartyAdmission.HERO_IDS:
 		_check(room.doll_pose(id) == "upright" and room.dolls[id].texture != null

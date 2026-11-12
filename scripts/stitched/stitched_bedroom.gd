@@ -270,8 +270,10 @@ func _make_spot(spot_id: String, button: Button) -> void:
 		label.name = button.name + "Label"
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		label.add_theme_font_size_override("font_size", 18)
+		label.add_theme_font_size_override("font_size", 21)
 		label.add_theme_color_override("font_color", Color("#f4e5cd"))
+		label.add_theme_color_override("font_outline_color", Color("#140c0e"))
+		label.add_theme_constant_override("outline_size", 5)
 		if ResourceLoader.exists(FELT):
 			var tag := StyleBoxTexture.new()
 			tag.texture = load(FELT)
