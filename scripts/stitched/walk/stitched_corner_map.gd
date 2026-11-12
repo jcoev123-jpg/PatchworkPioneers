@@ -23,6 +23,8 @@ const FLOOR_COUNT := 12
 # On a crowded foe inspect, reclaim unused space directly above this corner.
 # The route map retains its original small footprint outside foe inspection.
 const MAX_FOE_RISE := 88.0
+## Clear rim of the felt picture: left 9, top 23 px; right 21, bottom 45 px (position, extra size).
+const FELT_RIM := Rect2(-9, -23, 30, 68)
 
 var _base_rect: Rect2
 var back: NinePatchRect
@@ -48,8 +50,8 @@ func _init(rect: Rect2) -> void:
 	back.patch_margin_right = 40
 	back.patch_margin_top = 40
 	back.patch_margin_bottom = 40
-	back.size = rect.size
-	back.self_modulate = Color("241c2af5")
+	_fit_back()
+	back.self_modulate= Color("241c2af5")
 	back.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(back)
 	title_label = _label(Rect2(10, 6, rect.size.x - 20, 24), 17, AMBER)
@@ -67,6 +69,14 @@ func _init(rect: Rect2) -> void:
 	foe_body.clip_text = true
 	foe_body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
 	foe_body.visible = false
+
+
+## The felt picture keeps a clear rim, so its visible cloth sits inside the node's rect and
+## left the title on its top edge and the lower row of rooms hanging below it. Grow the
+## felt by that rim so the cloth covers exactly the rect the rooms and title are laid in.
+func _fit_back() -> void:
+	back.position = FELT_RIM.position
+	back.size = size + FELT_RIM.size
 
 
 func _label(rect: Rect2, font_size: int, color: Color, parent: Control = self) -> Label:
@@ -228,7 +238,7 @@ func show_foe(foe_name: String, lines: PackedStringArray) -> void:
 			break
 	position = _base_rect.position - Vector2(0, rise)
 	size = _base_rect.size + Vector2(0, rise)
-	back.size = size
+	_fit_back()
 	foe_body.size.y = size.y - 34.0
 	# Measure the real word-wrapped paragraph at each size. A sum of glyph
 	# widths undercounts a wrap when a long move name does not fit at the end
@@ -262,7 +272,7 @@ func show_map() -> void:
 	_foe_mode = false
 	position = _base_rect.position
 	size = _base_rect.size
-	back.size = size
+	_fit_back()
 	foe_body.size.y = size.y - 34.0
 	title_label.text = _map_title
 	map_holder.visible = true
