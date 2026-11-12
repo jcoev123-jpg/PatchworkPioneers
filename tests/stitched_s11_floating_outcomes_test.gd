@@ -417,6 +417,28 @@ func _run() -> void:
 	fight.refresh()
 	_check(fight.battle.state_snapshot() == baseline and fight.battle.rng_state() == rng,
 		"arrival callout checks leave the original preview battle untouched")
+	# A dynamically admitted boss inherits the same no-retreat rule as one
+	# authored at battle setup, even before it acts in the next round.
+	var normal_config := StitchedRunSession.starter_config(StitchedRunSession.DEFAULT_PICKS)
+	var normal_built := StitchedRules.create(normal_config)
+	_check(bool(normal_built.get("ok", false)), "ordinary setup for a summoned boss succeeds")
+	if bool(normal_built.get("ok", false)):
+		var boss_battle: StitchedRules = normal_built.battle
+		var boss_entry := StitchedEnemyCatalog.foe_for(StitchedEnemyCatalog.load_catalog(), "patchwork_behemoth")
+		var boss_arrival := boss_battle.summon_foe(boss_entry)
+		_check(bool(boss_arrival.get("ok", false)) and boss_battle.is_boss_encounter(),
+			"summoning a valid boss marks the encounter as a boss fight")
+		for attempt in range(20):
+			if boss_battle.current_side() == "hero":
+				break
+			if not bool(boss_battle.pass_turn().get("ok", false)):
+				break
+		var before_boss_retreat := boss_battle.state_snapshot()
+		var boss_retreat := boss_battle.retreat()
+		_check(boss_battle.current_side() == "hero" and not bool(boss_retreat.get("ok", false))
+			and str(boss_retreat.get("error", "")).contains("boss")
+			and boss_battle.state_snapshot() == before_boss_retreat,
+			"a summoned boss refuses retreat without changing state or RNG")
 	# Accessibility: reduced motion must not erase confirmed pass ticks or the
 	# final kill. Words fade in place while the stage only pulses its lighting.
 	screen.reduced_motion = true

@@ -1186,6 +1186,8 @@ func summon_foe(entry: Dictionary, arrival: String = "summon") -> Dictionary:
 		return {"ok": false, "error": str(built.get("error", "invalid foe"))}
 	var foe: Dictionary = built.unit
 	_units[str(foe.id)] = foe
+	if bool(foe.is_boss):
+		_boss_encounter = true
 	return {"ok": true, "action": arrival, "target": str(foe.id), "rank": MAX_RANK,
 		"name": str(foe.name)}
 
