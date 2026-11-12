@@ -87,6 +87,8 @@ Built one round, faint-when-empty socket on each signature ability and a patch-p
 
 (2026-11-13 play pass): Verified the live Sewing Circle can unsew Red Lint and sew it onto Pot Helm Command for 2 scraps, and that the next normal and floor-12 boss fights both label Warden's command as sewn with Red Lint. Played a full normal-fight hero round (Moth Wink, Needle Prick, Cog Shot, Pot Helm Command) and checked that settled attacker/target positions return to their original ranks after the held foe turns. Inspected floor-6 elite, floor-10 Walk, other visits and the boss screen; the disabled fray meter and Wren's hands did not appear. Job remains PART pending the owner's saved gold two-effect socket migration decision; the protected legacy rule was not changed.
 
+(2026-11-13 00:13 web play pass): Rechecked the single occupied Red Lint socket on Pot Helm Command, its mounted normal-fight Bleed effect, floor-6 elite and floor-12 boss layouts, and three real hero attacks with held beats. The 4th-seat summon and debug bleed/HP setup still work; a 0-HP hero enters HANGING. Title, party picker, Wren intro/room, corridor and thread tug, save/Continue, visits, events, victory and defeat were also exercised. Peddler price/gold visibility remains a separate owner-design question because new visible numbers are forbidden. Job 4 stays PART solely for the existing gold two-effect save migration decision; no protected rule was altered.
+
 Every hero ability button carries exactly one patch slot. With a patch sewn on, the slot shows that patch's own
 picture (see `assets/paper/stitched/patches` and `assets/paper/stitched/ability_patches`) inside a round frame,
 like ref3: a bleed patch that gives the ability +X bleed shows the bleed design. Empty, the slot shows a faint
