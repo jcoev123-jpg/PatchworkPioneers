@@ -231,11 +231,15 @@ func _pend(session: StitchedRunSession, kind: String) -> void:
 
 
 func _walk(session: StitchedRunSession, area: String) -> String:
-	_pend(session, "Fight")
 	if area != session.walk_area():
-		# walk_area() follows the floor, so stand on a floor of the asked-for area.
+		# walk_area() follows the floor, so stand before a floor of the asked-for area.
 		_floor(session, {"floorboards": 1, "walls": 6, "sewing_basket": 10}[area])
-		_pend(session, "Fight")
+	# A floor shortcut leaves us before its next door. Enter that real floor
+	# before opening the Walk, just as the fight shortcut does.
+	var legal := session.map.get_legal_choices()
+	if not legal.is_empty():
+		session.map.choose_node(legal[0])
+	_pend(session, "Fight")
 	if not session._start_walk():
 		session.pending.clear()
 		return _done(session, "failed: the Walk needs four living dolls (try a new run)")

@@ -46,10 +46,12 @@ func _run() -> void:
 	var said: String = cheats.run("walk walls")
 	_check(session.phase == "walk" and session.walk != null and session.is_consistent()
 		and is_instance_valid(app.stitched_run_walk), "walk walls: a mounted Walk (%s)" % said)
-	_check(session.walk_area() == "walls", "walk walls: on a walls floor")
+	_check(session.map.get_current_floor() == 6 and session.walk_area() == "walls",
+		"walk walls: enters floor 6 instead of displaying floor 5")
 	cheats.run("walk basket")
-	_check(session.phase == "walk" and session.walk_area() == "sewing_basket" and session.is_consistent(),
-		"walk basket: moves to a basket floor")
+	_check(session.phase == "walk" and session.map.get_current_floor() == 10
+		and session.walk_area() == "sewing_basket" and session.is_consistent(),
+		"walk basket: enters floor 10 instead of displaying floor 9")
 
 	for kind in ["normal", "elite", "boss"]:
 		said = cheats.run("fight " + kind)
