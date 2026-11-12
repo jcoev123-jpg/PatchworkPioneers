@@ -67,7 +67,9 @@ func _cloth_copy(panel: StitchedPartInspector, slot: String) -> bool:
     var owner := str(part["owner"])
     var expected := "Cloth for %s. Moves stay with the doll." % slot.to_upper()
     if StitchedSewnPatches.is_foe_patch(panel.selected_part_id):
-        expected = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot.to_upper()
+        expected = ("Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll."
+            if StitchedRules.fray_enabled else
+            "Foe cloth for %s; a stranger's stitching. Moves stay with the doll.") % slot.to_upper()
     elif not StitchedSewnPatches.favoured_slot(owner).is_empty():
         expected = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
             slot.to_upper(), owner.replace("_", " ").capitalize(),
@@ -469,12 +471,23 @@ func _test_live_owners(packed: PackedScene) -> void:
     _check(panel.select_owner("seamstress") and panel.select_part("seamstress_mending_knot_hat")
         and _line(panel, "PartText") == "Cloth for HEAD; Seamstress favours ARMS. Moves stay with the doll.",
         "changing maker updates HEAD copy to Seamstress's ARMS seam")
-    _check(panel.select_owner("any") and panel.select_part("scissor_crab_claw_arm")
+    _check(not StitchedRules.fray_enabled
+        and panel.select_owner("any") and panel.select_part("scissor_crab_claw_arm")
         and _line(panel, "PartText") ==
-            "Foe cloth for ARMS; may fray a doll outside its favoured seam. Moves stay with the doll."
+            "Foe cloth for ARMS; a stranger's stitching. Moves stay with the doll."
+        and not _line(panel, "PartText").contains("fray")
         and not _line(panel, "PartText").contains("Warden")
         and not _line(panel, "PartText").contains("Seamstress"),
-        "foe chafing is conditional on future wearer, never the Spoils maker filter")
+        "live foe cloth omits retired fray without inventing a wearer")
+    StitchedRules.fray_enabled = true
+    _check(panel.select_part("scissor_crab_claw_arm")
+        and _line(panel, "PartText") ==
+            "Foe cloth for ARMS; may fray a doll outside its favoured seam. Moves stay with the doll.",
+        "legacy fray-on fixtures preserve the original foe cloth warning")
+    StitchedRules.fray_enabled = false
+    _check(panel.select_part("scissor_crab_claw_arm") and _cloth_copy(panel, "arms")
+        and not _line(panel, "PartText").contains("fray"),
+        "returning to live mode restores the fray-free foe description")
     _check(panel.select_owner("all") and panel.select_part("warden_head_pot_helm_bonk")
         and _cloth_copy(panel, "head") and not _line(panel, "PartText").contains("may fray"),
         "returning to a hero-made patch clears previous foe warnings")

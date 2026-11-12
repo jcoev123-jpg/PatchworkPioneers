@@ -159,7 +159,9 @@ func _cloth_copy(inspector: StitchedPartInspector, slot: String) -> bool:
     var owner := str(part["owner"])
     var expected := "Cloth for %s. Moves stay with the doll." % slot.to_upper()
     if StitchedSewnPatches.is_foe_patch(inspector.selected_part_id):
-        expected = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot.to_upper()
+        expected = ("Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll."
+            if StitchedRules.fray_enabled else
+            "Foe cloth for %s; a stranger's stitching. Moves stay with the doll.") % slot.to_upper()
     elif not StitchedSewnPatches.favoured_slot(owner).is_empty():
         expected = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
             slot.to_upper(), owner.replace("_", " ").capitalize(),
@@ -712,18 +714,20 @@ func _run() -> void:
     await _tier(inspector, "warden_head_pot_helm_bonk", 3)
     _witness(inspector, "scissor_crab_claw_arm", "Scissor Claw", "arms", "any")
     _check(_line(inspector, "PartText") ==
-        "Foe cloth for ARMS; may fray a doll outside its favoured seam. Moves stay with the doll."
+        "Foe cloth for ARMS; a stranger's stitching. Moves stay with the doll."
+        and not _line(inspector, "PartText").contains("fray")
         and not _line(inspector, "PartText").contains("Warden")
         and not _line(inspector, "PartText").contains("Seamstress"),
-        "mounted foe part describes only conditional wearer fray, never a guessed doll")
+        "mounted foe part hides retired fray and never guesses the wearing doll")
     await _tier(inspector, "scissor_crab_claw_arm", 1)
     await _tier(inspector, "scissor_crab_claw_arm", 2)
     _witness(inspector, "moth_swarm_wings", "Tatter Wings", "legs", "any")
     await _tier(inspector, "moth_swarm_wings", 3)
     _witness(inspector, "felt_bulwark_button_shield", "Button Shield Torso", "torso", "any")
     _check(_no_retired_readouts(inspector) and _cloth_copy(inspector, "torso")
-        and _line(inspector, "PartText").contains("may fray a doll outside its favoured seam"),
-        "foe torso cloth warns conditionally without promising old ally guard or damage")
+        and _line(inspector, "PartText").contains("a stranger's stitching")
+        and not _line(inspector, "PartText").contains("fray"),
+        "foe torso cloth stays descriptive without retired fray or old ally combat promises")
     _check(not inspector.select_part("fictional_part")
         and inspector.selected_part_id == "felt_bulwark_button_shield"
         and not inspector.select_tier(0) and not inspector.select_tier(4),
@@ -781,8 +785,9 @@ func _run() -> void:
     _check(inspector.is_visible_in_tree() and guide.part_atlas == inspector
         and inspector.select_part("scissor_crab_claw_arm")
         and _cloth_copy(inspector, "arms")
-        and _line(inspector, "PartText").contains("may fray a doll outside its favoured seam"),
-        "re-entry restores the foe warning with the new selection, not stale hero copy")
+        and _line(inspector, "PartText").contains("a stranger's stitching")
+        and not _line(inspector, "PartText").contains("fray"),
+        "re-entry restores the retired-fray-free foe description, not stale hero copy")
     await _key(KEY_ESCAPE)
     _check(guide.is_open() and not inspector.visible and inspector.selected_part_id.is_empty()
         and root.gui_get_focus_owner() == guide.atlas_button,

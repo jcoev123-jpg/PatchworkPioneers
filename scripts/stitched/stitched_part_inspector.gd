@@ -294,8 +294,11 @@ func _refresh_details() -> void:
     # promises of moves granted by wearing a cloth patch (S14 fixed doll kits).
     var favoured := StitchedSewnPatches.favoured_slot(str(part["owner"]))
     if StitchedSewnPatches.is_foe_patch(selected_part_id):
-        # The owner here is the maker, never the doll that might wear these spoils.
-        _text.text = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot
+        # The maker is not the wearer. Retired fray must not appear in the live atlas.
+        if StitchedRules.fray_enabled:
+            _text.text = "Foe cloth for %s; may fray a doll outside its favoured seam. Moves stay with the doll." % slot
+        else:
+            _text.text = "Foe cloth for %s; a stranger's stitching. Moves stay with the doll." % slot
     elif not favoured.is_empty():
         var maker := str(part["owner"]).replace("_", " ").capitalize()
         _text.text = "Cloth for %s; %s favours %s. Moves stay with the doll." % [
