@@ -58,6 +58,9 @@ func _run() -> void:
 		_check(session.phase == "battle" and session.battle != null and session.is_consistent()
 			and is_instance_valid(app.stitched_run_battle) and app.stitched_run_battle.battle == session.battle,
 			"fight %s: a mounted battle (%s)" % [kind, said])
+		if kind == "normal":
+			_check(session.map.get_current_floor() == 10,
+				"fight from a floor-10 Walk does not accidentally enter floor 11")
 	cheats.run("fight elite")
 	# The held victory beat can precede settlement. Cheats must not corrupt a
 	# terminal battle's heroes, HP, statuses or outcome in that interval.

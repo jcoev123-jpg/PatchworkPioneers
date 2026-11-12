@@ -252,11 +252,12 @@ func _fight(session: StitchedRunSession, kind: String) -> String:
 		# A won Boss ends the run as "ALL TWELVE FLOORS CLEARED"; stand it on the
 		# twelfth floor so that recap can never claim fewer floors reached.
 		_floor(session, RunMap.FLOOR_COUNT)
-	# A floor cheat stops before its door choice. Commit that real next-floor
-	# node before opening a shortcut fight, or the displayed floor is one behind.
-	var legal := session.map.get_legal_choices()
-	if not legal.is_empty():
-		session.map.choose_node(legal[0])
+	# Only a map shortcut needs to pass through the next door. A running Walk,
+	# visit or battle has already entered its floor; do not jump another one.
+	if session.phase == "map":
+		var legal := session.map.get_legal_choices()
+		if not legal.is_empty():
+			session.map.choose_node(legal[0])
 	_pend(session, kind)
 	if not session._open_battle(kind):
 		session.pending.clear()
