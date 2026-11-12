@@ -124,6 +124,30 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	_check(rear_box.size.x > 0.0 and rear_box.position.x >= 0.0 and rear_box.end.x <= 1280.0
 		and fight.hits["foe_4"].visible and fight.hits["foe_4"].size.x > 20.0,
 		"fourth foe fits inside the corridor and retains a usable click target")
+	# Eight painted bodies can stand closer than the old fixed 150px HP plates.
+	# Their numeric bars must stay beneath their own feet, not drift to the right.
+	var plate_order: Array[Control] = []
+	var centered := true
+	var compact := false
+	for side in ["hero", "foe"]:
+		for rank in range(1, 5):
+			var key := "%s_%d" % [side, rank]
+			var plate: Control = fight.plates[key]
+			if not plate.visible:
+				continue
+			var feet: Vector2 = fight.stage.screen_point(key)
+			centered = centered and absf(plate.position.x + plate.size.x * 0.5 - feet.x) < 8.0
+			compact = compact or plate.size.x < 120.0
+			plate_order.append(plate)
+	plate_order.sort_custom(func(a, b): return a.position.x < b.position.x)
+	var no_overlap := true
+	for index in range(1, plate_order.size()):
+		var previous: Control = plate_order[index - 1]
+		var current: Control = plate_order[index]
+		no_overlap = no_overlap and current.position.x >= previous.position.x + previous.size.x + 1.0
+	_check(centered and compact and plate_order.size() == 8,
+		"all eight compact HP plates stay centered beneath their own projected figures")
+	_check(no_overlap, "eight close-set HP plates keep a gap without pushing later ranks away")
 	battle._units.erase(str(extra["id"]))
 	fight.refresh()
 	_verify_live_intents(fight, 3)

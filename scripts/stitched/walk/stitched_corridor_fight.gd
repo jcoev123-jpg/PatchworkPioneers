@@ -1482,31 +1482,64 @@ func _fit_name(title: Label) -> void:
 	title.add_theme_font_size_override("font_size", font_size)
 
 
+## Keep painted health plates readable when eight close-set figures occupy the ranks.
+## Resize existing authored felt artwork instead of sliding later plates away from their dolls.
+func _size_plate(plate: Control, width: float) -> void:
+	plate.size.x = width
+	(plate.get_node("Back") as NinePatchRect).size.x = width
+	(plate.get_node("TargetMarker") as TextureRect).size.x = width - 4.0
+	(plate.get_node("Name") as Label).size.x = width - 16.0
+	var status_row: Control = plate.get_node("StatusRow")
+	status_row.position.x = 6.0
+	status_row.size.x = width - 12.0
+	var icon_size := minf(18.0, floorf((width - 12.0) / 7.0))
+	for index in range(7):
+		var chip: TextureRect = status_row.get_node("Status%d" % index)
+		chip.position.x = index * icon_size
+		chip.size.x = icon_size
+		(chip.get_node("Short") as Label).size.x = icon_size
+	for name in ["Health", "HealthText"]:
+		var readout: Control = plate.get_node(name)
+		readout.position.x = 7.0
+		readout.size.x = width - 14.0
+
+
 ## Plates sit under each figure's feet and hit boxes cover the figure; both follow lunges.
 func _place_overlays() -> void:
 	var boxes: Dictionary = {}
 	var spots: Dictionary = {}
+	var ordered: Array = []
 	for key in plates:
 		var plate: Control = plates[key]
 		var feet: Variant = stage.screen_point(key)
 		if feet == null or not plate.visible:
 			hits[key].visible = false
 			continue
-		var spot: Vector2 = feet
-		plate.position = Vector2(spot.x - plate.size.x / 2.0, minf(spot.y + 2.0, BAR_TOP - 92.0))
+		ordered.append({"key": key, "spot": feet})
+	ordered.sort_custom(func(a, b): return a.spot.x < b.spot.x)
+	for index in range(ordered.size()):
+		var key: String = ordered[index].key
+		var spot: Vector2 = ordered[index].spot
+		var width := 150.0
+		if index > 0:
+			width = minf(width, spot.x - float(ordered[index - 1].spot.x) - 5.0)
+		if index + 1 < ordered.size():
+			width = minf(width, float(ordered[index + 1].spot.x) - spot.x - 5.0)
+		# Even during a lunge, a health number must remain large enough to read.
+		width = maxf(86.0, width)
+		var plate: Control = plates[key]
+		_size_plate(plate, width)
+		plate.position = Vector2(clampf(spot.x - width / 2.0, 4.0,
+			get_viewport_rect().size.x - width - 4.0), minf(spot.y + 2.0, BAR_TOP - 92.0))
 		var rect := stage.screen_rect(key)
 		if rect.size.x > 0.0:
 			boxes[key] = rect
 			spots[key] = spot.x
-	# Plates are wider than close feet can be; slide them apart so no name sits on another.
-	var ordered: Array = []
-	for key in plates:
-		if plates[key].visible:
-			ordered.append(key)
-	ordered.sort_custom(func(a, b): return plates[a].position.x < plates[b].position.x)
+	# A rare held pose can bring two feet closer than the minimum plate width.
+	# Resolve only that overlap rather than shifting every later rank.
 	var edge := -INF
-	for key in ordered:
-		var plate: Control = plates[key]
+	for entry in ordered:
+		var plate: Control = plates[entry.key]
 		if plate.position.x < edge + 4.0:
 			plate.position.x = minf(edge + 4.0, get_viewport_rect().size.x - plate.size.x - 4.0)
 		edge = plate.position.x + plate.size.x
