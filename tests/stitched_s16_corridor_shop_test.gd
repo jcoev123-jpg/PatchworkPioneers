@@ -153,6 +153,35 @@ func _run() -> void:
 		"leave arrow retains a genuinely clear 30px target around multiple wares")
 	visit.queue_free()
 
+	# A crowded Peddler places the later wares deeper into the corridor. Their
+	# labels must clear the bodies of the larger wares in the foreground.
+	var crowded := StitchedCorridorVisit.new()
+	root.add_child(crowded)
+	crowded.present("floorboards", "bright", "Peddler", "A crowded stall.", ["stop_peddler"])
+	var ware_actions: Array = []
+	for id in ["buy_candle_stub", "bandage", "buy_patch", "buy_pins", "buy_thimble_tonic",
+			"buy_fresh_stuffing", "buy_dye", "buy_starch", "buy_spare_spool"]:
+		ware_actions.append({"id": id, "text": id.replace("_", " "), "arguments": [], "enabled": true})
+	var ware_homes := crowded.lay_out(ware_actions, [], ["", "", "", "", "", "", "", "", ""])
+	var ware_buttons: Array[Button] = []
+	for index in ware_actions.size():
+		var ware := Button.new()
+		ware.text = ware_actions[index].text
+		ware_homes[index].add_child(ware)
+		ware_buttons.append(ware)
+	crowded.dress(ware_buttons)
+	await process_frame
+	await process_frame
+	var front_midpoint := INF
+	for index in range(5):
+		var bounds := crowded.stage.screen_rect("thing_%d" % index)
+		front_midpoint = minf(front_midpoint, bounds.get_center().y)
+	for index in range(5, crowded.groups.size()):
+		var tag := crowded.floor_buttons[index].get_node("WareName") as Label
+		_check(tag != null and tag.get_global_rect().end.y < front_midpoint - 8.0,
+			"second-row Peddler labels stay above foreground wares (item %d)" % index)
+	crowded.queue_free()
+
 	# Event exits must use the floor arrow even if their prose talks about coins,
 	# or has no navigation word (album, fortune, observatory). Unaffordable
 	# event trades should not leave a dead object on the floor.
