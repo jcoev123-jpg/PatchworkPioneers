@@ -291,10 +291,13 @@ func _group_art(group: Dictionary, actions: Array, pictures: Array) -> Texture2D
 		keys.append(own)
 	keys.append_array(ITEM_ART.get(str(first.id), []))
 	var lower := str(first.text).to_lower()
-	for row in WORD_ART:
-		for word in row[0]:
-			if lower.contains(word):
-				keys.append(row[1])
+	# What the choice gives is what lies on the floor: "spend 13 gold; gain 2 scraps" shows scraps.
+	var gained := lower.get_slice("gain ", 1) if lower.contains("gain ") else ""
+	for source in [gained, lower]:
+		for row in WORD_ART:
+			for word in row[0]:
+				if source.contains(word):
+					keys.append(row[1])
 	if not str(pictures[group.actions[0]]).is_empty():
 		keys.append(str(pictures[group.actions[0]]))
 	keys.append_array(FALLBACK)
