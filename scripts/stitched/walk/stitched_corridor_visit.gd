@@ -21,7 +21,7 @@ const DOLL_HEIGHT := 0.9
 const PER_ROW := 5
 const FIRST_ROW := 1.9
 # Separate a second row's names from the taller wares in front of it.
-const ROW_GAP := 1.6
+const ROW_GAP := 1.75
 const ROW_HALF := 1.1
 const ARROW_LENGTH := 1.2
 const ARROW_TILT := 0.45
