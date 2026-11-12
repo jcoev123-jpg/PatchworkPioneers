@@ -25,7 +25,8 @@ func _run() -> void:
 	if cheats == null:
 		_finish()
 		return
-	_check(cheats.run("help").contains("floor N"), "help lists the commands")
+	for advertised in ["floor N", "defeat", "hp WHO N", "status WHO KIND N", "summon", "patch ABILITY ID"]:
+		_check(cheats.run("help").contains(advertised), "help advertises %s" % advertised)
 	_check(cheats.run("bogus").begins_with("unknown command"), "unknown commands are refused")
 
 	_check(cheats.run("run 77").begins_with("new run"), "run starts a new Stitched run")
@@ -141,6 +142,22 @@ func _run() -> void:
 		and session.is_consistent(), "defeat: a real terminal loss is settled (%s)" % said)
 	_check(cheats.run("defeat").begins_with("party defeated") and app.stitched_run_session.phase == "defeat",
 		"defeat: command can also create and end a fresh battle")
+	# The first-floor recap must use the singular form, not "1 FLOORS REACHED".
+	cheats.run("run 99")
+	cheats.run("defeat")
+	session = app.stitched_run_session
+	var floor_caption := ""
+	var visible_fray := false
+	for candidate: Label in app.stitched_run_panel.find_children("*", "Label", true, false):
+		if candidate.text.contains("FLOOR") and candidate.text.contains("REACHED"):
+			floor_caption = candidate.text
+		if candidate.is_visible_in_tree() and candidate.text.to_upper().contains("FRAY"):
+			visible_fray = true
+	_check(session.map.get_current_floor() == 1 and session.phase == "defeat" and not floor_caption.is_empty(),
+		"defeat: a mounted first-floor recap is present")
+	_check(floor_caption.contains("1 FLOOR REACHED") and not floor_caption.contains("1 FLOORS REACHED"),
+		"first-floor defeat recap uses singular FLOOR")
+	_check(not visible_fray, "disabled fray never appears in the terminal recap")
 	_finish()
 
 
