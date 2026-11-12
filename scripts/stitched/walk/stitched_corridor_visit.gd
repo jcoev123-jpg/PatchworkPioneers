@@ -545,8 +545,13 @@ func _place_items() -> void:
 			# above the permanent story instead of painting both over each other.
 			if tag.text.length() > 32:
 				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 52.0)
-			tag.position = Vector2(-24, tag_y)
 			tag.size = Vector2(seen.size.x + 48, 40)
+			var tag_x := -24.0
+			# The permanent route map covers the lower-right of an Event. Shift
+			# long choice names left rather than letting their text cross the map.
+			if _event_visit:
+				tag_x = minf(tag_x, 998.0 - button.position.x - tag.size.x)
+			tag.position = Vector2(tag_x, tag_y)
 			button.add_child(tag)
 	for number in floor_buttons.size():
 		if is_instance_valid(floor_buttons[number]) and floor_buttons[number].visible and groups[number].arrow:

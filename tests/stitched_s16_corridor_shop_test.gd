@@ -233,7 +233,38 @@ func _run() -> void:
 		"long event floor labels stay wholly above the story (%s, %s; story top %s)" % [event.floor_buttons[0].position, long_tag.get_rect() if long_tag != null else Rect2(), StitchedCorridorVisit.STORY_RECT.position.y])
 	event.queue_free()
 
-	# Empty Moth visits quote disabled sacrifices and fumigation. Those controls
+	# The right-hand choice in a two-offer Event can have a long label.
+	# It must stay left of the corner route map, not paint over its rooms.
+	var two_offers := StitchedCorridorVisit.new()
+	root.add_child(two_offers)
+	two_offers.present("floorboards", "bright", "The Clockwork Teacup Parade", "Teacups march.", ["stop_event"])
+	var offer_actions := [
+		{"id": "collect_thread", "text": "Collect the spilled glowing thread (+2 scraps)", "arguments": [], "enabled": true},
+		{"id": "polish_joints", "text": "Polish the parade's spoon joints (spend 2 scraps; gain 25 gold)", "arguments": [], "enabled": false},
+	]
+	var offer_homes := two_offers.lay_out(offer_actions, [], ["", ""])
+	var offer_buttons: Array[Button] = []
+	for offer in offer_actions.size():
+		var choice := Button.new()
+		choice.text = offer_actions[offer].text
+		choice.disabled = not offer_actions[offer].enabled
+		offer_homes[offer].add_child(choice)
+		offer_buttons.append(choice)
+	two_offers.dress(offer_buttons)
+	await process_frame
+	await process_frame
+	var right_tag := two_offers.floor_buttons[1].get_node("WareName") as Label
+	var left_tag := two_offers.floor_buttons[0].get_node("WareName") as Label
+	_check(right_tag != null and right_tag.position.x < -24.0
+		and right_tag.get_global_rect().end.x <= 998.0
+		and not right_tag.get_global_rect().intersects(left_tag.get_global_rect())
+		and right_tag.get_global_rect().end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0,
+		"right-hand Event choice stays clear of route map, companion choice and bottom story")
+	_check(offer_buttons[1].text == offer_actions[1].text,
+		"moving the long floor caption preserves its full choice text")
+	two_offers.queue_free()
+
+	# Empty Moth visits quote disabled sacrifices and fumigation.Those controls
 	# must stay on the mounted page across Save/Reload and title Continue, unlike
 	# the Garden's no-scraps coin pile.
 	var moth := StitchedCorridorVisit.new()
