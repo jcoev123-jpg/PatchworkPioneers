@@ -414,6 +414,20 @@ func _run() -> void:
 		"wrapped Quiltwheel trade leaves clear space above the story footer: %s" % [quilt_caption.get_global_rect() if quilt_caption != null else Rect2()])
 	two_offers.queue_free()
 
+	# A Dye Vat event without its dedicated prop must show dye ware, not
+	# the unrelated hooded event keeper; the new art takes priority later.
+	var dye_vat := StitchedCorridorVisit.new()
+	root.add_child(dye_vat)
+	dye_vat.present("floorboards", "bright", "The Dye Vat", "Indigo thread.", ["prop_dye_vat", "stop_event"])
+	var expected_vat := StitchedCorridorStage.art("prop_dye_vat")
+	if expected_vat == null:
+		expected_vat = StitchedCorridorStage.art("item_dye")
+	if expected_vat == null:
+		expected_vat = StitchedCorridorStage.art("stop_event")
+	_check(dye_vat._keeper == expected_vat,
+		"Dye Vat prefers its own prop, then dye artwork, before the generic event keeper")
+	dye_vat.queue_free()
+
 	# Needle Gate's cost-free 'pass' is the exit arrow, not a third
 	# floor ware squeezed into the same caption lane as its two trades.
 	var needle_gate := StitchedCorridorVisit.new()
