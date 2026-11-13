@@ -141,7 +141,7 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 14:40 web play pass): Debug-sewed Red Lint, inspected normal, floor-10 elite and floor-12 boss ability turns, summon, Bleed, and the 0-HP Hanging Seamstress. Raised wide Hanging sheets clear of the floor and anchored their health plates beneath the laid-out puppet; verified after restart and with mounted fight/victory/Continue tests. Checked title, party, Wren intro/room, ordinary Save/Continue, the floor-6/10 Walks and thread tug, all five stops, three events, and victory/defeat. No live FRAY display or Wren hand controls appeared. Job 4 stays PART because the existing saved-gold two-effect contract needs an owner-approved migration, not a display-only workaround.
 
-## Job 5:information corner: map, and foe details on hover (DONE 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
 
