@@ -148,6 +148,10 @@ func present(area_name: String, band_name: String, title: String, words: String,
 		# the needle rather than a generic hooded road keeper.
 		if _keeper == null and str(key) == "prop_v3_seamstress_crimson_shadow_choir":
 			_keeper = StitchedCorridorStage.hero_art("seamstress")
+		# The gear lift centres on the Tinker; his existing portrait tells that
+		# story better than the unrelated hooded keeper until its prop is drawn.
+		if _keeper == null and str(key) == "prop_v3_tinker_biscuit_tin_gear_lift":
+			_keeper = StitchedCorridorStage.hero_art("tinker")
 		if _keeper != null:
 			break
 	var glow := OmniLight3D.new()

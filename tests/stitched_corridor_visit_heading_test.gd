@@ -54,6 +54,15 @@ func _run() -> void:
 	_check(page._keeper != null and expected_art != null
 		and page._keeper.resource_path == expected_art.resource_path,
 		"Choir prefers its own art and otherwise uses the Seamstress, never an unrelated event keeper")
+	# The biscuit-tin gear lift has no painted tableau yet: use the Tinker
+	# who is named in its story, without masking its eventual dedicated art.
+	page.present("sewing_basket", "bright", "The Biscuit-Tin Gear Lift", "The Tinker peers up.",
+		["prop_v3_tinker_biscuit_tin_gear_lift", "stop_event"])
+	var lift_art := StitchedCorridorStage.art("prop_v3_tinker_biscuit_tin_gear_lift")
+	var lift_expected := lift_art if lift_art != null else StitchedCorridorStage.hero_art("tinker")
+	_check(page._keeper != null and lift_expected != null
+		and page._keeper.resource_path == lift_expected.resource_path,
+		"Gear Lift prefers dedicated prop art and otherwise shows the Tinker")
 	page.present("floorboards", "bright", "Unknown Event", "A stranger waits.",
 		["prop_event_that_has_no_specific_picture", "stop_event"])
 	_check(page._keeper != null and page._keeper.resource_path == StitchedCorridorStage.art("stop_event").resource_path,
