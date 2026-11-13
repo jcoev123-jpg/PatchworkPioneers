@@ -404,6 +404,14 @@ func _run() -> void:
 	_check(right_tag.size.x >= 290.0 and left_tag.size.x >= 290.0
 		and offer_buttons[0].text == offer_actions[0].text,
 		"readable event caption width leaves quoted costs on the buttons")
+	# The two-line Mourning Quiltwheel trade used to finish just four pixels
+	# above its story. Lifting only the wrapped caption preserves its full text.
+	two_offers.groups[0].words = "Pay 27 gold for three bundles of wheel-mending thread"
+	two_offers._place_items()
+	var quilt_caption := two_offers.floor_buttons[0].get_node("WareName") as Label
+	_check(quilt_caption != null and quilt_caption.get_global_rect().end.y
+		<= StitchedCorridorVisit.STORY_RECT.position.y - 14.0,
+		"wrapped Quiltwheel trade leaves clear space above the story footer: %s" % [quilt_caption.get_global_rect() if quilt_caption != null else Rect2()])
 	two_offers.queue_free()
 
 	# Needle Gate's cost-free 'pass' is the exit arrow, not a third

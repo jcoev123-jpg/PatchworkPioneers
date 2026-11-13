@@ -590,6 +590,11 @@ func _place_items() -> void:
 				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 48.0)
 			tag.size = Vector2(maxf(seen.size.x + 48, 290.0) if _event_visit else seen.size.x + 48,
 				44.0 if _event_visit else 40.0)
+			# Give the second line of a long event caption breathing room above
+			# the story; single-line offers and their floor hit targets do not move.
+			if _event_visit and tag.get_theme_font("font").get_string_size(tag.text,
+					HORIZONTAL_ALIGNMENT_LEFT, -1, tag.get_theme_font_size("font_size")).x > tag.size.x:
+				tag_y -= 18.0
 			if unsew_caption:
 				tag.size.y = 22.0
 				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - tag.size.y - 4.0)

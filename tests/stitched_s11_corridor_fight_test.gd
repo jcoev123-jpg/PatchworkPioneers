@@ -101,6 +101,11 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	var spread_three := absf(fight.stage.figure_nodes["foe_3"].position.z - fight.stage.figure_nodes["foe_2"].position.z)
 	_check(is_equal_approx(spread_three, StitchedCorridorStage.FOE_SPREAD_THREE),
 		"2-3 foe fights spread wide silhouettes farther apart across the right-hand ranks")
+	var front_hero := fight.stage.screen_rect("hero_1")
+	var front_foe := fight.stage.screen_rect("foe_1")
+	_check(front_hero.size.x > 0.0 and front_foe.size.x > 0.0
+		and front_foe.position.x - front_hero.end.x >= 6.0,
+		"front doll and enemy idle silhouettes remain separate in the three-foe corridor")
 	for rank in [1, 2]:
 		var front_bounds := fight.stage.screen_rect("foe_%d" % rank)
 		var rear_bounds := fight.stage.screen_rect("foe_%d" % (rank + 1))
