@@ -549,6 +549,12 @@ func _summon(session: StitchedRunSession) -> String:
 func _patch(session: StitchedRunSession, words: PackedStringArray) -> String:
 	if not session.s14_enabled or words.size() < 3:
 		return "failed: patch needs ABILITY and patch ID"
+	# Terminal battle receipts may still be holding on screen. Never mutate
+	# ability inventory or the sealed recap after the outcome is decided.
+	if session.phase in ["victory", "defeat"]:
+		return "failed: cannot sew a patch after the battle or run has ended"
+	if session.phase == "battle" and session.battle != null and session.battle.is_over():
+		return "failed: cannot sew a patch after the battle or run has ended"
 	var requested_patch := words[words.size() - 1].to_lower()
 	var catalog: Dictionary = StitchedS14Abilities.patches().get("by_id", {})
 	var patch_id := requested_patch

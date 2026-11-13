@@ -68,11 +68,15 @@ func _run() -> void:
 	var terminal_battle: StitchedRules = session.battle
 	terminal_battle._outcome = "victory"
 	var terminal_state := terminal_battle.state_snapshot()
-	for terminal_command in ["win", "defeat", "hp h1 0", "status h1 stun 1", "heal"]:
+	var terminal_inventory: Array = session.ability_inventory.duplicate(true)
+	var terminal_sockets: Dictionary = session.ability_sockets.duplicate(true)
+	for terminal_command in ["win", "defeat", "hp h1 0", "status h1 stun 1", "heal",
+			"patch Pot Helm Command cotton_red_lint"]:
 		var refusal: String = cheats.run(terminal_command)
 		_check(refusal.begins_with("failed:") and terminal_battle.state_snapshot() == terminal_state
-			and session.battle == terminal_battle and session.phase == "battle",
-			"terminal battle rejects %s without changing a finished snapshot" % terminal_command)
+			and session.battle == terminal_battle and session.phase == "battle"
+			and session.ability_inventory == terminal_inventory and session.ability_sockets == terminal_sockets,
+			"terminal battle rejects %s without changing a finished snapshot or sockets" % terminal_command)
 	terminal_battle._outcome = "ongoing"
 	var gold_before := session.gold
 	var before_foes := session.battle._living_foes().size()
@@ -385,6 +389,16 @@ func _run() -> void:
 	said = cheats.run("defeat")
 	_check(said == "party defeated" and session.phase == "defeat" and session.battle == null
 		and session.is_consistent(), "defeat: a real terminal loss is settled (%s)" % said)
+	# A debug patch on the recap must not rewrite the sealed run or replace the
+	# displayed defeat page with an invalid new set of ability sockets.
+	var recap_inventory: Array = session.ability_inventory.duplicate(true)
+	var recap_sockets: Dictionary = session.ability_sockets.duplicate(true)
+	var recap_page: Control = app.stitched_run_panel
+	said = cheats.run("patch Pot Helm Command cotton_red_lint")
+	_check(said.begins_with("failed:") and session.phase == "defeat"
+		and session.ability_inventory == recap_inventory and session.ability_sockets == recap_sockets
+		and app.stitched_run_panel == recap_page and session.is_consistent(),
+		"patch refuses a finished run without changing the sealed recap")
 	_check(cheats.run("defeat").begins_with("party defeated") and app.stitched_run_session.phase == "defeat",
 		"defeat: command can also create and end a fresh battle")
 	# The first-floor recap must use the singular form, not "1 FLOORS REACHED".
