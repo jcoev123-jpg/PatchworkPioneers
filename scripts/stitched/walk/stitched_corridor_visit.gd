@@ -610,7 +610,8 @@ func _place_items() -> void:
 
 ## Three or more Event trades need shorter captions above the bottom story.
 ## Centre each name beneath its actual floor object; only the rightmost name
-## slides left of the route map. Additional rows keep dense events readable.
+## slides left of the route map. Interleave projected neighbours across rows
+## so five close-set wares do not paint adjacent 230px captions on one line.
 func _fit_crowded_event_captions() -> void:
 	if not _event_visit:
 		return
@@ -633,7 +634,8 @@ func _fit_crowded_event_captions() -> void:
 		label.add_theme_font_size_override("font_size", 15)
 		var centre := owners[index].position.x + owners[index].size.x * 0.5
 		var x := clampf(centre - label.size.x * 0.5, 8.0, 998.0 - label.size.x)
-		var y := STORY_RECT.position.y - 48.0 - float(rows - 1 - index / 3) * 50.0
+		var row := index % rows
+		var y := STORY_RECT.position.y - 48.0 - float(rows - 1 - row) * 50.0
 		label.position = Vector2(x, y) - owners[index].position
 
 

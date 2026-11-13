@@ -479,6 +479,40 @@ func _run() -> void:
 		mitten_bounds.append(bounds)
 	three_offers.queue_free()
 
+	# Five close-set event trades project more tightly than their 230px captions.
+	# Captions must remain distinct without moving their real floor hit targets.
+	var dense_event := StitchedCorridorVisit.new()
+	root.add_child(dense_event)
+	dense_event.present("floorboards", "bright", "The Five Stitches", "Five trades lie ahead.", ["stop_event"])
+	var dense_event_actions: Array = []
+	for index in 5:
+		dense_event_actions.append({"id": "trade_%d" % index,
+			"text": "Inspect stitch %d for thread" % index, "arguments": [], "enabled": true})
+	var dense_event_homes := dense_event.lay_out(dense_event_actions, [], ["", "", "", "", ""])
+	var dense_event_buttons: Array[Button] = []
+	for index in dense_event_actions.size():
+		var choice := Button.new()
+		choice.text = dense_event_actions[index].text
+		dense_event_homes[index].add_child(choice)
+		dense_event_buttons.append(choice)
+	dense_event.dress(dense_event_buttons)
+	await process_frame
+	await process_frame
+	var dense_event_rects: Array[Rect2] = []
+	for index in dense_event.floor_buttons.size():
+		var caption := dense_event.floor_buttons[index].get_node("WareName") as Label
+		var rect := caption.get_global_rect()
+		_check(rect.position.x >= 8.0 and rect.end.x <= 998.0
+			and rect.end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0,
+			"five-trade caption %d stays clear of the map and story" % index)
+		for prior in dense_event_rects:
+			_check(not prior.intersects(rect),
+				"five-trade caption %d does not cover another action name" % index)
+		dense_event_rects.append(rect)
+	_check(dense_event_rects.size() == 5 and dense_event_buttons.size() == 5,
+		"all five event trade actions remain available")
+	dense_event.queue_free()
+
 	# Empty Moth visits quote disabled sacrifices and fumigation.Those controls
 	# must stay on the mounted page across Save/Reload and title Continue, unlike
 	# the Garden's no-scraps coin pile.
