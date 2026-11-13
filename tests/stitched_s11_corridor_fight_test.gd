@@ -182,13 +182,18 @@ func _verify_intent_fixtures(fight: StitchedCorridorFight) -> void:
 	var fallen: Sprite3D = fight.stage.figure_nodes["hero_1"]
 	_check(fallen.visible and fallen.billboard == BaseMaterial3D.BILLBOARD_DISABLED
 		and is_equal_approx(fallen.rotation.y, PI / 2.0)
-		and is_equal_approx(fallen.rotation.z, -PI / 2.0) and fallen.position.y < 0.4
+		and is_equal_approx(fallen.rotation.z, -PI / 2.0)
+		and fallen.position.y >= fight.stage.placed_size(fallen).x * 0.5 + 0.025
 		and fight.plates["hero_1"].get_node("HealthText").text == "0/%d" % int(saved_hero.max_hp)
 		and fight.plates["hero_1"].get_node("StatusRow").visible,
-		"a zero-HP Hanging doll lies across the camera plane; HP and status remain visible")
+		"a zero-HP Hanging doll clears the floor in the camera plane; HP and status remain visible")
 	var fallen_rect := fight.stage.screen_rect("hero_1")
 	_check(fallen_rect.size.x > fallen_rect.size.y and fallen_rect.size.y > 0.0,
 		"the fallen doll projects as a readable horizontal figure in the side-view fight")
+	var fallen_plate: Control = fight.plates["hero_1"]
+	_check(fallen_plate.position.y >= minf(fallen_rect.end.y + 2.0,
+		StitchedCorridorFight.BAR_TOP - 92.0) - 1.0,
+		"a Hanging doll's HP plate sits beneath its laid-out sprite, not over its body")
 	var fallen_frames: Array = fallen.get_meta("idle_frames", [])
 	_check(fallen_frames.size() > 1, "a Hanging doll keeps its animated idle strip")
 	if fallen_frames.size() > 1:

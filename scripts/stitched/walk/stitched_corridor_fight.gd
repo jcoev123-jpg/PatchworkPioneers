@@ -1050,7 +1050,9 @@ func refresh() -> void:
 						# side-view camera explicitly so the fallen puppet lies horizontally.
 						figure.billboard = BaseMaterial3D.BILLBOARD_DISABLED
 						figure.rotation = Vector3(0, PI / 2.0, -PI / 2.0)
-						figure.position.y = 0.24
+						# Wider doll paintings otherwise sink halfway into the floor.
+						# The rolled sheet's short side is vertical; clear its lower edge.
+						figure.position.y = maxf(0.24, stage.placed_size(figure).x * 0.5 + 0.03)
 					else:
 						figure = stage.place(key, _figure_art(str(unit.id)), where, tall)
 					figure.set_meta("fight_unit", str(unit.id))
@@ -1533,6 +1535,13 @@ func _place_overlays() -> void:
 		if feet == null or not plate.visible:
 			hits[key].visible = false
 			continue
+		# A Hanging doll lies across the camera plane: its world origin is
+		# in the middle of its picture, not below it like a standing doll's feet.
+		var figure: Sprite3D = stage.figure_nodes.get(key)
+		if figure != null and figure.billboard == BaseMaterial3D.BILLBOARD_DISABLED:
+			var fallen_rect := stage.screen_rect(key)
+			if fallen_rect.has_area():
+				feet = Vector2(feet.x, fallen_rect.end.y)
 		ordered.append({"key": key, "spot": feet})
 	ordered.sort_custom(func(a, b): return a.spot.x < b.spot.x)
 	for index in range(ordered.size()):
