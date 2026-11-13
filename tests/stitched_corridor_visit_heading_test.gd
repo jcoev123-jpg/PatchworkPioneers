@@ -72,6 +72,34 @@ func _run() -> void:
 			"text": "Pay 19 gold for three bundles of spine thread (+3 scraps)"}]
 		_check(page._group_art({"actions": [0]}, spine_thread, [""]) == bundles,
 			"parenthesized scrap reward places earned bundles, not spent gold, on the floor")
+	# A long Unsew signature belongs in hover detail, never over the story footer.
+	var unsew_page := StitchedCorridorVisit.new()
+	root.add_child(unsew_page)
+	await process_frame
+	unsew_page.present("floorboards", "bright", "Sewing Circle", "A ring of old needles waits.")
+	var unsew_actions := [
+		{"id": "unsew", "text": "Warden / Unsew Red Lint from Pot Helm Command",
+			"arguments": ["warden", "warden_head_pot_helm_command"], "enabled": true},
+		{"id": "leave", "text": "Leave Sewing Circle", "arguments": [], "enabled": true},
+	]
+	var unsew_homes := unsew_page.lay_out(unsew_actions, [{"id": "warden", "name": "Warden"}], ["", ""])
+	var unsew_buttons: Array[Button] = []
+	for action_index in unsew_actions.size():
+		var choice := Button.new()
+		choice.text = str(unsew_actions[action_index].text)
+		unsew_homes[action_index].add_child(choice)
+		unsew_buttons.append(choice)
+	unsew_page.dress(unsew_buttons)
+	await process_frame
+	var unsew_tag := unsew_page.floor_buttons[0].get_node_or_null("WareName") as Label
+	_check(unsew_tag != null and unsew_tag.text == "Unsew Red Lint",
+		"unsew floor caption names the patch without wrapping the whole signature")
+	_check(unsew_tag != null and unsew_tag.get_global_rect().end.y <= StitchedCorridorVisit.STORY_RECT.position.y - 4.0,
+		"unsew floor caption clears the bottom stop story")
+	unsew_page._look(0, true)
+	_check(unsew_page.story.text.contains("Pot Helm Command"),
+		"unsew full signature remains readable on item hover")
+	unsew_page.queue_free()
 	# A crowded Sewing Circle keeps floor wares clickable without stacking
 	# unreadable recruitment and patch captions across the middle of the screen.
 	var crowded := StitchedCorridorVisit.new()

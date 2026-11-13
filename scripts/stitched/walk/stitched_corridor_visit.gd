@@ -559,6 +559,11 @@ func _place_items() -> void:
 		if not groups[number].arrow:
 			var tag := _label("WareName", 17 if _event_visit else 14, BONE)
 			tag.text = str(groups[number].words).split(" · ")[0]
+			# The full signature stays in the button's hover/keyboard description;
+			# a two-line Unsew label otherwise runs into the story below the wares.
+			var unsew_caption := heading.text == "Sewing Circle" and str(groups[number].key).get_slice("|", 0) == "unsew"
+			if unsew_caption:
+				tag.text = tag.text.get_slice(" from ", 0)
 			# Event wares name the action on the floor; the full priced
 			# description remains on the actual button for hover and focus.
 			# Dropping the parenthetical avoids a tiny two-line price fragment.
@@ -581,6 +586,9 @@ func _place_items() -> void:
 				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - 48.0)
 			tag.size = Vector2(maxf(seen.size.x + 48, 290.0) if _event_visit else seen.size.x + 48,
 				44.0 if _event_visit else 40.0)
+			if unsew_caption:
+				tag.size.y = 22.0
+				tag_y = minf(tag_y, STORY_RECT.position.y - button.position.y - tag.size.y - 4.0)
 			var tag_x := (seen.size.x - tag.size.x) / 2.0 if _event_visit else -24.0
 			# The spool lies right next to the red exit arrow at the Peddler.
 			# Shift only its caption right, leaving the ware and its hit area in place.
