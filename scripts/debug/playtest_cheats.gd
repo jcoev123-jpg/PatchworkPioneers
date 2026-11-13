@@ -354,35 +354,30 @@ func _win(session: StitchedRunSession) -> String:
 
 func _battle_unit(battle: StitchedRules, who: String) -> Dictionary:
 	var query := who.strip_edges().to_lower()
-	# IDs win over names; repeated foe names must never silently select
-	# whichever unit happened to be visited first in the dictionary.
+	# IDs and explicit seat selectors win over display names, even if a
+	# figure has been given a name such as "f4" during a playtest.
 	for unit in battle._units.values():
 		if str(unit.id).to_lower() == query:
 			return unit
+	var seat := ""
+	var side := ""
+	if query.begins_with("hero") or query.begins_with("foe"):
+		side = "hero" if query.begins_with("hero") else "foe"
+		seat = query.trim_prefix("hero").trim_prefix("foe")
+	elif query.begins_with("h") or query.begins_with("f"):
+		side = "hero" if query.begins_with("h") else "foe"
+		seat = query.substr(1)
+	if seat.is_valid_int() and int(seat) >= 1 and int(seat) <= 4:
+		for unit in battle._units.values():
+			if str(unit.side) == side and int(unit.rank) == int(seat) 					and not bool(unit.get("dead", false)) and not bool(unit.get("lost", false)):
+				return unit
 	var named: Dictionary = {}
 	for unit in battle._units.values():
 		if str(unit.name).to_lower() == query:
 			if not named.is_empty():
 				return {} # Ambiguous names require an explicit seat (f1-f4).
 			named = unit
-	if not named.is_empty():
-		return named
-	var seat := query.trim_prefix("hero").trim_prefix("foe")
-	var side := "hero" if query.begins_with("hero") or query.begins_with("h") else "foe"
-	if query.begins_with("hero") or query.begins_with("foe"):
-		seat = query.trim_prefix("hero").trim_prefix("foe")
-	elif query.begins_with("h") or query.begins_with("f"):
-		seat = query.substr(1)
-	else:
-		return {}
-	if not seat.is_valid_int() or int(seat) < 1 or int(seat) > 4:
-		return {}
-	for unit in battle._units.values():
-		if str(unit.side) != side or int(unit.rank) != int(seat):
-			continue
-		if not bool(unit.get("dead", false)) and not bool(unit.get("lost", false)):
-			return unit
-	return {}
+	return named
 
 
 func _finish_cheat_battle(session: StitchedRunSession, message: String,

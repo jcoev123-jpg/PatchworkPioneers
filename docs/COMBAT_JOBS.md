@@ -145,7 +145,7 @@ sewn on really changes the ability in the next fight; if it does not, that is th
 
 (2026-11-13 16:00 play fix): The Needle Gate's missing dedicated prop now falls back to existing needle-and-thread artwork rather than an unrelated hooded keeper, checked live after restart and in the 229-check corridor visit regression. The one-slot combat view remains correct; Job 4 stays PART pending owner approval for the legacy gold double-effect save/rules migration.
 
-## Job 5:information corner: map, and foe details on hover (DONE 2026-11-12)
+## Job 5: information corner: map, and foe details on hover (DONE 2026-11-12)
 
 Built the `StitchedCornerMap` on the walk, fight and visit screens, fed from real run routes, with visited rooms and current candle marker. Foe hover replaces it with live details and spotlights that foe, then restores the map on exit. Corrected the floor index and moved the fight map to the lower-right at `Rect2(968, 542, 306, 170)`; shortened the bottom bar to keep controls and foe HP plates clear.
 

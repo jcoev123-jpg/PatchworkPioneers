@@ -137,6 +137,12 @@ func _run() -> void:
 		"duplicate figure names cannot silently redirect HP or status setup")
 	first_foe.name = first_name
 	fourth_foe.name = fourth_name
+	# A figure named after a seat must not steal the explicit seat selector.
+	first_foe.name = "f4"
+	_check(cheats._battle_unit(session.battle, "f4") == fourth_foe
+		and cheats._battle_unit(session.battle, "foe4") == fourth_foe,
+		"explicit foe seat takes precedence over a conflicting display name")
+	first_foe.name = first_name
 	_check(session.is_consistent(), "restored foe names leave the battle consistent")
 	var before_hp_receipts := mounted_view.receipts.size()
 	said = cheats.run("hp f4 1")
