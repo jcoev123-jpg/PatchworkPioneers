@@ -735,7 +735,14 @@ func refresh(animate: bool = false) -> void:
 		pocket_buttons[index].text = str(pocket[index]).replace("_", " ").capitalize() if index < pocket.size() else "Empty pocket"
 		pocket_buttons[index].disabled = index >= pocket.size() or expected.phase != "walking"
 	forward_button.disabled = expected.phase != "walking"
-	forward_button.tooltip_text = "Let it take one" if walk.tug_unresolved() else "Walk on"
+	var passing_curio: bool = not bool(expected.get("looking_back", false)) \
+		and not current_curio().is_empty() and not walk.tug_unresolved()
+	if passing_curio:
+		forward_button.tooltip_text = "Walk past this curio without touching it"
+	elif walk.tug_unresolved():
+		forward_button.tooltip_text = "Let it take one"
+	else:
+		forward_button.tooltip_text = "Walk on"
 	exit_button.visible = host == null
 	back_button.disabled = expected.phase != "walking"
 	_show_event()
@@ -947,7 +954,7 @@ func _show_event() -> void:
 			return
 		var record: Dictionary = curio_records.get(curio.id, {})
 		event_title.text = str(record.get("name", "Something in the way")).to_upper()
-		event_text.text = CURIO_LINES.get(record.get("kind", ""), "Something waits in the candlelight.")
+		event_text.text = str(CURIO_LINES.get(record.get("kind", ""), "Something waits in the candlelight.")) + " Walk on to pass without touching it."
 		for choice in walk.curio_choices(curio.instance):
 			choices.append([CHOICE_CAPTIONS.get(choice, str(choice).to_upper()), {"kind": "curio", "target": curio.instance, "choice": choice}])
 	event_panel.show()

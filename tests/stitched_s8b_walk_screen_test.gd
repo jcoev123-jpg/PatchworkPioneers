@@ -478,6 +478,9 @@ func _deferred_items() -> void:
 	var curio := stage.current_curio()
 	_check(not curio.is_empty() and stage.pocket_target("pins") == curio.instance, "pins go to the curio in the way")
 	_check(stage.event_panel.visible and stage.event_buttons.size() >= 2 and stage.stage.figure_nodes.has("curio"), "the curio stands in the corridor with its choices")
+	_check(not stage.forward_button.disabled and stage.forward_button.tooltip_text.contains("Walk past")
+		and stage.event_text.text.contains("Walk on to pass without touching it"),
+		"visible curio makes the intentional hallway and Up bypass explicit")
 	for control in stage.event_buttons:
 		_check(control.is_visible_in_tree() and not control.disabled and control.get_theme_stylebox("normal") is StyleBoxTexture, "curio choices stay reachable and sewn")
 	_open_drawer(stage)
