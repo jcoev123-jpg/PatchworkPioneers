@@ -140,6 +140,10 @@ func present(area_name: String, band_name: String, title: String, words: String,
 	_keeper = null
 	for key in keeper_keys:
 		_keeper = StitchedCorridorStage.art(str(key))
+		# A needle belongs at the gate, not the unrelated hooded road keeper.
+		# Keep the dedicated gate artwork first when the painted prop arrives.
+		if _keeper == null and str(key) == "prop_needle_gate":
+			_keeper = StitchedCorridorStage.art("item_needle")
 		# The parade needs a shield-bearing guard, not the hooded generic event keeper.
 		# The dedicated parade picture takes priority whenever it arrives.
 		if _keeper == null and str(key) == "prop_v3_warden_cinder_shield_parade":

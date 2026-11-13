@@ -418,7 +418,14 @@ func _run() -> void:
 	# floor ware squeezed into the same caption lane as its two trades.
 	var needle_gate := StitchedCorridorVisit.new()
 	root.add_child(needle_gate)
-	needle_gate.present("floorboards", "bright", "The Needle Gate", "Crossed needles.", ["stop_event"])
+	needle_gate.present("floorboards", "bright", "The Needle Gate", "Crossed needles.", ["prop_needle_gate", "stop_event"])
+	var expected_gate := StitchedCorridorStage.art("prop_needle_gate")
+	if expected_gate == null:
+		expected_gate = StitchedCorridorStage.art("item_needle")
+	if expected_gate == null:
+		expected_gate = StitchedCorridorStage.art("stop_event")
+	_check(needle_gate._keeper == expected_gate,
+		"Needle Gate prefers its authored gate, then needle artwork, not an unrelated event keeper")
 	var gate_actions := [
 		{"id": "examine", "text": "Spend 1 scrap to unpick the gate and claim 12 gold", "arguments": [], "enabled": false},
 		{"id": "pass", "text": "Pass without stopping", "arguments": [], "enabled": true},
