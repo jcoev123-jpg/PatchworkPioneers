@@ -1,0 +1,12 @@
+pushed: 2026-11-13 21:59:56 +11:00
+controller processes: 0 
+supervisor processes: 0
+opencode processes: 0
+chrome cdp 9222: up
+STOP: False  PAUSE: False
+watchdog task: Running
+controller.log last write: 5959 min ago
+repo HEAD: e12c9348 2026-11-13 17:18:58 +1100 Web review: fixes from the review of the playtest rounds
+repo branch: master
+repo dirty files: 0
+free disk GB: 1375.8

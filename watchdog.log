@@ -1,0 +1,64 @@
+[2026-10-21 11:40:00] relay is halted, not restarting (needs the owner): [2026-10-21 11:31:09] halted: paused between cycles (start resumes)
+[2026-10-23 09:19:57] relay was down (last log: [2026-10-23 09:16:30] smoke check report: PLAYTEST_147.md); restarted the supervisor
+[2026-10-23 09:30:10] relay is halted, not restarting (needs the owner): [2026-10-23 09:19:57] halted: working tree is dirty; commit or stash before starting a cycle
+[2026-10-23 12:42:04] relay was down (last log: [2026-10-23 12:40:56] chatgpt DESIGNREVIEW [chat] (try 1)); restarted the supervisor
+[2026-10-23 15:10:01] relay was down (last log: [2026-10-23 15:03:26] smoke check report: PLAYTEST_151.md); restarted the supervisor
+[2026-10-23 16:40:01] relay is halted, not restarting (needs the owner): [2026-10-23 16:34:52] halted: paused between cycles (start resumes)
+[2026-10-24 12:40:02] relay is halted, not restarting (needs the owner): [2026-10-24 12:39:53] halted: paused between cycles (start resumes)
+[2026-10-24 14:10:02] relay is halted, not restarting (needs the owner): [2026-10-24 14:05:12] halted: paused between cycles (start resumes)
+[2026-10-25 21:50:00] relay Chrome down; launching it
+[2026-10-25 21:50:07] relay was down (last log: [2026-10-25 21:45:06] halted: restarting the PC (the relay Chrome hung 2 times (ChatGPT page timeouts count) in 2 h after 130 h of uptime)); restarted the supervisor
+[2026-10-27 00:19:56] relay was down (last log: [2026-10-27 00:18:49] halted: restarting the PC (the relay Chrome hung 3 times (ChatGPT page timeouts count) in 2 h after 26 h of uptime)); restarted the supervisor
+[2026-10-27 08:50:13] relay Chrome down; launching it
+[2026-10-27 08:50:21] relay was down (last log: [2026-10-27 00:20:01] chatgpt PLAN_NEXT [chat] (try 1)); restarted the supervisor
+[2026-10-27 14:50:06] relay Chrome down; launching it
+[2026-10-27 14:50:13] relay was down (last log: [2026-10-27 14:29:53] lane8: "Resolve Rag Duelist's one-turn Cape Dodge as a scene-free status" finished; committing and testing it in its worktree); restarted the supervisor
+[2026-10-27 20:29:56] relay is halted, not restarting (needs the owner): [2026-10-27 20:28:14] halted: paused between cycles (start resumes)
+[2026-10-28 11:59:57] relay is halted, not restarting (needs the owner): [2026-10-28 11:57:53] halted: paused between cycles (start resumes)
+[2026-10-28 14:59:56] relay is halted, not restarting (needs the owner): [2026-10-28 14:58:12] halted: paused between cycles (start resumes)
+[2026-10-28 15:39:56] relay is halted, not restarting (needs the owner): [2026-10-28 15:27:36] halted: paused between cycles (start resumes)
+[2026-10-29 15:50:01] relay was down (last log: [2026-10-29 15:49:55] halted: restarting the PC (the relay Chrome hung 4 times (ChatGPT page timeouts count) in 2 h after 49 h of uptime)); restarted the supervisor
+[2026-10-29 15:59:57] relay was down (last log: [2026-10-29 15:50:05] chatgpt PLAN_REFRESH [chat] (try 1)); restarted the supervisor
+[2026-10-29 19:50:01] relay is halted, not restarting (needs the owner): [2026-10-29 19:47:25] halted: paused between cycles (start resumes)
+[2026-10-30 10:20:00] relay is halted, not restarting (needs the owner): [2026-10-30 10:10:45] halted: paused between cycles (start resumes)
+[2026-10-30 14:09:56] relay is halted, not restarting (needs the owner): [2026-10-30 14:03:40] halted: paused between cycles (start resumes)
+[2026-10-30 16:39:56] relay is halted, not restarting (needs the owner): [2026-10-30 16:33:59] halted: paused between cycles (start resumes)
+[2026-10-30 19:20:02] relay was down (last log: [2026-10-30 19:15:16] halted: restarting the PC (the relay Chrome hung 3 times (ChatGPT page timeouts count) in 2 h after 27 h of uptime)); restarted the supervisor
+[2026-10-31 11:50:07] relay Chrome down; launching it
+[2026-10-31 11:50:14] relay was down (last log: [2026-10-31 09:48:21] supervisor: relay exited with code 1073807364; restarting in 60s (1/5 this hour)); restarted the supervisor
+[2026-10-31 17:50:01] relay is halted, not restarting (needs the owner): [2026-10-31 17:46:50] halted: paused between cycles (start resumes)
+[2026-10-31 22:29:57] relay was down (last log: [2026-10-31 22:23:25] chatgpt LANESPLAN_lane6 [chat] (try 1)); restarted the supervisor
+[2026-11-01 11:19:33] relay Chrome down; launching it
+[2026-11-01 11:19:40] relay was down (last log: [2026-10-31 23:04:22] chatgpt LANESPLAN_lane8 [chat] (try 1)); restarted the supervisor
+[2026-11-01 11:50:01] relay is halted, not restarting (needs the owner): [2026-11-01 11:46:27] halted: paused between cycles (start resumes)
+[2026-11-01 20:39:57] relay is halted, not restarting (needs the owner): [2026-11-01 20:34:06] halted: paused between cycles (start resumes)
+[2026-11-02 01:40:00] relay was down (last log: [2026-11-02 01:35:56] halted: restarting the PC (the relay Chrome hung 2 times (ChatGPT page timeouts count) in 2 h after 27 h of uptime)); restarted the supervisor
+[2026-11-02 10:39:57] relay is halted, not restarting (needs the owner): [2026-11-02 10:35:01] halted: paused between cycles (start resumes)
+[2026-11-02 11:59:57] relay is halted, not restarting (needs the owner): [2026-11-02 11:54:51] halted: paused between cycles (start resumes)
+[2026-11-02 13:09:57] relay is halted, not restarting (needs the owner): [2026-11-02 13:06:06] halted: paused between cycles (start resumes)
+[2026-11-02 15:59:57] relay is halted, not restarting (needs the owner): [2026-11-02 15:55:47] halted: paused between cycles (start resumes)
+[2026-11-02 19:09:56] relay is halted, not restarting (needs the owner): [2026-11-02 19:06:46] halted: paused between cycles (start resumes)
+[2026-11-02 23:50:03] relay was down (last log: [2026-11-02 23:41:48] halted: restarting the PC (the relay Chrome hung 3 times (ChatGPT page timeouts count) in 2 h after 22 h of uptime)); restarted the supervisor
+[2026-11-03 11:50:01] relay is halted, not restarting (needs the owner): [2026-11-03 11:46:24] halted: paused between cycles (start resumes)
+[2026-11-03 12:50:00] relay is halted, not restarting (needs the owner): [2026-11-03 12:42:55] halted: paused between cycles (start resumes)
+[2026-11-03 13:50:02] relay is halted, not restarting (needs the owner): [2026-11-03 13:47:37] halted: paused between cycles (start resumes)
+[2026-11-03 14:59:56] relay is halted, not restarting (needs the owner): [2026-11-03 14:56:40] halted: paused between cycles (start resumes)
+[2026-11-03 19:39:56] relay is halted, not restarting (needs the owner): [2026-11-03 19:38:59] halted: paused between cycles (start resumes)
+[2026-11-04 13:59:56] relay is halted, not restarting (needs the owner): [2026-11-04 13:51:28] halted: paused between cycles (start resumes)
+[2026-11-04 15:50:01] relay is halted, not restarting (needs the owner): [2026-11-04 15:46:44] halted: paused between cycles (start resumes)
+[2026-11-04 22:20:01] log digest push failed (exit 1)
+[2026-11-05 09:19:57] relay is halted, not restarting (needs the owner): [2026-11-05 09:14:45] halted: paused between cycles (start resumes)
+[2026-11-05 16:30:02] relay is halted, not restarting (needs the owner): [2026-11-05 16:29:27] halted: paused between cycles (start resumes)
+[2026-11-05 21:49:57] relay is halted, not restarting (needs the owner): [2026-11-05 21:43:06] halted: paused between cycles (start resumes)
+[2026-11-06 14:19:57] relay is halted, not restarting (needs the owner): [2026-11-06 14:18:29] halted: paused between cycles (start resumes)
+[2026-11-06 17:49:57] relay is halted, not restarting (needs the owner): [2026-11-06 17:47:36] halted: paused between cycles (start resumes)
+[2026-11-06 19:49:57] relay is halted, not restarting (needs the owner): [2026-11-06 19:49:36] halted: tests are red on master before starting; see C:\Users\jcoev\GodotGames\PatchworkPioneers\.review\relay_v2\cycles\_baseline\baseline_1793954514.txt
+[2026-11-07 02:39:56] relay is halted, not restarting (needs the owner): [2026-11-07 02:36:52] halted: paused between cycles (start resumes)
+[2026-11-07 07:39:56] relay is halted, not restarting (needs the owner): [2026-11-07 07:34:56] halted: paused between cycles (start resumes)
+[2026-11-07 09:49:56] relay is halted, not restarting (needs the owner): [2026-11-07 09:45:32] halted: paused between cycles (start resumes)
+[2026-11-07 22:19:57] relay is halted, not restarting (needs the owner): [2026-11-07 22:18:17] halted: paused between cycles (start resumes)
+[2026-11-07 23:19:57] relay is halted, not restarting (needs the owner): [2026-11-07 23:16:42] halted: paused between cycles (start resumes)
+[2026-11-08 11:00:01] relay is halted, not restarting (needs the owner): [2026-11-08 10:51:10] halted: paused between cycles (start resumes)
+[2026-11-09 13:19:57] relay is halted, not restarting (needs the owner): [2026-11-09 13:19:41] halted: paused between cycles (start resumes)
+[2026-11-09 14:39:57] relay is halted, not restarting (needs the owner): [2026-11-09 14:35:16] halted: paused between cycles (start resumes)
+[2026-11-09 18:49:57] relay is halted, not restarting (needs the owner): [2026-11-09 18:41:09] halted: paused between cycles (start resumes)

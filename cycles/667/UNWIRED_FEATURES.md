@@ -1,0 +1,2 @@
+- scripts/run_m04_event_rotation.gd
+- scripts/run_v3_hero_event_offers.gd

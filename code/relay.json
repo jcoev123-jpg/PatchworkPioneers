@@ -1,0 +1,681 @@
+{
+  "game": {
+    "name": "Patchwork Pioneers",
+    "slug": "pioneers",
+    "desc": "a Godot 4 turn-based ranked roguelike (four stitched ragdoll heroes, each with 4 fixed signature abilities; found patches are sewn onto an ability to add an effect; no body-part abilities; dark gothic patchwork art style)",
+    "docs": [
+      "STITCHED_DESIGN.md",
+      "MILESTONES.md",
+      "GAME_DESIGN.md",
+      "CHARACTER_DESIGNS.md",
+      "ART_STYLE.md"
+    ],
+    "focus_file": "OWNER_FOCUS.md",
+    "design_next_default": "BAL NEXT MAIN STEPS: none yet; build the STITCHED_DESIGN.md stages S1a-S9 in order (open OWNER ORDER items first).",
+    "locked_rules": "Design v4 (STITCHED_DESIGN.md): 4 heroes in ranks 1-4, SPEED+1d8 turn order, one ability per body-part slot (4), fray 0-200 with a resolve check at 100, the candle, Hanging by a thread; Bleed, Weak, Exposed, Thorns, Tangled, Blind and Riposte as GAME_DESIGN.md defines them, adapted to turns; a 12-floor run with one boss. The old card game is retired (owner 11-04): it need not stay playable; each stage deletes the card code and tests it replaces, S7 the rest.",
+    "design_rules": "- Owner 2026-11-04: STITCHED_DESIGN.md (Design v4) replaces the card combat and outranks the card rules in GAME_DESIGN.md and MILESTONES.md; its fray (stress) system is now IN scope. Build its stages S1a-S7 in order. Still out of scope: a hamlet or town between runs, multiple acts, audio. Light run-to-run unlocks and a difficulty climb are allowed (owner 2026-10-24). No new card content, card balance or card UI. Pick 4 of 8 heroes; look-driven abilities, enemies and events; single-purpose stops; gothic ragdoll storybook art (ART_STYLE.md \"Art v3\").",
+    "art_style": "Use the attached reference ONLY for the ART STYLE, never for its subjects, layout or text: a GOTHIC RAGDOLL storybook illustration of a patchwork world, grim and dreadful like a gothic horror tale told by a guttering candle (dark, oppressive, muted and desaturated, deep black shadows, small pools of warm light, worn and stained cloth, decay). Everything is a hand-sewn rag doll or stuffed toy: plump, rounded, soft stuffed shapes with chunky proportions (big round head, short sturdy limbs, never thin or spindly), big sewn-on button eyes or stitched-X eyes, visible bold running-stitch seams, mismatched patches and frayed edges. Clean, confident, smooth thick dark ink outlines (NOT scratchy, sketchy or hatched lines), painted soft cel shading with warm candle or lantern glow rim light and cool deep shadows. Fabric is shown as simple flat printed patterns (plaid, gingham, pinstripe, polka dots, stars, damask, quilted diamonds) inside the outlines, never photographed felt or fibre texture. Colours: rich deep jewel tones (plum, midnight teal, oxblood, moss, mustard, dusty rose, bone cream) on dusky backgrounds, with one glowing warm accent per image; strong light/dark contrast so it reads at a glance; use the palette given for this subject when one is given. It must NOT look like Don't Starve or Tim Burton: no sepia or brown wash, no scratchy pen hatching, no paper texture, no spindly limbs, no spiral curls, no grimy survival look. It is shown small in a game (about 96 to 160 pixels tall for characters), so use big simple shapes and an instantly readable silhouette; the prop or body part that shows what the character DOES is large and obvious. Charming and a little creepy, never gory.",
+    "art_refs": {
+      "chars": [
+        "ref_15_gothic_ragdoll.jpg"
+      ],
+      "ui": "ref_15_gothic_ragdoll.jpg"
+    },
+    "feature_inspiration": "Darkest Dungeon, Darkest Dungeon 2, Sonny 2 and Breach Wanderers",
+    "feature_style": "cloth, stitches, thread, pins, buttons and scraps; small, data-driven and tested",
+    "art_categories": [
+      "heroes",
+      "enemies",
+      "bosses",
+      "portraits",
+      "ui",
+      "icons",
+      "backgrounds",
+      "vfx"
+    ],
+    "art_framing": {
+      "enemies": "a single enemy character, full body, facing LEFT in a 3/4 view, standing ready to fight",
+      "bosses": "a single large boss character, full body, heavy and imposing, facing LEFT in a 3/4 view",
+      "heroes": "a single hero character, full body, ready pose, facing RIGHT in a 3/4 view",
+      "backgrounds": "a full-bleed wide 16:9 scene illustration (a battle backdrop or map board) with no characters and no text"
+    },
+    "scenarios": "title = the boot screen (the game's own main scene); roster_battle = the Stitched battle opened from a fixed seed (?screen=stitched_battle). The card screens are retired (owner 2026-11-05).",
+    "codex_env": "PatchworkPioneers",
+    "art_style_short": "Dark gothic ragdoll illustration in the attached reference's line style but far grimmer: plump stuffed rag-doll shapes with button or stitched-X eyes, bold running-stitch seams and worn, stained, torn patches, smooth thick dark ink outlines, heavy chiaroscuro with deep black shadows and small pools of warm candle or torch light, muted desaturated palette (bruised purples, dried-blood reds, sickly greens, ash greys), fog, decay and dread like a grim gothic horror dungeon crawler; NOT cute or cosy, NOT like Don't Starve (no sepia, no scratchy hatching, no spindly limbs)",
+    "art_accents": [
+      {
+        "name": "cross-stitch",
+        "categories": [
+          "icons"
+        ],
+        "match": "\\b(run|route|world|overworld|quilt|travel)?\\s*map\\b",
+        "match_categories": [
+          "backgrounds"
+        ],
+        "ref": "ref_16_cross_stitch.jpg",
+        "style": "Use the attached reference ONLY for the ART STYLE, never for its subjects, layout or text: CROSS-STITCH PIXEL ART, the embroidered accent style of a gothic ragdoll patchwork world. Every pixel is one visible X-shaped cross-stitch of embroidery thread, so the image is a strict square stitch grid like a framed embroidery sampler; every shape is outlined with a row of dark backstitch, with a little thread sheen. Bold limited palette of thread colours in the main game's jewel tones (plum, midnight teal, oxblood, moss, mustard, dusty rose, bone cream, dark brown outlines); use the palette given for this subject when one is given. An icon is only about 16 to 24 stitches across with big simple shapes so it reads at a glance at small size; a map or board is stitched on cream or dusk-blue aida cloth with the faint weave holes visible, its paths as running-stitch lines and its stops as small stitched motifs. Charming and a little spooky, never gory, NOT smooth digital pixel art.",
+        "short": "Cross-stitch pixel art exactly in the attached reference's style: every pixel is one visible X-shaped embroidery-thread stitch on a strict square grid like an embroidery sampler, dark backstitch outlines, bold limited jewel-tone thread palette, big simple shapes readable at small size"
+      }
+    ]
+  },
+  "repo": "C:/Users/jcoev/GodotGames/PatchworkPioneers",
+  "main_branch": "master",
+  "test_cmd": [
+    "python",
+    ".review/relay_v2/run_tests.py"
+  ],
+  "max_cycles_per_run": 10,
+  "max_fix_attempts": 3,
+  "build_retries": 1,
+  "on_cycle_fail": "continue",
+  "stall_s": 600,
+  "backoff_s": [
+    120,
+    600,
+    1800,
+    3600
+  ],
+  "timeouts": {
+    "claude": 1800,
+    "build": 3600,
+    "build_first_try": 1800,
+    "tests": 1500,
+    "chatgpt": 3600
+  },
+  "claude": {
+    "cmd": "C:\\Users\\jcoev\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Anthropic.ClaudeCode_Microsoft.Winget.Source_8wekyb3d8bbwe\\claude.exe",
+    "model": "",
+    "max_turns": 60,
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "disallowed_tools": [
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "opencode": {
+    "cmd": "opencode",
+    "model": "opencode-go/deepseek-v4.1-flash#high",
+    "args": [
+      "--standalone"
+    ],
+    "limit_fallback": "chatgpt",
+    "limit_cooldown_s": 3600,
+    "fallback_models": [],
+    "fallback_models_note": "Owner 2026-10-19: 'try all the free models in opencode when one of them gets depleted, or use the best one if its combined usage. Also, would using openrouter free models help'. OpenCode's free models have separate limits (2026-10-19 19:58: beam, longcat, nemotron ultra and lightning answered while the other six were limited), so every free one is listed, best first; muse-spark is gone from OpenCode. Then OpenRouter's free coding models on the owner's main key (1000 free requests a day, shared by all of them: once used up they all rest until 00:00 UTC). The key is in relay_v2/secrets.json; the provider block is in the repo opencode.json. Lightning stays out (nemotron_note). Owner 2026-10-20 'can you also include the free openrouter models': MiniMax M3.1 Flash and Nemotron 3 Ultra 550B added (both answered a test; small ones like LFM, nano, laguna-xs and inkling-small stay out). Then 'choose the best openrouter model ... that uses the least tokens but the best quality': Inkling leads (77.6% SWE-bench Verified; matches Nemotron 3 Ultra on Terminal-Bench 2.1 with about a third of the tokens), MiniMax M3.1 Flash next (owner's pick; coding-focused, no published scores yet), then Laguna S 2.1 (70.2% Terminal-Bench 2.1, 8B active), Nemotron 3 Ultra (token-heavy), then the small ones. The free tier counts requests, so fewer turns per task also saves the shared 1000 a day. Then 'only use the best model in openrouter since its shared usage': Inkling is the only OpenRouter free model left in the chain (the others are still in the repo opencode.json provider block, unused). 2026-10-21: space-bunny-free left OpenCode's model list (every try failed in 10 s as a 'usage limit'); replaced by the new free minimax-m3.1-flash-free (daily free-model check, owner 2026-10-21). Owner 2026-10-26 'would using another openrouter free model after inkling 500 messages cap be better': yes, Inkling's own cap (~500) leaves about half of the key's 1000 a day, so Laguna S 2.1 free (Poolside, coding model; answered with tools 2026-10-26) follows Inkling. MiniMax M3.1 Flash free was retired 2026-10-22 and Nemotron 3 Super free returns 404. Lanes load the provider block from relay_v2/opencode_coders.json (OPENCODE_CONFIG).",
+    "removed_free_models_note": "2026-10-29 (owner: 'Can you remove the free models that coded poorly'): removed from the fallback and small-only lists, outcomes as the last coder of a lane task 10-22..10-29: glm-5.3-flash-free 3 merged of 29 starts, big-pickle 12/49, mimo-v2.6-flash-free 6/40, longcat-2.5-preview-free 4/40 (3 given up), nemotron-3.5-super-vl-free 5/29; most starts were only rate limits. Kept: deepseek-v4.1-flash-free, minimax-m3.1-flash-free (11 merged, 0 given up), inkling:free, laguna:free.",
+    "paid_openrouter": {
+      "enabled": true,
+      "key_env": "***",
+      "start": "2026-10-19T00:00:00",
+      "end": "2027-10-19T00:00:00",
+      "base_usd": 0.94,
+      "budget_usd": 8.5,
+      "daily_max_usd": 0.25,
+      "reserve_usd": 0.5,
+      "note": "Owner 2026-10-19: use the main OpenRouter account's credit ($10 bought, $0.94 used before the relay), then 'The main one doesnt expire, but dont use the paid api that much, only after everything else is limited'. Paid DeepSeek V4.1 Flash is the LAST tier (after the free models, Go DeepSeek and the web coders). $8.50 is paced over a year (~2.3c/day, unspent days roll forward), at most $0.25 a day, and $0.50 always stays in the account: a negative balance would also block its 1000 free requests a day."
+    },
+    "main_skip_models": [
+      "opencode/nemotron-3.5-lightning-free"
+    ],
+    "main_skip_note": "2026-10-17: Nemotron Lightning wandered 1h+ on main builds (cycles 370, 374, 377); the main cycle skips it for Go DeepSeek, lanes may still use it.",
+    "small_only_models": [],
+    "small_only_note": "2026-10-26: Inkling's free variant has its own daily cap at Thinking Machines (about 500 requests; a medium task used 235), so it only codes small tasks. A spent cap rests it until 00:05 UTC (MODEL_DAY_CAP_RE). Owner 2026-10-27 'if its better to just have smarter models code, then remove the free models, or only make free models code small things': lane review since 10-25 approved the main free DeepSeek 60 times to 12 rejections, but the backup free models far less often (Inkling 19/21, GLM 0/3, Longcat 2/4, Laguna 2/3), so every backup free model codes small tasks only; medium and large ones go to Go DeepSeek (credit cap) or the web coders.",
+    "credit_off": {
+      "since": "2026-10-17 14:00",
+      "until": "2026-11-17 00:00",
+      "base_usd": 0.0,
+      "cap_usd": 0.5,
+      "peak_margin_min": 30,
+      "note": "Owner 2026-10-17: 'Use balance' is OFF in the OpenCode console, so the Go plan cannot bill the credit balance (past its limit it just fails and the relay marks it limited). This window is parked as credit_off; rename it back to credit (since/until/cap) only if the owner turns 'Use balance' on. $2.105 of the $3 was spent by 2026-10-16."
+    },
+    "model_note": "Owner 2026-10-16: 'I think deepseek v4.1 is free'. OpenCode's free deepseek-v4.1-flash-free codes instead of the paid opencode-go/deepseek-v4.1-flash#high; the credit cap and peak-hour pause apply only to opencode-go models.",
+    "fallback_note": "Owner 2026-10-17: \"get rid of gemini web and use opencode go deepseek when the free models run out\". Tiers: free OpenCode models, then Go DeepSeek (credit cap below), then DeepSeek web.",
+    "nemotron_note": "2026-10-18: nemotron-3.5-lightning-free removed from the fallback chain: 2 lane tasks accepted vs 11 given up, each burning a ~75-min lane timeout (Ragged Nerves 407: broken PowerShell edits for 75 min). Go DeepSeek (33 accepted / 1 given up) takes those runs.",
+    "weak_free_removed_note": "2026-10-27 (owner, as small_only_note): Beam (3 approved / 12 rejected; it failed lane5's Unpicker fix round 2) and Nemotron 3 Ultra (4 / 11) removed from fallback_models.",
+    "coder_cut_note": "2026-10-31 (owner: 'get rid of the free openrouter models and replace with what you said. if the free opencode models are also bad, replace them aswell'): lane tasks 10-20..10-31 by the coder that did most of the work: Go DeepSeek 241 accepted of 286 (84%, median 28 min), Inkling:free 32/100 (32%, 63 min), Laguna:free 3/11 (27%, 127 min), free deepseek-v4.1-flash-free 16/49 (33%, 59 min), MiniMax free 15/18 (83%). Inkling and Laguna removed (no OpenRouter free models left), the free DeepSeek removed, Go DeepSeek is the main model (Go plan quota only: credit stays off, so no extra billing); when Go is limited MiniMax free codes small tasks, then the paced paid OpenRouter tier, then ChatGPT. Old values: model opencode/deepseek-v4.1-flash-free#high, fallback [minimax free, inkling:free, laguna:free, opencode-go DeepSeek, paid OpenRouter DeepSeek]. 2026-10-31 later, owner: 'can you remove minimax theres no minimax 3.1 free anymore. remove openrouter paid aswell.' fallback_models and small_only_models emptied (were minimax-m3.1-flash-free and openrouter/deepseek/deepseek-v4.1-flash): when Go DeepSeek is limited, every size falls to limit_fallback (ChatGPT Chat)."
+  },
+  "web_accounts": {
+    "deepseek_web": [
+      {
+        "name": "acct1",
+        "cdp_url": "http://127.0.0.1:9222"
+      },
+      {
+        "name": "acct2",
+        "cdp_url": "http://127.0.0.1:9223",
+        "user_data_dir": "C:\\relay-chrome-ds2"
+      },
+      {
+        "name": "acct3",
+        "cdp_url": "http://127.0.0.1:9224",
+        "user_data_dir": "C:\\relay-chrome-ds3"
+      },
+      {
+        "name": "acct4",
+        "cdp_url": "http://127.0.0.1:9225",
+        "user_data_dir": "C:\\relay-chrome-ds4"
+      },
+      {
+        "name": "acct5",
+        "cdp_url": "http://127.0.0.1:9226",
+        "user_data_dir": "C:\\relay-chrome-ds5"
+      },
+      {
+        "name": "acct6",
+        "cdp_url": "http://127.0.0.1:9227",
+        "user_data_dir": "C:\\relay-chrome-ds6"
+      }
+    ],
+    "claude_web": [
+      {
+        "name": "acct2",
+        "cdp_url": "http://127.0.0.1:9223",
+        "user_data_dir": "C:\\relay-chrome-ds2"
+      },
+      {
+        "name": "acct3",
+        "cdp_url": "http://127.0.0.1:9224",
+        "user_data_dir": "C:\\relay-chrome-ds3"
+      },
+      {
+        "name": "acct4",
+        "cdp_url": "http://127.0.0.1:9225",
+        "user_data_dir": "C:\\relay-chrome-ds4"
+      },
+      {
+        "name": "acct5",
+        "cdp_url": "http://127.0.0.1:9226",
+        "user_data_dir": "C:\\relay-chrome-ds5"
+      },
+      {
+        "name": "acct6",
+        "cdp_url": "http://127.0.0.1:9227",
+        "user_data_dir": "C:\\relay-chrome-ds6"
+      },
+      {
+        "name": "acct7",
+        "cdp_url": "http://127.0.0.1:9228",
+        "user_data_dir": "C:\relay-chrome-x1"
+      },
+      {
+        "name": "acct8",
+        "cdp_url": "http://127.0.0.1:9229",
+        "user_data_dir": "C:\relay-chrome-x2"
+      },
+      {
+        "name": "acct9",
+        "cdp_url": "http://127.0.0.1:9230",
+        "user_data_dir": "C:\relay-chrome-x3"
+      }
+    ],
+    "claude_note": "Owner 2026-11-03: 'claude can have 1 custom connector for free. i connected it to the other ports. it uses sonnet 5.5 which is smart. change it instead of gemini web'. The owner signed into claude.ai (free plan, Sonnet 5.5) on 9223/9224 and added the 'patchwork' connector; claude_web_coder.py codes through it and replaced Gemini web in connector_web_coder.",
+    "mistral_web": [
+      {
+        "name": "acct1",
+        "cdp_url": "http://127.0.0.1:9222"
+      },
+      {
+        "name": "acct2",
+        "cdp_url": "http://127.0.0.1:9223",
+        "user_data_dir": "C:\\relay-chrome-ds2"
+      },
+      {
+        "name": "acct3",
+        "cdp_url": "http://127.0.0.1:9224",
+        "user_data_dir": "C:\\relay-chrome-ds3"
+      },
+      {
+        "name": "acct4",
+        "cdp_url": "http://127.0.0.1:9225",
+        "user_data_dir": "C:\\relay-chrome-ds4"
+      },
+      {
+        "name": "acct5",
+        "cdp_url": "http://127.0.0.1:9226",
+        "user_data_dir": "C:\\relay-chrome-ds5"
+      },
+      {
+        "name": "acct6",
+        "cdp_url": "http://127.0.0.1:9227",
+        "user_data_dir": "C:\\relay-chrome-ds6"
+      }
+    ],
+    "mistral_acct3_note": "Owner 2026-10-29: kept one Chrome per account (no in-page sign-in switching: the owner signs in); acct3 (9224) added, the owner signs into Le Chat there and adds the patchwork connector. controller.open_account_chromes opens 9223/9224 at relay start.",
+    "mistral_note": "2026-10-29 (owner: 'ive added mistral to the other google accounts in the chrome windows, can you set up the mcp server and start the relay'): Le Chat accounts share the DeepSeek Chromes. acct1 (9222) has the 'patchwork' connector; acct2 (9223) was signed in but had no connector yet (it rests 6h per try until the owner adds it: + > Connectors > add custom, URL in C:/rtg/g/mcp_bridge/connector_url.txt); acct3 (9224) Le Chat was signed out, so it is not listed. mistral_web_coder.NEED_CONNECTOR: no connector = rest, never command blocks.",
+    "note": "Owner 2026-10-28: 3 DeepSeek accounts. Each has its own relay Chrome (acct1 is the relay's own Chrome on 9222; acct2/acct3 have their own profile, started by deepseek_web_coder.ensure_chrome when closed), where the owner signs in once by hand. Each account has its own lock, daily message count (logs/deepseek_web{-name}_turns.json) and rest (logs/deepseek_web{-name}_rest.json); the coder takes the first free account, so one capped account no longer rests DeepSeek web for the day. The relay never signs in, switches accounts or clears site data.",
+    "new_accounts_note": "Owner 2026-11-06: 3 more Google accounts. acct4-6 = Chromes 9225/9226/9227 (C:/relay-chrome-ds4..6), opened by controller.open_account_chromes; the owner signs into DeepSeek, Claude and Le Chat there by hand and adds the 'patchwork' connector in Claude and Le Chat."
+  },
+  "chatgpt": {
+    "enabled": true,
+    "fallback_to_claude": false,
+    "file_mode": true,
+    "modes": {
+      "BRIEF": "chat",
+      "REVIEW": "chat",
+      "REVIEW_FIX": "chat",
+      "TRIAGE": "chat",
+      "LESSONS": "chat",
+      "PLAN": "chat",
+      "FINAL": "chat",
+      "AUDIT": "chat",
+      "RESCUE": "chat",
+      "CODEXPLAN": "chat",
+      "LANE2PLAN": "chat",
+      "CHATFIX": "chat",
+      "LANESPLAN": "chat",
+      "LANE6PLAN": "chat",
+      "LANE7PLAN": "chat"
+    },
+    "cdp_url": "http://127.0.0.1:9222",
+    "new_chat_url": "https://chatgpt.com/",
+    "max_chars": 50000,
+    "selectors": {
+      "composer": "div.ProseMirror[contenteditable=\"true\"]",
+      "send": "button[aria-label=\"Send\"]",
+      "stop": "button[aria-label=\"Stop\"]",
+      "assistant": "[data-content-search-unit-key$=\":assistant\"]"
+    },
+    "triage": true,
+    "lessons": true,
+    "chrome_launch": [
+      "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+      "--remote-debugging-port=9222",
+      "--user-data-dir=C:\\relay-chrome",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows",
+      "https://chatgpt.com"
+    ],
+    "stuck_idle_s": 900,
+    "stuck_frozen_s": 1800,
+    "max_reloads": 3,
+    "focused_rereview": true,
+    "attach_mode": false,
+    "review": false,
+    "file_tool": "sentinelx",
+    "sentinel_host": "win-julespc",
+    "plan_brief": true,
+    "effort": {
+      "PLAN": "high",
+      "AUDIT": "high",
+      "RESCUE": "high",
+      "default": "high",
+      "CHATFIX": "high",
+      "WORKFLOW": "high",
+      "PLAN_NEXT": "high",
+      "PLAN_REFRESH": "high",
+      "LANESPLAN": "high",
+      "VISUALCHECK": "high",
+      "REVIEW": "high",
+      "FINAL": "high",
+      "LANEREVIEW": "high",
+      "PLAYTEST": "high",
+      "SMOKE": "high",
+      "TRIAGE": "high",
+      "LESSONS": "high",
+      "BRIEF": "high"
+    },
+    "prefetch_plan": true,
+    "next_plan_try_s": 2100,
+    "plan_lanes_in_plan": false,
+    "focused_final": true,
+    "lane_plan_fallback": true,
+    "parallel_lane_plans": true,
+    "max_concurrent": 11,
+    "prefetch_lane_tasks": true,
+    "max_background": 6,
+    "tag_timeouts": {
+      "LANESPLAN": 1500
+    },
+    "attach_mode_note": "Owner 2026-10-20: SentinelX has rw on C:\\Users\\jcoev\\GodotGames (every game in there); ChatGPT reads and writes files directly. A SentinelX failure still falls back to the zip upload.",
+    "archive_chats": false,
+    "cycle_lessons": false,
+    "lane_lessons_min_fixes": 2,
+    "archive_note": "2026-10-31 owner: \"remove the archiving part, i will delete it myself\""
+  },
+  "rescue": {
+    "enabled": true,
+    "audit": true,
+    "max_per_run": 2,
+    "max_turns": 200,
+    "timeout": 3600,
+    "model": "",
+    "allowed_tools": [
+      "Read",
+      "Grep",
+      "Glob",
+      "Edit",
+      "Write",
+      "MultiEdit",
+      "Bash(python .review/relay_v2/run_tests.py)",
+      "Bash(python .review/relay_v2/run_tests.py:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git ls-files:*)"
+    ],
+    "disallowed_tools": [
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git reset:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git stash:*)",
+      "Bash(git rebase:*)",
+      "Bash(git merge:*)",
+      "Bash(git branch:*)",
+      "WebFetch",
+      "WebSearch"
+    ]
+  },
+  "cloud": {
+    "enabled": false,
+    "until": "2026-11-04",
+    "remote": "origin",
+    "max_sessions_per_run": 10,
+    "rescue_timeout_s": 7200,
+    "poll_s": 60,
+    "launch_timeout_s": 600,
+    "godot_url": "https://github.com/godotengine/godot/releases/download/4.7.2-stable/Godot_v4.7.2-stable_linux.x86_64.zip",
+    "ask_timeout_s": 3600,
+    "note": "Off for Patchwork Pioneers: the repo has no GitHub remote yet."
+  },
+  "max_consecutive_failures": 2,
+  "playtest": {
+    "enabled": true,
+    "every_n_cycles": 6,
+    "every_hours": 4,
+    "smoke": true,
+    "clone": "C:/pioneers-playtest",
+    "godot": "C:\\Users\\jcoev\\AppData\\Local\\Microsoft\\WinGet\\Packages\\GodotEngine.GodotEngine_Microsoft.Winget.Source_8wekyb3d8bbwe\\Godot_v4.7.2-stable_win64_console.exe",
+    "keep_shot_dirs": 6,
+    "background": true,
+    "smoke_scenes": [
+      "title",
+      "roster_battle"
+    ],
+    "hook_prefix": "pioneers",
+    "rosters": [
+      [
+        "roster_battle",
+        "?screen=stitched_battle"
+      ]
+    ],
+    "shots_since_cycle": 534,
+    "rosters_note": "Owner 2026-11-05 ('the design review showing the wrong images'): only Stitched screens; add a Stitched map/stop here once scripts/live_web_playtest_boot.gd can open it. Owner 2026-10-22 'polish now': cycle 114's ?screen= hook (scripts/live_web_playtest_boot.gd) opens each screen; verified all 7 + title load in the web export."
+  },
+  "roles": {
+    "PLAN": "chatgpt",
+    "FINAL": "chatgpt",
+    "AUDIT": "chatgpt",
+    "RESCUE": "chatgpt",
+    "PLAYTEST": "claude",
+    "fallback": "none",
+    "CODEXPLAN": "chatgpt",
+    "LANE2PLAN": "chatgpt",
+    "LANE3PLAN": "chatgpt",
+    "CHATFIX": "chatgpt",
+    "LANE4PLAN": "chatgpt",
+    "LANE5PLAN": "chatgpt",
+    "WORKFLOW": "chatgpt",
+    "LANEREVIEW": "chatgpt",
+    "LANESPLAN": "chatgpt",
+    "LANE6PLAN": "chatgpt",
+    "LANE7PLAN": "chatgpt",
+    "LANE8PLAN": "chatgpt"
+  },
+  "art": {
+    "enabled": true,
+    "max_per_cycle": 6,
+    "regenerate_existing": false,
+    "parallel": 3,
+    "bg_timeout_s": 3600,
+    "design_mode": "chat",
+    "design_effort": "high",
+    "backends": [
+      "flow",
+      "chatgpt"
+    ],
+    "max_per_lane": 4,
+    "backends_note": "Owner 2026-10-17: \"if it needs images then do flow and chatgpt chat. images are billed seperately.\""
+  },
+  "codex": {
+    "enabled": false,
+    "max_follow_ups": 1,
+    "fix_rounds": true,
+    "pause_wait_s": 1800,
+    "limit_wait_max_s": 1800,
+    "limit_wait_note": "Owner 2026-11-07 (speed it up): Codex builds in ~20 min, DeepSeek 30-75 (cycle 575: 75 min), so wait up to 30 min for a Codex reset.",
+    "limit_pause_h": 6,
+    "launch": false,
+    "note": "Off: no Codex cloud environment exists for Patchwork Pioneers.",
+    "parallel_lanes": true,
+    "more_note": "Owner 2026-11-06: use Codex more before the weekly reset: codex_cli.effort medium->high, fix_rounds false->true, lane3 = Codex lane."
+  },
+  "lane2": {
+    "enabled": true,
+    "worktree": "C:/pioneers-lane2",
+    "timeout_s": 4500,
+    "test_timeout_s": 2700,
+    "label": "DeepSeek lane 2",
+    "plan_hint": "DeepSeek: give it a SMALL, tightly scoped task (1-3 files, about 20-30 minutes)",
+    "area": "HERO PARTS (Design v4): each hero's 8 body parts and their abilities (data/parts/<hero_id>_parts.json in the STITCHED_DESIGN.md format, made from that hero's cards and look), enemy droppable parts (data/parts/enemy_parts.json) and their data tests; no card content",
+    "effort": "high",
+    "plan_focus": "SMALL items from the open STITCHED_DESIGN.md stage: one hero's parts data, enemy part data, a single rule helper with tests that does not touch the stitched turn loop."
+  },
+  "pc_restart": {
+    "enabled": false,
+    "hangs": 2,
+    "window_h": 2,
+    "min_uptime_h": 12,
+    "min_gap_h": 20,
+    "delay_s": 120,
+    "off_note": "Owner 2026-11-03: 'You can remove the pc restart if it doesnt help'. Off: the restarts (10-31, 11-02 twice) did not stop the ChatGPT timeouts coming back; the cause was the watchdog task's BelowNormal priority, fixed 11-03 (start_relay.ps1 / run_relay.ps1 set Normal).",
+    "note": "Owner 2026-10-19: 'can you restart the pc when this starts to happen. Maybe its because its on for too long'. At a cycle break after 2 hung-Chrome restarts within 2 h (PC up 12 h+, at most once per 20 h) the controller runs shutdown /r and halts; relay_watchdog.ps1 resumes it after sign-in. Owner 2026-10-25 ('If it keeps timing out, restart the pc'): ChatGPT Page.goto timeouts count as hangs (controller.note_bridge_error)."
+  },
+  "lane3": {
+    "enabled": true,
+    "lanes_cut_note": "Off 2026-10-29 (owner: 'Instead of restarting more often, reduce the lanes coding at once'): cycles ran 53-64 min with 6 lanes testing and reviewing beside the main build (full suite 7-18 min, ChatGPT build 20-31 min, the relay Chrome hung 4 times in 2 h). lane3 (free Big Pickle) had the most timeouts on 10-28/29 (4 of 16) and its free models rest 2 h at a time. Set enabled true to bring it back.",
+    "opencode_model_note": "Owner 2026-10-19: 'Try big pickle free in opencode'. Trial: lane3 codes on OpenCode's free Big Pickle; while it is rate limited lane3 codes on the free DeepSeek, as lane4 does with GLM.",
+    "effort": "high",
+    "worktree": "C:/pioneers-lane3",
+    "timeout_s": 4500,
+    "test_timeout_s": 2700,
+    "label": "Codex lane 3",
+    "plan_hint": "Codex (local CLI, high effort, full repo access): give it a MEDIUM gameplay feature (2-5 files, about 30-60 minutes) with its tests",
+    "area": "ENEMIES: new and harder enemies, elites and bosses with abilities that match their looks (data/enemies, scripts/combat_enemy_*.gd intents and special actions) and their tests",
+    "plan_focus": "MEDIUM pieces from the current STITCHED_DESIGN.md stage in this lane's area (2-5 files): enemy abilities, intents and their tests, including rules that touch combat",
+    "note": "Owner 2026-10-15: Gemini Argon removed (too expensive); lane3 codes as a DeepSeek lane again.",
+    "builder": "codex",
+    "builder_name": "Codex",
+    "codex_note": "Owner 2026-11-06: 'can you use codex more, my reset expires tomorow morning'. lane3 codes with the Codex CLI (codex_cli settings) beside the main build. Set builder back to opencode / enabled false to undo."
+  },
+  "chatgpt_fixer": {
+    "enabled": true,
+    "from_attempt": 2,
+    "timeout": 3600,
+    "builder": "chatgpt",
+    "note": "On: SentinelX can write in GodotGames (owner 2026-10-20)."
+  },
+  "lane4": {
+    "enabled": true,
+    "opencode_model": "agy/gemini-4-argon-high",
+    "backup_models": [
+      "agy/claude-sonnet-5-5-high",
+      "agy/gemini-3.8-flash-high"
+    ],
+    "backup_models_note": "Owner 2026-10-22 'Antigravity also has seperate gemini usage': Gemini 3.8 Flash (High) has its own Pro-plan quota in Antigravity (it answered while Argon's weekly quota was used up), so lane4 codes on Flash until Argon resets, then on DeepSeek. Owner 2026-10-26 'can you also use claude sonnet in antigravity': Claude Sonnet 5.5 (High) in Antigravity has its own quota on the same Google plan (it answered while both Gemini quotas were used up until Oct 28/29), so lane4 codes on it after Flash, then on DeepSeek. Google plan only; no Anthropic account or Claude CLI. 2026-10-27 (owner: smarter models code): Sonnet comes before Flash; lane review since 10-25 approved Sonnet 15 times with no rejections, Flash 3 to 2.",
+    "opencode_model_note": "Owner 2026-10-21: 'its allowed to use pro plan in antigravity but not in opencode', then 'ok run and set it up please'. lane4 codes with Gemini 4 Argon (High) through Google's Antigravity CLI (agy, signed in with the owner's Google AI Pro student plan; no API cost). While the plan's limit is used up (RESOURCE_EXHAUSTED) lane4 codes as a DeepSeek lane.",
+    "effort": "high",
+    "timeout_s": 7200,
+    "test_timeout_s": 2700,
+    "label": "Gemini lane 4 (Antigravity)",
+    "plan_hint": "Gemini 4 Argon via Antigravity: give it a SMALL to MEDIUM task (1-4 files, about 20-45 minutes)",
+    "area": "EVENT RULES, STATUSES AND BALANCE: new event effect kinds, gates and event rule helpers (scripts/run_*event*.gd) with the events that need them; status effects and keywords (on-hit statuses, card_keyword_glossary.gd, card_short_rules.gd), difficulty numbers (data/difficulty) and playtest bug fixes outside the other areas. Plain data-only event batches go to lane8.",
+    "plan_focus": "SMALL items from the current milestone in MILESTONES.md: data entries (body parts, enemies, encounters) and their tests, single rules or helpers that do not touch the core combat state machine.",
+    "worktree": "C:/pioneers-lane4",
+    "note": "On again 2026-10-21 for the Antigravity CLI (owner). Earlier: off at the start of Patchwork Pioneers (M01 was one small core).",
+    "builder_name": "Gemini Argon (Antigravity)"
+  },
+  "lane5": {
+    "enabled": true,
+    "lanes_cut_note": "Briefly off 2026-10-29 for the lane cut, back on the same evening (owner: 'Is mistral really that bad. It uses glm 5.3'): Mistral itself coded only 4 lane5 tasks (accounts 2 and 3 were connected only at 18:10); lane5's weak 10-28/29 record came from the free fallbacks that coded when Mistral was limited, and the worst of those were removed.",
+    "mistral_connector_note": "2026-10-29: lane5 back on as Mistral web in CONNECTOR mode (Le Chat 'patchwork' MCP connector -> mcp_bridge.py -> this worktree): the 10-29 trial did a whole events-test task in ONE message (~2 min, PASS), so it fits the free tier. Turn off again (enabled false) if most of its tasks need a full ChatGPT review.",
+    "off_note": "Owner 2026-10-28: web coders need a full ChatGPT review about half the time (lane5 43 full / 41 light, lane8 40/34), so they are off. Set enabled true to bring the lane back.",
+    "gemini_web_retired_note": "2026-10-28 (owner standing request: code the lanes that fail a lot, smarter models code): Gemini web had 1 merge in 8 tasks since 2026-10-27 14:00; its last task (cycle 333) got 9 error replies ('I encountered an error', 'hard time fulfilling') in 19 turns at 4-8 min a turn and timed out after 90 min with no edits. lane5 now codes as a DeepSeek lane (like lane2). To return to Gemini web set opencode_model 'gemini-web', label 'Gemini web lane 5', builder_name 'Gemini web', timeout_s 5400 and the web plan_hint.",
+    "opencode_model_note": "Owner 2026-10-23: 'If you can make deepseek web and gemini web code and interact with the code effectively then use them.' The Gemini app quota (owner's Google AI Pro plan, used only on Google's own site) is separate from Antigravity's. lane5 codes through gemini_web_coder.py in the relay Chrome; while Gemini web is limited it codes as a DeepSeek lane. No web backup: two lanes on one site account would rest it for an hour (lock).",
+    "mistral_trial_note": "Owner 2026-10-27 trial of mistral-web on lane5 (free tier): the first task used 11 messages in 13 min, then Le Chat said 'Messages limit reached ... reset in 3 hours' and the task ended with no changes, so lane5 is back on gemini-web. mistral_web_coder.py stays installed (lane_local.WEB_CODERS) for a paid plan.",
+    "opencode_model": "connector-web",
+    "gemini_connector_note": "Owner 2026-10-29: 'wire gemini in aswell. If its better than mistral, use it instead since it has more usage'. lane5 codes through connector_web_coder.py: new tasks alternate between Gemini web (Task mode, 4 Argon, @Patchwork) and Mistral web, fix rounds stay with the task's site, a resting site hands over to the other. logs/connector_web_runs.jsonl says who coded each run. Mistral only: opencode_model 'mistral-web'; Gemini only: 'gemini-web'.",
+    "mistral_retrial_note": "2026-10-28 (owner: 'mistral works but the messages weren't sent to it. try mistral again'): the second 2026-10-27 run sent its brief, then Le Chat showed 'Messages limit reached ... Your limit will reset in 2 hours' under it and the coder waited 8 min and failed with NoAnswer. deepseek_web_coder.Site now reads that banner and rests the coder until the stated reset (usage limit ... Resets in Nh), so the lane codes as a DeepSeek lane meanwhile. To end the trial drop opencode_model, set label 'DeepSeek lane 5', timeout_s 4500, the DeepSeek plan_hint and remove builder_name.",
+    "effort": "high",
+    "worktree": "C:/pioneers-lane5",
+    "timeout_s": 5400,
+    "test_timeout_s": 2700,
+    "label": "Claude web lane 5",
+    "builder_name": "Claude web",
+    "plan_hint": "Claude web (Sonnet 5.5) codes through the Patchwork MCP connector: it reads, edits and runs single tests itself inside one reply, with few messages per task: give it a SMALL, tightly scoped task (1-3 files, data entries plus one test, about 20-30 minutes) with exact file paths and the test to run",
+    "area": "MAP STOPS: the small single-purpose visits that replace the old shop and rest stop (Peddler, Unpicker, Campfire and similar), their prices and patches (data/shop, data/patches, the route/map stop helpers) and their tests",
+    "plan_focus": "SMALL items from the current milestone in MILESTONES.md or DESIGN_NEXT.md: data entries (body parts, enemies, encounters) and their tests, single rules or helpers, a small view tweak; never scripts/app.gd or the core combat state machine.",
+    "note": "On again 2026-10-23 for the web coders (owner). Earlier: owner 2026-10-14 disabled it after the PC crashed twice; 2026-10-23 the PC had 10 GB RAM free and ~5% CPU with lanes 2-4, 6, 7 running.",
+    "connector_first": "claude",
+    "claude_connector_note": "2026-11-03 (owner: change it instead of gemini web): connector_web_coder picks Claude web (claude_web_coder.py, 2 accounts) or Mistral web; Gemini web left lane5. Claude first since its task-402 trial (4 min, 3/3 focused tests, 500/500 suite; Mistral 5.8-15 min).",
+    "connector_first_note": "Owner 2026-10-31: 'can you test gemini and mistral for the same task to see which ones better. use the mcp for both.' A/B on task 402 (split-stop diary names) from its base commit in claude-wt: Mistral 15 min, 3/3 focused tests + full suite 466/466 passed, 202-line diff with tests; Gemini stopped after 7 min at its 'allow a Patchwork tool' prompt with a 13-line partial edit (run_route_atlas_test 40 failures). Lane5 history: Mistral 14 ok / 4 fail / 2 limit; Gemini 2 ok, 8 stopped at the allow prompt. New lane5 tasks start on Mistral; Gemini only takes over while Mistral rests. Rerun 14:51 after the owner changed Gemini's browser permissions ('it says it can do it ... argon high'): Gemini 4 Argon did the task in 7 min in one turn, same one-line display_kind fix as Mistral, 3/3 focused tests passed (20158 vs Mistral's 18988 checks). Owner 2026-10-29 rule 'If its better than mistral, use it instead since it has more usage': connector_first is now gemini, Mistral is the backup. | 2026-10-31 owner: \"yes change it to mistral\" (A/B coding time: Mistral 5.8 min, Argon 6.9, 3.8 Flash 12; all 3/3 focused tests)."
+  },
+  "workflow_review": {
+    "enabled": true
+  },
+  "visual_lanes": [],
+  "claude_only_for": [],
+  "lane_review": {
+    "enabled": true,
+    "max_fix_rounds": 2,
+    "poll_s": 10,
+    "batch_window_s": 45,
+    "retry_s": 120,
+    "escalate_repeated": true,
+    "escalate_to": "codex",
+    "parallel": true,
+    "batch_merge_tests": true,
+    "early_start": true,
+    "early_start_max_parked": 2,
+    "refill_idle_lanes": true,
+    "refill_cooldown_s": 900
+  },
+  "task_queue": {
+    "enabled": true,
+    "max_ownership_replans": 3
+  },
+  "cycle_budget": {
+    "enabled": true,
+    "target_minutes": 30
+  },
+  "codex_cli": {
+    "cmd": "",
+    "sandbox": "danger-full-access",
+    "effort": "high",
+    "writable_dirs": [
+      "%APPDATA%/Godot",
+      "%TEMP%"
+    ],
+    "note": "Local Codex CLI. Owner 2026-10-12: Codex codes the MAIN cycle (main_builder); lane 3 is DeepSeek now, so still only one Codex coder. Fallback coders are ChatGPT Chat mode (chatgpt_fixer.builder, RESCUE role, lane escalate_to).",
+    "subagents": false
+  },
+  "lane6": {
+    "enabled": true,
+    "builder": "chatgpt",
+    "mode": "chat",
+    "effort": "high",
+    "timeout_s": 4500,
+    "test_timeout_s": 2700,
+    "label": "ChatGPT lane 6 (Chat mode)",
+    "plan_hint": "ChatGPT Chat (high thinking, SentinelX file access): give it a MEDIUM gameplay feature (2-5 files, about 30-60 minutes)",
+    "area": "SCREENS AND WIRING: scripts/app.gd, screens and views, the stitched battle screen (S2) and the dark gothic UI theme, hooking new art and content into the UI (the ONLY lane that edits scripts/app.gd)",
+    "plan_focus": "MEDIUM gameplay pieces from the current milestone in MILESTONES.md (2-5 files): a view, a status rule set, a screen flow.",
+    "note": "On: SentinelX can write in GodotGames (owner 2026-10-20); works in <repo>/.lanes/lane6."
+  },
+  "lane7": {
+    "enabled": false,
+    "off_note": "Off 2026-10-24 (owner: stop lanes if they clash constantly): lane6/lane7 caused 14 of 20 next-plan clashes and both compete with main for ChatGPT. Turn back on when clashes stay low.",
+    "builder": "chatgpt",
+    "mode": "chat",
+    "effort": "high",
+    "timeout_s": 4500,
+    "test_timeout_s": 2700,
+    "label": "ChatGPT lane 7 (Chat mode)",
+    "plan_hint": "ChatGPT Chat (high thinking, SentinelX file access): give it a MEDIUM gameplay feature (2-5 files, about 30-60 minutes)",
+    "plan_focus": "MEDIUM gameplay pieces from the current milestone in MILESTONES.md (2-5 files): a view, a status rule set, a screen flow.",
+    "note": "On: SentinelX can write in GodotGames (owner 2026-10-20); works in <repo>/.lanes/lane7."
+  },
+  "shared_files": [],
+  "main_builder": "codex",
+  "claude_session": {
+    "enabled": true,
+    "builder": "chatgpt",
+    "mistral_out_note": "Owner 2026-11-11: 'mistral is struggling and is on fast mode not thinking. can you take mistral out of the relay.' Main builder while Codex is out = ChatGPT Chat again; lane8 = DeepSeek web (6 accounts); lane5 = Claude web only (connector_web_coder SITES); playtest loop = chatgpt,claude. Old file: logs/relay.json.before_mistral_out.",
+    "mistral_note": "Owner 2026-11-08 A/B ('use the best one'): on cycle 619's task Mistral web passed 13/13 tests + the hidden check first time (83 min); ChatGPT Chat 11 min with 4 failing (then 110 min of fix rounds); Claude web 3 failing before its free limit. mistral = Mistral web builds every main attempt while Codex is out (controller._mistral_build, main checkout via the MCP bridge task code 'main'); if it cannot, ChatGPT Chat builds attempt 0 and DeepSeek the fix rounds. Back to 'chatgpt' to undo.",
+    "mistral_timeout_s": 4500,
+    "mistral_fix_rounds": true,
+    "builder_note": "Owner 2026-10-28: 'let chatgpt chat do your job, claude usage is low'. chatgpt = ChatGPT Chat builds main while Codex is out (once per attempt, then DeepSeek); remove it to hand builds to the Claude session again.",
+    "claim_s": 300,
+    "timeout_s": 2700,
+    "fix_rounds": false,
+    "note": "Owner 2026-10-26: while Codex is usage-limited the owner's Claude Code session builds main (handoff/), not DeepSeek; unclaimed in claim_s or unfinished in timeout_s, DeepSeek builds."
+  },
+  "lane8": {
+    "enabled": false,
+    "off_note": "Owner 2026-11-11: 'can you remove deepseek web from relay. the playtesting is the only relay now since its more reliable.' lane8 off; DeepSeek web has no role (Mistral web also out, same day). The web playtest loop (C:/rtg/g/codex_play/play_forever.py, ChatGPT + Claude web) is the only thing building the game.",
+    "events_note": "Owner 2026-10-28 ('yes to all'): DeepSeek web is not reviewed by ChatGPT unless its change is big, so lane8 gets only event CONTENT that fits the light check (first try, <=150 data lines, tests only added): appended data entries checked by the catalog tests. Lane4 keeps event rules. Its old STATUSES AND BALANCE area moved to lane4.",
+    "opencode_model": "deepseek-web",
+    "opencode_model_note": "Owner 2026-10-23 (as lane5): DeepSeek web codes through deepseek_web_coder.py in the relay Chrome (Ironvale 2026-10-16: accepted and merged after one fix round). While it is limited lane8 codes as a DeepSeek lane. Removed from opencode.fallback_models so no other lane takes the site while lane8 holds it.",
+    "effort": "high",
+    "worktree": "C:/pioneers-lane8",
+    "timeout_s": 5400,
+    "test_timeout_s": 2700,
+    "label": "DeepSeek web lane 8",
+    "builder_name": "DeepSeek web",
+    "plan_hint": "DeepSeek web codes in a browser chat (it cannot run tests itself). Give it ONE small event batch (at most 4 new events, about 60-100 data lines in one data/events catalog, plus one NEW test file), with exact file paths and an existing event in that catalog to copy the shape from. No scripts/ edits, no edits to existing tests, so it passes the light check without a ChatGPT review.",
+    "area": "EVENT CONTENT: new look-driven roadside and story events added as data entries to ONE existing data/events/*.json catalog that no other coder has reserved, using only event effects, gates and costs that already exist, plus a new test file for them. Never scripts/ files.",
+    "plan_focus": "Event content from DESIGN_NEXT.md / MILESTONES.md (v3: many more events): look-driven roadside, story and hero-choice events built only from effects the event catalogs already use.",
+    "note": "2026-10-23: was a ChatGPT Chat lane (off: needed SentinelX write access); now a local web-coder lane.",
+    "deepseek_web_note": "Owner 2026-11-04: 'if deepseek web is not worth it for coding tasks because it cant interact well then change it to mistral'. DeepSeek web hit its usage limit in 36 of 65 starts (often within minutes) and ChatGPT Chat or the DeepSeek CLI finished most lane8 tasks, so lane8 codes on Mistral web through the patchwork connector (bridge task code lane8, beside lane5's). Back to DeepSeek web: opencode_model 'deepseek-web', label 'DeepSeek web lane 8', builder_name 'DeepSeek web' and the old plan_hint in setup_backups/relay.pre-lane8mistral.json."
+  },
+  "trusted_coders": {
+    "enabled": true,
+    "main": [
+      "Codex",
+      "ChatGPT",
+      "Claude"
+    ],
+    "lanes": [
+      "codex",
+      "chatgpt"
+    ],
+    "note": "Owner 2026-10-26: Codex, ChatGPT and the Claude session need no ChatGPT review when they finish coding; their work is accepted on its passing full suite. main: state.last_coder values; lanes: a lane's builder or repair_builder."
+  },
+  "light_checks": {
+    "enabled": true,
+    "max_code_lines": 150,
+    "max_test_removed_lines": 10,
+    "note": "Owner 2026-10-22 picked 'Lighter checks': a first-try change whose full suite passed, with at most 150 changed code/data lines, no deleted files, no project/export/relay files and at most 10 removed test lines, is accepted (main FINAL or lane review) without the 8-14 min ChatGPT review."
+  },
+  "lessons_keep": 10,
+  "lessons_note": "2026-10-31 owner OK: LESSONS.md = fixed \"## Always\" + newest 10 \"## Recent\"; no per-cycle lessons; lane lessons only after 2+ fix rounds or a give-up. Old file: C:/rtg/g/stats/LESSONS.md.bak-2026-10-31",
+  "design_review": {
+    "every": 24
+  }
+}
