@@ -718,6 +718,21 @@ STATUS: none"))
 	_check(exited[0], "Continue hands the result back like the classic exit")
 	var extra := fight.add_more("save", "Save run", func(): pass)
 	_check(extra.get_parent() == fight.more_grid, "the host can add choices behind More")
+	# A real victory Continue removes the battle during the key callback. Mark
+	# Enter as handled before that synchronous unmount, not from a null viewport.
+	var unmounted := [false]
+	screen.exit_requested.connect(func():
+		if fight.get_parent() == screen:
+			screen.remove_child(fight)
+			unmounted[0] = true)
+	fight._beat_input_shield.hide()
+	var confirm := InputEventKey.new()
+	confirm.keycode = KEY_ENTER
+	confirm.pressed = true
+	fight._unhandled_key_input(confirm)
+	_check(unmounted[0] and fight.get_viewport() == null,
+		"finished Enter Continue synchronously detaches the view without a null-viewport error")
+	fight.free()
 	screen.free()
 	var normal: Dictionary = await _camera_sample(false)
 	var reduced: Dictionary = await _camera_sample(true)

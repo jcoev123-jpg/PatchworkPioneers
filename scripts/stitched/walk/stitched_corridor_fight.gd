@@ -2767,7 +2767,12 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	elif event.keycode == KEY_M:
 		set_more_open(not more_panel.visible)
 	elif event.keycode in [KEY_ENTER, KEY_SPACE] and battle.is_over():
+		# Continue may remove this view synchronously; consume the key while mounted.
+		get_viewport().set_input_as_handled()
 		finish()
+		return
 	else:
 		return
-	get_viewport().set_input_as_handled()
+	var viewport := get_viewport()
+	if viewport != null:
+		viewport.set_input_as_handled()
