@@ -68,7 +68,7 @@ func _run() -> void:
 	var terminal_battle: StitchedRules = session.battle
 	terminal_battle._outcome = "victory"
 	var terminal_state := terminal_battle.state_snapshot()
-	for terminal_command in ["defeat", "hp h1 0", "status h1 stun 1", "heal"]:
+	for terminal_command in ["win", "defeat", "hp h1 0", "status h1 stun 1", "heal"]:
 		var refusal: String = cheats.run(terminal_command)
 		_check(refusal.begins_with("failed:") and terminal_battle.state_snapshot() == terminal_state
 			and session.battle == terminal_battle and session.phase == "battle",
@@ -172,8 +172,9 @@ func _run() -> void:
 		_check(int(hero.hp) == int(hero.max_hp) and not bool(hero.hanging),
 			"heal restores each living combat hero to full health")
 	said = cheats.run("win")
-	_check(said == "battle won" and session.phase == "map" and session.gold > gold_before and session.is_consistent(),
-		"win: elite settles to the map with gold (%s)" % said)
+	_check(said.begins_with("battle won") and said.contains("Save/Continue cannot replay cheats")
+		and session.phase == "map" and session.gold > gold_before and session.is_consistent(),
+		"win: elite settles with gold and warns that debug shortcuts cannot replay on Continue (%s)" % said)
 
 	# A terminal HP shortcut must preserve the real damage float and its held
 	# stage beat instead of freeing the battle before that blow is visible.

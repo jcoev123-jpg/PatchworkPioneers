@@ -334,6 +334,10 @@ func _fight(session: StitchedRunSession, kind: String) -> String:
 func _win(session: StitchedRunSession) -> String:
 	if session.phase != "battle" or session.battle == null:
 		return "failed: no open battle (try fight first)"
+	# A terminal damage receipt may still be holding its final impact on screen.
+	# Never interrupt that beat or settle the same combat twice.
+	if session.battle.is_over():
+		return "failed: the battle has already ended"
 	for unit in session.battle._units.values():
 		if str(unit.get("side")) == "foe" and not bool(unit.get("dead", false)):
 			session.battle._kill_foe(unit)
@@ -343,7 +347,9 @@ func _win(session: StitchedRunSession) -> String:
 	_close_views()
 	if not session.settle_battle(battle):
 		return _done(session, "failed: the battle would not settle")
-	return _done(session, "battle won")
+	# This debug shortcut bypasses replayable combat actions. The save validator
+	# must not accept its journal as though the battle was played normally.
+	return _done(session, "battle won (debug shortcut: Save/Continue cannot replay cheats)")
 
 
 func _battle_unit(battle: StitchedRules, who: String) -> Dictionary:
