@@ -110,6 +110,30 @@ func _run() -> void:
 		and session.is_consistent(), "status: stun enters the real rule statuses (%s)" % said)
 	_check(cheats.run("summon").begins_with("failed:") and session.battle._living_foes().size() == 4,
 		"summon refuses when fourth foe seat is occupied")
+	# Two foes may share a display name. The setup cheats must refuse an
+	# ambiguous name, rather than unexpectedly injuring or marking the first.
+	var first_foe: Dictionary = session.battle._foe_at(1)
+	var fourth_foe: Dictionary = session.battle._foe_at(4)
+	var first_name := str(first_foe.name)
+	var fourth_name := str(fourth_foe.name)
+	var first_hp := int(first_foe.hp)
+	var fourth_hp := int(fourth_foe.hp)
+	var first_statuses: Dictionary = first_foe.statuses.duplicate(true)
+	var fourth_statuses: Dictionary = fourth_foe.statuses.duplicate(true)
+	var before_ambiguous_receipts := mounted_view.receipts.size()
+	first_foe.name = "Twin Thread"
+	fourth_foe.name = "Twin Thread"
+	var ambiguous_hp: String = cheats.run("hp Twin Thread 1")
+	var ambiguous_status: String = cheats.run("status Twin Thread bleed 3")
+	_check(ambiguous_hp.begins_with("failed:") and ambiguous_status.begins_with("failed:")
+		and ambiguous_hp.contains("f1-f4") and ambiguous_status.contains("f1-f4")
+		and int(first_foe.hp) == first_hp and int(fourth_foe.hp) == fourth_hp
+		and first_foe.statuses == first_statuses and fourth_foe.statuses == fourth_statuses
+		and mounted_view.receipts.size() == before_ambiguous_receipts,
+		"duplicate figure names cannot silently redirect HP or status setup")
+	first_foe.name = first_name
+	fourth_foe.name = fourth_name
+	_check(session.is_consistent(), "restored foe names leave the battle consistent")
 	var before_hp_receipts := mounted_view.receipts.size()
 	said = cheats.run("hp f4 1")
 	_check(int(session.battle.get_unit(str(fourth.id)).hp) == 1 and session.is_consistent(),

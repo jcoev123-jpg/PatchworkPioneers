@@ -354,9 +354,19 @@ func _win(session: StitchedRunSession) -> String:
 
 func _battle_unit(battle: StitchedRules, who: String) -> Dictionary:
 	var query := who.strip_edges().to_lower()
+	# IDs win over names; repeated foe names must never silently select
+	# whichever unit happened to be visited first in the dictionary.
 	for unit in battle._units.values():
-		if str(unit.id).to_lower() == query or str(unit.name).to_lower() == query:
+		if str(unit.id).to_lower() == query:
 			return unit
+	var named: Dictionary = {}
+	for unit in battle._units.values():
+		if str(unit.name).to_lower() == query:
+			if not named.is_empty():
+				return {} # Ambiguous names require an explicit seat (f1-f4).
+			named = unit
+	if not named.is_empty():
+		return named
 	var seat := query.trim_prefix("hero").trim_prefix("foe")
 	var side := "hero" if query.begins_with("hero") or query.begins_with("h") else "foe"
 	if query.begins_with("hero") or query.begins_with("foe"):
@@ -448,7 +458,9 @@ func _hp(session: StitchedRunSession, words: PackedStringArray) -> String:
 		return "failed: hp needs a running battle, WHO and integer N"
 	var who := " ".join(words.slice(1, words.size() - 1))
 	var target := _battle_unit(session.battle, who)
-	if target.is_empty() or target.get("dead", false) or target.get("lost", false):
+	if target.is_empty():
+		return "failed: unknown or ambiguous figure '%s'; use h1-h4 or f1-f4 for a seat" % who
+	if target.get("dead", false) or target.get("lost", false):
 		return "failed: no living figure '%s'" % who
 	var value := int(words[words.size() - 1])
 	if value < 0 or value > int(target.max_hp):
@@ -486,7 +498,9 @@ func _status(session: StitchedRunSession, words: PackedStringArray) -> String:
 	if not kind in ["bleed", "rot", "stun", "guard"] or amount < 1 or amount > 99:
 		return "failed: status accepts bleed, rot, stun or guard and N from 1 to 99"
 	var target := _battle_unit(session.battle, who)
-	if target.is_empty() or bool(target.get("dead", false)) or bool(target.get("lost", false)):
+	if target.is_empty():
+		return "failed: unknown or ambiguous figure '%s'; use h1-h4 or f1-f4 for a seat" % who
+	if bool(target.get("dead", false)) or bool(target.get("lost", false)):
 		return "failed: no living figure '%s'" % who
 	var result := {"target": str(target.id), "target_side": str(target.side),
 		"hit": true, "damage": 0, "statuses": []}
