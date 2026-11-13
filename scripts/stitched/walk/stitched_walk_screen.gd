@@ -933,14 +933,14 @@ func _show_event() -> void:
 	var choices: Array = []
 	if walk.tug_unresolved():
 		event_title.text = "SOMETHING HAS THE THREAD"
-		event_text.text = "A thread pulls tight from the dark behind the last doll. Walk on and it pulls a seam open, or give it something sharp."
+		event_text.text = "A thread pulls tight from the dark behind the last doll. Walk on and it pulls a seam open, or offer pins or a spare spool from this doll's pockets."
 		var pocket: Array = expected.pockets[expected.viewpoint]
 		for item in ["pins", "spare_spool"]:
 			var slot := pocket.find(item)
 			if slot >= 0:
 				choices.append(["GIVE IT " + item.replace("_", " ").to_upper(), {"kind": "tug", "target": expected.tug.id, "choice": item, "slot": slot}])
 		if choices.is_empty():
-			event_text.text = "A thread pulls tight from the dark behind the last doll. There is nothing sharp to offer. Walk on and it will pull a seam open."
+			event_text.text = "A thread pulls tight from the dark behind the last doll. This doll has no pins or spare spool to offer. Walk on and it will pull a seam open."
 	else:
 		var curio := current_curio()
 		if curio.is_empty():

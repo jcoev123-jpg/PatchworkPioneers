@@ -316,12 +316,12 @@ func _host_tug_mount() -> void:
 	stage.expected = original_view.duplicate(true)
 	stage.expected.pockets[stage.expected.viewpoint] = []
 	stage._show_event()
-	_check(stage.event_buttons.is_empty() and stage.event_text.text.contains("nothing sharp")
-		and stage.event_text.text.contains("Walk on"), "tug without a sharp item describes only the available walk-on consequence")
+	_check(stage.event_buttons.is_empty() and stage.event_text.text.contains("no pins or spare spool")
+		and stage.event_text.text.contains("Walk on"), "tug without a carried offering names the missing items and walk-on consequence")
 	stage.expected = original_view
 	stage._show_event()
-	_check(stage.event_buttons.size() == item_choices and (item_choices == 0 or stage.event_text.text.contains("give it something sharp")),
-		"restoring carried items restores the offered sharp-item choice wording")
+	_check(stage.event_buttons.size() == item_choices and (item_choices == 0 or stage.event_text.text.contains("offer pins or a spare spool")),
+		"restoring carried items names both accepted offerings, including the non-sharp spool")
 	var before := stage.host.snapshot()
 	var journal_count := stage.host.journal.size()
 	_open_drawer(stage)
